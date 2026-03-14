@@ -11,6 +11,7 @@ use super::cancel_token::CancelToken;
 use super::central_repo::{ensure_central_repo, resolve_central_repo_path};
 use super::content_hash::hash_dir;
 use super::git_fetcher::clone_or_pull;
+use super::github_download::{download_github_directory, parse_github_api_params};
 use super::skill_store::{SkillRecord, SkillStore};
 use super::sync_engine::copy_dir_recursive;
 use super::sync_engine::sync_dir_copy_with_overwrite;
@@ -110,49 +111,106 @@ pub fn install_git_skill<R: tauri::Runtime>(
         anyhow::bail!("skill already exists in central repo: {:?}", central_path);
     }
 
-    // Always clone into a temp dir first, then copy the skill directory into central repo.
-    // This avoids storing a full git repo (with .git) inside central repo and allows
-    // handling GitHub folder URLs (/tree/<branch>/<path>).
-    let (repo_dir, rev) = clone_to_cache(
-        app,
-        store,
+    // Fast path: for GitHub URLs with a subpath, download via API instead of cloning.
+    let revision;
+    if let Some((owner, repo, branch, subpath)) = parse_github_api_params(
         &parsed.clone_url,
         parsed.branch.as_deref(),
-        cancel,
-    )?;
-
-    let copy_src = if let Some(subpath) = &parsed.subpath {
-        let sub_src = repo_dir.join(subpath);
-        if !sub_src.exists() {
-            anyhow::bail!("subpath not found in repo: {:?}", sub_src);
+        parsed.subpath.as_deref(),
+    ) {
+        log::info!(
+            "[installer] using GitHub API download: {}/{} path={}",
+            owner,
+            repo,
+            subpath
+        );
+        match download_github_directory(&owner, &repo, &branch, &subpath, &central_path, cancel) {
+            Ok(()) => {
+                revision = format!("api-download-{}", branch);
+            }
+            Err(err) => {
+                // Clean up partial download
+                let _ = std::fs::remove_dir_all(&central_path);
+                let err_msg = format!("{:#}", err);
+                // If cancelled, propagate immediately
+                if err_msg.contains("CANCELLED|") {
+                    return Err(err);
+                }
+                // If 404/403, the path doesn't exist on GitHub — don't waste time with git clone
+                if err_msg.contains("404") || err_msg.contains("Not Found") {
+                    anyhow::bail!(
+                        "该 Skill 在 GitHub 上未找到（可能已被删除或路径已变更）。\n请检查链接是否正确：{}/tree/{}/{}",
+                        parsed.clone_url.trim_end_matches(".git"),
+                        branch,
+                        subpath
+                    );
+                }
+                if err_msg.contains("403") || err_msg.contains("Forbidden") {
+                    anyhow::bail!("GitHub API 访问被拒绝（可能触发了频率限制）。请稍后再试。");
+                }
+                // Other errors: fall back to git clone
+                log::warn!(
+                    "[installer] GitHub API download failed, falling back to git clone: {:#}",
+                    err
+                );
+                let (repo_dir, rev) = clone_to_cache(
+                    app,
+                    store,
+                    &parsed.clone_url,
+                    parsed.branch.as_deref(),
+                    cancel,
+                )?;
+                let sub_src = repo_dir.join(&subpath);
+                if !sub_src.exists() {
+                    anyhow::bail!("subpath not found in repo: {:?}", sub_src);
+                }
+                copy_dir_recursive(&sub_src, &central_path)
+                    .with_context(|| format!("copy {:?} -> {:?}", sub_src, central_path))?;
+                revision = rev;
+            }
         }
-        sub_src
     } else {
-        // Repo root URL: if it looks like a multi-skill repo, ask user to provide a folder URL.
-        let skills_dir = repo_dir.join("skills");
-        if skills_dir.exists() {
-            let mut count = 0usize;
-            if let Ok(rd) = std::fs::read_dir(&skills_dir) {
-                for entry in rd.flatten() {
-                    let p = entry.path();
-                    if p.is_dir() && p.join("SKILL.md").exists() {
-                        count += 1;
+        // Standard git clone path (no subpath or non-GitHub URL)
+        let (repo_dir, rev) = clone_to_cache(
+            app,
+            store,
+            &parsed.clone_url,
+            parsed.branch.as_deref(),
+            cancel,
+        )?;
+
+        let copy_src = if let Some(subpath) = &parsed.subpath {
+            let sub_src = repo_dir.join(subpath);
+            if !sub_src.exists() {
+                anyhow::bail!("subpath not found in repo: {:?}", sub_src);
+            }
+            sub_src
+        } else {
+            // Repo root URL: if it looks like a multi-skill repo, ask user to provide a folder URL.
+            let skills_dir = repo_dir.join("skills");
+            if skills_dir.exists() {
+                let mut count = 0usize;
+                if let Ok(rd) = std::fs::read_dir(&skills_dir) {
+                    for entry in rd.flatten() {
+                        let p = entry.path();
+                        if p.is_dir() && p.join("SKILL.md").exists() {
+                            count += 1;
+                        }
                     }
                 }
+                if count >= 2 {
+                    anyhow::bail!(
+              "MULTI_SKILLS|该仓库包含多个 Skills，请复制具体 Skill 文件夹链接（例如 GitHub 的 /tree/<branch>/skills/<name>），再导入。"
+            );
+                }
             }
-            if count >= 2 {
-                anyhow::bail!(
-          "MULTI_SKILLS|该仓库包含多个 Skills，请复制具体 Skill 文件夹链接（例如 GitHub 的 /tree/<branch>/skills/<name>），再导入。"
-        );
-            }
-        }
-        repo_dir.clone()
-    };
+            repo_dir.clone()
+        };
 
-    copy_dir_recursive(&copy_src, &central_path)
-        .with_context(|| format!("copy {:?} -> {:?}", copy_src, central_path))?;
-
-    let revision = rev;
+        copy_dir_recursive(&copy_src, &central_path)
+            .with_context(|| format!("copy {:?} -> {:?}", copy_src, central_path))?;
+        revision = rev;
+    }
     let now = now_ms();
     let content_hash = compute_content_hash(&central_path);
     let description = parse_skill_md(&central_path.join("SKILL.md")).and_then(|(_, desc)| desc);

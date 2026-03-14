@@ -4,6 +4,7 @@ pub mod central_repo;
 pub mod content_hash;
 pub mod featured_skills;
 pub mod git_fetcher;
+pub mod github_download;
 pub mod github_search;
 pub mod installer;
 pub mod onboarding;
