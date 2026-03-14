@@ -328,3 +328,106 @@ fn install_local_selection_validates_skill_md() {
     };
     assert!(format!("{:#}", err).contains("SKILL_INVALID|missing_skill_md"));
 }
+
+/// Issue #28: when a git subpath is "skills", the derived name should be replaced by the
+/// SKILL.md name to avoid path duplication (e.g. `~/.claude/skills/skills/`).
+#[test]
+fn install_git_skill_uses_skill_md_name_over_subpath_skills() {
+    let app = tauri::test::mock_app();
+    let (_dir, store) = make_store();
+    let central_root = tempfile::tempdir().unwrap();
+    set_central_path(&store, central_root.path());
+
+    // Build a repo with skills/<folder> where the folder is named "skills" (simulating
+    // a URL like https://github.com/owner/repo/tree/main/skills).
+    let repo_dir = tempfile::tempdir().unwrap();
+    let skills_dir = repo_dir.path().join("skills");
+    fs::create_dir_all(&skills_dir).unwrap();
+    fs::write(
+        skills_dir.join("SKILL.md"),
+        "---\nname: my-real-skill\ndescription: A real skill\n---\n",
+    )
+    .unwrap();
+    fs::write(skills_dir.join("helper.txt"), b"data").unwrap();
+    let repo = init_git_repo(repo_dir.path());
+    commit_all(&repo, "add skill in skills dir");
+
+    // install_git_skill_from_selection with subpath "skills" (no user-provided name)
+    let res = super::install_git_skill_from_selection(
+        app.handle(),
+        &store,
+        repo_dir.path().to_string_lossy().as_ref(),
+        "skills",
+        None,
+    )
+    .unwrap();
+
+    // The name should be "my-real-skill" from SKILL.md, NOT "skills" from the subpath.
+    assert_eq!(res.name, "my-real-skill");
+    assert!(res.central_path.ends_with("my-real-skill"));
+    assert!(res.central_path.join("SKILL.md").exists());
+
+    let skill = store.get_skill_by_id(&res.skill_id).unwrap().unwrap();
+    assert_eq!(skill.name, "my-real-skill");
+    assert_eq!(skill.description.as_deref(), Some("A real skill"));
+}
+
+/// Issue #28: when user explicitly provides a name, SKILL.md should NOT override it.
+#[test]
+fn install_git_skill_respects_user_provided_name() {
+    let app = tauri::test::mock_app();
+    let (_dir, store) = make_store();
+    let central_root = tempfile::tempdir().unwrap();
+    set_central_path(&store, central_root.path());
+
+    let repo_dir = tempfile::tempdir().unwrap();
+    let skills_dir = repo_dir.path().join("skills");
+    fs::create_dir_all(&skills_dir).unwrap();
+    fs::write(skills_dir.join("SKILL.md"), "---\nname: md-name\n---\n").unwrap();
+    let repo = init_git_repo(repo_dir.path());
+    commit_all(&repo, "add skill");
+
+    let res = super::install_git_skill_from_selection(
+        app.handle(),
+        &store,
+        repo_dir.path().to_string_lossy().as_ref(),
+        "skills",
+        Some("user-custom-name".to_string()),
+    )
+    .unwrap();
+
+    // User-provided name takes priority.
+    assert_eq!(res.name, "user-custom-name");
+}
+
+/// Issue #28: install_git_skill (non-selection variant) also uses SKILL.md name.
+#[test]
+fn install_git_skill_derives_name_from_skill_md() {
+    let app = tauri::test::mock_app();
+    let (_dir, store) = make_store();
+    let central_root = tempfile::tempdir().unwrap();
+    set_central_path(&store, central_root.path());
+
+    let repo_dir = tempfile::tempdir().unwrap();
+    fs::write(
+        repo_dir.path().join("SKILL.md"),
+        "---\nname: proper-name\ndescription: desc\n---\n",
+    )
+    .unwrap();
+    let repo = init_git_repo(repo_dir.path());
+    commit_all(&repo, "init");
+
+    // The repo name (derived from path) will be something like a temp dir name.
+    // After install, the name should be "proper-name" from SKILL.md.
+    let res = super::install_git_skill(
+        app.handle(),
+        &store,
+        repo_dir.path().to_string_lossy().as_ref(),
+        None,
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(res.name, "proper-name");
+    assert!(res.central_path.ends_with("proper-name"));
+}

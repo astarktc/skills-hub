@@ -91,7 +91,8 @@ pub fn install_git_skill<R: tauri::Runtime>(
     cancel: Option<&CancelToken>,
 ) -> Result<InstallResult> {
     let parsed = parse_github_url(repo_url);
-    let name = name.unwrap_or_else(|| {
+    let user_provided_name = name.is_some();
+    let mut name = name.unwrap_or_else(|| {
         if let Some(subpath) = &parsed.subpath {
             subpath
                 .rsplit('/')
@@ -105,7 +106,7 @@ pub fn install_git_skill<R: tauri::Runtime>(
 
     let central_dir = resolve_central_repo_path(app, store)?;
     ensure_central_repo(&central_dir)?;
-    let central_path = central_dir.join(&name);
+    let mut central_path = central_dir.join(&name);
 
     if central_path.exists() {
         anyhow::bail!("skill already exists in central repo: {:?}", central_path);
@@ -225,9 +226,31 @@ pub fn install_git_skill<R: tauri::Runtime>(
             .with_context(|| format!("copy {:?} -> {:?}", copy_src, central_path))?;
         revision = rev;
     }
+    // After download, prefer the name from SKILL.md over the derived name (fixes #28:
+    // when subpath is "skills", the derived name collides with tool directory names).
+    let (mut description, md_name) = match parse_skill_md(&central_path.join("SKILL.md")) {
+        Some((n, d)) => (d, Some(n)),
+        None => (None, None),
+    };
+    if !user_provided_name {
+        if let Some(ref better_name) = md_name {
+            if *better_name != name {
+                let new_central = central_dir.join(better_name);
+                if !new_central.exists() {
+                    std::fs::rename(&central_path, &new_central).with_context(|| {
+                        format!("rename {:?} -> {:?}", central_path, new_central)
+                    })?;
+                    name = better_name.clone();
+                    central_path = new_central;
+                }
+                // Re-read description after rename (path changed)
+                description = parse_skill_md(&central_path.join("SKILL.md")).and_then(|(_, d)| d);
+            }
+        }
+    }
+
     let now = now_ms();
     let content_hash = compute_content_hash(&central_path);
-    let description = parse_skill_md(&central_path.join("SKILL.md")).and_then(|(_, desc)| desc);
 
     let record = SkillRecord {
         id: Uuid::new_v4().to_string(),
@@ -803,7 +826,8 @@ pub fn install_git_skill_from_selection<R: tauri::Runtime>(
     name: Option<String>,
 ) -> Result<InstallResult> {
     let parsed = parse_github_url(repo_url);
-    let display_name = name.unwrap_or_else(|| {
+    let user_provided_name = name.is_some();
+    let mut display_name = name.unwrap_or_else(|| {
         subpath
             .rsplit('/')
             .next()
@@ -813,7 +837,7 @@ pub fn install_git_skill_from_selection<R: tauri::Runtime>(
 
     let central_dir = resolve_central_repo_path(app, store)?;
     ensure_central_repo(&central_dir)?;
-    let central_path = central_dir.join(&display_name);
+    let mut central_path = central_dir.join(&display_name);
     if central_path.exists() {
         anyhow::bail!("skill already exists in central repo: {:?}", central_path);
     }
@@ -838,9 +862,30 @@ pub fn install_git_skill_from_selection<R: tauri::Runtime>(
     copy_dir_recursive(&copy_src, &central_path)
         .with_context(|| format!("copy {:?} -> {:?}", copy_src, central_path))?;
 
+    // Prefer name from SKILL.md over derived name (fixes #28).
+    let (mut description, md_name) = match parse_skill_md(&central_path.join("SKILL.md")) {
+        Some((n, d)) => (d, Some(n)),
+        None => (None, None),
+    };
+    if !user_provided_name {
+        if let Some(ref better_name) = md_name {
+            if *better_name != display_name {
+                let new_central = central_dir.join(better_name);
+                if !new_central.exists() {
+                    std::fs::rename(&central_path, &new_central).with_context(|| {
+                        format!("rename {:?} -> {:?}", central_path, new_central)
+                    })?;
+                    display_name = better_name.clone();
+                    central_path = new_central;
+                    description =
+                        parse_skill_md(&central_path.join("SKILL.md")).and_then(|(_, d)| d);
+                }
+            }
+        }
+    }
+
     let now = now_ms();
     let content_hash = compute_content_hash(&central_path);
-    let description = parse_skill_md(&central_path.join("SKILL.md")).and_then(|(_, desc)| desc);
     let record = SkillRecord {
         id: Uuid::new_v4().to_string(),
         name: display_name,
