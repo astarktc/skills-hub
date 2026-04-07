@@ -27,7 +27,8 @@ use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
 };
 use crate::core::sync_engine::{
-    copy_dir_recursive, sync_dir_for_tool_with_overwrite, sync_dir_hybrid, SyncMode,
+    copy_dir_recursive, remove_path_any, sync_dir_for_tool_with_overwrite, sync_dir_hybrid,
+    SyncMode,
 };
 use crate::core::tool_adapters::{adapter_by_key, is_tool_installed, resolve_default_path};
 use uuid::Uuid;
@@ -598,7 +599,7 @@ pub async fn unsync_skill_from_tool(
         for k in &group_tool_keys {
             if let Some(target) = store.get_skill_target(&skillId, k)? {
                 if !removed {
-                    remove_path_any(&target.target_path).map_err(anyhow::Error::msg)?;
+                    remove_path_any(std::path::Path::new(&target.target_path))?;
                     removed = true;
                 }
                 store.delete_skill_target(&skillId, k)?;
@@ -764,7 +765,7 @@ pub async fn delete_managed_skill(
 
         let mut remove_failures: Vec<String> = Vec::new();
         for target in targets {
-            if let Err(err) = remove_path_any(&target.target_path) {
+            if let Err(err) = remove_path_any(std::path::Path::new(&target.target_path)) {
                 remove_failures.push(format!("{}: {}", target.target_path, err));
             }
         }
@@ -790,30 +791,6 @@ pub async fn delete_managed_skill(
     .await
     .map_err(|err| err.to_string())?
     .map_err(format_anyhow_error)
-}
-
-fn remove_path_any(path: &str) -> Result<(), String> {
-    let p = std::path::Path::new(path);
-    if !p.exists() {
-        return Ok(());
-    }
-
-    let meta = std::fs::symlink_metadata(p).map_err(|err| err.to_string())?;
-    let ft = meta.file_type();
-
-    // 软链接（即使指向目录）也应该用 remove_file 删除链接本身
-    if ft.is_symlink() {
-        std::fs::remove_file(p).map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    if ft.is_dir() {
-        std::fs::remove_dir_all(p).map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    std::fs::remove_file(p).map_err(|err| err.to_string())?;
-    Ok(())
 }
 
 fn to_install_dto(result: InstallResult) -> InstallResultDto {
