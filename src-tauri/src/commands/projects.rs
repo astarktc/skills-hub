@@ -50,6 +50,11 @@ pub async fn add_project_tool(
 ) -> Result<(), String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        // Validate that the project exists before inserting
+        store
+            .get_project_by_id(&projectId)?
+            .ok_or_else(|| anyhow::anyhow!("project not found: {}", projectId))?;
+
         let record = ProjectToolRecord {
             id: Uuid::new_v4().to_string(),
             project_id: projectId,
@@ -111,6 +116,14 @@ pub async fn add_project_skill_assignment(
 ) -> Result<ProjectSkillAssignmentDto, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        // Validate that the project and skill exist before inserting
+        store
+            .get_project_by_id(&projectId)?
+            .ok_or_else(|| anyhow::anyhow!("project not found: {}", projectId))?;
+        store
+            .get_skill_by_id(&skillId)?
+            .ok_or_else(|| anyhow::anyhow!("skill not found: {}", skillId))?;
+
         let now = now_ms();
         let record = ProjectSkillAssignmentRecord {
             id: Uuid::new_v4().to_string(),
