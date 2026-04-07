@@ -1,4 +1,4 @@
-# Requirements: Skills Hub — Per-Project Skill Distribution
+# Requirements: Skills Hub -- Per-Project Skill Distribution
 
 **Defined:** 2026-04-07
 **Core Value:** Any skill assigned to a project is immediately available in that project's tool directory via symlink, so AI tools only load the skills that matter for that project.
@@ -77,58 +77,58 @@ Explicitly excluded. Documented to prevent scope creep.
 
 | Feature                                        | Reason                                                                                  |
 | ---------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Per-project skill versioning                   | Central library is single source of truth — one version per skill                       |
-| Fork/customize skills with upstream tracking   | Patch systems are complex and fragile — create separate skills instead                  |
+| Per-project skill versioning                   | Central library is single source of truth -- one version per skill                      |
+| Fork/customize skills with upstream tracking   | Patch systems are complex and fragile -- create separate skills instead                 |
 | Auto-sync / file watcher daemon                | Symlink mode propagates instantly; copy mode uses manual re-sync + staleness indicators |
-| Automatic .gitignore modification              | Always prompt, never auto-write — respect user's git workflow                           |
-| Cross-machine project sync                     | Project paths are machine-specific — portable manifests (deferred) solve this better    |
+| Automatic .gitignore modification              | Always prompt, never auto-write -- respect user's git workflow                          |
+| Cross-machine project sync                     | Project paths are machine-specific -- portable manifests (deferred) solve this better   |
 | Nested project support (monorepo sub-projects) | Register monorepo root or sub-packages as separate projects                             |
 | Mobile/web interface                           | Desktop-only via Tauri                                                                  |
-| Undo/redo for assignment changes               | Toggle cost is trivially low — just uncheck the box                                     |
-| Drag-and-drop skill ordering                   | Skills are an unordered set — AI tools don't care about order                           |
-| Real-time team collaboration                   | Skills Hub is local-only — team sharing via git is the natural mechanism                |
+| Undo/redo for assignment changes               | Toggle cost is trivially low -- just uncheck the box                                    |
+| Drag-and-drop skill ordering                   | Skills are an unordered set -- AI tools don't care about order                          |
+| Real-time team collaboration                   | Skills Hub is local-only -- team sharing via git is the natural mechanism               |
 
 ## Traceability
 
 Which phases cover which requirements. Updated during roadmap creation.
 
-| Requirement | Phase | Status  |
-| ----------- | ----- | ------- |
-| PROJ-01     | —     | Pending |
-| PROJ-02     | —     | Pending |
-| PROJ-03     | —     | Pending |
-| PROJ-04     | —     | Pending |
-| PROJ-05     | —     | Pending |
-| TOOL-01     | —     | Pending |
-| TOOL-02     | —     | Pending |
-| TOOL-03     | —     | Pending |
-| ASGN-01     | —     | Pending |
-| ASGN-02     | —     | Pending |
-| ASGN-03     | —     | Pending |
-| ASGN-04     | —     | Pending |
-| ASGN-05     | —     | Pending |
-| SYNC-01     | —     | Pending |
-| SYNC-02     | —     | Pending |
-| SYNC-03     | —     | Pending |
-| SYNC-04     | —     | Pending |
-| INFR-01     | —     | Pending |
-| INFR-02     | —     | Pending |
-| INFR-03     | —     | Pending |
-| INFR-04     | —     | Pending |
-| INFR-05     | —     | Pending |
-| UI-01       | —     | Pending |
-| UI-02       | —     | Pending |
-| UI-03       | —     | Pending |
-| UI-04       | —     | Pending |
-| UI-05       | —     | Pending |
+| Requirement | Phase   | Status  |
+| ----------- | ------- | ------- |
+| PROJ-01     | Phase 1 | Pending |
+| PROJ-02     | Phase 1 | Pending |
+| PROJ-03     | Phase 1 | Pending |
+| PROJ-04     | Phase 5 | Pending |
+| PROJ-05     | Phase 5 | Pending |
+| TOOL-01     | Phase 1 | Pending |
+| TOOL-02     | Phase 4 | Pending |
+| TOOL-03     | Phase 4 | Pending |
+| ASGN-01     | Phase 3 | Pending |
+| ASGN-02     | Phase 2 | Pending |
+| ASGN-03     | Phase 2 | Pending |
+| ASGN-04     | Phase 3 | Pending |
+| ASGN-05     | Phase 2 | Pending |
+| SYNC-01     | Phase 4 | Pending |
+| SYNC-02     | Phase 3 | Pending |
+| SYNC-03     | Phase 3 | Pending |
+| SYNC-04     | Phase 2 | Pending |
+| INFR-01     | Phase 2 | Pending |
+| INFR-02     | Phase 2 | Pending |
+| INFR-03     | Phase 5 | Pending |
+| INFR-04     | Phase 1 | Pending |
+| INFR-05     | Phase 1 | Pending |
+| UI-01       | Phase 4 | Pending |
+| UI-02       | Phase 4 | Pending |
+| UI-03       | Phase 4 | Pending |
+| UI-04       | Phase 4 | Pending |
+| UI-05       | Phase 4 | Pending |
 
 **Coverage:**
 
 - v1 requirements: 27 total
-- Mapped to phases: 0
-- Unmapped: 27 (pending roadmap creation)
+- Mapped to phases: 27
+- Unmapped: 0
 
 ---
 
 _Requirements defined: 2026-04-07_
-_Last updated: 2026-04-07 after initial definition_
+_Last updated: 2026-04-07 after roadmap creation_
