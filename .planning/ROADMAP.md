@@ -34,7 +34,12 @@ Decimal phases appear between their surrounding integers in numeric order.
 4. Skill assignments can be created and deleted per project/tool combination via Rust core functions
 5. All CRUD operations are in skill_store.rs and project commands are in a separate commands/projects.rs module
 
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+
+- [ ] 01-01-PLAN.md -- Schema V4 migration + SkillStore CRUD methods (record structs, 13 methods, tests)
+- [ ] 01-02-PLAN.md -- Tauri command module (commands/projects.rs with 9 commands, DTOs, registration)
 
 ### Phase 2: Sync Logic
 
@@ -101,7 +106,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase                      | Plans Complete | Status      | Completed |
 | -------------------------- | -------------- | ----------- | --------- |
-| 1. Data Foundation         | 0/0            | Not started | -         |
+| 1. Data Foundation         | 0/2            | Not started | -         |
 | 2. Sync Logic              | 0/0            | Not started | -         |
 | 3. IPC Commands            | 0/0            | Not started | -         |
 | 4. Frontend Component Tree | 0/0            | Not started | -         |
