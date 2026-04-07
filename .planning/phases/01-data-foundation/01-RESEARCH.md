@@ -534,17 +534,17 @@ fn v4_migration_creates_project_tables() {
 | A2  | Extending `SkillStore` rather than creating `ProjectStore` is the better approach                                       | Anti-Patterns                     | If the store grows too large, it may need splitting later. Risk is LOW -- Phase 1 adds ~10 methods, manageable in one struct.                                                                  |
 | A3  | Making `format_anyhow_error`, `expand_home_path`, `now_ms`, `remove_path_any` `pub(crate)` has no negative side effects | Pitfall 4                         | These are utility functions with no mutable state. Widening visibility from private to crate-internal is safe. Risk is NEGLIGIBLE.                                                             |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Assignment target path computation for delete cleanup**
+1. **Assignment target path computation for delete cleanup** -- RESOLVED
    - What we know: D-07 says delete reads assignment paths before DB delete and removes filesystem artifacts. The `project_skill_assignments` table does NOT have a `target_path` column (unlike `skill_targets` which does).
-   - What's unclear: How will the delete function know which filesystem path to clean up? It must compute `project_path / tool_relative_skills_dir / skill_name` -- but `tool_relative_skills_dir` comes from `ToolAdapter` and `skill_name` comes from the `skills` table.
-   - Recommendation: The delete command should JOIN `project_skill_assignments` with `skills` (for `name`) and look up the tool adapter (for `relative_skills_dir`), then compute the target path as `project.path / adapter.relative_skills_dir / skill.name`. This is a command-layer concern, not a store-layer concern. Alternatively, add a `target_path` column to `project_skill_assignments` -- but this would deviate from the CONTEXT.md schema which does not include one. **The planner should decide whether to compute paths at delete time or add a target_path column.**
+   - What was unclear: How will the delete function know which filesystem path to clean up? It must compute `project_path / tool_relative_skills_dir / skill_name` -- but `tool_relative_skills_dir` comes from `ToolAdapter` and `skill_name` comes from the `skills` table.
+   - **Resolution:** Compute paths at delete time in `core/project_ops.rs::remove_project_with_cleanup()`. The function looks up each assignment's skill (via `store.get_skill_by_id`) and tool adapter (via `tool_adapters::adapter_by_key`) to compute `project.path / adapter.relative_skills_dir / skill.name`. No `target_path` column is added -- this preserves the CONTEXT.md schema exactly. The computed path is removed using `sync_engine::remove_path_any` (made `pub(crate)` per D-07). This is a core-layer concern, living in `project_ops.rs` alongside the other business logic.
 
-2. **Shared helper visibility**
+2. **Shared helper visibility** -- RESOLVED
    - What we know: `format_anyhow_error`, `expand_home_path`, `now_ms`, `remove_path_any` are private to `commands/mod.rs`.
-   - What's unclear: Should these be moved to a separate `commands/helpers.rs` utility module, or just made `pub(crate)` in place?
-   - Recommendation: Make them `pub(crate)` in place -- minimal change, matches the "keep changes minimal" development workflow constraint.
+   - What was unclear: Should these be moved to a separate `commands/helpers.rs` utility module, or just made `pub(crate)` in place?
+   - **Resolution:** Make `format_anyhow_error`, `expand_home_path`, and `now_ms` `pub(crate)` in place in `commands/mod.rs` -- minimal change, no file moves. The `remove_path_any` in `commands/mod.rs` is NOT changed; instead, the existing `remove_path_any` in `sync_engine.rs` (which has a better signature: takes `&Path`, returns `anyhow::Result<()>`, handles NotFound gracefully) is made `pub(crate)` and used by `core/project_ops.rs` for delete cleanup per D-07. This avoids both duplicating code and creating an unnecessary dependency from the core layer back to the commands layer.
 
 ## Environment Availability
 
@@ -603,11 +603,11 @@ Step 2.6: SKIPPED -- This phase is purely code/config changes (Rust source files
 
 ### Known Threat Patterns for SQLite + Filesystem
 
-| Pattern                                 | STRIDE    | Standard Mitigation                                                                                                                               |
-| --------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| SQL injection via path strings          | Tampering | Parameterized queries (`params![]` macro) -- never interpolate strings into SQL [VERIFIED: all existing queries use params!]                      |
-| Path traversal via project registration | Tampering | `std::fs::canonicalize()` resolves all symlinks and `..` components; combined with `is_dir()` check [VERIFIED: CONTEXT.md D-08, D-09]             |
-| Symlink following during delete cleanup | Elevation | `remove_path_any` uses `symlink_metadata` to detect symlinks and removes the link itself, not the target [VERIFIED: commands/mod.rs line 799-800] |
+| Pattern                                 | STRIDE    | Standard Mitigation                                                                                                                              |
+| --------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| SQL injection via path strings          | Tampering | Parameterized queries (`params![]` macro) -- never interpolate strings into SQL [VERIFIED: all existing queries use params!]                     |
+| Path traversal via project registration | Tampering | `std::fs::canonicalize()` resolves all symlinks and `..` components; combined with `is_dir()` check [VERIFIED: CONTEXT.md D-08, D-09]            |
+| Symlink following during delete cleanup | Elevation | `remove_path_any` uses `symlink_metadata` to detect symlinks and removes the link itself, not the target [VERIFIED: sync_engine.rs line 137-156] |
 
 ## Sources
 
