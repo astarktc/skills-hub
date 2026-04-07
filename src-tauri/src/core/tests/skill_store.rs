@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
+use crate::core::skill_store::{
+    ProjectRecord, SkillRecord, SkillStore, SkillTargetRecord,
+};
 
 fn make_store() -> (tempfile::TempDir, SkillStore) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -249,4 +251,84 @@ fn error_context_includes_db_path() {
     let err = store.ensure_schema().unwrap_err();
     let msg = format!("{:#}", err);
     assert!(msg.contains("failed to open db at"), "{msg}");
+}
+
+#[test]
+fn v4_migration_creates_project_tables() {
+    let (_dir, store) = make_store();
+
+    let record = ProjectRecord {
+        id: "p1".to_string(),
+        path: "/home/user/project1".to_string(),
+        created_at: 100,
+        updated_at: 100,
+    };
+    store.register_project(&record).unwrap();
+
+    let projects = store.list_projects().unwrap();
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects[0].id, "p1");
+    assert_eq!(projects[0].path, "/home/user/project1");
+    assert_eq!(projects[0].created_at, 100);
+    assert_eq!(projects[0].updated_at, 100);
+}
+
+#[test]
+fn v4_migration_preserves_existing_data() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("test.db");
+
+    // Create a store and add data (this creates current schema)
+    let store = SkillStore::new(db.clone());
+    store.ensure_schema().expect("initial schema");
+
+    let skill = make_skill("s1", "S1", "/central/s1", 1);
+    store.upsert_skill(&skill).unwrap();
+
+    let target = SkillTargetRecord {
+        id: "t1".to_string(),
+        skill_id: "s1".to_string(),
+        tool: "cursor".to_string(),
+        target_path: "/target/1".to_string(),
+        mode: "copy".to_string(),
+        status: "ok".to_string(),
+        last_error: None,
+        synced_at: None,
+    };
+    store.upsert_skill_target(&target).unwrap();
+
+    // Call ensure_schema again (simulates app restart / upgrade)
+    store.ensure_schema().expect("re-ensure schema");
+
+    // Verify existing data survived
+    let skills = store.list_skills().unwrap();
+    assert_eq!(skills.len(), 1);
+    assert_eq!(skills[0].id, "s1");
+
+    let targets = store.list_skill_targets("s1").unwrap();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].tool, "cursor");
+}
+
+#[test]
+fn v4_tables_have_correct_constraints() {
+    let (_dir, store) = make_store();
+
+    let p1 = ProjectRecord {
+        id: "p1".to_string(),
+        path: "/home/user/project1".to_string(),
+        created_at: 100,
+        updated_at: 100,
+    };
+    store.register_project(&p1).unwrap();
+
+    // Duplicate path should fail with UNIQUE constraint
+    let p2 = ProjectRecord {
+        id: "p2".to_string(),
+        path: "/home/user/project1".to_string(),
+        created_at: 200,
+        updated_at: 200,
+    };
+    let result = store.register_project(&p2);
+    assert!(result.is_err(), "duplicate path should fail with UNIQUE constraint");
 }

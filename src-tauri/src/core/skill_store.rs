@@ -8,7 +8,7 @@ const DB_FILE_NAME: &str = "skills_hub.db";
 const LEGACY_APP_IDENTIFIERS: &[&str] = &["com.tauri.dev", "com.tauri.dev.skillshub"];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -95,6 +95,34 @@ pub struct SkillTargetRecord {
     pub synced_at: Option<i64>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ProjectRecord {
+    pub id: String,
+    pub path: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProjectToolRecord {
+    pub id: String,
+    pub project_id: String,
+    pub tool: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProjectSkillAssignmentRecord {
+    pub id: String,
+    pub project_id: String,
+    pub skill_id: String,
+    pub tool: String,
+    pub mode: String,
+    pub status: String,
+    pub last_error: Option<String>,
+    pub synced_at: Option<i64>,
+    pub created_at: i64,
+}
+
 impl SkillStore {
     pub fn new(db_path: PathBuf) -> Self {
         Self { db_path }
@@ -116,6 +144,41 @@ impl SkillStore {
                 conn.execute_batch("ALTER TABLE skills ADD COLUMN description TEXT NULL;")?;
                 // V3: add source_subpath column
                 conn.execute_batch("ALTER TABLE skills ADD COLUMN source_subpath TEXT NULL;")?;
+                // V4: project tables for per-project skill distribution
+                conn.execute_batch(
+                    "BEGIN;
+                     CREATE TABLE IF NOT EXISTS projects (
+                       id TEXT PRIMARY KEY,
+                       path TEXT NOT NULL UNIQUE,
+                       created_at INTEGER NOT NULL,
+                       updated_at INTEGER NOT NULL
+                     );
+                     CREATE TABLE IF NOT EXISTS project_tools (
+                       id TEXT PRIMARY KEY,
+                       project_id TEXT NOT NULL,
+                       tool TEXT NOT NULL,
+                       UNIQUE(project_id, tool),
+                       FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+                     );
+                     CREATE TABLE IF NOT EXISTS project_skill_assignments (
+                       id TEXT PRIMARY KEY,
+                       project_id TEXT NOT NULL,
+                       skill_id TEXT NOT NULL,
+                       tool TEXT NOT NULL,
+                       mode TEXT NOT NULL,
+                       status TEXT NOT NULL,
+                       last_error TEXT NULL,
+                       synced_at INTEGER NULL,
+                       created_at INTEGER NOT NULL,
+                       UNIQUE(project_id, skill_id, tool),
+                       FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                       FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE
+                     );
+                     CREATE INDEX IF NOT EXISTS idx_psa_project ON project_skill_assignments(project_id);
+                     CREATE INDEX IF NOT EXISTS idx_psa_skill ON project_skill_assignments(skill_id);
+                     CREATE INDEX IF NOT EXISTS idx_pt_project ON project_tools(project_id);
+                     COMMIT;"
+                )?;
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version < SCHEMA_VERSION {
                 // Incremental migrations
@@ -124,6 +187,42 @@ impl SkillStore {
                 }
                 if user_version < 3 {
                     conn.execute_batch("ALTER TABLE skills ADD COLUMN source_subpath TEXT NULL;")?;
+                }
+                if user_version < 4 {
+                    conn.execute_batch(
+                        "BEGIN;
+                         CREATE TABLE IF NOT EXISTS projects (
+                           id TEXT PRIMARY KEY,
+                           path TEXT NOT NULL UNIQUE,
+                           created_at INTEGER NOT NULL,
+                           updated_at INTEGER NOT NULL
+                         );
+                         CREATE TABLE IF NOT EXISTS project_tools (
+                           id TEXT PRIMARY KEY,
+                           project_id TEXT NOT NULL,
+                           tool TEXT NOT NULL,
+                           UNIQUE(project_id, tool),
+                           FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+                         );
+                         CREATE TABLE IF NOT EXISTS project_skill_assignments (
+                           id TEXT PRIMARY KEY,
+                           project_id TEXT NOT NULL,
+                           skill_id TEXT NOT NULL,
+                           tool TEXT NOT NULL,
+                           mode TEXT NOT NULL,
+                           status TEXT NOT NULL,
+                           last_error TEXT NULL,
+                           synced_at INTEGER NULL,
+                           created_at INTEGER NOT NULL,
+                           UNIQUE(project_id, skill_id, tool),
+                           FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                           FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE
+                         );
+                         CREATE INDEX IF NOT EXISTS idx_psa_project ON project_skill_assignments(project_id);
+                         CREATE INDEX IF NOT EXISTS idx_psa_skill ON project_skill_assignments(skill_id);
+                         CREATE INDEX IF NOT EXISTS idx_pt_project ON project_tools(project_id);
+                         COMMIT;"
+                    )?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
@@ -446,6 +545,40 @@ impl SkillStore {
                 params![skill_id, tool],
             )?;
             Ok(())
+        })
+    }
+
+    // --- Project methods ---
+
+    pub fn register_project(&self, record: &ProjectRecord) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO projects (id, path, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
+                params![record.id, record.path, record.created_at, record.updated_at],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_projects(&self) -> Result<Vec<ProjectRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, path, created_at, updated_at FROM projects ORDER BY created_at DESC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(ProjectRecord {
+                    id: row.get(0)?,
+                    path: row.get(1)?,
+                    created_at: row.get(2)?,
+                    updated_at: row.get(3)?,
+                })
+            })?;
+
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
         })
     }
 
