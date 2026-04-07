@@ -746,6 +746,7 @@ impl SkillStore {
         })
     }
 
+    #[allow(dead_code)] // Used in Phase 2 (sync logic)
     pub fn list_project_skill_assignments_for_project_tool(
         &self,
         project_id: &str,

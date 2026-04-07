@@ -1,12 +1,8 @@
 use tauri::State;
 use uuid::Uuid;
 
-use crate::core::project_ops::{
-    self, ProjectDto, ProjectSkillAssignmentDto, ProjectToolDto,
-};
-use crate::core::skill_store::{
-    ProjectSkillAssignmentRecord, ProjectToolRecord, SkillStore,
-};
+use crate::core::project_ops::{self, ProjectDto, ProjectSkillAssignmentDto, ProjectToolDto};
+use crate::core::skill_store::{ProjectSkillAssignmentRecord, ProjectToolRecord, SkillStore};
 
 use super::{expand_home_path, format_anyhow_error, now_ms};
 
@@ -26,10 +22,7 @@ pub async fn register_project(
 
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn remove_project(
-    store: State<'_, SkillStore>,
-    projectId: String,
-) -> Result<(), String> {
+pub async fn remove_project(store: State<'_, SkillStore>, projectId: String) -> Result<(), String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         project_ops::remove_project_with_cleanup(&store, &projectId)
@@ -40,9 +33,7 @@ pub async fn remove_project(
 }
 
 #[tauri::command]
-pub async fn list_projects(
-    store: State<'_, SkillStore>,
-) -> Result<Vec<ProjectDto>, String> {
+pub async fn list_projects(store: State<'_, SkillStore>) -> Result<Vec<ProjectDto>, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || project_ops::list_project_dtos(&store))
         .await
@@ -79,12 +70,10 @@ pub async fn remove_project_tool(
     tool: String,
 ) -> Result<(), String> {
     let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        store.remove_project_tool(&projectId, &tool)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(format_anyhow_error)
+    tauri::async_runtime::spawn_blocking(move || store.remove_project_tool(&projectId, &tool))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(format_anyhow_error)
 }
 
 #[tauri::command]

@@ -331,7 +331,10 @@ fn v4_tables_have_correct_constraints() {
         updated_at: 200,
     };
     let result = store.register_project(&p2);
-    assert!(result.is_err(), "duplicate path should fail with UNIQUE constraint");
+    assert!(
+        result.is_err(),
+        "duplicate path should fail with UNIQUE constraint"
+    );
 }
 
 // --- Task 2: Project CRUD tests ---
@@ -507,7 +510,10 @@ fn delete_skill_cascades_project_assignments() {
     // Delete skill -- CASCADE should remove assignment but keep project and tool
     store.delete_skill("s1").unwrap();
     assert_eq!(store.list_project_skill_assignments("p1").unwrap().len(), 0);
-    assert!(store.get_project_by_path("/home/user/proj").unwrap().is_some());
+    assert!(store
+        .get_project_by_path("/home/user/proj")
+        .unwrap()
+        .is_some());
     assert_eq!(store.list_project_tools("p1").unwrap().len(), 1);
 }
 
@@ -761,10 +767,7 @@ fn aggregate_sync_status_all_synced() {
     store.add_project_skill_assignment(&a1).unwrap();
     store.add_project_skill_assignment(&a2).unwrap();
 
-    assert_eq!(
-        store.aggregate_project_sync_status("p1").unwrap(),
-        "synced"
-    );
+    assert_eq!(store.aggregate_project_sync_status("p1").unwrap(), "synced");
 }
 
 #[test]
@@ -809,10 +812,7 @@ fn aggregate_sync_status_mixed() {
     store.add_project_skill_assignment(&a1).unwrap();
     store.add_project_skill_assignment(&a2).unwrap();
 
-    assert_eq!(
-        store.aggregate_project_sync_status("p1").unwrap(),
-        "error"
-    );
+    assert_eq!(store.aggregate_project_sync_status("p1").unwrap(), "error");
 }
 
 #[test]
@@ -827,10 +827,7 @@ fn aggregate_sync_status_no_assignments() {
     };
     store.register_project(&p).unwrap();
 
-    assert_eq!(
-        store.aggregate_project_sync_status("p1").unwrap(),
-        "none"
-    );
+    assert_eq!(store.aggregate_project_sync_status("p1").unwrap(), "none");
 }
 
 #[test]
