@@ -101,15 +101,33 @@ pub fn remove_project_with_cleanup(store: &SkillStore, project_id: &str) -> Resu
 
     for assignment in &assignments {
         if assignment.status == "synced" || assignment.status == "stale" {
-            if let Ok(Some(skill)) = store.get_skill_by_id(&assignment.skill_id) {
-                if let Some(adapter) = tool_adapters::adapter_by_key(&assignment.tool) {
-                    let project_path = Path::new(&project.path);
-                    let target = project_path
-                        .join(adapter.relative_skills_dir)
-                        .join(&skill.name);
-                    if let Err(e) = sync_engine::remove_path_any(&target) {
-                        log::warn!("failed to remove {:?}: {}", target, e);
+            match store.get_skill_by_id(&assignment.skill_id) {
+                Ok(Some(skill)) => {
+                    if let Some(adapter) = tool_adapters::adapter_by_key(&assignment.tool) {
+                        let project_path = Path::new(&project.path);
+                        let target = project_path
+                            .join(adapter.relative_skills_dir)
+                            .join(&skill.name);
+                        if let Err(e) = sync_engine::remove_path_any(&target) {
+                            log::warn!("failed to remove {:?}: {}", target, e);
+                        }
                     }
+                }
+                Ok(None) => {
+                    log::warn!(
+                        "skill {} not found during project cleanup; \
+                         orphaned symlink may remain in project {:?} for tool {}",
+                        assignment.skill_id,
+                        project.path,
+                        assignment.tool
+                    );
+                }
+                Err(e) => {
+                    log::warn!(
+                        "error looking up skill {} during project cleanup: {}",
+                        assignment.skill_id,
+                        e
+                    );
                 }
             }
         }
