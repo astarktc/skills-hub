@@ -98,7 +98,16 @@ pub fn run() {
             commands::search_skills_online,
             commands::list_skill_files,
             commands::read_skill_file,
-            commands::cancel_current_operation
+            commands::cancel_current_operation,
+            commands::projects::register_project,
+            commands::projects::remove_project,
+            commands::projects::list_projects,
+            commands::projects::add_project_tool,
+            commands::projects::remove_project_tool,
+            commands::projects::list_project_tools,
+            commands::projects::add_project_skill_assignment,
+            commands::projects::remove_project_skill_assignment,
+            commands::projects::list_project_skill_assignments,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

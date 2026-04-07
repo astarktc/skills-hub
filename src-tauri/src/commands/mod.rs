@@ -1,3 +1,5 @@
+pub mod projects;
+
 use anyhow::Context;
 use serde::Serialize;
 use tauri::State;
@@ -30,7 +32,7 @@ use crate::core::sync_engine::{
 use crate::core::tool_adapters::{adapter_by_key, is_tool_installed, resolve_default_path};
 use uuid::Uuid;
 
-fn format_anyhow_error(err: anyhow::Error) -> String {
+pub(crate) fn format_anyhow_error(err: anyhow::Error) -> String {
     let first = err.to_string();
     // Frontend relies on these prefixes for special flows.
     if first.starts_with("MULTI_SKILLS|")
@@ -244,7 +246,7 @@ pub struct InstallResultDto {
     pub content_hash: Option<String>,
 }
 
-fn expand_home_path(input: &str) -> Result<std::path::PathBuf, anyhow::Error> {
+pub(crate) fn expand_home_path(input: &str) -> Result<std::path::PathBuf, anyhow::Error> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         anyhow::bail!("storage path is empty");
@@ -823,7 +825,7 @@ fn to_install_dto(result: InstallResult) -> InstallResultDto {
     }
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
