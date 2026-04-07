@@ -47,15 +47,15 @@ fn remove_path_any_handles_file_dir_and_missing() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("f.txt");
     std::fs::write(&file, b"1").unwrap();
-    remove_path_any(file.to_string_lossy().as_ref()).unwrap();
+    remove_path_any(&file).unwrap();
     assert!(!file.exists());
 
     let sub = dir.path().join("d");
     std::fs::create_dir_all(&sub).unwrap();
-    remove_path_any(sub.to_string_lossy().as_ref()).unwrap();
+    remove_path_any(&sub).unwrap();
     assert!(!sub.exists());
 
-    remove_path_any(dir.path().join("missing").to_string_lossy().as_ref()).unwrap();
+    remove_path_any(&dir.path().join("missing")).unwrap();
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn remove_path_any_removes_symlink_only() {
     let link = dir.path().join("link");
     symlink(&target, &link).unwrap();
 
-    remove_path_any(link.to_string_lossy().as_ref()).unwrap();
+    remove_path_any(&link).unwrap();
     assert!(!link.exists());
     assert!(target.exists());
 }

@@ -60,6 +60,42 @@ CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
 CREATE INDEX IF NOT EXISTS idx_skills_updated_at ON skills(updated_at);
 "#;
 
+// V4: project tables for per-project skill distribution.
+const MIGRATION_V4: &str = r#"
+BEGIN;
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  path TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_tools (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  UNIQUE(project_id, tool),
+  FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS project_skill_assignments (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  skill_id TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  status TEXT NOT NULL,
+  last_error TEXT NULL,
+  synced_at INTEGER NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE(project_id, skill_id, tool),
+  FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_psa_project ON project_skill_assignments(project_id);
+CREATE INDEX IF NOT EXISTS idx_psa_skill ON project_skill_assignments(skill_id);
+CREATE INDEX IF NOT EXISTS idx_pt_project ON project_tools(project_id);
+COMMIT;
+"#;
+
 #[derive(Clone, Debug)]
 pub struct SkillStore {
     db_path: PathBuf,
@@ -145,40 +181,7 @@ impl SkillStore {
                 // V3: add source_subpath column
                 conn.execute_batch("ALTER TABLE skills ADD COLUMN source_subpath TEXT NULL;")?;
                 // V4: project tables for per-project skill distribution
-                conn.execute_batch(
-                    "BEGIN;
-                     CREATE TABLE IF NOT EXISTS projects (
-                       id TEXT PRIMARY KEY,
-                       path TEXT NOT NULL UNIQUE,
-                       created_at INTEGER NOT NULL,
-                       updated_at INTEGER NOT NULL
-                     );
-                     CREATE TABLE IF NOT EXISTS project_tools (
-                       id TEXT PRIMARY KEY,
-                       project_id TEXT NOT NULL,
-                       tool TEXT NOT NULL,
-                       UNIQUE(project_id, tool),
-                       FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-                     );
-                     CREATE TABLE IF NOT EXISTS project_skill_assignments (
-                       id TEXT PRIMARY KEY,
-                       project_id TEXT NOT NULL,
-                       skill_id TEXT NOT NULL,
-                       tool TEXT NOT NULL,
-                       mode TEXT NOT NULL,
-                       status TEXT NOT NULL,
-                       last_error TEXT NULL,
-                       synced_at INTEGER NULL,
-                       created_at INTEGER NOT NULL,
-                       UNIQUE(project_id, skill_id, tool),
-                       FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                       FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE
-                     );
-                     CREATE INDEX IF NOT EXISTS idx_psa_project ON project_skill_assignments(project_id);
-                     CREATE INDEX IF NOT EXISTS idx_psa_skill ON project_skill_assignments(skill_id);
-                     CREATE INDEX IF NOT EXISTS idx_pt_project ON project_tools(project_id);
-                     COMMIT;"
-                )?;
+                conn.execute_batch(MIGRATION_V4)?;
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version < SCHEMA_VERSION {
                 // Incremental migrations
@@ -189,40 +192,7 @@ impl SkillStore {
                     conn.execute_batch("ALTER TABLE skills ADD COLUMN source_subpath TEXT NULL;")?;
                 }
                 if user_version < 4 {
-                    conn.execute_batch(
-                        "BEGIN;
-                         CREATE TABLE IF NOT EXISTS projects (
-                           id TEXT PRIMARY KEY,
-                           path TEXT NOT NULL UNIQUE,
-                           created_at INTEGER NOT NULL,
-                           updated_at INTEGER NOT NULL
-                         );
-                         CREATE TABLE IF NOT EXISTS project_tools (
-                           id TEXT PRIMARY KEY,
-                           project_id TEXT NOT NULL,
-                           tool TEXT NOT NULL,
-                           UNIQUE(project_id, tool),
-                           FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-                         );
-                         CREATE TABLE IF NOT EXISTS project_skill_assignments (
-                           id TEXT PRIMARY KEY,
-                           project_id TEXT NOT NULL,
-                           skill_id TEXT NOT NULL,
-                           tool TEXT NOT NULL,
-                           mode TEXT NOT NULL,
-                           status TEXT NOT NULL,
-                           last_error TEXT NULL,
-                           synced_at INTEGER NULL,
-                           created_at INTEGER NOT NULL,
-                           UNIQUE(project_id, skill_id, tool),
-                           FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                           FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE
-                         );
-                         CREATE INDEX IF NOT EXISTS idx_psa_project ON project_skill_assignments(project_id);
-                         CREATE INDEX IF NOT EXISTS idx_psa_skill ON project_skill_assignments(skill_id);
-                         CREATE INDEX IF NOT EXISTS idx_pt_project ON project_tools(project_id);
-                         COMMIT;"
-                    )?;
+                    conn.execute_batch(MIGRATION_V4)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
