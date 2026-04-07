@@ -2,6 +2,32 @@
 
 **Analysis Date:** 2026-04-07
 
+## High-Level Summary
+
+### TypeScript
+- Strict mode: `noUnusedLocals` and `noUnusedParameters` are enabled — unused variables/params cause compile errors
+- Component files: PascalCase (`SkillCard.tsx`)
+- Props types: `ComponentNameProps` (`SkillCardProps`)
+- CSS class names: kebab-case (`modal-backdrop`, `skill-card`)
+- Modal conditional rendering: `if (!open) return null` (full unmount, not display:none)
+- Wrap presentational components with `memo()`
+- All user-visible text must use i18n (`t('key')`), translation keys defined in `src/i18n/resources.ts`
+- When adding new text, always provide both English and Chinese translations
+- DTO types are defined in `src/components/skills/types.ts` and must stay in sync with the Rust DTOs in `commands/mod.rs`
+
+### Rust
+- Functions/methods: snake_case
+- Constants: SCREAMING_SNAKE_CASE
+- Tauri command parameters use camelCase (to match frontend JS calling convention)
+- Use `anyhow::Context` to add context to errors
+- New core modules must be exported in `core/mod.rs`
+- Tests use `tempfile` crate for temp directories and `mockito` for HTTP mocking
+
+### Styling
+- Component styles go in `src/App.css` (not CSS Modules), using semantic CSS class names
+- Theming via CSS variables + `[data-theme="dark"]` selector, variables defined in `src/index.css`
+- Tailwind utility classes and custom CSS classes can be mixed
+
 ## Naming Patterns
 
 **Files:**

@@ -2,6 +2,16 @@
 
 **Analysis Date:** 2026-04-07
 
+## High-Level Summary
+- **Frontend**: React 19 + TypeScript 5.9 (strict) + Vite 7 + Tailwind CSS 4
+- **Backend**: Rust (Edition 2021, MSRV 1.77.2) + Tauri 2
+- **Database**: SQLite (rusqlite, bundled)
+- **Git**: libgit2 (git2 crate, vendored-openssl)
+- **HTTP**: reqwest (rustls-tls, blocking)
+- **i18n**: i18next (English / Chinese bilingual)
+- **Notifications**: sonner (toast)
+- **Icons**: lucide-react
+
 ## Languages
 
 **Primary:**
