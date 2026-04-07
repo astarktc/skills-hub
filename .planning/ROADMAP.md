@@ -38,8 +38,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 Plans:
 
-- [ ] 01-01-PLAN.md -- Schema V4 migration + SkillStore CRUD methods (record structs, 13 methods, tests)
-- [ ] 01-02-PLAN.md -- Tauri command module (commands/projects.rs with 9 commands, DTOs, registration)
+- [x] 01-01-PLAN.md -- Schema V4 migration + SkillStore CRUD methods (record structs, 13 methods, tests)
+- [x] 01-02-PLAN.md -- Tauri command module (commands/projects.rs with 9 commands, DTOs, registration)
 
 ### Phase 2: Sync Logic
 
