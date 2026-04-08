@@ -77,7 +77,7 @@ Plans:
 
 Plans:
 
-- [ ] 03-01-PLAN.md -- bulk_assign_skill command, error prefix infrastructure (DUPLICATE_PROJECT|, ASSIGNMENT_EXISTS|, NOT_FOUND|), TypeScript DTO types, tests
+- [x] 03-01-PLAN.md -- bulk_assign_skill command, error prefix infrastructure (DUPLICATE_PROJECT|, ASSIGNMENT_EXISTS|, NOT_FOUND|), TypeScript DTO types, tests
 
 ### Phase 4: Frontend Component Tree
 
