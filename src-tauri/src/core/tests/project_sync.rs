@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::core::project_sync;
-use crate::core::skill_store::{ProjectRecord, SkillRecord, SkillStore};
+use crate::core::skill_store::{ProjectRecord, SkillRecord, SkillStore, SkillTargetRecord};
 
 fn make_store() -> (tempfile::TempDir, SkillStore) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -396,4 +396,169 @@ fn resync_all_multiple_projects() {
         assert_eq!(s.synced, 1, "each project should have 1 synced assignment");
         assert_eq!(s.failed, 0, "no failures expected");
     }
+}
+
+#[test]
+fn staleness_detected_for_copy() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    let skill_dir = make_skill_dir(tmpdir.path(), "stale-skill");
+    let project_dir = tmpdir.path().join("stale-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "stale-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    // cursor forces copy mode, which stores content_hash
+    project_sync::assign_and_sync(&store, &project, &skill, "cursor", 2000)
+        .expect("assign should succeed");
+
+    // Verify initial status is synced
+    let before = store
+        .get_project_skill_assignment(&project.id, &skill.id, "cursor")
+        .unwrap()
+        .expect("assignment exists");
+    assert_eq!(before.status, "synced");
+    assert!(before.content_hash.is_some());
+
+    // Modify source to change the hash
+    fs::write(skill_dir.join("new-file.txt"), "changed content").expect("write new file");
+
+    // list_assignments_with_staleness should detect the change
+    let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
+        .expect("list should succeed");
+    assert_eq!(assignments.len(), 1);
+    assert_eq!(assignments[0].status, "stale");
+
+    // DB should also be updated to stale
+    let after = store
+        .get_project_skill_assignment(&project.id, &skill.id, "cursor")
+        .unwrap()
+        .expect("assignment exists");
+    assert_eq!(after.status, "stale");
+}
+
+#[test]
+fn staleness_skipped_for_symlink() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    let skill_dir = make_skill_dir(tmpdir.path(), "sym-skill");
+    let project_dir = tmpdir.path().join("sym-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "sym-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    // claude_code uses symlink mode
+    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000)
+        .expect("assign should succeed");
+
+    // Modify source
+    fs::write(skill_dir.join("new-file.txt"), "changed content").expect("write new file");
+
+    // Staleness check should skip symlink-mode -- status stays synced
+    let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
+        .expect("list should succeed");
+    assert_eq!(assignments.len(), 1);
+    assert_eq!(
+        assignments[0].status, "synced",
+        "symlink-mode should not become stale"
+    );
+}
+
+#[test]
+fn staleness_source_missing_no_crash() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    let skill_dir = make_skill_dir(tmpdir.path(), "vanish-skill");
+    let project_dir = tmpdir.path().join("vanish-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "vanish-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    // cursor forces copy mode
+    project_sync::assign_and_sync(&store, &project, &skill, "cursor", 2000)
+        .expect("assign should succeed");
+
+    // Delete source directory entirely
+    fs::remove_dir_all(&skill_dir).expect("remove source");
+
+    // Should not crash -- assignment returned with status unchanged
+    let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
+        .expect("list should not crash");
+    assert_eq!(assignments.len(), 1);
+    // Status stays synced because source.exists() returns false, so staleness check is skipped
+    assert_eq!(assignments[0].status, "synced");
+}
+
+#[test]
+fn global_and_project_sync_independent() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    let skill_dir = make_skill_dir(tmpdir.path(), "shared-skill");
+    let project_dir = tmpdir.path().join("indep-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "shared-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    // Global sync: add to skill_targets table (home dir path)
+    let global_target = SkillTargetRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        skill_id: skill.id.clone(),
+        tool: "claude_code".to_string(),
+        target_path: "/home/user/.claude/skills/shared-skill".to_string(),
+        mode: "symlink".to_string(),
+        status: "synced".to_string(),
+        last_error: None,
+        synced_at: Some(2000),
+    };
+    store.upsert_skill_target(&global_target).unwrap();
+
+    // Project sync: assign to project (project dir path)
+    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000)
+        .expect("assign should succeed");
+
+    // Verify both exist independently
+    let global_targets = store.list_skill_targets(&skill.id).unwrap();
+    assert_eq!(global_targets.len(), 1, "one global target");
+    assert_eq!(
+        global_targets[0].target_path,
+        "/home/user/.claude/skills/shared-skill"
+    );
+
+    let project_assignments = store.list_project_skill_assignments(&project.id).unwrap();
+    assert_eq!(project_assignments.len(), 1, "one project assignment");
+    assert_eq!(project_assignments[0].project_id, project.id);
+
+    // Remove project assignment -- global should remain
+    project_sync::unassign_and_cleanup(&store, &project, &skill, "claude_code")
+        .expect("unassign should succeed");
+
+    let global_after = store.list_skill_targets(&skill.id).unwrap();
+    assert_eq!(global_after.len(), 1, "global target still exists");
+
+    let project_after = store.list_project_skill_assignments(&project.id).unwrap();
+    assert_eq!(project_after.len(), 0, "project assignment removed");
 }

@@ -184,7 +184,7 @@ pub async fn list_project_skill_assignments(
 ) -> Result<Vec<ProjectSkillAssignmentDto>, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let records = store.list_project_skill_assignments(&projectId)?;
+        let records = project_sync::list_assignments_with_staleness(&store, &projectId)?;
         Ok::<_, anyhow::Error>(
             records
                 .into_iter()

@@ -201,6 +201,44 @@ pub fn resync_all_projects(store: &SkillStore, now: i64) -> Result<Vec<ResyncSum
     Ok(summaries)
 }
 
+pub fn list_assignments_with_staleness(
+    store: &SkillStore,
+    project_id: &str,
+) -> Result<Vec<ProjectSkillAssignmentRecord>> {
+    let assignments = store.list_project_skill_assignments(project_id)?;
+    let mut result = Vec::with_capacity(assignments.len());
+
+    for mut assignment in assignments {
+        // D-09: Only check staleness for copy-mode synced targets.
+        // Symlinks propagate changes instantly -- no staleness possible.
+        if assignment.status == "synced" && assignment.mode == "copy" {
+            if let Some(ref stored_hash) = assignment.content_hash {
+                if let Ok(Some(skill)) = store.get_skill_by_id(&assignment.skill_id) {
+                    let source = Path::new(&skill.central_path);
+                    if source.exists() {
+                        if let Ok(current_hash) = content_hash::hash_dir(source) {
+                            if current_hash != *stored_hash {
+                                assignment.status = "stale".to_string();
+                                let _ = store.update_assignment_status(
+                                    &assignment.id,
+                                    "stale",
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        result.push(assignment);
+    }
+
+    Ok(result)
+}
+
 pub fn unassign_and_cleanup(
     store: &SkillStore,
     project: &ProjectRecord,
