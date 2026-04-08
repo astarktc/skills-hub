@@ -170,6 +170,8 @@ export function useProjectState(): ProjectState {
     async (skillId: string, tool: string) => {
       if (!selectedProjectId) return;
       const key = `${skillId}:${tool}`;
+      // Prevent double-toggle while a pending operation is in flight
+      if (pendingCells.has(key)) return;
       setPendingCells((prev) => {
         const next = new Set(prev);
         next.add(key);
@@ -218,7 +220,7 @@ export function useProjectState(): ProjectState {
         });
       }
     },
-    [selectedProjectId, assignments, loadProjects],
+    [selectedProjectId, assignments, loadProjects, pendingCells],
   );
 
   const bulkAssign = useCallback(
