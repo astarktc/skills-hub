@@ -742,7 +742,7 @@ impl SkillStore {
                  SET status = ?1, last_error = ?2,
                      synced_at = COALESCE(?3, synced_at),
                      mode = COALESCE(?4, mode),
-                     content_hash = COALESCE(?5, content_hash)
+                     content_hash = ?5
                  WHERE id = ?6",
                 params![
                     status,

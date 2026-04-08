@@ -203,7 +203,11 @@ pub fn resync_all_projects(store: &SkillStore, now: i64) -> Result<Vec<ResyncSum
         match resync_project(store, &project.id, now) {
             Ok(summary) => summaries.push(summary),
             Err(e) => {
-                log::warn!("resync_all: failed to resync project {}: {:#}", project.id, e);
+                log::warn!(
+                    "resync_all: failed to resync project {}: {:#}",
+                    project.id,
+                    e
+                );
                 summaries.push(ResyncSummary {
                     project_id: project.id.clone(),
                     synced: 0,
