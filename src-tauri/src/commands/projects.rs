@@ -402,8 +402,33 @@ pub async fn update_project_gitignore(
             patterns.join("\n")
         );
 
+        let marker = "# Skills Hub";
+
+        // Helper: remove the Skills Hub block from content
+        let remove_block = |content: &str| -> String {
+            let mut lines: Vec<&str> = content.lines().collect();
+            let mut start = None;
+            let mut end = None;
+            for (i, line) in lines.iter().enumerate() {
+                if line.contains(marker) {
+                    start = Some(if i > 0 && lines[i - 1].trim().is_empty() { i - 1 } else { i });
+                }
+                if let Some(s) = start {
+                    if end.is_none() && i > s && (line.trim().is_empty() || i == lines.len() - 1) {
+                        end = Some(if line.trim().is_empty() { i } else { i + 1 });
+                    }
+                }
+            }
+            if let (Some(s), Some(e)) = (start, end) {
+                lines.drain(s..e);
+            }
+            let result = lines.join("\n");
+            if result.is_empty() { result } else { format!("{}\n", result) }
+        };
+
+        // .gitignore
+        let gitignore_path = project_path.join(".gitignore");
         if addToGitignore {
-            let gitignore_path = project_path.join(".gitignore");
             let existing = if gitignore_path.exists() {
                 fs::read_to_string(&gitignore_path)
                     .with_context(|| format!("failed to read {}", gitignore_path.display()))?
@@ -411,7 +436,7 @@ pub async fn update_project_gitignore(
                 String::new()
             };
 
-            if !existing.contains("# Skills Hub") {
+            if !existing.contains(marker) {
                 let mut content = existing;
                 if !content.ends_with('\n') && !content.is_empty() {
                     content.push('\n');
@@ -420,10 +445,19 @@ pub async fn update_project_gitignore(
                 fs::write(&gitignore_path, content)
                     .with_context(|| format!("failed to write {}", gitignore_path.display()))?;
             }
+        } else if gitignore_path.exists() {
+            let existing = fs::read_to_string(&gitignore_path)
+                .with_context(|| format!("failed to read {}", gitignore_path.display()))?;
+            if existing.contains(marker) {
+                let cleaned = remove_block(&existing);
+                fs::write(&gitignore_path, cleaned)
+                    .with_context(|| format!("failed to write {}", gitignore_path.display()))?;
+            }
         }
 
+        // .git/info/exclude
+        let exclude_path = project_path.join(".git").join("info").join("exclude");
         if addToExclude {
-            let exclude_path = project_path.join(".git").join("info").join("exclude");
             if let Some(parent) = exclude_path.parent() {
                 if !parent.exists() {
                     fs::create_dir_all(parent)
@@ -438,13 +472,21 @@ pub async fn update_project_gitignore(
                 String::new()
             };
 
-            if !existing.contains("# Skills Hub") {
+            if !existing.contains(marker) {
                 let mut content = existing;
                 if !content.ends_with('\n') && !content.is_empty() {
                     content.push('\n');
                 }
                 content.push_str(&gitignore_block);
                 fs::write(&exclude_path, content)
+                    .with_context(|| format!("failed to write {}", exclude_path.display()))?;
+            }
+        } else if exclude_path.exists() {
+            let existing = fs::read_to_string(&exclude_path)
+                .with_context(|| format!("failed to read {}", exclude_path.display()))?;
+            if existing.contains(marker) {
+                let cleaned = remove_block(&existing);
+                fs::write(&exclude_path, cleaned)
                     .with_context(|| format!("failed to write {}", exclude_path.display()))?;
             }
         }
@@ -454,4 +496,54 @@ pub async fn update_project_gitignore(
     .await
     .map_err(|e| e.to_string())?
     .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn get_project_gitignore_status(
+    store: State<'_, SkillStore>,
+    projectId: String,
+) -> Result<GitignoreStatusDto, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::fs;
+        use std::path::Path;
+
+        let project = store
+            .get_project_by_id(&projectId)?
+            .ok_or_else(|| anyhow::anyhow!("project not found: {}", projectId))?;
+
+        let project_path = Path::new(&project.path);
+        let marker = "# Skills Hub";
+
+        let in_gitignore = {
+            let p = project_path.join(".gitignore");
+            p.exists()
+                && fs::read_to_string(&p)
+                    .unwrap_or_default()
+                    .contains(marker)
+        };
+
+        let in_exclude = {
+            let p = project_path.join(".git").join("info").join("exclude");
+            p.exists()
+                && fs::read_to_string(&p)
+                    .unwrap_or_default()
+                    .contains(marker)
+        };
+
+        Ok::<_, anyhow::Error>(GitignoreStatusDto {
+            in_gitignore,
+            in_exclude,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct GitignoreStatusDto {
+    pub in_gitignore: bool,
+    pub in_exclude: bool,
 }

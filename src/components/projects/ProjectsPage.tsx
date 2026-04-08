@@ -7,6 +7,7 @@ import { useProjectState } from "./useProjectState";
 import ProjectList from "./ProjectList";
 import AssignmentMatrix from "./AssignmentMatrix";
 import AddProjectModal from "./AddProjectModal";
+import EditProjectModal from "./EditProjectModal";
 import ToolConfigModal from "./ToolConfigModal";
 import RemoveProjectModal from "./RemoveProjectModal";
 
@@ -110,6 +111,35 @@ const ProjectsPage = () => {
     [state],
   );
 
+  const handlePromptEdit = useCallback(
+    (id: string) => {
+      state.setEditTargetId(id);
+      state.setShowEditModal(true);
+    },
+    [state],
+  );
+
+  const handleEditSave = useCallback(
+    async (
+      projectId: string,
+      gitignoreOptions: { addToGitignore: boolean; addToExclude: boolean },
+    ) => {
+      try {
+        await invoke("update_project_gitignore", {
+          projectId,
+          addToGitignore: gitignoreOptions.addToGitignore,
+          addToExclude: gitignoreOptions.addToExclude,
+        });
+        state.setShowEditModal(false);
+        state.setEditTargetId(null);
+        toast.success(t("projects.configureProject"));
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [state, t],
+  );
+
   const handleResyncProject = useCallback(async () => {
     return await state.resyncProject();
   }, [state]);
@@ -170,6 +200,7 @@ const ProjectsPage = () => {
             loadError={state.loadError}
             onSelectProject={state.selectProject}
             onAddProject={() => state.setShowAddModal(true)}
+            onEditProject={handlePromptEdit}
             onRemoveProject={handlePromptRemove}
             t={t}
           />
@@ -210,6 +241,19 @@ const ProjectsPage = () => {
         projects={state.projects}
         onRegister={handleAddProject}
         onRequestClose={() => state.setShowAddModal(false)}
+        t={t}
+      />
+
+      <EditProjectModal
+        open={state.showEditModal}
+        project={
+          state.projects.find((p) => p.id === state.editTargetId) ?? null
+        }
+        onSave={handleEditSave}
+        onRequestClose={() => {
+          state.setShowEditModal(false);
+          state.setEditTargetId(null);
+        }}
         t={t}
       />
 
