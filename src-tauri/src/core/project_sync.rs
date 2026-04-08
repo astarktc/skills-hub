@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::core::{
     content_hash,
@@ -61,10 +61,13 @@ pub fn assign_and_sync(
         Ok(outcome) => {
             let mode_str = sync_mode_to_str(&outcome.mode_used);
             let hash = if matches!(outcome.mode_used, SyncMode::Copy) {
-                Some(
-                    content_hash::hash_dir(source)
-                        .context("computing content hash for copy-mode target")?,
-                )
+                match content_hash::hash_dir(source) {
+                    Ok(h) => Some(h),
+                    Err(e) => {
+                        log::warn!("failed to compute content hash after sync: {:#}", e);
+                        None
+                    }
+                }
             } else {
                 None
             };
@@ -135,10 +138,13 @@ pub(crate) fn sync_single_assignment(
 
     let mode_str = sync_mode_to_str(&outcome.mode_used);
     let hash = if matches!(outcome.mode_used, SyncMode::Copy) {
-        Some(
-            content_hash::hash_dir(source)
-                .context("computing content hash for copy-mode target")?,
-        )
+        match content_hash::hash_dir(source) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                log::warn!("failed to compute content hash after sync: {:#}", e);
+                None
+            }
+        }
     } else {
         None
     };
