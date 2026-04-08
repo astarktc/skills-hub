@@ -83,7 +83,7 @@ Plans:
 
 **Goal**: Users can register projects, configure tools, assign skills, and see sync status through a complete Projects tab
 **Depends on**: Phase 3
-**Requirements**: UI-01, UI-02, UI-03, UI-04, UI-05, SYNC-01, TOOL-02, TOOL-03
+**Requirements**: UI-01, UI-02, UI-03, UI-05, SYNC-01, TOOL-02, TOOL-03
 **Success Criteria** (what must be TRUE):
 
 1. A "Projects" tab appears in main navigation and clicking it shows the projects interface
@@ -111,7 +111,13 @@ Plans:
 2. When a skill is removed from the central library, its project assignments are marked as "missing" with a visual indicator
 3. On project registration, user is prompted to add tool skill directories to the project's .gitignore (prompt only, no automatic modification)
 
-**Plans**: TBD
+**Plans:** 3 plans
+
+Plans:
+
+- [ ] 05-01-PLAN.md -- Backend commands: auto-sync setting, bulk/per-skill unsync, INFR-03 skill deletion cleanup, PROJ-04 path_exists, INFR-02 SyncMutex fix, SYNC-01 missing status
+- [ ] 05-02-PLAN.md -- My Skills frontend: auto-sync toggle, bulk unsync button, per-skill Unlink icon, conditional install sync
+- [ ] 05-03-PLAN.md -- Projects frontend: missing project warning badges, error prefix translation, bulk assign failure surfacing, update-path flow, gitignore edge cases
 
 ## Progress
 
@@ -124,4 +130,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 2. Sync Logic              | 0/2            | Not started | -         |
 | 3. IPC Commands            | 0/1            | Not started | -         |
 | 4. Frontend Component Tree | 0/3            | Not started | -         |
-| 5. Edge Cases and Polish   | 0/0            | Not started | -         |
+| 5. Edge Cases and Polish   | 0/3            | Not started | -         |
