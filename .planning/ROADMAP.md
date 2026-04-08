@@ -58,8 +58,8 @@ Plans:
 
 Plans:
 
-- [ ] 02-01-PLAN.md -- V5 migration, SyncMutex, project_sync.rs core module (assign_and_sync, unassign_and_cleanup), enhanced commands
-- [ ] 02-02-PLAN.md -- Re-sync operations, staleness detection with list command wiring, mutex-protected re-sync commands, serialization test
+- [x] 02-01-PLAN.md -- V5 migration, SyncMutex, project_sync.rs core module (assign_and_sync, unassign_and_cleanup), enhanced commands
+- [x] 02-02-PLAN.md -- Re-sync operations, staleness detection with list command wiring, mutex-protected re-sync commands, serialization test
 
 ### Phase 3: IPC Commands
 
