@@ -1,7 +1,23 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useState } from "react";
 import type { TFunction } from "i18next";
 import type { ToolStatusDto } from "../skills/types";
 import type { ProjectToolDto } from "./types";
+
+function buildInitialSelection(
+  toolStatus: ToolStatusDto | null,
+  currentTools: ProjectToolDto[],
+): Set<string> {
+  const initial = new Set<string>();
+  if (toolStatus) {
+    for (const key of toolStatus.installed) {
+      initial.add(key);
+    }
+  }
+  for (const ct of currentTools) {
+    initial.add(ct.tool);
+  }
+  return initial;
+}
 
 type ToolConfigModalProps = {
   open: boolean;
@@ -13,33 +29,17 @@ type ToolConfigModalProps = {
   t: TFunction;
 };
 
-const ToolConfigModal = ({
-  open,
+const ToolConfigModalInner = ({
   loading,
   toolStatus,
   currentTools,
   onConfirm,
   onRequestClose,
   t,
-}: ToolConfigModalProps) => {
-  const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (open) {
-      const initial = new Set<string>();
-      if (toolStatus) {
-        for (const key of toolStatus.installed) {
-          initial.add(key);
-        }
-      }
-      for (const ct of currentTools) {
-        initial.add(ct.tool);
-      }
-      setSelectedTools(initial);
-    }
-  }, [open, toolStatus, currentTools]);
-
-  if (!open) return null;
+}: Omit<ToolConfigModalProps, "open">) => {
+  const [selectedTools, setSelectedTools] = useState<Set<string>>(() =>
+    buildInitialSelection(toolStatus, currentTools),
+  );
 
   const tools = toolStatus?.tools ?? [];
 
@@ -114,6 +114,11 @@ const ToolConfigModal = ({
       </div>
     </div>
   );
+};
+
+const ToolConfigModal = ({ open, ...rest }: ToolConfigModalProps) => {
+  if (!open) return null;
+  return <ToolConfigModalInner {...rest} />;
 };
 
 export default memo(ToolConfigModal);
