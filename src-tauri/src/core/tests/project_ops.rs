@@ -99,8 +99,8 @@ fn register_rejects_duplicate() {
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("already registered"),
-        "expected 'already registered', got: {}",
+        err.starts_with("DUPLICATE_PROJECT|"),
+        "expected 'DUPLICATE_PROJECT|' prefix, got: {}",
         err
     );
 }

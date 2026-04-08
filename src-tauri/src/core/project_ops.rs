@@ -80,7 +80,7 @@ pub fn register_project_path(
     let path_str = canonical.to_string_lossy().to_string();
 
     if store.get_project_by_path(&path_str)?.is_some() {
-        bail!("project already registered: {}", path_str);
+        bail!("DUPLICATE_PROJECT|{}", path_str);
     }
 
     let record = ProjectRecord {

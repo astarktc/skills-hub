@@ -19,17 +19,7 @@ pub async fn register_project(
     })
     .await
     .map_err(|e| e.to_string())?
-    .map_err(|e| {
-        let msg = format!("{}", e);
-        if msg.contains("project already registered") {
-            let prefix_path = msg
-                .strip_prefix("project already registered: ")
-                .unwrap_or(&msg);
-            format!("DUPLICATE_PROJECT|{}", prefix_path)
-        } else {
-            format_anyhow_error(e)
-        }
-    })
+    .map_err(format_anyhow_error)
 }
 
 #[tauri::command]
