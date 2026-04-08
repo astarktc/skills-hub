@@ -451,6 +451,7 @@ fn delete_project_cascades_tools_and_assignments() {
         status: "pending".to_string(),
         last_error: None,
         synced_at: None,
+        content_hash: None,
         created_at: 100,
     };
     store.add_project_skill_assignment(&assign).unwrap();
@@ -502,6 +503,7 @@ fn delete_skill_cascades_project_assignments() {
         status: "synced".to_string(),
         last_error: None,
         synced_at: Some(100),
+        content_hash: None,
         created_at: 100,
     };
     store.add_project_skill_assignment(&assign).unwrap();
@@ -600,6 +602,7 @@ fn assignment_crud() {
         status: "pending".to_string(),
         last_error: None,
         synced_at: None,
+        content_hash: None,
         created_at: 100,
     };
     store.add_project_skill_assignment(&assign).unwrap();
@@ -641,6 +644,7 @@ fn assignment_unique_constraint() {
         status: "pending".to_string(),
         last_error: None,
         synced_at: None,
+        content_hash: None,
         created_at: 100,
     };
     store.add_project_skill_assignment(&assign1).unwrap();
@@ -655,6 +659,7 @@ fn assignment_unique_constraint() {
         status: "pending".to_string(),
         last_error: None,
         synced_at: None,
+        content_hash: None,
         created_at: 200,
     };
     assert!(
@@ -699,6 +704,7 @@ fn list_project_assignments_by_project() {
         status: "synced".to_string(),
         last_error: None,
         synced_at: Some(100),
+        content_hash: None,
         created_at: 100,
     };
     let a2 = ProjectSkillAssignmentRecord {
@@ -710,6 +716,7 @@ fn list_project_assignments_by_project() {
         status: "synced".to_string(),
         last_error: None,
         synced_at: Some(200),
+        content_hash: None,
         created_at: 200,
     };
     store.add_project_skill_assignment(&a1).unwrap();
@@ -751,6 +758,7 @@ fn aggregate_sync_status_all_synced() {
         status: "synced".to_string(),
         last_error: None,
         synced_at: Some(100),
+        content_hash: None,
         created_at: 100,
     };
     let a2 = ProjectSkillAssignmentRecord {
@@ -762,6 +770,7 @@ fn aggregate_sync_status_all_synced() {
         status: "synced".to_string(),
         last_error: None,
         synced_at: Some(200),
+        content_hash: None,
         created_at: 200,
     };
     store.add_project_skill_assignment(&a1).unwrap();
@@ -796,6 +805,7 @@ fn aggregate_sync_status_mixed() {
         status: "synced".to_string(),
         last_error: None,
         synced_at: Some(100),
+        content_hash: None,
         created_at: 100,
     };
     let a2 = ProjectSkillAssignmentRecord {
@@ -807,6 +817,7 @@ fn aggregate_sync_status_mixed() {
         status: "error".to_string(),
         last_error: Some("symlink failed".to_string()),
         synced_at: None,
+        content_hash: None,
         created_at: 200,
     };
     store.add_project_skill_assignment(&a1).unwrap();
@@ -865,6 +876,7 @@ fn count_project_assignments_and_tools() {
         status: "pending".to_string(),
         last_error: None,
         synced_at: None,
+        content_hash: None,
         created_at: 100,
     };
     store.add_project_skill_assignment(&assign).unwrap();
@@ -897,6 +909,7 @@ fn list_project_skill_assignments_for_project_tool_filters() {
         status: "synced".to_string(),
         last_error: None,
         synced_at: Some(100),
+        content_hash: None,
         created_at: 100,
     };
     let a2 = ProjectSkillAssignmentRecord {
@@ -908,6 +921,7 @@ fn list_project_skill_assignments_for_project_tool_filters() {
         status: "synced".to_string(),
         last_error: None,
         synced_at: Some(200),
+        content_hash: None,
         created_at: 200,
     };
     store.add_project_skill_assignment(&a1).unwrap();
@@ -944,4 +958,118 @@ fn get_project_by_id() {
 
     let missing = store.get_project_by_id("nonexistent").unwrap();
     assert!(missing.is_none());
+}
+
+#[test]
+fn v5_migration_adds_content_hash() {
+    let (_dir, store) = make_store();
+
+    // Register a project and skill
+    let p = ProjectRecord {
+        id: "p1".to_string(),
+        path: "/home/user/proj".to_string(),
+        created_at: 100,
+        updated_at: 100,
+    };
+    store.register_project(&p).unwrap();
+
+    let skill = make_skill("s1", "S1", "/central/s1", 1);
+    store.upsert_skill(&skill).unwrap();
+
+    // Create an assignment
+    let assign = ProjectSkillAssignmentRecord {
+        id: "a1".to_string(),
+        project_id: "p1".to_string(),
+        skill_id: "s1".to_string(),
+        tool: "cursor".to_string(),
+        mode: "symlink".to_string(),
+        status: "pending".to_string(),
+        last_error: None,
+        synced_at: None,
+        content_hash: None,
+        created_at: 100,
+    };
+    store.add_project_skill_assignment(&assign).unwrap();
+
+    // Update with content_hash
+    store
+        .update_assignment_status("a1", "synced", None, Some(1000), Some("copy"), Some("abc123"))
+        .unwrap();
+
+    // Read back via get_project_skill_assignment
+    let got = store
+        .get_project_skill_assignment("p1", "s1", "cursor")
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.content_hash.as_deref(), Some("abc123"));
+    assert_eq!(got.status, "synced");
+    assert_eq!(got.synced_at, Some(1000));
+    assert_eq!(got.mode, "copy");
+}
+
+#[test]
+fn update_assignment_status_coalesce() {
+    let (_dir, store) = make_store();
+
+    let p = ProjectRecord {
+        id: "p1".to_string(),
+        path: "/home/user/proj".to_string(),
+        created_at: 100,
+        updated_at: 100,
+    };
+    store.register_project(&p).unwrap();
+
+    let skill = make_skill("s1", "S1", "/central/s1", 1);
+    store.upsert_skill(&skill).unwrap();
+
+    let assign = ProjectSkillAssignmentRecord {
+        id: "a1".to_string(),
+        project_id: "p1".to_string(),
+        skill_id: "s1".to_string(),
+        tool: "cursor".to_string(),
+        mode: "symlink".to_string(),
+        status: "pending".to_string(),
+        last_error: None,
+        synced_at: None,
+        content_hash: None,
+        created_at: 100,
+    };
+    store.add_project_skill_assignment(&assign).unwrap();
+
+    // First update: set synced with synced_at=1000 and mode="symlink"
+    store
+        .update_assignment_status("a1", "synced", None, Some(1000), Some("symlink"), None)
+        .unwrap();
+
+    let got = store
+        .get_project_skill_assignment("p1", "s1", "cursor")
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.status, "synced");
+    assert_eq!(got.synced_at, Some(1000));
+    assert_eq!(got.mode, "symlink");
+
+    // Second update: set error with last_error but synced_at=None (should preserve synced_at=1000)
+    store
+        .update_assignment_status("a1", "error", Some("fail"), None, None, None)
+        .unwrap();
+
+    let got = store
+        .get_project_skill_assignment("p1", "s1", "cursor")
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.status, "error");
+    assert_eq!(got.last_error.as_deref(), Some("fail"));
+    assert_eq!(got.synced_at, Some(1000), "COALESCE should preserve synced_at");
+    assert_eq!(got.mode, "symlink", "COALESCE should preserve mode");
+}
+
+#[test]
+fn get_project_skill_assignment_returns_none() {
+    let (_dir, store) = make_store();
+
+    let result = store
+        .get_project_skill_assignment("nonexistent", "nonexistent", "nonexistent")
+        .unwrap();
+    assert!(result.is_none());
 }

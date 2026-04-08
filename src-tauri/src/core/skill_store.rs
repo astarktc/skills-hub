@@ -156,6 +156,7 @@ pub struct ProjectSkillAssignmentRecord {
     pub status: String,
     pub last_error: Option<String>,
     pub synced_at: Option<i64>,
+    pub content_hash: Option<String>,
     pub created_at: i64,
 }
 
