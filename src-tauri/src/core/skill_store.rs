@@ -8,7 +8,7 @@ const DB_FILE_NAME: &str = "skills_hub.db";
 const LEGACY_APP_IDENTIFIERS: &[&str] = &["com.tauri.dev", "com.tauri.dev.skillshub"];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS project_skill_assignments (
   status TEXT NOT NULL,
   last_error TEXT NULL,
   synced_at INTEGER NULL,
+  content_hash TEXT NULL,
   created_at INTEGER NOT NULL,
   UNIQUE(project_id, skill_id, tool),
   FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -182,6 +183,7 @@ impl SkillStore {
                 // V3: add source_subpath column
                 conn.execute_batch("ALTER TABLE skills ADD COLUMN source_subpath TEXT NULL;")?;
                 // V4: project tables for per-project skill distribution
+                // (DDL includes V5 content_hash column in project_skill_assignments)
                 conn.execute_batch(MIGRATION_V4)?;
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version < SCHEMA_VERSION {
@@ -194,6 +196,11 @@ impl SkillStore {
                 }
                 if user_version < 4 {
                     conn.execute_batch(MIGRATION_V4)?;
+                }
+                if user_version < 5 {
+                    conn.execute_batch(
+                        "ALTER TABLE project_skill_assignments ADD COLUMN content_hash TEXT NULL;",
+                    )?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
@@ -650,8 +657,8 @@ impl SkillStore {
         self.with_conn(|conn| {
             conn.execute(
                 "INSERT INTO project_skill_assignments
-                 (id, project_id, skill_id, tool, mode, status, last_error, synced_at, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 (id, project_id, skill_id, tool, mode, status, last_error, synced_at, content_hash, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     record.id,
                     record.project_id,
@@ -661,6 +668,7 @@ impl SkillStore {
                     record.status,
                     record.last_error,
                     record.synced_at,
+                    record.content_hash,
                     record.created_at
                 ],
             )?;
@@ -674,7 +682,7 @@ impl SkillStore {
     ) -> Result<Vec<ProjectSkillAssignmentRecord>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, project_id, skill_id, tool, mode, status, last_error, synced_at, created_at
+                "SELECT id, project_id, skill_id, tool, mode, status, last_error, synced_at, content_hash, created_at
                  FROM project_skill_assignments
                  WHERE project_id = ?1
                  ORDER BY tool ASC, created_at ASC",
@@ -689,7 +697,8 @@ impl SkillStore {
                     status: row.get(5)?,
                     last_error: row.get(6)?,
                     synced_at: row.get(7)?,
-                    created_at: row.get(8)?,
+                    content_hash: row.get(8)?,
+                    created_at: row.get(9)?,
                 })
             })?;
 
@@ -717,6 +726,71 @@ impl SkillStore {
         })
     }
 
+    #[allow(dead_code)] // Used in Phase 2 (project_sync module)
+    pub fn update_assignment_status(
+        &self,
+        assignment_id: &str,
+        status: &str,
+        last_error: Option<&str>,
+        synced_at: Option<i64>,
+        mode: Option<&str>,
+        content_hash: Option<&str>,
+    ) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE project_skill_assignments
+                 SET status = ?1, last_error = ?2,
+                     synced_at = COALESCE(?3, synced_at),
+                     mode = COALESCE(?4, mode),
+                     content_hash = COALESCE(?5, content_hash)
+                 WHERE id = ?6",
+                params![
+                    status,
+                    last_error,
+                    synced_at,
+                    mode,
+                    content_hash,
+                    assignment_id
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    #[allow(dead_code)] // Used in Phase 2 (project_sync module)
+    pub fn get_project_skill_assignment(
+        &self,
+        project_id: &str,
+        skill_id: &str,
+        tool: &str,
+    ) -> Result<Option<ProjectSkillAssignmentRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, project_id, skill_id, tool, mode, status, last_error,
+                        synced_at, content_hash, created_at
+                 FROM project_skill_assignments
+                 WHERE project_id = ?1 AND skill_id = ?2 AND tool = ?3
+                 LIMIT 1",
+            )?;
+            let mut rows = stmt.query(params![project_id, skill_id, tool])?;
+            match rows.next()? {
+                Some(row) => Ok(Some(ProjectSkillAssignmentRecord {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    skill_id: row.get(2)?,
+                    tool: row.get(3)?,
+                    mode: row.get(4)?,
+                    status: row.get(5)?,
+                    last_error: row.get(6)?,
+                    synced_at: row.get(7)?,
+                    content_hash: row.get(8)?,
+                    created_at: row.get(9)?,
+                })),
+                None => Ok(None),
+            }
+        })
+    }
+
     #[allow(dead_code)] // Used in Phase 2 (sync logic)
     pub fn list_project_skill_assignments_for_project_tool(
         &self,
@@ -725,7 +799,7 @@ impl SkillStore {
     ) -> Result<Vec<ProjectSkillAssignmentRecord>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, project_id, skill_id, tool, mode, status, last_error, synced_at, created_at
+                "SELECT id, project_id, skill_id, tool, mode, status, last_error, synced_at, content_hash, created_at
                  FROM project_skill_assignments
                  WHERE project_id = ?1 AND tool = ?2
                  ORDER BY created_at ASC",
@@ -740,7 +814,8 @@ impl SkillStore {
                     status: row.get(5)?,
                     last_error: row.get(6)?,
                     synced_at: row.get(7)?,
-                    created_at: row.get(8)?,
+                    content_hash: row.get(8)?,
+                    created_at: row.get(9)?,
                 })
             })?;
 

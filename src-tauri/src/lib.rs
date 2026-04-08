@@ -8,6 +8,11 @@ use core::skill_store::{default_db_path, migrate_legacy_db_if_needed, SkillStore
 use tauri::Manager;
 use tauri_plugin_log::{Target, TargetKind};
 
+/// Global mutex to serialize concurrent sync operations (assign/unassign).
+/// Prevents filesystem corruption when multiple assignments run in parallel.
+#[derive(Clone)]
+pub struct SyncMutex(pub Arc<std::sync::Mutex<()>>);
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -32,6 +37,7 @@ pub fn run() {
             store.ensure_schema().map_err(tauri::Error::from)?;
             app.manage(store.clone());
             app.manage(Arc::new(CancelToken::new()));
+            app.manage(SyncMutex(Arc::new(std::sync::Mutex::new(()))));
 
             // Backfill description for skills that were installed before V2 schema.
             core::installer::backfill_skill_descriptions(&store);

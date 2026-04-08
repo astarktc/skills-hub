@@ -140,6 +140,7 @@ fn to_project_dto_includes_sync_status() {
         status: "error".to_string(),
         last_error: Some("test error".to_string()),
         synced_at: None,
+        content_hash: None,
         created_at: now,
     };
     store.add_project_skill_assignment(&assignment).unwrap();
@@ -189,6 +190,7 @@ fn list_project_dtos_returns_counts() {
             status: "pending".to_string(),
             last_error: None,
             synced_at: None,
+            content_hash: None,
             created_at: now,
         })
         .unwrap();

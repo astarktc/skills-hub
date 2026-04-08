@@ -134,6 +134,7 @@ pub async fn add_project_skill_assignment(
             status: "pending".to_string(),
             last_error: None,
             synced_at: None,
+            content_hash: None,
             created_at: now,
         };
         store.add_project_skill_assignment(&record)?;
@@ -146,6 +147,7 @@ pub async fn add_project_skill_assignment(
             status: record.status,
             last_error: record.last_error,
             synced_at: record.synced_at,
+            content_hash: record.content_hash,
             created_at: record.created_at,
         })
     })
@@ -192,6 +194,7 @@ pub async fn list_project_skill_assignments(
                     status: r.status,
                     last_error: r.last_error,
                     synced_at: r.synced_at,
+                    content_hash: r.content_hash,
                     created_at: r.created_at,
                 })
                 .collect(),

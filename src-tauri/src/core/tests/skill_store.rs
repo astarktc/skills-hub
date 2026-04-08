@@ -993,7 +993,14 @@ fn v5_migration_adds_content_hash() {
 
     // Update with content_hash
     store
-        .update_assignment_status("a1", "synced", None, Some(1000), Some("copy"), Some("abc123"))
+        .update_assignment_status(
+            "a1",
+            "synced",
+            None,
+            Some(1000),
+            Some("copy"),
+            Some("abc123"),
+        )
         .unwrap();
 
     // Read back via get_project_skill_assignment
@@ -1060,7 +1067,11 @@ fn update_assignment_status_coalesce() {
         .unwrap();
     assert_eq!(got.status, "error");
     assert_eq!(got.last_error.as_deref(), Some("fail"));
-    assert_eq!(got.synced_at, Some(1000), "COALESCE should preserve synced_at");
+    assert_eq!(
+        got.synced_at,
+        Some(1000),
+        "COALESCE should preserve synced_at"
+    );
     assert_eq!(got.mode, "symlink", "COALESCE should preserve mode");
 }
 
