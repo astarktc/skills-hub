@@ -15,6 +15,7 @@ pub struct ProjectDto {
     pub created_at: i64,
     pub updated_at: i64,
     pub tool_count: usize,
+    pub skill_count: usize,
     pub assignment_count: usize,
     pub sync_status: String,
 }
@@ -49,6 +50,7 @@ pub fn project_name_from_path(path: &str) -> String {
 
 pub fn to_project_dto(record: &ProjectRecord, store: &SkillStore) -> Result<ProjectDto> {
     let tool_count = store.count_project_tools(&record.id)?;
+    let skill_count = store.count_project_unique_skills(&record.id)?;
     let assignment_count = store.count_project_assignments(&record.id)?;
     let sync_status = store.aggregate_project_sync_status(&record.id)?;
     Ok(ProjectDto {
@@ -58,6 +60,7 @@ pub fn to_project_dto(record: &ProjectRecord, store: &SkillStore) -> Result<Proj
         created_at: record.created_at,
         updated_at: record.updated_at,
         tool_count,
+        skill_count,
         assignment_count,
         sync_status,
     })

@@ -25,6 +25,8 @@ export type ProjectState = {
   loadError: string | null;
   // Modal state
   showAddModal: boolean;
+  showEditModal: boolean;
+  editTargetId: string | null;
   showToolConfigModal: boolean;
   showRemoveModal: boolean;
   removeTargetId: string | null;
@@ -41,6 +43,8 @@ export type ProjectState = {
   addTools: (tools: string[]) => Promise<void>;
   removeTools: (tools: string[]) => Promise<void>;
   setShowAddModal: (show: boolean) => void;
+  setShowEditModal: (show: boolean) => void;
+  setEditTargetId: (id: string | null) => void;
   setShowToolConfigModal: (show: boolean) => void;
   setShowRemoveModal: (show: boolean) => void;
   setRemoveTargetId: (id: string | null) => void;
@@ -73,6 +77,8 @@ export function useProjectState(): ProjectState {
 
   // Modal state
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editTargetId, setEditTargetId] = useState<string | null>(null);
   const [showToolConfigModal, setShowToolConfigModal] = useState(false);
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [removeTargetId, setRemoveTargetId] = useState<string | null>(null);
@@ -191,6 +197,7 @@ export function useProjectState(): ProjectState {
           { projectId: selectedProjectId },
         );
         setAssignments(updated);
+        await loadProjects();
       } catch (err) {
         // Re-fetch to get consistent state even on error
         try {
@@ -211,7 +218,7 @@ export function useProjectState(): ProjectState {
         });
       }
     },
-    [selectedProjectId, assignments],
+    [selectedProjectId, assignments, loadProjects],
   );
 
   const bulkAssign = useCallback(
@@ -234,6 +241,7 @@ export function useProjectState(): ProjectState {
           { projectId: selectedProjectId },
         );
         setAssignments(updated);
+        await loadProjects();
       } catch (err) {
         try {
           const updated = await invoke<ProjectSkillAssignmentDto[]>(
@@ -253,7 +261,7 @@ export function useProjectState(): ProjectState {
         });
       }
     },
-    [selectedProjectId, tools],
+    [selectedProjectId, tools, loadProjects],
   );
 
   const resyncProject = useCallback(async (): Promise<ResyncSummaryDto> => {
@@ -271,8 +279,9 @@ export function useProjectState(): ProjectState {
     } catch {
       // Silent fallback
     }
+    await loadProjects();
     return result;
-  }, [selectedProjectId]);
+  }, [selectedProjectId, loadProjects]);
 
   const resyncAll = useCallback(async (): Promise<ResyncSummaryDto[]> => {
     const result = await invoke<ResyncSummaryDto[]>("resync_all_projects");
@@ -354,6 +363,8 @@ export function useProjectState(): ProjectState {
     pendingCells,
     loadError,
     showAddModal,
+    showEditModal,
+    editTargetId,
     showToolConfigModal,
     showRemoveModal,
     removeTargetId,
@@ -369,6 +380,8 @@ export function useProjectState(): ProjectState {
     addTools,
     removeTools,
     setShowAddModal,
+    setShowEditModal,
+    setEditTargetId,
     setShowToolConfigModal,
     setShowRemoveModal,
     setRemoveTargetId,

@@ -838,6 +838,17 @@ impl SkillStore {
         })
     }
 
+    pub fn count_project_unique_skills(&self, project_id: &str) -> Result<usize> {
+        self.with_conn(|conn| {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(DISTINCT skill_id) FROM project_skill_assignments WHERE project_id = ?1",
+                params![project_id],
+                |row| row.get(0),
+            )?;
+            Ok(count as usize)
+        })
+    }
+
     pub fn count_project_tools(&self, project_id: &str) -> Result<usize> {
         self.with_conn(|conn| {
             let count: i64 = conn.query_row(

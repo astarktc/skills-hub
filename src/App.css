@@ -2527,6 +2527,13 @@
   gap: 8px;
 }
 
+.project-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
 .project-item-name {
   font-size: 14px;
   font-weight: 600;
@@ -2781,7 +2788,8 @@
 }
 
 .matrix-grid table {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 2px;
   width: 100%;
 }
 

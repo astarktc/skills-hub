@@ -5,6 +5,7 @@ export type ProjectDto = {
   created_at: number;
   updated_at: number;
   tool_count: number;
+  skill_count: number;
   assignment_count: number;
   sync_status: string;
 };

@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Settings, Trash2 } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { ProjectDto } from "./types";
 
@@ -10,6 +10,7 @@ type ProjectListProps = {
   loadError: string | null;
   onSelectProject: (id: string) => void;
   onAddProject: () => void;
+  onEditProject: (id: string) => void;
   onRemoveProject: (id: string) => void;
   t: TFunction;
 };
@@ -21,6 +22,7 @@ const ProjectList = ({
   loadError,
   onSelectProject,
   onAddProject,
+  onEditProject,
   onRemoveProject,
   t,
 }: ProjectListProps) => {
@@ -58,22 +60,38 @@ const ProjectList = ({
             >
               <div className="project-item-row">
                 <span className="project-item-name">{p.name}</span>
-                <button
-                  className="btn-icon remove-btn"
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRemoveProject(p.id);
-                  }}
-                  aria-label={t("projects.removeTitle")}
-                >
-                  <Trash2 size={14} />
-                </button>
+                <div className="project-item-actions">
+                  <button
+                    className="btn-icon edit-btn"
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEditProject(p.id);
+                    }}
+                    aria-label={t("projects.configureProject")}
+                  >
+                    <Settings size={14} />
+                  </button>
+                  <button
+                    className="btn-icon remove-btn"
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRemoveProject(p.id);
+                    }}
+                    aria-label={t("projects.removeTitle")}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
               <span className="project-item-path">{p.path}</span>
               <div className="project-item-meta">
                 <span>
-                  {t("projects.assignmentCount", { count: p.assignment_count })}
+                  {t("projects.projectMeta", {
+                    tools: p.tool_count,
+                    skills: p.skill_count,
+                  })}
                 </span>
                 <span className={`project-status-dot ${p.sync_status}`} />
               </div>
