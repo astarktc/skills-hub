@@ -27,22 +27,22 @@ Any skill assigned to a project is immediately available in that project's tool 
 - ✓ Auto-update via GitHub Releases — existing
 - ✓ Cross-platform: macOS, Windows, Linux — existing
 - ✓ SQLite-backed persistence with schema migrations — existing
+- ✓ Register project directories via folder picker (with manual path fallback) — Validated in Phase 4
+- ✓ Assign skills to projects per tool via checkbox matrix UI — Validated in Phase 4
+- ✓ User-configurable tool columns per project (pick which tools appear in matrix) — Validated in Phase 4
+- ✓ "All Tools" bulk-assign button (checks all user-configured tools for a skill) — Validated in Phase 4
+- ✓ Sync all assignments for a single project ("Sync Project" button) — Validated in Phase 4
+- ✓ Sync all assignments across all projects ("Sync All" button) — Validated in Phase 4
+- ✓ Per-cell status indicators: synced (green), stale (yellow), missing (red), pending (gray) — Validated in Phase 4
+- ✓ Prompt user to add tool skill directories to project's .gitignore on registration — Validated in Phase 4
 
 ### Active
 
-<!-- Per-project skill distribution — the focus of this milestone. -->
+<!-- Per-project skill distribution — remaining items for Phase 5 polish. -->
 
-- [ ] Register project directories via folder picker (with manual path fallback)
 - [ ] Remove registered projects (cleans up all synced symlinks/copies)
-- [ ] Assign skills to projects per tool via checkbox matrix UI
 - [ ] Unassign skills from projects (removes symlink/copy from project directory)
-- [ ] User-configurable tool columns per project (pick which tools appear in matrix)
-- [ ] "All Tools" bulk-assign button (checks all user-configured tools for a skill)
-- [ ] Sync all assignments for a single project ("Sync Project" button)
-- [ ] Sync all assignments across all projects ("Sync All" button)
-- [ ] Per-cell status indicators: synced (green), stale (yellow), missing (red), pending (gray)
 - [ ] Content hash staleness detection for copy-mode targets
-- [ ] Prompt user to add tool skill directories to project's .gitignore on registration
 - [ ] Search/filter bar in the assignment matrix for large skill libraries
 - [ ] Handle removed/renamed project directories gracefully (detect on list, show warning)
 - [ ] Handle skills removed from central library (orphaned assignments marked "missing")
@@ -103,15 +103,15 @@ These coexist with existing `skill_targets` table (global sync). A skill can be 
 
 ## Key Decisions
 
-| Decision                                            | Rationale                                                                      | Outcome   |
-| --------------------------------------------------- | ------------------------------------------------------------------------------ | --------- |
-| Build in current repo (not new fork)                | Repo IS the fork already, simpler workflow                                     | — Pending |
-| User-configurable tool columns per project          | Most users use 2-3 tools, not 47+ — avoids unwieldy matrix                     | — Pending |
-| Separate project_tools table for tool column config | Cleaner than JSON array in projects table, better SQL queries                  | — Pending |
-| Prompt (not auto-add) for .gitignore entries        | Respects user's git workflow preferences                                       | — Pending |
-| Extract Projects tab as separate component tree     | App.tsx already at 2087 lines, must not grow further                           | — Pending |
-| English-only i18n this milestone                    | Reduces scope, ZH can be added as a follow-up pass                             | — Pending |
-| Symlink-first, copy as fallback                     | Symlinks propagate source changes instantly, copy for incompatible filesystems | — Pending |
+| Decision                                            | Rationale                                                                      | Outcome     |
+| --------------------------------------------------- | ------------------------------------------------------------------------------ | ----------- |
+| Build in current repo (not new fork)                | Repo IS the fork already, simpler workflow                                     | — Validated |
+| User-configurable tool columns per project          | Most users use 2-3 tools, not 47+ — avoids unwieldy matrix                     | — Validated |
+| Separate project_tools table for tool column config | Cleaner than JSON array in projects table, better SQL queries                  | — Validated |
+| Prompt (not auto-add) for .gitignore entries        | Respects user's git workflow preferences                                       | — Validated |
+| Extract Projects tab as separate component tree     | App.tsx already at 2087 lines, must not grow further                           | — Validated |
+| English-only i18n this milestone                    | Reduces scope, ZH can be added as a follow-up pass                             | — Validated |
+| Symlink-first, copy as fallback                     | Symlinks propagate source changes instantly, copy for incompatible filesystems | — Validated |
 
 ## Evolution
 
