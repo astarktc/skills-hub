@@ -404,26 +404,45 @@ pub async fn update_project_gitignore(
 
         let marker = "# Skills Hub";
 
-        // Helper: remove the Skills Hub block from content
+        // Helper: remove the Skills Hub block from content.
+        // The block is: an optional preceding blank line, the marker comment line,
+        // and all immediately following lines that start with '/' (our gitignore
+        // patterns). Stops at the first non-pattern line to avoid draining
+        // unrelated content that happens to follow without a blank separator.
         let remove_block = |content: &str| -> String {
             let mut lines: Vec<&str> = content.lines().collect();
             let mut start = None;
             let mut end = None;
             for (i, line) in lines.iter().enumerate() {
                 if line.contains(marker) {
-                    start = Some(if i > 0 && lines[i - 1].trim().is_empty() { i - 1 } else { i });
+                    // Include preceding blank line if present
+                    start = Some(if i > 0 && lines[i - 1].trim().is_empty() {
+                        i - 1
+                    } else {
+                        i
+                    });
                 }
-                if let Some(s) = start {
-                    if end.is_none() && i > s && (line.trim().is_empty() || i == lines.len() - 1) {
-                        end = Some(if line.trim().is_empty() { i } else { i + 1 });
+                if start.is_some() && end.is_none() && i > start.unwrap() {
+                    // Block continues while lines are our gitignore patterns (start with '/')
+                    if line.trim().is_empty() || !line.starts_with('/') {
+                        end = Some(i);
+                        break;
                     }
                 }
+            }
+            // If we found start but not end, the block runs to EOF
+            if start.is_some() && end.is_none() {
+                end = Some(lines.len());
             }
             if let (Some(s), Some(e)) = (start, end) {
                 lines.drain(s..e);
             }
             let result = lines.join("\n");
-            if result.is_empty() { result } else { format!("{}\n", result) }
+            if result.is_empty() {
+                result
+            } else {
+                format!("{}\n", result)
+            }
         };
 
         // .gitignore
@@ -518,18 +537,12 @@ pub async fn get_project_gitignore_status(
 
         let in_gitignore = {
             let p = project_path.join(".gitignore");
-            p.exists()
-                && fs::read_to_string(&p)
-                    .unwrap_or_default()
-                    .contains(marker)
+            p.exists() && fs::read_to_string(&p).unwrap_or_default().contains(marker)
         };
 
         let in_exclude = {
             let p = project_path.join(".git").join("info").join("exclude");
-            p.exists()
-                && fs::read_to_string(&p)
-                    .unwrap_or_default()
-                    .contains(marker)
+            p.exists() && fs::read_to_string(&p).unwrap_or_default().contains(marker)
         };
 
         Ok::<_, anyhow::Error>(GitignoreStatusDto {
