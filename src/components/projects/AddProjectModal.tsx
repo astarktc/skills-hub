@@ -44,10 +44,14 @@ const AddProjectModal = ({
   };
 
   const handleSubmit = async () => {
-    await onRegister(path, { addToGitignore, addToExclude });
-    setPath("");
-    setAddToGitignore(false);
-    setAddToExclude(false);
+    try {
+      await onRegister(path, { addToGitignore, addToExclude });
+      setPath("");
+      setAddToGitignore(false);
+      setAddToExclude(false);
+    } catch {
+      // Parent handles the error toast; preserve input state
+    }
   };
 
   return (
