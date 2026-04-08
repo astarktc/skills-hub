@@ -489,7 +489,7 @@ export type BulkAssignErrorDto = {
 
 **All claims in this research were verified from existing codebase code.** No user confirmation needed.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 None. This phase is fully constrained by existing code patterns and locked decisions from CONTEXT.md.
 
