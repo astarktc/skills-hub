@@ -92,8 +92,13 @@ Plans:
 4. User can add or remove tool columns for a project, with auto-detection of installed tools on first setup
 5. Projects tab uses its own component tree and state hook, isolated from App.tsx (App.tsx changes limited to tab navigation)
 
-**Plans**: TBD
-**UI hint**: yes
+**Plans:** 3 plans
+
+Plans:
+
+- [ ] 04-01-PLAN.md -- useProjectState hook, ProjectsPage shell, i18n strings, App.tsx/Header.tsx navigation integration
+- [ ] 04-02-PLAN.md -- ProjectList panel, AddProjectModal, ToolConfigModal, RemoveProjectModal, CSS styles
+- [ ] 04-03-PLAN.md -- AssignmentMatrix with checkbox grid, status colors, toolbar, bulk-assign, visual verification
 
 ### Phase 5: Edge Cases and Polish
 
@@ -118,5 +123,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 1. Data Foundation         | 0/2            | Not started | -         |
 | 2. Sync Logic              | 0/2            | Not started | -         |
 | 3. IPC Commands            | 0/1            | Not started | -         |
-| 4. Frontend Component Tree | 0/0            | Not started | -         |
+| 4. Frontend Component Tree | 0/3            | Not started | -         |
 | 5. Edge Cases and Polish   | 0/0            | Not started | -         |
