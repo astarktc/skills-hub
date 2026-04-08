@@ -228,3 +228,172 @@ fn unassign_target_not_found_cleans_db() {
         .unwrap();
     assert!(assignment.is_none(), "DB record should be deleted");
 }
+
+#[test]
+fn resync_updates_all() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    let skill1_dir = make_skill_dir(tmpdir.path(), "skill-a");
+    let skill2_dir = make_skill_dir(tmpdir.path(), "skill-b");
+    let project_dir = tmpdir.path().join("resync-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let (project, skill1) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "skill-a",
+        &skill1_dir.to_string_lossy(),
+    );
+
+    let skill2 = SkillRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "skill-b".to_string(),
+        description: None,
+        source_type: "local".to_string(),
+        source_ref: None,
+        source_subpath: None,
+        source_revision: None,
+        central_path: skill2_dir.to_string_lossy().to_string(),
+        content_hash: None,
+        created_at: 1000,
+        updated_at: 1000,
+        last_sync_at: None,
+        last_seen_at: 1000,
+        status: "ok".to_string(),
+    };
+    store.upsert_skill(&skill2).unwrap();
+
+    // Assign both skills
+    project_sync::assign_and_sync(&store, &project, &skill1, "claude_code", 2000)
+        .expect("assign skill1");
+    project_sync::assign_and_sync(&store, &project, &skill2, "claude_code", 2000)
+        .expect("assign skill2");
+
+    // Modify source of skill1 (add a new file)
+    fs::write(skill1_dir.join("extra.txt"), "new content").expect("write extra file");
+
+    // Re-sync the project
+    let summary = project_sync::resync_project(&store, &project.id, 3000)
+        .expect("resync_project should succeed");
+
+    assert_eq!(summary.synced, 2, "both assignments should be re-synced");
+    assert_eq!(summary.failed, 0, "no failures expected");
+    assert_eq!(summary.project_id, project.id);
+
+    // Verify both targets still exist
+    let target1 = project_dir.join(".claude/skills/skill-a");
+    let target2 = project_dir.join(".claude/skills/skill-b");
+    assert!(target1.exists(), "skill-a target should exist after resync");
+    assert!(target2.exists(), "skill-b target should exist after resync");
+}
+
+#[test]
+fn resync_continues_on_error() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    let skill1_dir = make_skill_dir(tmpdir.path(), "ok-skill");
+    let project_dir = tmpdir.path().join("partial-resync-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let (project, skill1) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "ok-skill",
+        &skill1_dir.to_string_lossy(),
+    );
+
+    // Second skill with a path that will be deleted after assignment
+    let bad_skill_dir = make_skill_dir(tmpdir.path(), "bad-skill");
+    let bad_skill = SkillRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "bad-skill".to_string(),
+        description: None,
+        source_type: "local".to_string(),
+        source_ref: None,
+        source_subpath: None,
+        source_revision: None,
+        central_path: bad_skill_dir.to_string_lossy().to_string(),
+        content_hash: None,
+        created_at: 1000,
+        updated_at: 1000,
+        last_sync_at: None,
+        last_seen_at: 1000,
+        status: "ok".to_string(),
+    };
+    store.upsert_skill(&bad_skill).unwrap();
+
+    // Assign both -- use cursor (copy mode) so missing source fails
+    project_sync::assign_and_sync(&store, &project, &skill1, "cursor", 2000)
+        .expect("assign ok-skill");
+    project_sync::assign_and_sync(&store, &project, &bad_skill, "cursor", 2000)
+        .expect("assign bad-skill");
+
+    // Delete the source of bad-skill to cause resync failure
+    fs::remove_dir_all(&bad_skill_dir).expect("remove bad-skill source");
+
+    // Re-sync should continue despite the error on bad-skill
+    let summary = project_sync::resync_project(&store, &project.id, 3000)
+        .expect("resync_project should succeed overall");
+
+    assert_eq!(summary.synced, 1, "one assignment should succeed");
+    assert_eq!(summary.failed, 1, "one assignment should fail");
+    assert_eq!(summary.errors.len(), 1, "one error recorded");
+
+    // Verify the failed assignment has error status in DB
+    let bad_assignment = store
+        .get_project_skill_assignment(&project.id, &bad_skill.id, "cursor")
+        .unwrap()
+        .expect("bad assignment should exist");
+    assert_eq!(bad_assignment.status, "error");
+
+    // Verify the successful assignment has synced status
+    let ok_assignment = store
+        .get_project_skill_assignment(&project.id, &skill1.id, "cursor")
+        .unwrap()
+        .expect("ok assignment should exist");
+    assert_eq!(ok_assignment.status, "synced");
+}
+
+#[test]
+fn resync_all_multiple_projects() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    // Project 1
+    let skill1_dir = make_skill_dir(tmpdir.path(), "all-skill-1");
+    let project1_dir = tmpdir.path().join("all-project-1");
+    fs::create_dir_all(&project1_dir).expect("create project1 dir");
+    let (project1, skill1) = register_project_and_skill(
+        &store,
+        &project1_dir.to_string_lossy(),
+        "all-skill-1",
+        &skill1_dir.to_string_lossy(),
+    );
+    project_sync::assign_and_sync(&store, &project1, &skill1, "claude_code", 2000)
+        .expect("assign to project1");
+
+    // Project 2
+    let skill2_dir = make_skill_dir(tmpdir.path(), "all-skill-2");
+    let project2_dir = tmpdir.path().join("all-project-2");
+    fs::create_dir_all(&project2_dir).expect("create project2 dir");
+    let (project2, skill2) = register_project_and_skill(
+        &store,
+        &project2_dir.to_string_lossy(),
+        "all-skill-2",
+        &skill2_dir.to_string_lossy(),
+    );
+    project_sync::assign_and_sync(&store, &project2, &skill2, "claude_code", 2000)
+        .expect("assign to project2");
+
+    // Re-sync all
+    let summaries = project_sync::resync_all_projects(&store, 3000)
+        .expect("resync_all_projects should succeed");
+
+    assert_eq!(summaries.len(), 2, "should have 2 project summaries");
+    for s in &summaries {
+        assert_eq!(s.synced, 1, "each project should have 1 synced assignment");
+        assert_eq!(s.failed, 0, "no failures expected");
+    }
+}
