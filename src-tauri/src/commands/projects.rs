@@ -19,7 +19,17 @@ pub async fn register_project(
     })
     .await
     .map_err(|e| e.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(|e| {
+        let msg = format!("{}", e);
+        if msg.contains("project already registered") {
+            let prefix_path = msg
+                .strip_prefix("project already registered: ")
+                .unwrap_or(&msg);
+            format!("DUPLICATE_PROJECT|{}", prefix_path)
+        } else {
+            format_anyhow_error(e)
+        }
+    })
 }
 
 #[tauri::command]
@@ -126,6 +136,14 @@ pub async fn add_project_skill_assignment(
         let skill = store
             .get_skill_by_id(&skillId)?
             .ok_or_else(|| anyhow::anyhow!("skill not found: {}", skillId))?;
+
+        // Check for existing assignment before attempting insert
+        if store
+            .get_project_skill_assignment(&projectId, &skillId, &tool)?
+            .is_some()
+        {
+            anyhow::bail!("ASSIGNMENT_EXISTS|{}:{}:{}", projectId, skillId, tool);
+        }
 
         let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
         let now = now_ms();
@@ -266,5 +284,81 @@ pub async fn resync_all_projects(
     })
     .await
     .map_err(|e| format!("{}", e))?
+    .map_err(format_anyhow_error)
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct BulkAssignResultDto {
+    pub assigned: Vec<ProjectSkillAssignmentDto>,
+    pub failed: Vec<BulkAssignErrorDto>,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct BulkAssignErrorDto {
+    pub tool: String,
+    pub error: String,
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn bulk_assign_skill(
+    store: State<'_, SkillStore>,
+    sync_mutex: State<'_, SyncMutex>,
+    projectId: String,
+    skillId: String,
+) -> Result<BulkAssignResultDto, String> {
+    let store = store.inner().clone();
+    let mutex = sync_mutex.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = store
+            .get_project_by_id(&projectId)?
+            .ok_or_else(|| anyhow::anyhow!("NOT_FOUND|project:{}", projectId))?;
+        let skill = store
+            .get_skill_by_id(&skillId)?
+            .ok_or_else(|| anyhow::anyhow!("NOT_FOUND|skill:{}", skillId))?;
+        let tools = store.list_project_tools(&projectId)?;
+
+        let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
+        let now = now_ms();
+
+        let mut assigned: Vec<ProjectSkillAssignmentDto> = Vec::new();
+        let mut failed: Vec<BulkAssignErrorDto> = Vec::new();
+
+        for tool_record in &tools {
+            // Skip if already assigned
+            if store
+                .get_project_skill_assignment(&projectId, &skillId, &tool_record.tool)?
+                .is_some()
+            {
+                continue;
+            }
+            match project_sync::assign_and_sync(&store, &project, &skill, &tool_record.tool, now) {
+                Ok(record) => {
+                    assigned.push(ProjectSkillAssignmentDto {
+                        id: record.id,
+                        project_id: record.project_id,
+                        skill_id: record.skill_id,
+                        tool: record.tool,
+                        mode: record.mode,
+                        status: record.status,
+                        last_error: record.last_error,
+                        synced_at: record.synced_at,
+                        content_hash: record.content_hash,
+                        created_at: record.created_at,
+                    });
+                }
+                Err(e) => {
+                    failed.push(BulkAssignErrorDto {
+                        tool: tool_record.tool.clone(),
+                        error: format!("{:#}", e),
+                    });
+                }
+            }
+        }
+
+        Ok::<_, anyhow::Error>(BulkAssignResultDto { assigned, failed })
+    })
+    .await
+    .map_err(|e| e.to_string())?
     .map_err(format_anyhow_error)
 }

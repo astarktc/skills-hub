@@ -39,6 +39,11 @@ pub(crate) fn format_anyhow_error(err: anyhow::Error) -> String {
     if first.starts_with("MULTI_SKILLS|")
         || first.starts_with("TARGET_EXISTS|")
         || first.starts_with("TOOL_NOT_INSTALLED|")
+        || first.starts_with("TOOL_NOT_WRITABLE|")
+        || first.starts_with("SKILL_INVALID|")
+        || first.starts_with("DUPLICATE_PROJECT|")
+        || first.starts_with("ASSIGNMENT_EXISTS|")
+        || first.starts_with("NOT_FOUND|")
     {
         return first;
     }
