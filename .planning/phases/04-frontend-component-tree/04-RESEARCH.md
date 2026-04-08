@@ -590,22 +590,13 @@ Add `import ProjectsPage from './components/projects/ProjectsPage'`.
 | A2  | CSS `title` attribute provides sufficient tooltip UX for error messages on red cells (D-09)                    | Don't Hand-Roll                   | MEDIUM -- if title tooltip is too limited, may need a CSS-only tooltip with `::after` pseudo-element  |
 | A3  | Direct `invoke` import from `@tauri-apps/api/core` works without the isTauri guard in the Tauri window context | Architecture Patterns (Pattern 5) | LOW -- ProjectsPage only renders inside Tauri; the guard exists in App.tsx for SSR/test compatibility |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Error tooltip approach for D-09**
-   - What we know: D-09 requires hover tooltip on red cells showing error message. Clicking retries sync.
-   - What's unclear: Whether `title` attribute provides sufficient UX or if a CSS-only tooltip (positioned element) is needed for better styling.
-   - Recommendation: Start with CSS-only tooltip (positioned `::after` pseudo-element) to control styling. `title` attribute has inconsistent browser rendering and no style control.
+1. **Error tooltip approach for D-09** -- RESOLVED: Use CSS-only tooltip via `::after` pseudo-element. The `title` attribute has inconsistent browser rendering and no style control. Plan 03 Task 1 implements `.matrix-cell.error::after` with positioned tooltip. A2 assumption updated accordingly.
 
-2. **Shared activeView type vs duplicated**
-   - What we know: The `activeView` union type is currently duplicated in App.tsx (line 91) and Header.tsx (line 8). Adding 'projects' requires updating both.
-   - What's unclear: Whether to extract a shared type (e.g., `type ActiveView = ...` in a shared types file).
-   - Recommendation: Extract to avoid future duplication. But this is minor refactoring that could be deferred.
+2. **Shared activeView type vs duplicated** -- RESOLVED: Defer extraction. Update both locations simultaneously (App.tsx line 91, Header.tsx line 8). Minor refactoring not worth a task in this phase -- Claude discretion area. Pitfall 4 documents the dual-update requirement.
 
-3. **Duplicate project detection for D-14**
-   - What we know: D-14 requires inline validation checking if a path is already registered. The hook has the `projects` list.
-   - What's unclear: Whether path comparison should be case-sensitive on all platforms or case-insensitive on macOS/Windows.
-   - Recommendation: Do a normalized comparison (trailing slash removal, home path expansion) on the frontend using the existing project paths from `list_projects`. The backend `register_project` command also validates for duplicates as a safety net.
+3. **Duplicate project detection for D-14** -- RESOLVED: Use case-sensitive comparison with trailing slash normalization on the frontend. Backend `register_project` also validates duplicates as safety net. Cross-platform case sensitivity is a Phase 5 polish concern (PROJ-04 already handles stale paths).
 
 ## Validation Architecture
 
