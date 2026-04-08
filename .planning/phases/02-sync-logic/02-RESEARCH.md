@@ -588,17 +588,13 @@ pub fn get_project_skill_assignment(
 | A2  | V5 migration adding `content_hash` column is the right approach over storing hash in `last_error`                | Architecture Patterns, Pitfall 4  | Low -- using `last_error` for hash is a hack; a proper column is cleaner and matches the schema-upfront philosophy from D-03                                                                                  |
 | A3  | Tauri `State` wraps managed values in `Arc` internally, so `.inner()` returns `&T` where `T` is the managed type | Pitfall 1                         | Medium -- if this is wrong, the clone pattern needs adjustment. Verified by inspecting CancelToken usage: `Arc<CancelToken>` is managed, and `cancel.inner()` returns `&Arc<CancelToken>` which is cloneable. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Re-sync commands: separate or combined?**
-   - What we know: D-05 defines "Sync Project" and "Sync All" operations. Phase 3 (IPC Commands) will expose these to the frontend.
-   - What's unclear: Whether Phase 2 should create the Tauri commands for re-sync now (since the core logic lives here) or defer command creation to Phase 3.
-   - Recommendation: Create the core functions (`resync_project`, `resync_all_projects`) in `project_sync.rs` now. Phase 3 will wrap them in Tauri commands. This keeps Phase 2 focused on core logic and matches the "Phase 3 = IPC Commands" boundary.
+1. **Re-sync commands: Phase 2 creates both core functions AND Tauri commands.**
+   - Resolved: Core functions (`resync_project`, `resync_all_projects`) live in `project_sync.rs`. Tauri commands (`resync_project` and `resync_all_projects`) are added to `commands/projects.rs` in Phase 2, wired through SyncMutex. This is necessary because INFR-02 requires ALL sync operations -- including re-sync -- to be serialized via the mutex. Deferring command creation to Phase 3 would leave the mutex wiring untested for re-sync paths. Phase 3 can still add additional IPC commands (bulk-assign, etc.) but the re-sync commands must exist in Phase 2 to satisfy INFR-02.
 
-2. **List assignments with staleness: modify command or add new one?**
-   - What we know: D-07 says staleness is checked on list load. The existing `list_project_skill_assignments` command (Phase 1) returns raw DB records.
-   - What's unclear: Whether to modify the existing list command to include staleness checking, or create a new command.
-   - Recommendation: Create the staleness-checking logic as a core function. The existing `list_project_skill_assignments` command can be enhanced in Phase 3 to call the staleness-checking wrapper before returning results. Phase 2 delivers the core function.
+2. **List assignments with staleness: modify existing command in Phase 2.**
+   - Resolved: The existing `list_project_skill_assignments` command in `commands/projects.rs` is modified to call `project_sync::list_assignments_with_staleness()` instead of the raw `store.list_project_skill_assignments()`. This is necessary because D-07 says staleness is checked on list load, and SYNC-04 requires the app to detect staleness. If the command is not wired to the staleness function, the app cannot detect stale assignments regardless of whether the core function exists. The `content_hash` field is also added to the DTO.
 
 ## Environment Availability
 
