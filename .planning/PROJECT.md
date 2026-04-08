@@ -134,4 +134,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-08 after Phase 2 (Sync Logic) completion_
+_Last updated: 2026-04-08 after Phase 3 (IPC Commands) completion_
