@@ -73,7 +73,7 @@ pub fn sync_dir_hybrid_with_overwrite(
         }
 
         if overwrite {
-            std::fs::remove_dir_all(target)
+            remove_path_any(target)
                 .with_context(|| format!("remove existing target {:?}", target))?;
             did_replace = true;
         } else {
@@ -134,7 +134,7 @@ fn ensure_parent_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn remove_path_any(path: &Path) -> Result<()> {
+pub(crate) fn remove_path_any(path: &Path) -> Result<()> {
     let meta = match std::fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),

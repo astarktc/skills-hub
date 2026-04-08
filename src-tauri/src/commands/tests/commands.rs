@@ -47,15 +47,15 @@ fn remove_path_any_handles_file_dir_and_missing() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("f.txt");
     std::fs::write(&file, b"1").unwrap();
-    remove_path_any(file.to_string_lossy().as_ref()).unwrap();
+    remove_path_any(&file).unwrap();
     assert!(!file.exists());
 
     let sub = dir.path().join("d");
     std::fs::create_dir_all(&sub).unwrap();
-    remove_path_any(sub.to_string_lossy().as_ref()).unwrap();
+    remove_path_any(&sub).unwrap();
     assert!(!sub.exists());
 
-    remove_path_any(dir.path().join("missing").to_string_lossy().as_ref()).unwrap();
+    remove_path_any(&dir.path().join("missing")).unwrap();
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn remove_path_any_removes_symlink_only() {
     let link = dir.path().join("link");
     symlink(&target, &link).unwrap();
 
-    remove_path_any(link.to_string_lossy().as_ref()).unwrap();
+    remove_path_any(&link).unwrap();
     assert!(!link.exists());
     assert!(target.exists());
 }
@@ -111,4 +111,52 @@ fn get_managed_skills_impl_maps_targets() {
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].targets.len(), 1);
     assert_eq!(out[0].targets[0].tool, "cursor");
+}
+
+#[test]
+fn format_anyhow_error_passthrough_duplicate_project() {
+    let err = anyhow::anyhow!("DUPLICATE_PROJECT|/home/user/my-project");
+    assert_eq!(
+        format_anyhow_error(err),
+        "DUPLICATE_PROJECT|/home/user/my-project"
+    );
+}
+
+#[test]
+fn format_anyhow_error_passthrough_assignment_exists() {
+    let err = anyhow::anyhow!("ASSIGNMENT_EXISTS|proj1:skill1:claude_code");
+    assert_eq!(
+        format_anyhow_error(err),
+        "ASSIGNMENT_EXISTS|proj1:skill1:claude_code"
+    );
+}
+
+#[test]
+fn format_anyhow_error_passthrough_not_found() {
+    let err = anyhow::anyhow!("NOT_FOUND|project:abc-123");
+    assert_eq!(format_anyhow_error(err), "NOT_FOUND|project:abc-123");
+}
+
+#[test]
+fn bulk_assign_skill_not_found_error_contract() {
+    // Verify the NOT_FOUND|project: error that bulk_assign_skill emits
+    // passes through format_anyhow_error unchanged -- this is the exact
+    // error shape the frontend receives when invoking bulk_assign_skill
+    // with a non-existent project ID.
+    let err = anyhow::anyhow!("NOT_FOUND|project:nonexistent-uuid");
+    let result = format_anyhow_error(err);
+    assert!(
+        result.starts_with("NOT_FOUND|project:"),
+        "bulk_assign_skill NOT_FOUND error must preserve prefix for frontend parsing, got: {}",
+        result
+    );
+
+    // Verify the NOT_FOUND|skill: variant as well
+    let err2 = anyhow::anyhow!("NOT_FOUND|skill:nonexistent-uuid");
+    let result2 = format_anyhow_error(err2);
+    assert!(
+        result2.starts_with("NOT_FOUND|skill:"),
+        "bulk_assign_skill NOT_FOUND error must preserve prefix for frontend parsing, got: {}",
+        result2
+    );
 }

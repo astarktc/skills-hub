@@ -8,6 +8,11 @@ use core::skill_store::{default_db_path, migrate_legacy_db_if_needed, SkillStore
 use tauri::Manager;
 use tauri_plugin_log::{Target, TargetKind};
 
+/// Global mutex to serialize concurrent sync operations (assign/unassign).
+/// Prevents filesystem corruption when multiple assignments run in parallel.
+#[derive(Clone)]
+pub struct SyncMutex(pub Arc<std::sync::Mutex<()>>);
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -32,6 +37,7 @@ pub fn run() {
             store.ensure_schema().map_err(tauri::Error::from)?;
             app.manage(store.clone());
             app.manage(Arc::new(CancelToken::new()));
+            app.manage(SyncMutex(Arc::new(std::sync::Mutex::new(()))));
 
             // Backfill description for skills that were installed before V2 schema.
             core::installer::backfill_skill_descriptions(&store);
@@ -98,7 +104,20 @@ pub fn run() {
             commands::search_skills_online,
             commands::list_skill_files,
             commands::read_skill_file,
-            commands::cancel_current_operation
+            commands::cancel_current_operation,
+            commands::projects::register_project,
+            commands::projects::remove_project,
+            commands::projects::list_projects,
+            commands::projects::add_project_tool,
+            commands::projects::remove_project_tool,
+            commands::projects::list_project_tools,
+            commands::projects::add_project_skill_assignment,
+            commands::projects::remove_project_skill_assignment,
+            commands::projects::list_project_skill_assignments,
+            commands::projects::resync_project,
+            commands::projects::resync_all_projects,
+            commands::projects::bulk_assign_skill,
+            commands::projects::update_project_gitignore,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
