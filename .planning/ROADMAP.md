@@ -54,7 +54,12 @@ Plans:
 4. Concurrent sync operations (Sync All vs individual toggle) are serialized and do not corrupt state
 5. Existing global sync continues to work unchanged alongside project sync
 
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+
+- [ ] 02-01-PLAN.md -- V5 migration, SyncMutex, project_sync.rs core module (assign_and_sync, unassign_and_cleanup), enhanced commands
+- [ ] 02-02-PLAN.md -- Re-sync operations (resync_project, resync_all), staleness detection, global sync independence
 
 ### Phase 3: IPC Commands
 
@@ -107,7 +112,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase                      | Plans Complete | Status      | Completed |
 | -------------------------- | -------------- | ----------- | --------- |
 | 1. Data Foundation         | 0/2            | Not started | -         |
-| 2. Sync Logic              | 0/0            | Not started | -         |
+| 2. Sync Logic              | 0/2            | Not started | -         |
 | 3. IPC Commands            | 0/0            | Not started | -         |
 | 4. Frontend Component Tree | 0/0            | Not started | -         |
 | 5. Edge Cases and Polish   | 0/0            | Not started | -         |
