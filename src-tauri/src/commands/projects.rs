@@ -67,6 +67,11 @@ pub async fn add_project_tool(
             .get_project_by_id(&projectId)?
             .ok_or_else(|| anyhow::anyhow!("project not found: {}", projectId))?;
 
+        // Validate that the tool key corresponds to a known tool adapter
+        if crate::core::tool_adapters::adapter_by_key(&tool).is_none() {
+            anyhow::bail!("unknown tool: {}", tool);
+        }
+
         let record = ProjectToolRecord {
             id: Uuid::new_v4().to_string(),
             project_id: projectId,
