@@ -7,14 +7,16 @@ function buildInitialSelection(
   toolStatus: ToolStatusDto | null,
   currentTools: ProjectToolDto[],
 ): Set<string> {
+  // If project already has tools configured, use those as baseline
+  if (currentTools.length > 0) {
+    return new Set(currentTools.map((ct) => ct.tool));
+  }
+  // For new projects with no tools yet, pre-select installed tools
   const initial = new Set<string>();
   if (toolStatus) {
     for (const key of toolStatus.installed) {
       initial.add(key);
     }
-  }
-  for (const ct of currentTools) {
-    initial.add(ct.tool);
   }
   return initial;
 }
