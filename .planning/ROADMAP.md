@@ -96,9 +96,9 @@ Plans:
 
 Plans:
 
-- [ ] 04-01-PLAN.md -- useProjectState hook, ProjectsPage shell, i18n strings, App.tsx/Header.tsx navigation integration
-- [ ] 04-02-PLAN.md -- ProjectList panel, AddProjectModal, ToolConfigModal, RemoveProjectModal, CSS styles
-- [ ] 04-03-PLAN.md -- AssignmentMatrix with checkbox grid, status colors, toolbar, bulk-assign, visual verification
+- [x] 04-01-PLAN.md -- useProjectState hook, ProjectsPage shell, i18n strings, App.tsx/Header.tsx navigation integration
+- [x] 04-02-PLAN.md -- ProjectList panel, AddProjectModal, ToolConfigModal, RemoveProjectModal, CSS styles
+- [x] 04-03-PLAN.md -- AssignmentMatrix with checkbox grid, status colors, toolbar, bulk-assign, visual verification
 
 ### Phase 5: Edge Cases and Polish
 
