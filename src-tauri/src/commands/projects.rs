@@ -2,7 +2,9 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::core::project_ops::{self, ProjectDto, ProjectSkillAssignmentDto, ProjectToolDto};
-use crate::core::skill_store::{ProjectSkillAssignmentRecord, ProjectToolRecord, SkillStore};
+use crate::core::project_sync;
+use crate::core::skill_store::{ProjectToolRecord, SkillStore};
+use crate::SyncMutex;
 
 use super::{expand_home_path, format_anyhow_error, now_ms};
 
@@ -110,34 +112,25 @@ pub async fn list_project_tools(
 #[allow(non_snake_case)]
 pub async fn add_project_skill_assignment(
     store: State<'_, SkillStore>,
+    sync_mutex: State<'_, SyncMutex>,
     projectId: String,
     skillId: String,
     tool: String,
 ) -> Result<ProjectSkillAssignmentDto, String> {
     let store = store.inner().clone();
+    let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        // Validate that the project and skill exist before inserting
-        store
+        let project = store
             .get_project_by_id(&projectId)?
             .ok_or_else(|| anyhow::anyhow!("project not found: {}", projectId))?;
-        store
+        let skill = store
             .get_skill_by_id(&skillId)?
             .ok_or_else(|| anyhow::anyhow!("skill not found: {}", skillId))?;
 
+        let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
         let now = now_ms();
-        let record = ProjectSkillAssignmentRecord {
-            id: Uuid::new_v4().to_string(),
-            project_id: projectId,
-            skill_id: skillId,
-            tool,
-            mode: "symlink".to_string(),
-            status: "pending".to_string(),
-            last_error: None,
-            synced_at: None,
-            content_hash: None,
-            created_at: now,
-        };
-        store.add_project_skill_assignment(&record)?;
+        let record = project_sync::assign_and_sync(&store, &project, &skill, &tool, now)?;
+
         Ok::<_, anyhow::Error>(ProjectSkillAssignmentDto {
             id: record.id,
             project_id: record.project_id,
@@ -160,13 +153,23 @@ pub async fn add_project_skill_assignment(
 #[allow(non_snake_case)]
 pub async fn remove_project_skill_assignment(
     store: State<'_, SkillStore>,
+    sync_mutex: State<'_, SyncMutex>,
     projectId: String,
     skillId: String,
     tool: String,
 ) -> Result<(), String> {
     let store = store.inner().clone();
+    let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        store.remove_project_skill_assignment(&projectId, &skillId, &tool)
+        let project = store
+            .get_project_by_id(&projectId)?
+            .ok_or_else(|| anyhow::anyhow!("project not found: {}", projectId))?;
+        let skill = store
+            .get_skill_by_id(&skillId)?
+            .ok_or_else(|| anyhow::anyhow!("skill not found: {}", skillId))?;
+
+        let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
+        project_sync::unassign_and_cleanup(&store, &project, &skill, &tool)
     })
     .await
     .map_err(|e| e.to_string())?
