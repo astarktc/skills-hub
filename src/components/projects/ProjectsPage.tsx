@@ -5,6 +5,7 @@ import { FolderOpen } from "lucide-react";
 import { toast } from "sonner";
 import { useProjectState } from "./useProjectState";
 import ProjectList from "./ProjectList";
+import AssignmentMatrix from "./AssignmentMatrix";
 import AddProjectModal from "./AddProjectModal";
 import ToolConfigModal from "./ToolConfigModal";
 import RemoveProjectModal from "./RemoveProjectModal";
@@ -109,6 +110,41 @@ const ProjectsPage = () => {
     [state],
   );
 
+  const handleResyncProject = useCallback(async () => {
+    return await state.resyncProject();
+  }, [state]);
+
+  const handleResyncAll = useCallback(async () => {
+    return await state.resyncAll();
+  }, [state]);
+
+  const handleToggleAssignment = useCallback(
+    async (skillId: string, tool: string) => {
+      try {
+        await state.toggleAssignment(skillId, tool);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [state],
+  );
+
+  const handleBulkAssign = useCallback(
+    async (skillId: string) => {
+      try {
+        await state.bulkAssign(skillId);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [state],
+  );
+
+  const handleConfigureToolsFromToolbar = useCallback(async () => {
+    await state.loadToolStatus();
+    state.setShowToolConfigModal(true);
+  }, [state]);
+
   return (
     <div className="projects-page">
       {!state.projectsLoading &&
@@ -142,13 +178,26 @@ const ProjectsPage = () => {
               <div className="matrix-placeholder">
                 {t("projects.selectProject")}
               </div>
-            ) : state.matrixLoading ? (
-              <div className="matrix-placeholder">
-                {t("projects.selectProject")}
-              </div>
             ) : (
               <div className="matrix-content">
-                {/* AssignmentMatrix will be added in Plan 03 */}
+                <AssignmentMatrix
+                  project={
+                    state.projects.find(
+                      (p) => p.id === state.selectedProjectId,
+                    ) ?? null
+                  }
+                  tools={state.tools}
+                  assignments={state.assignments}
+                  skills={state.skills}
+                  pendingCells={state.pendingCells}
+                  matrixLoading={state.matrixLoading}
+                  onToggleAssignment={handleToggleAssignment}
+                  onBulkAssign={handleBulkAssign}
+                  onResyncProject={handleResyncProject}
+                  onResyncAll={handleResyncAll}
+                  onConfigureTools={handleConfigureToolsFromToolbar}
+                  t={t}
+                />
               </div>
             )}
           </section>
