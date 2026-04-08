@@ -117,6 +117,7 @@ pub fn run() {
             commands::projects::resync_project,
             commands::projects::resync_all_projects,
             commands::projects::bulk_assign_skill,
+            commands::projects::update_project_gitignore,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

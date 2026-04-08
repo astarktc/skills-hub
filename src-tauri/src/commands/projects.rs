@@ -1,3 +1,4 @@
+use anyhow::Context;
 use tauri::State;
 use uuid::Uuid;
 
@@ -352,6 +353,103 @@ pub async fn bulk_assign_skill(
         }
 
         Ok::<_, anyhow::Error>(BulkAssignResultDto { assigned, failed })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn update_project_gitignore(
+    store: State<'_, SkillStore>,
+    projectId: String,
+    addToGitignore: bool,
+    addToExclude: bool,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::fs;
+        use std::path::Path;
+
+        let project = store
+            .get_project_by_id(&projectId)?
+            .ok_or_else(|| anyhow::anyhow!("project not found: {}", projectId))?;
+
+        let project_path = Path::new(&project.path);
+        if !project_path.is_dir() {
+            anyhow::bail!("project directory does not exist: {}", project.path);
+        }
+
+        // Collect unique relative_skills_dir patterns from the project's configured tools.
+        let tools = store.list_project_tools(&projectId)?;
+        let mut patterns: Vec<String> = Vec::new();
+        for tool_record in &tools {
+            if let Some(adapter) = crate::core::tool_adapters::adapter_by_key(&tool_record.tool) {
+                let pattern = format!("/{}/", adapter.relative_skills_dir);
+                if !patterns.contains(&pattern) {
+                    patterns.push(pattern);
+                }
+            }
+        }
+
+        if patterns.is_empty() {
+            return Ok(());
+        }
+
+        let gitignore_block = format!(
+            "\n# Skills Hub — managed skill directories\n{}\n",
+            patterns.join("\n")
+        );
+
+        if addToGitignore {
+            let gitignore_path = project_path.join(".gitignore");
+            let existing = if gitignore_path.exists() {
+                fs::read_to_string(&gitignore_path)
+                    .with_context(|| format!("failed to read {}", gitignore_path.display()))?
+            } else {
+                String::new()
+            };
+
+            if !existing.contains("# Skills Hub") {
+                let mut content = existing;
+                if !content.ends_with('\n') && !content.is_empty() {
+                    content.push('\n');
+                }
+                content.push_str(&gitignore_block);
+                fs::write(&gitignore_path, content)
+                    .with_context(|| format!("failed to write {}", gitignore_path.display()))?;
+            }
+        }
+
+        if addToExclude {
+            let exclude_path = project_path.join(".git").join("info").join("exclude");
+            if let Some(parent) = exclude_path.parent() {
+                if !parent.exists() {
+                    fs::create_dir_all(parent)
+                        .with_context(|| format!("failed to create {}", parent.display()))?;
+                }
+            }
+
+            let existing = if exclude_path.exists() {
+                fs::read_to_string(&exclude_path)
+                    .with_context(|| format!("failed to read {}", exclude_path.display()))?
+            } else {
+                String::new()
+            };
+
+            if !existing.contains("# Skills Hub") {
+                let mut content = existing;
+                if !content.ends_with('\n') && !content.is_empty() {
+                    content.push('\n');
+                }
+                content.push_str(&gitignore_block);
+                fs::write(&exclude_path, content)
+                    .with_context(|| format!("failed to write {}", exclude_path.display()))?;
+            }
+        }
+
+        Ok(())
     })
     .await
     .map_err(|e| e.to_string())?
