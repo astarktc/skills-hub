@@ -31,20 +31,21 @@ created: 2026-04-08
 
 Declared values (must be multiples of 4):
 
-| Token | Value | Usage                                                          |
-| ----- | ----- | -------------------------------------------------------------- |
-| xs    | 4px   | Icon gaps (nav-tab gap: 6px rounds to nearest), inline padding |
-| sm    | 8px   | Compact element spacing, checkbox gaps                         |
-| md    | 16px  | Default element spacing, card internal padding, list gaps      |
-| lg    | 24px  | Section padding (header: 24px horizontal), panel padding       |
-| xl    | 32px  | Content area padding (skills-list: 32px), page gutters         |
-| 2xl   | 48px  | Skill icon size (48px), major section breaks                   |
-| 3xl   | 64px  | Not used in this phase                                         |
+| Token | Value | Usage                                                     |
+| ----- | ----- | --------------------------------------------------------- |
+| xs    | 4px   | Icon gaps, inline padding                                 |
+| sm    | 8px   | Compact element spacing, checkbox gaps                    |
+| md    | 16px  | Default element spacing, card internal padding, list gaps |
+| lg    | 24px  | Section padding (header: 24px horizontal), panel padding  |
+| xl    | 32px  | Content area padding (skills-list: 32px), page gutters    |
+| 2xl   | 48px  | Skill icon size (48px), major section breaks              |
+| 3xl   | 64px  | Not used in this phase                                    |
 
 Exceptions:
 
 - Left panel width: 250px (D-01 locked decision, not a spacing token)
 - Header height: 56px (existing, reused)
+- Nav tab icon-label gap: 6px (inherited from existing Header.tsx `.nav-tab` style; not an 8-point token -- this is a legacy value preserved for visual consistency with the existing tabs)
 - Nav tab horizontal padding: 14px (existing pattern, inherited from Header.tsx)
 - Checkbox input size: 18px (existing pattern from pick-item-checkbox)
 - Status dot: 8px diameter (aggregate sync indicator in project list)
@@ -56,7 +57,7 @@ Exceptions:
 | Role    | Size | Weight | Line Height | Font      | Usage in Phase 4                                           |
 | ------- | ---- | ------ | ----------- | --------- | ---------------------------------------------------------- |
 | Body    | 13px | 400    | 1.5         | Fira Sans | Matrix cell labels, modal body text, descriptions          |
-| Label   | 14px | 500    | 1.4         | Fira Sans | Filter bar titles, section headings, project names in list |
+| Label   | 14px | 600    | 1.4         | Fira Sans | Filter bar titles, section headings, project names in list |
 | Heading | 16px | 600    | 1.3         | Fira Sans | Modal titles, right-panel project name, toolbar headings   |
 | Small   | 12px | 400    | 1.4         | Fira Sans | Path subtitles, helper text, assignment counts, timestamps |
 
@@ -64,7 +65,7 @@ Exceptions:
 
 **Mono font usage:** Fira Code at 12px for file paths (project path display, gitignore entries). Matches existing `--font-mono` variable.
 
-Source: Extracted from existing `App.css` patterns -- modal-title is 16px/600, modal-body is 13px, skill-desc is 13px/1.5, helper-text is 12px, filter-title is 14px/500.
+Source: Extracted from existing `App.css` patterns -- modal-title is 16px/600, modal-body is 13px, skill-desc is 13px/1.5, helper-text is 12px, filter-title is 14px/600.
 
 ---
 
@@ -128,9 +129,9 @@ All strings go through i18n (`t('key')`) in `src/i18n/resources.ts`. English onl
 | Tool count                      | `projects.toolCount`         | "{{count}} tools"                                                                                                                  |
 | Add Project modal title         | `projects.addProjectTitle`   | "Register Project"                                                                                                                 |
 | Add Project modal path label    | `projects.pathLabel`         | "Project directory"                                                                                                                |
-| Add Project modal browse button | `projects.browse`            | "Browse"                                                                                                                           |
+| Add Project modal browse button | `projects.browse`            | "Browse Folder"                                                                                                                    |
 | Add Project modal path helper   | `projects.pathHelper`        | "Select the root directory of your project"                                                                                        |
-| Add Project modal save button   | `projects.register`          | "Register"                                                                                                                         |
+| Add Project modal save button   | `projects.register`          | "Register Project"                                                                                                                 |
 | Duplicate project error         | `projects.duplicateError`    | "This directory is already registered as a project"                                                                                |
 | Gitignore section label         | `projects.gitignoreLabel`    | "Git ignore settings"                                                                                                              |
 | Gitignore checkbox shared       | `projects.gitignoreShared`   | "Add to project .gitignore (shared, committed to repo)"                                                                            |
@@ -181,6 +182,12 @@ ProjectsPage
         +-- placeholder (when no project selected)
 ```
 
+### Focal Point
+
+**Primary focal point:** Assignment matrix grid (right panel) -- the checkbox grid is the core interaction surface where users spend most of their time assigning and reviewing skill-to-tool mappings.
+
+**Secondary focal point:** Selected project highlight (left panel) -- the accent-colored selected project item anchors the user's context for which project the matrix is showing.
+
 ---
 
 ## Interaction Contracts
@@ -227,7 +234,7 @@ Uncheck flow (unassign):
 | ---------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------- |
 | 1. Click "Add Project"       | Opens AddProjectModal                                         | Modal with folder picker + manual path input                         |
 | 2. Enter/pick path           | Inline duplicate validation fires                             | If duplicate, show inline error below input, disable Register button |
-| 3. Click "Register"          | Modal closes, project appears in list selected                | Backend: `register_project`                                          |
+| 3. Click "Register Project"  | Modal closes, project appears in list selected                | Backend: `register_project`                                          |
 | 4. Auto-open ToolConfigModal | Shows tool checkbox list with auto-detected tools pre-checked | Backend: tool detection (existing)                                   |
 | 5. Confirm tools             | Tools saved, matrix columns appear                            | Backend: `add_project_tool` per selected tool                        |
 
