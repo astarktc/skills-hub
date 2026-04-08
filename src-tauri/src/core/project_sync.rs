@@ -200,8 +200,18 @@ pub fn resync_all_projects(store: &SkillStore, now: i64) -> Result<Vec<ResyncSum
     let mut summaries = Vec::with_capacity(projects.len());
 
     for project in &projects {
-        let summary = resync_project(store, &project.id, now)?;
-        summaries.push(summary);
+        match resync_project(store, &project.id, now) {
+            Ok(summary) => summaries.push(summary),
+            Err(e) => {
+                log::warn!("resync_all: failed to resync project {}: {:#}", project.id, e);
+                summaries.push(ResyncSummary {
+                    project_id: project.id.clone(),
+                    synced: 0,
+                    failed: 0,
+                    errors: vec![format!("project-level error: {:#}", e)],
+                });
+            }
+        }
     }
 
     Ok(summaries)
