@@ -1,4 +1,7 @@
 import { memo, useEffect, useState } from "react";
+// Direct invoke import: projects subtree always runs inside Tauri context.
+// App.tsx uses invokeTauri() for lazy import, but that pattern is a hook-local
+// callback and not importable here. Acceptable for Tauri-only components.
 import { invoke } from "@tauri-apps/api/core";
 import type { TFunction } from "i18next";
 import type { ProjectDto } from "./types";

@@ -1,5 +1,6 @@
 import { memo, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
+// Direct invoke import: projects subtree always runs inside Tauri context.
 import { invoke } from "@tauri-apps/api/core";
 import { FolderOpen } from "lucide-react";
 import { toast } from "sonner";

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+// Direct invoke import: projects subtree always runs inside Tauri context.
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ProjectDto,
