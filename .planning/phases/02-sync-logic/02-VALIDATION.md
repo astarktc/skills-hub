@@ -1,10 +1,11 @@
 ---
 phase: 2
 slug: sync-logic
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-04-07
+validated: 2026-04-07
 ---
 
 # Phase 2 — Validation Strategy
@@ -36,14 +37,14 @@ created: 2026-04-07
 
 ## Per-Task Verification Map
 
-| Task ID  | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command                    | File Exists | Status     |
-| -------- | ---- | ---- | ----------- | ---------- | --------------- | --------- | ------------------------------------ | ----------- | ---------- |
-| 02-01-01 | 01   | 1    | ASGN-02     | —          | N/A             | unit      | `cargo test -p app_lib project_sync` | ❌ W0       | ⬜ pending |
-| 02-01-02 | 01   | 1    | ASGN-03     | —          | N/A             | unit      | `cargo test -p app_lib project_sync` | ❌ W0       | ⬜ pending |
-| 02-01-03 | 01   | 1    | ASGN-05     | —          | N/A             | unit      | `cargo test -p app_lib project_sync` | ❌ W0       | ⬜ pending |
-| 02-01-04 | 01   | 1    | SYNC-04     | —          | N/A             | unit      | `cargo test -p app_lib project_sync` | ❌ W0       | ⬜ pending |
-| 02-01-05 | 01   | 1    | INFR-01     | —          | N/A             | unit      | `cargo test -p app_lib project_sync` | ❌ W0       | ⬜ pending |
-| 02-01-06 | 01   | 1    | INFR-02     | —          | N/A             | unit      | `cargo test -p app_lib project_sync` | ❌ W0       | ⬜ pending |
+| Task ID  | Plan | Wave | Requirement | Test Type | Automated Command                    | Test(s)                                                                                             | Status                       |
+| -------- | ---- | ---- | ----------- | --------- | ------------------------------------ | --------------------------------------------------------------------------------------------------- | ---------------------------- |
+| 02-01-01 | 01   | 1    | ASGN-02     | unit      | `cargo test -p app_lib project_sync` | `assign_creates_symlink`, `assign_stores_hash_for_copy`, `assign_records_error_on_sync_failure`     | ✅ green                     |
+| 02-01-02 | 01   | 1    | ASGN-03     | unit      | `cargo test -p app_lib project_sync` | `unassign_removes_symlink`, `unassign_target_not_found_cleans_db`                                   | ✅ green                     |
+| 02-01-03 | 01   | 1    | ASGN-05     | unit      | `cargo test -p app_lib project_sync` | `global_and_project_sync_independent`                                                               | ✅ green                     |
+| 02-01-04 | 01   | 1    | SYNC-04     | unit      | `cargo test -p app_lib project_sync` | `staleness_detected_for_copy`, `staleness_skipped_for_symlink`, `staleness_source_missing_no_crash` | ✅ green                     |
+| 02-01-05 | 01   | 1    | INFR-01     | manual    | N/A — requires cross-mount           | `assign_stores_hash_for_copy` (partial: copy-mode path only)                                        | ✅ green (automated portion) |
+| 02-01-06 | 01   | 1    | INFR-02     | unit      | `cargo test -p app_lib project_sync` | `sync_serialization`                                                                                | ✅ green                     |
 
 _Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky_
 
@@ -51,8 +52,8 @@ _Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky_
 
 ## Wave 0 Requirements
 
-- [ ] `src-tauri/src/core/tests/project_sync.rs` — test module for project sync operations
-- [ ] Test fixtures using `tempfile` crate for isolated filesystem scenarios
+- [x] `src-tauri/src/core/tests/project_sync.rs` — test module for project sync operations (13 tests)
+- [x] Test fixtures using `tempfile` crate for isolated filesystem scenarios
 
 _Existing test infrastructure (tempfile, mockito, cargo test) covers framework needs._
 
@@ -69,11 +70,24 @@ _Existing test infrastructure (tempfile, mockito, cargo test) covers framework n
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 30s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have automated verify or justified Manual-Only entry
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 30s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** validated
+
+---
+
+## Validation Audit 2026-04-07
+
+| Metric                | Count                |
+| --------------------- | -------------------- |
+| Requirements          | 6                    |
+| Automated (COVERED)   | 5                    |
+| Partial (manual-only) | 1 (INFR-01 cross-fs) |
+| Missing               | 0                    |
+| Total tests           | 13                   |
+| All green             | yes                  |
