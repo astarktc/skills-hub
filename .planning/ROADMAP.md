@@ -73,7 +73,11 @@ Plans:
 3. Frontend can invoke "Sync Project" to re-sync all assignments for one project
 4. Frontend can invoke "Sync All" to re-sync all assignments across all projects
 
-**Plans**: TBD
+**Plans:** 1 plan
+
+Plans:
+
+- [ ] 03-01-PLAN.md -- bulk_assign_skill command, error prefix infrastructure (DUPLICATE_PROJECT|, ASSIGNMENT_EXISTS|, NOT_FOUND|), TypeScript DTO types, tests
 
 ### Phase 4: Frontend Component Tree
 
@@ -113,6 +117,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | -------------------------- | -------------- | ----------- | --------- |
 | 1. Data Foundation         | 0/2            | Not started | -         |
 | 2. Sync Logic              | 0/2            | Not started | -         |
-| 3. IPC Commands            | 0/0            | Not started | -         |
+| 3. IPC Commands            | 0/1            | Not started | -         |
 | 4. Frontend Component Tree | 0/0            | Not started | -         |
 | 5. Edge Cases and Polish   | 0/0            | Not started | -         |
