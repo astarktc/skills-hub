@@ -626,3 +626,178 @@ fn sync_serialization() {
     // Final counter should be 0
     assert_eq!(concurrent.load(Ordering::SeqCst), 0, "all done");
 }
+
+#[test]
+fn bulk_assign_to_multiple_tools() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    let skill_dir = make_skill_dir(tmpdir.path(), "bulk-skill");
+    let project_dir = tmpdir.path().join("bulk-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "bulk-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    // Configure two tools for the project
+    use crate::core::skill_store::ProjectToolRecord;
+    store
+        .add_project_tool(&ProjectToolRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id: project.id.clone(),
+            tool: "claude_code".to_string(),
+        })
+        .unwrap();
+    store
+        .add_project_tool(&ProjectToolRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id: project.id.clone(),
+            tool: "cursor".to_string(),
+        })
+        .unwrap();
+
+    let tools = store.list_project_tools(&project.id).unwrap();
+    assert_eq!(tools.len(), 2);
+
+    // Simulate bulk assign: iterate tools, call assign_and_sync for each
+    let now = 3000i64;
+    let mut assigned = Vec::new();
+    let mut failed = Vec::new();
+
+    for tool_record in &tools {
+        // Skip if already assigned
+        if store
+            .get_project_skill_assignment(&project.id, &skill.id, &tool_record.tool)
+            .unwrap()
+            .is_some()
+        {
+            continue;
+        }
+        match project_sync::assign_and_sync(&store, &project, &skill, &tool_record.tool, now) {
+            Ok(record) => assigned.push(record),
+            Err(e) => failed.push(format!("{}: {:#}", tool_record.tool, e)),
+        }
+    }
+
+    assert_eq!(assigned.len(), 2, "both tools should be assigned");
+    assert_eq!(failed.len(), 0, "no failures expected");
+
+    // Verify both targets exist
+    let target_claude = project_dir.join(".claude/skills/bulk-skill");
+    let target_cursor = project_dir.join(".cursor/skills/bulk-skill");
+    assert!(target_claude.exists(), "claude target should exist");
+    assert!(target_cursor.exists(), "cursor target should exist");
+}
+
+#[test]
+fn bulk_assign_skips_already_assigned() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    let skill_dir = make_skill_dir(tmpdir.path(), "skip-skill");
+    let project_dir = tmpdir.path().join("skip-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "skip-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    // Configure one tool
+    use crate::core::skill_store::ProjectToolRecord;
+    store
+        .add_project_tool(&ProjectToolRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id: project.id.clone(),
+            tool: "claude_code".to_string(),
+        })
+        .unwrap();
+
+    // Pre-assign the skill to claude_code
+    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000)
+        .expect("initial assign");
+
+    // Now simulate bulk assign -- should skip the already-assigned tool
+    let tools = store.list_project_tools(&project.id).unwrap();
+    let mut assigned_count = 0;
+    for tool_record in &tools {
+        if store
+            .get_project_skill_assignment(&project.id, &skill.id, &tool_record.tool)
+            .unwrap()
+            .is_some()
+        {
+            continue; // Already assigned -- skip
+        }
+        project_sync::assign_and_sync(&store, &project, &skill, &tool_record.tool, 3000)
+            .expect("assign");
+        assigned_count += 1;
+    }
+
+    assert_eq!(assigned_count, 0, "no new assignments -- already assigned");
+
+    // Verify only one assignment exists in DB
+    let assignments = store.list_project_skill_assignments(&project.id).unwrap();
+    assert_eq!(assignments.len(), 1, "still only one assignment");
+}
+
+#[test]
+fn bulk_assign_continues_on_error() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    let project_dir = tmpdir.path().join("bulk-err-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    // Create a real skill dir for symlink-capable tools
+    let skill_dir = make_skill_dir(tmpdir.path(), "partial-skill");
+
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "partial-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    // Configure two tools: claude_code (symlink, will work) and cursor (copy, will work)
+    use crate::core::skill_store::ProjectToolRecord;
+    store
+        .add_project_tool(&ProjectToolRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id: project.id.clone(),
+            tool: "claude_code".to_string(),
+        })
+        .unwrap();
+    store
+        .add_project_tool(&ProjectToolRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id: project.id.clone(),
+            tool: "cursor".to_string(),
+        })
+        .unwrap();
+
+    // Assign claude_code first (will succeed via symlink)
+    let r1 = project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 3000)
+        .expect("claude_code assign");
+    assert_eq!(r1.status, "synced");
+
+    // Delete source to cause cursor (copy mode) to fail on resync
+    fs::remove_dir_all(&skill_dir).expect("remove source");
+
+    // Now try to assign cursor -- it will fail because source is gone and cursor uses copy mode
+    let r2 = project_sync::assign_and_sync(&store, &project, &skill, "cursor", 3000);
+    let record = r2.expect("assign_and_sync returns Ok even on sync failure");
+    assert_eq!(
+        record.status, "error",
+        "cursor should fail since source is gone"
+    );
+
+    // The point: claude_code succeeded first, cursor failed, both have DB records
+    let assignments = store.list_project_skill_assignments(&project.id).unwrap();
+    assert_eq!(assignments.len(), 2, "both tools have assignment records");
+}
