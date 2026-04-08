@@ -207,3 +207,64 @@ pub async fn list_project_skill_assignments(
     .map_err(|e| e.to_string())?
     .map_err(format_anyhow_error)
 }
+
+#[derive(serde::Serialize, Clone)]
+pub struct ResyncSummaryDto {
+    pub project_id: String,
+    pub synced: usize,
+    pub failed: usize,
+    pub errors: Vec<String>,
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn resync_project(
+    store: State<'_, SkillStore>,
+    sync_mutex: State<'_, SyncMutex>,
+    projectId: String,
+) -> Result<ResyncSummaryDto, String> {
+    let store = store.inner().clone();
+    let mutex = sync_mutex.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
+        let now = now_ms();
+        let summary = project_sync::resync_project(&store, &projectId, now)?;
+        Ok::<_, anyhow::Error>(ResyncSummaryDto {
+            project_id: summary.project_id,
+            synced: summary.synced,
+            failed: summary.failed,
+            errors: summary.errors,
+        })
+    })
+    .await
+    .map_err(|e| format!("{}", e))?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn resync_all_projects(
+    store: State<'_, SkillStore>,
+    sync_mutex: State<'_, SyncMutex>,
+) -> Result<Vec<ResyncSummaryDto>, String> {
+    let store = store.inner().clone();
+    let mutex = sync_mutex.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
+        let now = now_ms();
+        let summaries = project_sync::resync_all_projects(&store, now)?;
+        Ok::<_, anyhow::Error>(
+            summaries
+                .into_iter()
+                .map(|s| ResyncSummaryDto {
+                    project_id: s.project_id,
+                    synced: s.synced,
+                    failed: s.failed,
+                    errors: s.errors,
+                })
+                .collect(),
+        )
+    })
+    .await
+    .map_err(|e| format!("{}", e))?
+    .map_err(format_anyhow_error)
+}

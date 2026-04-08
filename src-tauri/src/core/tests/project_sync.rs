@@ -562,3 +562,67 @@ fn global_and_project_sync_independent() {
     let project_after = store.list_project_skill_assignments(&project.id).unwrap();
     assert_eq!(project_after.len(), 0, "project assignment removed");
 }
+
+#[test]
+fn sync_serialization() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    // Set up project and skill for both threads
+    let skill_dir = make_skill_dir(tmpdir.path(), "serial-skill");
+    let project_dir = tmpdir.path().join("serial-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "serial-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    // Assign first so resync has something to work with
+    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000)
+        .expect("assign should succeed");
+
+    // Shared mutex (same type as SyncMutex.0)
+    let mutex = Arc::new(std::sync::Mutex::new(()));
+    // Counter tracking concurrent executions -- must never exceed 1
+    let concurrent = Arc::new(AtomicU32::new(0));
+
+    let store1 = store.clone();
+    let pid1 = project.id.clone();
+    let mutex1 = mutex.clone();
+    let concurrent1 = concurrent.clone();
+
+    let store2 = store.clone();
+    let pid2 = project.id.clone();
+    let mutex2 = mutex.clone();
+    let concurrent2 = concurrent.clone();
+
+    let t1 = std::thread::spawn(move || {
+        let _lock = mutex1.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = concurrent1.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(prev, 0, "thread 1: no concurrent access allowed");
+        // Do sync work
+        let _ = project_sync::resync_project(&store1, &pid1, 4000);
+        concurrent1.fetch_sub(1, Ordering::SeqCst);
+    });
+
+    let t2 = std::thread::spawn(move || {
+        let _lock = mutex2.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = concurrent2.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(prev, 0, "thread 2: no concurrent access allowed");
+        // Do sync work
+        let _ = project_sync::resync_project(&store2, &pid2, 5000);
+        concurrent2.fetch_sub(1, Ordering::SeqCst);
+    });
+
+    t1.join().expect("thread 1 should complete");
+    t2.join().expect("thread 2 should complete");
+
+    // Final counter should be 0
+    assert_eq!(concurrent.load(Ordering::SeqCst), 0, "all done");
+}

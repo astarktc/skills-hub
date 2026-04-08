@@ -114,6 +114,8 @@ pub fn run() {
             commands::projects::add_project_skill_assignment,
             commands::projects::remove_project_skill_assignment,
             commands::projects::list_project_skill_assignments,
+            commands::projects::resync_project,
+            commands::projects::resync_all_projects,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
