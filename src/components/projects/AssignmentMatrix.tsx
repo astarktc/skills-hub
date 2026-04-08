@@ -204,6 +204,14 @@ type MatrixRowProps = {
   t: TFunction;
 };
 
+function setsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const v of a) {
+    if (!b.has(v)) return false;
+  }
+  return true;
+}
+
 const MatrixRow = memo(
   ({
     skill,
@@ -280,8 +288,30 @@ const MatrixRow = memo(
       </tr>
     );
   },
+  (prev, next) => {
+    if (prev.skill !== next.skill) return false;
+    if (prev.tools !== next.tools) return false;
+    if (prev.assignments !== next.assignments) return false;
+    if (prev.onToggleAssignment !== next.onToggleAssignment) return false;
+    if (prev.onBulkAssign !== next.onBulkAssign) return false;
+    if (prev.t !== next.t) return false;
+    return setsEqual(prev.pendingCells, next.pendingCells);
+  },
 );
 
 MatrixRow.displayName = "MatrixRow";
 
-export default memo(AssignmentMatrix);
+export default memo(AssignmentMatrix, (prev, next) => {
+  if (prev.project !== next.project) return false;
+  if (prev.tools !== next.tools) return false;
+  if (prev.assignments !== next.assignments) return false;
+  if (prev.skills !== next.skills) return false;
+  if (prev.matrixLoading !== next.matrixLoading) return false;
+  if (prev.onToggleAssignment !== next.onToggleAssignment) return false;
+  if (prev.onBulkAssign !== next.onBulkAssign) return false;
+  if (prev.onResyncProject !== next.onResyncProject) return false;
+  if (prev.onResyncAll !== next.onResyncAll) return false;
+  if (prev.onConfigureTools !== next.onConfigureTools) return false;
+  if (prev.t !== next.t) return false;
+  return setsEqual(prev.pendingCells, next.pendingCells);
+});
