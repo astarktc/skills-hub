@@ -78,8 +78,6 @@ jobs:
           choco install -y strawberryperl
           # Add Strawberry Perl to PATH
           export PATH="/c/Strawberry/perl/bin:$PATH"
-          # WebView2 Runtime is pre-installed on windows-2022 runner
-          rustup target add ${{ matrix.target }}
 
       - name: Install Linux build deps
         if: matrix.os == 'ubuntu-22.04'
@@ -242,6 +240,7 @@ jobs:
           ls -la src-tauri/target/${{ matrix.target }}/release/bundle/ || true
 
       - name: Verify codesign (optional)
+        if: matrix.os == 'macos-14'
         shell: bash
         run: |
           set -euo pipefail
@@ -441,7 +440,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/extract-changelog.mjs "$TAG" CHANGELOG.md > release-notes.md
+          if node scripts/extract-changelog.mjs "$TAG" CHANGELOG.md > release-notes.md 2>/dev/null; then
+            echo "Extracted release notes for $TAG from CHANGELOG.md"
+          else
+            echo "No CHANGELOG entry for $TAG — using default release notes"
+            echo "Release $TAG" > release-notes.md
+          fi
           {
             echo
             echo '**Windows Note:** Windows SmartScreen may show a warning during installation. This is normal for unsigned executables. The application is safe to use.'
@@ -532,7 +536,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Skills Hub ${{ github.ref_name }}
+          name: Project Skills Hub ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, '-') }}
           body_path: release-notes.md
           files: |

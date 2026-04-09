@@ -4,33 +4,53 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-04-09
+
+### Added
+
+- **Per-project skill distribution**: Register project directories, assign specific skills to specific projects, and sync via symlinks so AI tools only load relevant skills per project.
+- **Project management UI**: Full project CRUD with assignment matrix, tool configuration, and sync status.
+- **Linux x86_64 release**: `.deb` and `.AppImage` installers with auto-update support.
+
+### Changed
+
+- **App identifier**: Rebranded from `com.qufei1993.skillshub` to `com.skillshub.app` (fork-friendly, generic). Existing databases auto-migrate via legacy identifier detection.
+- **Upstream URLs**: All functional references (updater endpoint, release notes, featured skills catalog) now point to `astarktc/skills-hub`.
+- **Updater signing key**: New signing keypair for release artifact verification.
+
 ## [0.4.2] - 2026-04-06
 
 ### Fixed
+
 - **New tools modal style**: "New tools detected" dialog now uses consistent header/footer structure (`modal-header` + `modal-footer`) matching all other modals, fixing missing padding and border separators ([#46](https://github.com/qufei1993/skills-hub/issues/46)).
 - **Git skill name derivation**: Installing a Git skill from a repo root (subpath `"."`) now correctly derives the name from the repository URL instead of using `"."` as the display name.
 
 ## [0.4.1] - 2026-03-21
 
 ### Added
+
 - **Frontmatter metadata table**: Markdown files with YAML frontmatter now render a GitHub-style metadata table at the top of the skill detail view.
 
 ## [0.4.0] - 2026-03-20
 
 ### Added
+
 - **In-app update check**: Check for updates directly within Settings, download and install without leaving the app ([#33](https://github.com/qufei1993/skills-hub/issues/33)).
 - **QoderWork tool adapter**: Support for QoderWork desktop AI agent (`~/.qoderwork/skills/`) ([#34](https://github.com/qufei1993/skills-hub/issues/34)).
 
 ### Changed
+
 - **Settings promoted to full page**: Settings moved from a modal dialog to a dedicated page view, consistent with My Skills / Explore navigation pattern.
 - **Curated skills aggregation**: Explore page now sources skills from a curated list of 7 high-quality repositories.
 
 ### Fixed
+
 - Language toggle briefly flashing "Installing Skills..." loading overlay on Explore page.
 
 ## [0.3.0] - 2026-03-15
 
 ### Added
+
 - **Explore page**: Explore promoted from a modal tab to an independent page with My Skills / Explore top-level navigation.
 - **Featured skills**: Explore page displays curated skills from ClawHub API (updated daily via GitHub Actions) with frontend filtering and one-click install.
 - **Online skill search**: Real-time search via skills.sh API (triggered at 2+ characters, 500ms debounce), results deduplicated against the featured list and shown in separate sections.
@@ -40,6 +60,7 @@ All notable changes to this project will be documented in this file.
 - **MoltBot tool adapter**: Added standalone MoltBot tool support after OpenClaw rename/split.
 
 ### Fixed
+
 - Git install deriving skill name as "skills" when URL points to a `skills/` subdirectory, causing duplicated sync paths ([#28](https://github.com/qufei1993/skills-hub/issues/28)).
 - GitHub API rate-limit errors now display the exact reset time instead of a generic message.
 - Windows "Access Denied" OS error 5 when syncing to tools ([#20](https://github.com/qufei1993/skills-hub/issues/20)).
@@ -48,6 +69,7 @@ All notable changes to this project will be documented in this file.
 - OpenClaw path updated from `.moltbot/skills` to `.openclaw/skills` ([#29](https://github.com/qufei1993/skills-hub/issues/29)).
 
 ### Changed
+
 - My Skills list: tool badges now only show synced tools, collapsing to `+N more` beyond 5.
 - Manual Add modal simplified to Local Directory / Git Repository tabs only (Explore tab removed).
 - Multi-skill repo online install now auto-matches target skill (exact → unique-contains → fallback to manual picker).
@@ -55,6 +77,7 @@ All notable changes to this project will be documented in this file.
 ## [0.2.0] - 2026-02-01
 
 ### Added
+
 - **Windows platform support**: Full support for Windows build and release (thanks @jrtxio [PR#6](https://github.com/qufei1993/skills-hub/pull/6)).
 - Support and display for many new tools (e.g., Kimi Code CLI, Augment, OpenClaw, Cline, CodeBuddy, Command Code, Continue, Crush, Junie, iFlow CLI, Kiro CLI, Kode, MCPJam, Mistral Vibe, Mux, OpenClaude IDE, OpenHands, Pi, Qoder, Qwen Code, Trae/Trae CN, Zencoder, Neovate, Pochi, AdaL).
 - UI confirmation and linked selection for tools that share the same global skills directory.
@@ -62,6 +85,7 @@ All notable changes to this project will be documented in this file.
 - New local import commands for listing candidates and installing a selected subpath with SKILL.md validation.
 
 ### Changed
+
 - Antigravity global skills directory updated to `~/.gemini/antigravity/global_skills`.
 - OpenCode global skills directory corrected to `~/.config/opencode/skills`.
 - Tool status now includes `skills_dir`; frontend tool list/sync is driven by backend data and deduped by directory.
@@ -71,6 +95,7 @@ All notable changes to this project will be documented in this file.
 ## [0.1.1] - 2026-01-26
 
 ### Changed
+
 - GitHub Actions release workflow for macOS packaging and uploading `updater.json` (`.github/workflows/release.yml`).
 - Cursor sync now always uses directory copy due to Cursor not following symlinks when discovering skills: https://forum.cursor.com/t/cursor-doesnt-follow-symlinks-to-discover-skills/149693/4
 - Managed skill update now re-syncs copy-mode targets using copy-only overwrite, and forces Cursor targets to copy to avoid accidental relinking.
@@ -78,6 +103,7 @@ All notable changes to this project will be documented in this file.
 ## [0.1.0] - 2026-01-25
 
 ### Added
+
 - Initial release of Skills Hub desktop app (Tauri + React).
 - Central repository for Skills; sync to multiple AI coding tools (symlink/junction preferred, copy fallback).
 - Local import from folders.
@@ -89,8 +115,10 @@ All notable changes to this project will be documented in this file.
 - Git cache with cleanup (days) and freshness window (seconds).
 
 ### Build & Release
+
 - Local packaging scripts for macOS (dmg), Windows (msi/nsis), Linux (deb/appimage).
 - GitHub Actions build validation and tag-based draft releases (release notes pulled from `CHANGELOG.md`).
 
 ### Performance
+
 - Git import and batch install optimizations: cached clones reduce repeated fetches; timeouts and non‑interactive git improve stability.
