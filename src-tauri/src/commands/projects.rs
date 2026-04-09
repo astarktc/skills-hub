@@ -426,44 +426,54 @@ pub async fn update_project_gitignore(
 
         let marker = "# Skills Hub";
 
-        // Helper: remove the Skills Hub block from content.
-        // The block is: an optional preceding blank line, the marker comment line,
+        // Helper: remove ALL Skills Hub blocks from content.
+        // A block is: an optional preceding blank line, the marker comment line,
         // and all immediately following lines that start with '/' (our gitignore
-        // patterns). Stops at the first non-pattern line to avoid draining
-        // unrelated content that happens to follow without a blank separator.
+        // patterns). Handles multiple blocks if present (e.g. from double-write).
         let remove_block = |content: &str| -> String {
-            let mut lines: Vec<&str> = content.lines().collect();
-            let mut start = None;
-            let mut end = None;
+            let lines: Vec<&str> = content.lines().collect();
+            let mut result: Vec<&str> = Vec::new();
+            let mut in_block = false;
             for (i, line) in lines.iter().enumerate() {
                 if line.contains(marker) {
-                    // Include preceding blank line if present
-                    start = Some(if i > 0 && lines[i - 1].trim().is_empty() {
-                        i - 1
-                    } else {
-                        i
-                    });
-                }
-                if start.is_some() && end.is_none() && i > start.unwrap() {
-                    // Block continues while lines are our gitignore patterns (start with '/')
-                    if line.trim().is_empty() || !line.starts_with('/') {
-                        end = Some(i);
-                        break;
+                    in_block = true;
+                    // Remove preceding blank line if we just pushed one
+                    if let Some(last) = result.last() {
+                        if last.trim().is_empty() {
+                            result.pop();
+                        }
                     }
+                    continue;
                 }
+                if in_block {
+                    // Block continues while lines are our gitignore patterns (start with '/')
+                    // or are blank lines between patterns within the block
+                    if line.starts_with('/') {
+                        continue;
+                    }
+                    // A trailing blank line right after the last pattern belongs to the block
+                    if line.trim().is_empty() {
+                        // Peek ahead: if the next non-empty line is also a pattern or marker, skip
+                        // Otherwise this blank separates from unrelated content — keep it
+                        let next_non_empty = lines[i + 1..].iter().find(|l| !l.trim().is_empty());
+                        if let Some(next) = next_non_empty {
+                            if next.starts_with('/') || next.contains(marker) {
+                                continue;
+                            }
+                        } else {
+                            // Blank line at EOF after block — skip it
+                            continue;
+                        }
+                    }
+                    in_block = false;
+                }
+                result.push(line);
             }
-            // If we found start but not end, the block runs to EOF
-            if start.is_some() && end.is_none() {
-                end = Some(lines.len());
-            }
-            if let (Some(s), Some(e)) = (start, end) {
-                lines.drain(s..e);
-            }
-            let result = lines.join("\n");
-            if result.is_empty() {
-                result
+            let joined = result.join("\n");
+            if joined.is_empty() {
+                joined
             } else {
-                format!("{}\n", result)
+                format!("{}\n", joined)
             }
         };
 
