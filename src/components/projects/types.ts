@@ -21,6 +21,7 @@ export type ProjectSkillAssignmentDto = {
   id: string;
   project_id: string;
   skill_id: string;
+  skill_name: string;
   tool: string;
   mode: string;
   status: string;

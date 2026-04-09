@@ -34,6 +34,7 @@ pub struct ProjectSkillAssignmentDto {
     pub id: String,
     pub project_id: String,
     pub skill_id: String,
+    pub skill_name: String,
     pub tool: String,
     pub mode: String,
     pub status: String,
@@ -130,7 +131,7 @@ pub fn remove_tool_with_cleanup(store: &SkillStore, project_id: &str, tool: &str
                     let target = project_sync::resolve_project_sync_target(
                         Path::new(&project.path),
                         adapter.relative_skills_dir,
-                        &assignment.skill_id, // Use skill_id as fallback name
+                        &assignment.skill_name, // Use stored skill name, not UUID
                     );
                     if target.exists() || target.symlink_metadata().is_ok() {
                         if let Err(e) = sync_engine::remove_path_any(&target) {
@@ -190,13 +191,28 @@ pub fn remove_project_with_cleanup(store: &SkillStore, project_id: &str) -> Resu
                     }
                 }
                 Ok(None) => {
-                    log::warn!(
-                        "skill {} not found during project cleanup; \
-                         orphaned symlink may remain in project {:?} for tool {}",
-                        assignment.skill_id,
-                        project.path,
-                        assignment.tool
-                    );
+                    // Use stored skill_name for filesystem cleanup when skill record is gone
+                    if let Some(adapter) = tool_adapters::adapter_by_key(&assignment.tool) {
+                        let project_path = Path::new(&project.path);
+                        let target = project_path
+                            .join(adapter.relative_skills_dir)
+                            .join(&assignment.skill_name);
+                        if !assignment.skill_name.is_empty()
+                            && (target.exists() || target.symlink_metadata().is_ok())
+                        {
+                            if let Err(e) = sync_engine::remove_path_any(&target) {
+                                log::warn!("failed to remove orphaned target {:?}: {}", target, e);
+                            }
+                        } else {
+                            log::warn!(
+                                "skill {} not found during project cleanup; \
+                                 orphaned symlink may remain in project {:?} for tool {}",
+                                assignment.skill_id,
+                                project.path,
+                                assignment.tool
+                            );
+                        }
+                    }
                 }
                 Err(e) => {
                     log::warn!(

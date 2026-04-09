@@ -8,7 +8,7 @@ const DB_FILE_NAME: &str = "skills_hub.db";
 const LEGACY_APP_IDENTIFIERS: &[&str] = &["com.tauri.dev", "com.tauri.dev.skillshub"];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS project_skill_assignments (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
   skill_id TEXT NOT NULL,
+  skill_name TEXT NOT NULL DEFAULT '',
   tool TEXT NOT NULL,
   mode TEXT NOT NULL,
   status TEXT NOT NULL,
@@ -152,6 +153,7 @@ pub struct ProjectSkillAssignmentRecord {
     pub id: String,
     pub project_id: String,
     pub skill_id: String,
+    pub skill_name: String,
     pub tool: String,
     pub mode: String,
     pub status: String,
@@ -200,6 +202,18 @@ impl SkillStore {
                 if user_version < 5 {
                     conn.execute_batch(
                         "ALTER TABLE project_skill_assignments ADD COLUMN content_hash TEXT NULL;",
+                    )?;
+                }
+                if user_version < 6 {
+                    conn.execute_batch(
+                        "ALTER TABLE project_skill_assignments ADD COLUMN skill_name TEXT NOT NULL DEFAULT '';",
+                    )?;
+                    // Backfill skill_name from the skills table for existing rows
+                    conn.execute_batch(
+                        "UPDATE project_skill_assignments SET skill_name = COALESCE(
+                            (SELECT name FROM skills WHERE skills.id = project_skill_assignments.skill_id),
+                            ''
+                        ) WHERE skill_name = '';",
                     )?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -549,7 +563,7 @@ impl SkillStore {
     ) -> Result<Vec<ProjectSkillAssignmentRecord>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, project_id, skill_id, tool, mode, status, last_error, synced_at, content_hash, created_at
+                "SELECT id, project_id, skill_id, skill_name, tool, mode, status, last_error, synced_at, content_hash, created_at
                  FROM project_skill_assignments
                  WHERE skill_id = ?1",
             )?;
@@ -558,13 +572,14 @@ impl SkillStore {
                     id: row.get(0)?,
                     project_id: row.get(1)?,
                     skill_id: row.get(2)?,
-                    tool: row.get(3)?,
-                    mode: row.get(4)?,
-                    status: row.get(5)?,
-                    last_error: row.get(6)?,
-                    synced_at: row.get(7)?,
-                    content_hash: row.get(8)?,
-                    created_at: row.get(9)?,
+                    skill_name: row.get(3)?,
+                    tool: row.get(4)?,
+                    mode: row.get(5)?,
+                    status: row.get(6)?,
+                    last_error: row.get(7)?,
+                    synced_at: row.get(8)?,
+                    content_hash: row.get(9)?,
+                    created_at: row.get(10)?,
                 })
             })?;
             let mut items = Vec::new();
@@ -719,12 +734,13 @@ impl SkillStore {
         self.with_conn(|conn| {
             conn.execute(
                 "INSERT INTO project_skill_assignments
-                 (id, project_id, skill_id, tool, mode, status, last_error, synced_at, content_hash, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                 (id, project_id, skill_id, skill_name, tool, mode, status, last_error, synced_at, content_hash, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     record.id,
                     record.project_id,
                     record.skill_id,
+                    record.skill_name,
                     record.tool,
                     record.mode,
                     record.status,
@@ -744,7 +760,7 @@ impl SkillStore {
     ) -> Result<Vec<ProjectSkillAssignmentRecord>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, project_id, skill_id, tool, mode, status, last_error, synced_at, content_hash, created_at
+                "SELECT id, project_id, skill_id, skill_name, tool, mode, status, last_error, synced_at, content_hash, created_at
                  FROM project_skill_assignments
                  WHERE project_id = ?1
                  ORDER BY tool ASC, created_at ASC",
@@ -754,13 +770,14 @@ impl SkillStore {
                     id: row.get(0)?,
                     project_id: row.get(1)?,
                     skill_id: row.get(2)?,
-                    tool: row.get(3)?,
-                    mode: row.get(4)?,
-                    status: row.get(5)?,
-                    last_error: row.get(6)?,
-                    synced_at: row.get(7)?,
-                    content_hash: row.get(8)?,
-                    created_at: row.get(9)?,
+                    skill_name: row.get(3)?,
+                    tool: row.get(4)?,
+                    mode: row.get(5)?,
+                    status: row.get(6)?,
+                    last_error: row.get(7)?,
+                    synced_at: row.get(8)?,
+                    content_hash: row.get(9)?,
+                    created_at: row.get(10)?,
                 })
             })?;
 
@@ -828,7 +845,7 @@ impl SkillStore {
     ) -> Result<Option<ProjectSkillAssignmentRecord>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, project_id, skill_id, tool, mode, status, last_error,
+                "SELECT id, project_id, skill_id, skill_name, tool, mode, status, last_error,
                         synced_at, content_hash, created_at
                  FROM project_skill_assignments
                  WHERE project_id = ?1 AND skill_id = ?2 AND tool = ?3
@@ -840,13 +857,14 @@ impl SkillStore {
                     id: row.get(0)?,
                     project_id: row.get(1)?,
                     skill_id: row.get(2)?,
-                    tool: row.get(3)?,
-                    mode: row.get(4)?,
-                    status: row.get(5)?,
-                    last_error: row.get(6)?,
-                    synced_at: row.get(7)?,
-                    content_hash: row.get(8)?,
-                    created_at: row.get(9)?,
+                    skill_name: row.get(3)?,
+                    tool: row.get(4)?,
+                    mode: row.get(5)?,
+                    status: row.get(6)?,
+                    last_error: row.get(7)?,
+                    synced_at: row.get(8)?,
+                    content_hash: row.get(9)?,
+                    created_at: row.get(10)?,
                 })),
                 None => Ok(None),
             }
@@ -861,7 +879,7 @@ impl SkillStore {
     ) -> Result<Vec<ProjectSkillAssignmentRecord>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, project_id, skill_id, tool, mode, status, last_error, synced_at, content_hash, created_at
+                "SELECT id, project_id, skill_id, skill_name, tool, mode, status, last_error, synced_at, content_hash, created_at
                  FROM project_skill_assignments
                  WHERE project_id = ?1 AND tool = ?2
                  ORDER BY created_at ASC",
@@ -871,13 +889,14 @@ impl SkillStore {
                     id: row.get(0)?,
                     project_id: row.get(1)?,
                     skill_id: row.get(2)?,
-                    tool: row.get(3)?,
-                    mode: row.get(4)?,
-                    status: row.get(5)?,
-                    last_error: row.get(6)?,
-                    synced_at: row.get(7)?,
-                    content_hash: row.get(8)?,
-                    created_at: row.get(9)?,
+                    skill_name: row.get(3)?,
+                    tool: row.get(4)?,
+                    mode: row.get(5)?,
+                    status: row.get(6)?,
+                    last_error: row.get(7)?,
+                    synced_at: row.get(8)?,
+                    content_hash: row.get(9)?,
+                    created_at: row.get(10)?,
                 })
             })?;
 

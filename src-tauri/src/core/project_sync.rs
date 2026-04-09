@@ -40,6 +40,7 @@ pub fn assign_and_sync(
         id: uuid::Uuid::new_v4().to_string(),
         project_id: project.id.clone(),
         skill_id: skill.id.clone(),
+        skill_name: skill.name.clone(),
         tool: tool_key.to_string(),
         mode: "symlink".to_string(),
         status: "pending".to_string(),
