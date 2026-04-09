@@ -40,7 +40,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 - [ ] **INFR-01**: App detects cross-filesystem scenarios (WSL2 ext4-to-NTFS) and auto-falls back to copy mode
 - [ ] **INFR-02**: Sync operations are serialized to prevent race conditions between Sync All and individual toggles
-- [ ] **INFR-03**: App detects orphaned assignments when skills are deleted from central library and marks them as "missing"
+- [ ] **INFR-03**: When a skill is deleted from the central library, all its project assignments and filesystem artifacts are cleaned up (cascade delete)
 - [ ] **INFR-04**: Schema V4 migration adds projects, project_tools, and project_skill_assignments tables with transaction wrapping
 - [ ] **INFR-05**: New Tauri IPC commands are in a separate `commands/projects.rs` module (not in existing `commands/mod.rs`)
 
@@ -49,7 +49,6 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [ ] **UI-01**: Projects tab appears in main navigation alongside existing tabs
 - [ ] **UI-02**: Project list panel (left) with add/remove project actions
 - [ ] **UI-03**: Assignment matrix panel (right) with checkbox grid for selected project
-- [ ] **UI-04**: Sync status bar (bottom) with last sync time and Sync Project / Sync All buttons
 - [ ] **UI-05**: Projects tab uses its own component tree and state (isolated from App.tsx)
 
 ## v2 Requirements
@@ -119,13 +118,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | UI-01       | Phase 4 | Pending |
 | UI-02       | Phase 4 | Pending |
 | UI-03       | Phase 4 | Pending |
-| UI-04       | Phase 4 | Pending |
 | UI-05       | Phase 4 | Pending |
 
 **Coverage:**
 
-- v1 requirements: 27 total
-- Mapped to phases: 27
+- v1 requirements: 26 total
+- Mapped to phases: 26
 - Unmapped: 0
 
 ---
