@@ -36,6 +36,10 @@ jobs:
           - os: windows-2022
             target: aarch64-pc-windows-msvc
             arch: arm64
+          # Linux x86_64
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            arch: x86_64
 
     steps:
       - name: Checkout
@@ -55,7 +59,7 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Add macOS targets
+      - name: Add Rust target
         run: rustup target add ${{ matrix.target }}
 
       - name: Install macOS build deps
@@ -76,6 +80,12 @@ jobs:
           export PATH="/c/Strawberry/perl/bin:$PATH"
           # WebView2 Runtime is pre-installed on windows-2022 runner
           rustup target add ${{ matrix.target }}
+
+      - name: Install Linux build deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglib2.0-dev libgtk-3-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Install frontend deps
         run: npm ci
@@ -219,6 +229,18 @@ jobs:
           echo "=== Build completed ==="
           ls -la src-tauri/target/${{ matrix.target }}/release/bundle/ || true
 
+      - name: Build Tauri App (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== Building Tauri App for Linux ==="
+          echo "Target: ${{ matrix.target }}"
+          echo "Arch: ${{ matrix.arch }}"
+          npm run tauri:build -- --target ${{ matrix.target }} --bundles deb,appimage
+          echo "=== Build completed ==="
+          ls -la src-tauri/target/${{ matrix.target }}/release/bundle/ || true
+
       - name: Verify codesign (optional)
         shell: bash
         run: |
@@ -332,6 +354,68 @@ jobs:
           NEW_EXE="Skills-Hub-${VERSION}-Windows-${ARCH}.exe"
           cp "${EXE}" "release-assets/${NEW_EXE}"
 
+      - name: Prepare Linux Assets
+        if: matrix.os == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p release-assets
+          VERSION="${GITHUB_REF_NAME}"
+          ARCH="${{ matrix.arch }}"
+          TARGET="${{ matrix.target }}"
+
+          BUNDLE_DIRS=(
+            "src-tauri/target/${TARGET}/release/bundle"
+            "src-tauri/target/release/bundle"
+          )
+
+          TAR_GZ=""
+          DEB=""
+          APPIMAGE=""
+          for dir in "${BUNDLE_DIRS[@]}"; do
+            if [ -d "${dir}" ]; then
+              if [ -z "${TAR_GZ}" ]; then
+                TAR_GZ="$(find "${dir}" -type f -name "*.tar.gz" | head -n 1 || true)"
+              fi
+              if [ -z "${DEB}" ]; then
+                DEB="$(find "${dir}" -type f -name "*.deb" | head -n 1 || true)"
+              fi
+              if [ -z "${APPIMAGE}" ]; then
+                APPIMAGE="$(find "${dir}" -type f -name "*.AppImage" | head -n 1 || true)"
+              fi
+            fi
+          done
+
+          if [ -z "${TAR_GZ}" ]; then
+            echo "ERROR: No *.tar.gz updater artifact found (target=${TARGET}, arch=${ARCH})." >&2
+            for dir in "${BUNDLE_DIRS[@]}"; do
+              echo "---- list: ${dir}" >&2
+              ls -la "${dir}" 2>/dev/null || true
+              find "${dir}" -maxdepth 6 -type f 2>/dev/null | head -n 200 >&2 || true
+            done
+            exit 1
+          fi
+
+          if [ ! -f "${TAR_GZ}.sig" ]; then
+            echo "ERROR: No updater signature file: ${TAR_GZ}.sig" >&2
+            exit 1
+          fi
+
+          NEW_TAR_GZ="Skills-Hub-${VERSION}-Linux-${ARCH}.tar.gz"
+          cp "${TAR_GZ}" "release-assets/${NEW_TAR_GZ}"
+          cp "${TAR_GZ}.sig" "release-assets/${NEW_TAR_GZ}.sig"
+
+          if [ -n "${DEB}" ]; then
+            NEW_DEB="Skills-Hub-${VERSION}-Linux-${ARCH}.deb"
+            cp "${DEB}" "release-assets/${NEW_DEB}"
+          fi
+
+          if [ -n "${APPIMAGE}" ]; then
+            NEW_APPIMAGE="Skills-Hub-${VERSION}-Linux-${ARCH}.AppImage"
+            cp "${APPIMAGE}" "release-assets/${NEW_APPIMAGE}"
+          fi
+
       - name: List prepared assets
         shell: bash
         run: ls -la release-assets || true
@@ -339,7 +423,7 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-assets-${{ matrix.arch }}
+          name: release-assets-${{ matrix.target }}
           path: release-assets/*
           if-no-files-found: error
 
@@ -388,6 +472,7 @@ jobs:
 
           mac_arm_url=""; mac_arm_sig=""
           mac_x64_url=""; mac_x64_sig=""
+          linux_x64_url=""; linux_x64_sig=""
 
           ls -la dl || true
 
@@ -402,11 +487,13 @@ jobs:
                 mac_arm_url="$url"; mac_arm_sig="$sig_content";;
               *-macOS-x86_64.tar.gz)
                 mac_x64_url="$url"; mac_x64_sig="$sig_content";;
+              *-Linux-x86_64.tar.gz)
+                linux_x64_url="$url"; linux_x64_sig="$sig_content";;
             esac
           done
 
-          if [ -z "${mac_arm_url:-}" ] && [ -z "${mac_x64_url:-}" ]; then
-            echo "❌ 未找到任何 macOS updater 签名（dl/*.sig）; 请确认构建产物包含 *.tar.gz.sig" >&2
+          if [ -z "${mac_arm_url:-}" ] && [ -z "${mac_x64_url:-}" ] && [ -z "${linux_x64_url:-}" ]; then
+            echo "ERROR: No updater signatures found (dl/*.sig); ensure build artifacts include *.tar.gz.sig" >&2
             exit 1
           fi
 
@@ -436,6 +523,11 @@ jobs:
             if [ -n "${mac_x64_url:-}" ] && [ -n "${mac_x64_sig:-}" ]; then
               [ $first -eq 0 ] && echo ','
               echo "    \"darwin-x86_64\": {\"signature\": \"$mac_x64_sig\", \"url\": \"$mac_x64_url\"}"
+              first=0
+            fi
+            if [ -n "${linux_x64_url:-}" ] && [ -n "${linux_x64_sig:-}" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-x86_64\": {\"signature\": \"$linux_x64_sig\", \"url\": \"$linux_x64_url\"}"
               first=0
             fi
             echo '  }'
