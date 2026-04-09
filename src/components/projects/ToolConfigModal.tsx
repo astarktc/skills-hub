@@ -42,8 +42,13 @@ const ToolConfigModalInner = ({
   const [selectedTools, setSelectedTools] = useState<Set<string>>(() =>
     buildInitialSelection(toolStatus, currentTools),
   );
+  const [detectedOnly, setDetectedOnly] = useState(true);
 
-  const tools = toolStatus?.tools ?? [];
+  const allTools = toolStatus?.tools ?? [];
+  const installed = toolStatus?.installed ?? [];
+  const tools = detectedOnly
+    ? allTools.filter((tool) => installed.includes(tool.key))
+    : allTools;
 
   const handleToggle = (key: string) => {
     setSelectedTools((prev) => {
@@ -82,6 +87,14 @@ const ToolConfigModalInner = ({
         </div>
         <div className="modal-body">
           <p className="helper-text">{t("projects.toolConfigDesc")}</p>
+          <label className="tool-filter-toggle">
+            <input
+              type="checkbox"
+              checked={detectedOnly}
+              onChange={() => setDetectedOnly((v) => !v)}
+            />
+            {t("projects.toolConfigDetectedOnly")}
+          </label>
           <div className="tool-pick-list">
             {tools.map((tool) => (
               <div key={tool.key} className="pick-item">

@@ -2701,6 +2701,23 @@
   flex-direction: column;
   gap: 4px;
   margin-top: 12px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.tool-filter-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.tool-filter-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-primary);
 }
 
 .pick-item {

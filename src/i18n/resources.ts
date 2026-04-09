@@ -347,6 +347,7 @@ export const resources = {
         toolConfigDesc:
           "Select which AI tools to manage for this project. Installed tools are pre-selected.",
         toolConfigConfirm: "Save Tools",
+        toolConfigDetectedOnly: "Show detected tools only",
         removeTitle: "Remove Project",
         removeBody:
           'Remove "{{name}}" from Skills Hub? This will delete all synced skill symlinks and copies from this project\'s tool directories.',
