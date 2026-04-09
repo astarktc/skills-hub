@@ -403,7 +403,7 @@ function App() {
           // Fetch full release notes from GitHub API
           try {
             const res = await fetch(
-              `https://api.github.com/repos/qufei1993/skills-hub/releases/tags/v${update.version}`,
+              `https://api.github.com/repos/astarktc/skills-hub/releases/tags/v${update.version}`,
             );
             if (res.ok) {
               const data = await res.json();

@@ -1,12 +1,3 @@
-# Requirements Archive: v1.0 Per-Project Skill Distribution
-
-**Archived:** 2026-04-09
-**Status:** SHIPPED
-
-For current requirements, see `.planning/REQUIREMENTS.md`.
-
----
-
 # Requirements: Skills Hub -- Per-Project Skill Distribution
 
 **Defined:** 2026-04-07
