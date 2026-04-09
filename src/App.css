@@ -2938,3 +2938,44 @@
   white-space: nowrap;
   border-width: 0;
 }
+
+.auto-sync-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.auto-sync-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
+.auto-sync-label {
+  color: var(--text-secondary);
+}
+
+.unsync-all-btn {
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.matrix-cell.missing {
+  background: var(--danger-soft-bg-strong);
+}
+
+.card-btn.secondary-action {
+  color: var(--text-tertiary);
+}
+.card-btn.secondary-action:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-element);
+}
+.card-btn.secondary-action:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}

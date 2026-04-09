@@ -1,29 +1,38 @@
-import { memo, useState } from 'react'
-import { Box, Copy, Folder, Github, RefreshCw, Trash2 } from 'lucide-react'
-import { toast } from 'sonner'
-import type { TFunction } from 'i18next'
-import type { ManagedSkill, ToolOption } from './types'
+import { memo, useState } from "react";
+import {
+  Box,
+  Copy,
+  Folder,
+  Github,
+  RefreshCw,
+  Trash2,
+  Unlink,
+} from "lucide-react";
+import { toast } from "sonner";
+import type { TFunction } from "i18next";
+import type { ManagedSkill, ToolOption } from "./types";
 
 type GithubInfo = {
-  label: string
-  href: string
-}
+  label: string;
+  href: string;
+};
 
 type SkillCardProps = {
-  skill: ManagedSkill
-  installedTools: ToolOption[]
-  loading: boolean
-  getGithubInfo: (url: string | null | undefined) => GithubInfo | null
-  getSkillSourceLabel: (skill: ManagedSkill) => string
-  formatRelative: (ms: number | null | undefined) => string
-  onUpdate: (skill: ManagedSkill) => void
-  onDelete: (skillId: string) => void
-  onToggleTool: (skill: ManagedSkill, toolId: string) => void
-  onOpenDetail: (skill: ManagedSkill) => void
-  t: TFunction
-}
+  skill: ManagedSkill;
+  installedTools: ToolOption[];
+  loading: boolean;
+  getGithubInfo: (url: string | null | undefined) => GithubInfo | null;
+  getSkillSourceLabel: (skill: ManagedSkill) => string;
+  formatRelative: (ms: number | null | undefined) => string;
+  onUpdate: (skill: ManagedSkill) => void;
+  onDelete: (skillId: string) => void;
+  onToggleTool: (skill: ManagedSkill, toolId: string) => void;
+  onUnsync: (skillId: string) => void;
+  onOpenDetail: (skill: ManagedSkill) => void;
+  t: TFunction;
+};
 
-const MAX_VISIBLE_BADGES = 5
+const MAX_VISIBLE_BADGES = 5;
 
 const SkillCard = ({
   skill,
@@ -35,46 +44,50 @@ const SkillCard = ({
   onUpdate,
   onDelete,
   onToggleTool,
+  onUnsync,
   onOpenDetail,
   t,
 }: SkillCardProps) => {
-  const typeKey = skill.source_type.toLowerCase()
-  const iconNode = typeKey.includes('git') ? (
+  const typeKey = skill.source_type.toLowerCase();
+  const iconNode = typeKey.includes("git") ? (
     <Github size={20} />
-  ) : typeKey.includes('local') ? (
+  ) : typeKey.includes("local") ? (
     <Folder size={20} />
   ) : (
     <Box size={20} />
-  )
-  const github = getGithubInfo(skill.source_ref)
-  const copyValue = (github?.href ?? skill.source_ref ?? '').trim()
+  );
+  const github = getGithubInfo(skill.source_ref);
+  const copyValue = (github?.href ?? skill.source_ref ?? "").trim();
 
   const handleCopy = async () => {
-    if (!copyValue) return
+    if (!copyValue) return;
     try {
-      await navigator.clipboard.writeText(copyValue)
-      toast.success(t('copied'))
+      await navigator.clipboard.writeText(copyValue);
+      toast.success(t("copied"));
     } catch {
-      toast.error(t('copyFailed'))
+      toast.error(t("copyFailed"));
     }
-  }
+  };
 
   // Split tools into synced and remaining for badge display
-  const syncedTools: { tool: ToolOption; target: (typeof skill.targets)[0] }[] = []
-  const unsyncedTools: ToolOption[] = []
+  const syncedTools: { tool: ToolOption; target: (typeof skill.targets)[0] }[] =
+    [];
+  const unsyncedTools: ToolOption[] = [];
   for (const tool of installedTools) {
-    const target = skill.targets.find((tgt) => tgt.tool === tool.id)
+    const target = skill.targets.find((tgt) => tgt.tool === tool.id);
     if (target) {
-      syncedTools.push({ tool, target })
+      syncedTools.push({ tool, target });
     } else {
-      unsyncedTools.push(tool)
+      unsyncedTools.push(tool);
     }
   }
 
-  const [expanded, setExpanded] = useState(false)
-  const needsCollapse = syncedTools.length > MAX_VISIBLE_BADGES
-  const visibleSynced = expanded ? syncedTools : syncedTools.slice(0, MAX_VISIBLE_BADGES)
-  const remainingCount = syncedTools.length - MAX_VISIBLE_BADGES
+  const [expanded, setExpanded] = useState(false);
+  const needsCollapse = syncedTools.length > MAX_VISIBLE_BADGES;
+  const visibleSynced = expanded
+    ? syncedTools
+    : syncedTools.slice(0, MAX_VISIBLE_BADGES);
+  const remainingCount = syncedTools.length - MAX_VISIBLE_BADGES;
 
   return (
     <div className="skill-card">
@@ -98,8 +111,8 @@ const SkillCard = ({
               <button
                 className="repo-pill copyable"
                 type="button"
-                title={t('copy')}
-                aria-label={t('copy')}
+                title={t("copy")}
+                aria-label={t("copy")}
                 onClick={() => void handleCopy()}
                 disabled={!copyValue}
               >
@@ -114,8 +127,8 @@ const SkillCard = ({
               <button
                 className="repo-pill copyable"
                 type="button"
-                title={t('copy')}
-                aria-label={t('copy')}
+                title={t("copy")}
+                aria-label={t("copy")}
                 onClick={() => void handleCopy()}
                 disabled={!copyValue}
               >
@@ -131,13 +144,15 @@ const SkillCard = ({
             {formatRelative(skill.updated_at)}
           </div>
         </div>
-        <div className={`tool-matrix${!expanded && needsCollapse ? ' collapsed' : ''}`}>
+        <div
+          className={`tool-matrix${!expanded && needsCollapse ? " collapsed" : ""}`}
+        >
           {visibleSynced.map(({ tool, target }) => (
             <button
               key={`${skill.id}-${tool.id}`}
               type="button"
               className="tool-pill active"
-              title={`${tool.label} (${target.mode ?? t('unknown')})`}
+              title={`${tool.label} (${target.mode ?? t("unknown")})`}
               onClick={() => void onToggleTool(skill, tool.id)}
             >
               <span className="status-badge" />
@@ -150,7 +165,7 @@ const SkillCard = ({
               className="tool-pill more-badge"
               onClick={() => setExpanded(true)}
             >
-              {t('moreTools', { count: remainingCount })}
+              {t("moreTools", { count: remainingCount })}
             </button>
           ) : null}
           {expanded &&
@@ -173,22 +188,32 @@ const SkillCard = ({
           type="button"
           onClick={() => onUpdate(skill)}
           disabled={loading}
-          aria-label={t('update')}
+          aria-label={t("update")}
         >
           <RefreshCw size={16} />
+        </button>
+        <button
+          className="card-btn secondary-action"
+          type="button"
+          onClick={() => onUnsync(skill.id)}
+          disabled={loading || skill.targets.length === 0}
+          aria-label={t("unsyncSkillTooltip")}
+          title={t("unsyncSkillTooltip")}
+        >
+          <Unlink size={16} />
         </button>
         <button
           className="card-btn danger-action"
           type="button"
           onClick={() => onDelete(skill.id)}
           disabled={loading}
-          aria-label={t('remove')}
+          aria-label={t("remove")}
         >
           <Trash2 size={16} />
         </button>
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default memo(SkillCard)
+export default memo(SkillCard);
