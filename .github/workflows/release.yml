@@ -376,10 +376,10 @@ jobs:
           for dir in "${BUNDLE_DIRS[@]}"; do
             if [ -d "${dir}" ]; then
               if [ -z "${TAR_GZ}" ]; then
-                TAR_GZ="$(find "${dir}" -type f -name "*.tar.gz" | head -n 1 || true)"
+                TAR_GZ="$(find "${dir}" -type f -name "*.tar.gz" -not -path "*/deb/*" | head -n 1 || true)"
               fi
               if [ -z "${DEB}" ]; then
-                DEB="$(find "${dir}" -type f -name "*.deb" | head -n 1 || true)"
+                DEB="$(find "${dir}" -maxdepth 3 -type f -name "*.deb" | head -n 1 || true)"
               fi
               if [ -z "${APPIMAGE}" ]; then
                 APPIMAGE="$(find "${dir}" -type f -name "*.AppImage" | head -n 1 || true)"
