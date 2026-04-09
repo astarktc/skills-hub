@@ -477,7 +477,7 @@ fn staleness_skipped_for_symlink() {
 }
 
 #[test]
-fn staleness_source_missing_no_crash() {
+fn missing_status_when_source_absent() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().expect("tmpdir");
 
@@ -499,12 +499,21 @@ fn staleness_source_missing_no_crash() {
     // Delete source directory entirely
     fs::remove_dir_all(&skill_dir).expect("remove source");
 
-    // Should not crash -- assignment returned with status unchanged
+    // Should detect missing source and mark status as "missing"
     let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
         .expect("list should not crash");
     assert_eq!(assignments.len(), 1);
-    // Status stays synced because source.exists() returns false, so staleness check is skipped
-    assert_eq!(assignments[0].status, "synced");
+    assert_eq!(
+        assignments[0].status, "missing",
+        "source absent should produce missing status"
+    );
+
+    // Verify DB persisted the missing status
+    let db_record = store
+        .get_project_skill_assignment(&project.id, &skill.id, "cursor")
+        .unwrap()
+        .expect("assignment should exist in DB");
+    assert_eq!(db_record.status, "missing", "missing status should be persisted to DB");
 }
 
 #[test]
@@ -800,4 +809,147 @@ fn bulk_assign_continues_on_error() {
     // The point: claude_code succeeded first, cursor failed, both have DB records
     let assignments = store.list_project_skill_assignments(&project.id).unwrap();
     assert_eq!(assignments.len(), 2, "both tools have assignment records");
+}
+
+#[test]
+fn missing_status_when_target_absent() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    let skill_dir = make_skill_dir(tmpdir.path(), "target-gone-skill");
+    let project_dir = tmpdir.path().join("target-gone-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "target-gone-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    // claude_code uses symlink mode
+    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000)
+        .expect("assign should succeed");
+
+    // Verify target exists
+    let target = project_dir.join(".claude/skills/target-gone-skill");
+    assert!(target.exists(), "target should exist after assign");
+
+    // Manually remove the symlink
+    fs::remove_file(&target).ok();
+    fs::remove_dir_all(&target).ok();
+    assert!(
+        !target.exists() && target.symlink_metadata().is_err(),
+        "target should be deleted"
+    );
+
+    // Should detect missing target and mark status as "missing"
+    let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
+        .expect("list should succeed");
+    assert_eq!(assignments.len(), 1);
+    assert_eq!(
+        assignments[0].status, "missing",
+        "target absent should produce missing status"
+    );
+
+    // Verify DB persisted
+    let db_record = store
+        .get_project_skill_assignment(&project.id, &skill.id, "claude_code")
+        .unwrap()
+        .expect("assignment should exist");
+    assert_eq!(db_record.status, "missing", "missing status should be persisted to DB");
+}
+
+#[test]
+fn missing_status_recovers_when_source_restored() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    let skill_dir = make_skill_dir(tmpdir.path(), "recover-skill");
+    let project_dir = tmpdir.path().join("recover-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "recover-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    // cursor forces copy mode
+    let record = project_sync::assign_and_sync(&store, &project, &skill, "cursor", 2000)
+        .expect("assign should succeed");
+    assert_eq!(record.status, "synced");
+
+    // Delete source directory -> should become missing
+    fs::remove_dir_all(&skill_dir).expect("remove source");
+
+    let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
+        .expect("list should succeed");
+    assert_eq!(assignments[0].status, "missing", "should be missing after source deleted");
+
+    // Recreate source with same content
+    fs::create_dir_all(&skill_dir).expect("recreate skill dir");
+    fs::write(skill_dir.join("SKILL.md"), "# Test Skill\nTest content.").expect("write SKILL.md");
+
+    // Also ensure target copy exists (re-sync to restore it)
+    let target = project_dir.join(".cursor/skills/recover-skill");
+    if !target.exists() {
+        // Manually recreate the target copy to simulate recovery
+        fs::create_dir_all(&target).expect("recreate target");
+        fs::write(target.join("SKILL.md"), "# Test Skill\nTest content.").expect("write target SKILL.md");
+    }
+
+    // D-07 litmus test: assignment had DB status "missing", source+target reappeared,
+    // function should recalculate to "synced" or "stale" -- NOT "missing"
+    let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
+        .expect("list should succeed after recovery");
+    assert_eq!(assignments.len(), 1);
+    assert_ne!(
+        assignments[0].status, "missing",
+        "D-07: recovered assignment must not stay missing"
+    );
+    // Should be either "synced" or "stale" depending on hash match
+    assert!(
+        assignments[0].status == "synced" || assignments[0].status == "stale",
+        "recovered assignment should be synced or stale, got: {}",
+        assignments[0].status
+    );
+}
+
+#[test]
+fn missing_status_source_and_target_both_absent() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    let skill_dir = make_skill_dir(tmpdir.path(), "both-gone-skill");
+    let project_dir = tmpdir.path().join("both-gone-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "both-gone-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    // cursor forces copy mode
+    project_sync::assign_and_sync(&store, &project, &skill, "cursor", 2000)
+        .expect("assign should succeed");
+
+    // Delete both source and target
+    fs::remove_dir_all(&skill_dir).expect("remove source");
+    let target = project_dir.join(".cursor/skills/both-gone-skill");
+    fs::remove_dir_all(&target).ok();
+    assert!(!skill_dir.exists(), "source should be gone");
+    assert!(!target.exists(), "target should be gone");
+
+    // Should detect missing
+    let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
+        .expect("list should succeed");
+    assert_eq!(assignments.len(), 1);
+    assert_eq!(
+        assignments[0].status, "missing",
+        "both absent should produce missing status"
+    );
 }
