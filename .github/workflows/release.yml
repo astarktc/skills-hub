@@ -370,14 +370,10 @@ jobs:
             "src-tauri/target/release/bundle"
           )
 
-          TAR_GZ=""
           DEB=""
           APPIMAGE=""
           for dir in "${BUNDLE_DIRS[@]}"; do
             if [ -d "${dir}" ]; then
-              if [ -z "${TAR_GZ}" ]; then
-                TAR_GZ="$(find "${dir}" -type f -name "*.tar.gz" -not -path "*/deb/*" | head -n 1 || true)"
-              fi
               if [ -z "${DEB}" ]; then
                 DEB="$(find "${dir}" -maxdepth 3 -type f -name "*.deb" | head -n 1 || true)"
               fi
@@ -387,33 +383,28 @@ jobs:
             fi
           done
 
-          if [ -z "${TAR_GZ}" ]; then
-            echo "ERROR: No *.tar.gz updater artifact found (target=${TARGET}, arch=${ARCH})." >&2
+          # AppImage is the updater artifact on Linux (with its .sig)
+          if [ -z "${APPIMAGE}" ]; then
+            echo "ERROR: No *.AppImage found (target=${TARGET}, arch=${ARCH})." >&2
             for dir in "${BUNDLE_DIRS[@]}"; do
               echo "---- list: ${dir}" >&2
-              ls -la "${dir}" 2>/dev/null || true
               find "${dir}" -maxdepth 6 -type f 2>/dev/null | head -n 200 >&2 || true
             done
             exit 1
           fi
 
-          if [ ! -f "${TAR_GZ}.sig" ]; then
-            echo "ERROR: No updater signature file: ${TAR_GZ}.sig" >&2
+          if [ ! -f "${APPIMAGE}.sig" ]; then
+            echo "ERROR: No updater signature file: ${APPIMAGE}.sig" >&2
             exit 1
           fi
 
-          NEW_TAR_GZ="Skills-Hub-${VERSION}-Linux-${ARCH}.tar.gz"
-          cp "${TAR_GZ}" "release-assets/${NEW_TAR_GZ}"
-          cp "${TAR_GZ}.sig" "release-assets/${NEW_TAR_GZ}.sig"
+          NEW_APPIMAGE="Skills-Hub-${VERSION}-Linux-${ARCH}.AppImage"
+          cp "${APPIMAGE}" "release-assets/${NEW_APPIMAGE}"
+          cp "${APPIMAGE}.sig" "release-assets/${NEW_APPIMAGE}.sig"
 
           if [ -n "${DEB}" ]; then
             NEW_DEB="Skills-Hub-${VERSION}-Linux-${ARCH}.deb"
             cp "${DEB}" "release-assets/${NEW_DEB}"
-          fi
-
-          if [ -n "${APPIMAGE}" ]; then
-            NEW_APPIMAGE="Skills-Hub-${VERSION}-Linux-${ARCH}.AppImage"
-            cp "${APPIMAGE}" "release-assets/${NEW_APPIMAGE}"
           fi
 
       - name: List prepared assets
@@ -487,7 +478,7 @@ jobs:
                 mac_arm_url="$url"; mac_arm_sig="$sig_content";;
               *-macOS-x86_64.tar.gz)
                 mac_x64_url="$url"; mac_x64_sig="$sig_content";;
-              *-Linux-x86_64.tar.gz)
+              *-Linux-x86_64.AppImage)
                 linux_x64_url="$url"; linux_x64_sig="$sig_content";;
             esac
           done
