@@ -701,6 +701,78 @@ pub async fn set_github_token(store: State<'_, SkillStore>, token: String) -> Re
 }
 
 #[tauri::command]
+pub async fn get_auto_sync_enabled(store: State<'_, SkillStore>) -> Result<bool, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let val = store
+            .get_setting("auto_sync_enabled")?
+            .unwrap_or_else(|| "true".to_string());
+        Ok::<_, anyhow::Error>(val == "true")
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn set_auto_sync_enabled(
+    store: State<'_, SkillStore>,
+    enabled: bool,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        store.set_setting("auto_sync_enabled", if enabled { "true" } else { "false" })?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn unsync_all_skills(store: State<'_, SkillStore>) -> Result<usize, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let skills = store.list_skills()?;
+        let mut removed_count: usize = 0;
+        for skill in &skills {
+            let targets = store.list_skill_targets(&skill.id)?;
+            for target in &targets {
+                let _ = crate::core::sync_engine::remove_path_any(std::path::Path::new(
+                    &target.target_path,
+                ));
+            }
+            removed_count += targets.len();
+        }
+        store.delete_all_skill_targets()?;
+        Ok::<_, anyhow::Error>(removed_count)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn unsync_skill(store: State<'_, SkillStore>, skillId: String) -> Result<usize, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let targets = store.list_skill_targets(&skillId)?;
+        for target in &targets {
+            let _ = crate::core::sync_engine::remove_path_any(std::path::Path::new(
+                &target.target_path,
+            ));
+        }
+        let count = targets.len();
+        store.delete_skill_targets(&skillId)?;
+        Ok::<_, anyhow::Error>(count)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
 #[allow(non_snake_case)]
 pub async fn import_existing_skill(
     app: tauri::AppHandle,
@@ -761,13 +833,13 @@ pub async fn delete_managed_skill(
 ) -> Result<(), String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        // 便于排查“按钮点了没反应”：确认前端确实触发了命令
         println!("[delete_managed_skill] skillId={}", skillId);
 
-        // 先删除已同步到各工具目录的副本/软链接
-        // 注意：如果先删 skills 行，会触发 skill_targets cascade，导致无法再拿到 target_path
-        let targets = store.list_skill_targets(&skillId)?;
+        let record = store.get_skill_by_id(&skillId)?;
+        let skill_name = record.as_ref().map(|s| s.name.clone());
 
+        // Remove global tool directory symlinks/copies
+        let targets = store.list_skill_targets(&skillId)?;
         let mut remove_failures: Vec<String> = Vec::new();
         for target in targets {
             if let Err(err) = remove_path_any(std::path::Path::new(&target.target_path)) {
@@ -775,7 +847,29 @@ pub async fn delete_managed_skill(
             }
         }
 
-        let record = store.get_skill_by_id(&skillId)?;
+        // INFR-03: Clean up project directory artifacts before cascade delete
+        if let Some(ref name) = skill_name {
+            let project_assignments = store.list_project_skill_assignments_by_skill(&skillId)?;
+            for assignment in &project_assignments {
+                if assignment.status == "synced"
+                    || assignment.status == "stale"
+                    || assignment.status == "error"
+                {
+                    if let Ok(Some(project)) = store.get_project_by_id(&assignment.project_id) {
+                        if let Some(adapter) =
+                            crate::core::tool_adapters::adapter_by_key(&assignment.tool)
+                        {
+                            let project_path = std::path::Path::new(&project.path);
+                            let target = project_path.join(adapter.relative_skills_dir).join(name);
+                            if let Err(e) = remove_path_any(&target) {
+                                remove_failures.push(format!("{}: {}", target.display(), e));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if let Some(skill) = record {
             let path = std::path::PathBuf::from(skill.central_path);
             if path.exists() {

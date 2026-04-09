@@ -526,6 +526,69 @@ impl SkillStore {
         })
     }
 
+    pub fn delete_all_skill_targets(&self) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM skill_targets", [])?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_skill_targets(&self, skill_id: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM skill_targets WHERE skill_id = ?1",
+                params![skill_id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_project_skill_assignments_by_skill(
+        &self,
+        skill_id: &str,
+    ) -> Result<Vec<ProjectSkillAssignmentRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, project_id, skill_id, tool, mode, status, last_error, synced_at, content_hash, created_at
+                 FROM project_skill_assignments
+                 WHERE skill_id = ?1",
+            )?;
+            let rows = stmt.query_map(params![skill_id], |row| {
+                Ok(ProjectSkillAssignmentRecord {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    skill_id: row.get(2)?,
+                    tool: row.get(3)?,
+                    mode: row.get(4)?,
+                    status: row.get(5)?,
+                    last_error: row.get(6)?,
+                    synced_at: row.get(7)?,
+                    content_hash: row.get(8)?,
+                    created_at: row.get(9)?,
+                })
+            })?;
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
+        })
+    }
+
+    #[allow(dead_code)] // Used in Task 2 (update_project_path command)
+    pub fn update_project_path(&self, project_id: &str, new_path: &str, now_ms: i64) -> Result<()> {
+        self.with_conn(|conn| {
+            let rows = conn.execute(
+                "UPDATE projects SET path = ?1, updated_at = ?2 WHERE id = ?3",
+                params![new_path, now_ms, project_id],
+            )?;
+            if rows == 0 {
+                anyhow::bail!("project not found: {}", project_id);
+            }
+            Ok(())
+        })
+    }
+
     // --- Project methods ---
 
     pub fn register_project(&self, record: &ProjectRecord) -> Result<()> {
@@ -881,7 +944,7 @@ impl SkillStore {
                 let (status, _count) = row?;
                 has_any = true;
                 match status.as_str() {
-                    "error" => has_error = true,
+                    "error" | "missing" => has_error = true,
                     "stale" => has_stale = true,
                     "pending" => has_pending = true,
                     _ => {}
