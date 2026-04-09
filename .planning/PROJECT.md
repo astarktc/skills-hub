@@ -35,6 +35,8 @@ Any skill assigned to a project is immediately available in that project's tool 
 - ✓ Sync all assignments across all projects ("Sync All" button) — Validated in Phase 4
 - ✓ Per-cell status indicators: synced (green), stale (yellow), missing (red), pending (gray) — Validated in Phase 4
 - ✓ Prompt user to add tool skill directories to project's .gitignore on registration — Validated in Phase 4
+- ✓ Handle skills removed from central library (orphaned assignments marked "missing") — Validated in Phase 6
+- ✓ Tool column removal cascades to assignments and filesystem artifacts — Validated in Phase 6
 
 ### Active
 
@@ -45,7 +47,6 @@ Any skill assigned to a project is immediately available in that project's tool 
 - [ ] Content hash staleness detection for copy-mode targets
 - [ ] Search/filter bar in the assignment matrix for large skill libraries
 - [ ] Handle removed/renamed project directories gracefully (detect on list, show warning)
-- [ ] Handle skills removed from central library (orphaned assignments marked "missing")
 - [ ] Global sync (existing feature) continues to work alongside project sync
 - [ ] Cross-platform symlink testing (Windows NTFS via WSL, macOS, native Linux)
 
