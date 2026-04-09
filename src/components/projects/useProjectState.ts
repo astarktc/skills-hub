@@ -37,8 +37,12 @@ export type ProjectState = {
   registerProject: (path: string) => Promise<ProjectDto>;
   removeProject: (id: string) => Promise<void>;
   toggleAssignment: (skillId: string, tool: string) => Promise<void>;
-  bulkAssign: (skillId: string) => Promise<void>;
+  bulkAssign: (skillId: string) => Promise<BulkAssignResultDto | undefined>;
   resyncProject: () => Promise<ResyncSummaryDto>;
+  updateProjectPath: (
+    projectId: string,
+    newPath: string,
+  ) => Promise<ProjectDto>;
   resyncAll: () => Promise<ResyncSummaryDto[]>;
   loadToolStatus: () => Promise<void>;
   addTools: (tools: string[]) => Promise<void>;
@@ -53,6 +57,24 @@ export type ProjectState = {
 
 function normalizeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+export function formatProjectError(
+  raw: string,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): string {
+  if (raw.startsWith("DUPLICATE_PROJECT|")) {
+    const path = raw.slice("DUPLICATE_PROJECT|".length);
+    return t("projects.duplicateError") + (path ? `: ${path}` : "");
+  }
+  if (raw.startsWith("ASSIGNMENT_EXISTS|")) {
+    return t("projects.assignmentExistsError");
+  }
+  if (raw.startsWith("NOT_FOUND|")) {
+    const detail = raw.slice("NOT_FOUND|".length);
+    return t("projects.notFoundError") + (detail ? `: ${detail}` : "");
+  }
+  return raw;
 }
 
 export function useProjectState(): ProjectState {
@@ -235,7 +257,7 @@ export function useProjectState(): ProjectState {
         return next;
       });
       try {
-        await invoke<BulkAssignResultDto>("bulk_assign_skill", {
+        const result = await invoke<BulkAssignResultDto>("bulk_assign_skill", {
           projectId: selectedProjectId,
           skillId,
         });
@@ -245,6 +267,7 @@ export function useProjectState(): ProjectState {
         );
         setAssignments(updated);
         await loadProjects();
+        return result;
       } catch (err) {
         try {
           const updated = await invoke<ProjectSkillAssignmentDto[]>(
@@ -265,6 +288,18 @@ export function useProjectState(): ProjectState {
       }
     },
     [selectedProjectId, tools, loadProjects],
+  );
+
+  const updateProjectPath = useCallback(
+    async (projectId: string, newPath: string): Promise<ProjectDto> => {
+      const result = await invoke<ProjectDto>("update_project_path", {
+        projectId,
+        path: newPath,
+      });
+      await loadProjects();
+      return result;
+    },
+    [loadProjects],
   );
 
   const resyncProject = useCallback(async (): Promise<ResyncSummaryDto> => {
@@ -378,6 +413,7 @@ export function useProjectState(): ProjectState {
     toggleAssignment,
     bulkAssign,
     resyncProject,
+    updateProjectPath,
     resyncAll,
     loadToolStatus,
     addTools,

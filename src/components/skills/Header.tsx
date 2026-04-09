@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { FolderKanban, Layers, Search, Settings } from "lucide-react";
+import { Layers, Search, Settings } from "lucide-react";
 import type { TFunction } from "i18next";
 
 type HeaderProps = {
@@ -8,7 +8,7 @@ type HeaderProps = {
   activeView: "myskills" | "explore" | "detail" | "settings" | "projects";
   onToggleLanguage: () => void;
   onOpenSettings: () => void;
-  onViewChange: (view: "myskills" | "explore" | "projects") => void;
+  onViewChange: (view: "myskills" | "explore") => void;
   t: TFunction;
 };
 
@@ -45,14 +45,6 @@ const Header = ({
           >
             <Search size={16} />
             {t("navExplore")}
-          </button>
-          <button
-            className={`nav-tab${activeView === "projects" ? " active" : ""}`}
-            type="button"
-            onClick={() => onViewChange("projects")}
-          >
-            <FolderKanban size={16} />
-            {t("navProjects")}
           </button>
         </nav>
       </div>

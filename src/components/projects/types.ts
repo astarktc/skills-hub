@@ -8,6 +8,7 @@ export type ProjectDto = {
   skill_count: number;
   assignment_count: number;
   sync_status: string;
+  path_exists: boolean;
 };
 
 export type ProjectToolDto = {

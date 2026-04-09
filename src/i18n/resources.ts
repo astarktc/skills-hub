@@ -367,6 +367,17 @@ export const resources = {
         minutesAgo: "{{count}}m ago",
         hoursAgo: "{{count}}h ago",
         daysAgo: "{{count}}d ago",
+        assignmentExistsError: "This skill is already assigned to this tool",
+        notFoundError: "Item not found",
+        pathMissing: "(not found)",
+        pathMissingWarning:
+          "Project directory not found. Sync operations are disabled.",
+        updatePath: "Update Path",
+        updatePathSuccess: "Project path updated",
+        bulkAssignPartial: "{{assigned}} assigned, {{failed}} failed",
+        bulkAssignFailed: "Some tools failed to assign: {{details}}",
+        syncDisabledMissing:
+          "Sync is disabled because the project directory was not found.",
       },
     },
   },
