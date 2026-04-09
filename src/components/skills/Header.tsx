@@ -1,16 +1,16 @@
-import { memo } from 'react'
-import { Layers, Search, Settings } from 'lucide-react'
-import type { TFunction } from 'i18next'
+import { memo } from "react";
+import { FolderKanban, Layers, Search, Settings } from "lucide-react";
+import type { TFunction } from "i18next";
 
 type HeaderProps = {
-  language: string
-  loading: boolean
-  activeView: 'myskills' | 'explore' | 'detail' | 'settings'
-  onToggleLanguage: () => void
-  onOpenSettings: () => void
-  onViewChange: (view: 'myskills' | 'explore') => void
-  t: TFunction
-}
+  language: string;
+  loading: boolean;
+  activeView: "myskills" | "explore" | "detail" | "settings" | "projects";
+  onToggleLanguage: () => void;
+  onOpenSettings: () => void;
+  onViewChange: (view: "myskills" | "explore" | "projects") => void;
+  t: TFunction;
+};
 
 const Header = ({
   language,
@@ -26,38 +26,50 @@ const Header = ({
         <div className="brand-area">
           <img className="logo-icon" src="/logo.png" alt="" />
           <div className="brand-text-wrap">
-            <div className="brand-text">{t('appName')}</div>
+            <div className="brand-text">{t("appName")}</div>
           </div>
         </div>
         <nav className="nav-tabs">
           <button
-            className={`nav-tab${activeView === 'myskills' || activeView === 'detail' ? ' active' : ''}`}
+            className={`nav-tab${activeView === "myskills" || activeView === "detail" ? " active" : ""}`}
             type="button"
-            onClick={() => onViewChange('myskills')}
+            onClick={() => onViewChange("myskills")}
           >
             <Layers size={16} />
-            {t('navMySkills')}
+            {t("navMySkills")}
           </button>
           <button
-            className={`nav-tab${activeView === 'explore' ? ' active' : ''}`}
+            className={`nav-tab${activeView === "explore" ? " active" : ""}`}
             type="button"
-            onClick={() => onViewChange('explore')}
+            onClick={() => onViewChange("explore")}
           >
             <Search size={16} />
-            {t('navExplore')}
+            {t("navExplore")}
+          </button>
+          <button
+            className={`nav-tab${activeView === "projects" ? " active" : ""}`}
+            type="button"
+            onClick={() => onViewChange("projects")}
+          >
+            <FolderKanban size={16} />
+            {t("navProjects")}
           </button>
         </nav>
       </div>
       <div className="header-actions">
         <button className="lang-btn" type="button" onClick={onToggleLanguage}>
-          {language === 'en' ? t('languageShort.en') : t('languageShort.zh')}
+          {language === "en" ? t("languageShort.en") : t("languageShort.zh")}
         </button>
-        <button className={`icon-btn${activeView === 'settings' ? ' active' : ''}`} type="button" onClick={onOpenSettings}>
+        <button
+          className={`icon-btn${activeView === "settings" ? " active" : ""}`}
+          type="button"
+          onClick={onOpenSettings}
+        >
           <Settings size={18} />
         </button>
       </div>
     </header>
-  )
-}
+  );
+};
 
-export default memo(Header)
+export default memo(Header);

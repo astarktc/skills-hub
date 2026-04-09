@@ -8,7 +8,7 @@ const DB_FILE_NAME: &str = "skills_hub.db";
 const LEGACY_APP_IDENTIFIERS: &[&str] = &["com.tauri.dev", "com.tauri.dev.skillshub"];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 6;
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -60,6 +60,44 @@ CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
 CREATE INDEX IF NOT EXISTS idx_skills_updated_at ON skills(updated_at);
 "#;
 
+// V4: project tables for per-project skill distribution.
+const MIGRATION_V4: &str = r#"
+BEGIN;
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  path TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_tools (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  UNIQUE(project_id, tool),
+  FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS project_skill_assignments (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  skill_id TEXT NOT NULL,
+  skill_name TEXT NOT NULL DEFAULT '',
+  tool TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  status TEXT NOT NULL,
+  last_error TEXT NULL,
+  synced_at INTEGER NULL,
+  content_hash TEXT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE(project_id, skill_id, tool),
+  FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_psa_project ON project_skill_assignments(project_id);
+CREATE INDEX IF NOT EXISTS idx_psa_skill ON project_skill_assignments(skill_id);
+CREATE INDEX IF NOT EXISTS idx_pt_project ON project_tools(project_id);
+COMMIT;
+"#;
+
 #[derive(Clone, Debug)]
 pub struct SkillStore {
     db_path: PathBuf,
@@ -95,6 +133,36 @@ pub struct SkillTargetRecord {
     pub synced_at: Option<i64>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ProjectRecord {
+    pub id: String,
+    pub path: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProjectToolRecord {
+    pub id: String,
+    pub project_id: String,
+    pub tool: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProjectSkillAssignmentRecord {
+    pub id: String,
+    pub project_id: String,
+    pub skill_id: String,
+    pub skill_name: String,
+    pub tool: String,
+    pub mode: String,
+    pub status: String,
+    pub last_error: Option<String>,
+    pub synced_at: Option<i64>,
+    pub content_hash: Option<String>,
+    pub created_at: i64,
+}
+
 impl SkillStore {
     pub fn new(db_path: PathBuf) -> Self {
         Self { db_path }
@@ -116,6 +184,9 @@ impl SkillStore {
                 conn.execute_batch("ALTER TABLE skills ADD COLUMN description TEXT NULL;")?;
                 // V3: add source_subpath column
                 conn.execute_batch("ALTER TABLE skills ADD COLUMN source_subpath TEXT NULL;")?;
+                // V4: project tables for per-project skill distribution
+                // (DDL includes V5 content_hash column in project_skill_assignments)
+                conn.execute_batch(MIGRATION_V4)?;
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version < SCHEMA_VERSION {
                 // Incremental migrations
@@ -124,6 +195,26 @@ impl SkillStore {
                 }
                 if user_version < 3 {
                     conn.execute_batch("ALTER TABLE skills ADD COLUMN source_subpath TEXT NULL;")?;
+                }
+                if user_version < 4 {
+                    conn.execute_batch(MIGRATION_V4)?;
+                }
+                if user_version < 5 {
+                    conn.execute_batch(
+                        "ALTER TABLE project_skill_assignments ADD COLUMN content_hash TEXT NULL;",
+                    )?;
+                }
+                if user_version < 6 {
+                    conn.execute_batch(
+                        "ALTER TABLE project_skill_assignments ADD COLUMN skill_name TEXT NOT NULL DEFAULT '';",
+                    )?;
+                    // Backfill skill_name from the skills table for existing rows
+                    conn.execute_batch(
+                        "UPDATE project_skill_assignments SET skill_name = COALESCE(
+                            (SELECT name FROM skills WHERE skills.id = project_skill_assignments.skill_id),
+                            ''
+                        ) WHERE skill_name = '';",
+                    )?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
@@ -446,6 +537,451 @@ impl SkillStore {
                 params![skill_id, tool],
             )?;
             Ok(())
+        })
+    }
+
+    pub fn delete_all_skill_targets(&self) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM skill_targets", [])?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_skill_targets(&self, skill_id: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM skill_targets WHERE skill_id = ?1",
+                params![skill_id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_project_skill_assignments_by_skill(
+        &self,
+        skill_id: &str,
+    ) -> Result<Vec<ProjectSkillAssignmentRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, project_id, skill_id, skill_name, tool, mode, status, last_error, synced_at, content_hash, created_at
+                 FROM project_skill_assignments
+                 WHERE skill_id = ?1",
+            )?;
+            let rows = stmt.query_map(params![skill_id], |row| {
+                Ok(ProjectSkillAssignmentRecord {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    skill_id: row.get(2)?,
+                    skill_name: row.get(3)?,
+                    tool: row.get(4)?,
+                    mode: row.get(5)?,
+                    status: row.get(6)?,
+                    last_error: row.get(7)?,
+                    synced_at: row.get(8)?,
+                    content_hash: row.get(9)?,
+                    created_at: row.get(10)?,
+                })
+            })?;
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
+        })
+    }
+
+    pub fn update_project_path(&self, project_id: &str, new_path: &str, now_ms: i64) -> Result<()> {
+        self.with_conn(|conn| {
+            let rows = conn.execute(
+                "UPDATE projects SET path = ?1, updated_at = ?2 WHERE id = ?3",
+                params![new_path, now_ms, project_id],
+            )?;
+            if rows == 0 {
+                anyhow::bail!("project not found: {}", project_id);
+            }
+            Ok(())
+        })
+    }
+
+    // --- Project methods ---
+
+    pub fn register_project(&self, record: &ProjectRecord) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO projects (id, path, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
+                params![record.id, record.path, record.created_at, record.updated_at],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_projects(&self) -> Result<Vec<ProjectRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, path, created_at, updated_at FROM projects ORDER BY created_at DESC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(ProjectRecord {
+                    id: row.get(0)?,
+                    path: row.get(1)?,
+                    created_at: row.get(2)?,
+                    updated_at: row.get(3)?,
+                })
+            })?;
+
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
+        })
+    }
+
+    pub fn get_project_by_path(&self, path: &str) -> Result<Option<ProjectRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, path, created_at, updated_at FROM projects WHERE path = ?1 LIMIT 1",
+            )?;
+            let mut rows = stmt.query(params![path])?;
+            if let Some(row) = rows.next()? {
+                Ok(Some(ProjectRecord {
+                    id: row.get(0)?,
+                    path: row.get(1)?,
+                    created_at: row.get(2)?,
+                    updated_at: row.get(3)?,
+                }))
+            } else {
+                Ok(None)
+            }
+        })
+    }
+
+    pub fn get_project_by_id(&self, project_id: &str) -> Result<Option<ProjectRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, path, created_at, updated_at FROM projects WHERE id = ?1 LIMIT 1",
+            )?;
+            let mut rows = stmt.query(params![project_id])?;
+            if let Some(row) = rows.next()? {
+                Ok(Some(ProjectRecord {
+                    id: row.get(0)?,
+                    path: row.get(1)?,
+                    created_at: row.get(2)?,
+                    updated_at: row.get(3)?,
+                }))
+            } else {
+                Ok(None)
+            }
+        })
+    }
+
+    pub fn delete_project(&self, project_id: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])?;
+            Ok(())
+        })
+    }
+
+    // --- Project tool methods ---
+
+    pub fn add_project_tool(&self, record: &ProjectToolRecord) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT OR IGNORE INTO project_tools (id, project_id, tool) VALUES (?1, ?2, ?3)",
+                params![record.id, record.project_id, record.tool],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_project_tools(&self, project_id: &str) -> Result<Vec<ProjectToolRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, project_id, tool FROM project_tools WHERE project_id = ?1 ORDER BY tool ASC",
+            )?;
+            let rows = stmt.query_map(params![project_id], |row| {
+                Ok(ProjectToolRecord {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    tool: row.get(2)?,
+                })
+            })?;
+
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
+        })
+    }
+
+    pub fn remove_project_tool(&self, project_id: &str, tool: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM project_tools WHERE project_id = ?1 AND tool = ?2",
+                params![project_id, tool],
+            )?;
+            Ok(())
+        })
+    }
+
+    // --- Project skill assignment methods ---
+
+    pub fn add_project_skill_assignment(
+        &self,
+        record: &ProjectSkillAssignmentRecord,
+    ) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO project_skill_assignments
+                 (id, project_id, skill_id, skill_name, tool, mode, status, last_error, synced_at, content_hash, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    record.id,
+                    record.project_id,
+                    record.skill_id,
+                    record.skill_name,
+                    record.tool,
+                    record.mode,
+                    record.status,
+                    record.last_error,
+                    record.synced_at,
+                    record.content_hash,
+                    record.created_at
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_project_skill_assignments(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ProjectSkillAssignmentRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, project_id, skill_id, skill_name, tool, mode, status, last_error, synced_at, content_hash, created_at
+                 FROM project_skill_assignments
+                 WHERE project_id = ?1
+                 ORDER BY tool ASC, created_at ASC",
+            )?;
+            let rows = stmt.query_map(params![project_id], |row| {
+                Ok(ProjectSkillAssignmentRecord {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    skill_id: row.get(2)?,
+                    skill_name: row.get(3)?,
+                    tool: row.get(4)?,
+                    mode: row.get(5)?,
+                    status: row.get(6)?,
+                    last_error: row.get(7)?,
+                    synced_at: row.get(8)?,
+                    content_hash: row.get(9)?,
+                    created_at: row.get(10)?,
+                })
+            })?;
+
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
+        })
+    }
+
+    pub fn remove_project_skill_assignment(
+        &self,
+        project_id: &str,
+        skill_id: &str,
+        tool: &str,
+    ) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM project_skill_assignments
+                 WHERE project_id = ?1 AND skill_id = ?2 AND tool = ?3",
+                params![project_id, skill_id, tool],
+            )?;
+            Ok(())
+        })
+    }
+
+    #[allow(dead_code)] // Used in Phase 2 (project_sync module)
+    pub fn update_assignment_status(
+        &self,
+        assignment_id: &str,
+        status: &str,
+        last_error: Option<&str>,
+        synced_at: Option<i64>,
+        mode: Option<&str>,
+        content_hash: Option<&str>,
+    ) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE project_skill_assignments
+                 SET status = ?1, last_error = ?2,
+                     synced_at = COALESCE(?3, synced_at),
+                     mode = COALESCE(?4, mode),
+                     content_hash = ?5
+                 WHERE id = ?6",
+                params![
+                    status,
+                    last_error,
+                    synced_at,
+                    mode,
+                    content_hash,
+                    assignment_id
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    #[allow(dead_code)] // Used in Phase 2 (project_sync module)
+    pub fn get_project_skill_assignment(
+        &self,
+        project_id: &str,
+        skill_id: &str,
+        tool: &str,
+    ) -> Result<Option<ProjectSkillAssignmentRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, project_id, skill_id, skill_name, tool, mode, status, last_error,
+                        synced_at, content_hash, created_at
+                 FROM project_skill_assignments
+                 WHERE project_id = ?1 AND skill_id = ?2 AND tool = ?3
+                 LIMIT 1",
+            )?;
+            let mut rows = stmt.query(params![project_id, skill_id, tool])?;
+            match rows.next()? {
+                Some(row) => Ok(Some(ProjectSkillAssignmentRecord {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    skill_id: row.get(2)?,
+                    skill_name: row.get(3)?,
+                    tool: row.get(4)?,
+                    mode: row.get(5)?,
+                    status: row.get(6)?,
+                    last_error: row.get(7)?,
+                    synced_at: row.get(8)?,
+                    content_hash: row.get(9)?,
+                    created_at: row.get(10)?,
+                })),
+                None => Ok(None),
+            }
+        })
+    }
+
+    #[allow(dead_code)] // Used in Phase 2 (sync logic)
+    pub fn list_project_skill_assignments_for_project_tool(
+        &self,
+        project_id: &str,
+        tool: &str,
+    ) -> Result<Vec<ProjectSkillAssignmentRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, project_id, skill_id, skill_name, tool, mode, status, last_error, synced_at, content_hash, created_at
+                 FROM project_skill_assignments
+                 WHERE project_id = ?1 AND tool = ?2
+                 ORDER BY created_at ASC",
+            )?;
+            let rows = stmt.query_map(params![project_id, tool], |row| {
+                Ok(ProjectSkillAssignmentRecord {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    skill_id: row.get(2)?,
+                    skill_name: row.get(3)?,
+                    tool: row.get(4)?,
+                    mode: row.get(5)?,
+                    status: row.get(6)?,
+                    last_error: row.get(7)?,
+                    synced_at: row.get(8)?,
+                    content_hash: row.get(9)?,
+                    created_at: row.get(10)?,
+                })
+            })?;
+
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
+        })
+    }
+
+    pub fn count_project_assignments(&self, project_id: &str) -> Result<usize> {
+        self.with_conn(|conn| {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM project_skill_assignments WHERE project_id = ?1",
+                params![project_id],
+                |row| row.get(0),
+            )?;
+            Ok(count as usize)
+        })
+    }
+
+    pub fn count_project_unique_skills(&self, project_id: &str) -> Result<usize> {
+        self.with_conn(|conn| {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(DISTINCT skill_id) FROM project_skill_assignments WHERE project_id = ?1",
+                params![project_id],
+                |row| row.get(0),
+            )?;
+            Ok(count as usize)
+        })
+    }
+
+    pub fn count_project_tools(&self, project_id: &str) -> Result<usize> {
+        self.with_conn(|conn| {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM project_tools WHERE project_id = ?1",
+                params![project_id],
+                |row| row.get(0),
+            )?;
+            Ok(count as usize)
+        })
+    }
+
+    pub fn aggregate_project_sync_status(&self, project_id: &str) -> Result<String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT status, COUNT(*) as cnt
+                 FROM project_skill_assignments
+                 WHERE project_id = ?1
+                 GROUP BY status",
+            )?;
+            let rows = stmt.query_map(params![project_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?;
+
+            let mut has_any = false;
+            let mut has_error = false;
+            let mut has_stale = false;
+            let mut has_pending = false;
+
+            for row in rows {
+                let (status, _count) = row?;
+                has_any = true;
+                match status.as_str() {
+                    "error" | "missing" => has_error = true,
+                    "stale" => has_stale = true,
+                    "pending" => has_pending = true,
+                    _ => {}
+                }
+            }
+
+            if !has_any {
+                return Ok("none".to_string());
+            }
+            if has_error {
+                return Ok("error".to_string());
+            }
+            if has_stale {
+                return Ok("stale".to_string());
+            }
+            if has_pending {
+                return Ok("pending".to_string());
+            }
+            Ok("synced".to_string())
         })
     }
 

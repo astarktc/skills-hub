@@ -1,3 +1,5 @@
+pub mod projects;
+
 use anyhow::Context;
 use serde::Serialize;
 use tauri::State;
@@ -25,17 +27,23 @@ use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
 };
 use crate::core::sync_engine::{
-    copy_dir_recursive, sync_dir_for_tool_with_overwrite, sync_dir_hybrid, SyncMode,
+    copy_dir_recursive, remove_path_any, sync_dir_for_tool_with_overwrite, sync_dir_hybrid,
+    SyncMode,
 };
 use crate::core::tool_adapters::{adapter_by_key, is_tool_installed, resolve_default_path};
 use uuid::Uuid;
 
-fn format_anyhow_error(err: anyhow::Error) -> String {
+pub(crate) fn format_anyhow_error(err: anyhow::Error) -> String {
     let first = err.to_string();
     // Frontend relies on these prefixes for special flows.
     if first.starts_with("MULTI_SKILLS|")
         || first.starts_with("TARGET_EXISTS|")
         || first.starts_with("TOOL_NOT_INSTALLED|")
+        || first.starts_with("TOOL_NOT_WRITABLE|")
+        || first.starts_with("SKILL_INVALID|")
+        || first.starts_with("DUPLICATE_PROJECT|")
+        || first.starts_with("ASSIGNMENT_EXISTS|")
+        || first.starts_with("NOT_FOUND|")
     {
         return first;
     }
@@ -244,7 +252,7 @@ pub struct InstallResultDto {
     pub content_hash: Option<String>,
 }
 
-fn expand_home_path(input: &str) -> Result<std::path::PathBuf, anyhow::Error> {
+pub(crate) fn expand_home_path(input: &str) -> Result<std::path::PathBuf, anyhow::Error> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         anyhow::bail!("storage path is empty");
@@ -317,7 +325,7 @@ pub async fn set_central_repo_path(
                     std::fs::remove_dir_all(&old_path)
                         .with_context(|| format!("cleanup {:?}", old_path))?;
                     // Surface rename error in logs for troubleshooting.
-                    eprintln!("rename failed, fallback used: {}", err);
+                    log::warn!("rename failed, fallback used: {}", err);
                 }
 
                 let mut updated = skill.clone();
@@ -596,7 +604,7 @@ pub async fn unsync_skill_from_tool(
         for k in &group_tool_keys {
             if let Some(target) = store.get_skill_target(&skillId, k)? {
                 if !removed {
-                    remove_path_any(&target.target_path).map_err(anyhow::Error::msg)?;
+                    remove_path_any(std::path::Path::new(&target.target_path))?;
                     removed = true;
                 }
                 store.delete_skill_target(&skillId, k)?;
@@ -693,6 +701,78 @@ pub async fn set_github_token(store: State<'_, SkillStore>, token: String) -> Re
 }
 
 #[tauri::command]
+pub async fn get_auto_sync_enabled(store: State<'_, SkillStore>) -> Result<bool, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let val = store
+            .get_setting("auto_sync_enabled")?
+            .unwrap_or_else(|| "true".to_string());
+        Ok::<_, anyhow::Error>(val == "true")
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn set_auto_sync_enabled(
+    store: State<'_, SkillStore>,
+    enabled: bool,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        store.set_setting("auto_sync_enabled", if enabled { "true" } else { "false" })?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn unsync_all_skills(store: State<'_, SkillStore>) -> Result<usize, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let skills = store.list_skills()?;
+        let mut removed_count: usize = 0;
+        for skill in &skills {
+            let targets = store.list_skill_targets(&skill.id)?;
+            for target in &targets {
+                let _ = crate::core::sync_engine::remove_path_any(std::path::Path::new(
+                    &target.target_path,
+                ));
+            }
+            removed_count += targets.len();
+        }
+        store.delete_all_skill_targets()?;
+        Ok::<_, anyhow::Error>(removed_count)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn unsync_skill(store: State<'_, SkillStore>, skillId: String) -> Result<usize, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let targets = store.list_skill_targets(&skillId)?;
+        for target in &targets {
+            let _ = crate::core::sync_engine::remove_path_any(std::path::Path::new(
+                &target.target_path,
+            ));
+        }
+        let count = targets.len();
+        store.delete_skill_targets(&skillId)?;
+        Ok::<_, anyhow::Error>(count)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
 #[allow(non_snake_case)]
 pub async fn import_existing_skill(
     app: tauri::AppHandle,
@@ -753,21 +833,43 @@ pub async fn delete_managed_skill(
 ) -> Result<(), String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        // 便于排查“按钮点了没反应”：确认前端确实触发了命令
-        println!("[delete_managed_skill] skillId={}", skillId);
+        log::debug!("[delete_managed_skill] skillId={}", skillId);
 
-        // 先删除已同步到各工具目录的副本/软链接
-        // 注意：如果先删 skills 行，会触发 skill_targets cascade，导致无法再拿到 target_path
+        let record = store.get_skill_by_id(&skillId)?;
+        let skill_name = record.as_ref().map(|s| s.name.clone());
+
+        // Remove global tool directory symlinks/copies
         let targets = store.list_skill_targets(&skillId)?;
-
         let mut remove_failures: Vec<String> = Vec::new();
         for target in targets {
-            if let Err(err) = remove_path_any(&target.target_path) {
+            if let Err(err) = remove_path_any(std::path::Path::new(&target.target_path)) {
                 remove_failures.push(format!("{}: {}", target.target_path, err));
             }
         }
 
-        let record = store.get_skill_by_id(&skillId)?;
+        // INFR-03: Clean up project directory artifacts before cascade delete
+        if let Some(ref name) = skill_name {
+            let project_assignments = store.list_project_skill_assignments_by_skill(&skillId)?;
+            for assignment in &project_assignments {
+                if assignment.status == "synced"
+                    || assignment.status == "stale"
+                    || assignment.status == "error"
+                {
+                    if let Ok(Some(project)) = store.get_project_by_id(&assignment.project_id) {
+                        if let Some(adapter) =
+                            crate::core::tool_adapters::adapter_by_key(&assignment.tool)
+                        {
+                            let project_path = std::path::Path::new(&project.path);
+                            let target = project_path.join(adapter.relative_skills_dir).join(name);
+                            if let Err(e) = remove_path_any(&target) {
+                                remove_failures.push(format!("{}: {}", target.display(), e));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if let Some(skill) = record {
             let path = std::path::PathBuf::from(skill.central_path);
             if path.exists() {
@@ -790,30 +892,6 @@ pub async fn delete_managed_skill(
     .map_err(format_anyhow_error)
 }
 
-fn remove_path_any(path: &str) -> Result<(), String> {
-    let p = std::path::Path::new(path);
-    if !p.exists() {
-        return Ok(());
-    }
-
-    let meta = std::fs::symlink_metadata(p).map_err(|err| err.to_string())?;
-    let ft = meta.file_type();
-
-    // 软链接（即使指向目录）也应该用 remove_file 删除链接本身
-    if ft.is_symlink() {
-        std::fs::remove_file(p).map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    if ft.is_dir() {
-        std::fs::remove_dir_all(p).map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    std::fs::remove_file(p).map_err(|err| err.to_string())?;
-    Ok(())
-}
-
 fn to_install_dto(result: InstallResult) -> InstallResultDto {
     InstallResultDto {
         skill_id: result.skill_id,
@@ -823,7 +901,7 @@ fn to_install_dto(result: InstallResult) -> InstallResultDto {
     }
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
