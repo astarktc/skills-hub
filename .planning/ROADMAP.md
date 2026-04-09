@@ -133,7 +133,11 @@ Plans:
 3. The "Remove tool column" E2E flow completes without orphaned data
 4. The assignment matrix displays `missing` status cells when appropriate
 
-**Plans:** 0 plans
+**Plans:** 1 plan
+
+Plans:
+
+- [ ] 06-01-PLAN.md -- Tool removal cascade + missing status detection (TOOL-03, SYNC-01)
 
 ## Progress
 
@@ -147,4 +151,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 3. IPC Commands            | 0/1            | Not started | -         |
 | 4. Frontend Component Tree | 0/3            | Not started | -         |
 | 5. Edge Cases and Polish   | 0/3            | Not started | -         |
-| 6. Gap Closure             | 0/0            | Not started | -         |
+| 6. Gap Closure             | 0/1            | Not started | -         |
