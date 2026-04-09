@@ -101,14 +101,19 @@ pub async fn add_project_tool(
 #[allow(non_snake_case)]
 pub async fn remove_project_tool(
     store: State<'_, SkillStore>,
+    sync_mutex: State<'_, SyncMutex>,
     projectId: String,
     tool: String,
 ) -> Result<(), String> {
     let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || store.remove_project_tool(&projectId, &tool))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(format_anyhow_error)
+    let mutex = sync_mutex.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
+        project_ops::remove_tool_with_cleanup(&store, &projectId, &tool)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(format_anyhow_error)
 }
 
 #[tauri::command]

@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+use super::project_sync;
 use super::skill_store::{ProjectRecord, SkillStore};
 use super::sync_engine;
 use super::tool_adapters;
@@ -96,6 +97,74 @@ pub fn register_project_path(
     };
     store.register_project(&record)?;
     to_project_dto(&record, store)
+}
+
+pub fn remove_tool_with_cleanup(store: &SkillStore, project_id: &str, tool: &str) -> Result<()> {
+    let project = store
+        .get_project_by_id(project_id)?
+        .ok_or_else(|| anyhow::anyhow!("project not found: {}", project_id))?;
+
+    let assignments =
+        store.list_project_skill_assignments_for_project_tool(project_id, tool)?;
+
+    for assignment in &assignments {
+        match store.get_skill_by_id(&assignment.skill_id) {
+            Ok(Some(skill)) => {
+                if let Err(e) =
+                    project_sync::unassign_and_cleanup(store, &project, &skill, tool)
+                {
+                    log::warn!(
+                        "remove_tool_with_cleanup: failed to unassign skill {} for tool {}: {:#}",
+                        assignment.skill_id,
+                        tool,
+                        e
+                    );
+                }
+            }
+            Ok(None) => {
+                // Skill record missing from DB -- orphaned assignment.
+                // Do best-effort filesystem cleanup via adapter path resolution.
+                log::warn!(
+                    "remove_tool_with_cleanup: skill {} not found; cleaning up orphaned assignment for tool {}",
+                    assignment.skill_id,
+                    tool
+                );
+                if let Some(adapter) = tool_adapters::adapter_by_key(tool) {
+                    let target = project_sync::resolve_project_sync_target(
+                        Path::new(&project.path),
+                        adapter.relative_skills_dir,
+                        &assignment.skill_id, // Use skill_id as fallback name
+                    );
+                    if target.exists() || target.symlink_metadata().is_ok() {
+                        if let Err(e) = sync_engine::remove_path_any(&target) {
+                            log::warn!("failed to remove orphaned target {:?}: {}", target, e);
+                        }
+                    }
+                }
+                // Clean up the DB record directly
+                if let Err(e) = store.remove_project_skill_assignment(
+                    &project.id,
+                    &assignment.skill_id,
+                    tool,
+                ) {
+                    log::warn!(
+                        "failed to remove orphaned assignment record: {:#}",
+                        e
+                    );
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "remove_tool_with_cleanup: error looking up skill {}: {:#}",
+                    assignment.skill_id,
+                    e
+                );
+            }
+        }
+    }
+
+    store.remove_project_tool(project_id, tool)?;
+    Ok(())
 }
 
 pub fn remove_project_with_cleanup(store: &SkillStore, project_id: &str) -> Result<()> {
