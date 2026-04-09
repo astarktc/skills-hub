@@ -115,9 +115,9 @@ Plans:
 
 Plans:
 
-- [ ] 05-01-PLAN.md -- Backend commands: auto-sync setting, bulk/per-skill unsync, INFR-03 skill deletion cleanup, PROJ-04 path_exists, INFR-02 SyncMutex fix, SYNC-01 missing status
-- [ ] 05-02-PLAN.md -- My Skills frontend: auto-sync toggle, bulk unsync button, per-skill Unlink icon, conditional install sync
-- [ ] 05-03-PLAN.md -- Projects frontend: missing project warning badges, error prefix translation, bulk assign failure surfacing, update-path flow, gitignore edge cases
+- [x] 05-01-PLAN.md -- Backend commands: auto-sync setting, bulk/per-skill unsync, INFR-03 skill deletion cleanup, PROJ-04 path_exists, INFR-02 SyncMutex fix, SYNC-01 missing status
+- [x] 05-02-PLAN.md -- My Skills frontend: auto-sync toggle, bulk unsync button, per-skill Unlink icon, conditional install sync
+- [x] 05-03-PLAN.md -- Projects frontend: missing project warning badges, error prefix translation, bulk assign failure surfacing, update-path flow, gitignore edge cases
 
 ## Progress
 
