@@ -104,15 +104,12 @@ pub fn remove_tool_with_cleanup(store: &SkillStore, project_id: &str, tool: &str
         .get_project_by_id(project_id)?
         .ok_or_else(|| anyhow::anyhow!("project not found: {}", project_id))?;
 
-    let assignments =
-        store.list_project_skill_assignments_for_project_tool(project_id, tool)?;
+    let assignments = store.list_project_skill_assignments_for_project_tool(project_id, tool)?;
 
     for assignment in &assignments {
         match store.get_skill_by_id(&assignment.skill_id) {
             Ok(Some(skill)) => {
-                if let Err(e) =
-                    project_sync::unassign_and_cleanup(store, &project, &skill, tool)
-                {
+                if let Err(e) = project_sync::unassign_and_cleanup(store, &project, &skill, tool) {
                     log::warn!(
                         "remove_tool_with_cleanup: failed to unassign skill {} for tool {}: {:#}",
                         assignment.skill_id,
@@ -142,15 +139,10 @@ pub fn remove_tool_with_cleanup(store: &SkillStore, project_id: &str, tool: &str
                     }
                 }
                 // Clean up the DB record directly
-                if let Err(e) = store.remove_project_skill_assignment(
-                    &project.id,
-                    &assignment.skill_id,
-                    tool,
-                ) {
-                    log::warn!(
-                        "failed to remove orphaned assignment record: {:#}",
-                        e
-                    );
+                if let Err(e) =
+                    store.remove_project_skill_assignment(&project.id, &assignment.skill_id, tool)
+                {
+                    log::warn!("failed to remove orphaned assignment record: {:#}", e);
                 }
             }
             Err(e) => {

@@ -229,30 +229,114 @@ pub fn list_assignments_with_staleness(
     let mut result = Vec::with_capacity(assignments.len());
 
     for mut assignment in assignments {
-        // D-09: Only check staleness for copy-mode synced targets.
-        // Symlinks propagate changes instantly -- no staleness possible.
-        if assignment.status == "synced" && assignment.mode == "copy" {
-            if let Some(ref stored_hash) = assignment.content_hash {
-                if let Ok(Some(skill)) = store.get_skill_by_id(&assignment.skill_id) {
+        // --- Resolve source and target existence ---
+        let skill_opt = store.get_skill_by_id(&assignment.skill_id).ok().flatten();
+        let source_exists = skill_opt
+            .as_ref()
+            .map(|s| Path::new(&s.central_path).exists())
+            .unwrap_or(false);
+
+        let target_exists = if let Some(ref skill) = skill_opt {
+            if let Some(adapter) = tool_adapters::adapter_by_key(&assignment.tool) {
+                let project = store
+                    .get_project_by_id(&assignment.project_id)
+                    .ok()
+                    .flatten();
+                project
+                    .map(|p| {
+                        let target = resolve_project_sync_target(
+                            Path::new(&p.path),
+                            adapter.relative_skills_dir,
+                            &skill.name,
+                        );
+                        target.exists() || target.symlink_metadata().is_ok()
+                    })
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        // --- D-04: Source absent -> missing ---
+        if !source_exists {
+            if assignment.status != "missing" {
+                let _ = store.update_assignment_status(
+                    &assignment.id,
+                    "missing",
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+            }
+            assignment.status = "missing".to_string();
+            result.push(assignment);
+            continue;
+        }
+
+        // --- D-05: Target absent for a previously-deployed assignment -> missing ---
+        if !target_exists
+            && (assignment.status == "synced"
+                || assignment.status == "stale"
+                || assignment.status == "missing")
+        {
+            if assignment.status != "missing" {
+                let _ = store.update_assignment_status(
+                    &assignment.id,
+                    "missing",
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+            }
+            assignment.status = "missing".to_string();
+            result.push(assignment);
+            continue;
+        }
+
+        // --- D-07: Both source and target exist -> recalculate staleness ---
+        // Runs for ANY current DB status (including "missing") to enable recovery.
+        if source_exists && target_exists {
+            if assignment.mode == "copy" {
+                // Copy mode: compare content hashes to detect staleness
+                if let Some(ref skill) = skill_opt {
                     let source = Path::new(&skill.central_path);
-                    if source.exists() {
-                        if let Ok(current_hash) = content_hash::hash_dir(source) {
-                            if current_hash != *stored_hash {
-                                assignment.status = "stale".to_string();
-                                let _ = store.update_assignment_status(
-                                    &assignment.id,
-                                    "stale",
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                );
-                            }
+                    if let Ok(current_hash) = content_hash::hash_dir(source) {
+                        let is_stale = assignment.content_hash.as_deref() != Some(&current_hash);
+                        let new_status = if is_stale { "stale" } else { "synced" };
+                        if assignment.status != new_status {
+                            let _ = store.update_assignment_status(
+                                &assignment.id,
+                                new_status,
+                                None,
+                                None,
+                                None,
+                                if !is_stale { Some(&current_hash) } else { None },
+                            );
                         }
+                        assignment.status = new_status.to_string();
                     }
+                    // If hash_dir fails, leave status unchanged
+                }
+            } else {
+                // Symlink mode: if both exist, it is synced
+                if assignment.status == "missing" {
+                    let _ = store.update_assignment_status(
+                        &assignment.id,
+                        "synced",
+                        None,
+                        None,
+                        None,
+                        None,
+                    );
+                    assignment.status = "synced".to_string();
                 }
             }
         }
+
         result.push(assignment);
     }
 

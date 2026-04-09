@@ -513,7 +513,10 @@ fn missing_status_when_source_absent() {
         .get_project_skill_assignment(&project.id, &skill.id, "cursor")
         .unwrap()
         .expect("assignment should exist in DB");
-    assert_eq!(db_record.status, "missing", "missing status should be persisted to DB");
+    assert_eq!(
+        db_record.status, "missing",
+        "missing status should be persisted to DB"
+    );
 }
 
 #[test]
@@ -857,7 +860,10 @@ fn missing_status_when_target_absent() {
         .get_project_skill_assignment(&project.id, &skill.id, "claude_code")
         .unwrap()
         .expect("assignment should exist");
-    assert_eq!(db_record.status, "missing", "missing status should be persisted to DB");
+    assert_eq!(
+        db_record.status, "missing",
+        "missing status should be persisted to DB"
+    );
 }
 
 #[test]
@@ -886,7 +892,10 @@ fn missing_status_recovers_when_source_restored() {
 
     let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
         .expect("list should succeed");
-    assert_eq!(assignments[0].status, "missing", "should be missing after source deleted");
+    assert_eq!(
+        assignments[0].status, "missing",
+        "should be missing after source deleted"
+    );
 
     // Recreate source with same content
     fs::create_dir_all(&skill_dir).expect("recreate skill dir");
@@ -897,7 +906,8 @@ fn missing_status_recovers_when_source_restored() {
     if !target.exists() {
         // Manually recreate the target copy to simulate recovery
         fs::create_dir_all(&target).expect("recreate target");
-        fs::write(target.join("SKILL.md"), "# Test Skill\nTest content.").expect("write target SKILL.md");
+        fs::write(target.join("SKILL.md"), "# Test Skill\nTest content.")
+            .expect("write target SKILL.md");
     }
 
     // D-07 litmus test: assignment had DB status "missing", source+target reappeared,

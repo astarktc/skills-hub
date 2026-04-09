@@ -301,8 +301,14 @@ fn remove_tool_with_cleanup_deletes_assignments_and_artifacts() {
     // Verify symlinks exist
     let target1 = project_dir.join(".claude/skills/rtc-skill-1");
     let target2 = project_dir.join(".claude/skills/rtc-skill-2");
-    assert!(target1.exists(), "skill1 target should exist before removal");
-    assert!(target2.exists(), "skill2 target should exist before removal");
+    assert!(
+        target1.exists(),
+        "skill1 target should exist before removal"
+    );
+    assert!(
+        target2.exists(),
+        "skill2 target should exist before removal"
+    );
 
     // Act: remove the tool
     project_ops::remove_tool_with_cleanup(&store, &project.id, "claude_code")
