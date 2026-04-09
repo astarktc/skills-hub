@@ -118,6 +118,7 @@ function App() {
   const [autoSelectSkillName, setAutoSelectSkillName] = useState<string | null>(
     null,
   );
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
 
   const isTauri =
     typeof window !== "undefined" &&
@@ -376,6 +377,13 @@ function App() {
   }, [isTauri, invokeTauri]);
 
   useEffect(() => {
+    if (!isTauri) return;
+    invokeTauri<boolean>("get_auto_sync_enabled")
+      .then(setAutoSyncEnabled)
+      .catch(() => {});
+  }, [isTauri, invokeTauri]);
+
+  useEffect(() => {
     if (isTauri) {
       void loadPlan();
     }
@@ -623,6 +631,45 @@ function App() {
       setError(err instanceof Error ? err.message : String(err));
     }
   }, [invokeTauri, isTauri, t]);
+  const handleAutoSyncToggle = useCallback(
+    async (enabled: boolean) => {
+      try {
+        await invokeTauri("set_auto_sync_enabled", { enabled });
+        setAutoSyncEnabled(enabled);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [invokeTauri],
+  );
+
+  const handleUnsyncAll = useCallback(async () => {
+    setLoading(true);
+    setLoadingStartAt(Date.now());
+    try {
+      const count = await invokeTauri<number>("unsync_all_skills");
+      setSuccessToastMessage(t("unsyncAllComplete", { count }));
+      await loadManagedSkills();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+      setLoadingStartAt(null);
+    }
+  }, [invokeTauri, loadManagedSkills, t]);
+
+  const handleUnsyncSkill = useCallback(
+    async (skillId: string) => {
+      try {
+        await invokeTauri("unsync_skill", { skillId });
+        await loadManagedSkills();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [invokeTauri, loadManagedSkills],
+  );
+
   const handlePickLocalPath = useCallback(async () => {
     try {
       if (!isTauri) {
@@ -1062,7 +1109,7 @@ function App() {
             name: localName.trim() || undefined,
           },
         );
-        {
+        if (autoSyncEnabled) {
           const selectedInstalledIds = tools
             .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
             .map((t) => t.id);
@@ -1149,7 +1196,7 @@ function App() {
           repoUrl: url,
           name: gitName.trim() || undefined,
         });
-        {
+        if (autoSyncEnabled) {
           const selectedInstalledIds = tools
             .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
             .map((t) => t.id);
@@ -1214,7 +1261,7 @@ function App() {
               name: gitName.trim() || undefined,
             },
           );
-          {
+          if (autoSyncEnabled) {
             const selectedInstalledIds = tools
               .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
               .map((t) => t.id);
@@ -1282,7 +1329,7 @@ function App() {
                 name: gitName.trim() || undefined,
               },
             );
-            {
+            if (autoSyncEnabled) {
               const selectedInstalledIds = tools
                 .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
                 .map((t) => t.id);
@@ -1457,7 +1504,7 @@ function App() {
               name: localName.trim() || undefined,
             },
           );
-          {
+          if (autoSyncEnabled) {
             const selectedInstalledIds = tools
               .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
               .map((t) => t.id);
@@ -1568,7 +1615,7 @@ function App() {
               name: gitName.trim() || undefined,
             },
           );
-          {
+          if (autoSyncEnabled) {
             const selectedInstalledIds = tools
               .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
               .map((t) => t.id);
@@ -1664,6 +1711,7 @@ function App() {
 
   const handleSyncAllManagedToTools = useCallback(
     async (toolIds: string[]) => {
+      if (!autoSyncEnabled) return;
       if (managedSkills.length === 0) return;
       const installedIds = uniqueToolIdsBySkillsDir(
         toolIds.filter((id) => isInstalled(id)),
@@ -1724,6 +1772,7 @@ function App() {
       }
     },
     [
+      autoSyncEnabled,
       invokeTauri,
       isInstalled,
       loadManagedSkills,
@@ -1924,6 +1973,9 @@ function App() {
               onSortChange={handleSortChange}
               onSearchChange={handleSearchChange}
               onRefresh={handleRefresh}
+              autoSyncEnabled={autoSyncEnabled}
+              onAutoSyncChange={handleAutoSyncToggle}
+              onUnsyncAll={handleUnsyncAll}
               t={t}
             />
             <SkillsList
@@ -1938,6 +1990,7 @@ function App() {
               onUpdateSkill={handleUpdateSkill}
               onDeleteSkill={handleDeletePrompt}
               onToggleTool={handleToggleToolForSkill}
+              onUnsyncSkill={handleUnsyncSkill}
               onOpenDetail={handleOpenDetail}
               t={t}
             />

@@ -311,6 +311,11 @@ export const resources = {
         windsurf: "Windsurf",
         moltbot: "MoltBot",
       },
+      autoSyncToggle: "Auto-sync to tool directories",
+      unsyncAll: "Uninstall from tool directories",
+      unsyncAllComplete: "Removed {{count}} tool directory deployments",
+      unsyncSkill: "Uninstall from tool directories",
+      unsyncSkillTooltip: "Remove this skill from all tool directories",
       projects: {
         addProject: "Add Project",
         emptyTitle: "No projects registered",
