@@ -137,7 +137,7 @@ Plans:
 
 Plans:
 
-- [ ] 06-01-PLAN.md -- Tool removal cascade + missing status detection (TOOL-03, SYNC-01)
+- [x] 06-01-PLAN.md -- Tool removal cascade + missing status detection (TOOL-03, SYNC-01)
 
 ## Progress
 
