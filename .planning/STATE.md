@@ -1,11 +1,11 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
-status: planning
-stopped_at: Phase 6 context gathered
-last_updated: "2026-04-09T04:10:54.516Z"
-last_activity: 2026-04-08
+milestone_name: Per-Project Skill Distribution
+status: completed
+stopped_at: Milestone v1.0 shipped
+last_updated: "2026-04-09T04:25:00.000Z"
+last_activity: 2026-04-09 - Completed quick task 260409-c0k: Rebrand app identifier, update URLs, add Linux release
 progress:
   total_phases: 6
   completed_phases: 6
@@ -18,67 +18,53 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-07)
+See: .planning/PROJECT.md (updated 2026-04-09)
 
-**Core value:** Any skill assigned to a project is immediately available in that project's tool directory via symlink, so AI tools only load the skills that matter for that project.
-**Current focus:** Phase 1: Data Foundation
+**Core value:** Install once, sync everywhere -- with per-project precision.
+**Current focus:** Planning next milestone
 
 ## Current Position
 
-Phase: 06 of 5 (edge cases and polish)
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-04-08
-
-Progress: [░░░░░░░░░░] 0%
+Milestone: v1.0 Per-Project Skill Distribution -- SHIPPED 2026-04-09
+Status: Complete
+Next: `/gsd-new-milestone` to start next milestone
 
 ## Performance Metrics
 
 **Velocity:**
 
 - Total plans completed: 12
-- Average duration: --
-- Total execution time: 0 hours
+- Timeline: 2 days (Apr 7-8, 2026)
+- Source files changed: 30
+- Lines: +9,568 / -1,665
 
 **By Phase:**
 
-| Phase | Plans | Total | Avg/Plan |
-| ----- | ----- | ----- | -------- |
-| 01 | 2 | - | - |
-| 02 | 2 | - | - |
-| 03 | 1 | - | - |
-| 04 | 3 | - | - |
-| 05 | 3 | - | - |
-| 06 | 1 | - | - |
-
-**Recent Trend:**
-
-- Last 5 plans: --
-- Trend: --
-
-_Updated after each plan completion_
+| Phase              | Plans | Status   |
+| ------------------ | ----- | -------- |
+| 01 Data Foundation | 2     | Complete |
+| 02 Sync Logic      | 2     | Complete |
+| 03 IPC Commands    | 1     | Complete |
+| 04 Frontend        | 3     | Complete |
+| 05 Edge Cases      | 3     | Complete |
+| 06 Gap Closure     | 1     | Complete |
 
 ## Accumulated Context
 
 ### Decisions
 
 Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
-
-- Roadmap: Bottom-up build order (data -> sync -> IPC -> UI -> polish) validated by research
-- Roadmap: 5 phases at standard granularity, derived from requirement categories and dependency analysis
 
 ### Pending Todos
 
-None yet.
+None.
 
 ### Blockers/Concerns
 
-- Research flags Phase 2 (Sync Logic) for WSL2 cross-filesystem empirical testing
-- Research flags Phase 4 (Frontend) for optimistic UI revert complexity in useProjectState hook
+None -- milestone shipped.
 
-## Session Continuity
+### Quick Tasks Completed
 
-Last session: 2026-04-09T02:23:52.015Z
-Stopped at: Phase 6 context gathered
-Resume file: .planning/phases/06-gap-closure/06-CONTEXT.md
+| #          | Description                                                                                                          | Date       | Commit  | Directory                                                                                                           |
+| ---------- | -------------------------------------------------------------------------------------------------------------------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
+| 260409-c0k | Rebrand app identifier to com.skillshub.app, update qufei1993 URLs to astarktc, add Linux x86_64 to release workflow | 2026-04-09 | 9614454 | [260409-c0k-rebrand-app-identifier-to-com-skillshub-](./quick/260409-c0k-rebrand-app-identifier-to-com-skillshub-/) |
