@@ -247,10 +247,7 @@ fn test_remove_block_with_comment_line_after_block() {
     );
     let result = remove_block(content);
 
-    assert!(
-        !result.contains(MARKER),
-        "marker should be removed"
-    );
+    assert!(!result.contains(MARKER), "marker should be removed");
     assert!(
         !result.contains("/.claude/skills/"),
         "claude pattern should be removed"
@@ -284,10 +281,7 @@ fn test_remove_block_at_end_of_file() {
     );
     let result = remove_block(content);
 
-    assert!(
-        !result.contains(MARKER),
-        "marker should be removed"
-    );
+    assert!(!result.contains(MARKER), "marker should be removed");
     assert!(
         !result.contains("/.claude/skills/"),
         "claude pattern should be removed"
@@ -341,10 +335,7 @@ fn test_remove_block_includes_preceding_blank_line() {
 
     // The blank line before the marker should also be removed
     // Result should be just "node_modules/\n" without a trailing blank line
-    assert!(
-        !result.contains(MARKER),
-        "marker should be removed"
-    );
+    assert!(!result.contains(MARKER), "marker should be removed");
     // Check that the result does not have a trailing blank line
     // (the blank line that preceded the marker should have been drained)
     let lines: Vec<&str> = result.lines().collect();
@@ -369,10 +360,7 @@ fn test_remove_block_no_preceding_blank_line() {
     );
     let result = remove_block(content);
 
-    assert!(
-        !result.contains(MARKER),
-        "marker should be removed"
-    );
+    assert!(!result.contains(MARKER), "marker should be removed");
     let lines: Vec<&str> = result.lines().collect();
     assert_eq!(
         lines.len(),
@@ -404,10 +392,7 @@ fn test_remove_block_with_multiple_patterns() {
     );
     let result = remove_block(content);
 
-    assert!(
-        !result.contains(MARKER),
-        "marker should be removed"
-    );
+    assert!(!result.contains(MARKER), "marker should be removed");
     assert!(
         !result.contains("/.claude/skills/"),
         "claude pattern should be removed"
