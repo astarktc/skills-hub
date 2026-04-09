@@ -325,7 +325,7 @@ pub async fn set_central_repo_path(
                     std::fs::remove_dir_all(&old_path)
                         .with_context(|| format!("cleanup {:?}", old_path))?;
                     // Surface rename error in logs for troubleshooting.
-                    eprintln!("rename failed, fallback used: {}", err);
+                    log::warn!("rename failed, fallback used: {}", err);
                 }
 
                 let mut updated = skill.clone();
@@ -833,7 +833,7 @@ pub async fn delete_managed_skill(
 ) -> Result<(), String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        println!("[delete_managed_skill] skillId={}", skillId);
+        log::debug!("[delete_managed_skill] skillId={}", skillId);
 
         let record = store.get_skill_by_id(&skillId)?;
         let skill_name = record.as_ref().map(|s| s.name.clone());
