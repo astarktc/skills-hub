@@ -151,6 +151,15 @@ pub fn remove_tool_with_cleanup(store: &SkillStore, project_id: &str, tool: &str
                     assignment.skill_id,
                     e
                 );
+                // Best-effort: clean up the assignment record to avoid orphaned rows
+                if let Err(e2) =
+                    store.remove_project_skill_assignment(&project.id, &assignment.skill_id, tool)
+                {
+                    log::warn!(
+                        "failed to remove assignment record after lookup error: {:#}",
+                        e2
+                    );
+                }
             }
         }
     }
