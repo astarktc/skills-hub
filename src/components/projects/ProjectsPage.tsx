@@ -2,9 +2,10 @@ import { memo, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 // Direct invoke import: projects subtree always runs inside Tauri context.
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
 import { toast } from "sonner";
-import { useProjectState } from "./useProjectState";
+import { useProjectState, formatProjectError } from "./useProjectState";
 import ProjectList from "./ProjectList";
 import AssignmentMatrix from "./AssignmentMatrix";
 import AddProjectModal from "./AddProjectModal";
@@ -49,10 +50,15 @@ const ProjectsPage = () => {
           pendingGitignoreRef.current = null;
         }
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err));
+        toast.error(
+          formatProjectError(
+            err instanceof Error ? err.message : String(err),
+            t,
+          ),
+        );
       }
     },
-    [state],
+    [state, t],
   );
 
   const handleToolConfigConfirm = useCallback(
@@ -100,7 +106,9 @@ const ProjectsPage = () => {
       state.setRemoveTargetId(null);
       toast.success(t("projects.removeConfirm"));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
+      toast.error(
+        formatProjectError(err instanceof Error ? err.message : String(err), t),
+      );
     }
   }, [state, t]);
 
@@ -154,27 +162,68 @@ const ProjectsPage = () => {
       try {
         await state.toggleAssignment(skillId, tool);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err));
+        toast.error(
+          formatProjectError(
+            err instanceof Error ? err.message : String(err),
+            t,
+          ),
+        );
       }
     },
-    [state],
+    [state, t],
   );
 
   const handleBulkAssign = useCallback(
     async (skillId: string) => {
       try {
-        await state.bulkAssign(skillId);
+        const result = await state.bulkAssign(skillId);
+        if (result && result.failed.length > 0) {
+          const details = result.failed
+            .map((f) => `${f.tool}: ${f.error}`)
+            .join(", ");
+          toast.warning(
+            t("projects.bulkAssignFailed", {
+              details,
+            }),
+          );
+        }
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err));
+        toast.error(
+          formatProjectError(
+            err instanceof Error ? err.message : String(err),
+            t,
+          ),
+        );
       }
     },
-    [state],
+    [state, t],
   );
 
   const handleConfigureToolsFromToolbar = useCallback(async () => {
     await state.loadToolStatus();
     state.setShowToolConfigModal(true);
   }, [state]);
+
+  const handleUpdatePath = useCallback(
+    async (projectId: string) => {
+      try {
+        const selected = await open({ directory: true, multiple: false });
+        if (!selected) return;
+        const newPath = typeof selected === "string" ? selected : selected[0];
+        if (!newPath) return;
+        await state.updateProjectPath(projectId, newPath);
+        toast.success(t("projects.updatePathSuccess"));
+      } catch (err) {
+        toast.error(
+          formatProjectError(
+            err instanceof Error ? err.message : String(err),
+            t,
+          ),
+        );
+      }
+    },
+    [state, t],
+  );
 
   return (
     <div className="projects-page">
@@ -203,6 +252,7 @@ const ProjectsPage = () => {
             onAddProject={() => state.setShowAddModal(true)}
             onEditProject={handlePromptEdit}
             onRemoveProject={handlePromptRemove}
+            onUpdatePath={handleUpdatePath}
             t={t}
           />
           <section className="matrix-panel">

@@ -1,5 +1,11 @@
 import { memo } from "react";
-import { Plus, Settings, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  FolderOpen,
+  Plus,
+  Settings,
+  Trash2,
+} from "lucide-react";
 import type { TFunction } from "i18next";
 import type { ProjectDto } from "./types";
 
@@ -12,6 +18,7 @@ type ProjectListProps = {
   onAddProject: () => void;
   onEditProject: (id: string) => void;
   onRemoveProject: (id: string) => void;
+  onUpdatePath: (id: string) => void;
   t: TFunction;
 };
 
@@ -24,6 +31,7 @@ const ProjectList = ({
   onAddProject,
   onEditProject,
   onRemoveProject,
+  onUpdatePath,
   t,
 }: ProjectListProps) => {
   return (
@@ -53,14 +61,36 @@ const ProjectList = ({
           {projects.map((p) => (
             <div
               key={p.id}
-              className={`project-item${selectedProjectId === p.id ? " selected" : ""}`}
+              className={`project-item${selectedProjectId === p.id ? " selected" : ""}${!p.path_exists ? " missing" : ""}`}
               onClick={() => onSelectProject(p.id)}
               role="option"
               aria-selected={selectedProjectId === p.id}
             >
               <div className="project-item-row">
                 <span className="project-item-name">{p.name}</span>
+                {!p.path_exists && (
+                  <span
+                    className="project-warning-badge"
+                    title={t("projects.pathMissingWarning")}
+                  >
+                    <AlertTriangle size={14} />
+                  </span>
+                )}
                 <div className="project-item-actions">
+                  {!p.path_exists && (
+                    <button
+                      className="btn-icon update-path-btn"
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onUpdatePath(p.id);
+                      }}
+                      aria-label={t("projects.updatePath")}
+                      title={t("projects.updatePath")}
+                    >
+                      <FolderOpen size={14} />
+                    </button>
+                  )}
                   <button
                     className="btn-icon edit-btn"
                     type="button"
@@ -85,7 +115,15 @@ const ProjectList = ({
                   </button>
                 </div>
               </div>
-              <span className="project-item-path">{p.path}</span>
+              <span className="project-item-path">
+                {p.path}
+                {!p.path_exists && (
+                  <span className="project-path-missing">
+                    {" "}
+                    {t("projects.pathMissing")}
+                  </span>
+                )}
+              </span>
               <div className="project-item-meta">
                 <span>
                   {t("projects.projectMeta", {

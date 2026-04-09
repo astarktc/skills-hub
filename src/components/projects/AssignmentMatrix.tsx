@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo } from "react";
-import { RefreshCw, Settings } from "lucide-react";
+import { AlertTriangle, RefreshCw, Settings } from "lucide-react";
 import { toast } from "sonner";
 import type { TFunction } from "i18next";
 import type {
@@ -58,6 +58,8 @@ const AssignmentMatrix = ({
     }
     return max > 0 ? max : null;
   }, [assignments]);
+
+  const pathMissing = project ? !project.path_exists : false;
 
   const handleResyncProject = useCallback(async () => {
     try {
@@ -126,6 +128,12 @@ const AssignmentMatrix = ({
           <button
             className="btn btn-primary btn-sm"
             onClick={handleResyncProject}
+            disabled={pathMissing}
+            title={
+              pathMissing
+                ? t("projects.syncDisabledMissing")
+                : t("projects.syncProject")
+            }
           >
             <RefreshCw size={14} />
             {t("projects.syncProject")}
@@ -133,12 +141,25 @@ const AssignmentMatrix = ({
           <button
             className="btn btn-secondary btn-sm"
             onClick={handleResyncAll}
+            disabled={pathMissing}
+            title={
+              pathMissing
+                ? t("projects.syncDisabledMissing")
+                : t("projects.syncAll")
+            }
           >
             <RefreshCw size={14} />
             {t("projects.syncAll")}
           </button>
         </div>
       </div>
+
+      {pathMissing && (
+        <div className="matrix-path-missing-banner">
+          <AlertTriangle size={14} />
+          <span>{t("projects.syncDisabledMissing")}</span>
+        </div>
+      )}
 
       {skills.length === 0 ? (
         <div className="matrix-no-skills">{t("projects.noSkills")}</div>
@@ -181,6 +202,7 @@ const AssignmentMatrix = ({
                   tools={tools}
                   assignments={assignments}
                   pendingCells={pendingCells}
+                  disabled={pathMissing}
                   onToggleAssignment={onToggleAssignment}
                   onBulkAssign={onBulkAssign}
                   t={t}
@@ -199,6 +221,7 @@ type MatrixRowProps = {
   tools: ProjectToolDto[];
   assignments: ProjectSkillAssignmentDto[];
   pendingCells: Set<string>;
+  disabled: boolean;
   onToggleAssignment: (skillId: string, tool: string) => Promise<void>;
   onBulkAssign: (skillId: string) => Promise<void>;
   t: TFunction;
@@ -218,6 +241,7 @@ const MatrixRow = memo(
     tools,
     assignments,
     pendingCells,
+    disabled,
     onToggleAssignment,
     onBulkAssign,
     t,
@@ -252,7 +276,7 @@ const MatrixRow = memo(
               className={`matrix-cell ${statusClass}`}
               title={errorTitle}
               onClick={
-                isError
+                isError && !disabled
                   ? () => onToggleAssignment(skill.id, tool.tool)
                   : undefined
               }
@@ -263,7 +287,7 @@ const MatrixRow = memo(
                 <input
                   type="checkbox"
                   checked={!!assignment}
-                  disabled={isPending}
+                  disabled={isPending || disabled}
                   onChange={() => onToggleAssignment(skill.id, tool.tool)}
                   aria-label={`${skill.name} - ${tool.tool}`}
                 />
@@ -281,6 +305,7 @@ const MatrixRow = memo(
           <button
             className="btn btn-xs matrix-all-tools-btn"
             onClick={() => onBulkAssign(skill.id)}
+            disabled={disabled}
           >
             {t("projects.allTools")}
           </button>
@@ -292,6 +317,7 @@ const MatrixRow = memo(
     if (prev.skill !== next.skill) return false;
     if (prev.tools !== next.tools) return false;
     if (prev.assignments !== next.assignments) return false;
+    if (prev.disabled !== next.disabled) return false;
     if (prev.onToggleAssignment !== next.onToggleAssignment) return false;
     if (prev.onBulkAssign !== next.onBulkAssign) return false;
     if (prev.t !== next.t) return false;

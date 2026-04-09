@@ -2979,3 +2979,42 @@
   opacity: 0.3;
   cursor: not-allowed;
 }
+
+/* Project missing-path warning styles */
+.project-warning-badge {
+  color: var(--status-warning);
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.project-path-missing {
+  color: var(--status-error);
+  font-style: italic;
+  font-size: 11px;
+}
+
+.update-path-btn {
+  color: var(--accent-primary);
+}
+.update-path-btn:hover {
+  color: var(--accent-primary-hover);
+}
+
+.project-item.missing {
+  opacity: 0.85;
+}
+
+.matrix-path-missing-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--danger-soft-bg);
+  border: 1px solid var(--status-error);
+  border-radius: 6px;
+  color: var(--status-error);
+  font-size: 13px;
+  margin-bottom: 12px;
+}

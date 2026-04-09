@@ -43,7 +43,10 @@ const EditProjectModalInner = ({
         setAddToGitignore(status.in_gitignore);
         setAddToExclude(status.in_exclude);
       })
-      .catch(() => {})
+      .catch(() => {
+        setAddToGitignore(false);
+        setAddToExclude(false);
+      })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
