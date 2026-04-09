@@ -100,13 +100,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PROJ-05     | Phase 5 | Pending |
 | TOOL-01     | Phase 1 | Pending |
 | TOOL-02     | Phase 4 | Pending |
-| TOOL-03     | Phase 4 | Pending |
+| TOOL-03     | Phase 6 | Pending |
 | ASGN-01     | Phase 3 | Pending |
 | ASGN-02     | Phase 2 | Pending |
 | ASGN-03     | Phase 2 | Pending |
 | ASGN-04     | Phase 3 | Pending |
 | ASGN-05     | Phase 2 | Pending |
-| SYNC-01     | Phase 4 | Pending |
+| SYNC-01     | Phase 6 | Pending |
 | SYNC-02     | Phase 3 | Pending |
 | SYNC-03     | Phase 3 | Pending |
 | SYNC-04     | Phase 2 | Pending |

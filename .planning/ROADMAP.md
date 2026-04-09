@@ -18,6 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 3: IPC Commands** - Tauri command layer wiring backend to frontend with DTOs
 - [ ] **Phase 4: Frontend Component Tree** - Full Projects tab UI with assignment matrix, status indicators, tool configuration
 - [ ] **Phase 5: Edge Cases and Polish** - Graceful error handling for stale paths, orphaned assignments, .gitignore prompt
+- [ ] **Phase 6: Gap Closure** - Tool removal cascades to assignments/artifacts, missing status production
 
 ## Phase Details
 
@@ -119,6 +120,21 @@ Plans:
 - [x] 05-02-PLAN.md -- My Skills frontend: auto-sync toggle, bulk unsync button, per-skill Unlink icon, conditional install sync
 - [x] 05-03-PLAN.md -- Projects frontend: missing project warning badges, error prefix translation, bulk assign failure surfacing, update-path flow, gitignore edge cases
 
+### Phase 6: Gap Closure — Tool Removal Cleanup & Missing Status
+
+**Goal**: Tool column removal cascades to assignments/artifacts, and `missing` assignment status is produced when skill source is absent
+**Depends on**: Phase 4, Phase 5
+**Requirements**: TOOL-03, SYNC-01
+**Gap Closure:** Closes gaps from v1.0 milestone audit
+**Success Criteria** (what must be TRUE):
+
+1. Removing a tool column from a project deletes all assignments for that tool and cleans up filesystem artifacts (symlinks/copies) in the project directory
+2. When a skill's central repo directory no longer exists, assignments referencing it report `missing` status instead of silently failing
+3. The "Remove tool column" E2E flow completes without orphaned data
+4. The assignment matrix displays `missing` status cells when appropriate
+
+**Plans:** 0 plans
+
 ## Progress
 
 **Execution Order:**
@@ -131,3 +147,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 3. IPC Commands            | 0/1            | Not started | -         |
 | 4. Frontend Component Tree | 0/3            | Not started | -         |
 | 5. Edge Cases and Polish   | 0/3            | Not started | -         |
+| 6. Gap Closure             | 0/0            | Not started | -         |
