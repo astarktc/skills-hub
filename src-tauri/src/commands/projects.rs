@@ -25,9 +25,15 @@ pub async fn register_project(
 
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn remove_project(store: State<'_, SkillStore>, projectId: String) -> Result<(), String> {
+pub async fn remove_project(
+    store: State<'_, SkillStore>,
+    sync_mutex: State<'_, SyncMutex>,
+    projectId: String,
+) -> Result<(), String> {
     let store = store.inner().clone();
+    let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
         project_ops::remove_project_with_cleanup(&store, &projectId)
     })
     .await
@@ -42,6 +48,22 @@ pub async fn list_projects(store: State<'_, SkillStore>) -> Result<Vec<ProjectDt
         .await
         .map_err(|e| e.to_string())?
         .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn update_project_path(
+    store: State<'_, SkillStore>,
+    projectId: String,
+    path: String,
+) -> Result<ProjectDto, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        project_ops::update_project_path(&store, &projectId, &path, now_ms(), expand_home_path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(format_anyhow_error)
 }
 
 #[tauri::command]

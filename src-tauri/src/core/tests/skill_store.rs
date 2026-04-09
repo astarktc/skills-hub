@@ -1084,3 +1084,160 @@ fn get_project_skill_assignment_returns_none() {
         .unwrap();
     assert!(result.is_none());
 }
+
+#[test]
+fn delete_all_skill_targets_clears_table() {
+    let (_dir, store) = make_store();
+    let skill = make_skill("s1", "SkillA", "/central/a", 10);
+    store.upsert_skill(&skill).unwrap();
+    store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "t1".to_string(),
+            skill_id: "s1".to_string(),
+            tool: "claude_code".to_string(),
+            target_path: "/tmp/target".to_string(),
+            mode: "symlink".to_string(),
+            status: "ok".to_string(),
+            last_error: None,
+            synced_at: Some(10),
+        })
+        .unwrap();
+    assert_eq!(store.list_skill_targets("s1").unwrap().len(), 1);
+    store.delete_all_skill_targets().unwrap();
+    assert_eq!(store.list_skill_targets("s1").unwrap().len(), 0);
+}
+
+#[test]
+fn delete_skill_targets_removes_only_specified_skill() {
+    let (_dir, store) = make_store();
+    let s1 = make_skill("s1", "A", "/central/a", 10);
+    let s2 = make_skill("s2", "B", "/central/b", 10);
+    store.upsert_skill(&s1).unwrap();
+    store.upsert_skill(&s2).unwrap();
+    store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "t1".to_string(),
+            skill_id: "s1".to_string(),
+            tool: "claude_code".to_string(),
+            target_path: "/tmp/t1".to_string(),
+            mode: "symlink".to_string(),
+            status: "ok".to_string(),
+            last_error: None,
+            synced_at: Some(10),
+        })
+        .unwrap();
+    store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "t2".to_string(),
+            skill_id: "s2".to_string(),
+            tool: "claude_code".to_string(),
+            target_path: "/tmp/t2".to_string(),
+            mode: "symlink".to_string(),
+            status: "ok".to_string(),
+            last_error: None,
+            synced_at: Some(10),
+        })
+        .unwrap();
+    store.delete_skill_targets("s1").unwrap();
+    assert_eq!(store.list_skill_targets("s1").unwrap().len(), 0);
+    assert_eq!(store.list_skill_targets("s2").unwrap().len(), 1);
+}
+
+#[test]
+fn aggregate_project_sync_status_treats_missing_as_error() {
+    let (_dir, store) = make_store();
+    let project = ProjectRecord {
+        id: "p1".to_string(),
+        path: "/tmp/proj".to_string(),
+        created_at: 1,
+        updated_at: 1,
+    };
+    store.register_project(&project).unwrap();
+    let skill = make_skill("s1", "S1", "/central/s1", 1);
+    store.upsert_skill(&skill).unwrap();
+    let assignment = ProjectSkillAssignmentRecord {
+        id: "a1".to_string(),
+        project_id: "p1".to_string(),
+        skill_id: "s1".to_string(),
+        tool: "claude_code".to_string(),
+        mode: "symlink".to_string(),
+        status: "missing".to_string(),
+        last_error: None,
+        synced_at: None,
+        content_hash: None,
+        created_at: 1,
+    };
+    store.add_project_skill_assignment(&assignment).unwrap();
+    let status = store.aggregate_project_sync_status("p1").unwrap();
+    assert_eq!(status, "error");
+}
+
+#[test]
+fn update_project_path_changes_path() {
+    let (_dir, store) = make_store();
+    let project = ProjectRecord {
+        id: "p1".to_string(),
+        path: "/tmp/old".to_string(),
+        created_at: 1,
+        updated_at: 1,
+    };
+    store.register_project(&project).unwrap();
+    store.update_project_path("p1", "/tmp/new", 2).unwrap();
+    let updated = store.get_project_by_id("p1").unwrap().unwrap();
+    assert_eq!(updated.path, "/tmp/new");
+    assert_eq!(updated.updated_at, 2);
+}
+
+#[test]
+fn list_project_skill_assignments_by_skill_returns_correct_rows() {
+    let (_dir, store) = make_store();
+    let project = ProjectRecord {
+        id: "p1".to_string(),
+        path: "/tmp/proj".to_string(),
+        created_at: 1,
+        updated_at: 1,
+    };
+    store.register_project(&project).unwrap();
+    let s1 = make_skill("s1", "A", "/central/a", 10);
+    let s2 = make_skill("s2", "B", "/central/b", 10);
+    store.upsert_skill(&s1).unwrap();
+    store.upsert_skill(&s2).unwrap();
+    store
+        .add_project_tool(&ProjectToolRecord {
+            id: "pt1".to_string(),
+            project_id: "p1".to_string(),
+            tool: "claude_code".to_string(),
+        })
+        .unwrap();
+    store
+        .add_project_skill_assignment(&ProjectSkillAssignmentRecord {
+            id: "a1".to_string(),
+            project_id: "p1".to_string(),
+            skill_id: "s1".to_string(),
+            tool: "claude_code".to_string(),
+            mode: "symlink".to_string(),
+            status: "synced".to_string(),
+            last_error: None,
+            synced_at: Some(10),
+            content_hash: None,
+            created_at: 1,
+        })
+        .unwrap();
+    store
+        .add_project_skill_assignment(&ProjectSkillAssignmentRecord {
+            id: "a2".to_string(),
+            project_id: "p1".to_string(),
+            skill_id: "s2".to_string(),
+            tool: "claude_code".to_string(),
+            mode: "symlink".to_string(),
+            status: "synced".to_string(),
+            last_error: None,
+            synced_at: Some(10),
+            content_hash: None,
+            created_at: 1,
+        })
+        .unwrap();
+    let results = store.list_project_skill_assignments_by_skill("s1").unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].skill_id, "s1");
+}

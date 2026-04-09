@@ -18,6 +18,7 @@ pub struct ProjectDto {
     pub skill_count: usize,
     pub assignment_count: usize,
     pub sync_status: String,
+    pub path_exists: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,6 +64,7 @@ pub fn to_project_dto(record: &ProjectRecord, store: &SkillStore) -> Result<Proj
         skill_count,
         assignment_count,
         sync_status,
+        path_exists: std::path::Path::new(&record.path).is_dir(),
     })
 }
 
@@ -148,6 +150,37 @@ pub fn list_project_dtos(store: &SkillStore) -> Result<Vec<ProjectDto>> {
         dtos.push(to_project_dto(record, store)?);
     }
     Ok(dtos)
+}
+
+pub fn update_project_path(
+    store: &SkillStore,
+    project_id: &str,
+    new_path: &str,
+    now_ms: i64,
+    expand_home: impl Fn(&str) -> Result<PathBuf>,
+) -> Result<ProjectDto> {
+    let expanded = expand_home(new_path)?;
+    let canonical = std::fs::canonicalize(&expanded)
+        .with_context(|| format!("failed to resolve path: {:?}", expanded))?;
+
+    if !canonical.is_dir() {
+        bail!("path is not a directory: {:?}", canonical);
+    }
+
+    let path_str = canonical.to_string_lossy().to_string();
+
+    // Check for duplicates (different project using this path)
+    if let Some(existing) = store.get_project_by_path(&path_str)? {
+        if existing.id != project_id {
+            bail!("DUPLICATE_PROJECT|{}", path_str);
+        }
+    }
+
+    store.update_project_path(project_id, &path_str, now_ms)?;
+    let record = store
+        .get_project_by_id(project_id)?
+        .ok_or_else(|| anyhow::anyhow!("project not found: {}", project_id))?;
+    to_project_dto(&record, store)
 }
 
 #[cfg(test)]

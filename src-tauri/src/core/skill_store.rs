@@ -575,7 +575,6 @@ impl SkillStore {
         })
     }
 
-    #[allow(dead_code)] // Used in Task 2 (update_project_path command)
     pub fn update_project_path(&self, project_id: &str, new_path: &str, now_ms: i64) -> Result<()> {
         self.with_conn(|conn| {
             let rows = conn.execute(

@@ -112,6 +112,7 @@ pub fn run() {
             commands::projects::register_project,
             commands::projects::remove_project,
             commands::projects::list_projects,
+            commands::projects::update_project_path,
             commands::projects::add_project_tool,
             commands::projects::remove_project_tool,
             commands::projects::list_project_tools,
