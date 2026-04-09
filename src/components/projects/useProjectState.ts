@@ -109,6 +109,10 @@ export function useProjectState(): ProjectState {
   // Version counter for stale result discard on project selection
   const selectVersionRef = useRef(0);
 
+  // Track latest assignments for stale-closure protection in toggleAssignment
+  const assignmentsRef = useRef(assignments);
+  assignmentsRef.current = assignments;
+
   const loadProjects = useCallback(async () => {
     setProjectsLoading(true);
     setLoadError(null);
@@ -201,7 +205,7 @@ export function useProjectState(): ProjectState {
         return next;
       });
       try {
-        const exists = assignments.some(
+        const exists = assignmentsRef.current.some(
           (a) => a.skill_id === skillId && a.tool === tool,
         );
         if (exists) {
@@ -243,7 +247,7 @@ export function useProjectState(): ProjectState {
         });
       }
     },
-    [selectedProjectId, assignments, loadProjects, pendingCells],
+    [selectedProjectId, loadProjects, pendingCells],
   );
 
   const bulkAssign = useCallback(
