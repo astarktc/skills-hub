@@ -396,6 +396,7 @@ export const resources = {
       subtitle: "统一管理并同步你的技能到各工具",
       navMySkills: "我的 Skills",
       navExplore: "探索",
+      navProjects: "项目",
       newSkill: "新建 Skill",
       manualAdd: "手动添加",
       manualAddHint: "有 Git URL 或本地路径？点击<b>手动添加</b>直接导入",
@@ -681,6 +682,7 @@ export const resources = {
         windsurf: "Windsurf",
         moltbot: "MoltBot",
       },
+      // projects: deferred to future phase (English fallback active via i18next)
     },
   },
 } as const;
