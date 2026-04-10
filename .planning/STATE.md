@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-last_updated: "2026-04-10T03:59:09.046Z"
+last_updated: "2026-04-10T17:37:59.348Z"
 progress:
   total_phases: 6
   completed_phases: 6
@@ -74,3 +74,4 @@ None -- milestone shipped.
 | 260409-rnu | Wire handleImport to respect autoSyncEnabled -- sync when ON, clean migration when OFF                               | 2026-04-10 | 873d9e0 | [260409-rnu-wire-handleimport-to-respect-autosyncena](./quick/260409-rnu-wire-handleimport-to-respect-autosyncena/) |
 | 260409-sqk | Enrich onboarding import with .skill-lock.json git provenance                                                        | 2026-04-10 | 74e6607 | [260409-sqk-enrich-onboarding-import-with-skill-lock](./quick/260409-sqk-enrich-onboarding-import-with-skill-lock/) |
 | 260409-udb | Implement sorting dropdown and group-by-repo checkbox on My Skills and Projects pages                                | 2026-04-10 | 7aa6033 | [260409-udb-implement-sorting-dropdown-and-group-by-](./quick/260409-udb-implement-sorting-dropdown-and-group-by-/) |
+| 260410-hjn | Group by repo: consolidate local skills, indent matrix skills, fix icon layout, hide All tools button                | 2026-04-10 | fd8add8 | [260410-hjn-group-by-repo-consolidate-local-skills-i](./quick/260410-hjn-group-by-repo-consolidate-local-skills-i/) |
