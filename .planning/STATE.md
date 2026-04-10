@@ -5,7 +5,7 @@ milestone_name: Per-Project Skill Distribution
 status: completed
 stopped_at: Milestone v1.0 shipped
 last_updated: "2026-04-09T04:25:00.000Z"
-last_activity: 2026-04-10 - Completed quick task 260409-r9e: Fix updater.json version to always use 3-part semver
+last_activity: 2026-04-10 - Completed quick task 260409-rnu: Wire handleImport to respect autoSyncEnabled
 progress:
   total_phases: 6
   completed_phases: 6
@@ -73,3 +73,4 @@ None -- milestone shipped.
 | ---------- | -------------------------------------------------------------------------------------------------------------------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
 | 260409-c0k | Rebrand app identifier to com.skillshub.app, update qufei1993 URLs to astarktc, add Linux x86_64 to release workflow | 2026-04-09 | 9614454 | [260409-c0k-rebrand-app-identifier-to-com-skillshub-](./quick/260409-c0k-rebrand-app-identifier-to-com-skillshub-/) |
 | 260409-r9e | Fix updater.json version to always use 3-part semver                                                                 | 2026-04-10 | 0da47ec | [260409-r9e-fix-updater-json-version-to-always-use-3](./quick/260409-r9e-fix-updater-json-version-to-always-use-3/) |
+| 260409-rnu | Wire handleImport to respect autoSyncEnabled -- sync when ON, clean migration when OFF                               | 2026-04-10 | 873d9e0 | [260409-rnu-wire-handleimport-to-respect-autosyncena](./quick/260409-rnu-wire-handleimport-to-respect-autosyncena/) |
