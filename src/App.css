@@ -3068,3 +3068,19 @@
   color: var(--text-tertiary);
   font-size: 12px;
 }
+
+/* Assignment matrix sort/group controls */
+.matrix-toolbar-filters {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.matrix-group-header-row td {
+  padding: 10px 8px 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+}

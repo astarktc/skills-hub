@@ -1,5 +1,5 @@
-import { memo, useCallback, useMemo } from "react";
-import { AlertTriangle, RefreshCw, Settings } from "lucide-react";
+import React, { memo, useCallback, useMemo, useState } from "react";
+import { AlertTriangle, ArrowUpDown, RefreshCw, Settings } from "lucide-react";
 import { toast } from "sonner";
 import type { TFunction } from "i18next";
 import type {
@@ -59,6 +59,41 @@ const AssignmentMatrix = ({
     return max > 0 ? max : null;
   }, [assignments]);
 
+  const [sortBy, setSortBy] = useState<"name" | "updated" | "added">("name");
+  const [groupByRepo, setGroupByRepo] = useState(false);
+
+  const sortedSkills = useMemo(() => {
+    return [...skills].sort((a, b) => {
+      if (sortBy === "name") return a.name.localeCompare(b.name);
+      if (sortBy === "added") return (b.created_at ?? 0) - (a.created_at ?? 0);
+      return (b.updated_at ?? 0) - (a.updated_at ?? 0);
+    });
+  }, [skills, sortBy]);
+
+  const skillGroups = useMemo(() => {
+    if (!groupByRepo) return null;
+    const map = new Map<string, ManagedSkill[]>();
+    for (const skill of sortedSkills) {
+      const key = skill.source_ref ?? "";
+      const list = map.get(key);
+      if (list) {
+        list.push(skill);
+      } else {
+        map.set(key, [skill]);
+      }
+    }
+    const keys = [...map.keys()].sort((a, b) => {
+      if (a === "" && b !== "") return 1;
+      if (b === "" && a !== "") return -1;
+      return a.localeCompare(b);
+    });
+    return keys.map((key) => ({
+      key,
+      label: key || t("ungrouped"),
+      skills: map.get(key)!,
+    }));
+  }, [groupByRepo, sortedSkills, t]);
+
   const pathMissing = project ? !project.path_exists : false;
 
   const handleResyncProject = useCallback(async () => {
@@ -116,6 +151,36 @@ const AssignmentMatrix = ({
           <span className="matrix-toolbar-name">{project.name}</span>
           <span className="matrix-toolbar-path">{project.path}</span>
           <span className="matrix-toolbar-sync-time">{lastSyncDisplay}</span>
+        </div>
+        <div className="matrix-toolbar-filters">
+          <button className="btn btn-secondary btn-sm sort-btn" type="button">
+            <span className="sort-label">{t("filterSort")}:</span>
+            {sortBy === "name"
+              ? t("sortName")
+              : sortBy === "added"
+                ? t("sortAdded")
+                : t("sortUpdated")}
+            <ArrowUpDown size={12} />
+            <select
+              aria-label={t("filterSort")}
+              value={sortBy}
+              onChange={(e) =>
+                setSortBy(e.target.value as "name" | "updated" | "added")
+              }
+            >
+              <option value="name">{t("sortName")}</option>
+              <option value="updated">{t("sortUpdated")}</option>
+              <option value="added">{t("sortAdded")}</option>
+            </select>
+          </button>
+          <label className="group-by-repo-toggle">
+            <input
+              type="checkbox"
+              checked={groupByRepo}
+              onChange={(e) => setGroupByRepo(e.target.checked)}
+            />
+            <span className="group-by-repo-label">{t("groupByRepo")}</span>
+          </label>
         </div>
         <div className="matrix-toolbar-actions">
           <button
@@ -195,19 +260,40 @@ const AssignmentMatrix = ({
               </tr>
             </thead>
             <tbody>
-              {skills.map((skill) => (
-                <MatrixRow
-                  key={skill.id}
-                  skill={skill}
-                  tools={tools}
-                  assignments={assignments}
-                  pendingCells={pendingCells}
-                  disabled={pathMissing}
-                  onToggleAssignment={onToggleAssignment}
-                  onBulkAssign={onBulkAssign}
-                  t={t}
-                />
-              ))}
+              {skillGroups
+                ? skillGroups.map((group) => (
+                    <React.Fragment key={group.key}>
+                      <tr className="matrix-group-header-row">
+                        <td colSpan={tools.length + 2}>{group.label}</td>
+                      </tr>
+                      {group.skills.map((skill) => (
+                        <MatrixRow
+                          key={skill.id}
+                          skill={skill}
+                          tools={tools}
+                          assignments={assignments}
+                          pendingCells={pendingCells}
+                          disabled={pathMissing}
+                          onToggleAssignment={onToggleAssignment}
+                          onBulkAssign={onBulkAssign}
+                          t={t}
+                        />
+                      ))}
+                    </React.Fragment>
+                  ))
+                : sortedSkills.map((skill) => (
+                    <MatrixRow
+                      key={skill.id}
+                      skill={skill}
+                      tools={tools}
+                      assignments={assignments}
+                      pendingCells={pendingCells}
+                      disabled={pathMissing}
+                      onToggleAssignment={onToggleAssignment}
+                      onBulkAssign={onBulkAssign}
+                      t={t}
+                    />
+                  ))}
             </tbody>
           </table>
         </div>
