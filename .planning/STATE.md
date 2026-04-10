@@ -1,11 +1,9 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: Per-Project Skill Distribution
+milestone_name: milestone
 status: completed
-stopped_at: Milestone v1.0 shipped
-last_updated: "2026-04-09T04:25:00.000Z"
-last_activity: 2026-04-10 - Completed quick task 260409-udb: Implement sorting dropdown and group-by-repo checkbox on My Skills and Projects pages
+last_updated: "2026-04-10T03:59:09.046Z"
 progress:
   total_phases: 6
   completed_phases: 6
