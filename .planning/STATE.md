@@ -5,7 +5,7 @@ milestone_name: Per-Project Skill Distribution
 status: completed
 stopped_at: Milestone v1.0 shipped
 last_updated: "2026-04-09T04:25:00.000Z"
-last_activity: 2026-04-10 - Completed quick task 260409-sqk: Enrich onboarding import with .skill-lock.json git provenance
+last_activity: 2026-04-10 - Completed quick task 260409-udb: Implement sorting dropdown and group-by-repo checkbox on My Skills and Projects pages
 progress:
   total_phases: 6
   completed_phases: 6
@@ -75,3 +75,4 @@ None -- milestone shipped.
 | 260409-r9e | Fix updater.json version to always use 3-part semver                                                                 | 2026-04-10 | 0da47ec | [260409-r9e-fix-updater-json-version-to-always-use-3](./quick/260409-r9e-fix-updater-json-version-to-always-use-3/) |
 | 260409-rnu | Wire handleImport to respect autoSyncEnabled -- sync when ON, clean migration when OFF                               | 2026-04-10 | 873d9e0 | [260409-rnu-wire-handleimport-to-respect-autosyncena](./quick/260409-rnu-wire-handleimport-to-respect-autosyncena/) |
 | 260409-sqk | Enrich onboarding import with .skill-lock.json git provenance                                                        | 2026-04-10 | 74e6607 | [260409-sqk-enrich-onboarding-import-with-skill-lock](./quick/260409-sqk-enrich-onboarding-import-with-skill-lock/) |
+| 260409-udb | Implement sorting dropdown and group-by-repo checkbox on My Skills and Projects pages                                | 2026-04-10 | 7aa6033 | [260409-udb-implement-sorting-dropdown-and-group-by-](./quick/260409-udb-implement-sorting-dropdown-and-group-by-/) |
