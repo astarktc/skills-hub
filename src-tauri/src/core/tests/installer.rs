@@ -514,3 +514,35 @@ fn list_git_skills_finds_root_level_skills() {
         "should not find not-a-skill"
     );
 }
+
+/// Non-symlink local skills retain source_type "local" (enrichment is skipped).
+#[test]
+fn install_local_skill_non_symlink_stays_local() {
+    let app = tauri::test::mock_app();
+    let (_dir, store) = make_store();
+    let central_root = tempfile::tempdir().unwrap();
+    set_central_path(&store, central_root.path());
+
+    let source = tempfile::tempdir().unwrap();
+    fs::write(source.path().join("SKILL.md"), b"---\nname: plain\n---\n").unwrap();
+    fs::write(source.path().join("readme.txt"), b"hello").unwrap();
+
+    let res = super::install_local_skill(
+        app.handle(),
+        &store,
+        source.path(),
+        Some("plain-skill".to_string()),
+    )
+    .unwrap();
+
+    let skill = store.get_skill_by_id(&res.skill_id).unwrap().unwrap();
+    assert_eq!(skill.source_type, "local", "non-symlink should stay local");
+    assert!(
+        skill.source_ref.is_some(),
+        "source_ref should be the filesystem path"
+    );
+    assert!(
+        skill.source_subpath.is_none(),
+        "source_subpath should be None for local"
+    );
+}

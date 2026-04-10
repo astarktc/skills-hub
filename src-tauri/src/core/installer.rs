@@ -12,6 +12,7 @@ use super::central_repo::{ensure_central_repo, resolve_central_repo_path};
 use super::content_hash::hash_dir;
 use super::git_fetcher::clone_or_pull;
 use super::github_download::{download_github_directory, parse_github_api_params};
+use super::skill_lock::try_enrich_from_skill_lock;
 use super::skill_store::{SkillRecord, SkillStore};
 use super::sync_engine::copy_dir_recursive;
 use super::sync_engine::sync_dir_copy_with_overwrite;
@@ -57,13 +58,30 @@ pub fn install_local_skill<R: tauri::Runtime>(
     let content_hash = compute_content_hash(&central_path);
     let description = parse_skill_md(&central_path.join("SKILL.md")).and_then(|(_, desc)| desc);
 
+    // Enrich with git provenance from ~/.agents/.skill-lock.json if source is a
+    // symlink into ~/.agents/skills/ (skills installed via `npx skills add`).
+    let (source_type, source_ref, source_subpath) =
+        if let Some(lock_entry) = try_enrich_from_skill_lock(source_path) {
+            (
+                "git".to_string(),
+                Some(lock_entry.source_url),
+                lock_entry.source_subpath,
+            )
+        } else {
+            (
+                "local".to_string(),
+                Some(source_path.to_string_lossy().to_string()),
+                None,
+            )
+        };
+
     let record = SkillRecord {
         id: Uuid::new_v4().to_string(),
         name,
         description,
-        source_type: "local".to_string(),
-        source_ref: Some(source_path.to_string_lossy().to_string()),
-        source_subpath: None,
+        source_type,
+        source_ref,
+        source_subpath,
         source_revision: None,
         central_path: central_path.to_string_lossy().to_string(),
         content_hash: content_hash.clone(),

@@ -34,10 +34,7 @@ fn parse_valid_lock_file_returns_entries() {
     let map = result.unwrap();
     assert!(map.contains_key("agent-browser"));
     let entry = &map["agent-browser"];
-    assert_eq!(
-        entry.source_url,
-        "https://github.com/anthropics/skills.git"
-    );
+    assert_eq!(entry.source_url, "https://github.com/anthropics/skills.git");
     assert_eq!(
         entry.source_subpath.as_deref(),
         Some("skills/agent-browser")
@@ -52,7 +49,7 @@ fn parse_lock_file_missing_skills_key_returns_none() {
     let result = super::parse_lock_file(&dir.path().join(".skill-lock.json"));
     // Missing "skills" key means no entries -- should return None or empty
     assert!(
-        result.is_none() || result.as_ref().map_or(false, |m| m.is_empty()),
+        result.is_none() || result.as_ref().is_some_and(|m| m.is_empty()),
         "missing skills key should yield empty/None"
     );
 }
@@ -89,11 +86,7 @@ fn try_enrich_symlink_into_agents_skills_returns_entry() {
     let skills_dir = agents_dir.join("skills");
     let skill_dir = skills_dir.join("test-skill");
     fs::create_dir_all(&skill_dir).unwrap();
-    fs::write(
-        skill_dir.join("SKILL.md"),
-        "---\nname: test-skill\n---\n",
-    )
-    .unwrap();
+    fs::write(skill_dir.join("SKILL.md"), "---\nname: test-skill\n---\n").unwrap();
 
     write_lock_file(
         &agents_dir,
