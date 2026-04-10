@@ -3049,24 +3049,38 @@
   white-space: nowrap;
 }
 .repo-group {
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 .repo-group-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 0 4px 0;
-  font-size: 13px;
-  font-weight: 500;
+  padding: 10px 12px 6px 8px;
+  font-size: 18px;
+  font-weight: 1000;
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--border-color);
+  margin-bottom: 6px;
+  background: var(--bg-panel);
+  border-radius: 6px 6px 0 0;
+}
+.repo-group-icon {
   color: var(--text-secondary);
-  font-family: var(--font-mono);
-  border-bottom: 1px solid var(--border-subtle);
-  margin-bottom: 4px;
+  flex-shrink: 0;
+}
+.repo-group-link {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.repo-group-link:hover {
+  text-decoration: underline;
+  color: var(--accent);
 }
 .repo-group-header .repo-count {
   font-weight: 400;
   color: var(--text-tertiary);
   font-size: 12px;
+  margin-left: auto;
 }
 
 /* Assignment matrix sort/group controls */
@@ -3076,11 +3090,15 @@
   gap: 12px;
 }
 .matrix-group-header-row td {
-  padding: 10px 8px 4px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 10px 8px 6px;
+  font-size: 18px;
+  font-weight: 1000;
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--border-color);
   background: var(--bg-panel);
+}
+.matrix-group-header-row .repo-group-icon {
+  vertical-align: -2px;
+  margin-right: 6px;
+  color: var(--text-secondary);
 }

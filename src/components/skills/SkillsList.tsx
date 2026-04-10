@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { MessageCircle } from "lucide-react";
+import { GitBranch, MessageCircle } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { ManagedSkill, OnboardingPlan, ToolOption } from "./types";
 import SkillCard from "./SkillCard";
@@ -61,12 +61,16 @@ const SkillsList = ({
       if (b === "" && a !== "") return -1;
       return a.localeCompare(b);
     });
-    return keys.map((key) => ({
-      key,
-      label: key || t("ungrouped"),
-      skills: map.get(key)!,
-    }));
-  }, [groupByRepo, visibleSkills, t]);
+    return keys.map((key) => {
+      const ghInfo = key ? getGithubInfo(key) : null;
+      return {
+        key,
+        label: ghInfo ? ghInfo.label : key || t("ungrouped"),
+        href: ghInfo?.href ?? null,
+        skills: map.get(key)!,
+      };
+    });
+  }, [groupByRepo, visibleSkills, t, getGithubInfo]);
 
   const renderSkill = (skill: ManagedSkill) => (
     <SkillCard
@@ -119,7 +123,19 @@ const SkillsList = ({
           {groups.map((group) => (
             <div key={group.key} className="repo-group">
               <div className="repo-group-header">
-                <span>{group.label}</span>
+                <GitBranch size={14} className="repo-group-icon" />
+                {group.href ? (
+                  <a
+                    href={group.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="repo-group-link"
+                  >
+                    {group.label}
+                  </a>
+                ) : (
+                  <span>{group.label}</span>
+                )}
                 <span className="repo-count">{group.skills.length}</span>
               </div>
               {group.skills.map(renderSkill)}

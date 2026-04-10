@@ -1,5 +1,11 @@
 import React, { memo, useCallback, useMemo, useState } from "react";
-import { AlertTriangle, ArrowUpDown, RefreshCw, Settings } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowUpDown,
+  GitBranch,
+  RefreshCw,
+  Settings,
+} from "lucide-react";
 import { toast } from "sonner";
 import type { TFunction } from "i18next";
 import type {
@@ -35,6 +41,23 @@ function formatRelativeTime(timestampMs: number, t: TFunction): string {
   if (diffHr < 24) return t("projects.hoursAgo", { count: diffHr });
   const diffDay = Math.floor(diffHr / 24);
   return t("projects.daysAgo", { count: diffDay });
+}
+
+function shortRepoLabel(url: string): string | null {
+  try {
+    const normalized = url.replace(/^git\+/, "");
+    const parsed = new URL(normalized);
+    if (!parsed.hostname.includes("github.com")) return null;
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const owner = parts[0];
+    const repo = parts[1]?.replace(/\.git$/, "");
+    if (!owner || !repo) return null;
+    return `${owner}/${repo}`;
+  } catch {
+    const match = url.match(/github\.com\/([^/]+)\/([^/#?]+)/i);
+    if (!match) return null;
+    return `${match[1]}/${match[2].replace(/\.git$/, "")}`;
+  }
 }
 
 const AssignmentMatrix = ({
@@ -87,11 +110,14 @@ const AssignmentMatrix = ({
       if (b === "" && a !== "") return -1;
       return a.localeCompare(b);
     });
-    return keys.map((key) => ({
-      key,
-      label: key || t("ungrouped"),
-      skills: map.get(key)!,
-    }));
+    return keys.map((key) => {
+      const short = key ? shortRepoLabel(key) : null;
+      return {
+        key,
+        label: (short ?? key) || t("ungrouped"),
+        skills: map.get(key)!,
+      };
+    });
   }, [groupByRepo, sortedSkills, t]);
 
   const pathMissing = project ? !project.path_exists : false;
@@ -264,7 +290,10 @@ const AssignmentMatrix = ({
                 ? skillGroups.map((group) => (
                     <React.Fragment key={group.key}>
                       <tr className="matrix-group-header-row">
-                        <td colSpan={tools.length + 2}>{group.label}</td>
+                        <td colSpan={tools.length + 2}>
+                          <GitBranch size={14} className="repo-group-icon" />
+                          {group.label}
+                        </td>
                       </tr>
                       {group.skills.map((skill) => (
                         <MatrixRow
