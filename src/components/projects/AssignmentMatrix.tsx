@@ -97,7 +97,13 @@ const AssignmentMatrix = ({
     if (!groupByRepo) return null;
     const map = new Map<string, ManagedSkill[]>();
     for (const skill of sortedSkills) {
-      const key = skill.source_ref ?? "";
+      const ref = skill.source_ref ?? "";
+      const isGitUrl =
+        ref.startsWith("git+") ||
+        ref.startsWith("https://") ||
+        ref.startsWith("http://") ||
+        ref.includes("github.com");
+      const key = isGitUrl ? ref : "__local__";
       const list = map.get(key);
       if (list) {
         list.push(skill);
@@ -106,15 +112,18 @@ const AssignmentMatrix = ({
       }
     }
     const keys = [...map.keys()].sort((a, b) => {
-      if (a === "" && b !== "") return 1;
-      if (b === "" && a !== "") return -1;
+      if (a === "__local__" && b !== "__local__") return 1;
+      if (b === "__local__" && a !== "__local__") return -1;
       return a.localeCompare(b);
     });
     return keys.map((key) => {
-      const short = key ? shortRepoLabel(key) : null;
+      const short = key !== "__local__" && key ? shortRepoLabel(key) : null;
       return {
         key,
-        label: (short ?? key) || t("ungrouped"),
+        label:
+          key === "__local__"
+            ? t("localGroup")
+            : (short ?? key) || t("ungrouped"),
         skills: map.get(key)!,
       };
     });

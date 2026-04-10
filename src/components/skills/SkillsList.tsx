@@ -48,7 +48,13 @@ const SkillsList = ({
     if (!groupByRepo) return null;
     const map = new Map<string, ManagedSkill[]>();
     for (const skill of visibleSkills) {
-      const key = skill.source_ref ?? "";
+      const ref = skill.source_ref ?? "";
+      const isGitUrl =
+        ref.startsWith("git+") ||
+        ref.startsWith("https://") ||
+        ref.startsWith("http://") ||
+        ref.includes("github.com");
+      const key = isGitUrl ? ref : "__local__";
       const list = map.get(key);
       if (list) {
         list.push(skill);
@@ -57,15 +63,20 @@ const SkillsList = ({
       }
     }
     const keys = [...map.keys()].sort((a, b) => {
-      if (a === "" && b !== "") return 1;
-      if (b === "" && a !== "") return -1;
+      if (a === "__local__" && b !== "__local__") return 1;
+      if (b === "__local__" && a !== "__local__") return -1;
       return a.localeCompare(b);
     });
     return keys.map((key) => {
-      const ghInfo = key ? getGithubInfo(key) : null;
+      const ghInfo = key !== "__local__" && key ? getGithubInfo(key) : null;
       return {
         key,
-        label: ghInfo ? ghInfo.label : key || t("ungrouped"),
+        label:
+          key === "__local__"
+            ? t("localGroup")
+            : ghInfo
+              ? ghInfo.label
+              : key || t("ungrouped"),
         href: ghInfo?.href ?? null,
         skills: map.get(key)!,
       };
