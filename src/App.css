@@ -3098,7 +3098,16 @@
   background: var(--bg-panel);
 }
 .matrix-group-header-row .repo-group-icon {
-  vertical-align: -2px;
-  margin-right: 6px;
   color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.matrix-grid-grouped .matrix-skill-cell {
+  padding-left: 24px;
+}
+
+.matrix-group-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }

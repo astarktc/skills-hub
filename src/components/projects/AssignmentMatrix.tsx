@@ -282,7 +282,9 @@ const AssignmentMatrix = ({
           ))}
         </div>
       ) : (
-        <div className="matrix-grid">
+        <div
+          className={`matrix-grid${groupByRepo ? " matrix-grid-grouped" : ""}`}
+        >
           <table>
             <thead>
               <tr className="matrix-header-row">
@@ -300,8 +302,10 @@ const AssignmentMatrix = ({
                     <React.Fragment key={group.key}>
                       <tr className="matrix-group-header-row">
                         <td colSpan={tools.length + 2}>
-                          <GitBranch size={14} className="repo-group-icon" />
-                          {group.label}
+                          <span className="matrix-group-label">
+                            <GitBranch size={14} className="repo-group-icon" />
+                            {group.label}
+                          </span>
                         </td>
                       </tr>
                       {group.skills.map((skill) => (
@@ -312,6 +316,7 @@ const AssignmentMatrix = ({
                           assignments={assignments}
                           pendingCells={pendingCells}
                           disabled={pathMissing}
+                          showBulkAssign={tools.length > 1}
                           onToggleAssignment={onToggleAssignment}
                           onBulkAssign={onBulkAssign}
                           t={t}
@@ -327,6 +332,7 @@ const AssignmentMatrix = ({
                       assignments={assignments}
                       pendingCells={pendingCells}
                       disabled={pathMissing}
+                      showBulkAssign={tools.length > 1}
                       onToggleAssignment={onToggleAssignment}
                       onBulkAssign={onBulkAssign}
                       t={t}
@@ -346,6 +352,7 @@ type MatrixRowProps = {
   assignments: ProjectSkillAssignmentDto[];
   pendingCells: Set<string>;
   disabled: boolean;
+  showBulkAssign: boolean;
   onToggleAssignment: (skillId: string, tool: string) => Promise<void>;
   onBulkAssign: (skillId: string) => Promise<void>;
   t: TFunction;
@@ -366,6 +373,7 @@ const MatrixRow = memo(
     assignments,
     pendingCells,
     disabled,
+    showBulkAssign,
     onToggleAssignment,
     onBulkAssign,
     t,
@@ -426,13 +434,15 @@ const MatrixRow = memo(
           );
         })}
         <td>
-          <button
-            className="btn btn-xs matrix-all-tools-btn"
-            onClick={() => onBulkAssign(skill.id)}
-            disabled={disabled}
-          >
-            {t("projects.allTools")}
-          </button>
+          {showBulkAssign && (
+            <button
+              className="btn btn-xs matrix-all-tools-btn"
+              onClick={() => onBulkAssign(skill.id)}
+              disabled={disabled}
+            >
+              {t("projects.allTools")}
+            </button>
+          )}
         </td>
       </tr>
     );
@@ -442,6 +452,7 @@ const MatrixRow = memo(
     if (prev.tools !== next.tools) return false;
     if (prev.assignments !== next.assignments) return false;
     if (prev.disabled !== next.disabled) return false;
+    if (prev.showBulkAssign !== next.showBulkAssign) return false;
     if (prev.onToggleAssignment !== next.onToggleAssignment) return false;
     if (prev.onBulkAssign !== next.onBulkAssign) return false;
     if (prev.t !== next.t) return false;
