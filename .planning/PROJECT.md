@@ -35,19 +35,19 @@ Any skill assigned to a project is immediately available in that project's tool 
 - ✓ Sync all assignments across all projects ("Sync All" button) — Validated in Phase 4
 - ✓ Per-cell status indicators: synced (green), stale (yellow), missing (red), pending (gray) — Validated in Phase 4
 - ✓ Prompt user to add tool skill directories to project's .gitignore on registration — Validated in Phase 4
+- ✓ Remove registered projects (cleans up all synced symlinks/copies) — Validated in Phase 4/5
+- ✓ Unassign skills from projects (removes symlink/copy from project directory) — Validated in Phase 2
+- ✓ Content hash staleness detection for copy-mode targets — Validated in Phase 2
+- ✓ Handle removed/renamed project directories gracefully (detect on list, show warning) — Validated in Phase 5
+- ✓ Global sync (existing feature) continues to work alongside project sync — Validated in Phase 2
 - ✓ Handle skills removed from central library (orphaned assignments marked "missing") — Validated in Phase 6
 - ✓ Tool column removal cascades to assignments and filesystem artifacts — Validated in Phase 6
 
 ### Active
 
-<!-- Per-project skill distribution — remaining items for Phase 5 polish. -->
+<!-- All v1 requirements shipped. Remaining items deferred to v2. -->
 
-- [ ] Remove registered projects (cleans up all synced symlinks/copies)
-- [ ] Unassign skills from projects (removes symlink/copy from project directory)
-- [ ] Content hash staleness detection for copy-mode targets
 - [ ] Search/filter bar in the assignment matrix for large skill libraries
-- [ ] Handle removed/renamed project directories gracefully (detect on list, show warning)
-- [ ] Global sync (existing feature) continues to work alongside project sync
 - [ ] Cross-platform symlink testing (Windows NTFS via WSL, macOS, native Linux)
 
 ### Out of Scope
@@ -69,7 +69,7 @@ Any skill assigned to a project is immediately available in that project's tool 
 
 ### Brownfield State
 
-This is an active codebase with a working app (v0.4.2). The existing sync engine (`sync_engine.rs`) accepts generic `source: &Path` and `target: &Path` — only the path resolution layer is global-hardcoded. Per-project sync requires zero changes to the sync engine itself: just project-aware path resolution, assignment storage, and new UI.
+This is an active codebase with a working app (v1.0.0). The existing sync engine (`sync_engine.rs`) accepts generic `source: &Path` and `target: &Path` — only the path resolution layer is global-hardcoded. Per-project sync requires zero changes to the sync engine itself: just project-aware path resolution, assignment storage, and new UI.
 
 ### Key Architectural Insight
 
@@ -81,11 +81,11 @@ The sync primitives are path-generic. Changing WHERE to sync (project-local vs g
 
 ### Frontend State
 
-`App.tsx` is 2087 lines with 50+ state variables. The Projects tab will be a fully separate component tree (`src/components/projects/`) with its own state management to avoid further bloating App.tsx. Minimal changes to App.tsx — just adding the tab to navigation.
+`App.tsx` is ~2200 lines with 50+ state variables. The Projects tab is a fully separate component tree (`src/components/projects/`) with its own state management via the `useProjectState` custom hook, avoiding further bloating App.tsx. Changes to App.tsx were limited to tab navigation wiring.
 
 ### Data Model Additions
 
-New SQLite tables via Schema V4 migration:
+New SQLite tables via Schema V4 migration (current schema: V6 after V5 added `content_hash` and V6 added `skill_name` with backfill):
 
 - `projects` — registered project directories
 - `project_tools` — which tools are configured per project (drives matrix columns)
@@ -135,4 +135,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-08 after Phase 3 (IPC Commands) completion_
+_Last updated: 2026-04-09 after v1.0 milestone completion (all 6 phases shipped)_

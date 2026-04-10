@@ -9,47 +9,47 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Project Management
 
-- [ ] **PROJ-01**: User can register a project directory via folder picker (with manual path entry fallback)
-- [ ] **PROJ-02**: User can remove a registered project (cleans up all deployed symlinks/copies in the project directory)
-- [ ] **PROJ-03**: User can see all registered projects in a list with assignment counts and aggregate sync status
-- [ ] **PROJ-04**: App detects removed/renamed project directories on list load and shows a warning badge
-- [ ] **PROJ-05**: App prompts user to add tool-specific skill directories to the project's .gitignore on registration
+- [x] **PROJ-01**: User can register a project directory via folder picker (with manual path entry fallback)
+- [x] **PROJ-02**: User can remove a registered project (cleans up all deployed symlinks/copies in the project directory)
+- [x] **PROJ-03**: User can see all registered projects in a list with assignment counts and aggregate sync status
+- [x] **PROJ-04**: App detects removed/renamed project directories on list load and shows a warning badge
+- [x] **PROJ-05**: App prompts user to add tool-specific skill directories to the project's .gitignore on registration
 
 ### Tool Configuration
 
-- [ ] **TOOL-01**: User can configure which tool columns appear in the assignment matrix per project
-- [ ] **TOOL-02**: Tool column picker auto-detects installed tools and pre-selects them on first setup
-- [ ] **TOOL-03**: User can add or remove tool columns from a project at any time
+- [x] **TOOL-01**: User can configure which tool columns appear in the assignment matrix per project
+- [x] **TOOL-02**: Tool column picker auto-detects installed tools and pre-selects them on first setup
+- [x] **TOOL-03**: User can add or remove tool columns from a project at any time
 
 ### Skill Assignment
 
-- [ ] **ASGN-01**: User can assign a skill to a project for a specific tool via checkbox in the matrix
-- [ ] **ASGN-02**: Assigning a skill immediately creates a symlink/copy in the project's tool skill directory
-- [ ] **ASGN-03**: User can unassign a skill from a project (removes symlink/copy from project directory)
-- [ ] **ASGN-04**: User can bulk-assign all configured tools for a skill via "All Tools" button per row
-- [ ] **ASGN-05**: Global sync (existing feature) continues to work alongside project sync without interference
+- [x] **ASGN-01**: User can assign a skill to a project for a specific tool via checkbox in the matrix
+- [x] **ASGN-02**: Assigning a skill immediately creates a symlink/copy in the project's tool skill directory
+- [x] **ASGN-03**: User can unassign a skill from a project (removes symlink/copy from project directory)
+- [x] **ASGN-04**: User can bulk-assign all configured tools for a skill via "All Tools" button per row
+- [x] **ASGN-05**: Global sync (existing feature) continues to work alongside project sync without interference
 
 ### Sync & Status
 
-- [ ] **SYNC-01**: Each assignment cell shows status: synced (green), stale (yellow), missing (red), pending (gray)
-- [ ] **SYNC-02**: User can re-sync all assignments for a single project via "Sync Project" button
-- [ ] **SYNC-03**: User can re-sync all assignments across all projects via "Sync All" button
-- [ ] **SYNC-04**: App detects content staleness for copy-mode targets via hash comparison
+- [x] **SYNC-01**: Each assignment cell shows status: synced (green), stale (yellow), missing (red), pending (gray)
+- [x] **SYNC-02**: User can re-sync all assignments for a single project via "Sync Project" button
+- [x] **SYNC-03**: User can re-sync all assignments across all projects via "Sync All" button
+- [x] **SYNC-04**: App detects content staleness for copy-mode targets via hash comparison
 
 ### Infrastructure
 
-- [ ] **INFR-01**: App detects cross-filesystem scenarios (WSL2 ext4-to-NTFS) and auto-falls back to copy mode
-- [ ] **INFR-02**: Sync operations are serialized to prevent race conditions between Sync All and individual toggles
-- [ ] **INFR-03**: When a skill is deleted from the central library, all its project assignments and filesystem artifacts are cleaned up (cascade delete)
-- [ ] **INFR-04**: Schema V4 migration adds projects, project_tools, and project_skill_assignments tables with transaction wrapping
-- [ ] **INFR-05**: New Tauri IPC commands are in a separate `commands/projects.rs` module (not in existing `commands/mod.rs`)
+- [x] **INFR-01**: App detects cross-filesystem scenarios (WSL2 ext4-to-NTFS) and auto-falls back to copy mode
+- [x] **INFR-02**: Sync operations are serialized to prevent race conditions between Sync All and individual toggles
+- [x] **INFR-03**: When a skill is deleted from the central library, all its project assignments and filesystem artifacts are cleaned up (cascade delete)
+- [x] **INFR-04**: Schema V4 migration adds projects, project_tools, and project_skill_assignments tables with transaction wrapping
+- [x] **INFR-05**: New Tauri IPC commands are in a separate `commands/projects.rs` module (not in existing `commands/mod.rs`)
 
 ### Frontend
 
-- [ ] **UI-01**: Projects tab appears in main navigation alongside existing tabs
-- [ ] **UI-02**: Project list panel (left) with add/remove project actions
-- [ ] **UI-03**: Assignment matrix panel (right) with checkbox grid for selected project
-- [ ] **UI-05**: Projects tab uses its own component tree and state (isolated from App.tsx)
+- [x] **UI-01**: Projects tab appears in main navigation alongside existing tabs
+- [x] **UI-02**: Project list panel (left) with add/remove project actions
+- [x] **UI-03**: Assignment matrix panel (right) with checkbox grid for selected project
+- [x] **UI-05**: Projects tab uses its own component tree and state (isolated from App.tsx)
 
 ## v2 Requirements
 
@@ -91,34 +91,34 @@ Explicitly excluded. Documented to prevent scope creep.
 
 Which phases cover which requirements. Updated during roadmap creation.
 
-| Requirement | Phase   | Status  |
-| ----------- | ------- | ------- |
-| PROJ-01     | Phase 1 | Pending |
-| PROJ-02     | Phase 1 | Pending |
-| PROJ-03     | Phase 1 | Pending |
-| PROJ-04     | Phase 5 | Pending |
-| PROJ-05     | Phase 5 | Pending |
-| TOOL-01     | Phase 1 | Pending |
-| TOOL-02     | Phase 4 | Pending |
-| TOOL-03     | Phase 6 | Pending |
-| ASGN-01     | Phase 3 | Pending |
-| ASGN-02     | Phase 2 | Pending |
-| ASGN-03     | Phase 2 | Pending |
-| ASGN-04     | Phase 3 | Pending |
-| ASGN-05     | Phase 2 | Pending |
-| SYNC-01     | Phase 6 | Pending |
-| SYNC-02     | Phase 3 | Pending |
-| SYNC-03     | Phase 3 | Pending |
-| SYNC-04     | Phase 2 | Pending |
-| INFR-01     | Phase 2 | Pending |
-| INFR-02     | Phase 2 | Pending |
-| INFR-03     | Phase 5 | Pending |
-| INFR-04     | Phase 1 | Pending |
-| INFR-05     | Phase 1 | Pending |
-| UI-01       | Phase 4 | Pending |
-| UI-02       | Phase 4 | Pending |
-| UI-03       | Phase 4 | Pending |
-| UI-05       | Phase 4 | Pending |
+| Requirement | Phase   | Status |
+| ----------- | ------- | ------ |
+| PROJ-01     | Phase 1 | Done   |
+| PROJ-02     | Phase 1 | Done   |
+| PROJ-03     | Phase 1 | Done   |
+| PROJ-04     | Phase 5 | Done   |
+| PROJ-05     | Phase 5 | Done   |
+| TOOL-01     | Phase 1 | Done   |
+| TOOL-02     | Phase 4 | Done   |
+| TOOL-03     | Phase 6 | Done   |
+| ASGN-01     | Phase 3 | Done   |
+| ASGN-02     | Phase 2 | Done   |
+| ASGN-03     | Phase 2 | Done   |
+| ASGN-04     | Phase 3 | Done   |
+| ASGN-05     | Phase 2 | Done   |
+| SYNC-01     | Phase 6 | Done   |
+| SYNC-02     | Phase 3 | Done   |
+| SYNC-03     | Phase 3 | Done   |
+| SYNC-04     | Phase 2 | Done   |
+| INFR-01     | Phase 2 | Done   |
+| INFR-02     | Phase 2 | Done   |
+| INFR-03     | Phase 5 | Done   |
+| INFR-04     | Phase 1 | Done   |
+| INFR-05     | Phase 1 | Done   |
+| UI-01       | Phase 4 | Done   |
+| UI-02       | Phase 4 | Done   |
+| UI-03       | Phase 4 | Done   |
+| UI-05       | Phase 4 | Done   |
 
 **Coverage:**
 
@@ -129,4 +129,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 ---
 
 _Requirements defined: 2026-04-07_
-_Last updated: 2026-04-07 after roadmap creation_
+_Last updated: 2026-04-09 after v1.0 milestone completion_
