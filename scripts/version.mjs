@@ -114,6 +114,11 @@ async function main() {
       usage();
       process.exit(1);
     }
+    const semverRe = /^\d+\.\d+\.\d+$/;
+    if (!semverRe.test(arg)) {
+      console.error(`Error: Version must be 3-part semver (x.y.z), got "${arg}"`);
+      process.exit(1);
+    }
     setPackageJsonVersion(arg);
     syncFromPackageJson();
     console.log(`Version set to ${arg}`);
