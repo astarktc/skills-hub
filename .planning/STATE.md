@@ -5,7 +5,7 @@ milestone_name: Per-Project Skill Distribution
 status: completed
 stopped_at: Milestone v1.0 shipped
 last_updated: "2026-04-09T04:25:00.000Z"
-last_activity: 2026-04-09 - Completed quick task 260409-c0k: Rebrand app identifier, update URLs, add Linux release
+last_activity: 2026-04-10 - Completed quick task 260409-r9e: Fix updater.json version to always use 3-part semver
 progress:
   total_phases: 6
   completed_phases: 6
@@ -37,6 +37,10 @@ Next: `/gsd-new-milestone` to start next milestone
 - Timeline: 2 days (Apr 7-8, 2026)
 - Source files changed: 30
 - Lines: +9,568 / -1,665
+- Schema migrations added: 3 (V4, V5, V6 — from V3 baseline)
+- New Rust modules: `project_ops.rs`, `project_sync.rs`, `commands/projects.rs` (1,270 lines)
+- New frontend files: 9 under `src/components/projects/` (including `useProjectState.ts` hook)
+- New Tauri IPC commands: 13
 
 **By Phase:**
 
@@ -68,3 +72,4 @@ None -- milestone shipped.
 | #          | Description                                                                                                          | Date       | Commit  | Directory                                                                                                           |
 | ---------- | -------------------------------------------------------------------------------------------------------------------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
 | 260409-c0k | Rebrand app identifier to com.skillshub.app, update qufei1993 URLs to astarktc, add Linux x86_64 to release workflow | 2026-04-09 | 9614454 | [260409-c0k-rebrand-app-identifier-to-com-skillshub-](./quick/260409-c0k-rebrand-app-identifier-to-com-skillshub-/) |
+| 260409-r9e | Fix updater.json version to always use 3-part semver                                                                 | 2026-04-10 | 0da47ec | [260409-r9e-fix-updater-json-version-to-always-use-3](./quick/260409-r9e-fix-updater-json-version-to-always-use-3/) |
