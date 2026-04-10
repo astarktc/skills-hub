@@ -103,7 +103,8 @@ function App() {
     null,
   ) as MutableRefObject<Update | null>;
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortBy, setSortBy] = useState<"updated" | "name">("updated");
+  const [sortBy, setSortBy] = useState<"name" | "updated" | "added">("name");
+  const [groupByRepo, setGroupByRepo] = useState(false);
   const [activeView, setActiveView] = useState<
     "myskills" | "explore" | "detail" | "settings" | "projects"
   >("myskills");
@@ -542,6 +543,9 @@ function App() {
       if (sortBy === "name") {
         return a.name.localeCompare(b.name);
       }
+      if (sortBy === "added") {
+        return (b.created_at ?? 0) - (a.created_at ?? 0);
+      }
       return (b.updated_at ?? 0) - (a.updated_at ?? 0);
     });
     return sorted;
@@ -833,9 +837,12 @@ function App() {
     setLocalCandidatesBasePath("");
   }, [loading]);
 
-  const handleSortChange = useCallback((value: "updated" | "name") => {
-    setSortBy(value);
-  }, []);
+  const handleSortChange = useCallback(
+    (value: "name" | "updated" | "added") => {
+      setSortBy(value);
+    },
+    [],
+  );
 
   const handleSearchChange = useCallback((value: string) => {
     setSearchQuery(value);
@@ -999,23 +1006,13 @@ function App() {
           group.variants.find((v) => v.path === chosenPath)?.tool ?? null;
 
         setActionMessage(t("actions.importExisting", { name: group.name }));
-        let installResult: { skill_id: string; central_path: string };
-        try {
-          installResult = await invokeTauri<{
-            skill_id: string;
-            central_path: string;
-          }>("import_existing_skill", {
-            sourcePath: chosenPath,
-            name: group.name,
-          });
-        } catch (err) {
-          const raw = err instanceof Error ? err.message : String(err);
-          collectedErrors.push({
-            title: t("errors.importFailedTitle", { name: group.name }),
-            message: formatErrorMessage(raw),
-          });
-          continue;
-        }
+        const installResult = await invokeTauri<{
+          skill_id: string;
+          central_path: string;
+        }>("import_existing_skill", {
+          sourcePath: chosenPath,
+          name: group.name,
+        });
 
         if (autoSyncEnabled) {
           const selectedInstalledIds = tools
@@ -2004,11 +2001,14 @@ function App() {
               autoSyncEnabled={autoSyncEnabled}
               onAutoSyncChange={handleAutoSyncToggle}
               onUnsyncAll={handleUnsyncAll}
+              groupByRepo={groupByRepo}
+              onGroupByRepoChange={setGroupByRepo}
               t={t}
             />
             <SkillsList
               plan={plan}
               visibleSkills={visibleSkills}
+              groupByRepo={groupByRepo}
               installedTools={installedTools}
               loading={loading}
               getGithubInfo={getGithubInfo}

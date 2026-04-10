@@ -3,15 +3,17 @@ import { ArrowUpDown, RefreshCw, Search } from "lucide-react";
 import type { TFunction } from "i18next";
 
 type FilterBarProps = {
-  sortBy: "updated" | "name";
+  sortBy: "name" | "updated" | "added";
   searchQuery: string;
   loading: boolean;
-  onSortChange: (value: "updated" | "name") => void;
+  onSortChange: (value: "name" | "updated" | "added") => void;
   onSearchChange: (value: string) => void;
   onRefresh: () => void;
   autoSyncEnabled: boolean;
   onAutoSyncChange: (enabled: boolean) => void;
   onUnsyncAll: () => void;
+  groupByRepo: boolean;
+  onGroupByRepoChange: (value: boolean) => void;
   t: TFunction;
 };
 
@@ -25,6 +27,8 @@ const FilterBar = ({
   autoSyncEnabled,
   onAutoSyncChange,
   onUnsyncAll,
+  groupByRepo,
+  onGroupByRepoChange,
   t,
 }: FilterBarProps) => {
   return (
@@ -51,19 +55,32 @@ const FilterBar = ({
         </button>
         <button className="btn btn-secondary sort-btn" type="button">
           <span className="sort-label">{t("filterSort")}:</span>
-          {sortBy === "updated" ? t("sortUpdated") : t("sortName")}
+          {sortBy === "name"
+            ? t("sortName")
+            : sortBy === "added"
+              ? t("sortAdded")
+              : t("sortUpdated")}
           <ArrowUpDown size={12} />
           <select
             aria-label={t("filterSort")}
             value={sortBy}
             onChange={(event) =>
-              onSortChange(event.target.value as "updated" | "name")
+              onSortChange(event.target.value as "name" | "updated" | "added")
             }
           >
-            <option value="updated">{t("sortUpdated")}</option>
             <option value="name">{t("sortName")}</option>
+            <option value="updated">{t("sortUpdated")}</option>
+            <option value="added">{t("sortAdded")}</option>
           </select>
         </button>
+        <label className="group-by-repo-toggle" title={t("groupByRepo")}>
+          <input
+            type="checkbox"
+            checked={groupByRepo}
+            onChange={(e) => onGroupByRepoChange(e.target.checked)}
+          />
+          <span className="group-by-repo-label">{t("groupByRepo")}</span>
+        </label>
         <div className="search-container">
           <Search size={16} className="search-icon-abs" />
           <input

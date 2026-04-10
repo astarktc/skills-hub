@@ -3035,3 +3035,36 @@
   font-size: 13px;
   margin-bottom: 12px;
 }
+
+/* Group-by-repo toggle and grouped skill list */
+.group-by-repo-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.group-by-repo-label {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.repo-group {
+  margin-bottom: 8px;
+}
+.repo-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 4px 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 4px;
+}
+.repo-group-header .repo-count {
+  font-weight: 400;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}

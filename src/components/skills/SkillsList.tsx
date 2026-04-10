@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import { MessageCircle } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { ManagedSkill, OnboardingPlan, ToolOption } from "./types";
@@ -12,6 +12,7 @@ type GithubInfo = {
 type SkillsListProps = {
   plan: OnboardingPlan | null;
   visibleSkills: ManagedSkill[];
+  groupByRepo: boolean;
   installedTools: ToolOption[];
   loading: boolean;
   getGithubInfo: (url: string | null | undefined) => GithubInfo | null;
@@ -29,6 +30,7 @@ type SkillsListProps = {
 const SkillsList = ({
   plan,
   visibleSkills,
+  groupByRepo,
   installedTools,
   loading,
   getGithubInfo,
@@ -42,6 +44,48 @@ const SkillsList = ({
   onOpenDetail,
   t,
 }: SkillsListProps) => {
+  const groups = useMemo(() => {
+    if (!groupByRepo) return null;
+    const map = new Map<string, ManagedSkill[]>();
+    for (const skill of visibleSkills) {
+      const key = skill.source_ref ?? "";
+      const list = map.get(key);
+      if (list) {
+        list.push(skill);
+      } else {
+        map.set(key, [skill]);
+      }
+    }
+    const keys = [...map.keys()].sort((a, b) => {
+      if (a === "" && b !== "") return 1;
+      if (b === "" && a !== "") return -1;
+      return a.localeCompare(b);
+    });
+    return keys.map((key) => ({
+      key,
+      label: key || t("ungrouped"),
+      skills: map.get(key)!,
+    }));
+  }, [groupByRepo, visibleSkills, t]);
+
+  const renderSkill = (skill: ManagedSkill) => (
+    <SkillCard
+      key={skill.id}
+      skill={skill}
+      installedTools={installedTools}
+      loading={loading}
+      getGithubInfo={getGithubInfo}
+      getSkillSourceLabel={getSkillSourceLabel}
+      formatRelative={formatRelative}
+      onUpdate={onUpdateSkill}
+      onDelete={onDeleteSkill}
+      onToggleTool={onToggleTool}
+      onUnsync={onUnsyncSkill}
+      onOpenDetail={onOpenDetail}
+      t={t}
+    />
+  );
+
   return (
     <div className="skills-list">
       {plan && plan.total_skills_found > 0 ? (
@@ -70,26 +114,20 @@ const SkillsList = ({
 
       {visibleSkills.length === 0 ? (
         <div className="empty">{t("skillsEmpty")}</div>
-      ) : (
+      ) : groups ? (
         <>
-          {visibleSkills.map((skill) => (
-            <SkillCard
-              key={skill.id}
-              skill={skill}
-              installedTools={installedTools}
-              loading={loading}
-              getGithubInfo={getGithubInfo}
-              getSkillSourceLabel={getSkillSourceLabel}
-              formatRelative={formatRelative}
-              onUpdate={onUpdateSkill}
-              onDelete={onDeleteSkill}
-              onToggleTool={onToggleTool}
-              onUnsync={onUnsyncSkill}
-              onOpenDetail={onOpenDetail}
-              t={t}
-            />
+          {groups.map((group) => (
+            <div key={group.key} className="repo-group">
+              <div className="repo-group-header">
+                <span>{group.label}</span>
+                <span className="repo-count">{group.skills.length}</span>
+              </div>
+              {group.skills.map(renderSkill)}
+            </div>
           ))}
         </>
+      ) : (
+        <>{visibleSkills.map(renderSkill)}</>
       )}
     </div>
   );
