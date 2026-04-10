@@ -103,7 +103,7 @@ const AssignmentMatrix = ({
         ref.startsWith("https://") ||
         ref.startsWith("http://") ||
         ref.includes("github.com");
-      const key = isGitUrl ? ref : "__local__";
+      const key = isGitUrl ? (shortRepoLabel(ref) ?? ref) : "__local__";
       const list = map.get(key);
       if (list) {
         list.push(skill);
@@ -111,22 +111,19 @@ const AssignmentMatrix = ({
         map.set(key, [skill]);
       }
     }
-    const keys = [...map.keys()].sort((a, b) => {
-      if (a === "__local__" && b !== "__local__") return 1;
-      if (b === "__local__" && a !== "__local__") return -1;
-      return a.localeCompare(b);
-    });
-    return keys.map((key) => {
-      const short = key !== "__local__" && key ? shortRepoLabel(key) : null;
+    const entries = [...map.keys()].map((key) => {
       return {
         key,
-        label:
-          key === "__local__"
-            ? t("localGroup")
-            : (short ?? key) || t("ungrouped"),
+        label: key === "__local__" ? t("localGroup") : key || t("ungrouped"),
         skills: map.get(key)!,
       };
     });
+    entries.sort((a, b) => {
+      if (a.key === "__local__" && b.key !== "__local__") return 1;
+      if (b.key === "__local__" && a.key !== "__local__") return -1;
+      return a.label.toLowerCase().localeCompare(b.label.toLowerCase());
+    });
+    return entries;
   }, [groupByRepo, sortedSkills, t]);
 
   const pathMissing = project ? !project.path_exists : false;

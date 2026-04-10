@@ -54,7 +54,8 @@ const SkillsList = ({
         ref.startsWith("https://") ||
         ref.startsWith("http://") ||
         ref.includes("github.com");
-      const key = isGitUrl ? ref : "__local__";
+      const ghInfo = isGitUrl && ref ? getGithubInfo(ref) : null;
+      const key = isGitUrl ? (ghInfo?.label ?? ref) : "__local__";
       const list = map.get(key);
       if (list) {
         list.push(skill);
@@ -62,25 +63,21 @@ const SkillsList = ({
         map.set(key, [skill]);
       }
     }
-    const keys = [...map.keys()].sort((a, b) => {
-      if (a === "__local__" && b !== "__local__") return 1;
-      if (b === "__local__" && a !== "__local__") return -1;
-      return a.localeCompare(b);
-    });
-    return keys.map((key) => {
-      const ghInfo = key !== "__local__" && key ? getGithubInfo(key) : null;
+    const entries = [...map.keys()].map((key) => {
+      const isRepo = key !== "__local__" && key.includes("/");
       return {
         key,
-        label:
-          key === "__local__"
-            ? t("localGroup")
-            : ghInfo
-              ? ghInfo.label
-              : key || t("ungrouped"),
-        href: ghInfo?.href ?? null,
+        label: key === "__local__" ? t("localGroup") : key || t("ungrouped"),
+        href: isRepo ? `https://github.com/${key}` : null,
         skills: map.get(key)!,
       };
     });
+    entries.sort((a, b) => {
+      if (a.key === "__local__" && b.key !== "__local__") return 1;
+      if (b.key === "__local__" && a.key !== "__local__") return -1;
+      return a.label.toLowerCase().localeCompare(b.label.toLowerCase());
+    });
+    return entries;
   }, [groupByRepo, visibleSkills, t, getGithubInfo]);
 
   const renderSkill = (skill: ManagedSkill) => (
