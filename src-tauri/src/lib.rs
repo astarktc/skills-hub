@@ -98,6 +98,7 @@ pub fn run() {
             commands::get_github_token,
             commands::set_github_token,
             commands::import_existing_skill,
+            commands::remove_skill_source,
             commands::get_managed_skills,
             commands::delete_managed_skill,
             commands::get_auto_sync_enabled,

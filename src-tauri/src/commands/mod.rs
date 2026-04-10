@@ -30,7 +30,9 @@ use crate::core::sync_engine::{
     copy_dir_recursive, remove_path_any, sync_dir_for_tool_with_overwrite, sync_dir_hybrid,
     SyncMode,
 };
-use crate::core::tool_adapters::{adapter_by_key, is_tool_installed, resolve_default_path};
+use crate::core::tool_adapters::{
+    adapter_by_key, default_tool_adapters, is_tool_installed, resolve_default_path,
+};
 use uuid::Uuid;
 
 pub(crate) fn format_anyhow_error(err: anyhow::Error) -> String {
@@ -790,6 +792,34 @@ pub async fn import_existing_skill(
         }
         let result = install_local_skill(&app, &store, source, name)?;
         Ok::<_, anyhow::Error>(to_install_dto(result))
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn remove_skill_source(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = std::path::PathBuf::from(&path);
+
+        // Safety: only allow deletion of paths under known tool skill directories.
+        let home = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("cannot resolve home directory"))?;
+        let adapters = default_tool_adapters();
+        let is_safe = adapters.iter().any(|adapter| {
+            let tool_skills_dir = home.join(adapter.relative_skills_dir);
+            target.starts_with(&tool_skills_dir)
+        });
+        if !is_safe {
+            anyhow::bail!(
+                "UNSAFE_PATH|path is not under a known tool skills directory: {}",
+                path
+            );
+        }
+
+        remove_path_any(&target)?;
+        Ok::<_, anyhow::Error>(())
     })
     .await
     .map_err(|err| err.to_string())?
