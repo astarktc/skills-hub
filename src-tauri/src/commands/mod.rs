@@ -804,8 +804,8 @@ pub async fn remove_skill_source(path: String) -> Result<(), String> {
         let target = std::path::PathBuf::from(&path);
 
         // Safety: only allow deletion of paths under known tool skill directories.
-        let home = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("cannot resolve home directory"))?;
+        let home =
+            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot resolve home directory"))?;
         let adapters = default_tool_adapters();
         let is_safe = adapters.iter().any(|adapter| {
             let tool_skills_dir = home.join(adapter.relative_skills_dir);

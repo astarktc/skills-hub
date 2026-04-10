@@ -1007,50 +1007,68 @@ function App() {
           name: group.name,
         });
 
-        const selectedInstalledIds = tools
-          .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
-          .map((t) => t.id);
-        const targets = uniqueToolIdsBySkillsDir(selectedInstalledIds)
-          .map((id) => tools.find((t) => t.id === id))
-          .filter(Boolean) as ToolOption[];
-        for (const tool of targets) {
-          setActionMessage(
-            t("actions.syncing", { name: group.name, tool: tool.label }),
-          );
-          try {
-            const overwrite = Boolean(
-              chosenVariantTool &&
-              (chosenVariantTool === tool.id ||
-                (sharedToolIdsByToolId[chosenVariantTool] ?? []).includes(
-                  tool.id,
-                )),
+        if (autoSyncEnabled) {
+          const selectedInstalledIds = tools
+            .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
+            .map((t) => t.id);
+          const targets = uniqueToolIdsBySkillsDir(selectedInstalledIds)
+            .map((id) => tools.find((t) => t.id === id))
+            .filter(Boolean) as ToolOption[];
+          for (const tool of targets) {
+            setActionMessage(
+              t("actions.syncing", { name: group.name, tool: tool.label }),
             );
-            await invokeTauri("sync_skill_to_tool", {
-              sourcePath: installResult.central_path,
-              skillId: installResult.skill_id,
-              tool: tool.id,
-              name: group.name,
-              // 自动接管：如果来源就是该工具目录，同步回该工具时需要替换成指向中心仓库的软链
-              overwrite,
-            });
-          } catch (err) {
-            const raw = err instanceof Error ? err.message : String(err);
-            if (raw.startsWith("TARGET_EXISTS|")) {
-              const targetPath = raw.split("|")[1] ?? "";
-              collectedErrors.push({
-                title: t("errors.syncFailedTitle", {
-                  name: group.name,
-                  tool: tool.label,
-                }),
-                message: t("errors.syncTargetExistsMessage", {
-                  path: targetPath,
-                }),
+            try {
+              const overwrite = Boolean(
+                chosenVariantTool &&
+                (chosenVariantTool === tool.id ||
+                  (sharedToolIdsByToolId[chosenVariantTool] ?? []).includes(
+                    tool.id,
+                  )),
+              );
+              await invokeTauri("sync_skill_to_tool", {
+                sourcePath: installResult.central_path,
+                skillId: installResult.skill_id,
+                tool: tool.id,
+                name: group.name,
+                overwrite,
               });
-            } else {
+            } catch (err) {
+              const raw = err instanceof Error ? err.message : String(err);
+              if (raw.startsWith("TARGET_EXISTS|")) {
+                const targetPath = raw.split("|")[1] ?? "";
+                collectedErrors.push({
+                  title: t("errors.syncFailedTitle", {
+                    name: group.name,
+                    tool: tool.label,
+                  }),
+                  message: t("errors.syncTargetExistsMessage", {
+                    path: targetPath,
+                  }),
+                });
+              } else {
+                collectedErrors.push({
+                  title: t("errors.syncFailedTitle", {
+                    name: group.name,
+                    tool: tool.label,
+                  }),
+                  message: raw,
+                });
+              }
+            }
+          }
+        } else {
+          // Auto-sync OFF: clean migration -- remove originals from all tool directories
+          for (const variant of group.variants) {
+            try {
+              await invokeTauri("remove_skill_source", { path: variant.path });
+            } catch (err) {
+              // Non-fatal: skill is already imported, cleanup failure is secondary
+              const raw = err instanceof Error ? err.message : String(err);
               collectedErrors.push({
                 title: t("errors.syncFailedTitle", {
                   name: group.name,
-                  tool: tool.label,
+                  tool: variant.tool,
                 }),
                 message: raw,
               });
