@@ -462,6 +462,12 @@ jobs:
           set -euo pipefail
 
           VERSION="${TAG#v}"
+          # Normalize to 3-part semver (e.g., "1.0" -> "1.0.0", "1" -> "1.0.0")
+          IFS='.' read -ra parts <<< "$VERSION"
+          while [ ${#parts[@]} -lt 3 ]; do
+            parts+=("0")
+          done
+          VERSION="${parts[0]}.${parts[1]}.${parts[2]}"
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           base_url="https://github.com/$REPO/releases/download/$TAG"
 
