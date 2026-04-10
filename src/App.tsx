@@ -999,13 +999,23 @@ function App() {
           group.variants.find((v) => v.path === chosenPath)?.tool ?? null;
 
         setActionMessage(t("actions.importExisting", { name: group.name }));
-        const installResult = await invokeTauri<{
-          skill_id: string;
-          central_path: string;
-        }>("import_existing_skill", {
-          sourcePath: chosenPath,
-          name: group.name,
-        });
+        let installResult: { skill_id: string; central_path: string };
+        try {
+          installResult = await invokeTauri<{
+            skill_id: string;
+            central_path: string;
+          }>("import_existing_skill", {
+            sourcePath: chosenPath,
+            name: group.name,
+          });
+        } catch (err) {
+          const raw = err instanceof Error ? err.message : String(err);
+          collectedErrors.push({
+            title: t("errors.importFailedTitle", { name: group.name }),
+            message: formatErrorMessage(raw),
+          });
+          continue;
+        }
 
         if (autoSyncEnabled) {
           const selectedInstalledIds = tools
