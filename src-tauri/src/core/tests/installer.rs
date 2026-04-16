@@ -546,3 +546,296 @@ fn install_local_skill_non_symlink_stays_local() {
         "source_subpath should be None for local"
     );
 }
+
+// ── Deep discovery tests ──
+
+#[test]
+fn find_skill_dirs_recursive_finds_deeply_nested_skills() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+
+    // Create wshobson/agents-like structure: plugins/<plugin>/skills/<skill>/SKILL.md (depth 4)
+    let depths = [
+        "plugins/backend/skills/api-design",
+        "plugins/frontend/skills/tailwind-design",
+        "plugins/accessibility/skills/wcag-audit",
+    ];
+    for d in &depths {
+        fs::create_dir_all(base.join(d)).unwrap();
+        fs::write(
+            base.join(d).join("SKILL.md"),
+            format!("---\nname: {}\n---\n", d.rsplit('/').next().unwrap()),
+        )
+        .unwrap();
+    }
+
+    let found = super::find_skill_dirs_recursive(base, 0, 5);
+    assert_eq!(found.len(), 3, "should find all 3 deeply nested skills");
+    for d in &depths {
+        assert!(
+            found.iter().any(|p: &PathBuf| p.ends_with(d)),
+            "should find {}",
+            d
+        );
+    }
+}
+
+#[test]
+fn find_skill_dirs_recursive_respects_max_depth() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+
+    // Skill at depth 5 (within limit)
+    let d5 = "a/b/c/d/e";
+    fs::create_dir_all(base.join(d5)).unwrap();
+    fs::write(base.join(d5).join("SKILL.md"), "---\nname: deep5\n---\n").unwrap();
+
+    // Skill at depth 6 (beyond limit)
+    let d6 = "a/b/c/d/e/f";
+    fs::create_dir_all(base.join(d6)).unwrap();
+    fs::write(base.join(d6).join("SKILL.md"), "---\nname: deep6\n---\n").unwrap();
+
+    let found = super::find_skill_dirs_recursive(base, 0, 5);
+    assert!(
+        found.iter().any(|p: &PathBuf| p.ends_with(d5)),
+        "should find skill at depth 5"
+    );
+    assert!(
+        !found.iter().any(|p: &PathBuf| p.ends_with(d6)),
+        "should NOT find skill at depth 6"
+    );
+}
+
+#[test]
+fn find_skill_dirs_recursive_skips_excluded_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+
+    // Valid skill
+    fs::create_dir_all(base.join("valid/my-skill")).unwrap();
+    fs::write(
+        base.join("valid/my-skill/SKILL.md"),
+        "---\nname: valid\n---\n",
+    )
+    .unwrap();
+
+    // Skills inside dirs that should be skipped
+    let skip_dirs = ["node_modules", ".git", "dist", "build", "target", ".next", ".cache"];
+    for skip in &skip_dirs {
+        let skip_path = base.join(skip).join("hidden-skill");
+        fs::create_dir_all(&skip_path).unwrap();
+        fs::write(
+            skip_path.join("SKILL.md"),
+            "---\nname: hidden\n---\n",
+        )
+        .unwrap();
+    }
+
+    let found = super::find_skill_dirs_recursive(base, 0, 5);
+    assert_eq!(found.len(), 1, "should only find the valid skill, not those in excluded dirs");
+    assert!(found[0].ends_with("valid/my-skill"));
+}
+
+#[test]
+fn parse_marketplace_json_extracts_plugin_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+
+    // Create .claude-plugin/marketplace.json
+    fs::create_dir_all(base.join(".claude-plugin")).unwrap();
+    let manifest = serde_json::json!({
+        "plugins": [
+            {"name": "api-scaffolding", "source": "./plugins/api-scaffolding"},
+            {"name": "tailwind-design", "source": "./plugins/tailwind-design"},
+            {"name": "no-source"}
+        ]
+    });
+    fs::write(
+        base.join(".claude-plugin/marketplace.json"),
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    // Create the plugin dirs on disk
+    fs::create_dir_all(base.join("plugins/api-scaffolding")).unwrap();
+    fs::create_dir_all(base.join("plugins/tailwind-design")).unwrap();
+
+    let dirs = super::parse_marketplace_json(base);
+    assert_eq!(dirs.len(), 2);
+    assert!(dirs.iter().any(|p: &PathBuf| p.ends_with("plugins/api-scaffolding")));
+    assert!(dirs.iter().any(|p: &PathBuf| p.ends_with("plugins/tailwind-design")));
+}
+
+#[test]
+fn parse_marketplace_json_returns_empty_for_missing_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let dirs = super::parse_marketplace_json(dir.path());
+    assert!(dirs.is_empty());
+}
+
+#[test]
+fn parse_marketplace_json_returns_empty_for_malformed_json() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join(".claude-plugin")).unwrap();
+    fs::write(
+        dir.path().join(".claude-plugin/marketplace.json"),
+        "not json {{{",
+    )
+    .unwrap();
+    let dirs = super::parse_marketplace_json(dir.path());
+    assert!(dirs.is_empty());
+}
+
+#[test]
+fn list_git_skills_discovers_deeply_nested_via_recursive_fallback() {
+    let app = tauri::test::mock_app();
+    let (_dir, store) = make_store();
+    let central_root = tempfile::tempdir().unwrap();
+    set_central_path(&store, central_root.path());
+
+    // Build wshobson/agents-like repo with NO standard skill dirs
+    let repo_dir = tempfile::tempdir().unwrap();
+    let skills = [
+        "plugins/backend/skills/api-design",
+        "plugins/frontend/skills/tailwind",
+    ];
+    for s in &skills {
+        fs::create_dir_all(repo_dir.path().join(s)).unwrap();
+        fs::write(
+            repo_dir.path().join(s).join("SKILL.md"),
+            format!("---\nname: {}\n---\n", s.rsplit('/').next().unwrap()),
+        )
+        .unwrap();
+    }
+    let repo = init_git_repo(repo_dir.path());
+    commit_all(&repo, "add nested skills");
+
+    let candidates = super::list_git_skills(
+        app.handle(),
+        &store,
+        repo_dir.path().to_string_lossy().as_ref(),
+    )
+    .unwrap();
+
+    assert!(
+        candidates.len() >= 2,
+        "should find at least 2 deeply nested skills, found {}",
+        candidates.len()
+    );
+    let names: Vec<String> = candidates.iter().map(|c| c.name.clone()).collect();
+    assert!(names.contains(&"api-design".to_string()));
+    assert!(names.contains(&"tailwind".to_string()));
+}
+
+#[test]
+fn count_skills_in_repo_counts_deeply_nested() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+
+    // No skills in standard locations, but 3 deeply nested
+    let skills = [
+        "plugins/a/skills/s1",
+        "plugins/b/skills/s2",
+        "plugins/c/skills/s3",
+    ];
+    for s in &skills {
+        fs::create_dir_all(base.join(s)).unwrap();
+        fs::write(base.join(s).join("SKILL.md"), "---\nname: x\n---\n").unwrap();
+    }
+
+    let count = super::count_skills_in_repo(base);
+    assert_eq!(count, 3, "should count all 3 deeply nested skills");
+}
+
+#[test]
+fn scan_skill_candidates_in_dir_finds_deeply_nested() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+
+    let skills = [
+        ("plugins/a/skills/api-design", "API Design"),
+        ("plugins/b/skills/tailwind", "Tailwind"),
+    ];
+    for (path, name) in &skills {
+        fs::create_dir_all(base.join(path)).unwrap();
+        fs::write(
+            base.join(path).join("SKILL.md"),
+            format!("---\nname: {}\n---\n", name),
+        )
+        .unwrap();
+    }
+
+    let candidates = super::scan_skill_candidates_in_dir(base);
+    assert_eq!(candidates.len(), 2, "should find 2 deep candidates");
+    let names: Vec<&str> = candidates.iter().map(|c| c.0.as_str()).collect();
+    assert!(names.contains(&"API Design"));
+    assert!(names.contains(&"Tailwind"));
+}
+
+#[test]
+fn list_local_skills_discovers_deeply_nested() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+
+    let skills = [
+        "plugins/backend/skills/api-design",
+        "plugins/frontend/skills/tailwind",
+    ];
+    for s in &skills {
+        fs::create_dir_all(base.join(s)).unwrap();
+        fs::write(
+            base.join(s).join("SKILL.md"),
+            format!("---\nname: {}\n---\n", s.rsplit('/').next().unwrap()),
+        )
+        .unwrap();
+    }
+
+    let list = super::list_local_skills(base).unwrap();
+    assert!(
+        list.len() >= 2,
+        "should find at least 2 deeply nested skills, found {}",
+        list.len()
+    );
+    let names: Vec<String> = list.iter().map(|c| c.name.clone()).collect();
+    assert!(names.contains(&"api-design".to_string()));
+    assert!(names.contains(&"tailwind".to_string()));
+}
+
+#[test]
+fn existing_shallow_repos_still_work() {
+    // Verify that repos with standard skill dirs continue working unchanged
+    let app = tauri::test::mock_app();
+    let (_dir, store) = make_store();
+    let central_root = tempfile::tempdir().unwrap();
+    set_central_path(&store, central_root.path());
+
+    let repo_dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(repo_dir.path().join("skills/a")).unwrap();
+    fs::create_dir_all(repo_dir.path().join("skills/b")).unwrap();
+    fs::write(
+        repo_dir.path().join("skills/a/SKILL.md"),
+        "---\nname: Skill A\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        repo_dir.path().join("skills/b/SKILL.md"),
+        "---\nname: Skill B\n---\n",
+    )
+    .unwrap();
+    let repo = init_git_repo(repo_dir.path());
+    commit_all(&repo, "add standard skills");
+
+    let candidates = super::list_git_skills(
+        app.handle(),
+        &store,
+        repo_dir.path().to_string_lossy().as_ref(),
+    )
+    .unwrap();
+    let names: Vec<String> = candidates.iter().map(|c| c.name.clone()).collect();
+    assert!(names.contains(&"Skill A".to_string()));
+    assert!(names.contains(&"Skill B".to_string()));
+
+    // count_skills_in_repo should still work
+    let count = super::count_skills_in_repo(repo_dir.path());
+    assert_eq!(count, 2);
+}
