@@ -439,6 +439,7 @@ pub fn adapters_sharing_skills_dir(adapter: &ToolAdapter) -> Vec<ToolAdapter> {
         .collect()
 }
 
+#[allow(dead_code)]
 pub fn adapters_sharing_project_skills_dir(adapter: &ToolAdapter) -> Vec<ToolAdapter> {
     let relative = project_relative_skills_dir(adapter);
     default_tool_adapters()
@@ -447,10 +448,12 @@ pub fn adapters_sharing_project_skills_dir(adapter: &ToolAdapter) -> Vec<ToolAda
         .collect()
 }
 
+#[allow(dead_code)]
 pub fn resolve_project_path(adapter: &ToolAdapter, project_root: &Path) -> Result<PathBuf> {
     Ok(project_root.join(project_relative_skills_dir(adapter)))
 }
 
+#[allow(dead_code)]
 pub fn supports_project_scope(adapter: &ToolAdapter) -> bool {
     !matches!(adapter.id, ToolId::HermesAgent)
 }

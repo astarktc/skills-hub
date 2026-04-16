@@ -775,7 +775,11 @@ fn collect_skill_dirs(repo_dir: &Path) -> Vec<PathBuf> {
     // Recursive fallback (our addition — catches deeply nested skills up to depth 5)
     let recursive = find_skill_dirs_recursive(repo_dir, 0, 5);
     for p in recursive {
-        let rel = p.strip_prefix(repo_dir).unwrap_or(&p).to_string_lossy().to_string();
+        let rel = p
+            .strip_prefix(repo_dir)
+            .unwrap_or(&p)
+            .to_string_lossy()
+            .to_string();
         if rel != "." && !rel.is_empty() {
             out.push(p);
         }

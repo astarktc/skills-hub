@@ -201,6 +201,7 @@ pub fn parse_github_api_params(
 /// Fetch the HEAD commit SHA for a branch without cloning.
 /// Uses GitHub API: GET /repos/{owner}/{repo}/commits/{branch}
 /// Returns the 40-char hex SHA string.
+#[allow(dead_code)]
 pub fn fetch_branch_sha(
     owner: &str,
     repo: &str,

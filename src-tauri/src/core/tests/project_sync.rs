@@ -120,7 +120,7 @@ fn assign_stores_hash_for_copy() {
     assert!(!hash.is_empty(), "content_hash should be non-empty");
 
     // Verify filesystem: target should exist and NOT be a symlink
-    let target = project_dir.join(".cursor/skills/copy-skill");
+    let target = project_dir.join(".agents/skills/copy-skill");
     assert!(target.exists(), "target should exist");
     assert!(
         !target.symlink_metadata().unwrap().file_type().is_symlink(),
@@ -700,7 +700,7 @@ fn bulk_assign_to_multiple_tools() {
 
     // Verify both targets exist
     let target_claude = project_dir.join(".claude/skills/bulk-skill");
-    let target_cursor = project_dir.join(".cursor/skills/bulk-skill");
+    let target_cursor = project_dir.join(".agents/skills/bulk-skill");
     assert!(target_claude.exists(), "claude target should exist");
     assert!(target_cursor.exists(), "cursor target should exist");
 }
@@ -902,7 +902,7 @@ fn missing_status_recovers_when_source_restored() {
     fs::write(skill_dir.join("SKILL.md"), "# Test Skill\nTest content.").expect("write SKILL.md");
 
     // Also ensure target copy exists (re-sync to restore it)
-    let target = project_dir.join(".cursor/skills/recover-skill");
+    let target = project_dir.join(".agents/skills/recover-skill");
     if !target.exists() {
         // Manually recreate the target copy to simulate recovery
         fs::create_dir_all(&target).expect("recreate target");
@@ -949,7 +949,7 @@ fn missing_status_source_and_target_both_absent() {
 
     // Delete both source and target
     fs::remove_dir_all(&skill_dir).expect("remove source");
-    let target = project_dir.join(".cursor/skills/both-gone-skill");
+    let target = project_dir.join(".agents/skills/both-gone-skill");
     fs::remove_dir_all(&target).ok();
     assert!(!skill_dir.exists(), "source should be gone");
     assert!(!target.exists(), "target should be gone");

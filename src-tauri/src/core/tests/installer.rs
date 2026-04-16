@@ -1080,7 +1080,13 @@ fn collect_skill_dirs_scans_named_skill_containers_but_not_generic_dirs() {
                 .to_string()
         })
         .collect();
-    assert_eq!(rels, vec!["agent-pack/hidden-skill".to_string(), "agent-skills/visible-skill".to_string()]);
+    assert_eq!(
+        rels,
+        vec![
+            "agent-pack/hidden-skill".to_string(),
+            "agent-skills/visible-skill".to_string()
+        ]
+    );
 }
 
 #[test]
