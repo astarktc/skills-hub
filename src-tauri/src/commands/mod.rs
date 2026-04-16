@@ -904,7 +904,9 @@ pub async fn delete_managed_skill(
                             crate::core::tool_adapters::adapter_by_key(&assignment.tool)
                         {
                             let project_path = std::path::Path::new(&project.path);
-                            let target = project_path.join(adapter.relative_skills_dir).join(name);
+                            let target = project_path
+                                .join(crate::core::tool_adapters::project_relative_skills_dir(&adapter))
+                                .join(name);
                             if let Err(e) = remove_path_any(&target) {
                                 remove_failures.push(format!("{}: {}", target.display(), e));
                             }
