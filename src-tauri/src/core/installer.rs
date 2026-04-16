@@ -11,7 +11,9 @@ use super::cancel_token::CancelToken;
 use super::central_repo::{ensure_central_repo, resolve_central_repo_path};
 use super::content_hash::hash_dir;
 use super::git_fetcher::clone_or_pull;
-use super::github_download::{download_github_directory, parse_github_api_params};
+use super::github_download::{
+    download_github_directory, fetch_branch_sha, parse_github_api_params,
+};
 use super::skill_lock::try_enrich_from_skill_lock;
 use super::skill_store::{SkillRecord, SkillStore};
 use super::sync_engine::copy_dir_recursive;
@@ -160,7 +162,12 @@ pub fn install_git_skill<R: tauri::Runtime>(
             github_token_opt,
         ) {
             Ok(()) => {
-                revision = format!("api-download-{}", branch);
+                // Try to get real commit SHA for the branch (lightweight API call).
+                // Fall back to api-download-{branch} if it fails (non-blocking).
+                revision = match fetch_branch_sha(&owner, &repo, &branch, github_token_opt) {
+                    Ok(sha) => sha,
+                    Err(_) => format!("api-download-{}", branch),
+                };
             }
             Err(err) => {
                 // Clean up partial download

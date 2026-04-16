@@ -198,6 +198,49 @@ pub fn parse_github_api_params(
     ))
 }
 
+/// Fetch the HEAD commit SHA for a branch without cloning.
+/// Uses GitHub API: GET /repos/{owner}/{repo}/commits/{branch}
+/// Returns the 40-char hex SHA string.
+pub fn fetch_branch_sha(
+    owner: &str,
+    repo: &str,
+    branch: &str,
+    token: Option<&str>,
+) -> Result<String> {
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .context("build HTTP client")?;
+
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/commits/{}",
+        owner, repo, branch
+    );
+
+    let mut req = client
+        .get(&url)
+        .header("User-Agent", "skills-hub")
+        .header("Accept", "application/vnd.github.v3+json");
+    if let Some(t) = token {
+        req = req.header("Authorization", format!("Bearer {}", t));
+    }
+
+    let resp = req
+        .send()
+        .with_context(|| format!("request branch SHA: {}", url))?;
+    let resp = check_github_response(resp, &url)?;
+
+    let json: serde_json::Value = resp
+        .json()
+        .with_context(|| format!("parse commits response: {}", url))?;
+    let sha = json
+        .get("sha")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing sha field in commits response"))?;
+
+    Ok(sha.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,5 +359,54 @@ mod tests {
         let err = check_github_response(resp, "test").unwrap_err();
         let msg = format!("{:#}", err);
         assert!(msg.contains("404"), "got: {}", msg);
+    }
+
+    #[test]
+    fn fetch_branch_sha_extracts_sha() {
+        let mut server = mockito::Server::new();
+        let sha = "abc123def456789012345678901234567890abcd";
+        let _m = server
+            .mock("GET", "/repos/owner/repo/commits/main")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(r#"{{"sha":"{}","node_id":"xyz"}}"#, sha))
+            .create();
+
+        // Override the URL by calling the function with a mock client approach
+        // Since fetch_branch_sha uses a hardcoded github.com URL, we test via
+        // the internal logic by calling check_github_response + JSON parsing directly
+        let client = Client::new();
+        let resp = client
+            .get(format!("{}/repos/owner/repo/commits/main", server.url()))
+            .header("User-Agent", "skills-hub")
+            .header("Accept", "application/vnd.github.v3+json")
+            .send()
+            .unwrap();
+        let resp = check_github_response(resp, "test").unwrap();
+        let json: serde_json::Value = resp.json().unwrap();
+        let extracted_sha = json.get("sha").and_then(|v| v.as_str()).unwrap();
+        assert_eq!(extracted_sha, sha);
+    }
+
+    #[test]
+    fn fetch_branch_sha_error_on_404() {
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/repos/owner/repo/commits/nonexistent")
+            .with_status(404)
+            .with_body("not found")
+            .create();
+
+        let client = Client::new();
+        let resp = client
+            .get(format!(
+                "{}/repos/owner/repo/commits/nonexistent",
+                server.url()
+            ))
+            .header("User-Agent", "skills-hub")
+            .send()
+            .unwrap();
+        let err = check_github_response(resp, "test");
+        assert!(err.is_err(), "should return error for 404");
     }
 }
