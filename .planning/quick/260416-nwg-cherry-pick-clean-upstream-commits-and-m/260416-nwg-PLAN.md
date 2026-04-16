@@ -14,6 +14,7 @@ files_modified:
   - src-tauri/src/core/tests/installer.rs
   - src-tauri/src/core/github_download.rs
   - src/App.css
+  - src/App.tsx
   - src/components/skills/SkillDetailView.tsx
   - src-tauri/tauri.conf.json
   - featured-skills.json
@@ -28,8 +29,13 @@ must_haves:
     - "Sparse git checkout works for subpath skill install"
     - "Container path discovery finds skills inside nested dirs"
     - "Case-insensitive SKILL.md detection is preserved from our branch"
+    - "Marketplace scanning (parse_marketplace_json, scan_marketplace_skills) is preserved"
+    - "Recursive skill dir scanning (find_skill_dirs_recursive) is preserved"
+    - "Multi-skill candidate flow in App.tsx is preserved"
+    - "Skill-lock enrichment in install_local_skill is preserved"
     - "Hermes Agent adapter is registered"
     - "overwriteIfSameContent skips re-confirmation for identical content"
+    - "All 8 frontend sync_skill_to_tool call sites pass overwriteIfSameContent"
     - "project_sync uses project-relative skill dirs instead of global dirs"
     - "All existing Rust tests pass"
     - "npm run check passes (lint + build + rust checks)"
@@ -123,12 +129,20 @@ Resolve conflicts in `installer.rs` with "theirs-first, ours-on-top" strategy:
 - Other files in this commit (git_fetcher.rs, tests/git_fetcher.rs, App.css, SkillDetailView.tsx) should apply cleanly
 - For tests/installer.rs: accept upstream changes but keep any of our tests that don't overlap
 
-After resolving all conflicts:
+After resolving all conflicts, stage only the files touched by this commit:
 
 ```
-git add -A
+git add src-tauri/src/core/installer.rs src-tauri/src/core/git_fetcher.rs src-tauri/src/core/tests/git_fetcher.rs src-tauri/src/core/tests/installer.rs src/App.css src/components/skills/SkillDetailView.tsx
 git commit -m "fix: git skill install and frontmatter rendering (cherry-pick 6e8e733)"
 ```
+
+**Phase B.5 -- Clean doc commit (between the two conflict commits):**
+
+```
+git cherry-pick a5b4ffe   # docs: v0.4.3 bugfix notes
+```
+
+Should apply cleanly.
 
 **Phase C -- Commit 1826e2a (container path discovery, CONFLICTS in installer.rs + App.tsx):**
 
@@ -143,10 +157,10 @@ Resolve conflicts:
 - `github_download.rs`: Should apply cleanly (adds `subpath == "."` guard)
 - `tests/installer.rs`: Accept upstream changes, merge with any of our unique tests
 
-After resolving:
+After resolving, stage only the files touched by this commit:
 
 ```
-git add -A
+git add src-tauri/src/core/installer.rs src-tauri/src/core/github_download.rs src-tauri/src/core/tests/installer.rs src/App.tsx
 git commit -m "fix: git skill discovery for container paths (cherry-pick 1826e2a)"
 ```
 
@@ -163,13 +177,15 @@ Should apply cleanly (our featured-skills.json has zero local modifications).
 - `cargo test --manifest-path src-tauri/Cargo.toml` -- all Rust tests pass
 - Verify `has_skill_md` still uses `eq_ignore_ascii_case` (case-insensitive)
 - Verify `install_local_skill` still has skill-lock enrichment
+- Verify `parse_marketplace_json` and `scan_marketplace_skills` still exist and are called
+- Verify `find_skill_dirs_recursive` still exists and is called
 - Verify no remaining `fetch_branch_sha` references in code (should be fully removed)
   </action>
   <verify>
   <automated>cd /home/alexwsl/skills-hub && cargo test --manifest-path src-tauri/Cargo.toml 2>&1 | tail -20</automated>
   </verify>
   <done>
-  All 9 upstream commits cherry-picked. Conflict resolution complete: installer.rs has upstream's sparse checkout + container discovery merged with our case-insensitive detection and marketplace scanning. App.tsx kept as ours. All Rust tests pass.
+  All 9 upstream commits cherry-picked (including a5b4ffe). Conflict resolution complete: installer.rs has upstream's sparse checkout + container discovery merged with our case-insensitive detection, marketplace scanning, and recursive scanning. App.tsx kept as ours. All Rust tests pass.
   </done>
   </task>
 
@@ -180,6 +196,7 @@ Should apply cleanly (our featured-skills.json has zero local modifications).
     src-tauri/tauri.conf.json
     src-tauri/src/commands/mod.rs
     src-tauri/src/core/project_sync.rs
+    src/App.tsx
   </files>
   <action>
 Four isolated manual ports. Apply all, then commit together.
@@ -205,7 +222,7 @@ In the `sync_skill_to_tool` command function (around line 484):
 2. Add import: `use crate::core::content_hash::hash_dir;`
 3. Add helper function `target_has_same_content(source: &Path, target: &Path) -> bool` that compares `hash_dir(source)` and `hash_dir(target)` -- returns true only if both succeed and hashes match
 4. Update the overwrite calculation: `let do_overwrite = overwrite.unwrap_or(false) || (overwriteIfSameContent.unwrap_or(false) && target_has_same_content(&source_path, &target_path));`
-5. In the frontend App.tsx, find all `invoke('sync_skill_to_tool', ...)` call sites and add `overwriteIfSameContent: true` to each invocation
+5. In `src/App.tsx`, add `overwriteIfSameContent: true` to all 8 existing `invokeTauri("sync_skill_to_tool", ...)` call sites at lines ~1036, ~1159, ~1285, ~1353, ~1526, ~1637, ~1736, ~1819 (line numbers approximate — search for `sync_skill_to_tool` to find each one)
 
 **Port 4: project_relative_skills_dir (tool_adapters/mod.rs + project_sync.rs)**
 
@@ -241,13 +258,17 @@ git commit -m "feat: add Hermes adapter, window size, overwriteIfSameContent, pr
     <automated>cd /home/alexwsl/skills-hub && cargo test --manifest-path src-tauri/Cargo.toml 2>&1 | tail -20 && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings 2>&1 | tail -10</automated>
   </verify>
   <done>
-Hermes Agent adapter registered. Window size is 960x680. sync_skill_to_tool accepts overwriteIfSameContent param and frontend passes it. project_sync.rs uses project_relative_skills_dir for all tool path resolution. Cargo test and clippy pass.
+Hermes Agent adapter registered. Window size is 960x680. sync_skill_to_tool accepts overwriteIfSameContent param and all 8 frontend call sites in App.tsx pass it. project_sync.rs uses project_relative_skills_dir for all tool path resolution. Cargo test and clippy pass.
   </done>
 </task>
 
 <task type="auto">
   <name>Task 3: Full verification and final commit</name>
-  <files></files>
+  <files>
+    src-tauri/src/core/installer.rs
+    src-tauri/src/commands/mod.rs
+    src/App.tsx
+  </files>
   <action>
 Run the full project check suite to verify everything integrates cleanly:
 
@@ -267,17 +288,36 @@ If any failures:
 
 After all checks pass, verify key behaviors manually via grep:
 
-1. `grep -n "has_skill_md\|eq_ignore_ascii_case" src-tauri/src/core/installer.rs` -- case-insensitive detection preserved
-2. `grep -n "try_enrich_from_skill_lock" src-tauri/src/core/installer.rs` -- skill-lock enrichment preserved
-3. `grep -n "clone_or_pull_sparse" src-tauri/src/core/installer.rs` -- sparse checkout integrated
-4. `grep -n "ensure_installable_skill_dir" src-tauri/src/core/installer.rs` -- container validation integrated
-5. `grep -n "project_relative_skills_dir" src-tauri/src/core/project_sync.rs` -- project dirs used
-6. `grep -n "HermesAgent\|Hermes" src-tauri/src/core/tool_adapters/mod.rs` -- Hermes adapter present
-7. `grep -n "overwriteIfSameContent" src-tauri/src/commands/mod.rs` -- new param present
+**Upstream integrations:**
+
+1. `grep -n "clone_or_pull_sparse" src-tauri/src/core/installer.rs` -- sparse checkout integrated
+2. `grep -n "ensure_installable_skill_dir" src-tauri/src/core/installer.rs` -- container validation integrated
+3. `grep -n "collect_skill_dirs" src-tauri/src/core/installer.rs` -- unified scanning integrated
+4. `grep -n "normalize_github_skill_subpath" src-tauri/src/core/installer.rs` -- URL normalization integrated
+
+**Critical preserved invariants:**
+
+5. `grep -n "has_skill_md\|eq_ignore_ascii_case" src-tauri/src/core/installer.rs` -- case-insensitive SKILL.md detection preserved
+6. `grep -n "try_enrich_from_skill_lock" src-tauri/src/core/installer.rs` -- skill-lock enrichment preserved
+7. `grep -n "parse_marketplace_json\|scan_marketplace_skills" src-tauri/src/core/installer.rs` -- marketplace scanning preserved
+8. `grep -n "find_skill_dirs_recursive" src-tauri/src/core/installer.rs` -- recursive scanning preserved
+9. `grep -n "list_git_skills_cmd\|candidates\|SkillCandidate" src/App.tsx` -- multi-skill candidate flow preserved
+
+**Manual ports:**
+
+10. `grep -n "HermesAgent\|Hermes" src-tauri/src/core/tool_adapters/mod.rs` -- Hermes adapter present
+11. `grep -n "overwriteIfSameContent" src-tauri/src/commands/mod.rs src/App.tsx` -- new param present in backend and all 8 frontend call sites
+12. `grep -n "project_relative_skills_dir" src-tauri/src/core/project_sync.rs` -- project dirs used
+13. `grep -c "overwriteIfSameContent" src/App.tsx` -- should return 8 (one per call site)
+
+**Window size:**
+
+14. `grep -n "960\|680" src-tauri/tauri.conf.json` -- window dimensions updated
 
 If `npm run check` passes and all greps confirm the expected integrations, no additional commit needed. If fixes were required, commit them:
 
 ```
+git add <only-the-fixed-files>
 git commit -m "fix: address lint/build/clippy issues from upstream merge"
 ```
 
@@ -313,12 +353,15 @@ git commit -m "fix: address lint/build/clippy issues from upstream merge"
 1. `npm run check` passes (lint + build + rust:fmt:check + rust:clippy + rust:test)
 2. Case-insensitive SKILL.md detection preserved in installer.rs
 3. Skill-lock enrichment preserved in install_local_skill
-4. Sparse git checkout path present in install_git_skill
-5. Container path discovery helpers present
-6. Hermes adapter registered in tool_adapters
-7. project_relative_skills_dir used in all project_sync.rs call sites
-8. overwriteIfSameContent param present in sync_skill_to_tool
-9. Window size is 960x680 in tauri.conf.json
+4. Marketplace scanning preserved (parse_marketplace_json, scan_marketplace_skills)
+5. Recursive scanning preserved (find_skill_dirs_recursive)
+6. Multi-skill candidate flow preserved in App.tsx
+7. Sparse git checkout path present in install_git_skill
+8. Container path discovery helpers present
+9. Hermes adapter registered in tool_adapters
+10. project_relative_skills_dir used in all project_sync.rs call sites
+11. overwriteIfSameContent param present in sync_skill_to_tool and all 8 App.tsx call sites
+12. Window size is 960x680 in tauri.conf.json
 </verification>
 
 <success_criteria>
