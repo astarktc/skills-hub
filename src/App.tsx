@@ -1214,13 +1214,52 @@ function App() {
     setActionMessage(t("actions.creatingGitSkill"));
     try {
       const url = gitUrl.trim();
-      const isFolderUrl = url.includes("/tree/") || url.includes("/blob/");
 
-      if (isFolderUrl) {
-        const created = await invokeTauri<InstallResultDto>("install_git", {
-          repoUrl: url,
-          name: gitName.trim() || undefined,
-        });
+      // All URLs (including /tree/ and /blob/ folder URLs) route through the
+      // candidate-based flow. The backend's list_git_skills handles folder URL
+      // subpath extraction. This ensures every install goes through proper
+      // candidate discovery and name matching.
+      const candidates = await invokeTauri<GitSkillCandidate[]>(
+        "list_git_skills_cmd",
+        { repoUrl: url },
+      );
+      if (candidates.length === 0) {
+        throw new Error(t("errors.noSkillsFoundWithHint"));
+      }
+      if (candidates.length === 1) {
+        // When autoSelectSkillName is set (Explore page install), verify the
+        // single candidate actually matches the intended skill. If not, the
+        // backend scan missed the target skill -- show error instead of
+        // silently installing the wrong one.
+        if (autoSelectSkillName) {
+          const target = autoSelectSkillName.toLowerCase();
+          const candidateName = candidates[0].name.toLowerCase();
+          if (
+            candidateName !== target &&
+            !candidateName.includes(target) &&
+            !target.includes(candidateName)
+          ) {
+            setAutoSelectSkillName(null);
+            throw new Error(
+              t("errors.skillNotFoundInRepo", { name: autoSelectSkillName }),
+            );
+          }
+          setAutoSelectSkillName(null);
+        }
+        if (isSkillNameTaken(candidates[0].name)) {
+          setError(
+            t("errors.skillAlreadyExists", { name: candidates[0].name }),
+          );
+          return;
+        }
+        const created = await invokeTauri<InstallResultDto>(
+          "install_git_selection",
+          {
+            repoUrl: url,
+            subpath: candidates[0].subpath,
+            name: gitName.trim() || undefined,
+          },
+        );
         if (autoSyncEnabled) {
           const selectedInstalledIds = tools
             .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
@@ -1263,26 +1302,29 @@ function App() {
             if (collectedErrors.length > 0) showActionErrors(collectedErrors);
           }
         }
-      } else {
-        const candidates = await invokeTauri<GitSkillCandidate[]>(
-          "list_git_skills_cmd",
-          { repoUrl: url },
-        );
-        if (candidates.length === 0) {
-          throw new Error(t("errors.noSkillsFoundWithHint"));
-        }
-        if (candidates.length === 1) {
-          if (isSkillNameTaken(candidates[0].name)) {
-            setError(
-              t("errors.skillAlreadyExists", { name: candidates[0].name }),
-            );
+      } else if (autoSelectSkillName) {
+        // Auto-select the matching skill from online search results.
+        // skills.sh name may differ from SKILL.md name (e.g. "json-render-react" vs "react"),
+        // so try exact match first, then containment match.
+        const target = autoSelectSkillName.toLowerCase();
+        const containMatches = candidates.filter((c) => {
+          const n = c.name.toLowerCase();
+          return target.includes(n) || n.includes(target);
+        });
+        const match =
+          candidates.find((c) => c.name.toLowerCase() === target) ??
+          (containMatches.length === 1 ? containMatches[0] : undefined);
+        setAutoSelectSkillName(null);
+        if (match) {
+          if (isSkillNameTaken(match.name)) {
+            setError(t("errors.skillAlreadyExists", { name: match.name }));
             return;
           }
           const created = await invokeTauri<InstallResultDto>(
             "install_git_selection",
             {
               repoUrl: url,
-              subpath: candidates[0].subpath,
+              subpath: match.subpath,
               name: gitName.trim() || undefined,
             },
           );
@@ -1328,91 +1370,8 @@ function App() {
               if (collectedErrors.length > 0) showActionErrors(collectedErrors);
             }
           }
-        } else if (autoSelectSkillName) {
-          // Auto-select the matching skill from online search results.
-          // skills.sh name may differ from SKILL.md name (e.g. "json-render-react" vs "react"),
-          // so try exact match first, then containment match.
-          const target = autoSelectSkillName.toLowerCase();
-          const containMatches = candidates.filter((c) => {
-            const n = c.name.toLowerCase();
-            return target.includes(n) || n.includes(target);
-          });
-          const match =
-            candidates.find((c) => c.name.toLowerCase() === target) ??
-            (containMatches.length === 1 ? containMatches[0] : undefined);
-          setAutoSelectSkillName(null);
-          if (match) {
-            if (isSkillNameTaken(match.name)) {
-              setError(t("errors.skillAlreadyExists", { name: match.name }));
-              return;
-            }
-            const created = await invokeTauri<InstallResultDto>(
-              "install_git_selection",
-              {
-                repoUrl: url,
-                subpath: match.subpath,
-                name: gitName.trim() || undefined,
-              },
-            );
-            if (autoSyncEnabled) {
-              const selectedInstalledIds = tools
-                .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
-                .map((t) => t.id);
-              const targets = uniqueToolIdsBySkillsDir(selectedInstalledIds)
-                .map((id) => tools.find((t) => t.id === id))
-                .filter(Boolean) as ToolOption[];
-              if (targets.length === 0) {
-                setError(t("errors.noSyncTargets"));
-              } else {
-                const collectedErrors: { title: string; message: string }[] =
-                  [];
-                for (let i = 0; i < targets.length; i++) {
-                  const tool = targets[i];
-                  setActionMessage(
-                    t("actions.syncStep", {
-                      index: i + 1,
-                      total: targets.length,
-                      name: created.name,
-                      tool: tool.label,
-                    }),
-                  );
-                  try {
-                    await invokeTauri("sync_skill_to_tool", {
-                      sourcePath: created.central_path,
-                      skillId: created.skill_id,
-                      tool: tool.id,
-                      name: created.name,
-                    });
-                  } catch (err) {
-                    const raw =
-                      err instanceof Error ? err.message : String(err);
-                    collectedErrors.push({
-                      title: t("errors.syncFailedTitle", {
-                        name: created.name,
-                        tool: tool.label,
-                      }),
-                      message: raw,
-                    });
-                  }
-                }
-                if (collectedErrors.length > 0)
-                  showActionErrors(collectedErrors);
-              }
-            }
-          } else {
-            // No match found, fall back to picker
-            setGitCandidatesRepoUrl(url);
-            setGitCandidates(candidates);
-            setGitCandidateSelected(
-              Object.fromEntries(candidates.map((c) => [c.subpath, true])),
-            );
-            setShowGitPickModal(true);
-            setActionMessage(null);
-            setLoading(false);
-            setLoadingStartAt(null);
-            return;
-          }
         } else {
+          // No match found, fall back to picker
           setGitCandidatesRepoUrl(url);
           setGitCandidates(candidates);
           setGitCandidateSelected(
@@ -1424,6 +1383,17 @@ function App() {
           setLoadingStartAt(null);
           return;
         }
+      } else {
+        setGitCandidatesRepoUrl(url);
+        setGitCandidates(candidates);
+        setGitCandidateSelected(
+          Object.fromEntries(candidates.map((c) => [c.subpath, true])),
+        );
+        setShowGitPickModal(true);
+        setActionMessage(null);
+        setLoading(false);
+        setLoadingStartAt(null);
+        return;
       }
       setGitUrl("");
       setGitName("");

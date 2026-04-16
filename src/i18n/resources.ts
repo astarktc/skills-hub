@@ -208,6 +208,8 @@ export const resources = {
         importFailedTitle: "Import failed: {{name}}",
         unsyncedTitle: "Not synced: {{name}}",
         moreCount: " (+{{count}} more)",
+        skillNotFoundInRepo:
+          "Skill '{{name}}' was not found in this repository",
       },
       actions: {
         importExisting: "Import {{name}} ...",
