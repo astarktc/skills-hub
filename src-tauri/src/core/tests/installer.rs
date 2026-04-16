@@ -620,19 +620,27 @@ fn find_skill_dirs_recursive_skips_excluded_dirs() {
     .unwrap();
 
     // Skills inside dirs that should be skipped
-    let skip_dirs = ["node_modules", ".git", "dist", "build", "target", ".next", ".cache"];
+    let skip_dirs = [
+        "node_modules",
+        ".git",
+        "dist",
+        "build",
+        "target",
+        ".next",
+        ".cache",
+    ];
     for skip in &skip_dirs {
         let skip_path = base.join(skip).join("hidden-skill");
         fs::create_dir_all(&skip_path).unwrap();
-        fs::write(
-            skip_path.join("SKILL.md"),
-            "---\nname: hidden\n---\n",
-        )
-        .unwrap();
+        fs::write(skip_path.join("SKILL.md"), "---\nname: hidden\n---\n").unwrap();
     }
 
     let found = super::find_skill_dirs_recursive(base, 0, 5);
-    assert_eq!(found.len(), 1, "should only find the valid skill, not those in excluded dirs");
+    assert_eq!(
+        found.len(),
+        1,
+        "should only find the valid skill, not those in excluded dirs"
+    );
     assert!(found[0].ends_with("valid/my-skill"));
 }
 
@@ -662,8 +670,12 @@ fn parse_marketplace_json_extracts_plugin_dirs() {
 
     let dirs = super::parse_marketplace_json(base);
     assert_eq!(dirs.len(), 2);
-    assert!(dirs.iter().any(|p: &PathBuf| p.ends_with("plugins/api-scaffolding")));
-    assert!(dirs.iter().any(|p: &PathBuf| p.ends_with("plugins/tailwind-design")));
+    assert!(dirs
+        .iter()
+        .any(|p: &PathBuf| p.ends_with("plugins/api-scaffolding")));
+    assert!(dirs
+        .iter()
+        .any(|p: &PathBuf| p.ends_with("plugins/tailwind-design")));
 }
 
 #[test]
