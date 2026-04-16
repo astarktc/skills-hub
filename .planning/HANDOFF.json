@@ -1,0 +1,45 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-04-16T22:49:36.202Z",
+  "session_type": "gsd-quick",
+  "task_id": "260416-nwg",
+  "task_slug": "cherry-pick-clean-upstream-commits-and-m",
+  "status": "paused",
+  "phase": "pre-execution",
+  "progress": {
+    "completed_tasks": 0,
+    "total_tasks": 3,
+    "current_task": 1,
+    "task_names": [
+      "Cherry-pick 9 upstream commits with conflict resolution",
+      "Manual port -- Hermes adapter, window size, overwriteIfSameContent, project_relative_skills_dir",
+      "Full verification and final commit"
+    ]
+  },
+  "artifacts": {
+    "context": ".planning/quick/260416-nwg-cherry-pick-clean-upstream-commits-and-m/260416-nwg-CONTEXT.md",
+    "research": ".planning/quick/260416-nwg-cherry-pick-clean-upstream-commits-and-m/260416-nwg-RESEARCH.md",
+    "plan": ".planning/quick/260416-nwg-cherry-pick-clean-upstream-commits-and-m/260416-nwg-PLAN.md",
+    "continue_here": ".planning/quick/260416-nwg-cherry-pick-clean-upstream-commits-and-m/.continue-here.md"
+  },
+  "commits": {
+    "research": "ebc62cc",
+    "plan": "1b18c90"
+  },
+  "blockers": [],
+  "decisions": [
+    "Cherry-pick strategy (not wholesale merge) to preserve our project management system",
+    "Theirs-first, ours-on-top conflict resolution for installer.rs",
+    "Manual port scope: Hermes adapter, window size 960x680, overwriteIfSameContent, project_relative_skills_dir",
+    "Excluded: macOS close-to-hide behavior",
+    "featured-skills.json: take latest only (effe079), skip 8 intermediate bot commits",
+    "Include upstream doc commits (Copaw release notes, v0.4.3 bugfix notes, README updates)"
+  ],
+  "required_reading": [
+    ".planning/quick/260416-nwg-cherry-pick-clean-upstream-commits-and-m/260416-nwg-CONTEXT.md",
+    ".planning/quick/260416-nwg-cherry-pick-clean-upstream-commits-and-m/260416-nwg-RESEARCH.md",
+    ".planning/quick/260416-nwg-cherry-pick-clean-upstream-commits-and-m/260416-nwg-PLAN.md",
+    ".planning/quick/260416-nwg-cherry-pick-clean-upstream-commits-and-m/.continue-here.md"
+  ],
+  "resume_command": "/gsd-execute-phase -- resume quick-260416-nwg from task 1"
+}
