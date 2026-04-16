@@ -6,7 +6,7 @@ use crate::core::{
     content_hash,
     skill_store::{ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore},
     sync_engine::{self, SyncMode},
-    tool_adapters,
+    tool_adapters::{self, project_relative_skills_dir},
 };
 
 pub fn resolve_project_sync_target(
@@ -54,7 +54,7 @@ pub fn assign_and_sync(
     let source = Path::new(&skill.central_path);
     let target = resolve_project_sync_target(
         Path::new(&project.path),
-        adapter.relative_skills_dir,
+        project_relative_skills_dir(&adapter),
         &skill.name,
     );
 
@@ -126,7 +126,7 @@ pub(crate) fn sync_single_assignment(
     let source = Path::new(&skill.central_path);
     let target = resolve_project_sync_target(
         Path::new(&project.path),
-        adapter.relative_skills_dir,
+        project_relative_skills_dir(&adapter),
         &skill.name,
     );
 
@@ -247,7 +247,7 @@ pub fn list_assignments_with_staleness(
                     .map(|p| {
                         let target = resolve_project_sync_target(
                             Path::new(&p.path),
-                            adapter.relative_skills_dir,
+                            project_relative_skills_dir(&adapter),
                             &skill.name,
                         );
                         target.exists() || target.symlink_metadata().is_ok()
@@ -355,7 +355,7 @@ pub fn unassign_and_cleanup(
 
     let target = resolve_project_sync_target(
         Path::new(&project.path),
-        adapter.relative_skills_dir,
+        project_relative_skills_dir(&adapter),
         &skill.name,
     );
 

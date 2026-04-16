@@ -1039,6 +1039,7 @@ function App() {
                 tool: tool.id,
                 name: group.name,
                 overwrite,
+                overwriteIfSameContent: true,
               });
             } catch (err) {
               const raw = err instanceof Error ? err.message : String(err);
@@ -1161,6 +1162,7 @@ function App() {
                   skillId: created.skill_id,
                   tool: tool.id,
                   name: created.name,
+                  overwriteIfSameContent: true,
                 });
               } catch (err) {
                 const raw = err instanceof Error ? err.message : String(err);
@@ -1287,6 +1289,7 @@ function App() {
                   skillId: created.skill_id,
                   tool: tool.id,
                   name: created.name,
+                  overwriteIfSameContent: true,
                 });
               } catch (err) {
                 const raw = err instanceof Error ? err.message : String(err);
@@ -1355,6 +1358,7 @@ function App() {
                     skillId: created.skill_id,
                     tool: tool.id,
                     name: created.name,
+                    overwriteIfSameContent: true,
                   });
                 } catch (err) {
                   const raw = err instanceof Error ? err.message : String(err);
@@ -1528,6 +1532,7 @@ function App() {
                     skillId: created.skill_id,
                     tool: tool.id,
                     name: created.name,
+                    overwriteIfSameContent: true,
                   });
                 } catch (err) {
                   const raw = err instanceof Error ? err.message : String(err);
@@ -1639,6 +1644,7 @@ function App() {
                     skillId: created.skill_id,
                     tool: tool.id,
                     name: created.name,
+                    overwriteIfSameContent: true,
                   });
                 } catch (err) {
                   const raw = err instanceof Error ? err.message : String(err);
@@ -1738,6 +1744,7 @@ function App() {
                 skillId: skill.id,
                 tool: toolId,
                 name: skill.name,
+                overwriteIfSameContent: true,
               });
             } catch (err) {
               const raw = err instanceof Error ? err.message : String(err);
@@ -1821,6 +1828,7 @@ function App() {
             skillId: skill.id,
             tool: toolId,
             name: skill.name,
+            overwriteIfSameContent: true,
           });
         }
         const statusText = synced
