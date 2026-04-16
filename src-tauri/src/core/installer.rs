@@ -11,7 +11,9 @@ use super::cancel_token::CancelToken;
 use super::central_repo::{ensure_central_repo, resolve_central_repo_path};
 use super::content_hash::hash_dir;
 use super::git_fetcher::clone_or_pull;
-use super::github_download::{download_github_directory, parse_github_api_params};
+use super::github_download::{
+    download_github_directory, fetch_branch_sha, parse_github_api_params,
+};
 use super::skill_lock::try_enrich_from_skill_lock;
 use super::skill_store::{SkillRecord, SkillStore};
 use super::sync_engine::copy_dir_recursive;
@@ -160,7 +162,12 @@ pub fn install_git_skill<R: tauri::Runtime>(
             github_token_opt,
         ) {
             Ok(()) => {
-                revision = format!("api-download-{}", branch);
+                // Try to get real commit SHA for the branch (lightweight API call).
+                // Fall back to api-download-{branch} if it fails (non-blocking).
+                revision = match fetch_branch_sha(&owner, &repo, &branch, github_token_opt) {
+                    Ok(sha) => sha,
+                    Err(_) => format!("api-download-{}", branch),
+                };
             }
             Err(err) => {
                 // Clean up partial download
@@ -453,6 +460,132 @@ const SKILL_SCAN_BASES: [&str; 5] = [
     ".claude/skills",
 ];
 
+/// Directories to skip during recursive skill scanning (performance + correctness).
+const SKIP_DIRS: [&str; 7] = [
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    "target",
+    ".next",
+    ".cache",
+];
+
+/// Recursively find directories containing SKILL.md, up to max_depth levels deep.
+/// This is a fallback for repos that don't use standard skill directory layouts
+/// (e.g., wshobson/agents with skills at depth 4: plugins/*/skills/*/SKILL.md).
+fn find_skill_dirs_recursive(dir: &Path, depth: usize, max_depth: usize) -> Vec<PathBuf> {
+    if depth > max_depth {
+        return vec![];
+    }
+    let mut results = Vec::new();
+    if dir.join("SKILL.md").exists() {
+        results.push(dir.to_path_buf());
+    }
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if !p.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            // Skip known heavy/irrelevant directories
+            if SKIP_DIRS.iter().any(|&s| name_str == s) {
+                continue;
+            }
+            // Skip hidden dirs (starting with .) except known scan bases like .claude
+            if name_str.starts_with('.') && name_str != ".claude" {
+                continue;
+            }
+            results.extend(find_skill_dirs_recursive(&p, depth + 1, max_depth));
+        }
+    }
+    results
+}
+
+#[derive(Deserialize)]
+struct MarketplaceManifest {
+    plugins: Option<Vec<MarketplacePlugin>>,
+}
+
+#[derive(Deserialize)]
+struct MarketplacePlugin {
+    #[allow(dead_code)]
+    name: Option<String>,
+    source: Option<String>,
+    #[allow(dead_code)]
+    description: Option<String>,
+}
+
+/// Parse .claude-plugin/marketplace.json to extract plugin source directories.
+/// Returns absolute paths to plugin dirs that exist on disk.
+fn parse_marketplace_json(repo_dir: &Path) -> Vec<PathBuf> {
+    let manifest_path = repo_dir.join(".claude-plugin/marketplace.json");
+    let content = match std::fs::read_to_string(&manifest_path) {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    let manifest: MarketplaceManifest = match serde_json::from_str(&content) {
+        Ok(m) => m,
+        Err(_) => return vec![],
+    };
+    let plugins = match manifest.plugins {
+        Some(p) => p,
+        None => return vec![],
+    };
+    plugins
+        .iter()
+        .filter_map(|plugin| {
+            let source = plugin.source.as_ref()?;
+            let cleaned = source.strip_prefix("./").unwrap_or(source);
+            let resolved = repo_dir.join(cleaned);
+            if resolved.exists() {
+                Some(resolved)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Scan marketplace plugin dirs for skills. Checks each plugin dir's `skills/*/SKILL.md`
+/// pattern and direct children for SKILL.md.
+fn scan_marketplace_skills(
+    marketplace_dirs: &[PathBuf],
+    repo_dir: &Path,
+) -> Vec<(PathBuf, String, Option<String>)> {
+    let mut results = Vec::new();
+    for plugin_dir in marketplace_dirs {
+        // Check plugin_dir/skills/*/SKILL.md (primary pattern for wshobson/agents)
+        let skills_subdir = plugin_dir.join("skills");
+        if let Ok(rd) = std::fs::read_dir(&skills_subdir) {
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.is_dir() && p.join("SKILL.md").exists() {
+                    let (name, desc) = extract_skill_info(&p, repo_dir);
+                    results.push((p, name, desc));
+                }
+            }
+        }
+        // Also check direct children of plugin dir
+        if let Ok(rd) = std::fs::read_dir(plugin_dir) {
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.is_dir() && p.join("SKILL.md").exists() {
+                    let dir_name = entry.file_name();
+                    if dir_name.to_string_lossy() == "skills" {
+                        continue; // Already scanned above
+                    }
+                    let (name, desc) = extract_skill_info(&p, repo_dir);
+                    results.push((p, name, desc));
+                }
+            }
+        }
+    }
+    results
+}
+
 /// Check if a directory is a valid skill (has SKILL.md or is under .claude/skills/).
 fn is_skill_dir(p: &Path) -> bool {
     p.is_dir() && (p.join("SKILL.md").exists() || is_claude_skill_dir(p))
@@ -543,10 +676,37 @@ fn scan_skill_candidates_in_dir(repo_dir: &Path) -> Vec<(String, String)> {
             }
         }
     }
+    // Marketplace + recursive fallback if nothing found
+    if out.is_empty() {
+        let marketplace_dirs = parse_marketplace_json(repo_dir);
+        if !marketplace_dirs.is_empty() {
+            for (p, name, _) in scan_marketplace_skills(&marketplace_dirs, repo_dir) {
+                let rel = p
+                    .strip_prefix(repo_dir)
+                    .unwrap_or(&p)
+                    .to_string_lossy()
+                    .to_string();
+                out.push((name, rel));
+            }
+        }
+        if out.is_empty() {
+            let recursive = find_skill_dirs_recursive(repo_dir, 0, 5);
+            for p in recursive {
+                let (name, _) = extract_skill_info(&p, repo_dir);
+                let rel = p
+                    .strip_prefix(repo_dir)
+                    .unwrap_or(&p)
+                    .to_string_lossy()
+                    .to_string();
+                out.push((name, rel));
+            }
+        }
+    }
     out
 }
 
-/// Count skill directories in a repo: checks both `skills/*` and root-level subdirectories.
+/// Count skill directories in a repo: checks standard locations, root-level subdirs,
+/// marketplace plugin dirs, and falls back to recursive scan.
 fn count_skills_in_repo(repo_dir: &Path) -> usize {
     let mut count = 0usize;
     // 1) skills/*, .claude/skills/*, and known sub-locations
@@ -577,6 +737,18 @@ fn count_skills_in_repo(repo_dir: &Path) -> usize {
             if p.join("SKILL.md").exists() {
                 count += 1;
             }
+        }
+    }
+    // 3) If nothing found in standard locations, try marketplace + recursive fallback
+    if count == 0 {
+        let marketplace_dirs = parse_marketplace_json(repo_dir);
+        if !marketplace_dirs.is_empty() {
+            let marketplace_skills = scan_marketplace_skills(&marketplace_dirs, repo_dir);
+            count += marketplace_skills.len();
+        }
+        if count == 0 {
+            let recursive = find_skill_dirs_recursive(repo_dir, 0, 5);
+            count = recursive.len();
         }
     }
     count
@@ -910,6 +1082,49 @@ pub fn list_git_skills<R: tauri::Runtime>(
         }
     }
 
+    // Count non-root skills found so far (root "." is always present if SKILL.md exists)
+    let priority_count = out.iter().filter(|c| c.subpath != ".").count();
+
+    // Marketplace plugin dirs + recursive fallback when priority scan finds nothing
+    if priority_count == 0 {
+        let marketplace_dirs = parse_marketplace_json(&repo_dir);
+        if !marketplace_dirs.is_empty() {
+            for (p, name, desc) in scan_marketplace_skills(&marketplace_dirs, &repo_dir) {
+                let rel = p
+                    .strip_prefix(&repo_dir)
+                    .unwrap_or(&p)
+                    .to_string_lossy()
+                    .to_string();
+                out.push(GitSkillCandidate {
+                    name,
+                    description: desc,
+                    subpath: rel,
+                });
+            }
+        }
+        let marketplace_count = out.iter().filter(|c| c.subpath != ".").count();
+        if marketplace_count == 0 {
+            let recursive = find_skill_dirs_recursive(&repo_dir, 0, 5);
+            for p in recursive {
+                let rel = p
+                    .strip_prefix(&repo_dir)
+                    .unwrap_or(&p)
+                    .to_string_lossy()
+                    .to_string();
+                // Skip root (already handled above)
+                if rel == "." || rel.is_empty() {
+                    continue;
+                }
+                let (name, desc) = extract_skill_info(&p, &repo_dir);
+                out.push(GitSkillCandidate {
+                    name,
+                    description: desc,
+                    subpath: rel,
+                });
+            }
+        }
+    }
+
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out.dedup_by(|a, b| a.subpath == b.subpath);
 
@@ -1025,6 +1240,88 @@ pub fn list_local_skills(base_path: &Path) -> Result<Vec<LocalSkillCandidate>> {
                         valid: false,
                         reason: Some("missing_skill_md".to_string()),
                     });
+                }
+            }
+        }
+    }
+
+    // Count non-root skills found so far
+    let priority_count = out.iter().filter(|c| c.subpath != ".").count();
+
+    // Marketplace + recursive fallback when priority scan finds nothing
+    if priority_count == 0 {
+        let marketplace_dirs = parse_marketplace_json(base_path);
+        if !marketplace_dirs.is_empty() {
+            for (p, name, desc) in scan_marketplace_skills(&marketplace_dirs, base_path) {
+                let rel = p
+                    .strip_prefix(base_path)
+                    .unwrap_or(&p)
+                    .to_string_lossy()
+                    .to_string();
+                let skill_md = p.join("SKILL.md");
+                if skill_md.exists() {
+                    match parse_skill_md_with_reason(&skill_md) {
+                        Ok((parsed_name, parsed_desc)) => {
+                            out.push(LocalSkillCandidate {
+                                name: parsed_name,
+                                description: parsed_desc,
+                                subpath: rel,
+                                valid: true,
+                                reason: None,
+                            });
+                        }
+                        Err(reason) => {
+                            out.push(LocalSkillCandidate {
+                                name,
+                                description: desc,
+                                subpath: rel,
+                                valid: false,
+                                reason: Some(reason.to_string()),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        let marketplace_count = out.iter().filter(|c| c.subpath != ".").count();
+        if marketplace_count == 0 {
+            let recursive = find_skill_dirs_recursive(base_path, 0, 5);
+            for p in recursive {
+                let rel = p
+                    .strip_prefix(base_path)
+                    .unwrap_or(&p)
+                    .to_string_lossy()
+                    .to_string();
+                if rel == "." || rel.is_empty() {
+                    continue;
+                }
+                let skill_md = p.join("SKILL.md");
+                if skill_md.exists() {
+                    match parse_skill_md_with_reason(&skill_md) {
+                        Ok((name, desc)) => {
+                            out.push(LocalSkillCandidate {
+                                name,
+                                description: desc,
+                                subpath: rel,
+                                valid: true,
+                                reason: None,
+                            });
+                        }
+                        Err(reason) => {
+                            let name = p
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string();
+                            out.push(LocalSkillCandidate {
+                                name,
+                                description: None,
+                                subpath: rel,
+                                valid: false,
+                                reason: Some(reason.to_string()),
+                            });
+                        }
+                    }
                 }
             }
         }
