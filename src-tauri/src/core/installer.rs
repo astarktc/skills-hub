@@ -599,13 +599,19 @@ fn parse_marketplace_json(repo_dir: &Path) -> Vec<PathBuf> {
         Some(p) => p,
         None => return vec![],
     };
+
+    let repo_root = match repo_dir.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return vec![],
+    };
+
     plugins
         .iter()
         .filter_map(|plugin| {
             let source = plugin.source.as_ref()?;
             let cleaned = source.strip_prefix("./").unwrap_or(source);
-            let resolved = repo_dir.join(cleaned);
-            if resolved.exists() {
+            let resolved = repo_dir.join(cleaned).canonicalize().ok()?;
+            if resolved.starts_with(&repo_root) && resolved.exists() {
                 Some(resolved)
             } else {
                 None
