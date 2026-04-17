@@ -1,217 +1,235 @@
 # Codebase Structure
 
-**Analysis Date:** 2026-04-07
+**Analysis Date:** 2026-04-16
 
 ## Directory Layout
 
 ```text
 skills-hub/
+├── .github/                 # CI, release, and automation workflows
+├── .planning/               # GSD planning artifacts and generated codebase docs
+├── docs/                    # Project documentation outside runtime code
+├── public/                  # Static frontend assets served by Vite
+├── scripts/                 # Versioning and build helper scripts
 ├── src/                     # React frontend application
-│   ├── components/          # Presentational UI and modal components
-│   ├── i18n/                # i18next initialization and translation resources
-│   ├── pages/               # Secondary page experiments / unused route pages
-│   ├── App.tsx              # Main application controller and state container
-│   ├── App.css              # Shared component-level styling
-│   ├── index.css            # Theme variables and Tailwind entry CSS
-│   └── main.tsx             # Frontend bootstrap
-├── src-tauri/               # Tauri desktop shell and Rust backend
+│   ├── components/          # UI components and feature subtrees
+│   │   ├── projects/        # Project distribution feature UI and hook
+│   │   └── skills/          # Skills management UI and modal components
+│   ├── i18n/                # Translation bootstrap and resource definitions
+│   ├── pages/               # Dormant router-style pages, not active app entrypoints
+│   ├── App.tsx              # Active frontend shell and orchestration root
+│   ├── App.css              # Global component-level styles
+│   ├── index.css            # Global theme variables and base styles
+│   └── main.tsx             # React bootstrap entrypoint
+├── src-tauri/               # Native Tauri app, Rust backend, packaging config
 │   ├── src/
-│   │   ├── commands/        # Tauri IPC commands and command tests
-│   │   ├── core/            # Business logic, persistence, sync, search, adapters
-│   │   ├── lib.rs           # Tauri runtime setup and command registration
-│   │   └── main.rs          # Native binary entry point
-│   ├── capabilities/        # Tauri capability manifests
-│   ├── Cargo.toml           # Rust dependencies and crate settings
-│   └── tauri.conf.json      # Tauri app/build/bundle configuration
-├── scripts/                 # Versioning and icon helper scripts
-├── public/                  # Static assets copied by Vite
-├── docs/                    # Project docs, plans, release design notes, logs
-├── .planning/codebase/      # Generated architecture/quality/planning reference docs
-├── package.json             # Frontend package manifest and npm scripts
-├── vite.config.ts           # Vite dev/build configuration
-├── tsconfig.json            # Root TypeScript project references
-└── featured-skills.json     # Bundled featured-skill catalog fallback
+│   │   ├── commands/        # Tauri IPC command handlers and command tests
+│   │   ├── core/            # Business logic, persistence, sync, integrations, tests
+│   │   ├── lib.rs           # Tauri builder, state registration, command registration
+│   │   └── main.rs          # Native binary entrypoint
+│   ├── Cargo.toml           # Rust crate manifest
+│   ├── Cargo.lock           # Rust lockfile
+│   ├── build.rs             # Tauri build script
+│   └── tauri.conf.json      # Tauri app/runtime/bundling configuration
+├── dist/                    # Built frontend artifacts
+├── package.json             # JS scripts and dependency manifest
+├── package-lock.json        # npm lockfile
+├── tsconfig.json            # TypeScript project references root
+├── tsconfig.app.json        # Frontend TypeScript compiler config
+├── tsconfig.node.json       # Node/Vite TypeScript compiler config
+├── vite.config.ts           # Vite configuration
+├── eslint.config.js         # ESLint flat config
+└── featured-skills.json     # Packaged featured skills data snapshot
 ```
 
 ## Directory Purposes
 
 **`src/`:**
 
-- Purpose: Hold the entire React frontend.
-- Contains: `src/App.tsx`, global CSS, i18n setup, feature components under `src/components/skills/`, and dormant route-style files such as `src/components/Layout.tsx` and `src/pages/Dashboard.tsx`.
-- Key files: `src/App.tsx`, `src/main.tsx`, `src/index.css`, `src/App.css`, `src/i18n/resources.ts`.
+- Purpose: Hold the active React desktop UI.
+- Contains: `src/App.tsx`, shared CSS, i18n setup, feature component trees, and a small dormant `pages/` subtree.
+- Key files: `src/App.tsx`, `src/main.tsx`, `src/index.css`, `src/App.css`, `src/i18n/index.ts`, `src/i18n/resources.ts`
+
+**`src/components/skills/`:**
+
+- Purpose: Hold the active skills-management presentation layer.
+- Contains: Header, list/detail/explore/settings screens, loading UI, and modal components under `src/components/skills/modals/`.
+- Key files: `src/components/skills/Header.tsx`, `src/components/skills/SkillsList.tsx`, `src/components/skills/SkillCard.tsx`, `src/components/skills/SkillDetailView.tsx`, `src/components/skills/SettingsPage.tsx`, `src/components/skills/types.ts`
+
+**`src/components/projects/`:**
+
+- Purpose: Hold the per-project distribution feature UI.
+- Contains: Feature-local hook, project list, assignment matrix, CRUD/configuration modals, and DTO definitions.
+- Key files: `src/components/projects/ProjectsPage.tsx`, `src/components/projects/useProjectState.ts`, `src/components/projects/AssignmentMatrix.tsx`, `src/components/projects/ProjectList.tsx`, `src/components/projects/types.ts`
 
 **`src/components/`:**
 
-- Purpose: Hold reusable UI pieces.
-- Contains: Active skill-management UI in `src/components/skills/` and an inactive alternate shell in `src/components/Layout.tsx`.
-- Key files: `src/components/skills/Header.tsx`, `src/components/skills/SkillsList.tsx`, `src/components/skills/SkillCard.tsx`, `src/components/skills/ExplorePage.tsx`, `src/components/skills/SkillDetailView.tsx`, `src/components/skills/SettingsPage.tsx`.
-
-**`src/components/skills/modals/`:**
-
-- Purpose: Hold transient workflow dialogs.
-- Contains: Add/import/delete/pick/sync confirmation modals.
-- Key files: `src/components/skills/modals/AddSkillModal.tsx`, `src/components/skills/modals/ImportModal.tsx`, `src/components/skills/modals/GitPickModal.tsx`, `src/components/skills/modals/LocalPickModal.tsx`, `src/components/skills/modals/DeleteModal.tsx`, `src/components/skills/modals/NewToolsModal.tsx`, `src/components/skills/modals/SharedDirModal.tsx`.
+- Purpose: Hold shared or feature-root components.
+- Contains: The active feature folders plus the dormant router layout file.
+- Key files: `src/components/Layout.tsx`, `src/components/projects/`, `src/components/skills/`
 
 **`src/i18n/`:**
 
-- Purpose: Centralize localization setup.
-- Contains: i18next initialization and translation dictionaries.
-- Key files: `src/i18n/index.ts`, `src/i18n/resources.ts`.
+- Purpose: Centralize localization bootstrap and resource data.
+- Contains: i18n initialization and translation dictionaries.
+- Key files: `src/i18n/index.ts`, `src/i18n/resources.ts`
 
 **`src/pages/`:**
 
-- Purpose: Contain route-oriented page components for an alternate layout approach.
-- Contains: `src/pages/Dashboard.tsx`.
-- Key files: `src/pages/Dashboard.tsx`.
+- Purpose: Hold alternate router-oriented pages not wired into the active shell.
+- Contains: Placeholder page components.
+- Key files: `src/pages/Dashboard.tsx`
 
 **`src-tauri/src/commands/`:**
 
-- Purpose: Define the frontend/backend command boundary.
-- Contains: Tauri command functions, DTO structs, and command tests.
-- Key files: `src-tauri/src/commands/mod.rs`, `src-tauri/src/commands/tests/commands.rs`.
+- Purpose: Expose Tauri IPC commands.
+- Contains: General commands in `src-tauri/src/commands/mod.rs`, project-specific commands in `src-tauri/src/commands/projects.rs`, and command tests under `src-tauri/src/commands/tests/`.
+- Key files: `src-tauri/src/commands/mod.rs`, `src-tauri/src/commands/projects.rs`, `src-tauri/src/commands/tests/commands.rs`
 
 **`src-tauri/src/core/`:**
 
-- Purpose: Hold backend domain logic.
-- Contains: Persistence, installation, onboarding, sync, search, adapter registry, cleanup helpers, and unit/integration-style tests under `src-tauri/src/core/tests/`.
-- Key files: `src-tauri/src/core/skill_store.rs`, `src-tauri/src/core/installer.rs`, `src-tauri/src/core/onboarding.rs`, `src-tauri/src/core/sync_engine.rs`, `src-tauri/src/core/tool_adapters/mod.rs`, `src-tauri/src/core/skill_files.rs`, `src-tauri/src/core/mod.rs`.
+- Purpose: Hold backend business logic modules.
+- Contains: Installer logic, project sync logic, SQLite store, tool adapter registry, content hashing, onboarding, search/download helpers, cleanup helpers, and tests in `src-tauri/src/core/tests/`.
+- Key files: `src-tauri/src/core/installer.rs`, `src-tauri/src/core/project_ops.rs`, `src-tauri/src/core/project_sync.rs`, `src-tauri/src/core/sync_engine.rs`, `src-tauri/src/core/skill_store.rs`, `src-tauri/src/core/tool_adapters/mod.rs`
 
 **`src-tauri/src/core/tests/`:**
 
-- Purpose: Keep backend module tests close to the corresponding domain code.
-- Contains: One test file per major backend module.
-- Key files: `src-tauri/src/core/tests/installer.rs`, `src-tauri/src/core/tests/skill_store.rs`, `src-tauri/src/core/tests/onboarding.rs`, `src-tauri/src/core/tests/sync_engine.rs`, `src-tauri/src/core/tests/tool_adapters.rs`.
+- Purpose: Hold Rust backend tests that mirror core modules.
+- Contains: Test files such as `src-tauri/src/core/tests/installer.rs`, `src-tauri/src/core/tests/project_sync.rs`, and `src-tauri/src/core/tests/skill_store.rs`.
+- Key files: `src-tauri/src/core/tests/installer.rs`, `src-tauri/src/core/tests/project_ops.rs`, `src-tauri/src/core/tests/project_sync.rs`, `src-tauri/src/core/tests/sync_engine.rs`, `src-tauri/src/core/tests/tool_adapters.rs`
+
+**`src-tauri/`:**
+
+- Purpose: Package the desktop backend and app metadata.
+- Contains: Rust crate files, Tauri config, icons/resources, and build settings.
+- Key files: `src-tauri/Cargo.toml`, `src-tauri/build.rs`, `src-tauri/tauri.conf.json`
 
 **`scripts/`:**
 
-- Purpose: Hold project-specific maintenance scripts.
-- Contains: Version sync/check helpers and icon generation helpers referenced by `package.json` scripts.
-- Key files: `scripts/version.mjs`, `scripts/tauri-icon-desktop.mjs`.
+- Purpose: Hold JS build/release helper scripts.
+- Contains: Version and packaging helpers referenced from `package.json`.
+- Key files: `scripts/version.mjs`
 
-**`public/`:**
+**`.planning/codebase/`:**
 
-- Purpose: Hold static web assets served/copied by Vite.
-- Contains: Public files such as logos and images used by the React UI.
-- Key files: `public/` contents are served at the app root during frontend runtime.
-
-**`docs/`:**
-
-- Purpose: Hold long-form project documentation and planning artifacts.
-- Contains: Release plans, system design notes, changelog translations, and conversation logs.
-- Key files: `docs/releases/v0.1-v0.2/system-design.md`, `docs/README.zh.md`, `docs/plans/2026-04-02-skills-hub-fork-design.md`.
+- Purpose: Hold generated codebase mapping documents consumed by GSD commands.
+- Contains: This architecture/structure documentation set.
+- Key files: `.planning/codebase/ARCHITECTURE.md`, `.planning/codebase/STRUCTURE.md`
 
 ## Key File Locations
 
 **Entry Points:**
 
-- `src/main.tsx`: Frontend bootstrap; mounts `src/App.tsx`.
-- `src/App.tsx`: Actual active application shell and state orchestrator.
-- `src-tauri/src/main.rs`: Native executable entry that calls `app_lib::run()`.
-- `src-tauri/src/lib.rs`: Tauri runtime setup, plugin registration, shared-state injection, and command registration.
+- `src/main.tsx`: React bootstrap entry.
+- `src/App.tsx`: Active frontend shell and view switcher.
+- `src-tauri/src/main.rs`: Native Rust binary entrypoint.
+- `src-tauri/src/lib.rs`: Tauri app builder and command registration root.
 
 **Configuration:**
 
-- `package.json`: npm scripts, frontend dependencies, and Tauri CLI dependency.
-- `vite.config.ts`: Vite plugins and development server port.
-- `tsconfig.json`: TypeScript project references.
-- `tsconfig.app.json`: Frontend TypeScript compiler options.
-- `tsconfig.node.json`: Node/Vite TypeScript compiler options.
-- `src-tauri/Cargo.toml`: Rust crate metadata and dependencies.
-- `src-tauri/tauri.conf.json`: Desktop bundle metadata, frontend hooks, updater endpoint.
-- `eslint.config.js`: ESLint flat config.
+- `package.json`: JS scripts and frontend dependency manifest.
+- `vite.config.ts`: Vite build/dev configuration.
+- `eslint.config.js`: Frontend lint rules.
+- `tsconfig.json`: TypeScript project references root.
+- `tsconfig.app.json`: Frontend TypeScript settings.
+- `tsconfig.node.json`: Node/Vite TypeScript settings.
+- `src-tauri/Cargo.toml`: Rust dependency and crate configuration.
+- `src-tauri/tauri.conf.json`: Tauri runtime, bundle, and updater configuration.
 
 **Core Logic:**
 
-- `src/components/skills/types.ts`: Shared frontend DTO definitions.
-- `src-tauri/src/commands/mod.rs`: Tauri command contract.
-- `src-tauri/src/core/skill_store.rs`: SQLite persistence and migrations.
-- `src-tauri/src/core/installer.rs`: Local/git import and update workflows.
-- `src-tauri/src/core/sync_engine.rs`: Filesystem sync strategy.
-- `src-tauri/src/core/onboarding.rs`: Existing-skill discovery/import planning.
-- `src-tauri/src/core/tool_adapters/mod.rs`: Supported tool registry and path resolution.
-- `src-tauri/src/core/skill_files.rs`: Skill file listing and safe reading for the detail view.
+- `src-tauri/src/core/skill_store.rs`: SQLite schema, migrations, and CRUD.
+- `src-tauri/src/core/installer.rs`: Skill import/update workflows.
+- `src-tauri/src/core/project_ops.rs`: Project registration, DTO shaping, and cleanup helpers.
+- `src-tauri/src/core/project_sync.rs`: Project assignment sync, resync, staleness, and cleanup.
+- `src-tauri/src/core/sync_engine.rs`: Symlink/junction/copy primitives.
+- `src-tauri/src/core/tool_adapters/mod.rs`: Tool registry and path conventions.
 
 **Testing:**
 
-- `src-tauri/src/commands/tests/commands.rs`: Command-layer tests.
-- `src-tauri/src/core/tests/*.rs`: Backend domain tests.
-- Not detected: active frontend test directory or frontend test runner config.
+- `src-tauri/src/core/tests/`: Backend/core tests.
+- `src-tauri/src/commands/tests/`: Tauri command tests.
+- `package.json`: Test command entry via `npm run rust:test`.
 
 ## Naming Conventions
 
 **Files:**
 
-- Frontend React component files use PascalCase: `src/components/skills/SkillCard.tsx`, `src/components/skills/SettingsPage.tsx`.
-- Frontend bootstrap and non-component files use lowercase or framework-default names: `src/main.tsx`, `src/index.css`, `src/App.tsx`.
-- Rust module files use snake_case: `src-tauri/src/core/skill_store.rs`, `src-tauri/src/core/github_search.rs`.
-- Generated planning docs use uppercase filenames: `.planning/codebase/ARCHITECTURE.md`, `.planning/codebase/STRUCTURE.md`.
+- React component files use PascalCase: `src/components/skills/SkillCard.tsx`, `src/components/projects/ProjectsPage.tsx`.
+- React feature hooks use camelCase `use*` filenames: `src/components/projects/useProjectState.ts`.
+- Frontend support/setup files use lowercase names: `src/main.tsx`, `src/i18n/index.ts`, `src/i18n/resources.ts`.
+- Rust backend modules use snake_case: `src-tauri/src/core/project_sync.rs`, `src-tauri/src/core/skill_store.rs`, `src-tauri/src/commands/projects.rs`.
+- Rust module index files use `mod.rs`: `src-tauri/src/commands/mod.rs`, `src-tauri/src/core/mod.rs`, `src-tauri/src/core/tool_adapters/mod.rs`.
+- Rust tests mirror the covered module name under `src-tauri/src/core/tests/`: `src-tauri/src/core/tests/project_sync.rs`, `src-tauri/src/core/tests/skill_store.rs`.
 
 **Directories:**
 
-- Frontend feature directories are lowercase and nested by feature: `src/components/skills/`, `src/components/skills/modals/`.
-- Rust backend directories are layer-oriented and lowercase: `src-tauri/src/commands/`, `src-tauri/src/core/`, `src-tauri/src/core/tests/`.
-- Documentation directories are lowercase and topic-oriented: `docs/plans/`, `docs/releases/`, `docs/conversation-logs/`.
+- Frontend feature directories are noun-based and lowercase: `src/components/skills/`, `src/components/projects/`.
+- Backend responsibilities are split by technical layer under lowercase directories: `src-tauri/src/commands/`, `src-tauri/src/core/`.
+- Test directories sit under the backend layer they validate: `src-tauri/src/core/tests/`, `src-tauri/src/commands/tests/`.
 
 ## Where to Add New Code
 
 **New Feature:**
 
-- Primary frontend orchestration: `src/App.tsx` when the feature needs global state, command sequencing, or cross-screen coordination.
-- New presentational UI: `src/components/skills/` if the feature belongs to the active skills-management experience.
-- Backend command surface: `src-tauri/src/commands/mod.rs`.
-- Backend business logic: `src-tauri/src/core/` in a dedicated module, then export it from `src-tauri/src/core/mod.rs`.
-- Tests: `src-tauri/src/core/tests/` for backend logic and `src-tauri/src/commands/tests/` for command behavior.
+- Primary frontend orchestration: `src/App.tsx` if the feature changes top-level navigation, global app state, or shared modal/workflow wiring.
+- Primary frontend feature UI: create or extend a focused subtree under `src/components/skills/` or `src/components/projects/`, depending on whether the feature belongs to global skill management or project distribution.
+- Primary backend logic: add a focused module under `src-tauri/src/core/`, then expose it through `src-tauri/src/commands/mod.rs` or `src-tauri/src/commands/projects.rs`.
+- Tests: add Rust tests under `src-tauri/src/core/tests/` or `src-tauri/src/commands/tests/` using the mirrored module name.
 
 **New Component/Module:**
 
-- Implementation: `src/components/skills/` for active feature UI, or `src/components/skills/modals/` for dialog-based flows.
-- Shared props/types: `src/components/skills/types.ts` only when the type is a backend DTO or reused across multiple frontend components.
+- Skills UI component: `src/components/skills/`.
+- Skills modal: `src/components/skills/modals/`.
+- Projects UI component: `src/components/projects/`.
+- Shared frontend DTO additions: update `src/components/skills/types.ts` or `src/components/projects/types.ts`, then mirror the backend DTO in `src-tauri/src/commands/mod.rs`, `src-tauri/src/commands/projects.rs`, or `src-tauri/src/core/project_ops.rs`.
+- New backend core module: `src-tauri/src/core/`, and export it from `src-tauri/src/core/mod.rs`.
+- New Tauri command: add the function to `src-tauri/src/commands/mod.rs` or `src-tauri/src/commands/projects.rs`, then register it in `src-tauri/src/lib.rs` inside `generate_handler!`.
 
 **Utilities:**
 
-- Frontend helper logic that is local to the app shell: keep near `src/App.tsx` unless it becomes reusable enough to justify extraction.
-- Backend shared helpers: add to `src-tauri/src/core/` and export in `src-tauri/src/core/mod.rs`.
-- Tool-specific path/detection logic: extend `src-tauri/src/core/tool_adapters/mod.rs` instead of scattering tool rules elsewhere.
+- Frontend feature-local helpers: keep them in the owning component file unless reused broadly, then move them into the same feature directory such as `src/components/projects/` or `src/components/skills/`.
+- Backend reusable helpers: place them under `src-tauri/src/core/` near the owning domain, such as `src-tauri/src/core/content_hash.rs` or `src-tauri/src/core/skill_files.rs`.
+- Build/release utilities: `scripts/` for Node-based automation.
 
 ## Special Directories
 
-**`.planning/codebase/`:**
+**`src/components/projects/`:**
 
-- Purpose: Hold generated codebase analysis documents consumed by other GSD commands.
-- Generated: Yes.
-- Committed: Yes, when the orchestrator chooses to commit planning artifacts.
+- Purpose: Isolate the newer project-distribution feature from the legacy `src/App.tsx` state mass.
+- Generated: No.
+- Committed: Yes.
+
+**`src/pages/`:**
+
+- Purpose: Hold unused router-style page components.
+- Generated: No.
+- Committed: Yes.
+
+**`src/components/Layout.tsx`:**
+
+- Purpose: Hold an unused router shell built around `react-router-dom`.
+- Generated: No.
+- Committed: Yes.
 
 **`src-tauri/src/core/tests/`:**
 
-- Purpose: Keep backend tests parallel to domain modules.
-- Generated: No.
-- Committed: Yes.
-
-**`docs/releases/`:**
-
-- Purpose: Store release-specific design notes and implementation plans.
-- Generated: No.
-- Committed: Yes.
-
-**`public/`:**
-
-- Purpose: Serve static assets directly through Vite/Tauri web assets.
+- Purpose: Keep backend tests close to the business logic they validate.
 - Generated: No.
 - Committed: Yes.
 
 **`dist/`:**
 
-- Purpose: Vite/Tauri frontend build output referenced by `src-tauri/tauri.conf.json` as `frontendDist`.
+- Purpose: Store built frontend output.
 - Generated: Yes.
-- Committed: No by default; build artifact directory is not part of the current source listing.
+- Committed: Yes, currently present in the repository root.
 
-**Dormant route-shell files:**
+**`.planning/`:**
 
-- Purpose: `src/components/Layout.tsx` and `src/pages/Dashboard.tsx` indicate a router-style shell that is not currently wired into `src/main.tsx` or `src/App.tsx`.
-- Generated: No.
+- Purpose: Store project planning, debug notes, phase artifacts, and generated codebase maps.
+- Generated: Mixed; many files are workflow-generated.
 - Committed: Yes.
 
 ---
 
-_Structure analysis: 2026-04-07_
+_Structure analysis: 2026-04-16_
