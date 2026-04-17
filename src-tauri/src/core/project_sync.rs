@@ -233,9 +233,9 @@ pub fn list_assignments_with_staleness(
     // Pre-fetch skill records with deduplication (one DB query per unique skill_id)
     let mut skill_cache: HashMap<String, Option<SkillRecord>> = HashMap::new();
     for a in &assignments {
-        skill_cache.entry(a.skill_id.clone()).or_insert_with(|| {
-            store.get_skill_by_id(&a.skill_id).ok().flatten()
-        });
+        skill_cache
+            .entry(a.skill_id.clone())
+            .or_insert_with(|| store.get_skill_by_id(&a.skill_id).ok().flatten());
     }
 
     // Pre-fetch project record once (not per iteration)
@@ -243,7 +243,9 @@ pub fn list_assignments_with_staleness(
 
     for mut assignment in assignments {
         // --- Resolve source and target existence ---
-        let skill_opt = skill_cache.get(&assignment.skill_id).and_then(|s| s.as_ref());
+        let skill_opt = skill_cache
+            .get(&assignment.skill_id)
+            .and_then(|s| s.as_ref());
         let source_exists = skill_opt
             .map(|s| Path::new(&s.central_path).exists())
             .unwrap_or(false);
