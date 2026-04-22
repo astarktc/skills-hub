@@ -18,6 +18,7 @@ use super::skill_lock::try_enrich_from_skill_lock;
 use super::skill_store::{SkillRecord, SkillStore};
 use super::sync_engine::copy_dir_recursive;
 use super::sync_engine::sync_dir_copy_with_overwrite;
+use super::project_sync::resolve_project_sync_target;
 use super::tool_adapters::adapter_by_key;
 use super::tool_adapters::is_tool_installed;
 
@@ -799,7 +800,21 @@ fn count_skills_in_repo(repo_dir: &Path) -> usize {
 }
 
 fn compute_content_hash(path: &Path) -> Option<String> {
-    hash_dir(path).ok()
+    if should_compute_content_hash() {
+        hash_dir(path).ok()
+    } else {
+        None
+    }
+}
+
+fn should_compute_content_hash() -> bool {
+    if cfg!(debug_assertions) {
+        return true;
+    }
+    std::env::var("SKILLS_HUB_COMPUTE_HASH")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 pub struct UpdateResult {
@@ -980,6 +995,57 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
             };
             store.upsert_skill_target(&record)?;
             updated_targets.push(t.tool.clone());
+        }
+    }
+
+    // Re-sync copy-mode project skill assignments so project copies stay current.
+    // Symlinks auto-update since they point to the central path that was just refreshed.
+    let project_assignments = store.list_project_skill_assignments_by_skill(skill_id)?;
+    for pa in project_assignments {
+        let force_copy = pa.mode == "copy" || pa.tool == "cursor";
+        if !force_copy {
+            continue;
+        }
+        let project = match store.get_project_by_id(&pa.project_id)? {
+            Some(p) => p,
+            None => continue,
+        };
+        let project_path = PathBuf::from(&project.path);
+        if !project_path.exists() {
+            continue;
+        }
+        let adapter = match adapter_by_key(&pa.tool) {
+            Some(a) => a,
+            None => continue,
+        };
+        let target = resolve_project_sync_target(
+            &project_path,
+            adapter.relative_skills_dir,
+            &record.name,
+        );
+        match sync_dir_copy_with_overwrite(&central_path, &target, true) {
+            Ok(_outcome) => {
+                let _ = store.update_assignment_status(
+                    &pa.id,
+                    "synced",
+                    None,
+                    Some(now),
+                    Some("copy"),
+                    content_hash.as_deref(),
+                );
+                updated_targets.push(format!("project:{}:{}", pa.project_id, pa.tool));
+            }
+            Err(e) => {
+                log::warn!("failed to re-sync project assignment {}: {:#}", pa.id, e);
+                let _ = store.update_assignment_status(
+                    &pa.id,
+                    "error",
+                    Some(&format!("{:#}", e)),
+                    None,
+                    None,
+                    None,
+                );
+            }
         }
     }
 
