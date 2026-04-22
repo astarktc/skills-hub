@@ -674,6 +674,60 @@ function App() {
     [invokeTauri, loadManagedSkills],
   );
 
+  const handleSyncSkillToAllTools = useCallback(
+    async (skill: ManagedSkill) => {
+      const targetIds = uniqueToolIdsBySkillsDir(
+        installedToolIds.filter((id) => isInstalled(id)),
+      );
+      if (targetIds.length === 0) return;
+
+      setLoading(true);
+      setLoadingStartAt(Date.now());
+      setError(null);
+      try {
+        for (const toolId of targetIds) {
+          const toolLabel =
+            tools.find((tl) => tl.id === toolId)?.label ?? toolId;
+          setActionMessage(
+            t("actions.syncing", { name: skill.name, tool: toolLabel }),
+          );
+          try {
+            await invokeTauri("sync_skill_to_tool", {
+              sourcePath: skill.central_path,
+              skillId: skill.id,
+              tool: toolId,
+              name: skill.name,
+            });
+          } catch (err) {
+            const raw = err instanceof Error ? err.message : String(err);
+            if (
+              raw.startsWith("TOOL_NOT_INSTALLED|") ||
+              raw.startsWith("TOOL_NOT_WRITABLE|")
+            ) {
+              continue;
+            }
+            toast.error(raw);
+          }
+        }
+        setActionMessage(null);
+        toast.success(t("status.syncCompleted"));
+        await loadManagedSkills();
+      } finally {
+        setLoading(false);
+        setLoadingStartAt(null);
+      }
+    },
+    [
+      installedToolIds,
+      invokeTauri,
+      isInstalled,
+      loadManagedSkills,
+      t,
+      tools,
+      uniqueToolIdsBySkillsDir,
+    ],
+  );
+
   const handlePickLocalPath = useCallback(async () => {
     try {
       if (!isTauri) {
@@ -2089,6 +2143,7 @@ function App() {
               onDeleteSkill={handleDeletePrompt}
               onToggleTool={handleToggleToolForSkill}
               onUnsyncSkill={handleUnsyncSkill}
+              onSyncSkillToAllTools={handleSyncSkillToAllTools}
               onOpenDetail={handleOpenDetail}
               t={t}
             />
