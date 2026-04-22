@@ -45,6 +45,7 @@ function App() {
   const language = i18n.resolvedLanguage ?? i18n.language ?? "en";
   const languageStorageKey = "skills-language";
   const themeStorageKey = "skills-theme";
+  const groupByRepoStorageKey = "skills-groupByRepo";
   const toggleLanguage = useCallback(() => {
     void i18n.changeLanguage(language === "en" ? "zh" : "en");
   }, [i18n, language]);
@@ -104,7 +105,13 @@ function App() {
   ) as MutableRefObject<Update | null>;
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "updated" | "added">("name");
-  const [groupByRepo, setGroupByRepo] = useState(false);
+  const [groupByRepo, setGroupByRepo] = useState(() => {
+    try {
+      return window.localStorage.getItem(groupByRepoStorageKey) === "true";
+    } catch {
+      return false;
+    }
+  });
   const [activeView, setActiveView] = useState<
     "myskills" | "explore" | "detail" | "settings" | "projects"
   >("myskills");
@@ -308,6 +315,15 @@ function App() {
       // ignore storage failures
     }
   }, [language, languageStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(groupByRepoStorageKey, String(groupByRepo));
+    } catch {
+      // ignore storage failures
+    }
+  }, [groupByRepo, groupByRepoStorageKey]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -674,60 +690,6 @@ function App() {
     [invokeTauri, loadManagedSkills],
   );
 
-  const handleSyncSkillToAllTools = useCallback(
-    async (skill: ManagedSkill) => {
-      const targetIds = uniqueToolIdsBySkillsDir(
-        installedToolIds.filter((id) => isInstalled(id)),
-      );
-      if (targetIds.length === 0) return;
-
-      setLoading(true);
-      setLoadingStartAt(Date.now());
-      setError(null);
-      try {
-        for (const toolId of targetIds) {
-          const toolLabel =
-            tools.find((tl) => tl.id === toolId)?.label ?? toolId;
-          setActionMessage(
-            t("actions.syncing", { name: skill.name, tool: toolLabel }),
-          );
-          try {
-            await invokeTauri("sync_skill_to_tool", {
-              sourcePath: skill.central_path,
-              skillId: skill.id,
-              tool: toolId,
-              name: skill.name,
-            });
-          } catch (err) {
-            const raw = err instanceof Error ? err.message : String(err);
-            if (
-              raw.startsWith("TOOL_NOT_INSTALLED|") ||
-              raw.startsWith("TOOL_NOT_WRITABLE|")
-            ) {
-              continue;
-            }
-            toast.error(raw);
-          }
-        }
-        setActionMessage(null);
-        toast.success(t("status.syncCompleted"));
-        await loadManagedSkills();
-      } finally {
-        setLoading(false);
-        setLoadingStartAt(null);
-      }
-    },
-    [
-      installedToolIds,
-      invokeTauri,
-      isInstalled,
-      loadManagedSkills,
-      t,
-      tools,
-      uniqueToolIdsBySkillsDir,
-    ],
-  );
-
   const handlePickLocalPath = useCallback(async () => {
     try {
       if (!isTauri) {
@@ -988,109 +950,9 @@ function App() {
     }));
   }, []);
 
-  const handleRefresh = useCallback(async () => {
-    if (managedSkills.length === 0) return;
-
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setError(null);
-
-    try {
-      const collectedErrors: { title: string; message: string }[] = [];
-
-      // Phase 1: Update all skills from source repos
-      for (let i = 0; i < managedSkills.length; i++) {
-        const skill = managedSkills[i];
-        setActionMessage(
-          t("actions.refreshStep", {
-            index: i + 1,
-            total: managedSkills.length,
-            name: skill.name,
-          }),
-        );
-        try {
-          await invokeTauri<UpdateResultDto>("update_managed_skill", {
-            skillId: skill.id,
-          });
-        } catch (err) {
-          const raw = err instanceof Error ? err.message : String(err);
-          collectedErrors.push({
-            title: t("errors.updateFailedTitle", { name: skill.name }),
-            message: raw,
-          });
-        }
-      }
-
-      // Phase 2: Conditional sync to tool directories (only if autoSyncEnabled)
-      if (autoSyncEnabled) {
-        const freshSkills =
-          await invokeTauri<ManagedSkill[]>("get_managed_skills");
-        const syncTargetIds = uniqueToolIdsBySkillsDir(
-          installedToolIds.filter((id) => isInstalled(id)),
-        );
-        if (syncTargetIds.length > 0 && freshSkills.length > 0) {
-          for (let si = 0; si < freshSkills.length; si++) {
-            const skill = freshSkills[si];
-            for (let ti = 0; ti < syncTargetIds.length; ti++) {
-              const toolId = syncTargetIds[ti];
-              const toolLabel =
-                tools.find((tl) => tl.id === toolId)?.label ?? toolId;
-              setActionMessage(
-                t("actions.syncStep", {
-                  index: si + 1,
-                  total: freshSkills.length,
-                  name: skill.name,
-                  tool: toolLabel,
-                }),
-              );
-              try {
-                await invokeTauri("sync_skill_to_tool", {
-                  sourcePath: skill.central_path,
-                  skillId: skill.id,
-                  tool: toolId,
-                  name: skill.name,
-                });
-              } catch (err) {
-                const raw = err instanceof Error ? err.message : String(err);
-                if (
-                  raw.startsWith("TOOL_NOT_INSTALLED|") ||
-                  raw.startsWith("TOOL_NOT_WRITABLE|")
-                )
-                  continue;
-                collectedErrors.push({
-                  title: t("errors.syncFailedTitle", {
-                    name: skill.name,
-                    tool: toolLabel,
-                  }),
-                  message: raw,
-                });
-              }
-            }
-          }
-        }
-      }
-
-      setActionMessage(t("status.refreshCompleted"));
-      setSuccessToastMessage(t("status.refreshCompleted"));
-      setActionMessage(null);
-      await loadManagedSkills();
-      if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
-  }, [
-    autoSyncEnabled,
-    installedToolIds,
-    invokeTauri,
-    isInstalled,
-    loadManagedSkills,
-    managedSkills,
-    showActionErrors,
-    t,
-    tools,
-    uniqueToolIdsBySkillsDir,
-  ]);
+  const handleRefresh = useCallback(() => {
+    void loadManagedSkills();
+  }, [loadManagedSkills]);
 
   const handleReviewImport = useCallback(async () => {
     if (plan) {
@@ -2143,7 +2005,6 @@ function App() {
               onDeleteSkill={handleDeletePrompt}
               onToggleTool={handleToggleToolForSkill}
               onUnsyncSkill={handleUnsyncSkill}
-              onSyncSkillToAllTools={handleSyncSkillToAllTools}
               onOpenDetail={handleOpenDetail}
               t={t}
             />
