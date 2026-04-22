@@ -1,26 +1,27 @@
-import { memo, useMemo } from 'react'
-import { Plus, Search, Star } from 'lucide-react'
-import type { TFunction } from 'i18next'
-import type { FeaturedSkillDto, ManagedSkill, OnlineSkillDto } from './types'
+import { memo, useMemo } from "react";
+import { Eye, Plus, Search, Star } from "lucide-react";
+import type { TFunction } from "i18next";
+import type { FeaturedSkillDto, ManagedSkill, OnlineSkillDto } from "./types";
 
 type ExplorePageProps = {
-  featuredSkills: FeaturedSkillDto[]
-  featuredLoading: boolean
-  exploreFilter: string
-  searchResults: OnlineSkillDto[]
-  searchLoading: boolean
-  managedSkills: ManagedSkill[]
-  loading: boolean
-  onExploreFilterChange: (value: string) => void
-  onInstallSkill: (sourceUrl: string, skillName?: string) => void
-  onOpenManualAdd: () => void
-  t: TFunction
-}
+  featuredSkills: FeaturedSkillDto[];
+  featuredLoading: boolean;
+  exploreFilter: string;
+  searchResults: OnlineSkillDto[];
+  searchLoading: boolean;
+  managedSkills: ManagedSkill[];
+  loading: boolean;
+  onExploreFilterChange: (value: string) => void;
+  onInstallSkill: (sourceUrl: string, skillName?: string) => void;
+  onViewSkill: (sourceUrl: string, skillName: string, summary?: string) => void;
+  onOpenManualAdd: () => void;
+  t: TFunction;
+};
 
 function formatCount(n: number): string {
-  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
-  return String(n)
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(n);
 }
 
 const ExplorePage = ({
@@ -33,48 +34,55 @@ const ExplorePage = ({
   loading,
   onExploreFilterChange,
   onInstallSkill,
+  onViewSkill,
   onOpenManualAdd,
   t,
 }: ExplorePageProps) => {
   const filteredSkills = useMemo(() => {
-    if (!exploreFilter.trim()) return featuredSkills
-    const lower = exploreFilter.toLowerCase()
+    if (!exploreFilter.trim()) return featuredSkills;
+    const lower = exploreFilter.toLowerCase();
     return featuredSkills.filter(
       (s) =>
         s.name.toLowerCase().includes(lower) ||
         s.summary.toLowerCase().includes(lower),
-    )
-  }, [featuredSkills, exploreFilter])
+    );
+  }, [featuredSkills, exploreFilter]);
 
   const deduplicatedResults = useMemo(() => {
-    const featuredNames = new Set(filteredSkills.map((s) => s.name.toLowerCase()))
-    return searchResults.filter((s) => !featuredNames.has(s.name.toLowerCase()))
-  }, [searchResults, filteredSkills])
+    const featuredNames = new Set(
+      filteredSkills.map((s) => s.name.toLowerCase()),
+    );
+    return searchResults.filter(
+      (s) => !featuredNames.has(s.name.toLowerCase()),
+    );
+  }, [searchResults, filteredSkills]);
 
-  const isSearchActive = exploreFilter.trim().length >= 2
+  const isSearchActive = exploreFilter.trim().length >= 2;
 
   // Check if a skill is already installed by matching name + source (case-insensitive)
   const installedSkillKeys = useMemo(() => {
-    const keys = new Set<string>()
+    const keys = new Set<string>();
     for (const skill of managedSkills) {
-      const source = (skill.source_ref ?? '')
-        .replace('https://github.com/', '')
-        .replace(/\.git$/, '')
-        .split('/tree/')[0]
-        .toLowerCase()
-      keys.add(`${skill.name.toLowerCase()}|${source}`)
+      const source = (skill.source_ref ?? "")
+        .replace("https://github.com/", "")
+        .replace(/\.git$/, "")
+        .split("/tree/")[0]
+        .toLowerCase();
+      keys.add(`${skill.name.toLowerCase()}|${source}`);
     }
-    return keys
-  }, [managedSkills])
+    return keys;
+  }, [managedSkills]);
 
   const isInstalled = (skillName: string, source: string) => {
     const normalizedSource = source
-      .replace('https://github.com/', '')
-      .replace(/\.git$/, '')
-      .split('/tree/')[0]
-      .toLowerCase()
-    return installedSkillKeys.has(`${skillName.toLowerCase()}|${normalizedSource}`)
-  }
+      .replace("https://github.com/", "")
+      .replace(/\.git$/, "")
+      .split("/tree/")[0]
+      .toLowerCase();
+    return installedSkillKeys.has(
+      `${skillName.toLowerCase()}|${normalizedSource}`,
+    );
+  };
 
   return (
     <div className="explore-page">
@@ -84,7 +92,7 @@ const ExplorePage = ({
             <Search size={16} className="explore-search-icon" />
             <input
               className="explore-search-input"
-              placeholder={t('exploreFilterPlaceholder')}
+              placeholder={t("exploreFilterPlaceholder")}
               value={exploreFilter}
               onChange={(e) => onExploreFilterChange(e.target.value)}
             />
@@ -96,41 +104,43 @@ const ExplorePage = ({
             disabled={loading}
           >
             <Plus size={15} />
-            {t('manualAdd')}
+            {t("manualAdd")}
           </button>
         </div>
-        <div className="explore-source-label">
-          {t('exploreSourceHint')}
-        </div>
+        <div className="explore-source-label">{t("exploreSourceHint")}</div>
       </div>
 
       <div className="explore-scroll">
         {/* Featured section */}
         {featuredLoading ? (
-          <div className="explore-loading">{t('exploreLoading')}</div>
+          <div className="explore-loading">{t("exploreLoading")}</div>
         ) : (
           <>
             {isSearchActive && filteredSkills.length > 0 && (
-              <div className="explore-section-title">{t('exploreFeaturedTitle')}</div>
+              <div className="explore-section-title">
+                {t("exploreFeaturedTitle")}
+              </div>
             )}
             {filteredSkills.length > 0 ? (
               <div className="explore-grid">
                 {filteredSkills.map((skill) => {
-                  const installed = isInstalled(skill.name, skill.source_url)
+                  const installed = isInstalled(skill.name, skill.source_url);
                   return (
                     <div key={skill.slug} className="explore-card">
                       <div className="explore-card-top">
                         <div className="explore-card-info">
                           <div className="explore-card-name">{skill.name}</div>
                           <div className="explore-card-author">
-                            {skill.source_url
-                              .replace('https://github.com/', '')
-                              .split('/tree/')[0]}
+                            {
+                              skill.source_url
+                                .replace("https://github.com/", "")
+                                .split("/tree/")[0]
+                            }
                           </div>
                         </div>
                         {installed ? (
                           <span className="explore-btn-installed">
-                            {t('status.installed')}
+                            {t("status.installed")}
                           </span>
                         ) : (
                           <button
@@ -139,7 +149,7 @@ const ExplorePage = ({
                             disabled={loading}
                             onClick={() => onInstallSkill(skill.source_url)}
                           >
-                            {t('install')}
+                            {t("install")}
                           </button>
                         )}
                       </div>
@@ -151,44 +161,70 @@ const ExplorePage = ({
                             {formatCount(skill.stars)}
                           </span>
                         </div>
+                        <button
+                          className="explore-btn-view"
+                          type="button"
+                          disabled={loading}
+                          onClick={() =>
+                            onViewSkill(
+                              skill.source_url,
+                              skill.name,
+                              skill.summary,
+                            )
+                          }
+                        >
+                          <Eye size={12} />
+                          {t("exploreView")}
+                        </button>
                       </div>
                     </div>
-                  )
+                  );
                 })}
               </div>
             ) : !isSearchActive ? (
-              <div className="explore-empty">{t('exploreEmpty')}</div>
+              <div className="explore-empty">{t("exploreEmpty")}</div>
             ) : null}
 
             {/* Online search results */}
             {isSearchActive && (
               <>
-                <div className="explore-section-title">{t('exploreOnlineTitle')}</div>
+                <div className="explore-section-title">
+                  {t("exploreOnlineTitle")}
+                </div>
                 {searchLoading ? (
-                  <div className="explore-loading">{t('searchLoading')}</div>
+                  <div className="explore-loading">{t("searchLoading")}</div>
                 ) : deduplicatedResults.length > 0 ? (
                   <div className="explore-grid">
                     {deduplicatedResults.map((skill) => {
-                      const installed = isInstalled(skill.name, skill.source_url)
+                      const installed = isInstalled(
+                        skill.name,
+                        skill.source_url,
+                      );
                       return (
                         <div key={skill.source} className="explore-card">
                           <div className="explore-card-top">
                             <div className="explore-card-info">
-                              <div className="explore-card-name">{skill.name}</div>
-                              <div className="explore-card-author">{skill.source}</div>
+                              <div className="explore-card-name">
+                                {skill.name}
+                              </div>
+                              <div className="explore-card-author">
+                                {skill.source}
+                              </div>
                             </div>
                             {installed ? (
                               <span className="explore-btn-installed">
-                                {t('status.installed')}
+                                {t("status.installed")}
                               </span>
                             ) : (
                               <button
                                 className="explore-btn-install"
                                 type="button"
                                 disabled={loading}
-                                onClick={() => onInstallSkill(skill.source_url, skill.name)}
+                                onClick={() =>
+                                  onInstallSkill(skill.source_url, skill.name)
+                                }
                               >
-                                {t('install')}
+                                {t("install")}
                               </button>
                             )}
                           </div>
@@ -198,13 +234,24 @@ const ExplorePage = ({
                                 {formatCount(skill.installs)} installs
                               </span>
                             </div>
+                            <button
+                              className="explore-btn-view"
+                              type="button"
+                              disabled={loading}
+                              onClick={() =>
+                                onViewSkill(skill.source_url, skill.name)
+                              }
+                            >
+                              <Eye size={12} />
+                              {t("exploreView")}
+                            </button>
                           </div>
                         </div>
-                      )
+                      );
                     })}
                   </div>
                 ) : (
-                  <div className="explore-empty">{t('searchEmpty')}</div>
+                  <div className="explore-empty">{t("searchEmpty")}</div>
                 )}
               </>
             )}
@@ -212,7 +259,7 @@ const ExplorePage = ({
         )}
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default memo(ExplorePage)
+export default memo(ExplorePage);

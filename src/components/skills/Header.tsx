@@ -5,7 +5,13 @@ import type { TFunction } from "i18next";
 type HeaderProps = {
   language: string;
   loading: boolean;
-  activeView: "myskills" | "explore" | "detail" | "settings" | "projects";
+  activeView:
+    | "myskills"
+    | "explore"
+    | "detail"
+    | "settings"
+    | "projects"
+    | "explore-detail";
   onToggleLanguage: () => void;
   onOpenSettings: () => void;
   onViewChange: (view: "myskills" | "explore" | "projects") => void;
@@ -39,7 +45,7 @@ const Header = ({
             {t("navMySkills")}
           </button>
           <button
-            className={`nav-tab${activeView === "explore" ? " active" : ""}`}
+            className={`nav-tab${activeView === "explore" || activeView === "explore-detail" ? " active" : ""}`}
             type="button"
             onClick={() => onViewChange("explore")}
           >

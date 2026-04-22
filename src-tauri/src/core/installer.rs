@@ -1611,8 +1611,12 @@ pub fn clone_for_explore_preview<R: tauri::Runtime>(
 
     let central_dir = resolve_central_repo_path(app, store)?;
     let explore_cache_root = central_dir.join(".explore-cache");
-    std::fs::create_dir_all(&explore_cache_root)
-        .with_context(|| format!("failed to create explore-cache dir {:?}", explore_cache_root))?;
+    std::fs::create_dir_all(&explore_cache_root).with_context(|| {
+        format!(
+            "failed to create explore-cache dir {:?}",
+            explore_cache_root
+        )
+    })?;
 
     let cache_key = repo_cache_key(source_url, None);
     let explore_skill_dir = explore_cache_root.join(&cache_key);
@@ -1719,9 +1723,7 @@ pub fn clone_for_explore_preview<R: tauri::Runtime>(
                     anyhow::bail!("subpath not found in repo: {:?}", sub_src);
                 }
                 copy_dir_recursive(&sub_src, &explore_skill_dir)
-                    .with_context(|| {
-                        format!("copy {:?} -> {:?}", sub_src, explore_skill_dir)
-                    })?;
+                    .with_context(|| format!("copy {:?} -> {:?}", sub_src, explore_skill_dir))?;
             }
         }
     } else {

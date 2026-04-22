@@ -106,7 +106,12 @@ function App() {
   const [sortBy, setSortBy] = useState<"name" | "updated" | "added">("name");
   const [groupByRepo, setGroupByRepo] = useState(false);
   const [activeView, setActiveView] = useState<
-    "myskills" | "explore" | "detail" | "settings" | "projects"
+    | "myskills"
+    | "explore"
+    | "detail"
+    | "settings"
+    | "projects"
+    | "explore-detail"
   >("myskills");
   const [detailSkill, setDetailSkill] = useState<ManagedSkill | null>(null);
   const [addModalTab, setAddModalTab] = useState<"local" | "git">("git");
@@ -742,6 +747,47 @@ function App() {
   const handleBackToList = useCallback(() => {
     setDetailSkill(null);
     setActiveView("myskills");
+  }, []);
+
+  const handleOpenExploreDetail = useCallback(
+    async (sourceUrl: string, skillName: string, summary?: string) => {
+      setLoading(true);
+      setLoadingStartAt(Date.now());
+      try {
+        const cachePath = await invokeTauri<string>("clone_explore_skill", {
+          sourceUrl,
+        });
+        const exploreManagedSkill: ManagedSkill = {
+          id: "",
+          name: skillName,
+          description: summary ?? null,
+          source_type: "github",
+          source_ref: sourceUrl,
+          central_path: cachePath,
+          created_at: 0,
+          updated_at: Date.now(),
+          last_sync_at: null,
+          status: "",
+          targets: [],
+        };
+        setDetailSkill(exploreManagedSkill);
+        setActiveView("explore-detail");
+      } catch (err) {
+        const msg = formatErrorMessage(
+          err instanceof Error ? err.message : String(err),
+        );
+        if (msg) toast.error(msg, { duration: 3200 });
+      } finally {
+        setLoading(false);
+        setLoadingStartAt(null);
+      }
+    },
+    [invokeTauri, formatErrorMessage],
+  );
+
+  const handleBackToExplore = useCallback(() => {
+    setDetailSkill(null);
+    setActiveView("explore");
   }, []);
 
   const handleExploreFilterChange = useCallback(
@@ -1430,6 +1476,14 @@ function App() {
     [toolStatus],
   );
 
+  const handleExploreInstallFromDetail = useCallback(() => {
+    if (!detailSkill?.source_ref) return;
+    const sourceUrl = detailSkill.source_ref;
+    handleExploreInstall(sourceUrl);
+    setDetailSkill(null);
+    setActiveView("explore");
+  }, [detailSkill, handleExploreInstall]);
+
   useEffect(() => {
     if (exploreInstallTrigger > 0 && exploreInstallUrlRef.current && !loading) {
       exploreInstallUrlRef.current = null;
@@ -1951,13 +2005,24 @@ function App() {
       />
 
       <main className="skills-main">
-        {activeView === "detail" && detailSkill ? (
+        {(activeView === "detail" || activeView === "explore-detail") &&
+        detailSkill ? (
           <SkillDetailView
             skill={detailSkill}
-            onBack={handleBackToList}
+            onBack={
+              activeView === "explore-detail"
+                ? handleBackToExplore
+                : handleBackToList
+            }
             invokeTauri={invokeTauri}
             formatRelative={formatRelative}
             t={t}
+            isExplorePreview={activeView === "explore-detail"}
+            onInstall={
+              activeView === "explore-detail"
+                ? handleExploreInstallFromDetail
+                : undefined
+            }
           />
         ) : activeView === "myskills" ? (
           <div className="dashboard-stack">
@@ -2025,6 +2090,7 @@ function App() {
             loading={loading}
             onExploreFilterChange={handleExploreFilterChange}
             onInstallSkill={handleExploreInstall}
+            onViewSkill={handleOpenExploreDetail}
             onOpenManualAdd={handleOpenAdd}
             t={t}
           />
