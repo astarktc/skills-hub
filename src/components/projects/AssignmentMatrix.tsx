@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowUpDown,
@@ -82,8 +82,23 @@ const AssignmentMatrix = ({
     return max > 0 ? max : null;
   }, [assignments]);
 
+  const projectsGroupByRepoKey = "skills-projects-groupByRepo";
   const [sortBy, setSortBy] = useState<"name" | "updated" | "added">("name");
-  const [groupByRepo, setGroupByRepo] = useState(false);
+  const [groupByRepo, setGroupByRepo] = useState(() => {
+    try {
+      return window.localStorage.getItem(projectsGroupByRepoKey) === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(projectsGroupByRepoKey, String(groupByRepo));
+    } catch {
+      // ignore storage failures
+    }
+  }, [groupByRepo]);
 
   const sortedSkills = useMemo(() => {
     return [...skills].sort((a, b) => {

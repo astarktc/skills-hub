@@ -1885,6 +1885,45 @@ function App() {
     [loading, runToggleToolForSkill, sharedToolIdsByToolId],
   );
 
+  const handleSyncSkillToAllTools = useCallback(
+    async (skill: ManagedSkill) => {
+      if (loading) return;
+      const existingToolIds = new Set(skill.targets.map((t) => t.tool));
+      const toSync = installedTools.filter(
+        (tool) => !existingToolIds.has(tool.id),
+      );
+      if (toSync.length === 0) return;
+      setLoading(true);
+      setLoadingStartAt(Date.now());
+      setError(null);
+      try {
+        for (const tool of toSync) {
+          setActionMessage(
+            t("actions.syncing", { name: skill.name, tool: tool.label }),
+          );
+          await invokeTauri("sync_skill_to_tool", {
+            sourcePath: skill.central_path,
+            skillId: skill.id,
+            tool: tool.id,
+            name: skill.name,
+          });
+        }
+        const statusText = t("status.syncEnabled");
+        setActionMessage(statusText);
+        setSuccessToastMessage(statusText);
+        setActionMessage(null);
+        await loadManagedSkills();
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : String(err);
+        setError(raw);
+      } finally {
+        setLoading(false);
+        setLoadingStartAt(null);
+      }
+    },
+    [installedTools, invokeTauri, loadManagedSkills, loading, t],
+  );
+
   const handleUpdateManaged = useCallback(
     async (skill: ManagedSkill) => {
       setLoading(true);
@@ -2005,6 +2044,7 @@ function App() {
               onDeleteSkill={handleDeletePrompt}
               onToggleTool={handleToggleToolForSkill}
               onUnsyncSkill={handleUnsyncSkill}
+              onSyncSkillToAllTools={handleSyncSkillToAllTools}
               onOpenDetail={handleOpenDetail}
               t={t}
             />
