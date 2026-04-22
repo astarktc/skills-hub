@@ -4,7 +4,6 @@ import {
   Copy,
   Folder,
   Github,
-  Link,
   RefreshCw,
   Trash2,
   Unlink,
@@ -29,7 +28,6 @@ type SkillCardProps = {
   onDelete: (skillId: string) => void;
   onToggleTool: (skill: ManagedSkill, toolId: string) => void;
   onUnsync: (skillId: string) => void;
-  onSyncToAllTools: (skill: ManagedSkill) => void;
   onOpenDetail: (skill: ManagedSkill) => void;
   t: TFunction;
 };
@@ -47,7 +45,6 @@ const SkillCard = ({
   onDelete,
   onToggleTool,
   onUnsync,
-  onSyncToAllTools,
   onOpenDetail,
   t,
 }: SkillCardProps) => {
@@ -198,24 +195,12 @@ const SkillCard = ({
         <button
           className="card-btn secondary-action"
           type="button"
-          onClick={() =>
-            skill.targets.length > 0
-              ? onUnsync(skill.id)
-              : onSyncToAllTools(skill)
-          }
-          disabled={loading}
-          aria-label={
-            skill.targets.length > 0
-              ? t("unsyncSkillTooltip")
-              : t("syncSkillTooltip")
-          }
-          title={
-            skill.targets.length > 0
-              ? t("unsyncSkillTooltip")
-              : t("syncSkillTooltip")
-          }
+          onClick={() => onUnsync(skill.id)}
+          disabled={loading || skill.targets.length === 0}
+          aria-label={t("unsyncSkillTooltip")}
+          title={t("unsyncSkillTooltip")}
         >
-          {skill.targets.length > 0 ? <Link size={16} /> : <Unlink size={16} />}
+          <Unlink size={16} />
         </button>
         <button
           className="card-btn danger-action"

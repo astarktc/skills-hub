@@ -14,7 +14,6 @@ use super::git_fetcher::clone_or_pull;
 use super::github_download::{
     download_github_directory, fetch_branch_sha, parse_github_api_params,
 };
-use super::project_sync::resolve_project_sync_target;
 use super::skill_lock::try_enrich_from_skill_lock;
 use super::skill_store::{SkillRecord, SkillStore};
 use super::sync_engine::copy_dir_recursive;
@@ -800,7 +799,21 @@ fn count_skills_in_repo(repo_dir: &Path) -> usize {
 }
 
 fn compute_content_hash(path: &Path) -> Option<String> {
-    hash_dir(path).ok()
+    if should_compute_content_hash() {
+        hash_dir(path).ok()
+    } else {
+        None
+    }
+}
+
+fn should_compute_content_hash() -> bool {
+    if cfg!(debug_assertions) {
+        return true;
+    }
+    std::env::var("SKILLS_HUB_COMPUTE_HASH")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 pub struct UpdateResult {
@@ -981,54 +994,6 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
             };
             store.upsert_skill_target(&record)?;
             updated_targets.push(t.tool.clone());
-        }
-    }
-
-    // Re-sync copy-mode project skill assignments so project copies stay current.
-    // Symlinks auto-update since they point to the central path that was just refreshed.
-    let project_assignments = store.list_project_skill_assignments_by_skill(skill_id)?;
-    for pa in project_assignments {
-        let force_copy = pa.mode == "copy" || pa.tool == "cursor";
-        if !force_copy {
-            continue;
-        }
-        let project = match store.get_project_by_id(&pa.project_id)? {
-            Some(p) => p,
-            None => continue,
-        };
-        let project_path = PathBuf::from(&project.path);
-        if !project_path.exists() {
-            continue;
-        }
-        let adapter = match adapter_by_key(&pa.tool) {
-            Some(a) => a,
-            None => continue,
-        };
-        let target =
-            resolve_project_sync_target(&project_path, adapter.relative_skills_dir, &record.name);
-        match sync_dir_copy_with_overwrite(&central_path, &target, true) {
-            Ok(_outcome) => {
-                let _ = store.update_assignment_status(
-                    &pa.id,
-                    "synced",
-                    None,
-                    Some(now),
-                    Some("copy"),
-                    content_hash.as_deref(),
-                );
-                updated_targets.push(format!("project:{}:{}", pa.project_id, pa.tool));
-            }
-            Err(e) => {
-                log::warn!("failed to re-sync project assignment {}: {:#}", pa.id, e);
-                let _ = store.update_assignment_status(
-                    &pa.id,
-                    "error",
-                    Some(&format!("{:#}", e)),
-                    None,
-                    None,
-                    None,
-                );
-            }
         }
     }
 
@@ -1630,6 +1595,166 @@ fn repo_cache_key(clone_url: &str, branch: Option<&str>) -> String {
         hasher.update(b.as_bytes());
     }
     hex::encode(hasher.finalize())
+}
+
+/// Clone a skill into the explore-cache for preview (no DB registration).
+/// Reuses the same download strategy as `install_git_skill`:
+/// parse_github_url, GitHub API download (for subpath repos), git clone fallback,
+/// copy_dir_recursive for subpath isolation, and multi-skill detection.
+pub fn clone_for_explore_preview<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    store: &SkillStore,
+    source_url: &str,
+    cancel: Option<&CancelToken>,
+) -> Result<PathBuf> {
+    let parsed = parse_github_url(source_url);
+
+    let central_dir = resolve_central_repo_path(app, store)?;
+    let explore_cache_root = central_dir.join(".explore-cache");
+    std::fs::create_dir_all(&explore_cache_root)
+        .with_context(|| format!("failed to create explore-cache dir {:?}", explore_cache_root))?;
+
+    let cache_key = repo_cache_key(source_url, None);
+    let explore_skill_dir = explore_cache_root.join(&cache_key);
+
+    // Cache hit: if dir exists and has at least one entry besides .git, return immediately.
+    let lock = GIT_CACHE_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = lock.lock().unwrap_or_else(|err| err.into_inner());
+
+    if explore_skill_dir.exists() {
+        let has_content = std::fs::read_dir(&explore_skill_dir)
+            .ok()
+            .map(|rd| {
+                rd.flatten()
+                    .any(|e| e.file_name().to_string_lossy() != ".git")
+            })
+            .unwrap_or(false);
+        if has_content {
+            return Ok(explore_skill_dir);
+        }
+    }
+
+    // Ensure a clean destination.
+    if explore_skill_dir.exists() {
+        let _ = std::fs::remove_dir_all(&explore_skill_dir);
+    }
+    std::fs::create_dir_all(&explore_skill_dir)
+        .with_context(|| format!("failed to create explore skill dir {:?}", explore_skill_dir))?;
+
+    let github_token = store.get_setting("github_token")?.unwrap_or_default();
+    let github_token_opt = if github_token.is_empty() {
+        None
+    } else {
+        Some(github_token.as_str())
+    };
+
+    // Follow the same dual-path download strategy as install_git_skill.
+    if let Some((owner, repo, branch, subpath)) = parse_github_api_params(
+        &parsed.clone_url,
+        parsed.branch.as_deref(),
+        parsed.subpath.as_deref(),
+    ) {
+        log::info!(
+            "[explore-preview] using GitHub API download: {}/{} path={}",
+            owner,
+            repo,
+            subpath
+        );
+        match download_github_directory(
+            &owner,
+            &repo,
+            &branch,
+            &subpath,
+            &explore_skill_dir,
+            cancel,
+            github_token_opt,
+        ) {
+            Ok(()) => {
+                return Ok(explore_skill_dir);
+            }
+            Err(err) => {
+                let _ = std::fs::remove_dir_all(&explore_skill_dir);
+                let err_msg = format!("{:#}", err);
+                if err_msg.contains("CANCELLED|") {
+                    return Err(err);
+                }
+                if err_msg.contains("404") || err_msg.contains("Not Found") {
+                    anyhow::bail!(
+                        "Skill not found on GitHub (may have been deleted or the path changed).\nPlease check: {}/tree/{}/{}",
+                        parsed.clone_url.trim_end_matches(".git"),
+                        branch,
+                        subpath
+                    );
+                }
+                if let Some(rest) = err_msg.strip_prefix("RATE_LIMITED|") {
+                    let mins: i64 = rest.trim().parse().unwrap_or(0);
+                    if mins > 0 {
+                        anyhow::bail!(
+                            "GitHub API rate limit reached, resets in ~{} minutes. Configure a GitHub Token in Settings to increase the limit.",
+                            mins
+                        );
+                    }
+                    anyhow::bail!(
+                        "GitHub API rate limit reached. Configure a GitHub Token in Settings to increase the limit."
+                    );
+                }
+                if err_msg.contains("403") || err_msg.contains("Forbidden") {
+                    anyhow::bail!("GitHub API access denied (may have hit rate limit). Please try again later.");
+                }
+                // Fall back to git clone.
+                log::warn!(
+                    "[explore-preview] GitHub API download failed, falling back to git clone: {:#}",
+                    err
+                );
+                std::fs::create_dir_all(&explore_skill_dir)?;
+                let (repo_dir, _rev) = clone_to_cache(
+                    app,
+                    store,
+                    &parsed.clone_url,
+                    parsed.branch.as_deref(),
+                    cancel,
+                )?;
+                let sub_src = repo_dir.join(&subpath);
+                if !sub_src.exists() {
+                    anyhow::bail!("subpath not found in repo: {:?}", sub_src);
+                }
+                copy_dir_recursive(&sub_src, &explore_skill_dir)
+                    .with_context(|| {
+                        format!("copy {:?} -> {:?}", sub_src, explore_skill_dir)
+                    })?;
+            }
+        }
+    } else {
+        // Standard git clone path (no subpath or non-GitHub URL).
+        let (repo_dir, _rev) = clone_to_cache(
+            app,
+            store,
+            &parsed.clone_url,
+            parsed.branch.as_deref(),
+            cancel,
+        )?;
+
+        let copy_src = if let Some(subpath) = &parsed.subpath {
+            let sub_src = repo_dir.join(subpath);
+            if !sub_src.exists() {
+                anyhow::bail!("subpath not found in repo: {:?}", sub_src);
+            }
+            sub_src
+        } else {
+            let skill_count = count_skills_in_repo(&repo_dir);
+            if skill_count >= 2 {
+                anyhow::bail!(
+                    "MULTI_SKILLS|This repository contains multiple Skills. Please copy the specific skill folder link (e.g. GitHub /tree/<branch>/<skill-folder>) and try again."
+                );
+            }
+            repo_dir.clone()
+        };
+
+        copy_dir_recursive(&copy_src, &explore_skill_dir)
+            .with_context(|| format!("copy {:?} -> {:?}", copy_src, explore_skill_dir))?;
+    }
+
+    Ok(explore_skill_dir)
 }
 
 /// Backfill description for skills that have NULL description in the database.

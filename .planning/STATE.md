@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-last_updated: "2026-04-22T18:54:00.105Z"
+last_updated: "2026-04-16T14:49:29.359Z"
 progress:
   total_phases: 6
   completed_phases: 6
@@ -77,9 +77,3 @@ None -- milestone shipped.
 | 260410-hjn | Group by repo: consolidate local skills, indent matrix skills, fix icon layout, hide All tools button                | 2026-04-10 | fd8add8 | [260410-hjn-group-by-repo-consolidate-local-skills-i](./quick/260410-hjn-group-by-repo-consolidate-local-skills-i/) |
 | 260416-dn8 | Improve skill installation to handle non-standard repo structures matching npx skills CLI capabilities               | 2026-04-16 | 530e97e | [260416-dn8-improve-skill-installation-to-handle-non](./quick/260416-dn8-improve-skill-installation-to-handle-non/) |
 | 260416-hw6 | Fix multi-skill repo install bug where all skills get the same name instead of reading each skill's own SKILL.md     | 2026-04-16 | 784abdb | [260416-hw6-fix-multi-skill-repo-install-bug-where-a](./quick/260416-hw6-fix-multi-skill-repo-install-bug-where-a/) |
-| 260416-nwg | Cherry-pick 9 upstream commits and manually port Hermes adapter, overwriteIfSameContent, project-relative skill dirs | 2026-04-16 | 5d77fe9 | [260416-nwg-cherry-pick-clean-upstream-commits-and-m](./quick/260416-nwg-cherry-pick-clean-upstream-commits-and-m/) |
-| 260416-r00 | Performance bottlenecks: cache source hashes and precompute assignment lookup map                                    | 2026-04-17 | 1568b74 | [260416-r00-performance-bottlenecks-cache-source-has](./quick/260416-r00-performance-bottlenecks-cache-source-has/) |
-| 260422-h7p | Fix update_managed_skill_from_source to re-sync project-level copy-mode skill assignments after update               | 2026-04-22 | c8ccc56 | [260422-h7p-fix-update-managed-skill-from-source-to-](./quick/260422-h7p-fix-update-managed-skill-from-source-to-/) |
-| 260422-i79 | Decouple refresh button from auto-sync checkbox so refresh always re-downloads skills from repos into the library    | 2026-04-22 | e90d554 | [260422-i79-decouple-refresh-button-from-auto-sync-c](./quick/260422-i79-decouple-refresh-button-from-auto-sync-c/) |
-| 260422-ixr | Toggle link/unlink tool deployment buttons with dynamic icon state in My Skills                                      | 2026-04-22 | be0b104 | [260422-ixr-toggle-link-unlink-tool-deployment-butto](./quick/260422-ixr-toggle-link-unlink-tool-deployment-butto/) |
-| 260422-jb0 | Persist group-by-repo checkbox state in My Skills and Projects across app restarts                                   | 2026-04-22 | 66a521e | [260422-jb0-persist-group-by-repo-checkbox-state-in-](./quick/260422-jb0-persist-group-by-repo-checkbox-state-in-/) |
