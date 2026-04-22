@@ -800,21 +800,7 @@ fn count_skills_in_repo(repo_dir: &Path) -> usize {
 }
 
 fn compute_content_hash(path: &Path) -> Option<String> {
-    if should_compute_content_hash() {
-        hash_dir(path).ok()
-    } else {
-        None
-    }
-}
-
-fn should_compute_content_hash() -> bool {
-    if cfg!(debug_assertions) {
-        return true;
-    }
-    std::env::var("SKILLS_HUB_COMPUTE_HASH")
-        .ok()
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
+    hash_dir(path).ok()
 }
 
 pub struct UpdateResult {
