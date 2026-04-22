@@ -867,7 +867,11 @@ fn update_resyncs_project_copy_assignments() {
 
     // 1. Create a local skill source with a.txt = "v1"
     let source = tempfile::tempdir().unwrap();
-    fs::write(source.path().join("SKILL.md"), b"---\nname: proj-test\n---\n").unwrap();
+    fs::write(
+        source.path().join("SKILL.md"),
+        b"---\nname: proj-test\n---\n",
+    )
+    .unwrap();
     fs::write(source.path().join("a.txt"), b"v1").unwrap();
 
     let res = super::install_local_skill(
@@ -922,7 +926,9 @@ fn update_resyncs_project_copy_assignments() {
         content_hash: None,
         created_at: now,
     };
-    store.add_project_skill_assignment(&copy_assignment).unwrap();
+    store
+        .add_project_skill_assignment(&copy_assignment)
+        .unwrap();
 
     // 5. Insert a symlink-mode assignment for claude_code
     let symlink_assignment = ProjectSkillAssignmentRecord {
@@ -944,8 +950,7 @@ fn update_resyncs_project_copy_assignments() {
 
     // 6. Modify source to "v2" and update the skill
     fs::write(source.path().join("a.txt"), b"v2").unwrap();
-    let up =
-        super::update_managed_skill_from_source(app.handle(), &store, &res.skill_id).unwrap();
+    let up = super::update_managed_skill_from_source(app.handle(), &store, &res.skill_id).unwrap();
 
     // 7. Assert: copy-mode (cursor) project target has updated content
     assert_eq!(
@@ -973,7 +978,9 @@ fn update_resyncs_project_copy_assignments() {
     );
 
     // 10. Assert: DB assignment record has updated content_hash and status "synced"
-    let assignments = store.list_project_skill_assignments_by_skill(&res.skill_id).unwrap();
+    let assignments = store
+        .list_project_skill_assignments_by_skill(&res.skill_id)
+        .unwrap();
     let copy_rec = assignments.iter().find(|a| a.id == "pa-copy").unwrap();
     assert_eq!(copy_rec.status, "synced");
     assert!(

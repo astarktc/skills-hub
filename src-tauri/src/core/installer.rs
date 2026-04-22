@@ -14,11 +14,11 @@ use super::git_fetcher::clone_or_pull;
 use super::github_download::{
     download_github_directory, fetch_branch_sha, parse_github_api_params,
 };
+use super::project_sync::resolve_project_sync_target;
 use super::skill_lock::try_enrich_from_skill_lock;
 use super::skill_store::{SkillRecord, SkillStore};
 use super::sync_engine::copy_dir_recursive;
 use super::sync_engine::sync_dir_copy_with_overwrite;
-use super::project_sync::resolve_project_sync_target;
 use super::tool_adapters::adapter_by_key;
 use super::tool_adapters::is_tool_installed;
 
@@ -1018,11 +1018,8 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
             Some(a) => a,
             None => continue,
         };
-        let target = resolve_project_sync_target(
-            &project_path,
-            adapter.relative_skills_dir,
-            &record.name,
-        );
+        let target =
+            resolve_project_sync_target(&project_path, adapter.relative_skills_dir, &record.name);
         match sync_dir_copy_with_overwrite(&central_path, &target, true) {
             Ok(_outcome) => {
                 let _ = store.update_assignment_status(
