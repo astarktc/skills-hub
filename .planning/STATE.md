@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-last_updated: "2026-04-17T00:26:24.612Z"
+last_updated: "2026-04-22T18:54:00.105Z"
 progress:
   total_phases: 6
   completed_phases: 6
@@ -82,3 +82,4 @@ None -- milestone shipped.
 | 260422-h7p | Fix update_managed_skill_from_source to re-sync project-level copy-mode skill assignments after update               | 2026-04-22 | c8ccc56 | [260422-h7p-fix-update-managed-skill-from-source-to-](./quick/260422-h7p-fix-update-managed-skill-from-source-to-/) |
 | 260422-i79 | Decouple refresh button from auto-sync checkbox so refresh always re-downloads skills from repos into the library    | 2026-04-22 | e90d554 | [260422-i79-decouple-refresh-button-from-auto-sync-c](./quick/260422-i79-decouple-refresh-button-from-auto-sync-c/) |
 | 260422-ixr | Toggle link/unlink tool deployment buttons with dynamic icon state in My Skills                                      | 2026-04-22 | be0b104 | [260422-ixr-toggle-link-unlink-tool-deployment-butto](./quick/260422-ixr-toggle-link-unlink-tool-deployment-butto/) |
+| 260422-jb0 | Persist group-by-repo checkbox state in My Skills and Projects across app restarts                                   | 2026-04-22 | 66a521e | [260422-jb0-persist-group-by-repo-checkbox-state-in-](./quick/260422-jb0-persist-group-by-repo-checkbox-state-in-/) |
