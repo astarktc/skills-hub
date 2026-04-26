@@ -980,9 +980,107 @@ function App() {
     }));
   }, []);
 
-  const handleRefresh = useCallback(() => {
-    void loadManagedSkills();
-  }, [loadManagedSkills]);
+  const handleRefresh = useCallback(async () => {
+    if (managedSkills.length === 0) return;
+
+    setLoading(true);
+    setLoadingStartAt(Date.now());
+    setError(null);
+
+    try {
+      const collectedErrors: { title: string; message: string }[] = [];
+
+      for (let i = 0; i < managedSkills.length; i++) {
+        const skill = managedSkills[i];
+        setActionMessage(
+          t("actions.refreshStep", {
+            index: i + 1,
+            total: managedSkills.length,
+            name: skill.name,
+          }),
+        );
+        try {
+          await invokeTauri<UpdateResultDto>("update_managed_skill", {
+            skillId: skill.id,
+          });
+        } catch (err) {
+          const raw = err instanceof Error ? err.message : String(err);
+          collectedErrors.push({
+            title: t("errors.updateFailedTitle", { name: skill.name }),
+            message: raw,
+          });
+        }
+      }
+
+      if (autoSyncEnabled) {
+        const freshSkills =
+          await invokeTauri<ManagedSkill[]>("get_managed_skills");
+        const syncTargetIds = uniqueToolIdsBySkillsDir(
+          installedToolIds.filter((id) => isInstalled(id)),
+        );
+        if (syncTargetIds.length > 0 && freshSkills.length > 0) {
+          for (let si = 0; si < freshSkills.length; si++) {
+            const skill = freshSkills[si];
+            for (let ti = 0; ti < syncTargetIds.length; ti++) {
+              const toolId = syncTargetIds[ti];
+              const toolLabel =
+                tools.find((tl) => tl.id === toolId)?.label ?? toolId;
+              setActionMessage(
+                t("actions.syncStep", {
+                  index: si + 1,
+                  total: freshSkills.length,
+                  name: skill.name,
+                  tool: toolLabel,
+                }),
+              );
+              try {
+                await invokeTauri("sync_skill_to_tool", {
+                  sourcePath: skill.central_path,
+                  skillId: skill.id,
+                  tool: toolId,
+                  name: skill.name,
+                });
+              } catch (err) {
+                const raw = err instanceof Error ? err.message : String(err);
+                if (
+                  raw.startsWith("TOOL_NOT_INSTALLED|") ||
+                  raw.startsWith("TOOL_NOT_WRITABLE|")
+                )
+                  continue;
+                collectedErrors.push({
+                  title: t("errors.syncFailedTitle", {
+                    name: skill.name,
+                    tool: toolLabel,
+                  }),
+                  message: raw,
+                });
+              }
+            }
+          }
+        }
+      }
+
+      setActionMessage(t("status.refreshCompleted"));
+      setSuccessToastMessage(t("status.refreshCompleted"));
+      setActionMessage(null);
+      await loadManagedSkills();
+      if (collectedErrors.length > 0) showActionErrors(collectedErrors);
+    } finally {
+      setLoading(false);
+      setLoadingStartAt(null);
+    }
+  }, [
+    autoSyncEnabled,
+    installedToolIds,
+    invokeTauri,
+    isInstalled,
+    loadManagedSkills,
+    managedSkills,
+    showActionErrors,
+    t,
+    tools,
+    uniqueToolIdsBySkillsDir,
+  ]);
 
   const handleReviewImport = useCallback(async () => {
     if (plan) {
