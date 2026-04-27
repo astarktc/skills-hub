@@ -2444,6 +2444,12 @@
   padding: 8px 12px;
   border: 1px solid var(--border-subtle);
   text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.markdown-body td {
+  white-space: pre-wrap;
 }
 
 .markdown-body th {
@@ -2807,6 +2813,7 @@
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 
 .matrix-toolbar-name {

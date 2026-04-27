@@ -380,7 +380,7 @@ fn remove_tool_with_cleanup_leaves_other_tools_intact() {
 
     // Verify both targets exist
     let claude_target = project_dir.join(".claude/skills/multi-tool-skill");
-    let cursor_target = project_dir.join(".cursor/skills/multi-tool-skill");
+    let cursor_target = project_dir.join(".agents/skills/multi-tool-skill");
     assert!(claude_target.exists(), "claude target should exist");
     assert!(cursor_target.exists(), "cursor target should exist");
 

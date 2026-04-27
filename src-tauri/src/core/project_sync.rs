@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -6,7 +7,7 @@ use crate::core::{
     content_hash,
     skill_store::{ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore},
     sync_engine::{self, SyncMode},
-    tool_adapters,
+    tool_adapters::{self, project_relative_skills_dir},
 };
 
 pub fn resolve_project_sync_target(
@@ -54,7 +55,7 @@ pub fn assign_and_sync(
     let source = Path::new(&skill.central_path);
     let target = resolve_project_sync_target(
         Path::new(&project.path),
-        adapter.relative_skills_dir,
+        project_relative_skills_dir(&adapter),
         &skill.name,
     );
 
@@ -126,7 +127,7 @@ pub(crate) fn sync_single_assignment(
     let source = Path::new(&skill.central_path);
     let target = resolve_project_sync_target(
         Path::new(&project.path),
-        adapter.relative_skills_dir,
+        project_relative_skills_dir(&adapter),
         &skill.name,
     );
 
@@ -229,25 +230,34 @@ pub fn list_assignments_with_staleness(
     let assignments = store.list_project_skill_assignments(project_id)?;
     let mut result = Vec::with_capacity(assignments.len());
 
+    // Pre-fetch skill records with deduplication (one DB query per unique skill_id)
+    let mut skill_cache: HashMap<String, Option<SkillRecord>> = HashMap::new();
+    for a in &assignments {
+        skill_cache
+            .entry(a.skill_id.clone())
+            .or_insert_with(|| store.get_skill_by_id(&a.skill_id).ok().flatten());
+    }
+
+    // Pre-fetch project record once (not per iteration)
+    let project_record = store.get_project_by_id(project_id).ok().flatten();
+
     for mut assignment in assignments {
         // --- Resolve source and target existence ---
-        let skill_opt = store.get_skill_by_id(&assignment.skill_id).ok().flatten();
+        let skill_opt = skill_cache
+            .get(&assignment.skill_id)
+            .and_then(|s| s.as_ref());
         let source_exists = skill_opt
-            .as_ref()
             .map(|s| Path::new(&s.central_path).exists())
             .unwrap_or(false);
 
-        let target_exists = if let Some(ref skill) = skill_opt {
+        let target_exists = if let Some(skill) = skill_opt {
             if let Some(adapter) = tool_adapters::adapter_by_key(&assignment.tool) {
-                let project = store
-                    .get_project_by_id(&assignment.project_id)
-                    .ok()
-                    .flatten();
-                project
+                project_record
+                    .as_ref()
                     .map(|p| {
                         let target = resolve_project_sync_target(
                             Path::new(&p.path),
-                            adapter.relative_skills_dir,
+                            project_relative_skills_dir(&adapter),
                             &skill.name,
                         );
                         target.exists() || target.symlink_metadata().is_ok()
@@ -303,10 +313,18 @@ pub fn list_assignments_with_staleness(
         if source_exists && target_exists {
             if assignment.mode == "copy" {
                 // Copy mode: compare content hashes to detect staleness
-                if let Some(ref skill) = skill_opt {
-                    let source = Path::new(&skill.central_path);
-                    if let Ok(current_hash) = content_hash::hash_dir(source) {
-                        let is_stale = assignment.content_hash.as_deref() != Some(&current_hash);
+                if let Some(skill_ref) = skill_opt {
+                    let source = Path::new(&skill_ref.central_path);
+                    // Use cached hash from skill record; backfill if NULL (legacy records)
+                    let current_hash = skill_ref.content_hash.clone().or_else(|| {
+                        let h = content_hash::hash_dir(source).ok();
+                        if let Some(ref hash_val) = h {
+                            let _ = store.update_skill_content_hash(&skill_ref.id, hash_val);
+                        }
+                        h
+                    });
+                    if let Some(ref current_hash) = current_hash {
+                        let is_stale = assignment.content_hash.as_deref() != Some(current_hash);
                         let new_status = if is_stale { "stale" } else { "synced" };
                         if assignment.status != new_status {
                             let _ = store.update_assignment_status(
@@ -315,12 +333,12 @@ pub fn list_assignments_with_staleness(
                                 None,
                                 None,
                                 None,
-                                if !is_stale { Some(&current_hash) } else { None },
+                                if !is_stale { Some(current_hash) } else { None },
                             );
                         }
                         assignment.status = new_status.to_string();
                     }
-                    // If hash_dir fails, leave status unchanged
+                    // If hash unavailable, leave status unchanged
                 }
             } else {
                 // Symlink mode: if both exist, it is synced
@@ -355,7 +373,7 @@ pub fn unassign_and_cleanup(
 
     let target = resolve_project_sync_target(
         Path::new(&project.path),
-        adapter.relative_skills_dir,
+        project_relative_skills_dir(&adapter),
         &skill.name,
     );
 

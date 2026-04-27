@@ -326,6 +326,7 @@ export const resources = {
       unsyncAllComplete: "Removed {{count}} tool directory deployments",
       unsyncSkill: "Uninstall from tool directories",
       unsyncSkillTooltip: "Remove this skill from all tool directories",
+      syncSkillTooltip: "Deploy this skill to all installed tools",
       projects: {
         addProject: "Add Project",
         emptyTitle: "No projects registered",

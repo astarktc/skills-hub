@@ -14,6 +14,7 @@ use crate::core::cache_cleanup::{
 };
 use crate::core::cancel_token::CancelToken;
 use crate::core::central_repo::{ensure_central_repo, resolve_central_repo_path};
+use crate::core::content_hash::hash_dir;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::github_search::{search_github_repos, RepoSummary};
 use crate::core::installer::{
@@ -479,6 +480,16 @@ pub async fn sync_skill_dir(
     .map_err(format_anyhow_error)
 }
 
+fn target_has_same_content(source: &std::path::Path, target: &std::path::Path) -> bool {
+    if !target.exists() {
+        return false;
+    }
+    match (hash_dir(source), hash_dir(target)) {
+        (Ok(s), Ok(t)) => s == t,
+        _ => false,
+    }
+}
+
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn sync_skill_to_tool(
@@ -488,6 +499,7 @@ pub async fn sync_skill_to_tool(
     tool: String,
     name: String,
     overwrite: Option<bool>,
+    overwriteIfSameContent: Option<bool>,
 ) -> Result<SyncResultDto, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -508,7 +520,9 @@ pub async fn sync_skill_to_tool(
             anyhow::bail!("failed to create skills dir {:?}: {}", tool_root, err);
         }
         let target = tool_root.join(&name);
-        let overwrite = overwrite.unwrap_or(false);
+        let overwrite = overwrite.unwrap_or(false)
+            || (overwriteIfSameContent.unwrap_or(false)
+                && target_has_same_content(sourcePath.as_ref(), &target));
         let result =
             sync_dir_for_tool_with_overwrite(&tool, sourcePath.as_ref(), &target, overwrite)
                 .map_err(|err| {
@@ -890,7 +904,11 @@ pub async fn delete_managed_skill(
                             crate::core::tool_adapters::adapter_by_key(&assignment.tool)
                         {
                             let project_path = std::path::Path::new(&project.path);
-                            let target = project_path.join(adapter.relative_skills_dir).join(name);
+                            let target = project_path
+                                .join(crate::core::tool_adapters::project_relative_skills_dir(
+                                    &adapter,
+                                ))
+                                .join(name);
                             if let Err(e) = remove_path_any(&target) {
                                 remove_failures.push(format!("{}: {}", target.display(), e));
                             }

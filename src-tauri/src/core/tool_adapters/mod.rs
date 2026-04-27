@@ -13,6 +13,7 @@ pub enum ToolId {
     KimiCli,
     Augment,
     OpenClaw,
+    Copaw,
     Cline,
     CodeBuddy,
     CommandCode,
@@ -46,6 +47,7 @@ pub enum ToolId {
     Droid,
     Windsurf,
     Moltbot,
+    HermesAgent,
 }
 
 impl ToolId {
@@ -60,6 +62,7 @@ impl ToolId {
             ToolId::KimiCli => "kimi_cli",
             ToolId::Augment => "augment",
             ToolId::OpenClaw => "openclaw",
+            ToolId::Copaw => "copaw",
             ToolId::Cline => "cline",
             ToolId::CodeBuddy => "codebuddy",
             ToolId::CommandCode => "command_code",
@@ -93,6 +96,7 @@ impl ToolId {
             ToolId::Droid => "droid",
             ToolId::Windsurf => "windsurf",
             ToolId::Moltbot => "moltbot",
+            ToolId::HermesAgent => "hermes-agent",
         }
     }
 }
@@ -178,6 +182,13 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             // add-skill global path: ~/.openclaw/skills/
             relative_skills_dir: ".openclaw/skills",
             relative_detect_dir: ".openclaw",
+        },
+        ToolAdapter {
+            id: ToolId::Copaw,
+            display_name: "Copaw",
+            // add-skill global path: ~/.copaw/skill_pool/
+            relative_skills_dir: ".copaw/skill_pool",
+            relative_detect_dir: ".copaw",
         },
         ToolAdapter {
             id: ToolId::Cline,
@@ -410,6 +421,12 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             relative_skills_dir: ".moltbot/skills",
             relative_detect_dir: ".moltbot",
         },
+        ToolAdapter {
+            id: ToolId::HermesAgent,
+            display_name: "Hermes Agent",
+            relative_skills_dir: ".hermes/skills",
+            relative_detect_dir: ".hermes",
+        },
     ]
 }
 
@@ -420,6 +437,72 @@ pub fn adapters_sharing_skills_dir(adapter: &ToolAdapter) -> Vec<ToolAdapter> {
         .into_iter()
         .filter(|a| a.relative_skills_dir == adapter.relative_skills_dir)
         .collect()
+}
+
+#[allow(dead_code)]
+pub fn adapters_sharing_project_skills_dir(adapter: &ToolAdapter) -> Vec<ToolAdapter> {
+    let relative = project_relative_skills_dir(adapter);
+    default_tool_adapters()
+        .into_iter()
+        .filter(|a| project_relative_skills_dir(a) == relative)
+        .collect()
+}
+
+#[allow(dead_code)]
+pub fn resolve_project_path(adapter: &ToolAdapter, project_root: &Path) -> Result<PathBuf> {
+    Ok(project_root.join(project_relative_skills_dir(adapter)))
+}
+
+#[allow(dead_code)]
+pub fn supports_project_scope(adapter: &ToolAdapter) -> bool {
+    !matches!(adapter.id, ToolId::HermesAgent)
+}
+
+pub fn project_relative_skills_dir(adapter: &ToolAdapter) -> &'static str {
+    match adapter.id {
+        ToolId::Amp | ToolId::KimiCli => ".agents/skills",
+        ToolId::Antigravity => ".agents/skills",
+        ToolId::Augment => ".augment/skills",
+        ToolId::ClaudeCode => ".claude/skills",
+        ToolId::OpenClaw => "skills",
+        ToolId::Cline => ".agents/skills",
+        ToolId::CodeBuddy => ".codebuddy/skills",
+        ToolId::Codex => ".agents/skills",
+        ToolId::CommandCode => ".commandcode/skills",
+        ToolId::Continue => ".continue/skills",
+        ToolId::Crush => ".crush/skills",
+        ToolId::Cursor => ".agents/skills",
+        ToolId::Droid => ".factory/skills",
+        ToolId::GeminiCli => ".agents/skills",
+        ToolId::GithubCopilot => ".agents/skills",
+        ToolId::Goose => ".goose/skills",
+        ToolId::Junie => ".junie/skills",
+        ToolId::IflowCli => ".iflow/skills",
+        ToolId::KiloCode => ".kilocode/skills",
+        ToolId::KiroCli => ".kiro/skills",
+        ToolId::Kode => ".kode/skills",
+        ToolId::McpJam => ".mcpjam/skills",
+        ToolId::MistralVibe => ".vibe/skills",
+        ToolId::Mux => ".mux/skills",
+        ToolId::OpenCode => ".agents/skills",
+        ToolId::OpenHands => ".openhands/skills",
+        ToolId::Pi => ".pi/skills",
+        ToolId::Qoder => ".qoder/skills",
+        ToolId::QwenCode => ".qwen/skills",
+        ToolId::RooCode => ".roo/skills",
+        ToolId::Trae | ToolId::TraeCn => ".trae/skills",
+        ToolId::Windsurf => ".windsurf/skills",
+        ToolId::Zencoder => ".zencoder/skills",
+        ToolId::Neovate => ".neovate/skills",
+        ToolId::Pochi => ".pochi/skills",
+        ToolId::AdaL => ".adal/skills",
+        ToolId::HermesAgent => ".hermes/skills",
+        ToolId::Copaw
+        | ToolId::OpenClaude
+        | ToolId::QoderWork
+        | ToolId::Clawdbot
+        | ToolId::Moltbot => adapter.relative_skills_dir,
+    }
 }
 
 pub fn adapter_by_key(key: &str) -> Option<ToolAdapter> {

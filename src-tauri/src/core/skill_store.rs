@@ -419,6 +419,16 @@ impl SkillStore {
         })
     }
 
+    pub fn update_skill_content_hash(&self, skill_id: &str, hash: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE skills SET content_hash = ?1 WHERE id = ?2",
+                params![hash, skill_id],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn list_skills_missing_description(&self) -> Result<Vec<SkillRecord>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(

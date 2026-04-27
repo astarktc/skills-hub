@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowUpDown,
@@ -82,8 +82,23 @@ const AssignmentMatrix = ({
     return max > 0 ? max : null;
   }, [assignments]);
 
+  const projectsGroupByRepoKey = "skills-projects-groupByRepo";
   const [sortBy, setSortBy] = useState<"name" | "updated" | "added">("name");
-  const [groupByRepo, setGroupByRepo] = useState(false);
+  const [groupByRepo, setGroupByRepo] = useState(() => {
+    try {
+      return window.localStorage.getItem(projectsGroupByRepoKey) === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(projectsGroupByRepoKey, String(groupByRepo));
+    } catch {
+      // ignore storage failures
+    }
+  }, [groupByRepo]);
 
   const sortedSkills = useMemo(() => {
     return [...skills].sort((a, b) => {
@@ -125,6 +140,14 @@ const AssignmentMatrix = ({
     });
     return entries;
   }, [groupByRepo, sortedSkills, t]);
+
+  const assignmentMap = useMemo(() => {
+    const map = new Map<string, ProjectSkillAssignmentDto>();
+    for (const a of assignments) {
+      map.set(`${a.skill_id}:${a.tool}`, a);
+    }
+    return map;
+  }, [assignments]);
 
   const pathMissing = project ? !project.path_exists : false;
 
@@ -310,7 +333,7 @@ const AssignmentMatrix = ({
                           key={skill.id}
                           skill={skill}
                           tools={tools}
-                          assignments={assignments}
+                          assignmentMap={assignmentMap}
                           pendingCells={pendingCells}
                           disabled={pathMissing}
                           showBulkAssign={tools.length > 1}
@@ -326,7 +349,7 @@ const AssignmentMatrix = ({
                       key={skill.id}
                       skill={skill}
                       tools={tools}
-                      assignments={assignments}
+                      assignmentMap={assignmentMap}
                       pendingCells={pendingCells}
                       disabled={pathMissing}
                       showBulkAssign={tools.length > 1}
@@ -346,7 +369,7 @@ const AssignmentMatrix = ({
 type MatrixRowProps = {
   skill: ManagedSkill;
   tools: ProjectToolDto[];
-  assignments: ProjectSkillAssignmentDto[];
+  assignmentMap: Map<string, ProjectSkillAssignmentDto>;
   pendingCells: Set<string>;
   disabled: boolean;
   showBulkAssign: boolean;
@@ -367,7 +390,7 @@ const MatrixRow = memo(
   ({
     skill,
     tools,
-    assignments,
+    assignmentMap,
     pendingCells,
     disabled,
     showBulkAssign,
@@ -386,9 +409,7 @@ const MatrixRow = memo(
         {tools.map((tool) => {
           const cellKey = `${skill.id}:${tool.tool}`;
           const isPending = pendingCells.has(cellKey);
-          const assignment = assignments.find(
-            (a) => a.skill_id === skill.id && a.tool === tool.tool,
-          );
+          const assignment = assignmentMap.get(`${skill.id}:${tool.tool}`);
           const statusClass = isPending
             ? "pending"
             : assignment
@@ -447,7 +468,7 @@ const MatrixRow = memo(
   (prev, next) => {
     if (prev.skill !== next.skill) return false;
     if (prev.tools !== next.tools) return false;
-    if (prev.assignments !== next.assignments) return false;
+    if (prev.assignmentMap !== next.assignmentMap) return false;
     if (prev.disabled !== next.disabled) return false;
     if (prev.showBulkAssign !== next.showBulkAssign) return false;
     if (prev.onToggleAssignment !== next.onToggleAssignment) return false;

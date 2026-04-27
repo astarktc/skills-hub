@@ -10,10 +10,9 @@ use super::cache_cleanup::get_git_cache_ttl_secs;
 use super::cancel_token::CancelToken;
 use super::central_repo::{ensure_central_repo, resolve_central_repo_path};
 use super::content_hash::hash_dir;
-use super::git_fetcher::clone_or_pull;
-use super::github_download::{
-    download_github_directory, fetch_branch_sha, parse_github_api_params,
-};
+use super::git_fetcher::{clone_or_pull, clone_or_pull_sparse};
+use super::github_download::{download_github_directory, parse_github_api_params};
+use super::project_sync::resolve_project_sync_target;
 use super::skill_lock::try_enrich_from_skill_lock;
 use super::skill_store::{SkillRecord, SkillStore};
 use super::sync_engine::copy_dir_recursive;
@@ -117,11 +116,15 @@ pub fn install_git_skill<R: tauri::Runtime>(
     let user_provided_name = name.is_some();
     let mut name = name.unwrap_or_else(|| {
         if let Some(subpath) = &parsed.subpath {
-            subpath
-                .rsplit('/')
-                .next()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| derive_name_from_repo_url(&parsed.clone_url))
+            if subpath == "." {
+                derive_name_from_repo_url(&parsed.clone_url)
+            } else {
+                subpath
+                    .rsplit('/')
+                    .next()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| derive_name_from_repo_url(&parsed.clone_url))
+            }
         } else {
             derive_name_from_repo_url(&parsed.clone_url)
         }
@@ -135,7 +138,9 @@ pub fn install_git_skill<R: tauri::Runtime>(
         anyhow::bail!("skill already exists in central repo: {:?}", central_path);
     }
 
-    // Fast path: for GitHub URLs with a subpath, download via API instead of cloning.
+    // Fast path: for subpath installs, prefer sparse git checkout.
+    // The old GitHub Contents API path is much slower on large repos because it performs
+    // one directory/file request at a time and can time out before we even attempt git.
     let github_token = store.get_setting("github_token")?.unwrap_or_default();
     let github_token_opt = if github_token.is_empty() {
         None
@@ -149,79 +154,86 @@ pub fn install_git_skill<R: tauri::Runtime>(
         parsed.subpath.as_deref(),
     ) {
         log::info!(
-            "[installer] using GitHub API download: {}/{} path={}",
+            "[installer] using sparse git checkout for subpath install: {}/{} path={}",
             owner,
             repo,
             subpath
         );
-        match download_github_directory(
-            &owner,
-            &repo,
-            &branch,
+        match clone_to_cache_subpath(
+            app,
+            store,
+            &parsed.clone_url,
+            Some(branch.as_str()),
             &subpath,
-            &central_path,
             cancel,
-            github_token_opt,
         ) {
-            Ok(()) => {
-                // Try to get real commit SHA for the branch (lightweight API call).
-                // Fall back to api-download-{branch} if it fails (non-blocking).
-                revision = match fetch_branch_sha(&owner, &repo, &branch, github_token_opt) {
-                    Ok(sha) => sha,
-                    Err(_) => format!("api-download-{}", branch),
-                };
-            }
-            Err(err) => {
-                // Clean up partial download
-                let _ = std::fs::remove_dir_all(&central_path);
-                let err_msg = format!("{:#}", err);
-                // If cancelled, propagate immediately
-                if err_msg.contains("CANCELLED|") {
-                    return Err(err);
-                }
-                // If 404/403, the path doesn't exist on GitHub — don't waste time with git clone
-                if err_msg.contains("404") || err_msg.contains("Not Found") {
-                    anyhow::bail!(
-                        "该 Skill 在 GitHub 上未找到（可能已被删除或路径已变更）。\n请检查链接是否正确：{}/tree/{}/{}",
-                        parsed.clone_url.trim_end_matches(".git"),
-                        branch,
-                        subpath
-                    );
-                }
-                if let Some(rest) = err_msg.strip_prefix("RATE_LIMITED|") {
-                    let mins: i64 = rest.trim().parse().unwrap_or(0);
-                    if mins > 0 {
-                        anyhow::bail!(
-                            "GitHub API 频率限制已触发，约 {} 分钟后重置。可在设置中配置 GitHub Token 以提升限额。",
-                            mins
-                        );
-                    }
-                    anyhow::bail!(
-                        "GitHub API 频率限制已触发。可在设置中配置 GitHub Token 以提升限额。"
-                    );
-                }
-                if err_msg.contains("403") || err_msg.contains("Forbidden") {
-                    anyhow::bail!("GitHub API 访问被拒绝（可能触发了频率限制）。请稍后再试。");
-                }
-                // Other errors: fall back to git clone
-                log::warn!(
-                    "[installer] GitHub API download failed, falling back to git clone: {:#}",
-                    err
-                );
-                let (repo_dir, rev) = clone_to_cache(
-                    app,
-                    store,
-                    &parsed.clone_url,
-                    parsed.branch.as_deref(),
-                    cancel,
-                )?;
+            Ok((repo_dir, rev)) => {
                 let sub_src = repo_dir.join(&subpath);
                 if !sub_src.exists() {
                     anyhow::bail!("subpath not found in repo: {:?}", sub_src);
                 }
+                ensure_installable_skill_dir(&sub_src)?;
                 copy_dir_recursive(&sub_src, &central_path)
                     .with_context(|| format!("copy {:?} -> {:?}", sub_src, central_path))?;
                 revision = rev;
+            }
+            Err(err) => {
+                // Clean up partial content before fallback.
+                let _ = std::fs::remove_dir_all(&central_path);
+                let err_msg = format!("{:#}", err);
+                if err_msg.contains("CANCELLED|") {
+                    return Err(err);
+                }
+                log::warn!(
+                    "[installer] sparse git checkout failed, falling back to GitHub API download: {:#}",
+                    err
+                );
+                match download_github_directory(
+                    &owner,
+                    &repo,
+                    &branch,
+                    &subpath,
+                    &central_path,
+                    cancel,
+                    github_token_opt,
+                ) {
+                    Ok(()) => {
+                        revision = format!("api-download-{}", branch);
+                    }
+                    Err(err) => {
+                        let _ = std::fs::remove_dir_all(&central_path);
+                        let err_msg = format!("{:#}", err);
+                        if err_msg.contains("CANCELLED|") {
+                            return Err(err);
+                        }
+                        if err_msg.contains("404") || err_msg.contains("Not Found") {
+                            anyhow::bail!(
+                                "该 Skill 在 GitHub 上未找到（可能已被删除或路径已变更）。\n请检查链接是否正确：{}/tree/{}/{}",
+                                parsed.clone_url.trim_end_matches(".git"),
+                                branch,
+                                subpath
+                            );
+                        }
+                        if let Some(rest) = err_msg.strip_prefix("RATE_LIMITED|") {
+                            let mins: i64 = rest.trim().parse().unwrap_or(0);
+                            if mins > 0 {
+                                anyhow::bail!(
+                                    "GitHub API 频率限制已触发，约 {} 分钟后重置。可在设置中配置 GitHub Token 以提升限额。",
+                                    mins
+                                );
+                            }
+                            anyhow::bail!(
+                                "GitHub API 频率限制已触发。可在设置中配置 GitHub Token 以提升限额。"
+                            );
+                        }
+                        if err_msg.contains("403") || err_msg.contains("Forbidden") {
+                            anyhow::bail!(
+                                "GitHub API 访问被拒绝（可能触发了频率限制）。请稍后再试。"
+                            );
+                        }
+                        return Err(err);
+                    }
+                }
             }
         }
     } else {
@@ -239,6 +251,7 @@ pub fn install_git_skill<R: tauri::Runtime>(
             if !sub_src.exists() {
                 anyhow::bail!("subpath not found in repo: {:?}", sub_src);
             }
+            ensure_installable_skill_dir(&sub_src)?;
             sub_src
         } else {
             // Repo root URL: detect multi-skill repos and ask user to pick one.
@@ -248,6 +261,7 @@ pub fn install_git_skill<R: tauri::Runtime>(
                     "MULTI_SKILLS|该仓库包含多个 Skills，请复制具体 Skill 文件夹链接（例如 GitHub 的 /tree/<branch>/<skill-folder>），再导入。"
                 );
             }
+            ensure_installable_skill_dir(&repo_dir)?;
             repo_dir.clone()
         };
 
@@ -370,7 +384,7 @@ fn parse_github_url(input: &str) -> ParsedGitSource {
     if parts.len() >= 4 && (parts[2] == "tree" || parts[2] == "blob") {
         let branch = Some(parts[3].to_string());
         let subpath = if parts.len() > 4 {
-            Some(parts[4..].join("/"))
+            Some(normalize_github_skill_subpath(&parts[4..].join("/")))
         } else {
             None
         };
@@ -386,6 +400,18 @@ fn parse_github_url(input: &str) -> ParsedGitSource {
         branch: None,
         subpath: None,
     }
+}
+
+fn normalize_github_skill_subpath(subpath: &str) -> String {
+    let trimmed = subpath.trim_matches('/');
+    if trimmed.eq_ignore_ascii_case("SKILL.md") {
+        return ".".to_string();
+    }
+    trimmed
+        .strip_suffix("/SKILL.md")
+        .or_else(|| trimmed.strip_suffix("/skill.md"))
+        .unwrap_or(trimmed)
+        .to_string()
 }
 
 fn looks_like_github_shorthand(input: &str) -> bool {
@@ -574,13 +600,19 @@ fn parse_marketplace_json(repo_dir: &Path) -> Vec<PathBuf> {
         Some(p) => p,
         None => return vec![],
     };
+
+    let repo_root = match repo_dir.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return vec![],
+    };
+
     plugins
         .iter()
         .filter_map(|plugin| {
             let source = plugin.source.as_ref()?;
             let cleaned = source.strip_prefix("./").unwrap_or(source);
-            let resolved = repo_dir.join(cleaned);
-            if resolved.exists() {
+            let resolved = repo_dir.join(cleaned).canonicalize().ok()?;
+            if resolved.starts_with(&repo_root) && resolved.exists() {
                 Some(resolved)
             } else {
                 None
@@ -631,6 +663,16 @@ fn is_skill_dir(p: &Path) -> bool {
     p.is_dir() && (has_skill_md(p) || is_claude_skill_dir(p))
 }
 
+fn ensure_installable_skill_dir(p: &Path) -> Result<()> {
+    if is_skill_dir(p) {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "SKILL_INVALID|missing_skill_md|该路径不是有效 Skill 目录：未找到 SKILL.md。请粘贴具体 Skill 文件夹链接。"
+        );
+    }
+}
+
 /// Check if a directory is a Claude plugin skill (under .claude/skills/ without SKILL.md).
 fn is_claude_skill_dir(p: &Path) -> bool {
     // A directory under .claude/skills/ is treated as a valid skill even without SKILL.md
@@ -674,92 +716,43 @@ fn extract_skill_info(skill_dir: &Path, repo_dir: &Path) -> (String, Option<Stri
     (name, desc)
 }
 
-/// Scan all skill candidates in a repo directory, returning (name, relative_subpath) pairs.
-/// Used for auto-matching when updating legacy skills with missing source_subpath.
-fn scan_skill_candidates_in_dir(repo_dir: &Path) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    // Scan known sub-locations
-    for base in SKILL_SCAN_BASES {
-        let base_dir = repo_dir.join(base);
-        if let Ok(rd) = std::fs::read_dir(&base_dir) {
-            for entry in rd.flatten() {
-                let p = entry.path();
-                if is_skill_dir(&p) {
-                    let (name, _) = extract_skill_info(&p, repo_dir);
-                    let rel = p
-                        .strip_prefix(repo_dir)
-                        .unwrap_or(&p)
-                        .to_string_lossy()
-                        .to_string();
-                    out.push((name, rel));
-                }
-            }
-        }
-    }
-    // Root-level subdirectories
-    if let Ok(rd) = std::fs::read_dir(repo_dir) {
-        for entry in rd.flatten() {
-            let p = entry.path();
-            if !p.is_dir() {
-                continue;
-            }
-            let dir_name = entry.file_name();
-            let dir_name_str = dir_name.to_string_lossy();
-            if dir_name_str == "skills" || dir_name_str.starts_with('.') {
-                continue;
-            }
-            if has_skill_md(&p) {
-                let (name, _) = find_skill_md(&p)
-                    .and_then(|md| parse_skill_md(&md))
-                    .unwrap_or((dir_name_str.to_string(), None));
-                out.push((name, dir_name_str.to_string()));
-            }
-        }
-    }
-    // Marketplace + recursive (always run to catch deeply nested skills)
-    let marketplace_dirs = parse_marketplace_json(repo_dir);
-    if !marketplace_dirs.is_empty() {
-        for (p, name, _) in scan_marketplace_skills(&marketplace_dirs, repo_dir) {
-            let rel = p
-                .strip_prefix(repo_dir)
-                .unwrap_or(&p)
-                .to_string_lossy()
-                .to_string();
-            out.push((name, rel));
-        }
-    }
-    let recursive = find_skill_dirs_recursive(repo_dir, 0, 5);
-    for p in recursive {
-        let (name, _) = extract_skill_info(&p, repo_dir);
-        let rel = p
-            .strip_prefix(repo_dir)
-            .unwrap_or(&p)
-            .to_string_lossy()
-            .to_string();
-        out.push((name, rel));
-    }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out.dedup_by(|a, b| a.1 == b.1);
-    out
+fn is_hidden_dir_name(name: &str) -> bool {
+    name.starts_with('.')
 }
 
-/// Count skill directories in a repo: checks standard locations, root-level subdirs,
-/// marketplace plugin dirs, and recursive scan. Deduplicates by canonical path.
-fn count_skills_in_repo(repo_dir: &Path) -> usize {
-    let mut seen = std::collections::HashSet::new();
-    // 1) skills/*, .claude/skills/*, and known sub-locations
-    for base in SKILL_SCAN_BASES {
-        let base_dir = repo_dir.join(base);
-        if let Ok(rd) = std::fs::read_dir(&base_dir) {
-            for entry in rd.flatten() {
-                let p = entry.path();
-                if is_skill_dir(&p) {
-                    seen.insert(p);
-                }
+fn is_known_root_scan_dir(name: &str) -> bool {
+    SKILL_SCAN_BASES
+        .iter()
+        .filter_map(|base| base.split('/').next())
+        .any(|base| base == name)
+}
+
+fn is_skill_container_dir_name(name: &str) -> bool {
+    let normalized = name.to_ascii_lowercase();
+    normalized.contains("skill")
+}
+
+fn push_skill_dirs_from_base(out: &mut Vec<PathBuf>, base_dir: &Path) {
+    if let Ok(rd) = std::fs::read_dir(base_dir) {
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if is_skill_dir(&p) {
+                out.push(p);
             }
         }
     }
-    // 2) Root-level subdirectories (fixes #18: repos that put skills directly at root)
+}
+
+fn collect_skill_dirs(repo_dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+
+    // 1) Fast path: known skill locations such as skills/* and .claude/skills/*.
+    for base in SKILL_SCAN_BASES {
+        push_skill_dirs_from_base(&mut out, &repo_dir.join(base));
+    }
+
+    // 2) Root-level skills: repo/my-skill/SKILL.md.
+    // 3) Root-level skill containers: repo/*skill*/my-skill/SKILL.md.
     if let Ok(rd) = std::fs::read_dir(repo_dir) {
         for entry in rd.flatten() {
             let p = entry.path();
@@ -768,22 +761,25 @@ fn count_skills_in_repo(repo_dir: &Path) -> usize {
             }
             let dir_name = entry.file_name();
             let dir_name = dir_name.to_string_lossy();
-            // Skip dirs already covered above, hidden dirs, and common non-skill dirs
-            if dir_name == "skills" || dir_name.starts_with('.') {
+            if is_hidden_dir_name(&dir_name) || is_known_root_scan_dir(&dir_name) {
                 continue;
             }
-            if has_skill_md(&p) {
-                seen.insert(p);
+            if is_skill_dir(&p) {
+                out.push(p);
+            } else if is_skill_container_dir_name(&dir_name) {
+                push_skill_dirs_from_base(&mut out, &p);
             }
         }
     }
-    // 3) Always run marketplace + recursive scan to catch deeply nested skills
+
+    // Marketplace scanning (our addition — catches plugins with marketplace.json)
     let marketplace_dirs = parse_marketplace_json(repo_dir);
     if !marketplace_dirs.is_empty() {
         for (p, _, _) in scan_marketplace_skills(&marketplace_dirs, repo_dir) {
-            seen.insert(p);
+            out.push(p);
         }
     }
+    // Recursive fallback (our addition — catches deeply nested skills up to depth 5)
     let recursive = find_skill_dirs_recursive(repo_dir, 0, 5);
     for p in recursive {
         let rel = p
@@ -792,10 +788,34 @@ fn count_skills_in_repo(repo_dir: &Path) -> usize {
             .to_string_lossy()
             .to_string();
         if rel != "." && !rel.is_empty() {
-            seen.insert(p);
+            out.push(p);
         }
     }
-    seen.len()
+
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Scan all skill candidates in a repo directory, returning (name, relative_subpath) pairs.
+/// Used for auto-matching when updating legacy skills with missing source_subpath.
+fn scan_skill_candidates_in_dir(repo_dir: &Path) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for p in collect_skill_dirs(repo_dir) {
+        let (name, _) = extract_skill_info(&p, repo_dir);
+        let rel = p
+            .strip_prefix(repo_dir)
+            .unwrap_or(&p)
+            .to_string_lossy()
+            .to_string();
+        out.push((name, rel));
+    }
+    out
+}
+
+/// Count skill directories in a repo: checks both `skills/*` and root-level subdirectories.
+fn count_skills_in_repo(repo_dir: &Path) -> usize {
+    collect_skill_dirs(repo_dir).len()
 }
 
 fn compute_content_hash(path: &Path) -> Option<String> {
@@ -861,13 +881,24 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
             .ok_or_else(|| anyhow::anyhow!("missing source_ref for git skill"))?;
         let parsed = parse_github_url(repo_url);
 
-        let (repo_dir, rev) = clone_to_cache(
-            app,
-            store,
-            &parsed.clone_url,
-            parsed.branch.as_deref(),
-            None,
-        )?;
+        let (repo_dir, rev) = if let Some(subpath) = record.source_subpath.as_deref() {
+            clone_to_cache_subpath(
+                app,
+                store,
+                &parsed.clone_url,
+                parsed.branch.as_deref(),
+                subpath,
+                None,
+            )?
+        } else {
+            clone_to_cache(
+                app,
+                store,
+                &parsed.clone_url,
+                parsed.branch.as_deref(),
+                None,
+            )?
+        };
         new_revision = Some(rev);
 
         // Prefer stored source_subpath (from install time) over URL-parsed subpath.
@@ -997,6 +1028,54 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
         }
     }
 
+    // Re-sync copy-mode project skill assignments so project copies stay current.
+    // Symlinks auto-update since they point to the central path that was just refreshed.
+    let project_assignments = store.list_project_skill_assignments_by_skill(skill_id)?;
+    for pa in project_assignments {
+        let force_copy = pa.mode == "copy" || pa.tool == "cursor";
+        if !force_copy {
+            continue;
+        }
+        let project = match store.get_project_by_id(&pa.project_id)? {
+            Some(p) => p,
+            None => continue,
+        };
+        let project_path = PathBuf::from(&project.path);
+        if !project_path.exists() {
+            continue;
+        }
+        let adapter = match adapter_by_key(&pa.tool) {
+            Some(a) => a,
+            None => continue,
+        };
+        let target =
+            resolve_project_sync_target(&project_path, adapter.relative_skills_dir, &record.name);
+        match sync_dir_copy_with_overwrite(&central_path, &target, true) {
+            Ok(_outcome) => {
+                let _ = store.update_assignment_status(
+                    &pa.id,
+                    "synced",
+                    None,
+                    Some(now),
+                    Some("copy"),
+                    content_hash.as_deref(),
+                );
+                updated_targets.push(format!("project:{}:{}", pa.project_id, pa.tool));
+            }
+            Err(e) => {
+                log::warn!("failed to re-sync project assignment {}: {:#}", pa.id, e);
+                let _ = store.update_assignment_status(
+                    &pa.id,
+                    "error",
+                    Some(&format!("{:#}", e)),
+                    None,
+                    None,
+                    None,
+                );
+            }
+        }
+    }
+
     Ok(UpdateResult {
         skill_id: record.id,
         name: record.name,
@@ -1049,69 +1128,8 @@ pub fn list_git_skills<R: tauri::Runtime>(
                 description: desc,
                 subpath: subpath.to_string(),
             });
-        }
-        return Ok(out);
-    }
-
-    // Root-level skill
-    if let Some(root_skill) = find_skill_md(&repo_dir) {
-        let (name, desc) = parse_skill_md(&root_skill).unwrap_or(("root-skill".to_string(), None));
-        out.push(GitSkillCandidate {
-            name,
-            description: desc,
-            subpath: ".".to_string(),
-        });
-    }
-
-    // Scan known sub-locations: skills/*, .claude/skills/*, skills/.curated/*, etc.
-    // AND root-level subdirectories (fixes #18: repos without a skills/ parent).
-    let scan_bases: Vec<std::path::PathBuf> =
-        SKILL_SCAN_BASES.iter().map(|b| repo_dir.join(b)).collect();
-
-    // Collect all directories to scan: known bases + root-level subdirs
-    let mut dirs_to_scan: Vec<std::path::PathBuf> = Vec::new();
-    for base_dir in &scan_bases {
-        if base_dir.exists() {
-            dirs_to_scan.push(base_dir.clone());
-        }
-    }
-    // Root-level subdirectories (skip "skills" and hidden dirs to avoid double-counting)
-    if let Ok(rd) = std::fs::read_dir(&repo_dir) {
-        for entry in rd.flatten() {
-            let p = entry.path();
-            if !p.is_dir() {
-                continue;
-            }
-            let dir_name = entry.file_name();
-            let dir_name = dir_name.to_string_lossy();
-            if dir_name == "skills" || dir_name.starts_with('.') {
-                continue;
-            }
-            if has_skill_md(&p) {
-                let (name, desc) = find_skill_md(&p)
-                    .and_then(|md| parse_skill_md(&md))
-                    .unwrap_or((dir_name.to_string(), None));
-                let rel = p
-                    .strip_prefix(&repo_dir)
-                    .unwrap_or(&p)
-                    .to_string_lossy()
-                    .to_string();
-                out.push(GitSkillCandidate {
-                    name,
-                    description: desc,
-                    subpath: rel,
-                });
-            }
-        }
-    }
-
-    for base_dir in &dirs_to_scan {
-        if let Ok(rd) = std::fs::read_dir(base_dir) {
-            for entry in rd.flatten() {
-                let p = entry.path();
-                if !is_skill_dir(&p) {
-                    continue;
-                }
+        } else if dir.is_dir() {
+            for p in collect_skill_dirs(&dir) {
                 let (name, desc) = extract_skill_info(&p, &repo_dir);
                 let rel = p
                     .strip_prefix(&repo_dir)
@@ -1125,6 +1143,33 @@ pub fn list_git_skills<R: tauri::Runtime>(
                 });
             }
         }
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out.dedup_by(|a, b| a.subpath == b.subpath);
+        return Ok(out);
+    }
+
+    // Root-level skill
+    if let Some(root_skill) = find_skill_md(&repo_dir) {
+        let (name, desc) = parse_skill_md(&root_skill).unwrap_or(("root-skill".to_string(), None));
+        out.push(GitSkillCandidate {
+            name,
+            description: desc,
+            subpath: ".".to_string(),
+        });
+    }
+
+    for p in collect_skill_dirs(&repo_dir) {
+        let (name, desc) = extract_skill_info(&p, &repo_dir);
+        let rel = p
+            .strip_prefix(&repo_dir)
+            .unwrap_or(&p)
+            .to_string_lossy()
+            .to_string();
+        out.push(GitSkillCandidate {
+            name,
+            description: desc,
+            subpath: rel,
+        });
     }
 
     // Always run marketplace + recursive scan to catch deeply nested skills
@@ -1404,6 +1449,7 @@ pub fn install_git_skill_from_selection<R: tauri::Runtime>(
     if !copy_src.exists() {
         anyhow::bail!("path not found in repo: {:?}", copy_src);
     }
+    ensure_installable_skill_dir(&copy_src)?;
 
     copy_dir_recursive(&copy_src, &central_path)
         .with_context(|| format!("copy {:?} -> {:?}", copy_src, central_path))?;
@@ -1521,7 +1567,7 @@ fn clone_to_cache<R: tauri::Runtime>(
     std::fs::create_dir_all(&cache_root)
         .with_context(|| format!("failed to create cache dir {:?}", cache_root))?;
 
-    let repo_dir = cache_root.join(repo_cache_key(clone_url, branch));
+    let repo_dir = cache_root.join(repo_cache_key(clone_url, branch, None));
     let meta_path = repo_dir.join(".skills-hub-cache.json");
 
     let lock = GIT_CACHE_LOCK.get_or_init(|| Mutex::new(()));
@@ -1586,13 +1632,101 @@ fn clone_to_cache<R: tauri::Runtime>(
     Ok((repo_dir, rev))
 }
 
-fn repo_cache_key(clone_url: &str, branch: Option<&str>) -> String {
+fn clone_to_cache_subpath<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    store: &SkillStore,
+    clone_url: &str,
+    branch: Option<&str>,
+    subpath: &str,
+    cancel: Option<&CancelToken>,
+) -> Result<(PathBuf, String)> {
+    let started = std::time::Instant::now();
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .context("failed to resolve app cache dir")?;
+    let cache_root = cache_dir.join("skills-hub-git-cache");
+    std::fs::create_dir_all(&cache_root)
+        .with_context(|| format!("failed to create cache dir {:?}", cache_root))?;
+
+    let repo_dir = cache_root.join(repo_cache_key(clone_url, branch, Some(subpath)));
+    let meta_path = repo_dir.join(".skills-hub-cache.json");
+
+    let lock = GIT_CACHE_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = lock.lock().unwrap_or_else(|err| err.into_inner());
+
+    if repo_dir.join(".git").exists() {
+        if let Ok(meta) = std::fs::read_to_string(&meta_path) {
+            if let Ok(meta) = serde_json::from_str::<RepoCacheMeta>(&meta) {
+                if let Some(head) = meta.head {
+                    let ttl_ms = get_git_cache_ttl_secs(store).saturating_mul(1000);
+                    if ttl_ms > 0 && now_ms().saturating_sub(meta.last_fetched_ms) < ttl_ms {
+                        log::info!(
+                            "[installer] sparse git cache hit (fresh) {}s url={} branch={:?} subpath={} repo_dir={:?}",
+                            started.elapsed().as_secs_f32(),
+                            clone_url,
+                            branch,
+                            subpath,
+                            repo_dir
+                        );
+                        return Ok((repo_dir, head));
+                    }
+                }
+            }
+        }
+    }
+
+    log::info!(
+        "[installer] sparse git cache miss/stale; fetching {} url={} branch={:?} subpath={} repo_dir={:?}",
+        started.elapsed().as_secs_f32(),
+        clone_url,
+        branch,
+        subpath,
+        repo_dir
+    );
+
+    let rev = match clone_or_pull_sparse(clone_url, &repo_dir, branch, subpath, cancel) {
+        Ok(rev) => rev,
+        Err(err) => {
+            if repo_dir.exists() {
+                let _ = std::fs::remove_dir_all(&repo_dir);
+            }
+            clone_or_pull_sparse(clone_url, &repo_dir, branch, subpath, cancel)
+                .with_context(|| format!("{:#}", err))?
+        }
+    };
+
+    let _ = std::fs::write(
+        &meta_path,
+        serde_json::to_string(&RepoCacheMeta {
+            last_fetched_ms: now_ms(),
+            head: Some(rev.clone()),
+        })
+        .unwrap_or_else(|_| "{}".to_string()),
+    );
+
+    log::info!(
+        "[installer] sparse git cache ready {}s url={} branch={:?} subpath={} head={}",
+        started.elapsed().as_secs_f32(),
+        clone_url,
+        branch,
+        subpath,
+        rev
+    );
+    Ok((repo_dir, rev))
+}
+
+fn repo_cache_key(clone_url: &str, branch: Option<&str>, subpath: Option<&str>) -> String {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
     hasher.update(clone_url.as_bytes());
     hasher.update(b"\n");
     if let Some(b) = branch {
         hasher.update(b.as_bytes());
+    }
+    hasher.update(b"\n");
+    if let Some(s) = subpath {
+        hasher.update(s.as_bytes());
     }
     hex::encode(hasher.finalize())
 }
@@ -1618,7 +1752,7 @@ pub fn clone_for_explore_preview<R: tauri::Runtime>(
         )
     })?;
 
-    let cache_key = repo_cache_key(source_url, None);
+    let cache_key = repo_cache_key(source_url, None, None);
     let explore_skill_dir = explore_cache_root.join(&cache_key);
 
     // Cache hit: if dir exists and has at least one entry besides .git, return immediately.
@@ -1780,30 +1914,73 @@ fn parse_skill_md(path: &Path) -> Option<(String, Option<String>)> {
 
 fn parse_skill_md_with_reason(path: &Path) -> Result<(String, Option<String>), &'static str> {
     let text = std::fs::read_to_string(path).map_err(|_| "read_failed")?;
-    let mut lines = text.lines();
-    if lines.next().map(|v| v.trim()) != Some("---") {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.first().map(|v| v.trim()) != Some("---") {
         return Err("invalid_frontmatter");
     }
     let mut name: Option<String> = None;
     let mut desc: Option<String> = None;
     let mut found_end = false;
-    for line in lines.by_ref() {
-        let l = line.trim();
+    let mut i = 1usize;
+    while i < lines.len() {
+        let raw = lines[i];
+        let l = raw.trim();
         if l == "---" {
             found_end = true;
             break;
         }
         if let Some(v) = l.strip_prefix("name:") {
-            name = Some(v.trim().trim_matches('"').to_string());
+            name = Some(clean_frontmatter_value(v));
         } else if let Some(v) = l.strip_prefix("description:") {
-            desc = Some(v.trim().trim_matches('"').to_string());
+            let v = v.trim();
+            if v == "|" || v == ">" {
+                let folded = v == ">";
+                let mut block_lines: Vec<String> = Vec::new();
+                while i + 1 < lines.len() {
+                    let next = lines[i + 1];
+                    if next.trim() == "---" {
+                        break;
+                    }
+                    if !next.trim().is_empty() && !next.starts_with(char::is_whitespace) {
+                        break;
+                    }
+                    block_lines.push(next.strip_prefix("  ").unwrap_or(next).to_string());
+                    i += 1;
+                }
+                let value = if folded {
+                    block_lines
+                        .iter()
+                        .map(|line| line.trim())
+                        .filter(|line| !line.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                } else {
+                    block_lines.join("\n").trim().to_string()
+                };
+                desc = Some(value);
+            } else {
+                desc = Some(clean_frontmatter_value(v));
+            }
         }
+        i += 1;
     }
     if !found_end {
         return Err("invalid_frontmatter");
     }
     let name = name.ok_or("missing_name")?;
     Ok((name, desc))
+}
+
+fn clean_frontmatter_value(value: &str) -> String {
+    let value = value.trim();
+    if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        value[1..value.len() - 1].to_string()
+    } else {
+        value.to_string()
+    }
 }
 
 #[cfg(test)]

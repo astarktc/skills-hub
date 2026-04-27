@@ -45,6 +45,7 @@ function App() {
   const language = i18n.resolvedLanguage ?? i18n.language ?? "en";
   const languageStorageKey = "skills-language";
   const themeStorageKey = "skills-theme";
+  const groupByRepoStorageKey = "skills-groupByRepo";
   const toggleLanguage = useCallback(() => {
     void i18n.changeLanguage(language === "en" ? "zh" : "en");
   }, [i18n, language]);
@@ -104,7 +105,13 @@ function App() {
   ) as MutableRefObject<Update | null>;
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "updated" | "added">("name");
-  const [groupByRepo, setGroupByRepo] = useState(false);
+  const [groupByRepo, setGroupByRepo] = useState(() => {
+    try {
+      return window.localStorage.getItem(groupByRepoStorageKey) === "true";
+    } catch {
+      return false;
+    }
+  });
   const [activeView, setActiveView] = useState<
     | "myskills"
     | "explore"
@@ -313,6 +320,15 @@ function App() {
       // ignore storage failures
     }
   }, [language, languageStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(groupByRepoStorageKey, String(groupByRepo));
+    } catch {
+      // ignore storage failures
+    }
+  }, [groupByRepo, groupByRepoStorageKey]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -677,6 +693,60 @@ function App() {
       }
     },
     [invokeTauri, loadManagedSkills],
+  );
+
+  const handleSyncSkillToAllTools = useCallback(
+    async (skill: ManagedSkill) => {
+      const targetIds = uniqueToolIdsBySkillsDir(
+        installedToolIds.filter((id) => isInstalled(id)),
+      );
+      if (targetIds.length === 0) return;
+
+      setLoading(true);
+      setLoadingStartAt(Date.now());
+      setError(null);
+      try {
+        for (const toolId of targetIds) {
+          const toolLabel =
+            tools.find((tl) => tl.id === toolId)?.label ?? toolId;
+          setActionMessage(
+            t("actions.syncing", { name: skill.name, tool: toolLabel }),
+          );
+          try {
+            await invokeTauri("sync_skill_to_tool", {
+              sourcePath: skill.central_path,
+              skillId: skill.id,
+              tool: toolId,
+              name: skill.name,
+            });
+          } catch (err) {
+            const raw = err instanceof Error ? err.message : String(err);
+            if (
+              raw.startsWith("TOOL_NOT_INSTALLED|") ||
+              raw.startsWith("TOOL_NOT_WRITABLE|")
+            ) {
+              continue;
+            }
+            toast.error(raw);
+          }
+        }
+        setActionMessage(null);
+        toast.success(t("status.syncCompleted"));
+        await loadManagedSkills();
+      } finally {
+        setLoading(false);
+        setLoadingStartAt(null);
+      }
+    },
+    [
+      installedToolIds,
+      invokeTauri,
+      isInstalled,
+      loadManagedSkills,
+      t,
+      tools,
+      uniqueToolIdsBySkillsDir,
+    ],
   );
 
   const handlePickLocalPath = useCallback(async () => {
@@ -1183,6 +1253,7 @@ function App() {
                 tool: tool.id,
                 name: group.name,
                 overwrite,
+                overwriteIfSameContent: true,
               });
             } catch (err) {
               const raw = err instanceof Error ? err.message : String(err);
@@ -1305,6 +1376,7 @@ function App() {
                   skillId: created.skill_id,
                   tool: tool.id,
                   name: created.name,
+                  overwriteIfSameContent: true,
                 });
               } catch (err) {
                 const raw = err instanceof Error ? err.message : String(err);
@@ -1431,6 +1503,7 @@ function App() {
                   skillId: created.skill_id,
                   tool: tool.id,
                   name: created.name,
+                  overwriteIfSameContent: true,
                 });
               } catch (err) {
                 const raw = err instanceof Error ? err.message : String(err);
@@ -1499,6 +1572,7 @@ function App() {
                     skillId: created.skill_id,
                     tool: tool.id,
                     name: created.name,
+                    overwriteIfSameContent: true,
                   });
                 } catch (err) {
                   const raw = err instanceof Error ? err.message : String(err);
@@ -1680,6 +1754,7 @@ function App() {
                     skillId: created.skill_id,
                     tool: tool.id,
                     name: created.name,
+                    overwriteIfSameContent: true,
                   });
                 } catch (err) {
                   const raw = err instanceof Error ? err.message : String(err);
@@ -1791,6 +1866,7 @@ function App() {
                     skillId: created.skill_id,
                     tool: tool.id,
                     name: created.name,
+                    overwriteIfSameContent: true,
                   });
                 } catch (err) {
                   const raw = err instanceof Error ? err.message : String(err);
@@ -1890,6 +1966,7 @@ function App() {
                 skillId: skill.id,
                 tool: toolId,
                 name: skill.name,
+                overwriteIfSameContent: true,
               });
             } catch (err) {
               const raw = err instanceof Error ? err.message : String(err);
@@ -1973,6 +2050,7 @@ function App() {
             skillId: skill.id,
             tool: toolId,
             name: skill.name,
+            overwriteIfSameContent: true,
           });
         }
         const statusText = synced
@@ -2152,6 +2230,7 @@ function App() {
               onDeleteSkill={handleDeletePrompt}
               onToggleTool={handleToggleToolForSkill}
               onUnsyncSkill={handleUnsyncSkill}
+              onSyncSkillToAllTools={handleSyncSkillToAllTools}
               onOpenDetail={handleOpenDetail}
               t={t}
             />

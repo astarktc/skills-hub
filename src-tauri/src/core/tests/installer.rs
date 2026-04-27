@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::core::skill_store::{SkillStore, SkillTargetRecord};
+use crate::core::skill_store::{
+    ProjectRecord, ProjectSkillAssignmentRecord, SkillStore, SkillTargetRecord,
+};
 
 fn make_store() -> (tempfile::TempDir, SkillStore) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -84,6 +86,16 @@ fn parses_github_urls() {
     assert_eq!(p.branch.as_deref(), Some("main"));
     assert_eq!(p.subpath.as_deref(), Some("skills/x"));
 
+    let p = super::parse_github_url("https://github.com/owner/repo/blob/main/skills/x/SKILL.md");
+    assert_eq!(p.clone_url, "https://github.com/owner/repo.git");
+    assert_eq!(p.branch.as_deref(), Some("main"));
+    assert_eq!(p.subpath.as_deref(), Some("skills/x"));
+
+    let p = super::parse_github_url("https://github.com/owner/repo/blob/main/SKILL.md");
+    assert_eq!(p.clone_url, "https://github.com/owner/repo.git");
+    assert_eq!(p.branch.as_deref(), Some("main"));
+    assert_eq!(p.subpath.as_deref(), Some("."));
+
     let p = super::parse_github_url("/local/path/to/repo");
     assert_eq!(p.clone_url, "/local/path/to/repo");
 }
@@ -107,6 +119,33 @@ body
     let (name, desc) = super::parse_skill_md(&p).unwrap();
     assert_eq!(name, "My Skill");
     assert_eq!(desc.as_deref(), Some("Desc"));
+}
+
+#[test]
+fn parses_skill_md_frontmatter_literal_description() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("SKILL.md");
+    fs::write(
+        &p,
+        r#"---
+name: technical-writer
+description: |
+  Creates clear documentation, API references, guides, and
+  technical content for developers and users.
+author: awesome-llm-apps
+---
+
+body
+"#,
+    )
+    .unwrap();
+
+    let (name, desc) = super::parse_skill_md(&p).unwrap();
+    assert_eq!(name, "technical-writer");
+    assert_eq!(
+        desc.as_deref(),
+        Some("Creates clear documentation, API references, guides, and\ntechnical content for developers and users.")
+    );
 }
 
 #[test]
@@ -370,6 +409,80 @@ fn install_git_skill_uses_skill_md_name_over_subpath_skills() {
     let skill = store.get_skill_by_id(&res.skill_id).unwrap().unwrap();
     assert_eq!(skill.name, "my-real-skill");
     assert_eq!(skill.description.as_deref(), Some("A real skill"));
+}
+
+#[test]
+fn install_git_skill_rejects_container_subpath_without_skill_md() {
+    let app = tauri::test::mock_app();
+    let (_dir, store) = make_store();
+    let central_root = tempfile::tempdir().unwrap();
+    set_central_path(&store, central_root.path());
+
+    let repo_dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(
+        repo_dir
+            .path()
+            .join("awesome_agent_skills/technical-writer"),
+    )
+    .unwrap();
+    fs::write(
+        repo_dir
+            .path()
+            .join("awesome_agent_skills/technical-writer/SKILL.md"),
+        "---\nname: technical-writer\n---\n",
+    )
+    .unwrap();
+    let repo = init_git_repo(repo_dir.path());
+    commit_all(&repo, "add container skill");
+
+    let err = match super::install_git_skill_from_selection(
+        app.handle(),
+        &store,
+        repo_dir.path().to_string_lossy().as_ref(),
+        "awesome_agent_skills",
+        None,
+    ) {
+        Ok(_) => panic!("expected invalid skill path"),
+        Err(e) => e,
+    };
+    assert!(format!("{:#}", err).contains("SKILL_INVALID|missing_skill_md"));
+}
+
+#[test]
+fn install_git_skill_selection_accepts_specific_child_under_container() {
+    let app = tauri::test::mock_app();
+    let (_dir, store) = make_store();
+    let central_root = tempfile::tempdir().unwrap();
+    set_central_path(&store, central_root.path());
+
+    let repo_dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(
+        repo_dir
+            .path()
+            .join("awesome_agent_skills/technical-writer"),
+    )
+    .unwrap();
+    fs::write(
+        repo_dir
+            .path()
+            .join("awesome_agent_skills/technical-writer/SKILL.md"),
+        "---\nname: technical-writer\ndescription: docs\n---\n",
+    )
+    .unwrap();
+    let repo = init_git_repo(repo_dir.path());
+    commit_all(&repo, "add container skill");
+
+    let res = super::install_git_skill_from_selection(
+        app.handle(),
+        &store,
+        repo_dir.path().to_string_lossy().as_ref(),
+        "awesome_agent_skills/technical-writer",
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(res.name, "technical-writer");
+    assert!(res.central_path.join("SKILL.md").exists());
 }
 
 /// Issue #28: when user explicitly provides a name, SKILL.md should NOT override it.
@@ -850,4 +963,284 @@ fn existing_shallow_repos_still_work() {
     // count_skills_in_repo should still work
     let count = super::count_skills_in_repo(repo_dir.path());
     assert_eq!(count, 2);
+}
+
+#[test]
+fn list_git_skills_finds_root_skill_container_layout() {
+    let app = tauri::test::mock_app();
+    let (_dir, store) = make_store();
+    let central_root = tempfile::tempdir().unwrap();
+    set_central_path(&store, central_root.path());
+
+    let repo_dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(repo_dir.path().join("custom-agent-skills/technical-writer")).unwrap();
+    fs::write(
+        repo_dir
+            .path()
+            .join("custom-agent-skills/technical-writer/SKILL.md"),
+        "---\nname: technical-writer\ndescription: docs\n---\n",
+    )
+    .unwrap();
+    let repo = init_git_repo(repo_dir.path());
+    commit_all(&repo, "add container skill");
+
+    let candidates = super::list_git_skills(
+        app.handle(),
+        &store,
+        repo_dir.path().to_string_lossy().as_ref(),
+    )
+    .unwrap();
+
+    let candidate = candidates
+        .iter()
+        .find(|c| c.name == "technical-writer")
+        .expect("technical-writer should be discovered");
+    assert_eq!(candidate.subpath, "custom-agent-skills/technical-writer");
+    assert_eq!(candidate.description.as_deref(), Some("docs"));
+}
+
+#[test]
+fn collect_skill_dirs_finds_skills_under_explicit_container() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("technical-writer")).unwrap();
+    fs::create_dir_all(dir.path().join("not-a-skill")).unwrap();
+    fs::write(
+        dir.path().join("technical-writer/SKILL.md"),
+        "---\nname: technical-writer\n---\n",
+    )
+    .unwrap();
+
+    let dirs = super::collect_skill_dirs(dir.path());
+    let rels: Vec<String> = dirs
+        .iter()
+        .map(|p| {
+            p.strip_prefix(dir.path())
+                .unwrap_or(p)
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(rels, vec!["technical-writer".to_string()]);
+}
+
+#[test]
+fn collect_skill_dirs_finds_multiple_skills_under_explicit_container() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("technical-writer")).unwrap();
+    fs::create_dir_all(dir.path().join("python-expert")).unwrap();
+    fs::create_dir_all(dir.path().join("not-a-skill")).unwrap();
+    fs::write(
+        dir.path().join("technical-writer/SKILL.md"),
+        "---\nname: technical-writer\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("python-expert/SKILL.md"),
+        "---\nname: python-expert\n---\n",
+    )
+    .unwrap();
+
+    let dirs = super::collect_skill_dirs(dir.path());
+    let rels: Vec<String> = dirs
+        .iter()
+        .map(|p| {
+            p.strip_prefix(dir.path())
+                .unwrap_or(p)
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(
+        rels,
+        vec!["python-expert".to_string(), "technical-writer".to_string()]
+    );
+}
+
+#[test]
+fn collect_skill_dirs_scans_named_skill_containers_but_not_generic_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("agent-pack/hidden-skill")).unwrap();
+    fs::create_dir_all(dir.path().join("agent-skills/visible-skill")).unwrap();
+    fs::write(
+        dir.path().join("agent-pack/hidden-skill/SKILL.md"),
+        "---\nname: hidden\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("agent-skills/visible-skill/SKILL.md"),
+        "---\nname: visible\n---\n",
+    )
+    .unwrap();
+
+    let dirs = super::collect_skill_dirs(dir.path());
+    let rels: Vec<String> = dirs
+        .iter()
+        .map(|p| {
+            p.strip_prefix(dir.path())
+                .unwrap_or(p)
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(
+        rels,
+        vec![
+            "agent-pack/hidden-skill".to_string(),
+            "agent-skills/visible-skill".to_string()
+        ]
+    );
+}
+
+#[test]
+fn collect_skill_dirs_deduplicates_known_root_containers() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("skills/technical-writer")).unwrap();
+    fs::write(
+        dir.path().join("skills/technical-writer/SKILL.md"),
+        "---\nname: technical-writer\n---\n",
+    )
+    .unwrap();
+
+    let dirs = super::collect_skill_dirs(dir.path());
+    assert_eq!(dirs.len(), 1);
+    assert!(dirs[0].ends_with("skills/technical-writer"));
+}
+
+/// After `update_managed_skill_from_source`, copy-mode project assignments
+/// (including Cursor) must receive updated content. Symlink-mode assignments
+/// should be skipped (they auto-update via the central path).
+#[test]
+fn update_resyncs_project_copy_assignments() {
+    let app = tauri::test::mock_app();
+    let (_dir, store) = make_store();
+
+    let central_root = tempfile::tempdir().unwrap();
+    set_central_path(&store, central_root.path());
+
+    // 1. Create a local skill source with a.txt = "v1"
+    let source = tempfile::tempdir().unwrap();
+    fs::write(
+        source.path().join("SKILL.md"),
+        b"---\nname: proj-test\n---\n",
+    )
+    .unwrap();
+    fs::write(source.path().join("a.txt"), b"v1").unwrap();
+
+    let res = super::install_local_skill(
+        app.handle(),
+        &store,
+        source.path(),
+        Some("proj-test".to_string()),
+    )
+    .unwrap();
+
+    // 2. Register a project (using a tempdir as the project root)
+    let project_root = tempfile::tempdir().unwrap();
+    let now = 1000i64;
+    let project = ProjectRecord {
+        id: "p1".to_string(),
+        path: project_root.path().to_string_lossy().to_string(),
+        created_at: now,
+        updated_at: now,
+    };
+    store.register_project(&project).unwrap();
+
+    // 3. Create the tool skills directory structure under the project
+    // Cursor: .cursor/skills/proj-test/
+    let cursor_target = project_root
+        .path()
+        .join(".cursor")
+        .join("skills")
+        .join("proj-test");
+    fs::create_dir_all(&cursor_target).unwrap();
+    fs::write(cursor_target.join("a.txt"), b"v1").unwrap();
+
+    // Claude Code: .claude/skills/proj-test/
+    let claude_target = project_root
+        .path()
+        .join(".claude")
+        .join("skills")
+        .join("proj-test");
+    fs::create_dir_all(&claude_target).unwrap();
+    fs::write(claude_target.join("a.txt"), b"v1").unwrap();
+
+    // 4. Insert a copy-mode assignment for cursor
+    let copy_assignment = ProjectSkillAssignmentRecord {
+        id: "pa-copy".to_string(),
+        project_id: "p1".to_string(),
+        skill_id: res.skill_id.clone(),
+        skill_name: "proj-test".to_string(),
+        tool: "cursor".to_string(),
+        mode: "copy".to_string(),
+        status: "synced".to_string(),
+        last_error: None,
+        synced_at: Some(now),
+        content_hash: None,
+        created_at: now,
+    };
+    store
+        .add_project_skill_assignment(&copy_assignment)
+        .unwrap();
+
+    // 5. Insert a symlink-mode assignment for claude_code
+    let symlink_assignment = ProjectSkillAssignmentRecord {
+        id: "pa-sym".to_string(),
+        project_id: "p1".to_string(),
+        skill_id: res.skill_id.clone(),
+        skill_name: "proj-test".to_string(),
+        tool: "claude_code".to_string(),
+        mode: "symlink".to_string(),
+        status: "synced".to_string(),
+        last_error: None,
+        synced_at: Some(now),
+        content_hash: None,
+        created_at: now,
+    };
+    store
+        .add_project_skill_assignment(&symlink_assignment)
+        .unwrap();
+
+    // 6. Modify source to "v2" and update the skill
+    fs::write(source.path().join("a.txt"), b"v2").unwrap();
+    let up = super::update_managed_skill_from_source(app.handle(), &store, &res.skill_id).unwrap();
+
+    // 7. Assert: copy-mode (cursor) project target has updated content
+    assert_eq!(
+        fs::read(cursor_target.join("a.txt")).unwrap(),
+        b"v2",
+        "copy-mode project target should have updated content"
+    );
+
+    // 8. Assert: updated_targets includes a project: prefixed entry for cursor
+    assert!(
+        up.updated_targets
+            .iter()
+            .any(|t| t.starts_with("project:") && t.contains("cursor")),
+        "updated_targets should include project:p1:cursor, got: {:?}",
+        up.updated_targets
+    );
+
+    // 9. Assert: symlink assignment is NOT in updated_targets
+    assert!(
+        !up.updated_targets
+            .iter()
+            .any(|t| t.starts_with("project:") && t.contains("claude_code")),
+        "symlink assignment should not be in updated_targets, got: {:?}",
+        up.updated_targets
+    );
+
+    // 10. Assert: DB assignment record has updated content_hash and status "synced"
+    let assignments = store
+        .list_project_skill_assignments_by_skill(&res.skill_id)
+        .unwrap();
+    let copy_rec = assignments.iter().find(|a| a.id == "pa-copy").unwrap();
+    assert_eq!(copy_rec.status, "synced");
+    assert!(
+        copy_rec.content_hash.is_some(),
+        "content_hash should be set after re-sync"
+    );
+    assert!(
+        copy_rec.synced_at.unwrap() > now,
+        "synced_at should be updated"
+    );
 }
