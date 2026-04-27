@@ -70,6 +70,19 @@ pub fn run() {
                         log::info!("cleaned up {} git cache dirs", removed);
                     }
                 }
+
+                // Wipe explore-cache on startup (session-scoped)
+                if let Ok(central) =
+                    core::central_repo::resolve_central_repo_path(&handle, &store_for_cleanup)
+                {
+                    let explore_cache = central.join(".explore-cache");
+                    if explore_cache.exists() {
+                        match std::fs::remove_dir_all(&explore_cache) {
+                            Ok(()) => log::info!("cleaned up explore-cache"),
+                            Err(e) => log::warn!("failed to clean explore-cache: {}", e),
+                        }
+                    }
+                }
             });
 
             Ok(())
@@ -109,6 +122,7 @@ pub fn run() {
             commands::search_skills_online,
             commands::list_skill_files,
             commands::read_skill_file,
+            commands::clone_explore_skill,
             commands::cancel_current_operation,
             commands::projects::register_project,
             commands::projects::remove_project,

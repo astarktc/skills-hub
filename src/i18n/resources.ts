@@ -137,6 +137,7 @@ export const resources = {
         "Featured: top 300 from curated GitHub repos · Search: more results via skills.sh · Type 2+ characters to search",
       exploreFeaturedTitle: "Featured",
       exploreOnlineTitle: "Online Results",
+      exploreView: "View",
       searchLoading: "Searching skills.sh...",
       searchEmpty: "No additional results found.",
       searchError: "Online search failed.",
@@ -206,6 +207,7 @@ export const resources = {
           "Target folder already exists: {{path}}.\nFor safety it was not overwritten.\n" +
           "You can uncheck this tool or clean the folder first, then retry.",
         importFailedTitle: "Import failed: {{name}}",
+        updateFailedTitle: "Update failed: {{name}}",
         unsyncedTitle: "Not synced: {{name}}",
         moreCount: " (+{{count}} more)",
         skillNotFoundInRepo:
@@ -220,6 +222,7 @@ export const resources = {
         creatingGitSkill: "Creating Git skill...",
         removing: "Removing {{name}} ...",
         updating: "Updating {{name}} ...",
+        refreshStep: "Updating ({{index}}/{{total}}) {{name}} ...",
         unsyncing: "Unsync {{name}} -> {{tool}} ...",
       },
       status: {
@@ -229,6 +232,7 @@ export const resources = {
         selectedSkillsInstalled: "Selected skills installed.",
         skillRemoved: "Skill removed.",
         syncCompleted: "Sync completed.",
+        refreshCompleted: "All skills refreshed.",
         syncDisabled: "Sync disabled.",
         syncEnabled: "Sync enabled.",
         updated: "{{name}} updated.",
@@ -524,6 +528,7 @@ export const resources = {
         "精选推荐：来自精选 GitHub 仓库的 Top 300 · 在线搜索：更多结果来自 skills.sh · 输入 2 个字符开始搜索",
       exploreFeaturedTitle: "精选推荐",
       exploreOnlineTitle: "在线搜索",
+      exploreView: "View",
       searchLoading: "正在搜索 skills.sh...",
       searchEmpty: "未找到更多结果。",
       searchError: "在线搜索失败。",
@@ -584,6 +589,7 @@ export const resources = {
         syncTargetExistsMessage:
           "目标目录已存在同名 Skill：{{path}}。为安全起见未覆盖。\n你可以：取消勾选该工具，或先手动清理该目录后重试。",
         importFailedTitle: "导入失败：{{name}}",
+        updateFailedTitle: "更新失败：{{name}}",
         unsyncedTitle: "未同步：{{name}}",
         moreCount: "（另有{{count}}个）",
       },
@@ -596,6 +602,7 @@ export const resources = {
         creatingGitSkill: "创建 Git 技能...",
         removing: "移除 {{name}} ...",
         updating: "更新 {{name}} ...",
+        refreshStep: "更新 ({{index}}/{{total}}) {{name}} ...",
         unsyncing: "取消生效：{{name}} -> {{tool}} ...",
       },
       status: {
@@ -605,6 +612,7 @@ export const resources = {
         selectedSkillsInstalled: "选中技能安装完成。",
         skillRemoved: "已删除该技能。",
         syncCompleted: "同步完成。",
+        refreshCompleted: "所有 Skills 已刷新。",
         syncDisabled: "已取消同步。",
         syncEnabled: "已同步到工具。",
         updated: "{{name}} 已更新。",

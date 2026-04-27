@@ -17,8 +17,8 @@ use crate::core::central_repo::{ensure_central_repo, resolve_central_repo_path};
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::github_search::{search_github_repos, RepoSummary};
 use crate::core::installer::{
-    install_git_skill, install_git_skill_from_selection, install_local_skill,
-    install_local_skill_from_selection, list_git_skills, list_local_skills,
+    clone_for_explore_preview, install_git_skill, install_git_skill_from_selection,
+    install_local_skill, install_local_skill_from_selection, list_git_skills, list_local_skills,
     update_managed_skill_from_source, GitSkillCandidate, InstallResult, LocalSkillCandidate,
 };
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
@@ -1080,6 +1080,26 @@ pub async fn read_skill_file(central_path: String, file_path: String) -> Result<
     .await
     .map_err(|err| err.to_string())?
     .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn clone_explore_skill(
+    sourceUrl: String,
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    cancel: State<'_, Arc<CancelToken>>,
+) -> Result<String, String> {
+    let store = store.inner().clone();
+    let cancel = cancel.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        cancel.reset();
+        let path = clone_for_explore_preview(&app, &store, &sourceUrl, Some(&cancel))
+            .map_err(format_anyhow_error)?;
+        Ok(path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("task join error: {}", e))?
 }
 
 #[tauri::command]
