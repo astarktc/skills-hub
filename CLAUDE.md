@@ -27,23 +27,27 @@ Always run `npm run check` before committing to ensure all checks pass.
 ## Architecture - read .planning/codebase/ARCHITECTURE.md
 
 ### Frontend ↔ Backend Communication
+
 - Uses Tauri IPC (`invoke`) to call backend commands
 - Frontend call pattern: `const result = await invoke('command_name', { param })`
 - Backend commands are defined in `commands/mod.rs` and registered in `lib.rs` via `generate_handler!`
 - New commands must be registered in both places
 
 ### Frontend State Management
+
 - **No state management library** — all state is centralized in `App.tsx` via `useState`
 - Passed to child components via props drilling (modals receive many props)
 - Data refresh pattern: call `invoke('get_managed_skills')` after operations to re-fetch the list
 
 ### Backend Layering
+
 - `commands/` layer: Tauri command definitions, DTO conversions, error formatting (no business logic)
 - `core/` layer: Pure business logic, independently testable
 - Async commands use `tauri::async_runtime::spawn_blocking` to wrap synchronous operations
 - Shared state injected via `app.manage(store)` + `State<'_, SkillStore>`
 
 ### Error Handling
+
 - Backend uses `anyhow::Result<T>`, converted to string via `format_anyhow_error()` for the frontend
 - Special error prefixes for frontend identification: `MULTI_SKILLS|`, `TARGET_EXISTS|`, `TOOL_NOT_INSTALLED|`
 - Frontend catches with try-catch and displays errors via sonner toast
@@ -59,6 +63,27 @@ Always run `npm run check` before committing to ensure all checks pass.
 3. **Verify after changes**: Always run `npm run check` after implementation to ensure lint, build, and all Rust checks pass. Fix any errors before presenting the result.
 4. **Keep changes minimal**: Only modify what is necessary for the requirement. Do not refactor, add comments, or "improve" unrelated code.
 
+## Worktree Safety
+
+Parallel worktrees that branch from a stale base can silently revert changes merged to main after the branch point. This caused a major incident in v1.1.4 where 14 commits were lost.
+
+**Before merging a worktree branch back to main:**
+
+1. Rebase the worktree branch onto current main first: `git rebase main` from the worktree branch
+2. After rebase, review the full diff against main: `git diff main...HEAD` — scan for unexpected deletions in files the worktree didn't intentionally modify
+3. Pay special attention to shared files modified by multiple worktrees: `tool_adapters/mod.rs`, `installer.rs`, `App.tsx`, `commands/mod.rs`, `project_sync.rs`
+
+**After merging a worktree branch:**
+
+1. Run `git diff <pre-merge-commit>..HEAD -- src-tauri/src src/` and verify no unintended reverts
+2. Run `npm run check` immediately — a passing build does not guarantee feature completeness, but a failing build catches structural damage early
+3. Spot-check key functions that other worktrees recently added (grep for function names from recent commits)
+
+**When resolving merge conflicts in worktree merges:**
+
+- For files the worktree did NOT intentionally modify, prefer the main branch version
+- Never accept the worktree version wholesale for a file with conflicts unless you verify every hunk
+
 ## Testing - read .planning/codebase/TESTING.md
 
 ## Important Notes
@@ -72,6 +97,7 @@ Always run `npm run check` before committing to ensure all checks pass.
 - Tool adapter list is in `tool_adapters/mod.rs` — adding a new AI tool requires both a `ToolId` enum variant and an adapter instance
 
 <!-- GSD:project-start source:PROJECT.md -->
+
 ## Project
 
 **Skills Hub — Per-Project Skill Distribution**
@@ -91,9 +117,11 @@ Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI 
 <!-- GSD:project-end -->
 
 <!-- GSD:stack-start source:codebase/STACK.md -->
+
 ## Technology Stack
 
 ## High-Level Summary
+
 - **Frontend**: React 19 + TypeScript 5.9 (strict) + Vite 7 + Tailwind CSS 4
 - **Backend**: Rust (Edition 2021, MSRV 1.77.2) + Tauri 2
 - **Database**: SQLite (rusqlite, bundled)
@@ -102,14 +130,18 @@ Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI 
 - **i18n**: i18next (English / Chinese bilingual)
 - **Notifications**: sonner (toast)
 - **Icons**: lucide-react
+
 ## Languages
+
 - TypeScript 5.9.x - React desktop UI in `src/**/*.ts` and `src/**/*.tsx`, configured by `package.json`, `tsconfig.json`, `tsconfig.app.json`, and `vite.config.ts`
 - Rust 2021 edition (MSRV 1.77.2) - Tauri backend, native app shell, filesystem/database/network logic in `src-tauri/src/**/*.rs`, configured by `src-tauri/Cargo.toml`
 - CSS - Global styling and theme variables in `src/App.css` and `src/index.css`
 - JSON - App/package configuration in `package.json`, `src-tauri/tauri.conf.json`, `featured-skills.json`, and GitHub workflow files under `.github/workflows/`
 - JavaScript (Node.js scripts) - Release/version automation in `scripts/*.mjs` referenced by `package.json` and `.github/workflows/*.yml`
 - YAML - CI/CD automation in `.github/workflows/ci.yml`, `.github/workflows/release.yml`, and `.github/workflows/update-featured-skills.yml`
+
 ## Runtime
+
 - Node.js 20 in CI and release workflows, declared in `.github/workflows/ci.yml` and `.github/workflows/release.yml`
 - Node.js 18+ for local development, with 20+ recommended in `README.md`
 - Rust stable toolchain with minimum supported version 1.77.2 in `src-tauri/Cargo.toml`
@@ -118,7 +150,9 @@ Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI 
 - Lockfile: present via `package-lock.json`
 - Cargo - Rust dependency manager for `src-tauri/Cargo.toml`
 - Lockfile: present via `src-tauri/Cargo.lock`
+
 ## Frameworks
+
 - React 19.2.x - UI framework for the desktop frontend in `src/App.tsx`, `src/components/**/*.tsx`, and `src/pages/**/*.tsx`
 - Tauri 2.9.x - Desktop application framework and IPC bridge in `src-tauri/src/lib.rs`, `src-tauri/src/commands/mod.rs`, and `src-tauri/tauri.conf.json`
 - Vite 7.3.x - Frontend dev server and production bundler in `vite.config.ts` and `package.json`
@@ -134,7 +168,9 @@ Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI 
 - ESLint 9.39.x with flat config - frontend linting in `eslint.config.js`
 - TypeScript project references - split app/node TS configs via `tsconfig.json`, `tsconfig.app.json`, and `tsconfig.node.json`
 - `tauri-build` 2.5.3 - Rust-side build integration in `src-tauri/Cargo.toml` and `src-tauri/build.rs`
+
 ## Key Dependencies
+
 - `@tauri-apps/api` 2.9.1 - frontend access to Tauri APIs from files such as `src/App.tsx` and `src/components/skills/SettingsPage.tsx`
 - `@tauri-apps/plugin-dialog` 2.5.3 - native directory/file pickers used from frontend flows and registered in `src-tauri/src/lib.rs`
 - `@tauri-apps/plugin-opener` 2.5.3 - shell/open integration registered in `src-tauri/src/lib.rs`
@@ -152,7 +188,9 @@ Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI 
 - `dirs` 5.0 - home/app-data path resolution in `src-tauri/src/core/central_repo.rs`, `src-tauri/src/core/tool_adapters/mod.rs`, and `src-tauri/src/commands/mod.rs`
 - `junction` 1.1 - Windows junction fallback used by sync logic in `src-tauri/src/core/sync_engine.rs`
 - `clsx` 2.1.1 + `tailwind-merge` 3.4.0 - class composition utilities available to the frontend from `package.json`
+
 ## Configuration
+
 - Runtime configuration is primarily app-internal, persisted in SQLite settings via `src-tauri/src/core/skill_store.rs` rather than loaded from dotenv files
 - `.env.example` exists at `/home/alexwsl/skills-hub/.env.example`, but no dotenv loader is detected in `package.json`, `vite.config.ts`, or `src-tauri/src/**/*.rs`
 - GitHub API authentication is optional and stored through `get_github_token` / `set_github_token` in `src-tauri/src/commands/mod.rs`, with the token consumed by `src-tauri/src/core/github_search.rs`, `src-tauri/src/core/github_download.rs`, and `src-tauri/src/core/installer.rs`
@@ -163,7 +201,9 @@ Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI 
 - Tauri/native build: `src-tauri/Cargo.toml`, `src-tauri/build.rs`, `src-tauri/tauri.conf.json`
 - CI verification: `.github/workflows/ci.yml`
 - Release packaging and updater artifact assembly: `.github/workflows/release.yml`
+
 ## Platform Requirements
+
 - Node.js 18+ with npm, documented in `README.md`
 - Rust stable toolchain, with MSRV 1.77.2 from `src-tauri/Cargo.toml`
 - Tauri OS dependencies, documented in `README.md`; Linux CI installs GTK/WebKit-related packages in `.github/workflows/ci.yml`
@@ -174,10 +214,13 @@ Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI 
 <!-- GSD:stack-end -->
 
 <!-- GSD:conventions-start source:CONVENTIONS.md -->
+
 ## Conventions
 
 ## High-Level Summary
+
 ### TypeScript
+
 - Strict mode: `noUnusedLocals` and `noUnusedParameters` are enabled — unused variables/params cause compile errors
 - Component files: PascalCase (`SkillCard.tsx`)
 - Props types: `ComponentNameProps` (`SkillCardProps`)
@@ -187,18 +230,24 @@ Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI 
 - All user-visible text must use i18n (`t('key')`), translation keys defined in `src/i18n/resources.ts`
 - When adding new text, always provide both English and Chinese translations
 - DTO types are defined in `src/components/skills/types.ts` and must stay in sync with the Rust DTOs in `commands/mod.rs`
+
 ### Rust
+
 - Functions/methods: snake_case
 - Constants: SCREAMING_SNAKE_CASE
 - Tauri command parameters use camelCase (to match frontend JS calling convention)
 - Use `anyhow::Context` to add context to errors
 - New core modules must be exported in `core/mod.rs`
 - Tests use `tempfile` crate for temp directories and `mockito` for HTTP mocking
+
 ### Styling
+
 - Component styles go in `src/App.css` (not CSS Modules), using semantic CSS class names
 - Theming via CSS variables + `[data-theme="dark"]` selector, variables defined in `src/index.css`
 - Tailwind utility classes and custom CSS classes can be mixed
+
 ## Naming Patterns
+
 - React component files use PascalCase filenames in `src/components/skills/` such as `src/components/skills/SkillCard.tsx`, `src/components/skills/SettingsPage.tsx`, and `src/components/skills/modals/AddSkillModal.tsx`.
 - Frontend non-component support files use lowercase names when they represent infrastructure or setup, such as `src/main.tsx`, `src/i18n/index.ts`, and `src/i18n/resources.ts`.
 - Rust production modules use snake_case filenames such as `src-tauri/src/core/skill_store.rs`, `src-tauri/src/core/github_search.rs`, and `src-tauri/src/commands/mod.rs`.
@@ -212,7 +261,9 @@ Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI 
 - Type aliases and prop types use PascalCase with descriptive suffixes, such as `SkillCardProps` in `src/components/skills/SkillCard.tsx`, `SettingsPageProps` in `src/components/skills/SettingsPage.tsx`, and DTO aliases in `src/components/skills/types.ts`.
 - Rust structs use PascalCase and DTO suffixes for IPC types, for example `ToolInfoDto`, `ToolStatusDto`, and `InstallResultDto` in `src-tauri/src/commands/mod.rs`.
 - Shared frontend DTOs are centralized in `src/components/skills/types.ts` and mirror backend command DTOs from `src-tauri/src/commands/mod.rs`; keep names and fields aligned across both files.
+
 ## Code Style
+
 - Frontend code uses a Prettier-like style with single quotes, no semicolons, and trailing commas in multiline structures, as shown in `src/App.tsx`, `src/components/skills/SkillCard.tsx`, and `src/i18n/index.ts`.
 - React code prefers destructured props with a typed props object followed by an arrow function definition, for example in `src/components/skills/modals/AddSkillModal.tsx` and `src/components/skills/SettingsPage.tsx`.
 - JSX keeps one prop per line once elements become non-trivial, especially in modal and list components under `src/components/skills/`.
@@ -222,29 +273,39 @@ Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI 
 - The frontend extends `@eslint/js`, `typescript-eslint`, `eslint-plugin-react-hooks`, and `eslint-plugin-react-refresh` via `eslint.config.js`.
 - TypeScript strictness is enforced in `tsconfig.app.json` and `tsconfig.node.json` with `strict`, `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`, and `noUncheckedSideEffectImports` enabled.
 - Use TypeScript’s strict null handling and explicit fallback expressions such as `?? ''`, `?? null`, and early returns, as seen in `src/App.tsx` and `src/components/skills/SkillDetailView.tsx`.
+
 ## Import Organization
+
 - Not detected. Frontend imports use relative paths such as `./components/skills/ExplorePage` in `src/App.tsx` and `../types` in `src/components/skills/modals/AddSkillModal.tsx`.
 - Rust modules use `crate::core::...` absolute crate paths in backend code such as `src-tauri/src/commands/mod.rs`.
+
 ## Error Handling
+
 - Frontend async actions generally use `try/catch` with `err instanceof Error ? err.message : String(err)` normalization, as seen in `src/App.tsx` and `src/components/skills/SettingsPage.tsx`.
 - Frontend converts backend wire-format errors into user-facing translation keys in `formatErrorMessage` inside `src/App.tsx`; preserve this pattern when adding new backend error prefixes.
 - Toast notifications via `sonner` are the standard user-facing error and success channel in components like `src/App.tsx`, `src/components/skills/SkillCard.tsx`, and `src/components/skills/SkillDetailView.tsx`.
 - Backend command handlers return `Result<T, String>` at the Tauri boundary and map internal `anyhow::Error` values through `format_anyhow_error` in `src-tauri/src/commands/mod.rs`.
 - Backend business logic adds context with `anyhow::Context`, for example in `expand_home_path` and `ensure_schema` code paths in `src-tauri/src/commands/mod.rs` and `src-tauri/src/core/skill_store.rs`.
 - Long-running synchronous backend work is wrapped in `tauri::async_runtime::spawn_blocking` in `src-tauri/src/commands/mod.rs`; use this when exposing blocking filesystem, git, or SQLite work to the frontend.
+
 ## Logging
+
 - Frontend uses `sonner` toasts for user-visible operational feedback rather than console logging, with examples in `src/App.tsx` and `src/components/skills/SkillCard.tsx`.
 - Backend uses the `log` crate with `tauri-plugin-log` initialization in `src-tauri/src/lib.rs`.
 - Backend setup and cleanup emit `log::info!` for best-effort maintenance events in `src-tauri/src/lib.rs`.
 - Direct `console.log` usage is not detected in the frontend source under `src/`; follow the existing pattern and surface UI feedback through state or toast instead.
 - Silent failures are occasionally intentional for non-critical browser or storage operations, such as `catch {}` in `src/components/skills/SkillCard.tsx`, `src/components/skills/SettingsPage.tsx`, and `src/i18n/index.ts`.
+
 ## Comments
+
 - Comments are sparse and used to explain non-obvious logic boundaries, not routine code. Examples include section comments in `src/components/skills/SkillDetailView.tsx` and lifecycle/setup comments in `src-tauri/src/lib.rs`.
 - Use comments for behavior constraints, safety assumptions, and algorithm notes, such as the cleanup safety bullets in `src-tauri/src/lib.rs` and migration notes in `src-tauri/src/core/skill_store.rs`.
 - Avoid redundant comments on self-explanatory JSX or straightforward assignments; most component files omit them.
 - Not generally used in TypeScript component files under `src/components/skills/`.
 - Rust doc comments are minimal but present for selected internals, for example `CancelToken` in `src-tauri/src/core/cancel_token.rs`.
+
 ## Function Design
+
 - Presentational components are kept moderate and focused, often one component per file, such as `src/components/skills/SkillCard.tsx`, `src/components/skills/ExplorePage.tsx`, and modal files under `src/components/skills/modals/`.
 - `src/App.tsx` is the notable orchestration exception: it centralizes application state, view switching, and command orchestration. New global stateful workflows currently belong there unless the surrounding architecture is deliberately changed.
 - Rust command and core modules favor many small functions over monolithic logic, with helper functions and DTO mappers split inside `src-tauri/src/commands/mod.rs` and `src-tauri/src/core/*.rs`.
@@ -254,14 +315,18 @@ Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI 
 - Frontend components use early null returns for conditional mounting, for example `if (!open) return null` in `src/components/skills/modals/DeleteModal.tsx`, `src/components/skills/modals/AddSkillModal.tsx`, and `src/components/skills/LoadingOverlay.tsx`.
 - Frontend helpers often return normalized primitives or nullable objects, such as `getGithubInfo` in `src/App.tsx` and `isInstalled` in `src/components/skills/ExplorePage.tsx`.
 - Backend functions return `Result<T>` internally and serialize DTO structs at the command boundary in `src-tauri/src/commands/mod.rs`.
+
 ## Module Design
+
 - Frontend component files usually define a single component and default-export `memo(Component)` for presentational modules, as shown in `src/components/skills/SkillCard.tsx`, `src/components/skills/ExplorePage.tsx`, `src/components/skills/SettingsPage.tsx`, and modal components under `src/components/skills/modals/`.
 - Frontend shared DTOs use named `export type` declarations from `src/components/skills/types.ts`.
 - Backend command aggregation uses a single module file `src-tauri/src/commands/mod.rs` with public command functions and DTO structs.
 - Backend core modules expose focused APIs through per-file modules under `src-tauri/src/core/` and are re-exported via `src-tauri/src/core/mod.rs`.
 - Not used on the frontend; components are imported directly from their file paths in `src/App.tsx`.
 - Rust module indexing is handled through `mod.rs` files such as `src-tauri/src/core/mod.rs` and `src-tauri/src/commands/mod.rs`.
+
 ## Prescriptive Patterns to Follow
+
 - Put new user-visible strings in `src/i18n/resources.ts` and consume them through `t('key')`; do not inline English text in JSX.
 - Keep new frontend DTO fields synchronized between `src/components/skills/types.ts` and `src-tauri/src/commands/mod.rs`.
 - Wrap new presentational React components in `memo()` when they primarily render props, matching `src/components/skills/SkillCard.tsx` and `src/components/skills/ExplorePage.tsx`.
@@ -271,13 +336,17 @@ Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI 
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->
+
 ## Architecture
 
 ## Pattern Overview
+
 - Use `src/App.tsx` as the single frontend orchestration layer for view state, modal state, tool status, onboarding state, settings state, and async action flows.
 - Use Tauri IPC as the only frontend/backend boundary: React calls `invoke` through `invokeTauri()` in `src/App.tsx`, backend commands live in `src-tauri/src/commands/mod.rs`, and command registration lives in `src-tauri/src/lib.rs`.
 - Keep business logic out of Tauri command functions: the command layer in `src-tauri/src/commands/mod.rs` converts inputs/outputs and delegates to pure core modules under `src-tauri/src/core/`.
+
 ## Layers
+
 - Purpose: Start the React app and load global styling and i18n.
 - Location: `src/main.tsx`, `src/index.css`, `src/i18n/index.ts`
 - Contains: React root creation, Tailwind/global CSS entry, i18next initialization.
@@ -318,10 +387,14 @@ Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI 
 - Contains: SQLite schema creation, incremental migrations, CRUD for `skills`, `skill_targets`, and `settings`, legacy DB migration.
 - Depends on: `rusqlite`, app data directory resolution via Tauri, filesystem.
 - Used by: Nearly every backend workflow, especially `src-tauri/src/lib.rs`, `src-tauri/src/commands/mod.rs`, `src-tauri/src/core/installer.rs`, `src-tauri/src/core/onboarding.rs`, `src-tauri/src/core/featured_skills.rs`, and cache configuration helpers.
+
 ## Data Flow
+
 - Use local React hooks in `src/App.tsx` as the only state container; there is no Redux, Zustand, Context store, or router-driven state model in active use.
 - Persist durable settings in two places: browser `localStorage` for UI-only settings like theme/language behavior in `src/App.tsx`, and SQLite settings via backend commands for app-wide configuration such as central repo path, git cache values, and GitHub token in `src-tauri/src/core/skill_store.rs`.
+
 ## Key Abstractions
+
 - Purpose: Represent one installed skill in the app-managed central repository.
 - Examples: `src-tauri/src/core/skill_store.rs`, `src-tauri/src/commands/mod.rs`, `src/components/skills/types.ts`
 - Pattern: Persist backend canonical records as `SkillRecord`, expose UI-safe DTOs as `ManagedSkillDto`, mirror them in TypeScript as `ManagedSkill`.
@@ -340,7 +413,9 @@ Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI 
 - Purpose: Allow long-running git/download operations to be canceled from the UI.
 - Examples: `src-tauri/src/core/cancel_token.rs`, `src-tauri/src/lib.rs`, `src-tauri/src/commands/mod.rs`, `src/App.tsx`
 - Pattern: Register one shared `Arc<CancelToken>` in Tauri state, reset it before install operations, and expose `cancel_current_operation` for the loading overlay cancel button.
+
 ## Entry Points
+
 - Location: `src-tauri/src/main.rs`
 - Triggers: Native app startup.
 - Responsibilities: Call `app_lib::run()` and keep the binary entry minimal.
@@ -356,36 +431,47 @@ Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI 
 - Location: `src/components/Layout.tsx`, `src/pages/Dashboard.tsx`
 - Triggers: Not wired into `src/main.tsx` or `src/App.tsx`.
 - Responsibilities: Provide an alternate router-style shell with sidebar navigation and a placeholder dashboard. Treat these files as dormant until they are explicitly connected.
+
 ## Error Handling
+
 - Use `tauri::async_runtime::spawn_blocking` in `src-tauri/src/commands/mod.rs` for filesystem, database, and network work so commands can remain async without rewriting the core layer.
 - Use prefixed errors such as `MULTI_SKILLS|`, `TARGET_EXISTS|`, `TOOL_NOT_INSTALLED|`, `TOOL_NOT_WRITABLE|`, and `SKILL_INVALID|...` in `src-tauri/src/commands/mod.rs` and `src-tauri/src/core/installer.rs` to drive frontend-specific flows.
 - Use `format_anyhow_error()` in `src-tauri/src/commands/mod.rs` to preserve error chains and rewrite common GitHub/network failures into clearer messages.
 - Use toast-based display in `src/App.tsx` with `formatErrorMessage()` for end-user translation and suppression of canceled operations.
+
 ## Cross-Cutting Concerns
+
 <!-- GSD:architecture-end -->
 
 <!-- GSD:skills-start source:skills/ -->
+
 ## Project Skills
 
 No project skills found. Add skills to any of: `.claude/skills/`, `.agents/skills/`, `.cursor/skills/`, or `.github/skills/` with a `SKILL.md` index file.
+
 <!-- GSD:skills-end -->
 
 <!-- GSD:workflow-start source:GSD defaults -->
+
 ## GSD Workflow Enforcement
 
 Before using Edit, Write, or other file-changing tools, start work through a GSD command so planning artifacts and execution context stay in sync.
 
 Use these entry points:
+
 - `/gsd-quick` for small fixes, doc updates, and ad-hoc tasks
 - `/gsd-debug` for investigation and bug fixing
 - `/gsd-execute-phase` for planned phase work
 
 Do not make direct repo edits outside a GSD workflow unless the user explicitly asks to bypass it.
+
 <!-- GSD:workflow-end -->
 
 <!-- GSD:profile-start -->
+
 ## Developer Profile
 
 > Profile not yet configured. Run `/gsd-profile-user` to generate your developer profile.
 > This section is managed by `generate-claude-profile` -- do not edit manually.
+
 <!-- GSD:profile-end -->
