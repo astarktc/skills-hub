@@ -746,6 +746,34 @@ pub async fn set_auto_sync_enabled(
 }
 
 #[tauri::command]
+#[allow(non_snake_case)]
+pub async fn get_ui_zoom_level(store: State<'_, SkillStore>) -> Result<f64, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let val = store
+            .get_setting("ui_zoom_level")
+            .map_err(format_anyhow_error)?;
+        Ok::<_, String>(val.and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0))
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn set_ui_zoom_level(store: State<'_, SkillStore>, zoomLevel: f64) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let clamped = zoomLevel.clamp(0.5, 3.0);
+        store
+            .set_setting("ui_zoom_level", &clamped.to_string())
+            .map_err(format_anyhow_error)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
 pub async fn unsync_all_skills(store: State<'_, SkillStore>) -> Result<usize, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {

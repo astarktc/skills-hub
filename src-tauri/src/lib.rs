@@ -39,6 +39,17 @@ pub fn run() {
             app.manage(Arc::new(CancelToken::new()));
             app.manage(SyncMutex(Arc::new(std::sync::Mutex::new(()))));
 
+            // Apply persisted zoom level before first paint.
+            {
+                let zoom_str = store.get_setting("ui_zoom_level").unwrap_or(None);
+                let zoom_level: f64 = zoom_str.and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0);
+                if (zoom_level - 1.0).abs() > f64::EPSILON {
+                    if let Some(webview_window) = app.get_webview_window("main") {
+                        let _ = webview_window.set_zoom(zoom_level);
+                    }
+                }
+            }
+
             // Backfill description for skills that were installed before V2 schema.
             core::installer::backfill_skill_descriptions(&store);
 
@@ -116,6 +127,8 @@ pub fn run() {
             commands::delete_managed_skill,
             commands::get_auto_sync_enabled,
             commands::set_auto_sync_enabled,
+            commands::get_ui_zoom_level,
+            commands::set_ui_zoom_level,
             commands::unsync_all_skills,
             commands::unsync_skill,
             commands::get_featured_skills,
