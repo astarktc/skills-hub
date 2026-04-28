@@ -2954,7 +2954,6 @@
 .matrix-grid table {
   border-collapse: separate;
   border-spacing: 2px;
-  width: 100%;
 }
 
 .matrix-header-row th {
@@ -2965,6 +2964,7 @@
   text-align: center;
   padding: 8px 4px;
   white-space: nowrap;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .matrix-header-row th:first-child {
@@ -2977,14 +2977,19 @@
   vertical-align: middle;
 }
 
+.matrix-row:nth-child(even) {
+  background: var(--bg-element);
+}
+
+.matrix-row:hover {
+  background: var(--bg-element-hover);
+}
+
 .matrix-skill-cell {
   font-size: 14px;
   font-weight: 600;
   line-height: 1.4;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 200px;
   padding-right: 8px;
 }
 
