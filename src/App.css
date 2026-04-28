@@ -132,16 +132,24 @@
 .filter-bar {
   padding: 20px 32px 0 32px;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.filter-row {
-  display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.filter-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.filter-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .sort-btn {

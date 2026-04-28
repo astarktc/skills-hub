@@ -37,45 +37,7 @@ const FilterBar = ({
 }: FilterBarProps) => {
   return (
     <div className="filter-bar">
-      <div className="filter-row filter-row-actions">
-        <label className="auto-sync-toggle" title={t("autoSyncToggle")}>
-          <input
-            type="checkbox"
-            checked={autoSyncEnabled}
-            onChange={(e) => onAutoSyncChange(e.target.checked)}
-            disabled={loading}
-          />
-          <span className="auto-sync-label">{t("autoSyncToggle")}</span>
-        </label>
-        <button
-          className="btn btn-secondary unsync-all-btn"
-          type="button"
-          onClick={onUnsyncAll}
-          disabled={loading}
-          title={t("unsyncAll")}
-        >
-          {t("unsyncAll")}
-        </button>
-        <div className="search-container">
-          <Search size={16} className="search-icon-abs" />
-          <input
-            className="search-input"
-            value={searchQuery}
-            onChange={(event) => onSearchChange(event.target.value)}
-            placeholder={t("searchPlaceholder")}
-          />
-        </div>
-        <button
-          className="btn btn-secondary"
-          type="button"
-          onClick={onRefresh}
-          disabled={loading}
-        >
-          <RefreshCw size={14} />
-          {t("refresh")}
-        </button>
-      </div>
-      <div className="filter-row filter-row-filters">
+      <div className="filter-bar-left">
         <button className="btn btn-secondary sort-btn" type="button">
           <span className="sort-label">{t("filterSort")}:</span>
           {sortBy === "name"
@@ -125,6 +87,44 @@ const FilterBar = ({
             <option value="auto-grid">{t("viewAutoGrid")}</option>
             <option value="dense-grid">{t("viewDenseGrid")}</option>
           </select>
+        </button>
+      </div>
+      <div className="filter-bar-right">
+        <label className="auto-sync-toggle" title={t("autoSyncToggle")}>
+          <input
+            type="checkbox"
+            checked={autoSyncEnabled}
+            onChange={(e) => onAutoSyncChange(e.target.checked)}
+            disabled={loading}
+          />
+          <span className="auto-sync-label">{t("autoSyncToggle")}</span>
+        </label>
+        <button
+          className="btn btn-secondary unsync-all-btn"
+          type="button"
+          onClick={onUnsyncAll}
+          disabled={loading}
+          title={t("unsyncAll")}
+        >
+          {t("unsyncAll")}
+        </button>
+        <div className="search-container">
+          <Search size={16} className="search-icon-abs" />
+          <input
+            className="search-input"
+            value={searchQuery}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder={t("searchPlaceholder")}
+          />
+        </div>
+        <button
+          className="btn btn-secondary"
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+        >
+          <RefreshCw size={14} />
+          {t("refresh")}
         </button>
       </div>
     </div>
