@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: completed
 last_updated: "2026-04-28"
-last_activity: "2026-04-28 - Completed quick task 260428-6z: Fix featured skills description regression"
+last_activity: "2026-04-28 - Completed quick task 260428-xo: Add Default Zoom Level to Settings"
 progress:
   total_phases: 6
   completed_phases: 6
@@ -89,3 +89,4 @@ None -- milestone shipped.
 | 260428-7c  | Replicate My Skills auto grid on Explore page with doubled minimum card width (720px)                                | 2026-04-28 | 08a8b4f | [260428-7c-explore-page-auto-grid-layout](./quick/260428-7c-explore-page-auto-grid-layout/)                         |
 | 260428-tf  | Bump search limit to 50 and write v2 featured-skills scraper                                                         | 2026-04-28 | 8494107 | [260428-tf-search-limit-featured-scraper](./quick/260428-tf-search-limit-featured-scraper/)                         |
 | 260428-6z  | Fix featured skills description regression and add SKILL.md enrichment to v2 scraper                                 | 2026-04-28 | 63d4d37 | [260428-6z-fix-skill-descriptions](./quick/260428-6z-fix-skill-descriptions/)                                       |
+| 260428-xo  | Add Default Zoom Level dropdown to Settings with Tauri native setZoom, Rust startup apply, Ctrl+/- hotkeys           | 2026-04-28 | 38fe19c | [260428-xo-ui-scaling-feasibility](./quick/260428-xo-ui-scaling-feasibility/)                                       |
