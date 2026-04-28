@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ArrowUpDown, RefreshCw, Search } from "lucide-react";
+import { ArrowUpDown, LayoutList, RefreshCw, Search } from "lucide-react";
 import type { TFunction } from "i18next";
 
 type FilterBarProps = {
@@ -14,6 +14,8 @@ type FilterBarProps = {
   onUnsyncAll: () => void;
   groupByRepo: boolean;
   onGroupByRepoChange: (value: boolean) => void;
+  viewMode: "list" | "auto-grid" | "dense-grid";
+  onViewModeChange: (value: "list" | "auto-grid" | "dense-grid") => void;
   t: TFunction;
 };
 
@@ -29,12 +31,13 @@ const FilterBar = ({
   onUnsyncAll,
   groupByRepo,
   onGroupByRepoChange,
+  viewMode,
+  onViewModeChange,
   t,
 }: FilterBarProps) => {
   return (
     <div className="filter-bar">
-      <div className="filter-title">{t("allSkills")}</div>
-      <div className="filter-actions">
+      <div className="filter-row filter-row-actions">
         <label className="auto-sync-toggle" title={t("autoSyncToggle")}>
           <input
             type="checkbox"
@@ -53,6 +56,26 @@ const FilterBar = ({
         >
           {t("unsyncAll")}
         </button>
+        <div className="search-container">
+          <Search size={16} className="search-icon-abs" />
+          <input
+            className="search-input"
+            value={searchQuery}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder={t("searchPlaceholder")}
+          />
+        </div>
+        <button
+          className="btn btn-secondary"
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+        >
+          <RefreshCw size={14} />
+          {t("refresh")}
+        </button>
+      </div>
+      <div className="filter-row filter-row-filters">
         <button className="btn btn-secondary sort-btn" type="button">
           <span className="sort-label">{t("filterSort")}:</span>
           {sortBy === "name"
@@ -81,23 +104,27 @@ const FilterBar = ({
           />
           <span className="group-by-repo-label">{t("groupByRepo")}</span>
         </label>
-        <div className="search-container">
-          <Search size={16} className="search-icon-abs" />
-          <input
-            className="search-input"
-            value={searchQuery}
-            onChange={(event) => onSearchChange(event.target.value)}
-            placeholder={t("searchPlaceholder")}
-          />
-        </div>
-        <button
-          className="btn btn-secondary"
-          type="button"
-          onClick={onRefresh}
-          disabled={loading}
-        >
-          <RefreshCw size={14} />
-          {t("refresh")}
+        <button className="btn btn-secondary sort-btn" type="button">
+          <span className="sort-label">{t("viewMode")}:</span>
+          {viewMode === "list"
+            ? t("viewList")
+            : viewMode === "auto-grid"
+              ? t("viewAutoGrid")
+              : t("viewDenseGrid")}
+          <LayoutList size={12} />
+          <select
+            aria-label={t("viewMode")}
+            value={viewMode}
+            onChange={(event) =>
+              onViewModeChange(
+                event.target.value as "list" | "auto-grid" | "dense-grid",
+              )
+            }
+          >
+            <option value="list">{t("viewList")}</option>
+            <option value="auto-grid">{t("viewAutoGrid")}</option>
+            <option value="dense-grid">{t("viewDenseGrid")}</option>
+          </select>
         </button>
       </div>
     </div>

@@ -46,6 +46,7 @@ function App() {
   const languageStorageKey = "skills-language";
   const themeStorageKey = "skills-theme";
   const groupByRepoStorageKey = "skills-groupByRepo";
+  const viewModeStorageKey = "skills-viewMode";
   const toggleLanguage = useCallback(() => {
     void i18n.changeLanguage(language === "en" ? "zh" : "en");
   }, [i18n, language]);
@@ -112,6 +113,20 @@ function App() {
       return false;
     }
   });
+  const [viewMode, setViewMode] = useState<"list" | "auto-grid" | "dense-grid">(
+    () => {
+      try {
+        const stored = window.localStorage.getItem(viewModeStorageKey);
+        if (
+          stored === "list" ||
+          stored === "auto-grid" ||
+          stored === "dense-grid"
+        )
+          return stored;
+      } catch {}
+      return "list";
+    },
+  );
   const [activeView, setActiveView] = useState<
     | "myskills"
     | "explore"
@@ -329,6 +344,15 @@ function App() {
       // ignore storage failures
     }
   }, [groupByRepo, groupByRepoStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(viewModeStorageKey, viewMode);
+    } catch {
+      // ignore storage failures
+    }
+  }, [viewMode, viewModeStorageKey]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2214,12 +2238,15 @@ function App() {
               onUnsyncAll={handleUnsyncAll}
               groupByRepo={groupByRepo}
               onGroupByRepoChange={setGroupByRepo}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
               t={t}
             />
             <SkillsList
               plan={plan}
               visibleSkills={visibleSkills}
               groupByRepo={groupByRepo}
+              viewMode={viewMode}
               installedTools={installedTools}
               loading={loading}
               getGithubInfo={getGithubInfo}
