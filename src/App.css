@@ -240,11 +240,11 @@
 }
 
 .skills-grid--auto-grid {
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
 }
 
 .skills-grid--dense-grid {
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
 }
 
 .skills-group-list {
@@ -287,6 +287,14 @@
 
 .skills-grid .tool-matrix {
   flex-wrap: wrap;
+}
+
+.skills-grid .skill-meta-row {
+  flex-wrap: wrap;
+}
+
+.skills-grid .repo-pill {
+  max-width: 100%;
 }
 
 .skills-grid--dense-grid .skill-card {

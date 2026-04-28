@@ -107,7 +107,7 @@ const SkillsList = ({
     viewMode !== "list" ? `skills-grid skills-grid--${viewMode}` : "";
 
   return (
-    <div className={`skills-list ${gridClass}`}>
+    <div className="skills-list">
       {plan && plan.total_skills_found > 0 ? (
         <div className="discovered-banner">
           <div className="banner-left">
@@ -167,7 +167,7 @@ const SkillsList = ({
           ))}
         </>
       ) : (
-        <>{visibleSkills.map(renderSkill)}</>
+        <div className={gridClass}>{visibleSkills.map(renderSkill)}</div>
       )}
     </div>
   );
