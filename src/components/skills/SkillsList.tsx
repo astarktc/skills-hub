@@ -13,6 +13,7 @@ type SkillsListProps = {
   plan: OnboardingPlan | null;
   visibleSkills: ManagedSkill[];
   groupByRepo: boolean;
+  viewMode: "list" | "auto-grid" | "dense-grid";
   installedTools: ToolOption[];
   loading: boolean;
   getGithubInfo: (url: string | null | undefined) => GithubInfo | null;
@@ -32,6 +33,7 @@ const SkillsList = ({
   plan,
   visibleSkills,
   groupByRepo,
+  viewMode,
   installedTools,
   loading,
   getGithubInfo,
@@ -101,8 +103,11 @@ const SkillsList = ({
     />
   );
 
+  const gridClass =
+    viewMode !== "list" ? `skills-grid skills-grid--${viewMode}` : "";
+
   return (
-    <div className="skills-list">
+    <div className={`skills-list ${gridClass}`}>
       {plan && plan.total_skills_found > 0 ? (
         <div className="discovered-banner">
           <div className="banner-left">
@@ -149,7 +154,15 @@ const SkillsList = ({
                 )}
                 <span className="repo-count">{group.skills.length}</span>
               </div>
-              {group.skills.map(renderSkill)}
+              <div
+                className={
+                  viewMode !== "list"
+                    ? `skills-grid skills-grid--${viewMode}`
+                    : "skills-group-list"
+                }
+              >
+                {group.skills.map(renderSkill)}
+              </div>
             </div>
           ))}
         </>

@@ -123,7 +123,9 @@ function App() {
           stored === "dense-grid"
         )
           return stored;
-      } catch {}
+      } catch {
+        // ignore storage failures
+      }
       return "list";
     },
   );
