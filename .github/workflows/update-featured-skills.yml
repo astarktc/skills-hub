@@ -23,6 +23,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
 
       - name: Fetch featured skills
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/fetch-featured-skills-v2.mjs
 
       - name: Commit if changed
