@@ -54,7 +54,13 @@ function App() {
   }, [i18n, language]);
   const [themePreference, setThemePreference] = useState<
     "system" | "light" | "dark"
-  >("system");
+  >(() => {
+    if (typeof window === "undefined") return "system";
+    const stored = window.localStorage.getItem(themeStorageKey);
+    if (stored === "light" || stored === "dark" || stored === "system")
+      return stored;
+    return "system";
+  });
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
   const [plan, setPlan] = useState<OnboardingPlan | null>(null);
   const [loading, setLoading] = useState(false);
@@ -322,14 +328,6 @@ function App() {
       loadManagedSkills();
     }
   }, [isTauri, loadManagedSkills]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const stored = window.localStorage.getItem(themeStorageKey);
-    if (stored === "light" || stored === "dark" || stored === "system") {
-      setThemePreference(stored);
-    }
-  }, [themeStorageKey]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
