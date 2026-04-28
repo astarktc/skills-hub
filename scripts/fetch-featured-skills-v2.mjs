@@ -217,31 +217,41 @@ async function enrichWithGitHub(allSkills) {
     }
 
     for (const skill of skills) {
-      // Find directories whose last segment matches the slug
+      // Find directories whose last segment matches the slug (exact, then containment)
       const candidates = []
       for (const dp of dirPaths) {
         const segments = dp.split('/')
         const lastSeg = segments[segments.length - 1]
-        if (lastSeg === skill.slug) {
+        const isExact = lastSeg === skill.slug
+        // Bidirectional containment: "react-best-practices" ↔ "vercel-react-best-practices"
+        const isContainment =
+          !isExact && (lastSeg.includes(skill.slug) || skill.slug.includes(lastSeg))
+        if (isExact || isContainment) {
           const hasSkillMd = blobPaths.has(`${dp}/SKILL.md`)
           const isUnderScanBase = SKILL_SCAN_BASES.some(
             (base) => dp === `${base}/${skill.slug}` || dp.startsWith(`${base}/`),
           )
-          candidates.push({ dirPath: dp, hasSkillMd, isUnderScanBase })
+          candidates.push({ dirPath: dp, hasSkillMd, isUnderScanBase, isExact })
         }
       }
 
       if (candidates.length === 0) continue
 
+      // Only accept containment matches when exactly one has SKILL.md (avoid ambiguity)
+      const exact = candidates.filter((c) => c.isExact)
+      const fuzzy = candidates.filter((c) => !c.isExact && c.hasSkillMd)
+      const usable = exact.length > 0 ? exact : fuzzy.length === 1 ? fuzzy : []
+      if (usable.length === 0) continue
+
       // Pick best match: prefer has SKILL.md + under scan base
-      candidates.sort((a, b) => {
+      usable.sort((a, b) => {
         if (a.hasSkillMd !== b.hasSkillMd) return a.hasSkillMd ? -1 : 1
         if (a.isUnderScanBase !== b.isUnderScanBase) return a.isUnderScanBase ? -1 : 1
         return a.dirPath.length - b.dirPath.length
       })
 
       skillDirMap.set(skill, {
-        dirPath: candidates[0].dirPath,
+        dirPath: usable[0].dirPath,
         repoFullName,
         branch,
       })
