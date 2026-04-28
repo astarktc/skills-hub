@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { Eye, Plus, Search, Star } from "lucide-react";
+import { Download, Eye, Plus, Search, Star } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { FeaturedSkillDto, ManagedSkill, OnlineSkillDto } from "./types";
 
@@ -156,10 +156,18 @@ const ExplorePage = ({
                       <div className="explore-card-desc">{skill.summary}</div>
                       <div className="explore-card-bottom">
                         <div className="explore-card-stats">
-                          <span className="explore-stat">
-                            <Star size={12} />
-                            {formatCount(skill.stars)}
-                          </span>
+                          {skill.downloads > 0 && (
+                            <span className="explore-stat">
+                              <Download size={12} />
+                              {formatCount(skill.downloads)}
+                            </span>
+                          )}
+                          {skill.stars > 0 && (
+                            <span className="explore-stat">
+                              <Star size={12} />
+                              {formatCount(skill.stars)}
+                            </span>
+                          )}
                         </div>
                         <button
                           className="explore-btn-view"
