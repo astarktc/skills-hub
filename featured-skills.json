@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-04-28T19:12:15.482Z",
+  "updated_at": "2026-04-28T19:24:24.144Z",
   "total": 300,
   "categories": [
     "general"
@@ -14,7 +14,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/vercel-labs/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "vercel-react-best-practices",
@@ -25,7 +25,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/vercel-labs/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "frontend-design",
@@ -36,7 +36,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "soultrace",
@@ -47,7 +47,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/soultrace-ai/soultrace-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "web-design-guidelines",
@@ -58,7 +58,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/vercel-labs/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "remotion-best-practices",
@@ -69,7 +69,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/remotion-dev/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "microsoft-foundry",
@@ -80,7 +80,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-ai",
@@ -91,7 +91,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-deploy",
@@ -102,7 +102,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-prepare",
@@ -113,7 +113,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-diagnostics",
@@ -124,7 +124,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-compute",
@@ -135,7 +135,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-validate",
@@ -146,7 +146,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-storage",
@@ -157,7 +157,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "entra-app-registration",
@@ -168,7 +168,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-cloud-migrate",
@@ -179,7 +179,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "appinsights-instrumentation",
@@ -190,7 +190,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-rbac",
@@ -201,7 +201,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-compliance",
@@ -212,7 +212,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-messaging",
@@ -223,7 +223,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-hosted-copilot-sdk",
@@ -234,7 +234,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-aigateway",
@@ -245,7 +245,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-resource-visualizer",
@@ -256,7 +256,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-resource-lookup",
@@ -267,7 +267,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-kusto",
@@ -278,7 +278,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-quotas",
@@ -289,7 +289,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "agent-browser",
@@ -300,7 +300,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/vercel-labs/agent-browser",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-upgrade",
@@ -311,7 +311,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-enterprise-infra-planner",
@@ -322,7 +322,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "skill-creator",
@@ -333,7 +333,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-kubernetes",
@@ -344,7 +344,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-cost-optimization",
@@ -355,7 +355,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "vercel-composition-patterns",
@@ -366,7 +366,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/vercel-labs/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "ui-ux-pro-max",
@@ -377,7 +377,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "ai-image-generation",
@@ -388,7 +388,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/infsh-skills/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "ai-video-generation",
@@ -399,7 +399,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/infsh-skills/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "agent-tools",
@@ -410,7 +410,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/infsh-skills/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "infsh-cli",
@@ -421,7 +421,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/infsh-skills/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "supabase-postgres-best-practices",
@@ -432,7 +432,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/supabase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "brainstorming",
@@ -443,7 +443,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/obra/superpowers",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-cost",
@@ -454,7 +454,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-observability",
@@ -465,7 +465,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/github-copilot-for-azure",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "shadcn",
@@ -476,7 +476,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/shadcn/ui",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "vercel-react-native-skills",
@@ -487,7 +487,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/vercel-labs/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "simple",
@@ -498,7 +498,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/roin-orca/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "seo-audit",
@@ -509,7 +509,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "caveman",
@@ -520,7 +520,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/juliusbrussee/caveman",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "pdf",
@@ -531,7 +531,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "polish",
@@ -542,7 +542,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "critique",
@@ -553,7 +553,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "audit",
@@ -564,7 +564,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "pptx",
@@ -575,7 +575,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "animate",
@@ -586,7 +586,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "adapt",
@@ -597,7 +597,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "copywriting",
@@ -608,7 +608,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "clarify",
@@ -619,7 +619,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-doc",
@@ -630,7 +630,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "optimize",
@@ -641,7 +641,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-base",
@@ -652,7 +652,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-im",
@@ -663,7 +663,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "colorize",
@@ -674,7 +674,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-calendar",
@@ -685,7 +685,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-drive",
@@ -696,7 +696,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-wiki",
@@ -707,7 +707,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-mail",
@@ -718,7 +718,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-shared",
@@ -729,7 +729,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-sheets",
@@ -740,7 +740,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-task",
@@ -751,7 +751,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-whiteboard",
@@ -762,7 +762,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-vc",
@@ -773,7 +773,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-minutes",
@@ -784,7 +784,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-event",
@@ -795,7 +795,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-workflow-meeting-summary",
@@ -806,7 +806,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "bolder",
@@ -817,7 +817,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-contact",
@@ -828,7 +828,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-openapi-explorer",
@@ -839,7 +839,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-skill-maker",
@@ -850,7 +850,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-workflow-standup-report",
@@ -861,7 +861,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "delight",
@@ -872,7 +872,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "distill",
@@ -883,7 +883,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "quieter",
@@ -894,7 +894,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "github-actions-docs",
@@ -905,7 +905,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "openclaw-secure-linux-cloud",
@@ -916,7 +916,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "skills-cli",
@@ -927,7 +927,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "secure-linux-web-hosting",
@@ -938,7 +938,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "running-claude-code-via-litellm-copilot",
@@ -949,7 +949,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "opensource-guide-coach",
@@ -960,7 +960,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "using-superpowers",
@@ -971,7 +971,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/obra/superpowers",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "readme-i18n",
@@ -982,7 +982,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "systematic-debugging",
@@ -993,7 +993,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/obra/superpowers",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "next-best-practices",
@@ -1004,7 +1004,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/vercel-labs/next-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "writing-plans",
@@ -1015,7 +1015,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/obra/superpowers",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "use-my-browser",
@@ -1026,7 +1026,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "xget",
@@ -1037,7 +1037,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "tzst",
@@ -1048,7 +1048,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "xdrop",
@@ -1059,7 +1059,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "extract-design-system",
@@ -1070,7 +1070,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/arvindrk/extract-design-system",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "docx",
@@ -1081,7 +1081,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "browser-use",
@@ -1092,7 +1092,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/browser-use/browser-use",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "sleek-design-mobile-apps",
@@ -1103,7 +1103,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/sleekdotdesign/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "typeset",
@@ -1114,7 +1114,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "test-driven-development",
@@ -1125,7 +1125,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/obra/superpowers",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "requesting-code-review",
@@ -1136,7 +1136,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/obra/superpowers",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "xlsx",
@@ -1147,7 +1147,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "overdrive",
@@ -1158,7 +1158,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "marketing-psychology",
@@ -1169,7 +1169,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "executing-plans",
@@ -1180,7 +1180,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/obra/superpowers",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "webapp-testing",
@@ -1191,7 +1191,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "social-content",
@@ -1202,7 +1202,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "content-strategy",
@@ -1213,7 +1213,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "normalize",
@@ -1224,7 +1224,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "programmatic-seo",
@@ -1235,7 +1235,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "subagent-driven-development",
@@ -1246,7 +1246,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/obra/superpowers",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-approval",
@@ -1257,7 +1257,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "extract",
@@ -1268,7 +1268,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "onboard",
@@ -1279,7 +1279,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "harden",
@@ -1290,7 +1290,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "verification-before-completion",
@@ -1301,7 +1301,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/obra/superpowers",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "marketing-ideas",
@@ -1312,7 +1312,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "pricing-strategy",
@@ -1323,7 +1323,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "product-marketing-context",
@@ -1334,7 +1334,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "receiving-code-review",
@@ -1345,7 +1345,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/obra/superpowers",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "writing-skills",
@@ -1356,7 +1356,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/obra/superpowers",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "teach-impeccable",
@@ -1367,7 +1367,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "copy-editing",
@@ -1378,7 +1378,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "dispatching-parallel-agents",
@@ -1389,7 +1389,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/obra/superpowers",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "using-git-worktrees",
@@ -1400,7 +1400,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/obra/superpowers",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "paper-context-resolver",
@@ -1411,7 +1411,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/lllllllama/ai-paper-reproduction-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "env-and-assets-bootstrap",
@@ -1422,7 +1422,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/lllllllama/ai-paper-reproduction-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "repo-intake-and-plan",
@@ -1433,7 +1433,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/lllllllama/ai-paper-reproduction-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "minimal-run-and-audit",
@@ -1444,7 +1444,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/lllllllama/ai-paper-reproduction-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "analytics-tracking",
@@ -1455,7 +1455,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "page-cro",
@@ -1466,7 +1466,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "audit-website",
@@ -1477,7 +1477,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/squirrelscan/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "launch-strategy",
@@ -1488,7 +1488,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "finishing-a-development-branch",
@@ -1499,7 +1499,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/obra/superpowers",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "schema-markup",
@@ -1510,7 +1510,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "email-sequence",
@@ -1521,7 +1521,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "canvas-design",
@@ -1532,7 +1532,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "paid-ads",
@@ -1543,7 +1543,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "mcp-builder",
@@ -1554,7 +1554,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "competitor-alternatives",
@@ -1565,7 +1565,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "onboarding-cro",
@@ -1576,7 +1576,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "caveman-commit",
@@ -1587,7 +1587,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/juliusbrussee/caveman",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "form-cro",
@@ -1598,7 +1598,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "referral-program",
@@ -1609,7 +1609,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "free-tool-strategy",
@@ -1620,7 +1620,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "impeccable",
@@ -1631,7 +1631,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "caveman-review",
@@ -1642,7 +1642,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/juliusbrussee/caveman",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "ab-test-setup",
@@ -1653,7 +1653,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "grill-me",
@@ -1664,7 +1664,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/mattpocock/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "signup-flow-cro",
@@ -1675,7 +1675,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firecrawl",
@@ -1686,7 +1686,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firecrawl/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "better-auth-best-practices",
@@ -1697,7 +1697,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/better-auth/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "paywall-upgrade-cro",
@@ -1708,7 +1708,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "popup-cro",
@@ -1719,7 +1719,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "caveman-compress",
@@ -1730,7 +1730,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/juliusbrussee/caveman",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "ai-seo",
@@ -1741,7 +1741,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "react:components",
@@ -1752,7 +1752,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/google-labs-code/stitch-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "supabase",
@@ -1763,7 +1763,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/supabase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "deploy-to-vercel",
@@ -1774,7 +1774,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/vercel-labs/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "arrange",
@@ -1785,7 +1785,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "design-md",
@@ -1796,7 +1796,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/google-labs-code/stitch-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "caveman-help",
@@ -1807,7 +1807,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/juliusbrussee/caveman",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "ad-creative",
@@ -1818,7 +1818,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "cold-email",
@@ -1829,7 +1829,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "tailwind-design-system",
@@ -1840,7 +1840,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/wshobson/agents",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "typescript-advanced-types",
@@ -1851,7 +1851,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/wshobson/agents",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firebase-basics",
@@ -1862,7 +1862,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "web-artifacts-builder",
@@ -1873,7 +1873,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firebase-auth-basics",
@@ -1884,7 +1884,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "stitch-loop",
@@ -1895,7 +1895,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/google-labs-code/stitch-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "churn-prevention",
@@ -1906,7 +1906,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "enhance-prompt",
@@ -1917,7 +1917,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/google-labs-code/stitch-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "value",
@@ -1928,7 +1928,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/hugmouse/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "algorithmic-art",
@@ -1939,7 +1939,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "wonda-cli",
@@ -1950,7 +1950,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/degausai/wonda",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firebase-hosting-basics",
@@ -1961,7 +1961,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firebase-app-hosting-basics",
@@ -1972,7 +1972,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "site-architecture",
@@ -1983,7 +1983,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firebase-data-connect",
@@ -1994,7 +1994,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-postgres",
@@ -2005,7 +2005,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/github-copilot-for-azure",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "airunway-aks-setup",
@@ -2016,7 +2016,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firebase-firestore-standard",
@@ -2027,7 +2027,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "sales-enablement",
@@ -2038,7 +2038,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "doc-coauthoring",
@@ -2049,7 +2049,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "theme-factory",
@@ -2060,7 +2060,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firebase-ai-logic",
@@ -2071,7 +2071,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "design-taste-frontend",
@@ -2082,7 +2082,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-slides",
@@ -2093,7 +2093,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "convex-quickstart",
@@ -2104,7 +2104,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/get-convex/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "developing-genkit-js",
@@ -2115,7 +2115,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firebase-firestore-enterprise-native-mode",
@@ -2126,7 +2126,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "developing-genkit-dart",
@@ -2137,7 +2137,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-attendance",
@@ -2148,7 +2148,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "revops",
@@ -2159,7 +2159,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "convex-setup-auth",
@@ -2170,7 +2170,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/get-convex/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "convex-performance-audit",
@@ -2181,7 +2181,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/get-convex/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "convex-migration-helper",
@@ -2192,7 +2192,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/get-convex/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "convex-create-component",
@@ -2203,7 +2203,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/get-convex/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "brand-guidelines",
@@ -2214,7 +2214,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "building-native-ui",
@@ -2225,7 +2225,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/expo/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "playwright-best-practices",
@@ -2236,7 +2236,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/currents-dev/playwright-best-practices-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "shadcn-ui",
@@ -2247,7 +2247,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/google-labs-code/stitch-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "develop-userscripts",
@@ -2258,7 +2258,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "shape",
@@ -2269,7 +2269,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firecrawl-scrape",
@@ -2280,7 +2280,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firecrawl/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "high-end-visual-design",
@@ -2291,7 +2291,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firecrawl-search",
@@ -2302,7 +2302,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firecrawl/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "nodejs-backend-patterns",
@@ -2313,7 +2313,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/wshobson/agents",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firecrawl-agent",
@@ -2324,7 +2324,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firecrawl/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "redesign-existing-projects",
@@ -2335,7 +2335,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firecrawl-crawl",
@@ -2346,7 +2346,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firecrawl/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firecrawl-map",
@@ -2357,7 +2357,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firecrawl/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firecrawl-download",
@@ -2368,7 +2368,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firecrawl/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "internal-comms",
@@ -2379,7 +2379,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "emil-design-eng",
@@ -2390,7 +2390,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/emilkowalski/skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "compress",
@@ -2401,7 +2401,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/juliusbrussee/caveman",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "neon-postgres",
@@ -2412,7 +2412,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/neondatabase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "minimalist-ui",
@@ -2423,7 +2423,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "sentry-cli",
@@ -2434,7 +2434,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/sentry/dev",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lead-magnets",
@@ -2445,7 +2445,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "slack-gif-creator",
@@ -2456,7 +2456,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "git-commit",
@@ -2467,7 +2467,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/github/awesome-copilot",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "full-output-enforcement",
@@ -2478,7 +2478,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "template-skill",
@@ -2489,7 +2489,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "layout",
@@ -2500,7 +2500,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "playwright-cli",
@@ -2511,7 +2511,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/playwright-cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "self-improving-agent",
@@ -2522,7 +2522,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/charon-fan/agent-playbook",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "native-data-fetching",
@@ -2533,7 +2533,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/expo/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "stitch-design-taste",
@@ -2544,7 +2544,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "industrial-brutalist-ui",
@@ -2555,7 +2555,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "next-cache-components",
@@ -2566,7 +2566,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/vercel-labs/next-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "obsidian-markdown",
@@ -2577,7 +2577,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/kepano/obsidian-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "seo-geo",
@@ -2588,7 +2588,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/resciencelab/opc-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "vercel-cli-with-tokens",
@@ -2599,7 +2599,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/vercel-labs/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "pexo-agent",
@@ -2610,7 +2610,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/pexoai/pexo-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "expo-tailwind-setup",
@@ -2621,7 +2621,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/expo/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "tdd",
@@ -2632,7 +2632,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/mattpocock/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "turborepo",
@@ -2643,7 +2643,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/vercel/turborepo",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "gws-gmail",
@@ -2654,7 +2654,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/googleworkspace/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "remotion",
@@ -2665,7 +2665,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/google-labs-code/stitch-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "gws-drive",
@@ -2676,7 +2676,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/googleworkspace/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "gws-docs",
@@ -2687,7 +2687,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/googleworkspace/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "upgrading-expo",
@@ -2698,7 +2698,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/expo/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "vercel-react-view-transitions",
@@ -2709,7 +2709,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/vercel-labs/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "ai-sdk",
@@ -2720,7 +2720,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/vercel/ai",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "obsidian-bases",
@@ -2731,7 +2731,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/kepano/obsidian-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "baoyu-post-to-wechat",
@@ -2742,7 +2742,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/jimliu/baoyu-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "obsidian-cli",
@@ -2753,7 +2753,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/kepano/obsidian-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "expo-cicd-workflows",
@@ -2764,7 +2764,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/expo/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "gws-sheets",
@@ -2775,7 +2775,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/googleworkspace/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "gws-calendar",
@@ -2786,7 +2786,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/googleworkspace/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "developing-genkit-go",
@@ -2797,7 +2797,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "stitch-design",
@@ -2808,7 +2808,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/google-labs-code/stitch-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "expo-api-routes",
@@ -2819,7 +2819,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/expo/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "expo-deployment",
@@ -2830,7 +2830,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/expo/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "expo-dev-client",
@@ -2841,7 +2841,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/expo/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "vue-best-practices",
@@ -2852,7 +2852,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/hyf0/vue-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firestore-security-rules-auditor",
@@ -2863,7 +2863,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "vue",
@@ -2874,7 +2874,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/antfu/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "python-performance-optimization",
@@ -2885,7 +2885,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/wshobson/agents",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "accessibility",
@@ -2896,7 +2896,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/addyosmani/web-quality-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "vite",
@@ -2907,7 +2907,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/antfu/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "gh-cli",
@@ -2918,7 +2918,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/github/awesome-copilot",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "seo",
@@ -2929,7 +2929,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/addyosmani/web-quality-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "customer-research",
@@ -2940,7 +2940,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/coreyhaines31/marketingskills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "baoyu-image-gen",
@@ -2951,7 +2951,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/jimliu/baoyu-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "improve-codebase-architecture",
@@ -2962,7 +2962,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/mattpocock/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "planning-with-files",
@@ -2973,7 +2973,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/othmanadi/planning-with-files",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "baoyu-markdown-to-html",
@@ -2984,7 +2984,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/jimliu/baoyu-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "api-design-principles",
@@ -2995,7 +2995,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/wshobson/agents",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "baoyu-cover-image",
@@ -3006,7 +3006,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/jimliu/baoyu-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "gws-docs-write",
@@ -3017,7 +3017,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/googleworkspace/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "lark-okr",
@@ -3028,7 +3028,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "baoyu-xhs-images",
@@ -3039,7 +3039,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/jimliu/baoyu-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "baoyu-article-illustrator",
@@ -3050,7 +3050,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/jimliu/baoyu-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "gws-sheets-read",
@@ -3061,7 +3061,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/googleworkspace/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "swiftui-expert-skill",
@@ -3072,7 +3072,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/avdlee/swiftui-agent-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "gws-drive-upload",
@@ -3083,7 +3083,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/googleworkspace/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "gws-calendar-agenda",
@@ -3094,7 +3094,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/googleworkspace/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "baoyu-slide-deck",
@@ -3105,7 +3105,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/jimliu/baoyu-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "notion-api",
@@ -3116,7 +3116,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/intellectronica/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "baoyu-infographic",
@@ -3127,7 +3127,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/jimliu/baoyu-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "claude-api",
@@ -3138,7 +3138,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "create-auth-skill",
@@ -3149,7 +3149,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/better-auth/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "python-testing-patterns",
@@ -3160,7 +3160,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/wshobson/agents",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "baoyu-url-to-markdown",
@@ -3171,7 +3171,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/jimliu/baoyu-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "backlink-analyzer",
@@ -3182,7 +3182,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/aaron-he-zhu/seo-geo-claude-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "gws-calendar-insert",
@@ -3193,7 +3193,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/googleworkspace/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "gws-sheets-append",
@@ -3204,7 +3204,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/googleworkspace/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "hyperframes",
@@ -3215,7 +3215,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/heygen-com/hyperframes",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "gws-gmail-send",
@@ -3226,7 +3226,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/googleworkspace/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "baoyu-comic",
@@ -3237,7 +3237,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/jimliu/baoyu-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "web-search",
@@ -3248,7 +3248,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/infsh-skills/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "baoyu-post-to-x",
@@ -3259,7 +3259,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/jimliu/baoyu-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "python-executor",
@@ -3270,7 +3270,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/infsh-skills/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "remotion-render",
@@ -3281,7 +3281,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/infsh-skills/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "twitter-automation",
@@ -3292,7 +3292,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/infsh-skills/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "gws-gmail-triage",
@@ -3303,7 +3303,7 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/googleworkspace/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     }
   ],
   "trending": [
@@ -3311,232 +3311,232 @@
       "slug": "github-actions-docs",
       "name": "github-actions-docs",
       "summary": "",
-      "downloads": 260,
+      "downloads": 201,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "use-my-browser",
-      "name": "use-my-browser",
-      "summary": "",
-      "downloads": 259,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "openclaw-secure-linux-cloud",
       "name": "openclaw-secure-linux-cloud",
       "summary": "",
-      "downloads": 257,
+      "downloads": 196,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "use-my-browser",
+      "name": "use-my-browser",
+      "summary": "",
+      "downloads": 196,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/xixu-me/skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "develop-userscripts",
       "name": "develop-userscripts",
       "summary": "",
-      "downloads": 256,
+      "downloads": 195,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "secure-linux-web-hosting",
       "name": "secure-linux-web-hosting",
       "summary": "",
-      "downloads": 256,
+      "downloads": 195,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "skills-cli",
       "name": "skills-cli",
       "summary": "",
-      "downloads": 256,
+      "downloads": 195,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "xget",
       "name": "xget",
       "summary": "",
-      "downloads": 256,
+      "downloads": 195,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "tzst",
       "name": "tzst",
       "summary": "",
-      "downloads": 256,
+      "downloads": 195,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "readme-i18n",
       "name": "readme-i18n",
       "summary": "",
-      "downloads": 256,
+      "downloads": 195,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "running-claude-code-via-litellm-copilot",
       "name": "running-claude-code-via-litellm-copilot",
       "summary": "",
-      "downloads": 256,
+      "downloads": 195,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "xdrop",
       "name": "xdrop",
       "summary": "",
-      "downloads": 256,
+      "downloads": 195,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "opensource-guide-coach",
       "name": "opensource-guide-coach",
       "summary": "",
-      "downloads": 256,
+      "downloads": 195,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/xixu-me/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "env-and-assets-bootstrap",
       "name": "env-and-assets-bootstrap",
       "summary": "",
-      "downloads": 255,
+      "downloads": 194,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/lllllllama/ai-paper-reproduction-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "minimal-run-and-audit",
       "name": "minimal-run-and-audit",
       "summary": "",
-      "downloads": 255,
+      "downloads": 194,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/lllllllama/ai-paper-reproduction-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "paper-context-resolver",
       "name": "paper-context-resolver",
       "summary": "",
-      "downloads": 255,
+      "downloads": 194,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/lllllllama/ai-paper-reproduction-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "repo-intake-and-plan",
       "name": "repo-intake-and-plan",
       "summary": "",
-      "downloads": 255,
+      "downloads": 194,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/lllllllama/ai-paper-reproduction-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "grill-with-docs",
       "name": "grill-with-docs",
       "summary": "",
-      "downloads": 195,
+      "downloads": 189,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/mattpocock/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "diagnose",
       "name": "diagnose",
       "summary": "",
-      "downloads": 177,
+      "downloads": 171,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/mattpocock/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "setup-matt-pocock-skills",
       "name": "setup-matt-pocock-skills",
-      "summary": "",
-      "downloads": 159,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/mattpocock/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "zoom-out",
-      "name": "zoom-out",
       "summary": "",
       "downloads": 161,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/mattpocock/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "zoom-out",
+      "name": "zoom-out",
+      "summary": "",
+      "downloads": 162,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/mattpocock/skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "triage",
       "name": "triage",
       "summary": "",
-      "downloads": 142,
+      "downloads": 141,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/mattpocock/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "improve-codebase-architecture",
@@ -3547,150 +3547,150 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/mattpocock/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
-      "slug": "to-prd",
-      "name": "to-prd",
+      "slug": "caveman",
+      "name": "caveman",
+      "summary": "",
+      "downloads": 147,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/mattpocock/skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "tdd",
+      "name": "tdd",
       "summary": "",
       "downloads": 176,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/mattpocock/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "tdd",
-      "name": "tdd",
-      "summary": "",
-      "downloads": 178,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/mattpocock/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "caveman",
-      "name": "caveman",
-      "summary": "",
-      "downloads": 150,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/mattpocock/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "to-issues",
-      "name": "to-issues",
-      "summary": "",
-      "downloads": 161,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/mattpocock/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "write-a-skill",
       "name": "write-a-skill",
       "summary": "",
-      "downloads": 148,
+      "downloads": 147,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/mattpocock/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "to-prd",
+      "name": "to-prd",
+      "summary": "",
+      "downloads": 171,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/mattpocock/skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "to-issues",
+      "name": "to-issues",
+      "summary": "",
+      "downloads": 156,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/mattpocock/skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "grill-me",
       "name": "grill-me",
       "summary": "",
-      "downloads": 231,
+      "downloads": 230,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/mattpocock/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "find-skills",
-      "name": "find-skills",
-      "summary": "",
-      "downloads": 727,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/vercel-labs/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firebase-security-rules-auditor",
       "name": "firebase-security-rules-auditor",
-      "summary": "",
-      "downloads": 90,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "firebase-ai-logic-basics",
-      "name": "firebase-ai-logic-basics",
       "summary": "",
       "downloads": 89,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
-      "slug": "impeccable",
-      "name": "impeccable",
+      "slug": "firebase-ai-logic-basics",
+      "name": "firebase-ai-logic-basics",
       "summary": "",
-      "downloads": 190,
+      "downloads": 87,
       "stars": 0,
       "category": "general",
       "tags": [],
-      "source_url": "https://github.com/pbakaus/impeccable",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "imagegen-frontend-web",
-      "name": "imagegen-frontend-web",
-      "summary": "",
-      "downloads": 63,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "source_url": "https://github.com/firebase/agent-skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "brandkit",
       "name": "brandkit",
       "summary": "",
-      "downloads": 63,
+      "downloads": 65,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "imagegen-frontend-web",
+      "name": "imagegen-frontend-web",
+      "summary": "",
+      "downloads": 64,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/leonxlnx/taste-skill",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "imagegen-frontend-mobile",
       "name": "imagegen-frontend-mobile",
       "summary": "",
-      "downloads": 61,
+      "downloads": 60,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "impeccable",
+      "name": "impeccable",
+      "summary": "",
+      "downloads": 177,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/pbakaus/impeccable",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "remotion-to-hyperframes",
+      "name": "remotion-to-hyperframes",
+      "summary": "",
+      "downloads": 57,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/heygen-com/hyperframes",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "agentspace",
@@ -3701,711 +3701,711 @@
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/agentspace-so/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
-      "slug": "remotion-to-hyperframes",
-      "name": "remotion-to-hyperframes",
+      "slug": "find-skills",
+      "name": "find-skills",
       "summary": "",
-      "downloads": 50,
+      "downloads": 683,
       "stars": 0,
       "category": "general",
       "tags": [],
-      "source_url": "https://github.com/heygen-com/hyperframes",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "source_url": "https://github.com/vercel-labs/skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firebase-basics",
       "name": "firebase-basics",
       "summary": "",
-      "downloads": 94,
+      "downloads": 92,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firebase-hosting-basics",
       "name": "firebase-hosting-basics",
-      "summary": "",
-      "downloads": 93,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "verified-agent-identity",
-      "name": "verified-agent-identity",
-      "summary": "",
-      "downloads": 38,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/billionsnetwork/verified-agent-identity",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "firebase-auth-basics",
-      "name": "firebase-auth-basics",
-      "summary": "",
-      "downloads": 93,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "firebase-firestore-enterprise-native-mode",
-      "name": "firebase-firestore-enterprise-native-mode",
       "summary": "",
       "downloads": 91,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "firebase-auth-basics",
+      "name": "firebase-auth-basics",
+      "summary": "",
+      "downloads": 91,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/firebase/agent-skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "firebase-firestore-enterprise-native-mode",
+      "name": "firebase-firestore-enterprise-native-mode",
+      "summary": "",
+      "downloads": 89,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/firebase/agent-skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "developing-genkit-python",
       "name": "developing-genkit-python",
       "summary": "",
-      "downloads": 90,
+      "downloads": 88,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firebase-firestore-standard",
       "name": "firebase-firestore-standard",
       "summary": "",
-      "downloads": 90,
+      "downloads": 88,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firebase-app-hosting-basics",
       "name": "firebase-app-hosting-basics",
       "summary": "",
-      "downloads": 90,
+      "downloads": 88,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "developing-genkit-dart",
       "name": "developing-genkit-dart",
       "summary": "",
-      "downloads": 89,
+      "downloads": 87,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "firebase-data-connect",
       "name": "firebase-data-connect",
       "summary": "",
-      "downloads": 89,
+      "downloads": 87,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "developing-genkit-js",
       "name": "developing-genkit-js",
       "summary": "",
-      "downloads": 89,
+      "downloads": 87,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "developing-genkit-go",
       "name": "developing-genkit-go",
       "summary": "",
-      "downloads": 89,
+      "downloads": 87,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/firebase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "verified-agent-identity",
+      "name": "verified-agent-identity",
+      "summary": "",
+      "downloads": 32,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/billionsnetwork/verified-agent-identity",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "byted-web-search",
       "name": "byted-web-search",
       "summary": "",
-      "downloads": 30,
+      "downloads": 28,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/skills.volces.com",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "shadcn",
       "name": "shadcn",
       "summary": "",
-      "downloads": 97,
+      "downloads": 98,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/shadcn/ui",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "azure-prepare",
-      "name": "azure-prepare",
-      "summary": "",
-      "downloads": 343,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "design-taste-frontend",
-      "name": "design-taste-frontend",
-      "summary": "",
-      "downloads": 83,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "azure-storage",
-      "name": "azure-storage",
-      "summary": "",
-      "downloads": 342,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "azure-quotas",
-      "name": "azure-quotas",
-      "summary": "",
-      "downloads": 341,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "azure-enterprise-infra-planner",
-      "name": "azure-enterprise-infra-planner",
-      "summary": "",
-      "downloads": 340,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-cloud-migrate",
       "name": "azure-cloud-migrate",
       "summary": "",
-      "downloads": 342,
+      "downloads": 328,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-ai",
       "name": "azure-ai",
       "summary": "",
-      "downloads": 342,
+      "downloads": 328,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "entra-app-registration",
       "name": "entra-app-registration",
       "summary": "",
-      "downloads": 341,
+      "downloads": 327,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-compliance",
       "name": "azure-compliance",
       "summary": "",
-      "downloads": 341,
+      "downloads": 327,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-compute",
       "name": "azure-compute",
       "summary": "",
-      "downloads": 341,
+      "downloads": 327,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "azure-storage",
+      "name": "azure-storage",
+      "summary": "",
+      "downloads": 327,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/microsoft/azure-skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-diagnostics",
       "name": "azure-diagnostics",
       "summary": "",
-      "downloads": 341,
+      "downloads": 327,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-validate",
       "name": "azure-validate",
       "summary": "",
-      "downloads": 341,
+      "downloads": 327,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "azure-prepare",
+      "name": "azure-prepare",
+      "summary": "",
+      "downloads": 327,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/microsoft/azure-skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-messaging",
       "name": "azure-messaging",
       "summary": "",
-      "downloads": 341,
+      "downloads": 327,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "azure-deploy",
-      "name": "azure-deploy",
-      "summary": "",
-      "downloads": 341,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-hosted-copilot-sdk",
       "name": "azure-hosted-copilot-sdk",
       "summary": "",
-      "downloads": 341,
+      "downloads": 327,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-resource-visualizer",
       "name": "azure-resource-visualizer",
       "summary": "",
-      "downloads": 341,
+      "downloads": 327,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-aigateway",
       "name": "azure-aigateway",
       "summary": "",
-      "downloads": 341,
+      "downloads": 327,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "appinsights-instrumentation",
       "name": "appinsights-instrumentation",
       "summary": "",
-      "downloads": 341,
+      "downloads": 327,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-rbac",
       "name": "azure-rbac",
       "summary": "",
-      "downloads": 341,
+      "downloads": 327,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-resource-lookup",
       "name": "azure-resource-lookup",
       "summary": "",
-      "downloads": 341,
+      "downloads": 327,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-kusto",
       "name": "azure-kusto",
       "summary": "",
-      "downloads": 341,
+      "downloads": 327,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "azure-upgrade",
       "name": "azure-upgrade",
       "summary": "",
-      "downloads": 340,
+      "downloads": 326,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
-      "slug": "azure-kubernetes",
-      "name": "azure-kubernetes",
+      "slug": "azure-quotas",
+      "name": "azure-quotas",
       "summary": "",
-      "downloads": 340,
+      "downloads": 326,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
-      "slug": "caveman-review",
-      "name": "caveman-review",
+      "slug": "azure-enterprise-infra-planner",
+      "name": "azure-enterprise-infra-planner",
       "summary": "",
-      "downloads": 82,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/juliusbrussee/caveman",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "systematic-debugging",
-      "name": "systematic-debugging",
-      "summary": "",
-      "downloads": 46,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/obra/superpowers",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "microsoft-foundry",
-      "name": "microsoft-foundry",
-      "summary": "",
-      "downloads": 348,
+      "downloads": 325,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "azure-cost",
-      "name": "azure-cost",
-      "summary": "",
-      "downloads": 336,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/microsoft/azure-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "image-to-code",
-      "name": "image-to-code",
-      "summary": "",
-      "downloads": 60,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "full-output-enforcement",
-      "name": "full-output-enforcement",
-      "summary": "",
-      "downloads": 59,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "caveman-help",
       "name": "caveman-help",
       "summary": "",
-      "downloads": 80,
+      "downloads": 78,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/juliusbrussee/caveman",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "high-end-visual-design",
-      "name": "high-end-visual-design",
-      "summary": "",
-      "downloads": 71,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "gpt-taste",
-      "name": "gpt-taste",
-      "summary": "",
-      "downloads": 64,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "minimalist-ui",
-      "name": "minimalist-ui",
-      "summary": "",
-      "downloads": 61,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "stitch-design-taste",
-      "name": "stitch-design-taste",
-      "summary": "",
-      "downloads": 59,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "industrial-brutalist-ui",
-      "name": "industrial-brutalist-ui",
-      "summary": "",
-      "downloads": 57,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "frontend-design",
-      "name": "frontend-design",
-      "summary": "",
-      "downloads": 175,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/anthropics/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "supabase",
-      "name": "supabase",
-      "summary": "",
-      "downloads": 105,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/supabase/agent-skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "redesign-existing-projects",
-      "name": "redesign-existing-projects",
-      "summary": "",
-      "downloads": 68,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/leonxlnx/taste-skill",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "app-store-screenshots",
-      "name": "app-store-screenshots",
-      "summary": "",
-      "downloads": 84,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/infsh-skills/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "video-ad-specs",
-      "name": "video-ad-specs",
-      "summary": "",
-      "downloads": 84,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/infsh-skills/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "product-photography",
-      "name": "product-photography",
-      "summary": "",
-      "downloads": 84,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/infsh-skills/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
-    },
-    {
-      "slug": "competitor-teardown",
-      "name": "competitor-teardown",
-      "summary": "",
-      "downloads": 84,
-      "stars": 0,
-      "category": "general",
-      "tags": [],
-      "source_url": "https://github.com/infsh-skills/skills",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
       "slug": "caveman-commit",
       "name": "caveman-commit",
       "summary": "",
-      "downloads": 81,
+      "downloads": 77,
       "stars": 0,
       "category": "general",
       "tags": [],
       "source_url": "https://github.com/juliusbrussee/caveman",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
-      "slug": "lark-attendance",
-      "name": "lark-attendance",
+      "slug": "azure-deploy",
+      "name": "azure-deploy",
+      "summary": "",
+      "downloads": 327,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/microsoft/azure-skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "azure-kubernetes",
+      "name": "azure-kubernetes",
+      "summary": "",
+      "downloads": 325,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/microsoft/azure-skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "azure-cost",
+      "name": "azure-cost",
+      "summary": "",
+      "downloads": 322,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/microsoft/azure-skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "caveman-review",
+      "name": "caveman-review",
+      "summary": "",
+      "downloads": 73,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/juliusbrussee/caveman",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "frontend-design",
+      "name": "frontend-design",
+      "summary": "",
+      "downloads": 170,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/anthropics/skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "ui-ux-pro-max",
+      "name": "ui-ux-pro-max",
+      "summary": "",
+      "downloads": 68,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "microsoft-foundry",
+      "name": "microsoft-foundry",
+      "summary": "",
+      "downloads": 334,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/microsoft/azure-skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "stripe-best-practices",
+      "name": "stripe-best-practices",
+      "summary": "",
+      "downloads": 33,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/docs.stripe.com",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "design-taste-frontend",
+      "name": "design-taste-frontend",
+      "summary": "",
+      "downloads": 82,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/leonxlnx/taste-skill",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "upgrade-stripe",
+      "name": "upgrade-stripe",
+      "summary": "",
+      "downloads": 27,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/docs.stripe.com",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "taste-design",
+      "name": "taste-design",
+      "summary": "",
+      "downloads": 12,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/google-labs-code/stitch-skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "caveman-compress",
+      "name": "caveman-compress",
+      "summary": "",
+      "downloads": 79,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/juliusbrussee/caveman",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "systematic-debugging",
+      "name": "systematic-debugging",
+      "summary": "",
+      "downloads": 43,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/obra/superpowers",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "momentic-result-classification",
+      "name": "momentic-result-classification",
+      "summary": "",
+      "downloads": 38,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/momentic-ai/skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "momentic-test",
+      "name": "momentic-test",
+      "summary": "",
+      "downloads": 38,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/momentic-ai/skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "pptx",
+      "name": "pptx",
+      "summary": "",
+      "downloads": 32,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/anthropics/skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "analytics-tracking",
+      "name": "analytics-tracking",
+      "summary": "",
+      "downloads": 29,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/coreyhaines31/marketingskills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "stripe-projects",
+      "name": "stripe-projects",
+      "summary": "",
+      "downloads": 27,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/docs.stripe.com",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "compress",
+      "name": "compress",
+      "summary": "",
+      "downloads": 71,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/juliusbrussee/caveman",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "react:components",
+      "name": "react:components",
+      "summary": "",
+      "downloads": 33,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/google-labs-code/stitch-skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "content-strategy",
+      "name": "content-strategy",
+      "summary": "",
+      "downloads": 28,
+      "stars": 0,
+      "category": "general",
+      "tags": [],
+      "source_url": "https://github.com/coreyhaines31/marketingskills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
+    },
+    {
+      "slug": "customer-research",
+      "name": "customer-research",
       "summary": "",
       "downloads": 26,
       "stars": 0,
       "category": "general",
       "tags": [],
-      "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "source_url": "https://github.com/coreyhaines31/marketingskills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
-      "slug": "lark-shared",
-      "name": "lark-shared",
+      "slug": "enhance-prompt",
+      "name": "enhance-prompt",
       "summary": "",
-      "downloads": 26,
+      "downloads": 31,
       "stars": 0,
       "category": "general",
       "tags": [],
-      "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "source_url": "https://github.com/google-labs-code/stitch-skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
-      "slug": "lark-im",
-      "name": "lark-im",
+      "slug": "marketing-ideas",
+      "name": "marketing-ideas",
       "summary": "",
-      "downloads": 26,
+      "downloads": 29,
       "stars": 0,
       "category": "general",
       "tags": [],
-      "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "source_url": "https://github.com/coreyhaines31/marketingskills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
-      "slug": "lark-doc",
-      "name": "lark-doc",
+      "slug": "lead-magnets",
+      "name": "lead-magnets",
       "summary": "",
-      "downloads": 26,
+      "downloads": 25,
       "stars": 0,
       "category": "general",
       "tags": [],
-      "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "source_url": "https://github.com/coreyhaines31/marketingskills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
-      "slug": "lark-sheets",
-      "name": "lark-sheets",
+      "slug": "gws-sheets",
+      "name": "gws-sheets",
       "summary": "",
-      "downloads": 26,
+      "downloads": 18,
       "stars": 0,
       "category": "general",
       "tags": [],
-      "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "source_url": "https://github.com/googleworkspace/cli",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     },
     {
-      "slug": "lark-contact",
-      "name": "lark-contact",
+      "slug": "stitch-design",
+      "name": "stitch-design",
       "summary": "",
-      "downloads": 26,
+      "downloads": 16,
       "stars": 0,
       "category": "general",
       "tags": [],
-      "source_url": "https://github.com/larksuite/cli",
-      "updated_at": "2026-04-28T19:12:15.482Z"
+      "source_url": "https://github.com/google-labs-code/stitch-skills",
+      "updated_at": "2026-04-28T19:24:24.144Z"
     }
   ]
 }
