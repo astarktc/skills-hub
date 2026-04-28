@@ -149,6 +149,7 @@ function App() {
     null,
   );
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
+  const [zoomLevel, setZoomLevel] = useState(1.0);
 
   const isTauri =
     typeof window !== "undefined" &&
@@ -428,6 +429,13 @@ function App() {
     if (!isTauri) return;
     invokeTauri<boolean>("get_auto_sync_enabled")
       .then(setAutoSyncEnabled)
+      .catch(() => {});
+  }, [isTauri, invokeTauri]);
+
+  useEffect(() => {
+    if (!isTauri) return;
+    invokeTauri<number>("get_ui_zoom_level")
+      .then((level) => setZoomLevel(level))
       .catch(() => {});
   }, [isTauri, invokeTauri]);
 
@@ -945,6 +953,21 @@ function App() {
       setThemePreference(nextTheme);
     },
     [],
+  );
+
+  const handleZoomLevelChange = useCallback(
+    async (nextLevel: number) => {
+      setZoomLevel(nextLevel);
+      if (!isTauri) return;
+      try {
+        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+        await getCurrentWebview().setZoom(nextLevel);
+        await invokeTauri("set_ui_zoom_level", { zoomLevel: nextLevel });
+      } catch {
+        /* ignore -- zoom is best-effort */
+      }
+    },
+    [isTauri, invokeTauri],
   );
 
   const handleCloseNewTools = useCallback(() => {
@@ -2272,9 +2295,11 @@ function App() {
             gitCacheCleanupDays={gitCacheCleanupDays}
             gitCacheTtlSecs={gitCacheTtlSecs}
             themePreference={themePreference}
+            zoomLevel={zoomLevel}
             onPickStoragePath={handlePickStoragePath}
             onToggleLanguage={toggleLanguage}
             onThemeChange={handleThemeChange}
+            onZoomLevelChange={handleZoomLevelChange}
             onGitCacheCleanupDaysChange={handleGitCacheCleanupDaysChange}
             onGitCacheTtlSecsChange={handleGitCacheTtlSecsChange}
             onClearGitCacheNow={handleClearGitCacheNow}
