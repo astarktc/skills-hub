@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-last_updated: "2026-04-22T19:32:40.226Z"
+last_updated: "2026-04-28"
 progress:
   total_phases: 6
   completed_phases: 6
@@ -84,3 +84,4 @@ None -- milestone shipped.
 | 260422-ixr | Toggle link/unlink tool deployment buttons with dynamic icon state in My Skills                                      | 2026-04-22 | be0b104 | [260422-ixr-toggle-link-unlink-tool-deployment-butto](./quick/260422-ixr-toggle-link-unlink-tool-deployment-butto/) |
 | 260422-jb0 | Persist group-by-repo checkbox state in My Skills and Projects across app restarts                                   | 2026-04-22 | 66a521e | [260422-jb0-persist-group-by-repo-checkbox-state-in-](./quick/260422-jb0-persist-group-by-repo-checkbox-state-in-/) |
 | 260422-k78 | Add skill detail viewer to Explore page with temporary caching and staleness checks                                  | 2026-04-22 | 1a5b779 | [260422-k78-add-skill-detail-viewer-to-explore-page-](./quick/260422-k78-add-skill-detail-viewer-to-explore-page-/) |
+| 260428-5z  | Add view mode toggle (List/Auto Grid/Dense Grid) to My Skills page with two-row toolbar                              | 2026-04-28 | d323160 | [260428-5z-view-mode-toggle](./quick/260428-5z-view-mode-toggle/)                                                   |
