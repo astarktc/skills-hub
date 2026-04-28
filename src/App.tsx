@@ -40,6 +40,8 @@ import type {
   UpdateResultDto,
 } from "./components/skills/types";
 
+const ZOOM_PRESETS = [0.75, 1, 1.1, 1.25, 1.5, 1.75, 2];
+
 function App() {
   const { t, i18n } = useTranslation();
   const language = i18n.resolvedLanguage ?? i18n.language ?? "en";
@@ -437,6 +439,35 @@ function App() {
     invokeTauri<number>("get_ui_zoom_level")
       .then((level) => setZoomLevel(level))
       .catch(() => {});
+  }, [isTauri, invokeTauri]);
+
+  useEffect(() => {
+    if (!isTauri) return;
+    const handler = (e: KeyboardEvent) => {
+      const zoomIn =
+        (e.ctrlKey || e.metaKey) && (e.key === "=" || e.key === "+");
+      const zoomOut = (e.ctrlKey || e.metaKey) && e.key === "-";
+      if (!zoomIn && !zoomOut) return;
+      e.preventDefault();
+      setZoomLevel((prev) => {
+        const idx = ZOOM_PRESETS.indexOf(prev);
+        const curIdx =
+          idx >= 0 ? idx : ZOOM_PRESETS.findIndex((p) => p >= prev);
+        const nextIdx = zoomIn
+          ? Math.min((curIdx >= 0 ? curIdx : 0) + 1, ZOOM_PRESETS.length - 1)
+          : Math.max((curIdx >= 0 ? curIdx : ZOOM_PRESETS.length - 1) - 1, 0);
+        const next = ZOOM_PRESETS[nextIdx];
+        import("@tauri-apps/api/webview").then(({ getCurrentWebview }) => {
+          getCurrentWebview()
+            .setZoom(next)
+            .catch(() => {});
+        });
+        invokeTauri("set_ui_zoom_level", { zoomLevel: next }).catch(() => {});
+        return next;
+      });
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, [isTauri, invokeTauri]);
 
   useEffect(() => {

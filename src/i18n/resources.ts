@@ -32,7 +32,7 @@ export const resources = {
       },
       defaultZoomLevel: "Default Zoom Level",
       defaultZoomLevelHint:
-        "Sets the zoom level applied when the app starts. Use Ctrl+/Ctrl- for temporary session zoom.",
+        "Scales the entire UI. Also adjustable with Ctrl+/Ctrl-.",
       zoomOptions: {
         "75": "75%",
         "100": "100% (Default)",
@@ -440,8 +440,7 @@ export const resources = {
         dark: "暗色",
       },
       defaultZoomLevel: "默认缩放级别",
-      defaultZoomLevelHint:
-        "设置应用启动时的缩放级别。使用 Ctrl+/Ctrl- 临时调整缩放。",
+      defaultZoomLevelHint: "缩放整个界面。也可使用 Ctrl+/Ctrl- 调整。",
       zoomOptions: {
         "75": "75%",
         "100": "100%（默认）",
