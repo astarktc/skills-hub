@@ -903,7 +903,7 @@ function App() {
         try {
           const results = await invokeTauri<OnlineSkillDto[]>(
             "search_skills_online",
-            { query: value.trim(), limit: 20 },
+            { query: value.trim(), limit: 50 },
           );
           setSearchResults(results);
         } catch {
