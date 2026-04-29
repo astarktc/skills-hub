@@ -1,170 +1,169 @@
 # Coding Conventions
 
-**Analysis Date:** 2026-04-07
+**Analysis Date:** 2026-04-29
 
-## High-Level Summary
+## Project Skills
 
-### TypeScript
-- Strict mode: `noUnusedLocals` and `noUnusedParameters` are enabled — unused variables/params cause compile errors
-- Component files: PascalCase (`SkillCard.tsx`)
-- Props types: `ComponentNameProps` (`SkillCardProps`)
-- CSS class names: kebab-case (`modal-backdrop`, `skill-card`)
-- Modal conditional rendering: `if (!open) return null` (full unmount, not display:none)
-- Wrap presentational components with `memo()`
-- All user-visible text must use i18n (`t('key')`), translation keys defined in `src/i18n/resources.ts`
-- When adding new text, always provide both English and Chinese translations
-- DTO types are defined in `src/components/skills/types.ts` and must stay in sync with the Rust DTOs in `commands/mod.rs`
+**Detected skill indexes:**
 
-### Rust
-- Functions/methods: snake_case
-- Constants: SCREAMING_SNAKE_CASE
-- Tauri command parameters use camelCase (to match frontend JS calling convention)
-- Use `anyhow::Context` to add context to errors
-- New core modules must be exported in `core/mod.rs`
-- Tests use `tempfile` crate for temp directories and `mockito` for HTTP mocking
-
-### Styling
-- Component styles go in `src/App.css` (not CSS Modules), using semantic CSS class names
-- Theming via CSS variables + `[data-theme="dark"]` selector, variables defined in `src/index.css`
-- Tailwind utility classes and custom CSS classes can be mixed
+- `.claude/skills/code-simplification/SKILL.md`: prefer the simplest code that works; extract duplication only at the third occurrence; avoid one-caller abstractions, redundant defensive checks, and dead code.
+- `.claude/skills/vercel-react-best-practices/SKILL.md`: React changes should avoid unnecessary re-renders, prefer direct imports over barrels, use primitive effect dependencies, avoid inline components, and parallelize independent async work.
+- `.claude/skills/vercel-composition-patterns/SKILL.md`: prefer composition and explicit variant components over boolean prop proliferation for reusable React APIs.
+- `.claude/skills/frontend-design/SKILL.md`: UI additions should be production-grade, visually intentional, accessible, and cohesive with existing theme variables.
+- `.claude/skills/web-design-guidelines/SKILL.md`: use for UI/accessibility review tasks; fetch current guidelines before formal review.
 
 ## Naming Patterns
 
 **Files:**
 
-- React component files use PascalCase filenames in `src/components/skills/` such as `src/components/skills/SkillCard.tsx`, `src/components/skills/SettingsPage.tsx`, and `src/components/skills/modals/AddSkillModal.tsx`.
-- Frontend non-component support files use lowercase names when they represent infrastructure or setup, such as `src/main.tsx`, `src/i18n/index.ts`, and `src/i18n/resources.ts`.
-- Rust production modules use snake_case filenames such as `src-tauri/src/core/skill_store.rs`, `src-tauri/src/core/github_search.rs`, and `src-tauri/src/commands/mod.rs`.
-- Rust test files mirror the module name they cover under `src-tauri/src/core/tests/`, such as `src-tauri/src/core/tests/installer.rs` and `src-tauri/src/core/tests/skill_store.rs`.
+- React component files use PascalCase filenames: `src/components/skills/SkillCard.tsx`, `src/components/skills/SettingsPage.tsx`, `src/components/projects/ProjectsPage.tsx`, `src/components/projects/AssignmentMatrix.tsx`.
+- React modal files use PascalCase plus a `Modal` suffix: `src/components/skills/modals/AddSkillModal.tsx`, `src/components/projects/RemoveProjectModal.tsx`, `src/components/projects/ToolConfigModal.tsx`.
+- React hook files use a `use*` camelCase filename: `src/components/projects/useProjectState.ts`.
+- Frontend setup and infrastructure files use lowercase names: `src/main.tsx`, `src/i18n/index.ts`, `src/i18n/resources.ts`.
+- Shared frontend type files are named `types.ts`: `src/components/skills/types.ts`, `src/components/projects/types.ts`.
+- Rust production modules use snake_case filenames: `src-tauri/src/core/skill_store.rs`, `src-tauri/src/core/project_sync.rs`, `src-tauri/src/core/github_search.rs`.
+- Rust test files mirror the module under test in `src-tauri/src/core/tests/`: `src-tauri/src/core/tests/project_ops.rs`, `src-tauri/src/core/tests/skill_store.rs`, `src-tauri/src/core/tests/sync_engine.rs`.
 
 **Functions:**
 
-- TypeScript component functions use PascalCase when they define components, for example `SkillCard` in `src/components/skills/SkillCard.tsx` and `AddSkillModal` in `src/components/skills/modals/AddSkillModal.tsx`.
-- TypeScript helper functions use camelCase, for example `formatRelative`, `getSkillSourceLabel`, and `getGithubInfo` in `src/App.tsx`, plus `formatCount` in `src/components/skills/ExplorePage.tsx`.
-- Rust functions and methods use snake_case throughout, for example `format_anyhow_error` in `src-tauri/src/commands/mod.rs`, `ensure_schema` in `src-tauri/src/core/skill_store.rs`, and `hash_dir` tested from `src-tauri/src/core/tests/content_hash.rs`.
+- React component functions use PascalCase: `SkillCard` in `src/components/skills/SkillCard.tsx`, `ProjectsPage` in `src/components/projects/ProjectsPage.tsx`, `AddSkillModal` in `src/components/skills/modals/AddSkillModal.tsx`.
+- React hooks use `use*`: `useProjectState` in `src/components/projects/useProjectState.ts`.
+- TypeScript handlers and helpers use camelCase: `handleAddProject`, `handleToolConfigConfirm`, `formatProjectError`, and `normalizeError` in `src/components/projects/`.
+- Rust functions and methods use snake_case: `format_anyhow_error` and `expand_home_path` in `src-tauri/src/commands/mod.rs`, `ensure_schema` in `src-tauri/src/core/skill_store.rs`, `assign_and_sync` in `src-tauri/src/core/project_sync.rs`.
+- Tauri command function names use snake_case at the command boundary, but parameters that are consumed by JavaScript may intentionally use camelCase with `#[allow(non_snake_case)]`, as in `install_local(sourcePath, ...)` in `src-tauri/src/commands/mod.rs`.
 
 **Variables:**
 
-- Frontend local variables and state use camelCase, including state setters from `useState` in `src/App.tsx` like `managedSkills`, `searchResults`, `showAddModal`, and `updateAvailableVersion`.
-- Boolean state names prefer `is*`, `show*`, `can*`, or `has*`, as seen in `src/App.tsx`, `src/components/skills/ExplorePage.tsx`, and `src/components/skills/SettingsPage.tsx`.
-- Rust locals use snake_case, such as `user_version`, `db_path`, and `newly_installed` in `src-tauri/src/core/skill_store.rs` and `src-tauri/src/commands/mod.rs`.
+- Frontend state variables use camelCase with React setter names: `managedSkills`, `setManagedSkills`, `selectedProjectId`, `setSelectedProjectId` in `src/App.tsx` and `src/components/projects/useProjectState.ts`.
+- Boolean frontend state uses `is*`, `show*`, `can*`, or `has*` names: `isTauri` in `src/App.tsx`, `showAddModal` in `src/components/projects/useProjectState.ts`, `canClose` in `src/components/skills/modals/AddSkillModal.tsx`.
+- TypeScript event handlers use `handle*` for local callbacks and `on*` for props passed into components, as seen in `src/components/projects/ProjectsPage.tsx` and `src/components/skills/modals/AddSkillModal.tsx`.
+- Rust locals use snake_case: `user_version`, `db_path`, `newly_installed`, `project_id`, `skill_cache` in `src-tauri/src/**/*.rs`.
+- Rust constants use SCREAMING_SNAKE_CASE: `DB_FILE_NAME`, `LEGACY_APP_IDENTIFIERS`, and `SCHEMA_VERSION` in `src-tauri/src/core/skill_store.rs`.
 
 **Types:**
 
-- Type aliases and prop types use PascalCase with descriptive suffixes, such as `SkillCardProps` in `src/components/skills/SkillCard.tsx`, `SettingsPageProps` in `src/components/skills/SettingsPage.tsx`, and DTO aliases in `src/components/skills/types.ts`.
-- Rust structs use PascalCase and DTO suffixes for IPC types, for example `ToolInfoDto`, `ToolStatusDto`, and `InstallResultDto` in `src-tauri/src/commands/mod.rs`.
-- Shared frontend DTOs are centralized in `src/components/skills/types.ts` and mirror backend command DTOs from `src-tauri/src/commands/mod.rs`; keep names and fields aligned across both files.
+- TypeScript prop types use `ComponentNameProps`: `SkillCardProps` in `src/components/skills/SkillCard.tsx`, `AddSkillModalProps` in `src/components/skills/modals/AddSkillModal.tsx`.
+- TypeScript DTO types use a `Dto` suffix and preserve backend field names, including snake_case wire fields: `ProjectDto`, `ProjectToolDto`, `ProjectSkillAssignmentDto` in `src/components/projects/types.ts`.
+- Rust DTO structs use PascalCase plus `Dto`: `ToolInfoDto`, `ToolStatusDto`, `InstallResultDto` in `src-tauri/src/commands/mod.rs`.
+- Rust database records use PascalCase plus `Record`: `SkillRecord`, `SkillTargetRecord`, `ProjectRecord`, `ProjectSkillAssignmentRecord` in `src-tauri/src/core/skill_store.rs`.
 
 ## Code Style
 
 **Formatting:**
 
-- Frontend code uses a Prettier-like style with single quotes, no semicolons, and trailing commas in multiline structures, as shown in `src/App.tsx`, `src/components/skills/SkillCard.tsx`, and `src/i18n/index.ts`.
-- React code prefers destructured props with a typed props object followed by an arrow function definition, for example in `src/components/skills/modals/AddSkillModal.tsx` and `src/components/skills/SettingsPage.tsx`.
-- JSX keeps one prop per line once elements become non-trivial, especially in modal and list components under `src/components/skills/`.
-- CSS lives in global stylesheets, primarily `src/App.css` and `src/index.css`, and uses semantic kebab-case class names such as `.skill-card`, `.modal-backdrop`, and `.explore-card`.
-- Rust is formatted with `cargo fmt`, enforced by the `rust:fmt:check` script in `package.json`.
+- Frontend uses TypeScript with strict compilation rather than a detected Prettier config. There is no `.prettierrc` or `biome.json`; preserve the style of the surrounding file.
+- Existing frontend files currently mix quote/semicolon styles: `src/App.tsx` and `src/components/projects/useProjectState.ts` use double quotes with semicolons, while `src/components/skills/modals/AddSkillModal.tsx` uses single quotes without semicolons. Match the local file being edited.
+- JSX should keep one prop per line for non-trivial elements, matching `src/components/skills/SkillCard.tsx` and `src/components/projects/ProjectsPage.tsx`.
+- Use early returns for conditional modal mounting: `if (!open) return null` in `src/components/skills/modals/AddSkillModal.tsx`.
+- CSS lives in global stylesheets, primarily `src/App.css` and `src/index.css`; use semantic kebab-case class names such as `skill-card`, `modal-backdrop`, `projects-page`, and `matrix-panel`.
+- Rust formatting is `cargo fmt`, enforced by `npm run rust:fmt:check` from `package.json`.
 
 **Linting:**
 
-- ESLint flat config is defined in `eslint.config.js` and applies to `**/*.{ts,tsx}`.
-- The frontend extends `@eslint/js`, `typescript-eslint`, `eslint-plugin-react-hooks`, and `eslint-plugin-react-refresh` via `eslint.config.js`.
-- TypeScript strictness is enforced in `tsconfig.app.json` and `tsconfig.node.json` with `strict`, `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`, and `noUncheckedSideEffectImports` enabled.
-- Use TypeScript’s strict null handling and explicit fallback expressions such as `?? ''`, `?? null`, and early returns, as seen in `src/App.tsx` and `src/components/skills/SkillDetailView.tsx`.
+- ESLint flat config is in `eslint.config.js` and applies to `**/*.{ts,tsx}`.
+- ESLint extends `@eslint/js`, `typescript-eslint`, `eslint-plugin-react-hooks`, and `eslint-plugin-react-refresh` in `eslint.config.js`.
+- TypeScript strictness is configured in `tsconfig.app.json`: `strict`, `noUnusedLocals`, `noUnusedParameters`, `erasableSyntaxOnly`, `noFallthroughCasesInSwitch`, and `noUncheckedSideEffectImports` are enabled.
+- Rust linting uses `cargo clippy --all-targets --all-features -- -D warnings` via `npm run rust:clippy` in `package.json`.
+- Full verification command is `npm run check`, which runs lint, build, Rust format check, Clippy, and Rust tests.
 
 ## Import Organization
 
 **Order:**
 
-1. External libraries and framework imports first, such as `react`, `lucide-react`, `sonner`, and `react-i18next` in `src/App.tsx` and `src/components/skills/SkillCard.tsx`
-2. Local stylesheet imports near the top for entry files, such as `./App.css` in `src/App.tsx` and `./index.css` in `src/main.tsx`
-3. Local component and type imports after external imports, such as imports from `./components/skills/*` and `./components/skills/types` in `src/App.tsx`
+1. External value imports first: React hooks, Tauri APIs, i18n, icons, toast libraries; examples are `src/App.tsx`, `src/components/projects/ProjectsPage.tsx`, and `src/components/skills/SkillCard.tsx`.
+2. Local component imports next: `src/App.tsx` imports `./components/skills/*` and `./components/projects/ProjectsPage` after external imports.
+3. Type-only imports should use `import type` and usually follow value imports: `src/components/projects/useProjectState.ts`, `src/components/projects/ProjectsPage.tsx`, and `src/components/skills/SkillCard.tsx`.
+4. Rust imports group `std` imports first, external crates next, then `crate::...` imports, as shown in `src-tauri/src/core/project_sync.rs` and `src-tauri/src/commands/mod.rs`.
 
 **Path Aliases:**
 
-- Not detected. Frontend imports use relative paths such as `./components/skills/ExplorePage` in `src/App.tsx` and `../types` in `src/components/skills/modals/AddSkillModal.tsx`.
-- Rust modules use `crate::core::...` absolute crate paths in backend code such as `src-tauri/src/commands/mod.rs`.
+- No frontend path aliases are configured in `tsconfig.app.json` or `vite.config.ts`; use relative paths such as `./components/skills/ExplorePage` and `../skills/types`.
+- Rust backend code uses crate-relative paths such as `crate::core::skill_store::SkillStore` in `src-tauri/src/commands/mod.rs` and `src-tauri/src/core/project_sync.rs`.
+- Avoid barrel files for new frontend code; project skill guidance in `.claude/skills/vercel-react-best-practices/SKILL.md` prefers direct imports for bundle analyzability.
 
 ## Error Handling
 
 **Patterns:**
 
-- Frontend async actions generally use `try/catch` with `err instanceof Error ? err.message : String(err)` normalization, as seen in `src/App.tsx` and `src/components/skills/SettingsPage.tsx`.
-- Frontend converts backend wire-format errors into user-facing translation keys in `formatErrorMessage` inside `src/App.tsx`; preserve this pattern when adding new backend error prefixes.
-- Toast notifications via `sonner` are the standard user-facing error and success channel in components like `src/App.tsx`, `src/components/skills/SkillCard.tsx`, and `src/components/skills/SkillDetailView.tsx`.
-- Backend command handlers return `Result<T, String>` at the Tauri boundary and map internal `anyhow::Error` values through `format_anyhow_error` in `src-tauri/src/commands/mod.rs`.
-- Backend business logic adds context with `anyhow::Context`, for example in `expand_home_path` and `ensure_schema` code paths in `src-tauri/src/commands/mod.rs` and `src-tauri/src/core/skill_store.rs`.
-- Long-running synchronous backend work is wrapped in `tauri::async_runtime::spawn_blocking` in `src-tauri/src/commands/mod.rs`; use this when exposing blocking filesystem, git, or SQLite work to the frontend.
+- Frontend async actions use `try/catch` and normalize unknown errors with `err instanceof Error ? err.message : String(err)`, as in `src/components/projects/ProjectsPage.tsx` and `src/components/projects/useProjectState.ts`.
+- Frontend user-facing errors and successes should use `sonner` toasts (`toast.error`, `toast.success`, `toast.warning`) as in `src/App.tsx`, `src/components/projects/ProjectsPage.tsx`, and `src/components/skills/SkillCard.tsx`.
+- Frontend special backend error contracts are parsed by prefix. Use `formatErrorMessage` in `src/App.tsx` for global skill flows and `formatProjectError` in `src/components/projects/useProjectState.ts` for project flows.
+- Backend command functions return `Result<T, String>` and map `anyhow::Error` through `format_anyhow_error` in `src-tauri/src/commands/mod.rs`.
+- Backend core code returns `anyhow::Result<T>` and should add context with `anyhow::Context` around filesystem, database, git, and network failures, as in `src-tauri/src/core/skill_store.rs` and `src-tauri/src/commands/mod.rs`.
+- Long-running or blocking Tauri commands should wrap synchronous core work in `tauri::async_runtime::spawn_blocking`, matching `get_tool_status`, `get_onboarding_plan`, and `set_central_repo_path` in `src-tauri/src/commands/mod.rs`.
+- Preserve frontend-relevant error prefixes in `format_anyhow_error`: `MULTI_SKILLS|`, `TARGET_EXISTS|`, `TOOL_NOT_INSTALLED|`, `TOOL_NOT_WRITABLE|`, `SKILL_INVALID|`, `DUPLICATE_PROJECT|`, `ASSIGNMENT_EXISTS|`, and `NOT_FOUND|` in `src-tauri/src/commands/mod.rs`.
+- Some backend workflows intentionally record failure status rather than returning `Err`, for example `assign_and_sync` in `src-tauri/src/core/project_sync.rs` returns an assignment with `status: "error"` when sync fails.
 
 ## Logging
 
-**Framework:**
-
-- Frontend uses `sonner` toasts for user-visible operational feedback rather than console logging, with examples in `src/App.tsx` and `src/components/skills/SkillCard.tsx`.
-- Backend uses the `log` crate with `tauri-plugin-log` initialization in `src-tauri/src/lib.rs`.
+**Framework:** backend `log` crate with `tauri-plugin-log`; frontend `sonner` toasts for user-visible messages.
 
 **Patterns:**
 
-- Backend setup and cleanup emit `log::info!` for best-effort maintenance events in `src-tauri/src/lib.rs`.
-- Direct `console.log` usage is not detected in the frontend source under `src/`; follow the existing pattern and surface UI feedback through state or toast instead.
-- Silent failures are occasionally intentional for non-critical browser or storage operations, such as `catch {}` in `src/components/skills/SkillCard.tsx`, `src/components/skills/SettingsPage.tsx`, and `src/i18n/index.ts`.
+- Backend logs non-fatal operational issues with `log::warn!`, for example hash computation failures and project resync failures in `src-tauri/src/core/project_sync.rs`, and rename fallback information in `src-tauri/src/commands/mod.rs`.
+- Use toast notifications instead of `console.log` for visible frontend feedback, matching `src/App.tsx`, `src/components/projects/ProjectsPage.tsx`, and `src/components/skills/SkillCard.tsx`.
+- Silent `catch {}` blocks are used only for non-critical fallback paths, such as clipboard/storage failure handling in `src/components/skills/SkillCard.tsx` and best-effort reloads in `src/components/projects/useProjectState.ts`.
 
 ## Comments
 
 **When to Comment:**
 
-- Comments are sparse and used to explain non-obvious logic boundaries, not routine code. Examples include section comments in `src/components/skills/SkillDetailView.tsx` and lifecycle/setup comments in `src-tauri/src/lib.rs`.
-- Use comments for behavior constraints, safety assumptions, and algorithm notes, such as the cleanup safety bullets in `src-tauri/src/lib.rs` and migration notes in `src-tauri/src/core/skill_store.rs`.
-- Avoid redundant comments on self-explanatory JSX or straightforward assignments; most component files omit them.
+- Use comments for behavior constraints, migration notes, safety assumptions, stale-result protection, and non-obvious sequencing. Examples include schema migration comments in `src-tauri/src/core/skill_store.rs`, stale selection comments in `src/components/projects/useProjectState.ts`, and gitignore sequencing comments in `src/components/projects/ProjectsPage.tsx`.
+- Avoid comments that restate straightforward JSX, assignments, imports, or type declarations.
+- Remove commented-out code; Git history is the source for removed implementation details.
 
 **JSDoc/TSDoc:**
 
-- Not generally used in TypeScript component files under `src/components/skills/`.
-- Rust doc comments are minimal but present for selected internals, for example `CancelToken` in `src-tauri/src/core/cancel_token.rs`.
+- Not generally used in frontend component files under `src/components/`.
+- Rust doc comments are sparse and reserved for selected public/internal abstractions; prefer clear names and focused tests unless API documentation is needed.
 
 ## Function Design
 
 **Size:**
 
-- Presentational components are kept moderate and focused, often one component per file, such as `src/components/skills/SkillCard.tsx`, `src/components/skills/ExplorePage.tsx`, and modal files under `src/components/skills/modals/`.
-- `src/App.tsx` is the notable orchestration exception: it centralizes application state, view switching, and command orchestration. New global stateful workflows currently belong there unless the surrounding architecture is deliberately changed.
-- Rust command and core modules favor many small functions over monolithic logic, with helper functions and DTO mappers split inside `src-tauri/src/commands/mod.rs` and `src-tauri/src/core/*.rs`.
+- Prefer focused components and helpers. Presentational components should stay close to the size of `src/components/skills/SkillCard.tsx`, `src/components/projects/ProjectList.tsx`, or modal files under `src/components/**/`.
+- `src/App.tsx` is an orchestration exception with many states and handlers; new feature-specific state should stay in the relevant feature subtree when possible, as project state does in `src/components/projects/useProjectState.ts`.
+- Follow the code-simplification skill thresholds from `.claude/skills/code-simplification/SKILL.md`: review functions above 20-40 lines, refactor functions above 40 lines when a clean split exists, and keep nesting at two levels where practical.
 
 **Parameters:**
 
-- React components receive explicit prop objects with typed callbacks and data dependencies, as seen in `src/components/skills/modals/AddSkillModal.tsx` and `src/components/skills/SettingsPage.tsx`.
-- Event handlers usually pass primitive values upward rather than DOM events, for example `onLocalPathChange(event.target.value)` in `src/components/skills/modals/AddSkillModal.tsx`.
-- Backend command parameters use camelCase for frontend compatibility, while internal Rust functions stay snake_case in `src-tauri/src/commands/mod.rs`.
+- React presentational components receive explicit prop objects and callbacks instead of reading global state directly, as in `src/components/skills/SkillCard.tsx` and `src/components/skills/modals/AddSkillModal.tsx`.
+- Event handlers should convert DOM events into primitive values before passing them upward, as in `onLocalPathChange(event.target.value)` in `src/components/skills/modals/AddSkillModal.tsx`.
+- Backend command parameters exposed to JavaScript may use camelCase to match `invoke` calls; internal Rust helpers should remain snake_case, as seen in `src-tauri/src/commands/mod.rs`.
+- Avoid boolean prop proliferation for new reusable components; project skill guidance in `.claude/skills/vercel-composition-patterns/SKILL.md` prefers explicit variants or composition when behavior diverges.
 
 **Return Values:**
 
-- Frontend components use early null returns for conditional mounting, for example `if (!open) return null` in `src/components/skills/modals/DeleteModal.tsx`, `src/components/skills/modals/AddSkillModal.tsx`, and `src/components/skills/LoadingOverlay.tsx`.
-- Frontend helpers often return normalized primitives or nullable objects, such as `getGithubInfo` in `src/App.tsx` and `isInstalled` in `src/components/skills/ExplorePage.tsx`.
-- Backend functions return `Result<T>` internally and serialize DTO structs at the command boundary in `src-tauri/src/commands/mod.rs`.
+- Frontend async state actions return `Promise<T>` and throw normalized `Error` values for caller-level toasts, as in `src/components/projects/useProjectState.ts`.
+- Backend core functions return `anyhow::Result<T>`; command functions convert to `Result<T, String>` at the Tauri boundary in `src-tauri/src/commands/mod.rs`.
+- DTO conversion should happen at boundary modules, not deep inside UI components or core storage functions.
 
 ## Module Design
 
 **Exports:**
 
-- Frontend component files usually define a single component and default-export `memo(Component)` for presentational modules, as shown in `src/components/skills/SkillCard.tsx`, `src/components/skills/ExplorePage.tsx`, `src/components/skills/SettingsPage.tsx`, and modal components under `src/components/skills/modals/`.
-- Frontend shared DTOs use named `export type` declarations from `src/components/skills/types.ts`.
-- Backend command aggregation uses a single module file `src-tauri/src/commands/mod.rs` with public command functions and DTO structs.
-- Backend core modules expose focused APIs through per-file modules under `src-tauri/src/core/` and are re-exported via `src-tauri/src/core/mod.rs`.
+- Presentational React components usually default-export `memo(Component)`, as in `src/components/skills/SkillCard.tsx`, `src/components/skills/modals/AddSkillModal.tsx`, and `src/components/projects/ProjectsPage.tsx`.
+- Frontend DTOs use named `export type` declarations from `src/components/skills/types.ts` and `src/components/projects/types.ts`.
+- Feature state hooks export named functions and types: `ProjectState`, `formatProjectError`, and `useProjectState` in `src/components/projects/useProjectState.ts`.
+- Rust core modules are declared and exported through `src-tauri/src/core/mod.rs`.
+- Rust command modules are declared through `src-tauri/src/commands/mod.rs`; project-specific commands live in `src-tauri/src/commands/projects.rs`.
 
 **Barrel Files:**
 
-- Not used on the frontend; components are imported directly from their file paths in `src/App.tsx`.
-- Rust module indexing is handled through `mod.rs` files such as `src-tauri/src/core/mod.rs` and `src-tauri/src/commands/mod.rs`.
+- Frontend barrel files are not used; import components directly by file path.
+- Rust uses `mod.rs` files for module indexing: `src-tauri/src/core/mod.rs` and `src-tauri/src/commands/mod.rs`.
 
-## Prescriptive Patterns to Follow
+## Prescriptive Patterns
 
-- Put new user-visible strings in `src/i18n/resources.ts` and consume them through `t('key')`; do not inline English text in JSX.
-- Keep new frontend DTO fields synchronized between `src/components/skills/types.ts` and `src-tauri/src/commands/mod.rs`.
-- Wrap new presentational React components in `memo()` when they primarily render props, matching `src/components/skills/SkillCard.tsx` and `src/components/skills/ExplorePage.tsx`.
-- Use early-return modal rendering (`if (!open) return null`) for overlay components, matching files in `src/components/skills/modals/`.
-- Put global app-level orchestration, shared fetch/reload flows, and Tauri command wiring in `src/App.tsx` unless the architecture is intentionally reworked.
-- For backend commands, keep business logic in `src-tauri/src/core/` and make `src-tauri/src/commands/mod.rs` responsible for Tauri command wrappers, DTOs, and error formatting.
+- Put new user-visible frontend strings in `src/i18n/resources.ts` and consume them through `t('key')` or `t("key")`; do not inline user-visible English in JSX.
+- Keep DTOs synchronized between Rust command structs in `src-tauri/src/commands/mod.rs` / `src-tauri/src/commands/projects.rs` and TypeScript types in `src/components/skills/types.ts` / `src/components/projects/types.ts`.
+- Keep backend business logic in `src-tauri/src/core/`; keep Tauri commands responsible for argument conversion, `spawn_blocking`, DTO conversion, and error formatting.
+- Register new Tauri commands in both the command module and the `generate_handler!` list in `src-tauri/src/lib.rs`.
+- Use direct component imports and avoid new barrels, matching existing frontend imports and Vercel bundle guidance.
+- Use `useCallback` for callbacks passed across component boundaries when existing nearby code does so, as in `src/components/projects/ProjectsPage.tsx` and `src/components/projects/useProjectState.ts`.
+- Use `Promise.all` for independent frontend IPC calls, as in `selectProject` in `src/components/projects/useProjectState.ts`.
+- Avoid one-off abstractions with a single caller unless they isolate a real boundary such as IPC, storage, or filesystem behavior.
 
 ---
 
-_Convention analysis: 2026-04-07_
+_Convention analysis: 2026-04-29_

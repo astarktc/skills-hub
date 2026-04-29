@@ -1,231 +1,304 @@
 # Codebase Concerns
 
-**Analysis Date:** 2026-04-07
+**Analysis Date:** 2026-04-29
 
 ## Tech Debt
 
-**Monolithic frontend state and workflow orchestration:**
+**Frontend orchestration concentration:**
 
-- Issue: `src/App.tsx` contains most UI state, async orchestration, tool-sync logic, modal flow, update checks, settings persistence, and error handling in a single 2,086-line component.
+- Issue: `src/App.tsx` is 2,532 lines and owns application state, settings, onboarding, update checks, global sync flows, modal state, explore flows, and direct Tauri command wiring. This exceeds the project skill `code-simplification` review threshold for file/function complexity and makes cross-feature edits risky.
 - Files: `src/App.tsx`
-- Impact: Changes to add/import/sync/update flows are high-risk because unrelated UI state and side effects are tightly coupled. Repeated install-and-sync code paths are easy to drift apart, and React hook dependency suppression increases the chance of stale-state bugs.
-- Fix approach: Split `src/App.tsx` into feature hooks and workflow modules, such as install flow, sync flow, settings flow, and updates flow. Move repeated install+sync sequences into shared helpers and remove `eslint-disable-next-line react-hooks/exhaustive-deps` workarounds by giving effects stable dependencies.
+- Impact: Small feature work requires navigating unrelated concerns, effect dependencies are suppressed in places, and duplicated async install/sync flows are easy to diverge.
+- Fix approach: Keep new per-project state in `src/components/projects/` as established by `src/components/projects/useProjectState.ts`; when touching existing global flows, extract cohesive hooks around settings, updater, onboarding import, and install/sync orchestration before adding more state to `src/App.tsx`.
 
-**Duplicated install-and-sync logic across local, Git, picker, onboarding, and explore flows:**
+**Duplicated install-then-sync loops:**
 
-- Issue: The same sequence of "install skill, compute selected targets, sync per tool, collect errors, refresh managed skills" is implemented multiple times instead of once.
-- Files: `src/App.tsx`
-- Impact: Bug fixes and new behaviors must be applied in many branches. Inconsistent edge-case handling is likely, especially around no-target selection, duplicate-name handling, and post-install cleanup.
-- Fix approach: Extract a shared frontend action helper or backend command that accepts an install result and target list, then performs sync/error aggregation consistently for all entry points.
+- Issue: Local candidate install, Git candidate install, onboarding import, and global auto-sync all repeat the same pattern of computing installed tool targets, looping tools, invoking `sync_skill_to_tool`, collecting errors, and refreshing skills.
+- Files: `src/App.tsx:1800`, `src/App.tsx:1877`, `src/App.tsx:1285`, `src/App.tsx:2013`
+- Impact: Behavior changes for sync error handling, target de-duplication, overwrite options, or cancellation must be made in multiple branches; one branch can silently miss fixes.
+- Fix approach: Extract one helper/hook in `src/App.tsx` or a new `src/components/skills/useSkillSyncActions.ts` that accepts created skill metadata plus selected target IDs and returns collected errors; keep UI-specific progress messages at call sites.
 
-**Large command layer with mixed responsibilities:**
+**Direct IPC import split:**
 
-- Issue: `src-tauri/src/commands/mod.rs` is nearly 1,000 lines and mixes DTO definitions, path expansion, command handlers, cross-tool syncing, deletion behavior, GitHub token storage, file reading, and error text formatting.
-- Files: `src-tauri/src/commands/mod.rs`
-- Impact: Backend command changes are harder to reason about, and command-specific bugs are more likely to leak into unrelated areas. The module is also a bottleneck for adding new commands or changing DTOs.
-- Fix approach: Split the command layer into focused modules such as `settings`, `skills`, `sync`, `files`, and `github`, while keeping DTOs close to their handlers.
+- Issue: Main skill flows use guarded dynamic `invokeTauri()` in `src/App.tsx`, while the project subtree imports `invoke` directly and assumes Tauri context.
+- Files: `src/App.tsx:169`, `src/components/projects/useProjectState.ts:2`, `src/components/projects/ProjectsPage.tsx:3`
+- Impact: Browser-only development, test harnesses, or future web previews fail harder in the project subtree than in the rest of the app; error normalization and command wrappers are inconsistent.
+- Fix approach: Introduce a small shared IPC module such as `src/lib/tauri.ts` with `invokeTauri<T>()` and reuse it from both `src/App.tsx` and `src/components/projects/`.
 
-**Installer complexity concentrated in one backend module:**
+**Dormant router shell:**
 
-- Issue: `src-tauri/src/core/installer.rs` handles local install, Git install, GitHub API directory download fallback, multi-skill discovery, SKILL.md parsing, description backfill, update logic, caching, naming, and target refresh.
-- Files: `src-tauri/src/core/installer.rs`
-- Impact: Installer changes are fragile because Git, filesystem, parsing, and persistence concerns are intertwined. Regressions can affect both initial import and update flows.
-- Fix approach: Split installer responsibilities into smaller modules for repo fetching, skill discovery, metadata parsing, central-repo import, and update propagation.
+- Issue: `src/components/Layout.tsx` and `src/pages/Dashboard.tsx` define an alternate React Router-style shell that is not wired into `src/main.tsx` or `src/App.tsx` and uses different styling conventions.
+- Files: `src/components/Layout.tsx`, `src/pages/Dashboard.tsx`, `src/main.tsx`, `src/App.tsx`
+- Impact: Contributors may place new UI in an unused route tree, creating dead features that compile but never render.
+- Fix approach: Either connect the router shell deliberately from `src/main.tsx` or delete the dormant files; new visible screens should be added through `src/App.tsx` / `src/components/skills/` / `src/components/projects/` until routing is intentionally adopted.
 
-**Mixed-language user-facing error strings in backend:**
+**Suppression and dead-code allowances:**
 
-- Issue: Backend error formatting and command responses contain Chinese user-facing strings directly, while the frontend i18n system is otherwise centralized in `src/i18n/resources.ts`.
-- Files: `src-tauri/src/commands/mod.rs`, `src-tauri/src/core/installer.rs`, `src-tauri/src/core/git_fetcher.rs`, `src-tauri/src/core/github_download.rs`
-- Impact: Error UX is inconsistent, localization is incomplete, and frontend message parsing depends on raw backend text rather than stable error codes.
-- Fix approach: Return structured error codes plus parameters from Rust, then localize entirely in `src/i18n/resources.ts` on the frontend.
+- Issue: Several production files carry `#[allow(dead_code)]`, `#[allow(clippy::too_many_arguments)]`, and `eslint-disable-next-line react-hooks/exhaustive-deps` suppressions.
+- Files: `src/App.tsx:1270`, `src/App.tsx:1742`, `src-tauri/src/core/sync_engine.rs:5`, `src-tauri/src/core/skill_lock.rs:13`, `src-tauri/src/core/github_download.rs:47`, `src-tauri/src/core/tool_adapters/mod.rs:442`
+- Impact: Suppressions hide real drift: unused helper APIs remain in production modules and React effect dependency mistakes can survive linting.
+- Fix approach: Treat new suppressions as exceptions requiring a nearby reason; remove obsolete `dead_code` allowances when the API is unused outside tests, and prefer stable callbacks/refs over dependency lint suppression.
+
+**Project status mutation during reads:**
+
+- Issue: Listing assignments also recalculates staleness and writes updated statuses back to SQLite.
+- Files: `src-tauri/src/core/project_sync.rs:226`, `src-tauri/src/core/project_sync.rs:273`, `src-tauri/src/core/project_sync.rs:311`, `src-tauri/src/commands/projects.rs:221`
+- Impact: Read commands have side effects, making UI refreshes capable of changing persisted state and complicating debugging of sync status transitions.
+- Fix approach: Split state inspection from persistence: expose a pure status computation helper and call a separate reconciliation/update command when the UI explicitly refreshes or resyncs.
+
+**Settings table stores sensitive and non-sensitive values identically:**
+
+- Issue: GitHub tokens are persisted through `settings` as plaintext string values using the same API as UI settings and cache data.
+- Files: `src-tauri/src/commands/mod.rs:692`, `src-tauri/src/commands/mod.rs:703`, `src-tauri/src/core/skill_store.rs:47`, `src/App.tsx:421`, `src/App.tsx:698`
+- Impact: A database copy exposes the GitHub token; returning the token to the frontend keeps it in React state and increases exposure through debugging tools.
+- Fix approach: Move credentials to an OS keychain/secure storage plugin; if that is deferred, store only a masked presence flag in frontend state and require overwrite/clear actions rather than retrieving the full token.
 
 ## Known Bugs
 
-**Cancel action does not reset all in-flight operations:**
+**Project path update does not migrate existing artifacts:**
 
-- Symptoms: Pressing cancel only affects the `install_git` command path that explicitly resets and passes the shared cancel token. Other long-running workflows continue despite the loading overlay being dismissed.
-- Files: `src/App.tsx`, `src-tauri/src/commands/mod.rs`, `src-tauri/src/core/cancel_token.rs`, `src-tauri/src/core/github_download.rs`, `src-tauri/src/core/git_fetcher.rs`
-- Trigger: Start a long-running operation from flows that do not wire the cancel token, such as `list_git_skills_cmd`, `install_git_selection`, search-related requests, or local copy-heavy operations, then press cancel via `cancel_current_operation`.
-- Workaround: Wait for the backend task to finish, or avoid using cancel outside the main Git install path.
+- Symptoms: Updating a registered project path changes the database path only; existing symlinks/copies in the old project remain, and assignment records continue to point conceptually at the new path without cleaning the old targets.
+- Files: `src-tauri/src/core/project_ops.rs:241`, `src-tauri/src/core/skill_store.rs:607`, `src/components/projects/ProjectsPage.tsx:207`
+- Trigger: Register a project, assign one or more skills, use the update path action, then inspect the old project directory.
+- Workaround: Manually remove old `.claude/skills` or equivalent tool directories, then resync the updated project.
 
-**Deleting a skill can leave the app in a partial-success state while reporting failure:**
+**Adding a project tool does not sync existing assignments for that tool:**
 
-- Symptoms: The central skill record and directory can be removed even when cleanup of one or more synced tool targets fails, after which the command returns an error message.
-- Files: `src-tauri/src/commands/mod.rs`
-- Trigger: Run `delete_managed_skill` when one synced target cannot be removed due to permissions, locks, or filesystem errors.
-- Workaround: Manually remove leftover tool directories after the failed deletion message.
+- Symptoms: Tool configuration persists new tools, but existing assigned skills are not automatically materialized for newly added tools unless the user runs a resync or toggles assignments.
+- Files: `src/components/projects/useProjectState.ts:355`, `src-tauri/src/commands/projects.rs:69`, `src-tauri/src/core/project_sync.rs:166`
+- Trigger: Create a project with assignments, reopen tool configuration, add a new tool, and inspect that tool's project skill directory before resync.
+- Workaround: Use the project resync button after adding tools.
 
-**Git skill selection path cannot be cancelled once started:**
+**Project deletion can leave artifacts for non-synced error statuses:**
 
-- Symptoms: Multi-skill discovery and selected-skill Git installs continue running after the user dismisses loading state because those commands do not receive the shared cancel token.
-- Files: `src/App.tsx`, `src-tauri/src/commands/mod.rs`
-- Trigger: Start `list_git_skills_cmd` or `install_git_selection`, then invoke `cancel_current_operation` from the frontend.
-- Workaround: Wait for the request to complete before interacting again.
+- Symptoms: Project cleanup removes artifacts only for assignments with `synced` or `stale` status; assignments marked `error`, `missing`, or `pending` are deleted from SQLite without attempting filesystem cleanup.
+- Files: `src-tauri/src/core/project_ops.rs:172`, `src-tauri/src/core/project_ops.rs:179`, `src-tauri/src/core/sync_engine.rs:137`
+- Trigger: Create an assignment that leaves a target on disk but records an error status, then remove the project.
+- Workaround: Manually remove managed skill directories from the project before or after deleting the project record.
 
-**Search result “installed” detection can misclassify skills:**
+**Skill detail read errors are displayed as file content:**
 
-- Symptoms: Explore/search cards determine installed state from a synthesized key of skill name plus normalized source path, which can miss renamed installs or collide for unrelated skills with the same name and repo root.
-- Files: `src/components/skills/ExplorePage.tsx`, `src/App.tsx`
-- Trigger: Install a skill with a custom display name, or import multiple skills from one repository where source normalization collapses to the same repo root.
-- Workaround: Verify installation status from `My Skills` rather than relying on Explore badges.
+- Symptoms: File read failures set the active file content to the raw error string instead of using the normal toast/error display path.
+- Files: `src/components/skills/SkillDetailView.tsx:458`, `src/components/skills/SkillDetailView.tsx:469`
+- Trigger: Select a file that becomes unreadable or disappears after the file tree loads.
+- Workaround: Reopen the skill detail view to refresh the file list; inspect app logs for the original backend error.
+
+**Gitignore status silently treats unreadable files as unchecked:**
+
+- Symptoms: Status checks use `unwrap_or_default()` for `.gitignore` and `.git/info/exclude`, so permission or encoding read failures look the same as no Skills Hub marker.
+- Files: `src-tauri/src/commands/projects.rs:560`, `src-tauri/src/commands/projects.rs:578`, `src-tauri/src/commands/projects.rs:583`
+- Trigger: Register a project where `.gitignore` or `.git/info/exclude` exists but cannot be read.
+- Workaround: Fix permissions manually, then reopen or refresh project settings.
 
 ## Security Considerations
 
-**GitHub token is stored in plaintext application settings:**
+**Arbitrary project path writes through project gitignore command:**
 
-- Risk: Personal access tokens are persisted as plain text in the SQLite settings store rather than OS-backed secure storage.
-- Files: `src-tauri/src/commands/mod.rs`, `src-tauri/src/core/skill_store.rs`, `src/components/skills/SettingsPage.tsx`
-- Current mitigation: The token input uses `type="password"` in `src/components/skills/SettingsPage.tsx`, and the app only reads/writes it through Tauri commands.
-- Recommendations: Store tokens in OS credential storage via a Tauri keychain/secret plugin, and keep only a reference or non-sensitive metadata in SQLite.
+- Risk: The app writes `.gitignore` and `.git/info/exclude` inside any registered directory, and project registration accepts any canonicalized directory path.
+- Files: `src-tauri/src/core/project_ops.rs:73`, `src-tauri/src/commands/projects.rs:392`, `src-tauri/src/commands/projects.rs:488`, `src-tauri/src/commands/projects.rs:517`
+- Current mitigation: Registration requires the path to exist and be a directory; writes are limited to `.gitignore` and `.git/info/exclude` below the registered path.
+- Recommendations: Keep the native directory picker as the primary UI path source, add explicit confirmation for paths outside the user's home or known project roots, and avoid exposing project write commands to untrusted web content.
 
-**Local file viewer can expose any text file inside a managed skill directory:**
+**Skill file browser trusts frontend-supplied central path:**
 
-- Risk: `read_skill_file` blocks traversal outside the central skill directory, but it still displays arbitrary UTF-8 text files within that directory, including copied config or accidentally imported secrets.
-- Files: `src-tauri/src/commands/mod.rs`, `src-tauri/src/core/skill_files.rs`, `src/components/skills/SkillDetailView.tsx`
-- Current mitigation: Path canonicalization prevents traversal, symlinks are not followed by file listing, and files over 1 MB are rejected.
-- Recommendations: Add filename/content allowlists or explicit warnings for sensitive names like `.env`, `credentials`, `*.pem`, and `*.key`, and consider hiding dotfiles by default in the viewer.
+- Risk: `list_skill_files` and `read_skill_file` take `central_path` from the frontend instead of looking up a skill ID in the database; `read_file` protects traversal relative to the supplied base, but `list_files` lists any directory the frontend passes.
+- Files: `src-tauri/src/commands/mod.rs:1100`, `src-tauri/src/commands/mod.rs:1120`, `src-tauri/src/core/skill_files.rs:19`, `src-tauri/src/core/skill_files.rs:58`
+- Current mitigation: Tauri commands are not exposed to arbitrary external web pages under the current desktop capability file; `read_file` canonicalizes the requested relative file under the supplied base and limits files to 1 MB.
+- Recommendations: Change commands to accept `skillId` and resolve `central_path` server-side from `src-tauri/src/core/skill_store.rs`; apply canonical central-repo containment checks to both listing and reading.
 
-**Remote content trust is broad for featured and searchable skills:**
+**Plaintext credential persistence:**
 
-- Risk: The app surfaces externally hosted skill repositories and downloads remote content from GitHub and `skills.sh` without signature verification or publisher trust controls.
-- Files: `src-tauri/src/core/featured_skills.rs`, `src-tauri/src/core/skills_search.rs`, `src-tauri/src/core/github_download.rs`, `src-tauri/src/core/git_fetcher.rs`, `src/components/skills/ExplorePage.tsx`
-- Current mitigation: Downloads are limited to declared repo paths, and the app copies content into its own managed directory instead of executing it.
-- Recommendations: Add source verification signals, repository trust indicators, and optional allowlists for approved owners.
+- Risk: The optional GitHub token is stored in the SQLite settings table and returned unmasked to the frontend.
+- Files: `src-tauri/src/commands/mod.rs:678`, `src-tauri/src/commands/mod.rs:692`, `src-tauri/src/commands/mod.rs:703`, `src/App.tsx:421`, `src/App.tsx:641`
+- Current mitigation: Token use is limited to GitHub HTTP requests and is not printed by the code paths inspected.
+- Recommendations: Store credentials in OS secure storage; redact token values in all UI state and logs; avoid including settings database files in support bundles.
+
+**Recursive copy and cleanup act on resolved tool/project paths:**
+
+- Risk: Sync and cleanup functions can create, overwrite, copy, or remove directories beneath resolved tool/project paths; a wrong adapter path or corrupted database path can affect unintended filesystem locations.
+- Files: `src-tauri/src/core/sync_engine.rs:60`, `src-tauri/src/core/sync_engine.rs:91`, `src-tauri/src/core/sync_engine.rs:137`, `src-tauri/src/core/project_sync.rs:365`, `src-tauri/src/commands/mod.rs:902`
+- Current mitigation: Most paths are derived from registered projects, central repo records, and tool adapters; overwrite is explicit in command flows.
+- Recommendations: Before destructive removal, verify targets are within adapter-relative skills directories and, where possible, are symlinks/copies that Skills Hub created; keep `SyncMutex` coverage around all filesystem mutations.
 
 ## Performance Bottlenecks
 
-**Copy-based sync path scales poorly for large skills and repeated updates:**
+**Project list performs multiple SQLite queries per row:**
 
-- Problem: When symlinks are unavailable or disabled for a tool such as Cursor, the app recursively copies full directories for sync and update operations.
-- Files: `src-tauri/src/core/sync_engine.rs`, `src-tauri/src/commands/mod.rs`
-- Cause: `copy_dir_recursive` walks and copies the entire tree every time, and `sync_dir_for_tool_with_overwrite` forces copy mode for Cursor.
-- Improvement path: Add incremental syncing based on content hashes or per-file timestamps, and surface mode-specific UX so users know when a tool is on the slow copy path.
+- Problem: Building project DTOs calls count/status queries for every project.
+- Files: `src-tauri/src/core/project_ops.rs:54`, `src-tauri/src/core/project_ops.rs:232`, `src-tauri/src/core/skill_store.rs:925`, `src-tauri/src/core/skill_store.rs:936`, `src-tauri/src/core/skill_store.rs:947`, `src-tauri/src/core/skill_store.rs:958`
+- Cause: `to_project_dto()` computes `tool_count`, `skill_count`, `assignment_count`, and aggregate sync status independently per project.
+- Improvement path: Replace per-project counting with one aggregate query or a summary view that joins/group-counts all projects at once.
 
-**Frontend re-renders and state churn are concentrated in one root component:**
+**Copy-mode sync hashes and copies whole directories:**
 
-- Problem: `src/App.tsx` owns nearly all state for the app, so many unrelated interactions can trigger wide rerender scope and expensive recomputation.
-- Files: `src/App.tsx`
-- Cause: Centralized state plus many `useMemo`, `useCallback`, and effect-driven async flows all live in one component.
-- Improvement path: Move state into feature-level components or custom hooks and memoize only where profiling shows value.
+- Problem: Cursor project sync forces copy mode and staleness detection hashes full source directories.
+- Files: `src-tauri/src/core/sync_engine.rs:117`, `src-tauri/src/core/sync_engine.rs:123`, `src-tauri/src/core/project_sync.rs:141`, `src-tauri/src/core/project_sync.rs:314`, `src-tauri/src/core/content_hash.rs`
+- Cause: Copy fallback needs physical files; staleness compares directory hashes rather than using incremental file metadata or stored source revisions.
+- Improvement path: Cache content hashes on skill update/install and reuse them consistently; only rehash when source metadata changes, and avoid copying unchanged files when source and target hashes match.
 
-**Online search issues can flood the backend with requests during typing:**
+**Bulk/project sync is serialized and blocking:**
 
-- Problem: Search triggers network-backed Tauri calls after a 500 ms timer without request cancellation or stale-response suppression beyond the latest state overwrite.
-- Files: `src/App.tsx`, `src-tauri/src/core/skills_search.rs`
-- Cause: Debouncing is implemented with `setTimeout`, but in-flight requests are not cancelled and every qualifying input can still hit `skills.sh`.
-- Improvement path: Add abortable requests or sequence guards in the frontend and request-level cancellation support in the backend.
+- Problem: A global `SyncMutex` serializes assignment, unassignment, resync, and cleanup operations; long copy operations block other sync tasks.
+- Files: `src-tauri/src/lib.rs:11`, `src-tauri/src/commands/projects.rs:30`, `src-tauri/src/commands/projects.rs:146`, `src-tauri/src/commands/projects.rs:262`, `src-tauri/src/commands/projects.rs:287`, `src-tauri/src/commands/projects.rs:327`
+- Cause: The mutex protects filesystem consistency but has global granularity rather than target-path granularity.
+- Improvement path: Keep correctness first, then move to per-target or per-project locks with explicit conflict keys once sync operations expose stable source/target paths.
+
+**Large skill lists render all cards and matrix cells:**
+
+- Problem: Skill lists and project assignment matrix render directly from in-memory arrays without virtualization.
+- Files: `src/components/skills/SkillsList.tsx`, `src/components/projects/AssignmentMatrix.tsx:103`, `src/components/projects/AssignmentMatrix.tsx:144`
+- Cause: Sorting/grouping is memoized, but all visible skill rows/cards and tool cells are still rendered in one pass.
+- Improvement path: For large libraries, add windowing or pagination to `src/components/skills/SkillsList.tsx` and `src/components/projects/AssignmentMatrix.tsx`; keep grouping logic memoized and use stable row components.
+
+**Featured skills failures are fully silent:**
+
+- Problem: Network, parse, cache, and bundled JSON parse failures collapse to cached/bundled/empty results without surfacing diagnostics to the UI.
+- Files: `src-tauri/src/core/featured_skills.rs:48`, `src-tauri/src/core/featured_skills.rs:57`, `src-tauri/src/core/featured_skills.rs:66`
+- Cause: Fallback logic prioritizes resilience but uses `if let` and `unwrap_or_default()` without logging.
+- Improvement path: Keep fallback behavior, but log one warning per failed source so stale or empty Explore content can be diagnosed.
 
 ## Fragile Areas
 
-**Tool adapters with shared directories are easy to break:**
+**Project sync lifecycle:**
 
-- Files: `src-tauri/src/core/tool_adapters/mod.rs`, `src-tauri/src/commands/mod.rs`, `src/App.tsx`
-- Why fragile: Some tools share the same skills directory, so sync and unsync behavior depends on grouping logic in both backend and frontend. A new adapter with a shared path must be reflected consistently in detection, UI selection, persistence, and sync semantics.
-- Safe modification: When adding or changing adapters in `src-tauri/src/core/tool_adapters/mod.rs`, verify shared-directory behavior through `sync_skill_to_tool`, `unsync_skill_from_tool`, and frontend selection confirmation in `src/App.tsx`.
-- Test coverage: Rust coverage exists for tool adapters in `src-tauri/src/core/tests/tool_adapters.rs`, but there are no frontend tests for shared-directory confirmation or selection UX.
+- Files: `src-tauri/src/core/project_sync.rs`, `src-tauri/src/core/project_ops.rs`, `src-tauri/src/commands/projects.rs`, `src/components/projects/useProjectState.ts`, `src/components/projects/AssignmentMatrix.tsx`
+- Why fragile: Sync status is stored in SQLite, recalculated during reads, mutated during assignment/removal/resync, and projected into UI badges; filesystem state and database state can diverge.
+- Safe modification: Add or update tests in `src-tauri/src/core/tests/project_sync.rs` and `src-tauri/src/core/tests/project_ops.rs` before changing status transitions; keep `src/components/projects/types.ts` aligned with Rust DTOs.
+- Test coverage: Backend project sync tests exist in `src-tauri/src/core/tests/project_sync.rs`, but frontend project state behavior in `src/components/projects/useProjectState.ts` has no detected frontend test runner.
 
-**Name-based onboarding grouping can merge unrelated skills:**
+**Global skill deletion cleanup:**
 
-- Files: `src-tauri/src/core/onboarding.rs`
-- Why fragile: Onboarding groups detected skills by `name` first, then uses content hashes to flag conflicts. Different skills with the same declared name are treated as one logical group.
-- Safe modification: Preserve the current grouping semantics only if duplicate-name handling is intentional; otherwise introduce stable source identifiers before changing import behavior.
-- Test coverage: Rust tests exist in `src-tauri/src/core/tests/onboarding.rs`, but edge cases around same-name/different-origin skills are not obvious from the current suite.
+- Files: `src-tauri/src/commands/mod.rs:900`, `src-tauri/src/commands/mod.rs:913`, `src-tauri/src/commands/mod.rs:922`, `src-tauri/src/core/sync_engine.rs:137`
+- Why fragile: Deletion removes global targets, project artifacts, central repo directories, and database records in one command; partial cleanup failures can leave a mixed state.
+- Safe modification: Preserve the current order of collecting cleanup failures before database deletion unless a transaction/rollback strategy is introduced; add tests in `src-tauri/src/commands/tests/commands.rs` for partial cleanup behavior.
+- Test coverage: Backend command tests exist in `src-tauri/src/commands/tests/commands.rs`, but destructive filesystem edge cases around project artifacts need targeted coverage.
 
-**Error handling depends on string prefixes and message parsing:**
+**GitHub install/download fallback paths:**
 
-- Files: `src-tauri/src/commands/mod.rs`, `src/App.tsx`
-- Why fragile: Frontend behavior branches on raw string prefixes like `MULTI_SKILLS|`, `TARGET_EXISTS|`, `TOOL_NOT_INSTALLED|`, and `TOOL_NOT_WRITABLE|`. Any wording change in Rust can silently break frontend flows.
-- Safe modification: Add new stable error codes before changing existing text, and migrate the frontend to parse structured payloads instead of free-form messages.
-- Test coverage: Backend command tests exist in `src-tauri/src/commands/tests/commands.rs`, but there are no frontend tests asserting parsing behavior.
+- Files: `src-tauri/src/core/installer.rs:180`, `src-tauri/src/core/installer.rs:1734`, `src-tauri/src/core/github_download.rs:28`, `src-tauri/src/core/git_fetcher.rs`
+- Why fragile: Install logic combines sparse clone, GitHub Contents API download, cached clone fallback, rate-limit translation, cancellation, and partial directory cleanup.
+- Safe modification: Keep cancellation prefix `CANCELLED|` and rate-limit handling `RATE_LIMITED|` intact; update tests in `src-tauri/src/core/tests/installer.rs`, `src-tauri/src/core/tests/github_search.rs`, and inline tests in `src-tauri/src/core/github_download.rs` for any flow change.
+- Test coverage: Backend coverage is present, but end-to-end frontend install/cancel flows are not covered by detected frontend tests.
 
-**Skill detail rendering mixes markdown, frontmatter parsing, syntax highlighting, and file browsing in one component:**
+**Tool adapter registry:**
 
-- Files: `src/components/skills/SkillDetailView.tsx`
-- Why fragile: The component owns file tree building, frontmatter parsing, text loading, markdown rendering, syntax highlighting, and async file state. Changes to one concern can affect the others.
-- Safe modification: Extract file tree, content loading, markdown rendering, and metadata parsing into separate utilities/components before expanding viewer features.
-- Test coverage: No dedicated frontend tests were detected for `src/components/skills/SkillDetailView.tsx`.
+- Files: `src-tauri/src/core/tool_adapters/mod.rs`, `src-tauri/src/core/tests/tool_adapters.rs`, `src/i18n/resources.ts`, `src/components/skills/types.ts`
+- Why fragile: Adding a tool requires adapter metadata, shared-directory grouping behavior, frontend labels, and project relative skills directory behavior to stay consistent.
+- Safe modification: Add adapter tests in `src-tauri/src/core/tests/tool_adapters.rs`; verify shared skills directory grouping in both `src/App.tsx` and project assignment flows.
+- Test coverage: Backend adapter tests exist, but UI presentation and per-project tool configuration are not covered by frontend tests.
+
+**React effect dependency suppressions:**
+
+- Files: `src/App.tsx:1244`, `src/App.tsx:1270`, `src/App.tsx:1742`
+- Why fragile: Suppressed dependency linting can freeze callbacks/state in effects and makes future refactors harder to reason about.
+- Safe modification: Replace suppressed effects with stable refs or extracted hooks; run `npm run lint` and manually verify initial load, tool detection, and modal flows after changes.
+- Test coverage: No detected frontend test suite covers these hooks, so regressions rely on manual verification and TypeScript/lint checks.
 
 ## Scaling Limits
 
-**Tool adapter matrix grows linearly in maintenance cost:**
+**SQLite access opens a new connection for every store operation:**
 
-- Current capacity: `src-tauri/src/core/tool_adapters/mod.rs` defines 47 tool adapters, each with detection and skill-directory metadata.
-- Limit: Every new tool increases the chance of path drift, duplicate directories, platform-specific edge cases, and translation/UI mismatches.
-- Scaling path: Move adapter data into a declarative registry with validation tests for duplicate keys, duplicate detection paths, and duplicate skills directories.
+- Current capacity: Adequate for local desktop usage with small-to-medium skill/project counts.
+- Limit: Repeated `with_conn()` calls create many short-lived SQLite connections during list and sync operations.
+- Scaling path: Introduce a connection pool or batch APIs for high-churn operations; group project summary queries instead of calling many store methods per DTO.
 
-**Single-file translation resource will become harder to maintain as features grow:**
+**Project assignment matrix grows as skills × tools:**
 
-- Current capacity: `src/i18n/resources.ts` is already 599 lines and holds both English and Chinese resources in one file.
-- Limit: New UX flows increase merge conflicts and make missing-key review harder.
-- Scaling path: Split translations by feature namespace and add automated key parity checks.
+- Current capacity: Comfortable for dozens of skills and configured tools.
+- Limit: Hundreds of skills across many tools produce large DOM tables and many status lookups.
+- Scaling path: Virtualize rows, memoize cell components, and add search/filter controls directly in `src/components/projects/AssignmentMatrix.tsx`.
 
-**SQLite settings store is taking on more operational state:**
+**GitHub unauthenticated API quota:**
 
-- Current capacity: Settings already store central repo path, Git cache config, installed tools history, featured skills cache, and GitHub token.
-- Limit: As more state is added, a single generic key/value table in `src-tauri/src/core/skill_store.rs` becomes less self-describing and harder to migrate safely.
-- Scaling path: Introduce typed settings accessors or dedicated tables for security-sensitive and structured settings.
+- Current capacity: 60 requests/hour without token and 5,000/hour with token, reflected in settings copy.
+- Limit: GitHub Contents API directory downloads make one request per directory plus file downloads; large repos or repeated explore/install actions can hit rate limits.
+- Scaling path: Prefer cached clone paths for repeated repositories, keep token configuration visible, and batch/cancel requests where possible.
+
+**Copy fallback duplicates skill directories:**
+
+- Current capacity: Acceptable for small text-based skills.
+- Limit: Copy mode duplicates data per project/tool and can become expensive for binary-heavy or large skill directories.
+- Scaling path: Keep skills text-only where possible, skip generated/heavy directories during copy, and add per-skill size warnings before assignment.
 
 ## Dependencies at Risk
 
-**Git integration depends on external system `git` behavior:**
+**No frontend test framework:**
 
-- Risk: The app prefers the system `git` binary and only falls back to libgit2 when `SKILLS_HUB_ALLOW_LIBGIT2_FALLBACK=1` is set.
-- Impact: User environment differences in PATH, proxies, certs, or CLI behavior can directly affect install/update reliability.
-- Migration plan: Make backend diagnostics more structured, add preflight checks for git availability, and consider a safer fallback policy rather than environment-variable-gated recovery.
+- Risk: React state orchestration, project matrix interactions, settings persistence, and updater/install UI flows rely on TypeScript and manual checks only.
+- Impact: UI regressions in `src/App.tsx`, `src/components/projects/useProjectState.ts`, and modal components can pass `npm run check` if types/lint/build remain valid.
+- Migration plan: Add a lightweight Vitest + React Testing Library setup focused on hooks and components; start with `src/components/projects/useProjectState.ts` and pure formatting/error helpers.
 
-**App behavior depends on third-party APIs with rate limits and schema expectations:**
+**GitHub API and git clone behavior:**
 
-- Risk: `skills.sh`, GitHub search, GitHub contents API, and a raw GitHub JSON URL are all external dependencies.
-- Impact: Rate limits, downtime, or response shape changes can break Explore, search, featured skills, and GitHub subpath installs.
-- Migration plan: Cache more aggressively, add resilient parsing and telemetry, and define graceful degraded states in the UI.
+- Risk: External rate limits, repository layout changes, branch naming, private repository auth, and network/proxy failures directly affect install and explore flows.
+- Impact: `src-tauri/src/core/installer.rs`, `src-tauri/src/core/github_download.rs`, `src-tauri/src/core/github_search.rs`, and `src-tauri/src/core/git_fetcher.rs` can fail even when local app logic is correct.
+- Migration plan: Keep dual-path download fallback, improve cached metadata, and surface explicit retry/token guidance through `src/App.tsx` error translation.
+
+**Tauri updater and desktop plugin permissions:**
+
+- Risk: Updater, dialog, and webview zoom capabilities are tightly tied to Tauri plugin behavior and permissions.
+- Impact: Changes in Tauri permissions can break `src/App.tsx` update checks, native directory pickers, or zoom persistence without compile-time failures.
+- Migration plan: Keep `src-tauri/capabilities/default.json` minimal and add smoke tests or release checklist steps that exercise updater check, dialog open, and zoom commands.
 
 ## Missing Critical Features
 
-**No secure secret storage for GitHub token:**
+**Frontend automated tests:**
 
-- Problem: Token handling is functional but not hardened for desktop-app secret management.
-- Blocks: Safe enterprise or long-lived personal token use.
+- Problem: No dedicated frontend test runner is detected for React components and hooks.
+- Blocks: Safe refactoring of `src/App.tsx`, `src/components/projects/useProjectState.ts`, `src/components/projects/AssignmentMatrix.tsx`, and modal flows.
 
-**No frontend automated test suite detected:**
+**Secure credential storage:**
 
-- Problem: No `.test.ts`, `.test.tsx`, `.spec.ts`, or `.spec.tsx` files were detected under `src/`.
-- Blocks: Safe refactoring of `src/App.tsx`, `src/components/skills/ExplorePage.tsx`, `src/components/skills/SkillDetailView.tsx`, and settings/onboarding flows.
+- Problem: GitHub token persistence uses the same SQLite settings path as normal app settings.
+- Blocks: Treating GitHub token support as production-grade credential handling.
 
-**No structured error contract between frontend and backend:**
+**Explicit sync artifact ownership markers:**
 
-- Problem: Errors are mostly plain strings with a few reserved prefixes.
-- Blocks: Reliable localization, durable error UX, and safer backend refactors.
+- Problem: Cleanup uses paths/statuses but does not consistently verify that each target was created by Skills Hub before removal.
+- Blocks: Strong safety guarantees for destructive cleanup in `src-tauri/src/core/sync_engine.rs`, `src-tauri/src/core/project_sync.rs`, and `src-tauri/src/commands/mod.rs`.
+
+**First-class project path migration:**
+
+- Problem: Updating a project path does not move or clean existing tool directories.
+- Blocks: Reliable relocation of registered projects in `src/components/projects/ProjectsPage.tsx` and `src-tauri/src/core/project_ops.rs`.
 
 ## Test Coverage Gaps
 
-**Frontend app workflows are untested:**
+**Frontend project state and matrix interactions:**
 
-- What's not tested: Add/import/sync/update/delete flows, update banner behavior, localStorage-backed theme/language persistence, and Explore search/install behavior.
-- Files: `src/App.tsx`, `src/components/skills/ExplorePage.tsx`, `src/components/skills/SettingsPage.tsx`
-- Risk: Regressions in core user workflows can ship unnoticed because the most stateful code path has no automated UI coverage.
+- What's not tested: Project selection race handling, assignment toggles, bulk assign, tool add/remove refresh behavior, and resync UI feedback.
+- Files: `src/components/projects/useProjectState.ts`, `src/components/projects/AssignmentMatrix.tsx`, `src/components/projects/ProjectsPage.tsx`
+- Risk: UI can show stale assignment state, double-submit cells, or miss required refreshes without failing backend tests.
 - Priority: High
 
-**Skill detail viewer has no automated coverage:**
+**Global App install/sync flows:**
 
-- What's not tested: File listing, frontmatter table parsing, markdown rendering, syntax highlighting selection, large-file error display, and file-tree interactions.
-- Files: `src/components/skills/SkillDetailView.tsx`, `src-tauri/src/core/skill_files.rs`
-- Risk: Viewer regressions or file-reading edge cases can break inspection of managed skills without detection.
+- What's not tested: Add local/Git skill, multi-candidate selection, onboarding import, auto-sync target de-duplication, cancellation UI, update prompt behavior, and settings persistence.
+- Files: `src/App.tsx`, `src/components/skills/modals/*.tsx`, `src/components/skills/SettingsPage.tsx`
+- Risk: Large duplicated flows can diverge while TypeScript still compiles.
+- Priority: High
+
+**Credential handling:**
+
+- What's not tested: Token masking/clearing, persistence failure handling, and accidental token exposure in UI state/logs.
+- Files: `src-tauri/src/commands/mod.rs:692`, `src-tauri/src/commands/mod.rs:703`, `src/App.tsx:421`, `src/App.tsx:698`, `src/components/skills/SettingsPage.tsx`
+- Risk: Secrets can remain visible or persisted unexpectedly.
 - Priority: Medium
 
-**Cross-layer error mapping is not verified end-to-end:**
+**Destructive cleanup edge cases:**
 
-- What's not tested: Frontend handling for backend prefixes like `MULTI_SKILLS|`, `TARGET_EXISTS|`, `TOOL_NOT_INSTALLED|`, and `TOOL_NOT_WRITABLE|`.
-- Files: `src/App.tsx`, `src-tauri/src/commands/mod.rs`
-- Risk: Small wording or formatting changes in Rust can silently break frontend error flows.
+- What's not tested: Project deletion for `error`/`pending` assignments, project path updates with existing artifacts, unreadable targets, and cleanup after missing skill records.
+- Files: `src-tauri/src/core/project_ops.rs`, `src-tauri/src/core/project_sync.rs`, `src-tauri/src/commands/mod.rs:900`, `src-tauri/src/core/sync_engine.rs:137`
+- Risk: Orphaned symlinks/copies or unintended deletion behavior can go unnoticed.
 - Priority: High
 
-**Deletion and partial-cleanup behavior lacks targeted regression tests:**
+**Skill file browser authorization boundary:**
 
-- What's not tested: Partial target-removal failure cases during `delete_managed_skill` and the resulting user-visible state.
-- Files: `src-tauri/src/commands/mod.rs`
-- Risk: Users can lose the managed record while orphaned tool directories remain.
-- Priority: High
+- What's not tested: Supplying arbitrary `centralPath` values to `list_skill_files` and `read_skill_file`, symlink edge cases, and non-UTF8/large-file UI behavior.
+- Files: `src-tauri/src/commands/mod.rs:1100`, `src-tauri/src/commands/mod.rs:1120`, `src-tauri/src/core/skill_files.rs`
+- Risk: File browsing scope assumptions can regress and expose unexpected local files inside the desktop app boundary.
+- Priority: Medium
 
 ---
 
-_Concerns audit: 2026-04-07_
+_Concerns audit: 2026-04-29_

@@ -1,131 +1,137 @@
 # Technology Stack
 
-**Analysis Date:** 2026-04-07
-
-## High-Level Summary
-- **Frontend**: React 19 + TypeScript 5.9 (strict) + Vite 7 + Tailwind CSS 4
-- **Backend**: Rust (Edition 2021, MSRV 1.77.2) + Tauri 2
-- **Database**: SQLite (rusqlite, bundled)
-- **Git**: libgit2 (git2 crate, vendored-openssl)
-- **HTTP**: reqwest (rustls-tls, blocking)
-- **i18n**: i18next (English / Chinese bilingual)
-- **Notifications**: sonner (toast)
-- **Icons**: lucide-react
+**Analysis Date:** 2026-04-29
 
 ## Languages
 
 **Primary:**
 
-- TypeScript 5.9.x - React desktop UI in `src/**/*.ts` and `src/**/*.tsx`, configured by `package.json`, `tsconfig.json`, `tsconfig.app.json`, and `vite.config.ts`
-- Rust 2021 edition (MSRV 1.77.2) - Tauri backend, native app shell, filesystem/database/network logic in `src-tauri/src/**/*.rs`, configured by `src-tauri/Cargo.toml`
+- TypeScript 5.9.3 - React desktop UI in `src/App.tsx`, `src/main.tsx`, `src/components/**/*.tsx`, and frontend type contracts in `src/components/skills/types.ts`; configured by `package.json`, `tsconfig.json`, `tsconfig.app.json`, and `vite.config.ts`.
+- Rust 2021 edition, MSRV 1.77.2 - Tauri backend, IPC command handlers, SQLite persistence, filesystem sync, Git/HTTP integrations, and tests under `src-tauri/src/**/*.rs`; configured by `src-tauri/Cargo.toml`.
 
 **Secondary:**
 
-- CSS - Global styling and theme variables in `src/App.css` and `src/index.css`
-- JSON - App/package configuration in `package.json`, `src-tauri/tauri.conf.json`, `featured-skills.json`, and GitHub workflow files under `.github/workflows/`
-- JavaScript (Node.js scripts) - Release/version automation in `scripts/*.mjs` referenced by `package.json` and `.github/workflows/*.yml`
-- YAML - CI/CD automation in `.github/workflows/ci.yml`, `.github/workflows/release.yml`, and `.github/workflows/update-featured-skills.yml`
+- CSS - Global styling and theme variables in `src/App.css` and `src/index.css`.
+- JavaScript / Node.js ESM - Maintenance and release scripts under `scripts/*.mjs`, especially `scripts/version.mjs`, `scripts/fetch-featured-skills-v2.mjs`, `scripts/extract-changelog.mjs`, and Tauri icon tooling.
+- JSON - App metadata and catalogs in `package.json`, `src-tauri/tauri.conf.json`, `featured-skills.json`, and TypeScript config files.
+- YAML - GitHub Actions automation in `.github/workflows/ci.yml`, `.github/workflows/release.yml`, and `.github/workflows/update-featured-skills.yml`.
 
 ## Runtime
 
 **Environment:**
 
-- Node.js 20 in CI and release workflows, declared in `.github/workflows/ci.yml` and `.github/workflows/release.yml`
-- Node.js 18+ for local development, with 20+ recommended in `README.md`
-- Rust stable toolchain with minimum supported version 1.77.2 in `src-tauri/Cargo.toml`
-- Tauri 2 desktop runtime, combining the web UI and native Rust backend in `src-tauri/src/lib.rs` and `src-tauri/tauri.conf.json`
+- Tauri 2.9.5 desktop runtime - Native shell and IPC bridge initialized in `src-tauri/src/main.rs` and `src-tauri/src/lib.rs`, with frontend dist/dev URL configured in `src-tauri/tauri.conf.json`.
+- Browser/WebView runtime - React UI runs in the Tauri webview and uses dynamic `@tauri-apps/api` imports from `src/App.tsx` and `src/components/projects/*.tsx`.
+- Node.js 18+ local development - Documented in `README.md`; Node 20 is used by CI and release workflows in `.github/workflows/ci.yml`, `.github/workflows/release.yml`, and `.github/workflows/update-featured-skills.yml`.
+- Rust stable toolchain - CI uses `dtolnay/rust-toolchain@stable` in `.github/workflows/ci.yml` and `.github/workflows/release.yml`; crate declares `rust-version = "1.77.2"` in `src-tauri/Cargo.toml`.
 
 **Package Manager:**
 
-- npm - scripts and install flow are defined in `package.json` and `README.md`
-- Lockfile: present via `package-lock.json`
-- Cargo - Rust dependency manager for `src-tauri/Cargo.toml`
-- Lockfile: present via `src-tauri/Cargo.lock`
+- npm - JavaScript package manager and script runner via `package.json`.
+- Lockfile: present at `package-lock.json`.
+- Cargo - Rust package manager for `src-tauri/Cargo.toml`.
+- Lockfile: present at `src-tauri/Cargo.lock`.
 
 ## Frameworks
 
 **Core:**
 
-- React 19.2.x - UI framework for the desktop frontend in `src/App.tsx`, `src/components/**/*.tsx`, and `src/pages/**/*.tsx`
-- Tauri 2.9.x - Desktop application framework and IPC bridge in `src-tauri/src/lib.rs`, `src-tauri/src/commands/mod.rs`, and `src-tauri/tauri.conf.json`
-- Vite 7.3.x - Frontend dev server and production bundler in `vite.config.ts` and `package.json`
-- React Router DOM 7.12.x - Client-side routing for page navigation, imported from frontend files such as `src/pages/*.tsx`
-- i18next 25.x + react-i18next 16.x - bilingual UI localization in `src/i18n/index.ts`, `src/i18n/resources.ts`, and frontend components importing `TFunction` or `useTranslation`
-- Tailwind CSS 4.1.x - utility styling via Vite plugin in `vite.config.ts` and dependency declarations in `package.json`
+- React 19.2.3 - Main UI framework in `src/App.tsx`, `src/main.tsx`, and `src/components/**/*.tsx`.
+- Tauri 2.9.5 - Cross-platform desktop framework in `src-tauri/src/lib.rs`, `src-tauri/src/main.rs`, and `src-tauri/tauri.conf.json`.
+- Vite 7.3.1 - Frontend dev server and production bundler configured in `vite.config.ts`; dev server runs on port 5173 with `strictPort`.
+- Tailwind CSS 4.1.18 - Styling utility framework enabled through `@tailwindcss/vite` in `vite.config.ts`.
+- React Router DOM 7.12.0 - Present in `package.json`; dormant router-style files exist under `src/pages/` and `src/components/Layout.tsx`, while active navigation is state-driven in `src/App.tsx`.
+- i18next 25.7.4 + react-i18next 16.5.3 - Localization initialized in `src/i18n/index.ts` with resources in `src/i18n/resources.ts`.
 
 **Testing:**
 
-- Rust built-in test harness (`cargo test`) - backend/unit integration tests under `src-tauri/src/core/tests/` and `src-tauri/src/commands/tests/`
-- Mockito 1.x - HTTP mocking for Rust tests in `src-tauri/src/core/tests/github_search.rs`, `src-tauri/src/core/tests/skills_search.rs`, and `src-tauri/Cargo.toml`
-- Tempfile 3.x - temporary filesystem fixtures for Rust tests in `src-tauri/src/core/tests/*.rs` and `src-tauri/Cargo.toml`
-- No dedicated frontend test runner is detected in `package.json` or root config files
+- Rust built-in test harness - Backend tests are under `src-tauri/src/core/tests/*.rs` and `src-tauri/src/commands/tests/*.rs`; run with `npm run rust:test` or `cargo test` from `src-tauri/`.
+- Mockito 1.x - HTTP mocking for Rust tests in `src-tauri/src/core/tests/github_search.rs`, `src-tauri/src/core/tests/skills_search.rs`, and other HTTP-focused tests.
+- Tempfile 3.x - Temporary filesystem fixtures in Rust tests under `src-tauri/src/core/tests/`.
+- Playwright 1.59.1 - Script dependency for `scripts/fetch-featured-skills-v2.mjs` and scheduled featured-skills scraping; not configured as the primary app test runner.
+- No dedicated frontend unit test runner is detected in `package.json` or root test config files.
 
 **Build/Dev:**
 
-- `@vitejs/plugin-react` 5.1.x - React integration for Vite in `vite.config.ts`
-- `@tailwindcss/vite` 4.1.x - Tailwind Vite integration in `vite.config.ts`
-- ESLint 9.39.x with flat config - frontend linting in `eslint.config.js`
-- TypeScript project references - split app/node TS configs via `tsconfig.json`, `tsconfig.app.json`, and `tsconfig.node.json`
-- `tauri-build` 2.5.3 - Rust-side build integration in `src-tauri/Cargo.toml` and `src-tauri/build.rs`
+- TypeScript project references - `tsconfig.json` references `tsconfig.app.json` and `tsconfig.node.json`; `npm run build` runs `tsc -b && vite build`.
+- ESLint 9.39.2 flat config - `eslint.config.js` applies `@eslint/js`, `typescript-eslint`, `eslint-plugin-react-hooks`, and `eslint-plugin-react-refresh` to `**/*.{ts,tsx}`.
+- `@vitejs/plugin-react` 5.1.2 - React plugin in `vite.config.ts`.
+- `@tailwindcss/vite` 4.1.18 - Tailwind Vite plugin in `vite.config.ts`.
+- `@tauri-apps/cli` 2.9.6 - Tauri dev/build CLI used by scripts in `package.json`.
+- `tauri-build` 2.5.3 - Rust build integration via `src-tauri/build.rs` and `src-tauri/Cargo.toml`.
+- GitHub Actions - CI in `.github/workflows/ci.yml`, release packaging in `.github/workflows/release.yml`, and featured catalog refresh in `.github/workflows/update-featured-skills.yml`.
 
 ## Key Dependencies
 
 **Critical:**
 
-- `@tauri-apps/api` 2.9.1 - frontend access to Tauri APIs from files such as `src/App.tsx` and `src/components/skills/SettingsPage.tsx`
-- `@tauri-apps/plugin-dialog` 2.5.3 - native directory/file pickers used from frontend flows and registered in `src-tauri/src/lib.rs`
-- `@tauri-apps/plugin-opener` 2.5.3 - shell/open integration registered in `src-tauri/src/lib.rs`
-- `@tauri-apps/plugin-updater` 2.5.3 - auto-update checks and installation used in `src/App.tsx`, `src/components/skills/SettingsPage.tsx`, `src-tauri/src/lib.rs`, and `src-tauri/tauri.conf.json`
-- `react-markdown` 10.1.0 + `remark-frontmatter` 5.0.0 + `remark-gfm` 4.0.1 - Markdown skill file rendering in frontend detail views under `src/components/skills/`
-- `react-syntax-highlighter` 16.1.1 - code block rendering in skill detail UI under `src/components/skills/`
-- `sonner` 2.0.7 - toast notifications used in `src/App.tsx` and `src/components/skills/SkillCard.tsx`
-- `lucide-react` 0.562.0 - icon system used broadly across `src/components/**/*.tsx`
+- `@tauri-apps/api` 2.10.1 - Frontend IPC and app/webview APIs used in `src/App.tsx`, `src/components/projects/ProjectsPage.tsx`, `src/components/projects/useProjectState.ts`, and `src/components/projects/EditProjectModal.tsx`.
+- `@tauri-apps/plugin-dialog` 2.7.0 - Native directory picker integration used in `src/App.tsx`, `src/components/projects/ProjectsPage.tsx`, and `src/components/projects/AddProjectModal.tsx`; registered in `src-tauri/src/lib.rs`.
+- `@tauri-apps/plugin-updater` 2.10.1 - In-app update checks and installs used in `src/App.tsx` and `src/components/skills/SettingsPage.tsx`; configured in `src-tauri/tauri.conf.json` and registered in `src-tauri/src/lib.rs`.
+- `@tauri-apps/plugin-opener` 2.5.3 - Native opener integration registered in `src-tauri/src/lib.rs`.
+- `rusqlite` 0.31 with `bundled` - Embedded SQLite persistence in `src-tauri/src/core/skill_store.rs`; stores skills, sync targets, projects, project tools, project assignments, and settings.
+- `reqwest` 0.12 with `blocking`, `json`, and `rustls-tls` - HTTP client for GitHub, skills.sh, and featured catalog requests in `src-tauri/src/core/github_search.rs`, `src-tauri/src/core/github_download.rs`, `src-tauri/src/core/skills_search.rs`, and `src-tauri/src/core/featured_skills.rs`.
+- `git2` 0.19 with `vendored-openssl` - libgit2 fallback for Git fetch/clone workflows in `src-tauri/src/core/git_fetcher.rs`; system Git is preferred when available.
+- `serde` / `serde_json` - Serialization and DTO payloads across `src-tauri/src/commands/mod.rs`, `src-tauri/src/commands/projects.rs`, and core HTTP parsers.
+- `anyhow` 1.0 - Backend error propagation and context in `src-tauri/src/core/*.rs` and `src-tauri/src/commands/*.rs`.
 
 **Infrastructure:**
 
-- `rusqlite` 0.31 with `bundled` feature - embedded SQLite storage in `src-tauri/src/core/skill_store.rs`
-- `reqwest` 0.12 with `blocking`, `json`, and `rustls-tls` - outbound HTTP for GitHub, skills.sh, and featured skills fetches in `src-tauri/src/core/github_search.rs`, `src-tauri/src/core/github_download.rs`, `src-tauri/src/core/skills_search.rs`, and `src-tauri/src/core/featured_skills.rs`
-- `git2` 0.19 with `vendored-openssl` - Git clone/pull support in `src-tauri/src/core/git_fetcher.rs` and installer tests
-- `uuid` 1.x with v4 - identifier generation in `src-tauri/src/commands/mod.rs` and `src-tauri/src/core/installer.rs`
-- `walkdir` 2.5 - recursive filesystem traversal in `src-tauri/src/core/content_hash.rs` and `src-tauri/src/core/skill_files.rs`
-- `sha2` 0.10 + `hex` 0.4 - directory content hashing in `src-tauri/src/core/content_hash.rs`
-- `dirs` 5.0 - home/app-data path resolution in `src-tauri/src/core/central_repo.rs`, `src-tauri/src/core/tool_adapters/mod.rs`, and `src-tauri/src/commands/mod.rs`
-- `junction` 1.1 - Windows junction fallback used by sync logic in `src-tauri/src/core/sync_engine.rs`
-- `clsx` 2.1.1 + `tailwind-merge` 3.4.0 - class composition utilities available to the frontend from `package.json`
+- `dirs` 5.0 - Home, data, and app-directory resolution in `src-tauri/src/core/skill_store.rs`, `src-tauri/src/core/central_repo.rs`, `src-tauri/src/core/tool_adapters/mod.rs`, and `src-tauri/src/commands/mod.rs`.
+- `walkdir` 2.5 - Recursive file traversal in `src-tauri/src/core/sync_engine.rs`, `src-tauri/src/core/content_hash.rs`, `src-tauri/src/core/skill_files.rs`, and installer logic.
+- `sha2` 0.10 + `hex` 0.4 - Content hashing in `src-tauri/src/core/content_hash.rs`.
+- `junction` 1.1 - Windows junction fallback for sync in `src-tauri/src/core/sync_engine.rs`.
+- `uuid` 1.x with `v4` - Identifier generation for skills, targets, projects, assignments, and operations in backend commands and core modules.
+- `urlencoding` 2.1 - Query/path encoding for GitHub and skills.sh requests in `src-tauri/src/core/github_search.rs` and `src-tauri/src/core/skills_search.rs`.
+- `tauri-plugin-log` 2 - Backend logging configured in `src-tauri/src/lib.rs` with log-dir and stdout targets.
+- `react-markdown` 10.1.0 + `remark-gfm` 4.0.1 + `remark-frontmatter` 5.0.0 - Markdown and frontmatter rendering for skill detail/update notes in `src/App.tsx` and `src/components/skills/SkillDetailView.tsx`.
+- `react-syntax-highlighter` 16.1.1 - Code block rendering in skill file previews under `src/components/skills/SkillDetailView.tsx`.
+- `sonner` 2.0.7 - Toast notifications used in `src/App.tsx`, `src/components/skills/SkillCard.tsx`, and other UI flows.
+- `lucide-react` 0.562.0 - Icon set used broadly by components under `src/components/**/*.tsx`.
+- `clsx` 2.1.1 + `tailwind-merge` 3.4.0 - Class composition dependencies available to frontend components.
 
 ## Configuration
 
 **Environment:**
 
-- Runtime configuration is primarily app-internal, persisted in SQLite settings via `src-tauri/src/core/skill_store.rs` rather than loaded from dotenv files
-- `.env.example` exists at `/home/alexwsl/skills-hub/.env.example`, but no dotenv loader is detected in `package.json`, `vite.config.ts`, or `src-tauri/src/**/*.rs`
-- GitHub API authentication is optional and stored through `get_github_token` / `set_github_token` in `src-tauri/src/commands/mod.rs`, with the token consumed by `src-tauri/src/core/github_search.rs`, `src-tauri/src/core/github_download.rs`, and `src-tauri/src/core/installer.rs`
-- Tauri updater endpoints and signing metadata are configured in `src-tauri/tauri.conf.json`
-- Version synchronization between frontend and Tauri config is enforced by `scripts/version.mjs` and the `version:*` scripts in `package.json`
+- Runtime app configuration is mostly persisted in SQLite settings via `src-tauri/src/core/skill_store.rs`, accessed through commands such as `get_central_repo_path`, `set_central_repo_path`, `get_github_token`, `set_github_token`, `get_git_cache_ttl_secs`, and `set_git_cache_ttl_secs` in `src-tauri/src/commands/mod.rs`.
+- UI-only preferences use browser `localStorage` in `src/App.tsx`, including `skills-language`, `skills-theme`, `skills-groupByRepo`, `skills-viewMode`, and `skills-ignored-update-version`.
+- `.env.example` exists at `.env.example`; no dotenv runtime loader is detected for the app itself. `scripts/fetch-featured-skills-v2.mjs` optionally reads a local `.env` file for script-only variables such as `GITHUB_TOKEN`.
+- Never read or commit `.env` files. Only note existence when present.
+- Git command behavior can be tuned with environment variables read in `src-tauri/src/core/git_fetcher.rs`: `SKILLS_HUB_GIT_BIN`, `SKILLS_HUB_GIT_PATH`, `SKILLS_HUB_GIT_TIMEOUT_SECS`, `SKILLS_HUB_GIT_FETCH_TIMEOUT_SECS`, and `SKILLS_HUB_ALLOW_LIBGIT2_FALLBACK`.
+- IO profiling can be enabled with `SKILLS_HUB_PROFILE_IO` in `src-tauri/src/core/sync_engine.rs`.
+- Featured catalog refresh in `.github/workflows/update-featured-skills.yml` passes GitHub Actions `GITHUB_TOKEN` to `scripts/fetch-featured-skills-v2.mjs`.
+- Release signing and packaging in `.github/workflows/release.yml` uses GitHub Actions secrets such as `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, and `KEYCHAIN_PASSWORD`.
 
 **Build:**
 
-- Frontend build: `vite.config.ts`, `tsconfig.json`, `tsconfig.app.json`, `tsconfig.node.json`
-- Linting: `eslint.config.js`
-- Tauri/native build: `src-tauri/Cargo.toml`, `src-tauri/build.rs`, `src-tauri/tauri.conf.json`
-- CI verification: `.github/workflows/ci.yml`
-- Release packaging and updater artifact assembly: `.github/workflows/release.yml`
+- Frontend build config: `vite.config.ts`, `tsconfig.json`, `tsconfig.app.json`, `tsconfig.node.json`.
+- Frontend lint config: `eslint.config.js`.
+- Tauri build config: `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/build.rs`.
+- App version is duplicated in `package.json` and `src-tauri/tauri.conf.json`; keep them synchronized with `scripts/version.mjs` and the `version:*` scripts in `package.json`.
+- Tauri updater endpoint and public key are configured in `src-tauri/tauri.conf.json`.
+- Bundled fallback featured catalog is committed as `featured-skills.json` and embedded by `src-tauri/src/core/featured_skills.rs`.
+- CI verification runs separate web and Rust jobs in `.github/workflows/ci.yml`.
+- Release packaging targets macOS, Windows, and Linux in `.github/workflows/release.yml`.
 
 ## Platform Requirements
 
 **Development:**
 
-- Node.js 18+ with npm, documented in `README.md`
-- Rust stable toolchain, with MSRV 1.77.2 from `src-tauri/Cargo.toml`
-- Tauri OS dependencies, documented in `README.md`; Linux CI installs GTK/WebKit-related packages in `.github/workflows/ci.yml`
-- Desktop environment capable of running Tauri apps; the app is not configured as a web-only deployment target
+- Node.js 18+ with npm; Node 20+ recommended by `README.md` and used in CI.
+- Rust stable with MSRV 1.77.2 from `src-tauri/Cargo.toml`.
+- Tauri OS dependencies; Linux CI installs GTK/WebKit/AppIndicator packages in `.github/workflows/ci.yml` and `.github/workflows/release.yml`.
+- System Git is strongly preferred for clone/fetch flows in `src-tauri/src/core/git_fetcher.rs`; libgit2 fallback exists when `SKILLS_HUB_ALLOW_LIBGIT2_FALLBACK=1` or no usable Git binary is found.
+- Local development commands are defined in `package.json`: `npm run dev`, `npm run tauri:dev`, `npm run build`, `npm run lint`, `npm run rust:test`, `npm run rust:clippy`, and `npm run check`.
 
 **Production:**
 
-- Packaged desktop binaries produced by Tauri for macOS, Windows, and Linux via scripts in `package.json` and pipelines in `.github/workflows/release.yml`
-- Auto-update artifacts published through GitHub Releases, configured by `src-tauri/tauri.conf.json` and `.github/workflows/release.yml`
-- Local persistent storage uses SQLite database file resolution from `src-tauri/src/core/skill_store.rs` and central repository filesystem storage from `src-tauri/src/core/central_repo.rs`
+- Deployment target is packaged desktop binaries produced by Tauri, not a hosted web app.
+- Supported platforms are macOS, Windows, and Linux, documented in `README.md` and packaged through `.github/workflows/release.yml`.
+- macOS builds produce `.app`/`.dmg` and updater `.tar.gz` artifacts; Windows builds produce NSIS installer `.exe`; Linux builds produce `.deb` and `.AppImage` artifacts.
+- Auto-update artifacts are published through GitHub Releases using updater metadata generated in `.github/workflows/release.yml` and consumed by `@tauri-apps/plugin-updater` from `src/App.tsx` and `src/components/skills/SettingsPage.tsx`.
+- Persistent data uses a SQLite database under the Tauri app data directory resolved by `src-tauri/src/core/skill_store.rs`, plus a configurable central skills repository that defaults to `~/.skillshub` via `src-tauri/src/core/central_repo.rs`.
 
 ---
 
-_Stack analysis: 2026-04-07_
+_Stack analysis: 2026-04-29_
