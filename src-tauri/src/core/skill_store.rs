@@ -12,7 +12,7 @@ const LEGACY_APP_IDENTIFIERS: &[&str] = &[
 ];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 6;
+const SCHEMA_VERSION: i32 = 7;
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -218,6 +218,14 @@ impl SkillStore {
                             (SELECT name FROM skills WHERE skills.id = project_skill_assignments.skill_id),
                             ''
                         ) WHERE skill_name = '';",
+                    )?;
+                }
+                if user_version < 7 {
+                    conn.execute_batch(
+                        "CREATE TABLE IF NOT EXISTS hidden_explore_skills (
+                            source_url TEXT PRIMARY KEY,
+                            hidden_at INTEGER NOT NULL
+                        );",
                     )?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -996,6 +1004,36 @@ impl SkillStore {
                 return Ok("pending".to_string());
             }
             Ok("synced".to_string())
+        })
+    }
+
+    pub fn hide_explore_skill(&self, source_url: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT OR IGNORE INTO hidden_explore_skills (source_url, hidden_at) VALUES (?1, strftime('%s', 'now'))",
+                params![source_url],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn unhide_explore_skill(&self, source_url: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM hidden_explore_skills WHERE source_url = ?1",
+                params![source_url],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_hidden_explore_skills(&self) -> Result<Vec<String>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare("SELECT source_url FROM hidden_explore_skills")?;
+            let urls = stmt
+                .query_map([], |row| row.get(0))?
+                .collect::<std::result::Result<Vec<String>, _>>()?;
+            Ok(urls)
         })
     }
 

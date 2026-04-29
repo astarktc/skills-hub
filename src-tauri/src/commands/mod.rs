@@ -1154,6 +1154,43 @@ pub fn cancel_current_operation(cancel: State<'_, Arc<CancelToken>>) -> Result<(
     Ok(())
 }
 
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn hide_explore_skill(
+    store: State<'_, SkillStore>,
+    sourceUrl: String,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || store.hide_explore_skill(&sourceUrl))
+        .await
+        .map_err(|e| format!("{e}"))?
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn unhide_explore_skill(
+    store: State<'_, SkillStore>,
+    sourceUrl: String,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || store.unhide_explore_skill(&sourceUrl))
+        .await
+        .map_err(|e| format!("{e}"))?
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn get_hidden_explore_skills(
+    store: State<'_, SkillStore>,
+) -> Result<Vec<String>, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || store.list_hidden_explore_skills())
+        .await
+        .map_err(|e| format!("{e}"))?
+        .map_err(format_anyhow_error)
+}
+
 #[cfg(test)]
 #[path = "tests/commands.rs"]
 mod tests;
