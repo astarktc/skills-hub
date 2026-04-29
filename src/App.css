@@ -2180,6 +2180,49 @@
   cursor: not-allowed;
 }
 
+.explore-btn-hide {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.explore-btn-hide:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.explore-show-hidden {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-top: 8px;
+  user-select: none;
+}
+
+.explore-show-hidden input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.explore-hidden-count {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
 /* ===== Skill Detail View ===== */
 .detail-view {
   flex: 1;

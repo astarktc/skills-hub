@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { Download, Eye, Plus, Search, Star } from "lucide-react";
+import { Download, Eye, EyeOff, Plus, Search, Star } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { FeaturedSkillDto, ManagedSkill, OnlineSkillDto } from "./types";
 
@@ -11,6 +11,11 @@ type ExplorePageProps = {
   searchLoading: boolean;
   managedSkills: ManagedSkill[];
   loading: boolean;
+  hiddenSkills: Set<string>;
+  showHidden: boolean;
+  onShowHiddenChange: (value: boolean) => void;
+  onHideSkill: (sourceUrl: string) => void;
+  onUnhideSkill: (sourceUrl: string) => void;
   onExploreFilterChange: (value: string) => void;
   onInstallSkill: (sourceUrl: string, skillName?: string) => void;
   onViewSkill: (sourceUrl: string, skillName: string, summary?: string) => void;
@@ -32,6 +37,11 @@ const ExplorePage = ({
   searchLoading,
   managedSkills,
   loading,
+  hiddenSkills,
+  showHidden,
+  onShowHiddenChange,
+  onHideSkill,
+  onUnhideSkill,
   onExploreFilterChange,
   onInstallSkill,
   onViewSkill,
@@ -56,6 +66,16 @@ const ExplorePage = ({
       (s) => !featuredNames.has(s.name.toLowerCase()),
     );
   }, [searchResults, filteredSkills]);
+
+  const visibleFeatured = useMemo(() => {
+    if (showHidden) return filteredSkills;
+    return filteredSkills.filter((s) => !hiddenSkills.has(s.source_url));
+  }, [filteredSkills, hiddenSkills, showHidden]);
+
+  const visibleSearchResults = useMemo(() => {
+    if (showHidden) return deduplicatedResults;
+    return deduplicatedResults.filter((s) => !hiddenSkills.has(s.source_url));
+  }, [deduplicatedResults, hiddenSkills, showHidden]);
 
   const isSearchActive = exploreFilter.trim().length >= 2;
 
@@ -107,6 +127,17 @@ const ExplorePage = ({
             {t("manualAdd")}
           </button>
         </div>
+        <label className="explore-show-hidden">
+          <input
+            type="checkbox"
+            checked={showHidden}
+            onChange={(e) => onShowHiddenChange(e.target.checked)}
+          />
+          {t("exploreShowHidden")}
+          {hiddenSkills.size > 0 && (
+            <span className="explore-hidden-count">({hiddenSkills.size})</span>
+          )}
+        </label>
         <div className="explore-source-label">{t("exploreSourceHint")}</div>
       </div>
 
@@ -116,14 +147,14 @@ const ExplorePage = ({
           <div className="explore-loading">{t("exploreLoading")}</div>
         ) : (
           <>
-            {isSearchActive && filteredSkills.length > 0 && (
+            {isSearchActive && visibleFeatured.length > 0 && (
               <div className="explore-section-title">
                 {t("exploreFeaturedTitle")}
               </div>
             )}
-            {filteredSkills.length > 0 ? (
+            {visibleFeatured.length > 0 ? (
               <div className="explore-grid">
-                {filteredSkills.map((skill) => {
+                {visibleFeatured.map((skill) => {
                   const installed = isInstalled(skill.name, skill.source_url);
                   return (
                     <div key={skill.slug} className="explore-card">
@@ -184,6 +215,27 @@ const ExplorePage = ({
                           <Eye size={12} />
                           {t("exploreView")}
                         </button>
+                        <button
+                          className="explore-btn-hide"
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (hiddenSkills.has(skill.source_url)) {
+                              onUnhideSkill(skill.source_url);
+                            } else {
+                              onHideSkill(skill.source_url);
+                            }
+                          }}
+                        >
+                          {hiddenSkills.has(skill.source_url) ? (
+                            <Eye size={12} />
+                          ) : (
+                            <EyeOff size={12} />
+                          )}
+                          {hiddenSkills.has(skill.source_url)
+                            ? t("exploreUnhide")
+                            : t("exploreHide")}
+                        </button>
                       </div>
                     </div>
                   );
@@ -201,9 +253,9 @@ const ExplorePage = ({
                 </div>
                 {searchLoading ? (
                   <div className="explore-loading">{t("searchLoading")}</div>
-                ) : deduplicatedResults.length > 0 ? (
+                ) : visibleSearchResults.length > 0 ? (
                   <div className="explore-grid">
-                    {deduplicatedResults.map((skill) => {
+                    {visibleSearchResults.map((skill) => {
                       const installed = isInstalled(
                         skill.name,
                         skill.source_url,
@@ -252,6 +304,27 @@ const ExplorePage = ({
                             >
                               <Eye size={12} />
                               {t("exploreView")}
+                            </button>
+                            <button
+                              className="explore-btn-hide"
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (hiddenSkills.has(skill.source_url)) {
+                                  onUnhideSkill(skill.source_url);
+                                } else {
+                                  onHideSkill(skill.source_url);
+                                }
+                              }}
+                            >
+                              {hiddenSkills.has(skill.source_url) ? (
+                                <Eye size={12} />
+                              ) : (
+                                <EyeOff size={12} />
+                              )}
+                              {hiddenSkills.has(skill.source_url)
+                                ? t("exploreUnhide")
+                                : t("exploreHide")}
                             </button>
                           </div>
                         </div>

@@ -49,6 +49,7 @@ function App() {
   const themeStorageKey = "skills-theme";
   const groupByRepoStorageKey = "skills-groupByRepo";
   const viewModeStorageKey = "skills-viewMode";
+  const showHiddenStorageKey = "explore-showHidden";
   const toggleLanguage = useCallback(() => {
     void i18n.changeLanguage(language === "en" ? "zh" : "en");
   }, [i18n, language]);
@@ -158,6 +159,14 @@ function App() {
   );
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
   const [zoomLevel, setZoomLevel] = useState(1.0);
+  const [hiddenSkills, setHiddenSkills] = useState<Set<string>>(new Set());
+  const [showHidden, setShowHidden] = useState(() => {
+    try {
+      return window.localStorage.getItem(showHiddenStorageKey) === "true";
+    } catch {
+      return false;
+    }
+  });
 
   const isTauri =
     typeof window !== "undefined" &&
@@ -356,6 +365,15 @@ function App() {
       // ignore storage failures
     }
   }, [viewMode, viewModeStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(showHiddenStorageKey, String(showHidden));
+    } catch {
+      // ignore
+    }
+  }, [showHidden, showHiddenStorageKey]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -859,17 +877,55 @@ function App() {
     }
   }, [featuredSkills.length, invokeTauri]);
 
+  const loadHiddenSkills = useCallback(async () => {
+    try {
+      const urls = await invokeTauri<string[]>("get_hidden_explore_skills");
+      setHiddenSkills(new Set(urls));
+    } catch {
+      // silent
+    }
+  }, [invokeTauri]);
+
   const handleViewChange = useCallback(
     (view: "myskills" | "explore" | "projects") => {
       setActiveView(view);
       if (view === "explore") {
         loadFeaturedSkills();
+        loadHiddenSkills();
       }
       if (view === "myskills") {
         setDetailSkill(null);
       }
     },
-    [loadFeaturedSkills],
+    [loadFeaturedSkills, loadHiddenSkills],
+  );
+
+  const handleHideSkill = useCallback(
+    async (sourceUrl: string) => {
+      try {
+        await invokeTauri("hide_explore_skill", { sourceUrl });
+        setHiddenSkills((prev) => new Set([...prev, sourceUrl]));
+      } catch {
+        // silent
+      }
+    },
+    [invokeTauri],
+  );
+
+  const handleUnhideSkill = useCallback(
+    async (sourceUrl: string) => {
+      try {
+        await invokeTauri("unhide_explore_skill", { sourceUrl });
+        setHiddenSkills((prev) => {
+          const next = new Set(prev);
+          next.delete(sourceUrl);
+          return next;
+        });
+      } catch {
+        // silent
+      }
+    },
+    [invokeTauri],
   );
 
   const handleOpenDetail = useCallback((skill: ManagedSkill) => {
@@ -2348,6 +2404,11 @@ function App() {
             searchLoading={searchLoading}
             managedSkills={managedSkills}
             loading={loading}
+            hiddenSkills={hiddenSkills}
+            showHidden={showHidden}
+            onShowHiddenChange={setShowHidden}
+            onHideSkill={handleHideSkill}
+            onUnhideSkill={handleUnhideSkill}
             onExploreFilterChange={handleExploreFilterChange}
             onInstallSkill={handleExploreInstall}
             onViewSkill={handleOpenExploreDetail}
