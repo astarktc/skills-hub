@@ -191,6 +191,13 @@ impl SkillStore {
                 // V4: project tables for per-project skill distribution
                 // (DDL includes V5 content_hash column in project_skill_assignments)
                 conn.execute_batch(MIGRATION_V4)?;
+                // V7: hidden explore skills table
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS hidden_explore_skills (
+                        source_url TEXT PRIMARY KEY,
+                        hidden_at INTEGER NOT NULL
+                    );",
+                )?;
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version < SCHEMA_VERSION {
                 // Incremental migrations
@@ -220,15 +227,6 @@ impl SkillStore {
                         ) WHERE skill_name = '';",
                     )?;
                 }
-                if user_version < 7 {
-                    conn.execute_batch(
-                        "CREATE TABLE IF NOT EXISTS hidden_explore_skills (
-                            source_url TEXT PRIMARY KEY,
-                            hidden_at INTEGER NOT NULL
-                        );",
-                    )?;
-                }
-                conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
                 anyhow::bail!(
                     "database schema version {} is newer than app supports {}",
@@ -236,6 +234,14 @@ impl SkillStore {
                     SCHEMA_VERSION
                 );
             }
+
+            // Ensure V7 table exists (handles DBs that were created at V7 without this table)
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS hidden_explore_skills (
+                    source_url TEXT PRIMARY KEY,
+                    hidden_at INTEGER NOT NULL
+                );",
+            )?;
 
             Ok(())
         })
