@@ -2039,7 +2039,7 @@
 
 .explore-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(720px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(576px, 1fr));
   gap: 10px;
   margin-bottom: 24px;
 }

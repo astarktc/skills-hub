@@ -905,8 +905,8 @@ function App() {
       try {
         await invokeTauri("hide_explore_skill", { sourceUrl });
         setHiddenSkills((prev) => new Set([...prev, sourceUrl]));
-      } catch {
-        // silent
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
       }
     },
     [invokeTauri],
@@ -921,8 +921,8 @@ function App() {
           next.delete(sourceUrl);
           return next;
         });
-      } catch {
-        // silent
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
       }
     },
     [invokeTauri],
