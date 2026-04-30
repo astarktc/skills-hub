@@ -12,7 +12,7 @@ const LEGACY_APP_IDENTIFIERS: &[&str] = &[
 ];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 7;
+const SCHEMA_VERSION: i32 = 8;
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -225,6 +225,27 @@ impl SkillStore {
                             (SELECT name FROM skills WHERE skills.id = project_skill_assignments.skill_id),
                             ''
                         ) WHERE skill_name = '';",
+                    )?;
+                }
+                if user_version < 8 {
+                    // Consolidate 9 .agents/skills tools into single agents_skills key.
+                    // Must DELETE duplicates BEFORE UPDATE due to UNIQUE(project_id, tool) constraint.
+                    conn.execute_batch(
+                        "DELETE FROM project_tools WHERE rowid NOT IN (
+                            SELECT MIN(rowid) FROM project_tools
+                            WHERE tool IN ('cursor','codex','amp','kimi_cli','antigravity','cline','gemini_cli','github_copilot','opencode')
+                            GROUP BY project_id
+                        ) AND tool IN ('cursor','codex','amp','kimi_cli','antigravity','cline','gemini_cli','github_copilot','opencode');
+                        UPDATE project_tools SET tool = 'agents_skills'
+                            WHERE tool IN ('cursor','codex','amp','kimi_cli','antigravity','cline','gemini_cli','github_copilot','opencode');
+
+                        DELETE FROM project_skill_assignments WHERE rowid NOT IN (
+                            SELECT MIN(rowid) FROM project_skill_assignments
+                            WHERE tool IN ('cursor','codex','amp','kimi_cli','antigravity','cline','gemini_cli','github_copilot','opencode')
+                            GROUP BY project_id, skill_id
+                        ) AND tool IN ('cursor','codex','amp','kimi_cli','antigravity','cline','gemini_cli','github_copilot','opencode');
+                        UPDATE project_skill_assignments SET tool = 'agents_skills'
+                            WHERE tool IN ('cursor','codex','amp','kimi_cli','antigravity','cline','gemini_cli','github_copilot','opencode');",
                     )?;
                 }
             } else if user_version > SCHEMA_VERSION {

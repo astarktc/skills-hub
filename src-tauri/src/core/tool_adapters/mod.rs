@@ -2,8 +2,16 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+/// Tool keys that are consolidated into the virtual AgentsStandard group for project scope.
+#[allow(dead_code)]
+pub const AGENTS_STANDARD_KEYS: &[&str] = &[
+    "cursor", "codex", "amp", "kimi_cli", "antigravity",
+    "cline", "gemini_cli", "github_copilot", "opencode",
+];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolId {
+    AgentsStandard,
     Cursor,
     ClaudeCode,
     Codex,
@@ -53,6 +61,7 @@ pub enum ToolId {
 impl ToolId {
     pub fn as_key(&self) -> &'static str {
         match self {
+            ToolId::AgentsStandard => "agents_skills",
             ToolId::Cursor => "cursor",
             ToolId::ClaudeCode => "claude_code",
             ToolId::Codex => "codex",
@@ -122,6 +131,12 @@ pub struct DetectedSkill {
 
 pub fn default_tool_adapters() -> Vec<ToolAdapter> {
     vec![
+        ToolAdapter {
+            id: ToolId::AgentsStandard,
+            display_name: ".agents/skills (9 tools)",
+            relative_skills_dir: ".agents/skills",
+            relative_detect_dir: ".agents",
+        },
         ToolAdapter {
             id: ToolId::Cursor,
             display_name: "Cursor",
@@ -460,6 +475,7 @@ pub fn supports_project_scope(adapter: &ToolAdapter) -> bool {
 
 pub fn project_relative_skills_dir(adapter: &ToolAdapter) -> &'static str {
     match adapter.id {
+        ToolId::AgentsStandard => ".agents/skills",
         ToolId::Amp | ToolId::KimiCli => ".agents/skills",
         ToolId::Antigravity => ".agents/skills",
         ToolId::Augment => ".augment/skills",
