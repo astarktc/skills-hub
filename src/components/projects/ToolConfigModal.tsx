@@ -110,6 +110,12 @@ const ToolConfigModalInner = ({
                     <span className="pick-item-badge"> (installed)</span>
                   )}
                 </label>
+                {tool.key === "agents_skills" && (
+                  <span className="pick-item-subtitle">
+                    Cursor, Codex, Amp, Kimi Code CLI, Antigravity, Cline,
+                    Gemini CLI, GitHub Copilot, OpenCode
+                  </span>
+                )}
               </div>
             ))}
           </div>

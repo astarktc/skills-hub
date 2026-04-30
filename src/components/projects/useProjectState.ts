@@ -345,7 +345,7 @@ export function useProjectState(): ProjectState {
 
   const loadToolStatus = useCallback(async () => {
     try {
-      const result = await invoke<ToolStatusDto>("get_tool_status");
+      const result = await invoke<ToolStatusDto>("get_project_tool_status");
       setToolStatus(result);
     } catch (err) {
       throw new Error(normalizeError(err));

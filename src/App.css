@@ -2932,6 +2932,14 @@
   color: var(--status-success);
 }
 
+.pick-item-subtitle {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-left: 1.5rem;
+  margin-top: 2px;
+}
+
 /* === Assignment Matrix === */
 
 .matrix-toolbar {

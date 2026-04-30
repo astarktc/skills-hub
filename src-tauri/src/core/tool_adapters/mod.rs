@@ -4,8 +4,15 @@ use anyhow::{Context, Result};
 
 /// Tool keys that are consolidated into the virtual AgentsStandard group for project scope.
 pub const AGENTS_STANDARD_KEYS: &[&str] = &[
-    "cursor", "codex", "amp", "kimi_cli", "antigravity",
-    "cline", "gemini_cli", "github_copilot", "opencode",
+    "cursor",
+    "codex",
+    "amp",
+    "kimi_cli",
+    "antigravity",
+    "cline",
+    "gemini_cli",
+    "github_copilot",
+    "opencode",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
