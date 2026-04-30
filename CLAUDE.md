@@ -18,6 +18,8 @@ npm run rust:test        # cargo test
 npm run rust:clippy      # Rust lint
 npm run rust:fmt         # Rust format
 npm run rust:fmt:check   # Rust format check
+node scripts/version.mjs set X.Y.Z  # Bump version in ALL 3 files (package.json, tauri.conf.json, Cargo.toml)
+node scripts/version.mjs check      # Verify all version files are in sync
 ```
 
 Always run `npm run check` before committing to ensure all checks pass.
@@ -91,7 +93,7 @@ Parallel worktrees that branch from a stale base can silently revert changes mer
 - Path handling must support `~` expansion (backend has `expand_home_path()`)
 - Sync strategy uses triple fallback: symlink → junction (Windows) → copy
 - Git uses vendored-openssl, HTTP uses rustls-tls — avoids system SSL issues
-- Version numbers must stay in sync between `package.json` and `src-tauri/tauri.conf.json` (validate with `npm run version:check`)
+- Version numbers must stay in sync across `package.json`, `src-tauri/tauri.conf.json`, AND `src-tauri/Cargo.toml` — always use `node scripts/version.mjs set X.Y.Z` to bump (never edit version fields manually)
 - Rust crate is named `app_lib` (not the default package name) — use `app_lib::...` for imports
 - Database has a schema migration mechanism (`migrate_legacy_db_if_needed`) — consider migrations when modifying table structures
 - Tool adapter list is in `tool_adapters/mod.rs` — adding a new AI tool requires both a `ToolId` enum variant and an adapter instance
