@@ -29,6 +29,18 @@ function formatCount(n: number): string {
   return String(n);
 }
 
+function normalizeGithubRepo(source: string): string {
+  return source
+    .replace(/^https:\/\/github\.com\//i, "")
+    .replace(/\.git$/i, "")
+    .split("/tree/")[0]
+    .toLowerCase();
+}
+
+function getExploreHideKey(skillName: string, source: string): string {
+  return `${skillName.toLowerCase()}|${normalizeGithubRepo(source)}`;
+}
+
 const ExplorePage = ({
   featuredSkills,
   featuredLoading,
@@ -69,12 +81,16 @@ const ExplorePage = ({
 
   const visibleFeatured = useMemo(() => {
     if (showHidden) return filteredSkills;
-    return filteredSkills.filter((s) => !hiddenSkills.has(s.source_url));
+    return filteredSkills.filter(
+      (s) => !hiddenSkills.has(getExploreHideKey(s.name, s.source_url)),
+    );
   }, [filteredSkills, hiddenSkills, showHidden]);
 
   const visibleSearchResults = useMemo(() => {
     if (showHidden) return deduplicatedResults;
-    return deduplicatedResults.filter((s) => !hiddenSkills.has(s.source_url));
+    return deduplicatedResults.filter(
+      (s) => !hiddenSkills.has(getExploreHideKey(s.name, s.source_url)),
+    );
   }, [deduplicatedResults, hiddenSkills, showHidden]);
 
   const isSearchActive = exploreFilter.trim().length >= 2;
@@ -156,6 +172,10 @@ const ExplorePage = ({
               <div className="explore-grid">
                 {visibleFeatured.map((skill) => {
                   const installed = isInstalled(skill.name, skill.source_url);
+                  const hideKey = getExploreHideKey(
+                    skill.name,
+                    skill.source_url,
+                  );
                   return (
                     <div key={skill.slug} className="explore-card">
                       <div className="explore-card-top">
@@ -220,19 +240,19 @@ const ExplorePage = ({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (hiddenSkills.has(skill.source_url)) {
-                              onUnhideSkill(skill.source_url);
+                            if (hiddenSkills.has(hideKey)) {
+                              onUnhideSkill(hideKey);
                             } else {
-                              onHideSkill(skill.source_url);
+                              onHideSkill(hideKey);
                             }
                           }}
                         >
-                          {hiddenSkills.has(skill.source_url) ? (
+                          {hiddenSkills.has(hideKey) ? (
                             <Eye size={12} />
                           ) : (
                             <EyeOff size={12} />
                           )}
-                          {hiddenSkills.has(skill.source_url)
+                          {hiddenSkills.has(hideKey)
                             ? t("exploreUnhide")
                             : t("exploreHide")}
                         </button>
@@ -257,6 +277,10 @@ const ExplorePage = ({
                   <div className="explore-grid">
                     {visibleSearchResults.map((skill) => {
                       const installed = isInstalled(
+                        skill.name,
+                        skill.source_url,
+                      );
+                      const hideKey = getExploreHideKey(
                         skill.name,
                         skill.source_url,
                       );
@@ -310,19 +334,19 @@ const ExplorePage = ({
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (hiddenSkills.has(skill.source_url)) {
-                                  onUnhideSkill(skill.source_url);
+                                if (hiddenSkills.has(hideKey)) {
+                                  onUnhideSkill(hideKey);
                                 } else {
-                                  onHideSkill(skill.source_url);
+                                  onHideSkill(hideKey);
                                 }
                               }}
                             >
-                              {hiddenSkills.has(skill.source_url) ? (
+                              {hiddenSkills.has(hideKey) ? (
                                 <Eye size={12} />
                               ) : (
                                 <EyeOff size={12} />
                               )}
-                              {hiddenSkills.has(skill.source_url)
+                              {hiddenSkills.has(hideKey)
                                 ? t("exploreUnhide")
                                 : t("exploreHide")}
                             </button>
