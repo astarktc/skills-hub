@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-last_updated: "2026-04-28"
-last_activity: "2026-04-28 - Completed quick task 260428-xo: Add Default Zoom Level to Settings"
+last_updated: "2026-04-30"
+last_activity: "2026-04-30 - Completed quick task 260429-s9x: Consolidate .agents/skills harnesses into virtual AgentsStandard ToolId"
 progress:
   total_phases: 6
   completed_phases: 6
@@ -92,3 +92,4 @@ None -- milestone shipped.
 | 260428-xo  | Add Default Zoom Level dropdown to Settings with Tauri native setZoom, Rust startup apply, Ctrl+/- hotkeys           | 2026-04-28 | 38fe19c | [260428-xo-ui-scaling-feasibility](./quick/260428-xo-ui-scaling-feasibility/)                                       |
 | 260429-5b  | Set default app window resolution to 1440x1080                                                                       | 2026-04-29 | 160cdf7 | [260429-5b-default-window-1440x1080](./quick/260429-5b-default-window-1440x1080/)                                   |
 | 260429-pc  | Explore page: rename View to Preview, add hide skill button (DB-persisted), add show-hidden checkbox                 | 2026-04-29 | 6f05e5b | [260429-pc-explore-hide-skills-preview-rename](./quick/260429-pc-explore-hide-skills-preview-rename/)               |
+| 260429-s9x | Consolidate .agents/skills harnesses into virtual AgentsStandard ToolId for project assignments                      | 2026-04-30 | 226db1f | [260429-s9x-consolidate-agents-skills-harnesses-into](./quick/260429-s9x-consolidate-agents-skills-harnesses-into/) |
