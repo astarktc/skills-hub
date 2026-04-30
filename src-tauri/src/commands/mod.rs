@@ -32,7 +32,8 @@ use crate::core::sync_engine::{
     SyncMode,
 };
 use crate::core::tool_adapters::{
-    adapter_by_key, default_tool_adapters, is_tool_installed, resolve_default_path,
+    adapter_by_key, default_tool_adapters, is_tool_installed, resolve_default_path, ToolId,
+    AGENTS_STANDARD_KEYS,
 };
 use uuid::Uuid;
 
@@ -134,6 +135,10 @@ pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusD
         let mut installed: Vec<String> = Vec::new();
 
         for adapter in &adapters {
+            // AgentsStandard is project-only -- excluded from global tool list
+            if adapter.id == ToolId::AgentsStandard {
+                continue;
+            }
             let ok = is_tool_installed(adapter)?;
             let key = adapter.id.as_key().to_string();
             let skills_dir = resolve_default_path(adapter)?.to_string_lossy().to_string();
@@ -176,6 +181,70 @@ pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusD
     })
     .await
     .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn get_project_tool_status() -> Result<ToolStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let adapters = default_tool_adapters();
+        let mut tools: Vec<ToolInfoDto> = Vec::new();
+        let mut installed: Vec<String> = Vec::new();
+
+        for adapter in &adapters {
+            let key = adapter.id.as_key();
+
+            // Skip individual constituent tools -- they're absorbed into AgentsStandard
+            if AGENTS_STANDARD_KEYS.contains(&key) {
+                continue;
+            }
+
+            if adapter.id == ToolId::AgentsStandard {
+                // Installed if ANY of the 9 constituent detect dirs exist
+                let group_installed = adapters
+                    .iter()
+                    .filter(|a| AGENTS_STANDARD_KEYS.contains(&a.id.as_key()))
+                    .any(|a| is_tool_installed(a).unwrap_or(false));
+
+                let skills_dir = resolve_default_path(adapter)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+
+                tools.push(ToolInfoDto {
+                    key: "agents_skills".to_string(),
+                    label: adapter.display_name.to_string(),
+                    installed: group_installed,
+                    skills_dir,
+                });
+                if group_installed {
+                    installed.push("agents_skills".to_string());
+                }
+            } else {
+                let ok = is_tool_installed(adapter)?;
+                let key_str = key.to_string();
+                let skills_dir = resolve_default_path(adapter)?.to_string_lossy().to_string();
+                tools.push(ToolInfoDto {
+                    key: key_str.clone(),
+                    label: adapter.display_name.to_string(),
+                    installed: ok,
+                    skills_dir,
+                });
+                if ok {
+                    installed.push(key_str);
+                }
+            }
+        }
+
+        installed.dedup();
+
+        Ok::<_, anyhow::Error>(ToolStatusDto {
+            tools,
+            installed,
+            newly_installed: vec![],
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
     .map_err(format_anyhow_error)
 }
 

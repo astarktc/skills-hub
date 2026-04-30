@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 /// Tool keys that are consolidated into the virtual AgentsStandard group for project scope.
-#[allow(dead_code)]
 pub const AGENTS_STANDARD_KEYS: &[&str] = &[
     "cursor", "codex", "amp", "kimi_cli", "antigravity",
     "cline", "gemini_cli", "github_copilot", "opencode",
