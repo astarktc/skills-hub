@@ -1755,29 +1755,35 @@ pub fn clone_for_explore_preview<R: tauri::Runtime>(
     let cache_key = repo_cache_key(source_url, None, None);
     let explore_skill_dir = explore_cache_root.join(&cache_key);
 
-    // Cache hit: if dir exists and has at least one entry besides .git, return immediately.
-    let lock = GIT_CACHE_LOCK.get_or_init(|| Mutex::new(()));
-    let _guard = lock.lock().unwrap_or_else(|err| err.into_inner());
+    // Cache hit check — hold GIT_CACHE_LOCK only for the quick filesystem probe
+    // and initial directory setup, then drop it before any download/clone path.
+    // clone_to_cache() acquires the same lock internally, so holding it here would
+    // cause a self-deadlock (std::sync::Mutex is not reentrant).
+    {
+        let lock = GIT_CACHE_LOCK.get_or_init(|| Mutex::new(()));
+        let _guard = lock.lock().unwrap_or_else(|err| err.into_inner());
 
-    if explore_skill_dir.exists() {
-        let has_content = std::fs::read_dir(&explore_skill_dir)
-            .ok()
-            .map(|rd| {
-                rd.flatten()
-                    .any(|e| e.file_name().to_string_lossy() != ".git")
-            })
-            .unwrap_or(false);
-        if has_content {
-            return Ok(explore_skill_dir);
+        if explore_skill_dir.exists() {
+            let has_content = std::fs::read_dir(&explore_skill_dir)
+                .ok()
+                .map(|rd| {
+                    rd.flatten()
+                        .any(|e| e.file_name().to_string_lossy() != ".git")
+                })
+                .unwrap_or(false);
+            if has_content {
+                return Ok(explore_skill_dir);
+            }
         }
-    }
 
-    // Ensure a clean destination.
-    if explore_skill_dir.exists() {
-        let _ = std::fs::remove_dir_all(&explore_skill_dir);
-    }
-    std::fs::create_dir_all(&explore_skill_dir)
-        .with_context(|| format!("failed to create explore skill dir {:?}", explore_skill_dir))?;
+        // Ensure a clean destination.
+        if explore_skill_dir.exists() {
+            let _ = std::fs::remove_dir_all(&explore_skill_dir);
+        }
+        std::fs::create_dir_all(&explore_skill_dir).with_context(|| {
+            format!("failed to create explore skill dir {:?}", explore_skill_dir)
+        })?;
+    } // _guard dropped — lock released before download paths
 
     let github_token = store.get_setting("github_token")?.unwrap_or_default();
     let github_token_opt = if github_token.is_empty() {
