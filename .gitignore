@@ -1,3 +1,8 @@
+.claude
+.codex
+.agents
+.opencode
+
 # Logs
 logs
 *.log
@@ -30,3 +35,30 @@ plans/
 .env
 
 bun.lock
+
+# ── GSD baseline (auto-generated) ──
+.gsd
+.gsd-id
+.mcp.json
+.bg-shell/
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+.env.*
+!.env.example
+node_modules/
+.next/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+target/
+vendor/
+.cache/
+tmp/

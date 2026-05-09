@@ -1,17 +1,8 @@
-# Roadmap: Per-Project Skill Distribution
+# Roadmap: Skills Hub
 
-## Overview
+## v1.0 — Per-Project Skill Distribution
 
 This milestone adds per-project skill distribution to Skills Hub. The work follows a bottom-up build order: data layer first, then sync logic, then IPC commands, then frontend, then edge cases. Each phase is independently testable before the next begins. The existing sync engine is reused unchanged -- the entire feature reduces to "compute different target paths, call the same functions."
-
-## Phases
-
-**Phase Numbering:**
-
-- Integer phases (1, 2, 3): Planned milestone work
-- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
-
-Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Data Foundation** - Schema V4 migration, project/tool CRUD, command module structure
 - [x] **Phase 2: Sync Logic** - Project-aware path resolution, sync operations, cross-platform fallback, serialization
@@ -20,9 +11,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Edge Cases and Polish** - Graceful error handling for stale paths, orphaned assignments, .gitignore prompt
 - [x] **Phase 6: Gap Closure** - Tool removal cascades to assignments/artifacts, missing status production
 
-## Phase Details
+### Phase Details
 
-### Phase 1: Data Foundation
+#### Phase 1: Data Foundation
 
 **Goal**: Projects, tool configurations, and skill assignments can be stored and retrieved reliably
 **Depends on**: Nothing (first phase)
@@ -37,12 +28,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Plans:** 2 plans
 
-Plans:
-
 - [x] 01-01-PLAN.md -- Schema V4 migration + SkillStore CRUD methods (record structs, 13 methods, tests)
 - [x] 01-02-PLAN.md -- Tauri command module (commands/projects.rs with 9 commands, DTOs, registration)
 
-### Phase 2: Sync Logic
+#### Phase 2: Sync Logic
 
 **Goal**: Assigning or unassigning a skill to a project creates or removes the correct symlink/copy in the project's tool directory
 **Depends on**: Phase 1
@@ -57,12 +46,10 @@ Plans:
 
 **Plans:** 2 plans
 
-Plans:
-
 - [x] 02-01-PLAN.md -- V5 migration, SyncMutex, project_sync.rs core module (assign_and_sync, unassign_and_cleanup), enhanced commands
 - [x] 02-02-PLAN.md -- Re-sync operations, staleness detection with list command wiring, mutex-protected re-sync commands, serialization test
 
-### Phase 3: IPC Commands
+#### Phase 3: IPC Commands
 
 **Goal**: All project management and sync operations are accessible from the frontend via Tauri IPC
 **Depends on**: Phase 2
@@ -76,11 +63,9 @@ Plans:
 
 **Plans:** 1 plan
 
-Plans:
-
 - [x] 03-01-PLAN.md -- bulk_assign_skill command, error prefix infrastructure (DUPLICATE_PROJECT|, ASSIGNMENT_EXISTS|, NOT_FOUND|), TypeScript DTO types, tests
 
-### Phase 4: Frontend Component Tree
+#### Phase 4: Frontend Component Tree
 
 **Goal**: Users can register projects, configure tools, assign skills, and see sync status through a complete Projects tab
 **Depends on**: Phase 3
@@ -95,13 +80,11 @@ Plans:
 
 **Plans:** 3 plans
 
-Plans:
-
 - [x] 04-01-PLAN.md -- useProjectState hook, ProjectsPage shell, i18n strings, App.tsx/Header.tsx navigation integration
 - [x] 04-02-PLAN.md -- ProjectList panel, AddProjectModal, ToolConfigModal, RemoveProjectModal, CSS styles
 - [x] 04-03-PLAN.md -- AssignmentMatrix with checkbox grid, status colors, toolbar, bulk-assign, visual verification
 
-### Phase 5: Edge Cases and Polish
+#### Phase 5: Edge Cases and Polish
 
 **Goal**: The app handles missing projects, orphaned assignments, and .gitignore concerns gracefully
 **Depends on**: Phase 4
@@ -114,18 +97,15 @@ Plans:
 
 **Plans:** 3 plans
 
-Plans:
-
 - [x] 05-01-PLAN.md -- Backend commands: auto-sync setting, bulk/per-skill unsync, INFR-03 skill deletion cleanup, PROJ-04 path_exists, INFR-02 SyncMutex fix, SYNC-01 missing status
 - [x] 05-02-PLAN.md -- My Skills frontend: auto-sync toggle, bulk unsync button, per-skill Unlink icon, conditional install sync
 - [x] 05-03-PLAN.md -- Projects frontend: missing project warning badges, error prefix translation, bulk assign failure surfacing, update-path flow, gitignore edge cases
 
-### Phase 6: Gap Closure — Tool Removal Cleanup & Missing Status
+#### Phase 6: Gap Closure
 
 **Goal**: Tool column removal cascades to assignments/artifacts, and `missing` assignment status is produced when skill source is absent
 **Depends on**: Phase 4, Phase 5
 **Requirements**: TOOL-03, SYNC-01
-**Gap Closure:** Closes gaps from v1.0 milestone audit
 **Success Criteria** (what must be TRUE):
 
 1. Removing a tool column from a project deletes all assignments for that tool and cleans up filesystem artifacts (symlinks/copies) in the project directory
@@ -135,14 +115,9 @@ Plans:
 
 **Plans:** 1 plan
 
-Plans:
-
 - [x] 06-01-PLAN.md -- Tool removal cascade + missing status detection (TOOL-03, SYNC-01)
 
-## Progress
-
-**Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
+### Progress
 
 | Phase                      | Plans Complete | Status   | Completed  |
 | -------------------------- | -------------- | -------- | ---------- |
@@ -152,3 +127,20 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 4. Frontend Component Tree | 3/3            | Complete | 2026-04-08 |
 | 5. Edge Cases and Polish   | 3/3            | Complete | 2026-04-08 |
 | 6. Gap Closure             | 1/1            | Complete | 2026-04-09 |
+
+## v1.1.7 — Polish, Features & Stability
+
+Post-ship refinement — UI polish, install reliability, Explore page features, performance optimizations, and tool adapter expansion. 23 quick tasks across 8 releases (v1.1.0-v1.1.7). No formal phases — all work was ad-hoc quick tasks with atomic commits.
+
+Key deliverables:
+
+- Rebranding (com.skillshub.app, astarktc URLs)
+- Group-by-repo UI with persistence
+- Multi-skill repo install fixes
+- Performance caching (source hashes, assignment lookup)
+- Explore page: detail viewer, auto grid, hide skills, preview
+- View mode toggle (list/auto grid/dense grid)
+- UI scaling/zoom with Tauri native support
+- AgentsStandard virtual ToolId for .agents/skills
+
+Shipped: 2026-04-30 | Git tag: v1.1.7
