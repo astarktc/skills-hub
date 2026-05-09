@@ -945,6 +945,7 @@ function App() {
       try {
         const cachePath = await invokeTauri<string>("clone_explore_skill", {
           sourceUrl,
+          skillName,
         });
         const exploreManagedSkill: ManagedSkill = {
           id: "",

@@ -1739,6 +1739,7 @@ pub fn clone_for_explore_preview<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     store: &SkillStore,
     source_url: &str,
+    skill_name: Option<&str>,
     cancel: Option<&CancelToken>,
 ) -> Result<PathBuf> {
     let parsed = parse_github_url(source_url);
@@ -1752,7 +1753,7 @@ pub fn clone_for_explore_preview<R: tauri::Runtime>(
         )
     })?;
 
-    let cache_key = repo_cache_key(source_url, None, None);
+    let cache_key = repo_cache_key(source_url, skill_name, None);
     let explore_skill_dir = explore_cache_root.join(&cache_key);
 
     // Cache hit check — hold GIT_CACHE_LOCK only for the quick filesystem probe
@@ -1883,13 +1884,42 @@ pub fn clone_for_explore_preview<R: tauri::Runtime>(
             }
             sub_src
         } else {
-            let skill_count = count_skills_in_repo(&repo_dir);
-            if skill_count >= 2 {
-                anyhow::bail!(
-                    "MULTI_SKILLS|This repository contains multiple Skills. Please copy the specific skill folder link (e.g. GitHub /tree/<branch>/<skill-folder>) and try again."
-                );
+            // Multi-skill repo with no subpath: find the matching skill by name.
+            let skill_dirs = collect_skill_dirs(&repo_dir);
+            if skill_dirs.len() >= 2 {
+                if let Some(target_name) = skill_name {
+                    let target = target_name.to_lowercase();
+                    let matched = skill_dirs.iter().find(|dir| {
+                        let (name, _) = extract_skill_info(dir, &repo_dir);
+                        let n = name.to_lowercase();
+                        n == target || n.contains(&target) || target.contains(&n)
+                    });
+                    if let Some(dir) = matched {
+                        dir.clone()
+                    } else {
+                        // Fallback: match by directory name
+                        let matched_by_dir = skill_dirs.iter().find(|dir| {
+                            dir.file_name()
+                                .map(|n| {
+                                    let n = n.to_string_lossy().to_lowercase();
+                                    n == target || n.contains(&target) || target.contains(&n)
+                                })
+                                .unwrap_or(false)
+                        });
+                        matched_by_dir.cloned().ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "MULTI_SKILLS|This repository contains multiple Skills. Please copy the specific skill folder link (e.g. GitHub /tree/<branch>/<skill-folder>) and try again."
+                            )
+                        })?
+                    }
+                } else {
+                    anyhow::bail!(
+                        "MULTI_SKILLS|This repository contains multiple Skills. Please copy the specific skill folder link (e.g. GitHub /tree/<branch>/<skill-folder>) and try again."
+                    );
+                }
+            } else {
+                repo_dir.clone()
             }
-            repo_dir.clone()
         };
 
         copy_dir_recursive(&copy_src, &explore_skill_dir)

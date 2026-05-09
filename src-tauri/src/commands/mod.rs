@@ -1201,6 +1201,7 @@ pub async fn read_skill_file(central_path: String, file_path: String) -> Result<
 #[allow(non_snake_case)]
 pub async fn clone_explore_skill(
     sourceUrl: String,
+    skillName: Option<String>,
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     cancel: State<'_, Arc<CancelToken>>,
@@ -1209,8 +1210,14 @@ pub async fn clone_explore_skill(
     let cancel = cancel.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         cancel.reset();
-        let path = clone_for_explore_preview(&app, &store, &sourceUrl, Some(&cancel))
-            .map_err(format_anyhow_error)?;
+        let path = clone_for_explore_preview(
+            &app,
+            &store,
+            &sourceUrl,
+            skillName.as_deref(),
+            Some(&cancel),
+        )
+        .map_err(format_anyhow_error)?;
         Ok(path.to_string_lossy().to_string())
     })
     .await
