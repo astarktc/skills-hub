@@ -1,10 +1,10 @@
 # Milestones
 
-## v1.1.7 — Polish, Features & Stability (2026-04-09 to 2026-04-30)
+## v1.1.8 — Polish, Features & Stability (2026-04-09 to 2026-05-09)
 
 **Theme:** Post-ship refinement — UI polish, install reliability, Explore page features, performance optimizations, and tool adapter expansion.
 
-**Scope:** 23 quick tasks across 8 releases (v1.1.0–v1.1.7). No formal phases — all work was ad-hoc quick tasks with atomic commits.
+**Scope:** 23 quick tasks across releases v1.1.0–v1.1.7, plus the v1.1.8 bugfix release. No formal phases — all work was ad-hoc quick tasks and one bugfix PR with atomic commits.
 
 **Key deliverables:**
 
@@ -16,10 +16,11 @@
 - View mode toggle (list/auto grid/dense grid)
 - UI scaling/zoom with Tauri native support
 - AgentsStandard virtual ToolId for .agents/skills
+- v1.1.8 bugfixes: unify installer download into `fetch_skill_files`; resolve multi-skill repos in explore preview by name; fix self-deadlock in `clone_for_explore_preview`
 
-**Artifacts:** [milestones/v1.1.7-quick-tasks.md](milestones/v1.1.7-quick-tasks.md) (task index from STATE.md)
+**Artifacts:** [milestones/v1.1.7-quick-tasks.md](milestones/v1.1.7-quick-tasks.md) (quick-task index)
 
-**Git tag:** v1.1.7
+**Git tag:** v1.1.8
 
 ---
 
@@ -37,6 +38,6 @@
 - Full Projects tab UI with assignment matrix
 - .gitignore prompt, stale path detection, orphan cleanup
 
-**Artifacts:** [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md) | [milestones/v1.0-REQUIREMENTS.md](milestones/v1.0-REQUIREMENTS.md) | [milestones/v1.0-MILESTONE-AUDIT.md](milestones/v1.0-MILESTONE-AUDIT.md)
+**Artifacts:** [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md) | [milestones/v1.0-REQUIREMENTS.md](milestones/v1.0-REQUIREMENTS.md) | [milestones/v1.0-MILESTONE-AUDIT.md](milestones/v1.0-MILESTONE-AUDIT.md) | [milestones/v1.0-phases/](milestones/v1.0-phases/) (archived phase artifacts)
 
 **Git tag:** v1.0

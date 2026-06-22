@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI Agent Skills and syncing them to 47+ AI coding tools. This milestone adds per-project skill distribution: register project directories, assign specific skills to specific projects, and sync via symlinks from `~/.skillshub/<skill>` to `<project>/.claude/skills/<skill>` (or equivalent tool path).
+Skills Hub is a cross-platform desktop app (Tauri 2 + React 19) for managing AI Agent Skills and syncing them to 47+ AI coding tools. As of v1.0 it supports per-project skill distribution (shipped): register project directories, assign specific skills to specific projects, and sync via symlinks from `~/.skillshub/<skill>` to `<project>/.claude/skills/<skill>` (or equivalent tool path). The v1.1.x line then layered on UI polish, install reliability, Explore-page features, and performance work through v1.1.8.
 
 ## Core Value
 
@@ -69,7 +69,7 @@ Any skill assigned to a project is immediately available in that project's tool 
 
 ### Brownfield State
 
-This is an active codebase with a working app (v1.0.0). The existing sync engine (`sync_engine.rs`) accepts generic `source: &Path` and `target: &Path` — only the path resolution layer is global-hardcoded. Per-project sync requires zero changes to the sync engine itself: just project-aware path resolution, assignment storage, and new UI.
+This is an active codebase with a working app (v1.1.8). The existing sync engine (`sync_engine.rs`) accepts generic `source: &Path` and `target: &Path` — only the path resolution layer is global-hardcoded. Per-project sync requires zero changes to the sync engine itself: just project-aware path resolution, assignment storage, and new UI.
 
 ### Key Architectural Insight
 
@@ -135,4 +135,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-09 after v1.0 milestone completion (all 6 phases shipped)_
+_Last updated: 2026-06-22 — reconciled for gsd-pi migration. v1.0 (per-project distribution, 6 phases) and the v1.1.x polish line (through v1.1.8) both shipped._

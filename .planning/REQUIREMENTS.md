@@ -129,4 +129,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 ---
 
 _Requirements defined: 2026-04-07_
-_Last updated: 2026-04-09 after v1.0 milestone completion_
+_Last updated: 2026-06-22 — reconciled for gsd-pi migration; all v1 requirements shipped and verified (v1.0). v2 requirements remain deferred._

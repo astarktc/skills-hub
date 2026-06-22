@@ -1,6 +1,15 @@
 # Roadmap: Skills Hub
 
+## Milestones
+
+- ✅ **v1.0 — Per-Project Skill Distribution** — Phases 1-6 (shipped 2026-04-09)
+- ✅ **v1.1.8 — Polish, Features & Stability** — 23 quick tasks + bugfix release across v1.1.0–v1.1.8 (shipped 2026-05-09)
+- 📋 **Next** — Migrate planning to gsd-pi (v1.3.0) before further feature work
+
 ## v1.0 — Per-Project Skill Distribution
+
+<details>
+<summary>✅ SHIPPED 2026-04-09 — Phases 1-6, 12 plans</summary>
 
 This milestone adds per-project skill distribution to Skills Hub. The work follows a bottom-up build order: data layer first, then sync logic, then IPC commands, then frontend, then edge cases. Each phase is independently testable before the next begins. The existing sync engine is reused unchanged -- the entire feature reduces to "compute different target paths, call the same functions."
 
@@ -117,20 +126,13 @@ This milestone adds per-project skill distribution to Skills Hub. The work follo
 
 - [x] 06-01-PLAN.md -- Tool removal cascade + missing status detection (TOOL-03, SYNC-01)
 
-### Progress
+</details>
 
-| Phase                      | Plans Complete | Status   | Completed  |
-| -------------------------- | -------------- | -------- | ---------- |
-| 1. Data Foundation         | 2/2            | Complete | 2026-04-07 |
-| 2. Sync Logic              | 2/2            | Complete | 2026-04-07 |
-| 3. IPC Commands            | 1/1            | Complete | 2026-04-08 |
-| 4. Frontend Component Tree | 3/3            | Complete | 2026-04-08 |
-| 5. Edge Cases and Polish   | 3/3            | Complete | 2026-04-08 |
-| 6. Gap Closure             | 1/1            | Complete | 2026-04-09 |
+> Phase artifacts archived to `.planning/milestones/v1.0-phases/`.
 
-## v1.1.7 — Polish, Features & Stability
+## v1.1.8 — Polish, Features & Stability
 
-Post-ship refinement — UI polish, install reliability, Explore page features, performance optimizations, and tool adapter expansion. 23 quick tasks across 8 releases (v1.1.0-v1.1.7). No formal phases — all work was ad-hoc quick tasks with atomic commits.
+Post-ship refinement — UI polish, install reliability, Explore page features, performance optimizations, and tool adapter expansion. 23 quick tasks across releases v1.1.0–v1.1.7, followed by the v1.1.8 bugfix release (installer reliability). No formal phases — all work was ad-hoc quick tasks (and one bugfix PR) with atomic commits.
 
 Key deliverables:
 
@@ -142,5 +144,21 @@ Key deliverables:
 - View mode toggle (list/auto grid/dense grid)
 - UI scaling/zoom with Tauri native support
 - AgentsStandard virtual ToolId for .agents/skills
+- v1.1.8 bugfixes: unify installer download into `fetch_skill_files`; resolve multi-skill repos in explore preview by name; fix self-deadlock in `clone_for_explore_preview`
 
-Shipped: 2026-04-30 | Git tag: v1.1.7
+Quick task index: [milestones/v1.1.7-quick-tasks.md](milestones/v1.1.7-quick-tasks.md)
+
+Shipped: 2026-05-09 | Git tag: v1.1.8
+
+## Progress
+
+| Phase                      | Milestone | Plans Complete | Status   | Completed  |
+| -------------------------- | --------- | -------------- | -------- | ---------- |
+| 1. Data Foundation         | v1.0      | 2/2            | Complete | 2026-04-07 |
+| 2. Sync Logic              | v1.0      | 2/2            | Complete | 2026-04-07 |
+| 3. IPC Commands            | v1.0      | 1/1            | Complete | 2026-04-08 |
+| 4. Frontend Component Tree | v1.0      | 3/3            | Complete | 2026-04-08 |
+| 5. Edge Cases and Polish   | v1.0      | 3/3            | Complete | 2026-04-08 |
+| 6. Gap Closure             | v1.0      | 1/1            | Complete | 2026-04-09 |
+
+v1.1.8 — Polish, Features & Stability: no formal phases (quick tasks + bugfix release). See milestone index above.
