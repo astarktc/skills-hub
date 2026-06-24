@@ -21,13 +21,10 @@ export default defineConfig([
     },
     rules: {
       // React Compiler rules newly enabled by eslint-plugin-react-hooks 7.1.x's
-      // recommended preset (required for the ESLint 10 peer range). They flag
-      // pre-existing, working patterns rather than bugs; satisfying them is a
-      // focused, behavior-risk refactor tracked as a separate follow-up. Kept
-      // off here so `eslint src` stays green without that refactor.
+      // recommended preset (required for the ESLint 10 peer range). Re-enabled
+      // incrementally as their flagged sites are fixed; the remaining entries
+      // below are still off pending their behavior-preserving fix.
       'react-hooks/set-state-in-effect': 'off',
-      'react-hooks/immutability': 'off',
-      'react-hooks/preserve-manual-memoization': 'off',
       'react-hooks/refs': 'off',
     },
   },

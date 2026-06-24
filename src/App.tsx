@@ -167,6 +167,10 @@ function App() {
       return false;
     }
   });
+  const [storagePath, setStoragePath] = useState<string>(t("notAvailable"));
+  const [gitCacheCleanupDays, setGitCacheCleanupDays] = useState<number>(30);
+  const [gitCacheTtlSecs, setGitCacheTtlSecs] = useState<number>(60);
+  const [githubToken, setGithubToken] = useState<string>("");
 
   const isTauri =
     typeof window !== "undefined" &&
@@ -653,10 +657,6 @@ function App() {
     return sorted;
   }, [managedSkills, searchQuery, sortBy]);
 
-  const [storagePath, setStoragePath] = useState<string>(t("notAvailable"));
-  const [gitCacheCleanupDays, setGitCacheCleanupDays] = useState<number>(30);
-  const [gitCacheTtlSecs, setGitCacheTtlSecs] = useState<number>(60);
-  const [githubToken, setGithubToken] = useState<string>("");
   const handlePickStoragePath = useCallback(async () => {
     try {
       if (!isTauri) {
