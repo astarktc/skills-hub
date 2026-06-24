@@ -39,6 +39,8 @@ bun.lock
 # ── GSD baseline (auto-generated) ──
 .gsd
 .gsd-id
+.gsd-backups/
+.planning/config.json.bak-*
 .mcp.json
 .bg-shell/
 Thumbs.db

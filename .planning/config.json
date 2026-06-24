@@ -7,7 +7,7 @@
   "firecrawl": false,
   "exa_search": false,
   "git": {
-    "branching_strategy": "phase",
+    "branching_strategy": "none",
     "phase_branch_template": "gsd/phase-{phase}-{slug}",
     "milestone_branch_template": "gsd/{milestone}-{slug}",
     "quick_branch_template": null
@@ -28,7 +28,7 @@
     "skip_discuss": false,
     "code_review": true,
     "code_review_depth": "standard",
-    "use_worktrees": true,
+    "use_worktrees": false,
     "_auto_chain_active": false,
     "ai_integration_phase": true
   },
