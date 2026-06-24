@@ -109,9 +109,15 @@ export function useProjectState(): ProjectState {
   // Version counter for stale result discard on project selection
   const selectVersionRef = useRef(0);
 
-  // Track latest assignments for stale-closure protection in toggleAssignment
+  // Track latest assignments for stale-closure protection in toggleAssignment.
+  // Write the ref in an effect (after commit) rather than during render to
+  // satisfy react-hooks/refs. toggleAssignment reads assignmentsRef.current
+  // only inside an async event handler (always after the latest commit), so
+  // the ref still reflects the newest assignments when read — behavior-preserving.
   const assignmentsRef = useRef(assignments);
-  assignmentsRef.current = assignments;
+  useEffect(() => {
+    assignmentsRef.current = assignments;
+  }, [assignments]);
 
   const loadProjects = useCallback(async () => {
     setProjectsLoading(true);
