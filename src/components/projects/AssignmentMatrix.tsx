@@ -1,6 +1,6 @@
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
+  TriangleAlert,
   ArrowUpDown,
   GitBranch,
   RefreshCw,
@@ -276,7 +276,7 @@ const AssignmentMatrix = ({
 
       {pathMissing && (
         <div className="matrix-path-missing-banner">
-          <AlertTriangle size={14} />
+          <TriangleAlert size={14} />
           <span>{t("projects.syncDisabledMissing")}</span>
         </div>
       )}

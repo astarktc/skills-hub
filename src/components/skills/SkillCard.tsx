@@ -3,12 +3,12 @@ import {
   Box,
   Copy,
   Folder,
-  Github,
   Link,
   RefreshCw,
   Trash2,
   Unlink,
 } from "lucide-react";
+import { SiGithub } from "@icons-pack/react-simple-icons";
 import { toast } from "sonner";
 import type { TFunction } from "i18next";
 import type { ManagedSkill, ToolOption } from "./types";
@@ -53,7 +53,7 @@ const SkillCard = ({
 }: SkillCardProps) => {
   const typeKey = skill.source_type.toLowerCase();
   const iconNode = typeKey.includes("git") ? (
-    <Github size={20} />
+    <SiGithub size={20} />
   ) : typeKey.includes("local") ? (
     <Folder size={20} />
   ) : (

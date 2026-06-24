@@ -1,6 +1,6 @@
 import { memo } from "react";
 import {
-  AlertTriangle,
+  TriangleAlert,
   FolderOpen,
   Plus,
   Settings,
@@ -73,7 +73,7 @@ const ProjectList = ({
                     className="project-warning-badge"
                     title={t("projects.pathMissingWarning")}
                   >
-                    <AlertTriangle size={14} />
+                    <TriangleAlert size={14} />
                   </span>
                 )}
                 <div className="project-item-actions">
