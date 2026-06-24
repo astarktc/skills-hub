@@ -54,9 +54,17 @@ const SettingsPage = ({
   t,
 }: SettingsPageProps) => {
   const [localToken, setLocalToken] = useState(githubToken);
-  useEffect(() => {
+  // Sync the local editable copy when the githubToken prop changes, using the
+  // adjust-state-during-render pattern (React docs) instead of an effect so we
+  // don't synchronously setState inside an effect (satisfies
+  // react-hooks/set-state-in-effect). Behavior-preserving: localToken is reset
+  // to githubToken exactly when the prop changes, identical to the prior
+  // effect minus the extra commit.
+  const [prevGithubToken, setPrevGithubToken] = useState(githubToken);
+  if (githubToken !== prevGithubToken) {
+    setPrevGithubToken(githubToken);
     setLocalToken(githubToken);
-  }, [githubToken]);
+  }
 
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
@@ -119,7 +127,9 @@ const SettingsPage = ({
   }, [isTauri]);
 
   useEffect(() => {
-    void loadAppVersion();
+    void (async () => {
+      await loadAppVersion();
+    })();
     return () => {
       updateRef.current = null;
     };

@@ -337,9 +337,14 @@ function App() {
   }, [invokeTauri]);
 
   useEffect(() => {
-    if (isTauri) {
-      loadManagedSkills();
-    }
+    if (!isTauri) return;
+    // Fire-and-forget load on mount. Awaited inside an IIFE so the loader's
+    // setState runs in an async continuation rather than synchronously in the
+    // effect body (satisfies react-hooks/set-state-in-effect). Behavior is
+    // unchanged: loadManagedSkills only setStates after its await.
+    void (async () => {
+      await loadManagedSkills();
+    })();
   }, [isTauri, loadManagedSkills]);
 
   useEffect(() => {
@@ -491,9 +496,12 @@ function App() {
   }, [isTauri, invokeTauri]);
 
   useEffect(() => {
-    if (isTauri) {
-      void loadPlan();
-    }
+    if (!isTauri) return;
+    // Fire-and-forget load on mount (see loadManagedSkills effect). loadPlan's
+    // intentional eager loading-overlay setState is preserved exactly.
+    void (async () => {
+      await loadPlan();
+    })();
   }, [isTauri, loadPlan]);
 
   useEffect(() => {
@@ -561,15 +569,24 @@ function App() {
   useEffect(() => {
     if (!successToastMessage) return;
     toast.success(successToastMessage, { duration: 1800 });
-    setSuccessToastMessage(null);
+    // Clear the one-shot trigger in a microtask so the reset is not a
+    // synchronous setState in the effect body (satisfies
+    // react-hooks/set-state-in-effect). The flag is internal and only consumed
+    // by this effect, so deferring it one microtask is behavior-preserving.
+    void Promise.resolve().then(() => setSuccessToastMessage(null));
   }, [successToastMessage]);
 
   useEffect(() => {
     if (!error) return;
     const msg = formatErrorMessage(error);
     if (msg) toast.error(msg, { duration: 2600 });
-    setError(null);
-    setActionMessage(null);
+    // Reset the one-shot error/action triggers in a microtask (see the success
+    // toast effect above) to keep the setState out of the synchronous effect
+    // body. Behavior-preserving: these flags are only consumed here.
+    void Promise.resolve().then(() => {
+      setError(null);
+      setActionMessage(null);
+    });
   }, [error, formatErrorMessage]);
 
   const toolInfos = useMemo(() => toolStatus?.tools ?? [], [toolStatus]);

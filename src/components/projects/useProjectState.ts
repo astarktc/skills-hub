@@ -135,10 +135,14 @@ export function useProjectState(): ProjectState {
     }
   }, []);
 
-  // Load projects and skills on mount
+  // Load projects and skills on mount. Concurrent fire-and-forget, awaited
+  // inside an IIFE so the loaders' setState runs in an async continuation
+  // (satisfies react-hooks/set-state-in-effect). Promise.all preserves the
+  // original concurrent start; behavior is unchanged.
   useEffect(() => {
-    void loadProjects();
-    void loadSkills();
+    void (async () => {
+      await Promise.all([loadProjects(), loadSkills()]);
+    })();
   }, [loadProjects, loadSkills]);
 
   const selectProject = useCallback(async (id: string) => {

@@ -20,11 +20,8 @@ export default defineConfig([
       globals: globals.browser,
     },
     rules: {
-      // React Compiler rules newly enabled by eslint-plugin-react-hooks 7.1.x's
-      // recommended preset (required for the ESLint 10 peer range). Re-enabled
-      // incrementally as their flagged sites are fixed; the remaining entries
-      // below are still off pending their behavior-preserving fix.
-      'react-hooks/set-state-in-effect': 'off',
+      // React Compiler rule from eslint-plugin-react-hooks 7.1.x's recommended
+      // preset. Still off pending its behavior-preserving fix.
       'react-hooks/refs': 'off',
     },
   },
