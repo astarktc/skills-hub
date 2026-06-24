@@ -160,7 +160,7 @@ export function useProjectState(): ProjectState {
       if (selectVersionRef.current !== version) return;
       setTools([]);
       setAssignments([]);
-      throw new Error(normalizeError(err));
+      throw new Error(normalizeError(err), { cause: err });
     } finally {
       if (selectVersionRef.current === version) {
         setMatrixLoading(false);
@@ -238,7 +238,7 @@ export function useProjectState(): ProjectState {
         } catch {
           // Silent fallback — state may be stale
         }
-        throw new Error(normalizeError(err));
+        throw new Error(normalizeError(err), { cause: err });
       } finally {
         setPendingCells((prev) => {
           const next = new Set(prev);
@@ -282,7 +282,7 @@ export function useProjectState(): ProjectState {
         } catch {
           // Silent fallback
         }
-        throw new Error(normalizeError(err));
+        throw new Error(normalizeError(err), { cause: err });
       } finally {
         setPendingCells((prev) => {
           const next = new Set(prev);
@@ -348,7 +348,7 @@ export function useProjectState(): ProjectState {
       const result = await invoke<ToolStatusDto>("get_project_tool_status");
       setToolStatus(result);
     } catch (err) {
-      throw new Error(normalizeError(err));
+      throw new Error(normalizeError(err), { cause: err });
     }
   }, []);
 
