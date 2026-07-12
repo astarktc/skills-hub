@@ -3082,6 +3082,19 @@
   cursor: wait;
 }
 
+.matrix-cell .cell-global-icon {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.matrix-cell input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .matrix-cell.error[title] {
   cursor: pointer;
 }

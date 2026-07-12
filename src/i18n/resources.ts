@@ -409,6 +409,8 @@ export const resources = {
         bulkAssignFailed: "Some tools failed to assign: {{details}}",
         syncDisabledMissing:
           "Sync is disabled because the project directory was not found.",
+        globalSynced:
+          "This skill is already deployed globally for this tool. Assign it here only to manage it per-project.",
       },
     },
   },

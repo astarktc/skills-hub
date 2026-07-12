@@ -3,6 +3,7 @@ import {
   TriangleAlert,
   ArrowUpDown,
   GitBranch,
+  Globe,
   RefreshCw,
   Settings,
 } from "lucide-react";
@@ -410,6 +411,8 @@ const MatrixRow = memo(
           const cellKey = `${skill.id}:${tool.tool}`;
           const isPending = pendingCells.has(cellKey);
           const assignment = assignmentMap.get(`${skill.id}:${tool.tool}`);
+          const isGlobal = skill.targets.some((gt) => gt.tool === tool.tool);
+          const lockedGlobal = isGlobal && !assignment;
           const statusClass = isPending
             ? "pending"
             : assignment
@@ -419,12 +422,14 @@ const MatrixRow = memo(
           const errorTitle = isError
             ? t("projects.syncErrorPrefix") + (assignment?.last_error ?? "")
             : undefined;
+          const cellTitle =
+            errorTitle ?? (isGlobal ? t("projects.globalSynced") : undefined);
 
           return (
             <td
               key={cellKey}
-              className={`matrix-cell ${statusClass}`}
-              title={errorTitle}
+              className={`matrix-cell ${statusClass}${isGlobal ? " global" : ""}`}
+              title={cellTitle}
               onClick={
                 isError && !disabled
                   ? () => onToggleAssignment(skill.id, tool.tool)
@@ -437,9 +442,16 @@ const MatrixRow = memo(
                 <input
                   type="checkbox"
                   checked={!!assignment}
-                  disabled={isPending || disabled}
+                  disabled={isPending || disabled || lockedGlobal}
                   onChange={() => onToggleAssignment(skill.id, tool.tool)}
                   aria-label={`${skill.name} - ${tool.tool}`}
+                />
+              )}
+              {isGlobal && !isPending && (
+                <Globe
+                  size={10}
+                  className="cell-global-icon"
+                  aria-hidden="true"
                 />
               )}
               {isError && (
