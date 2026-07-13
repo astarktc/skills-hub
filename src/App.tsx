@@ -661,12 +661,23 @@ function App() {
 
   const visibleSkills = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
+    const wildcardPattern = query.includes("*")
+      ? new RegExp(
+          query
+            .split("*")
+            .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+            .join(".*"),
+        )
+      : null;
+    const matchesQuery = (value: string) =>
+      wildcardPattern ? wildcardPattern.test(value) : value.includes(query);
     const filtered = managedSkills.filter((skill) => {
       if (!query) return true;
       return (
-        skill.name.toLowerCase().includes(query) ||
-        skill.central_path.toLowerCase().includes(query) ||
-        skill.source_type.toLowerCase().includes(query)
+        matchesQuery(skill.name.toLowerCase()) ||
+        matchesQuery(skill.source_ref?.toLowerCase() ?? "") ||
+        matchesQuery(skill.central_path.toLowerCase()) ||
+        matchesQuery(skill.source_type.toLowerCase())
       );
     });
     const sorted = [...filtered].sort((a, b) => {
