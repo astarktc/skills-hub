@@ -25,11 +25,13 @@ import LocalPickModal from "./components/skills/modals/LocalPickModal";
 import ImportModal from "./components/skills/modals/ImportModal";
 import NewToolsModal from "./components/skills/modals/NewToolsModal";
 import SharedDirModal from "./components/skills/modals/SharedDirModal";
+import ToolConfigModal from "./components/skills/modals/ToolConfigModal";
 import SettingsPage from "./components/skills/SettingsPage";
 import ProjectsPage from "./components/projects/ProjectsPage";
 import type {
   FeaturedSkillDto,
   GitSkillCandidate,
+  GlobalToolConfigDto,
   InstallResultDto,
   LocalSkillCandidate,
   ManagedSkill,
@@ -98,6 +100,11 @@ function App() {
   const [loadingStartAt, setLoadingStartAt] = useState<number | null>(null);
   const [toolStatus, setToolStatus] = useState<ToolStatusDto | null>(null);
   const [showNewToolsModal, setShowNewToolsModal] = useState(false);
+  const [showToolConfigModal, setShowToolConfigModal] = useState(false);
+  const [globalSelectedTools, setGlobalSelectedTools] = useState<
+    string[] | null
+  >(null);
+  const [scanSelectedToolsOnly, setScanSelectedToolsOnly] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [pendingSharedToggle, setPendingSharedToggle] = useState<{
@@ -868,12 +875,24 @@ function App() {
     () => managedSkills.find((skill) => skill.id === pendingDeleteId) ?? null,
     [managedSkills, pendingDeleteId],
   );
+  const relevantNewlyInstalled = useMemo(() => {
+    if (!toolStatus) return [] as string[];
+    // "Only scan selected tools": ignore newly detected tools that are not
+    // part of the saved global tool selection.
+    if (scanSelectedToolsOnly && globalSelectedTools) {
+      return toolStatus.newly_installed.filter((id) =>
+        globalSelectedTools.includes(id),
+      );
+    }
+    return toolStatus.newly_installed;
+  }, [toolStatus, scanSelectedToolsOnly, globalSelectedTools]);
+
   const newlyInstalledToolsText = useMemo(() => {
-    if (!toolStatus || toolStatus.newly_installed.length === 0) return "";
-    return toolStatus.newly_installed
+    if (relevantNewlyInstalled.length === 0) return "";
+    return relevantNewlyInstalled
       .map((id) => tools.find((t) => t.id === id)?.label ?? id)
       .join("、");
-  }, [toolStatus, tools]);
+  }, [relevantNewlyInstalled, tools]);
 
   const handleOpenSettings = useCallback(() => {
     setActiveView("settings");
@@ -1076,6 +1095,40 @@ function App() {
   const handleCloseNewTools = useCallback(() => {
     if (!loading) setShowNewToolsModal(false);
   }, [loading]);
+
+  const handleOpenToolConfig = useCallback(() => {
+    setShowToolConfigModal(true);
+  }, []);
+
+  const handleCloseToolConfig = useCallback(() => {
+    if (!loading) setShowToolConfigModal(false);
+  }, [loading]);
+
+  const handleToolConfigConfirm = useCallback(
+    async (selected: string[], scanOnly: boolean) => {
+      try {
+        await invokeTauri("set_global_tool_config", {
+          selectedTools: selected,
+          scanSelectedOnly: scanOnly,
+        });
+        setGlobalSelectedTools(selected);
+        setScanSelectedToolsOnly(scanOnly);
+        // Deploy targets follow the saved selection exactly.
+        setSyncTargets(() => {
+          const next: Record<string, boolean> = {};
+          for (const info of toolInfos) {
+            next[info.key] = selected.includes(info.key);
+          }
+          return next;
+        });
+        setShowToolConfigModal(false);
+        toast.success(t("status.toolConfigSaved"));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [invokeTauri, t, toolInfos],
+  );
 
   const handleCloseDelete = useCallback(() => {
     if (!loading) setPendingDeleteId(null);
@@ -1318,21 +1371,46 @@ function App() {
   useEffect(() => {
     const load = async () => {
       if (!isTauri) return;
+      // Load the global tool config first so the new-tools popup and sync
+      // target defaults respect the saved selection.
+      let selectedTools: string[] | null = null;
+      let scanSelectedOnly = true;
+      try {
+        const config = await invokeTauri<GlobalToolConfigDto>(
+          "get_global_tool_config",
+        );
+        selectedTools = config.selected_tools;
+        scanSelectedOnly = config.scan_selected_only;
+        setGlobalSelectedTools(selectedTools);
+        setScanSelectedToolsOnly(scanSelectedOnly);
+      } catch (err) {
+        // Non-fatal; fall back to defaults.
+        console.warn(err);
+      }
       try {
         const status = await invokeTauri<ToolStatusDto>("get_tool_status");
         setToolStatus(status);
 
-        // Default-select installed tools for sync targets if user hasn't toggled yet.
+        // Default sync targets: saved global selection if configured,
+        // otherwise installed tools (if user hasn't toggled yet).
         setSyncTargets((prev) => {
           if (Object.keys(prev).length > 0) return prev;
           const next: Record<string, boolean> = {};
           for (const t of status.tools) {
-            next[t.key] = status.installed.includes(t.key);
+            next[t.key] = selectedTools
+              ? selectedTools.includes(t.key)
+              : status.installed.includes(t.key);
           }
           return next;
         });
 
-        if (status.newly_installed.length > 0) {
+        const relevantNew =
+          scanSelectedOnly && selectedTools
+            ? status.newly_installed.filter((key) =>
+                selectedTools.includes(key),
+              )
+            : status.newly_installed;
+        if (relevantNew.length > 0) {
           setShowNewToolsModal(true);
         }
       } catch (err) {
@@ -2161,18 +2239,22 @@ function App() {
   );
 
   const handleSyncAllNewTools = useCallback(() => {
-    if (!toolStatus) return;
+    if (relevantNewlyInstalled.length === 0) return;
     setSyncTargets((prev) => {
       const next = { ...prev };
-      for (const id of toolStatus.newly_installed) {
+      for (const id of relevantNewlyInstalled) {
         const shared = sharedToolIdsByToolId[id] ?? [id];
         for (const sid of shared) next[sid] = true;
       }
       return next;
     });
     setShowNewToolsModal(false);
-    void handleSyncAllManagedToTools(toolStatus.newly_installed);
-  }, [handleSyncAllManagedToTools, sharedToolIdsByToolId, toolStatus]);
+    void handleSyncAllManagedToTools(relevantNewlyInstalled);
+  }, [
+    handleSyncAllManagedToTools,
+    relevantNewlyInstalled,
+    sharedToolIdsByToolId,
+  ]);
 
   const runToggleToolForSkill = useCallback(
     async (skill: ManagedSkill, toolId: string) => {
@@ -2364,6 +2446,7 @@ function App() {
               autoSyncEnabled={autoSyncEnabled}
               onAutoSyncChange={handleAutoSyncToggle}
               onUnsyncAll={handleUnsyncAll}
+              onConfigureTools={handleOpenToolConfig}
               groupByRepo={groupByRepo}
               onGroupByRepoChange={setGroupByRepo}
               viewMode={viewMode}
@@ -2483,6 +2566,17 @@ function App() {
         otherLabels={pendingSharedLabels?.otherLabels ?? ""}
         onRequestClose={handleSharedCancel}
         onConfirm={handleSharedConfirm}
+        t={t}
+      />
+
+      <ToolConfigModal
+        open={showToolConfigModal}
+        loading={loading}
+        toolStatus={toolStatus}
+        selectedTools={globalSelectedTools}
+        scanSelectedOnly={scanSelectedToolsOnly}
+        onConfirm={handleToolConfigConfirm}
+        onRequestClose={handleCloseToolConfig}
         t={t}
       />
 

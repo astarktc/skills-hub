@@ -1,5 +1,11 @@
 import { memo } from "react";
-import { ArrowUpDown, LayoutList, RefreshCw, Search } from "lucide-react";
+import {
+  ArrowUpDown,
+  LayoutList,
+  RefreshCw,
+  Search,
+  Wrench,
+} from "lucide-react";
 import type { TFunction } from "i18next";
 
 type FilterBarProps = {
@@ -12,6 +18,7 @@ type FilterBarProps = {
   autoSyncEnabled: boolean;
   onAutoSyncChange: (enabled: boolean) => void;
   onUnsyncAll: () => void;
+  onConfigureTools: () => void;
   groupByRepo: boolean;
   onGroupByRepoChange: (value: boolean) => void;
   viewMode: "list" | "auto-grid" | "dense-grid";
@@ -29,6 +36,7 @@ const FilterBar = ({
   autoSyncEnabled,
   onAutoSyncChange,
   onUnsyncAll,
+  onConfigureTools,
   groupByRepo,
   onGroupByRepoChange,
   viewMode,
@@ -99,6 +107,16 @@ const FilterBar = ({
           />
           <span className="auto-sync-label">{t("autoSyncToggle")}</span>
         </label>
+        <button
+          className="btn btn-secondary"
+          type="button"
+          onClick={onConfigureTools}
+          disabled={loading}
+          title={t("configureTools")}
+        >
+          <Wrench size={14} />
+          {t("configureTools")}
+        </button>
         <button
           className="btn btn-secondary unsync-all-btn"
           type="button"

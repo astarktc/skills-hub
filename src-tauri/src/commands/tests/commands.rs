@@ -160,3 +160,31 @@ fn bulk_assign_skill_not_found_error_contract() {
         result2
     );
 }
+
+#[test]
+fn global_tool_config_defaults() {
+    let (_dir, store) = make_store();
+    let cfg = get_global_tool_config_impl(&store).expect("get config");
+    assert_eq!(cfg.selected_tools, None);
+    assert!(cfg.scan_selected_only);
+}
+
+#[test]
+fn global_tool_config_roundtrip() {
+    let (_dir, store) = make_store();
+    let selected = vec!["claude_code".to_string(), "cursor".to_string()];
+    set_global_tool_config_impl(&store, &selected, false).expect("set config");
+    let cfg = get_global_tool_config_impl(&store).expect("get config");
+    assert_eq!(cfg.selected_tools, Some(selected));
+    assert!(!cfg.scan_selected_only);
+}
+
+#[test]
+fn global_tool_config_empty_selection_persists() {
+    let (_dir, store) = make_store();
+    set_global_tool_config_impl(&store, &[], true).expect("set config");
+    let cfg = get_global_tool_config_impl(&store).expect("get config");
+    // Empty selection is a deliberate choice, distinct from "never configured".
+    assert_eq!(cfg.selected_tools, Some(vec![]));
+    assert!(cfg.scan_selected_only);
+}

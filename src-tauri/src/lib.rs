@@ -128,6 +128,8 @@ pub fn run() {
             commands::delete_managed_skill,
             commands::get_auto_sync_enabled,
             commands::set_auto_sync_enabled,
+            commands::get_global_tool_config,
+            commands::set_global_tool_config,
             commands::get_ui_zoom_level,
             commands::set_ui_zoom_level,
             commands::unsync_all_skills,

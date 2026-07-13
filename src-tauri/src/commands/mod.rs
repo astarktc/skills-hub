@@ -814,6 +814,71 @@ pub async fn set_auto_sync_enabled(
     .map_err(format_anyhow_error)
 }
 
+#[derive(Debug, Serialize)]
+pub struct GlobalToolConfigDto {
+    pub selected_tools: Option<Vec<String>>,
+    pub scan_selected_only: bool,
+}
+
+pub(crate) fn get_global_tool_config_impl(
+    store: &SkillStore,
+) -> anyhow::Result<GlobalToolConfigDto> {
+    let selected_tools = store
+        .get_setting("global_selected_tools_v1")?
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok());
+    let scan_selected_only = store
+        .get_setting("scan_selected_tools_only")?
+        .map(|v| v == "true")
+        .unwrap_or(true);
+    Ok(GlobalToolConfigDto {
+        selected_tools,
+        scan_selected_only,
+    })
+}
+
+pub(crate) fn set_global_tool_config_impl(
+    store: &SkillStore,
+    selected_tools: &[String],
+    scan_selected_only: bool,
+) -> anyhow::Result<()> {
+    store.set_setting(
+        "global_selected_tools_v1",
+        &serde_json::to_string(selected_tools).unwrap_or_else(|_| "[]".to_string()),
+    )?;
+    store.set_setting(
+        "scan_selected_tools_only",
+        if scan_selected_only { "true" } else { "false" },
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_global_tool_config(
+    store: State<'_, SkillStore>,
+) -> Result<GlobalToolConfigDto, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || get_global_tool_config_impl(&store))
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn set_global_tool_config(
+    store: State<'_, SkillStore>,
+    selectedTools: Vec<String>,
+    scanSelectedOnly: bool,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        set_global_tool_config_impl(&store, &selectedTools, scanSelectedOnly)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn get_ui_zoom_level(store: State<'_, SkillStore>) -> Result<f64, String> {
