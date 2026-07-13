@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.9] - 2026-07-12
+
+### Added
+
+- **Global Configure Tools modal**: Configure tool-level deployment for all skills from a single modal on the My Skills page.
+- **Assignment matrix reflects global deployment**: The project assignment matrix now shows skills deployed globally at the tool level.
+
+### Fixed
+
+- **My Skills search**: Search now supports wildcard matching on skill and repo names.
+
+### Changed
+
+- **Dependency upgrades**: TypeScript 6 (with TS7 RC for builds), ESLint 10, Vite 8, i18next 26, lucide-react 1.x, rusqlite 0.39, git2 0.21, plus transitive security fixes.
+
 ## [1.0.0] - 2026-04-09
 
 ### Added
