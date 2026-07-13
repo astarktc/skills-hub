@@ -6,6 +6,10 @@ on:
     paths:
       - package.json
 
+permissions:
+  contents: write
+  actions: write
+
 jobs:
   tag:
     runs-on: ubuntu-latest
@@ -30,4 +34,9 @@ jobs:
             echo "Creating tag $TAG"
             git tag "$TAG"
             git push origin "$TAG"
+            # Tags pushed with GITHUB_TOKEN do not trigger the Release
+            # workflow's push event — dispatch it explicitly instead.
+            gh workflow run release.yml --ref "$TAG"
           fi
+        env:
+          GH_TOKEN: ${{ github.token }}
