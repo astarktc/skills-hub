@@ -33,6 +33,7 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 
 | tool key | Display name | skills dir (relative to `~`) | detect dir (relative to `~`) |
 | --- | --- | --- | --- |
+| `agents_skills` | .agents/skills (9 tools) | `.agents/skills` | `.agents` |
 | `cursor` | Cursor | `.cursor/skills` | `.cursor` |
 | `claude_code` | Claude Code | `.claude/skills` | `.claude` |
 | `codex` | Codex | `.codex/skills` | `.codex` |
@@ -42,6 +43,7 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `kimi_cli` | Kimi Code CLI | `.config/agents/skills` | `.config/agents` |
 | `augment` | Augment | `.augment/rules` | `.augment` |
 | `openclaw` | OpenClaw | `.openclaw/skills` | `.openclaw` |
+| `copaw` | Copaw | `.copaw/skill_pool` | `.copaw` |
 | `cline` | Cline | `.cline/skills` | `.cline` |
 | `codebuddy` | CodeBuddy | `.codebuddy/skills` | `.codebuddy` |
 | `command_code` | Command Code | `.commandcode/skills` | `.commandcode` |
@@ -58,6 +60,7 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `openhands` | OpenHands | `.openhands/skills` | `.openhands` |
 | `pi` | Pi | `.pi/agent/skills` | `.pi` |
 | `qoder` | Qoder | `.qoder/skills` | `.qoder` |
+| `qoderwork` | QoderWork | `.qoderwork/skills` | `.qoderwork` |
 | `qwen_code` | Qwen Code | `.qwen/skills` | `.qwen` |
 | `trae` | Trae | `.trae/skills` | `.trae` |
 | `trae_cn` | Trae CN | `.trae-cn/skills` | `.trae-cn` |
@@ -74,6 +77,7 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `droid` | Droid | `.factory/skills` | `.factory` |
 | `windsurf` | Windsurf | `.codeium/windsurf/skills` | `.codeium/windsurf` |
 | `moltbot` | MoltBot | `.moltbot/skills` | `.moltbot` |
+| `hermes-agent` | Hermes Agent | `.hermes/skills` | `.hermes` |
 
 ## Development
 

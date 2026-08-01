@@ -57,8 +57,8 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
 - **DTO changes**: `src/components/skills/types.ts` mirrors the Rust DTOs in `commands/`. Update both sides.
 - **New AI tool adapter**: add the `ToolId` variant and the `default_tool_adapters()` entry in
   `core/tool_adapters/mod.rs` (plus the `project_relative_skills_dir()` arm), **and** add a row to the
-  README supported-tools table. The Rust arms are compiler-enforced; the README is not — it currently lags
-  (41 table rows vs 45 `ToolId` variants).
+  README supported-tools table. The Rust arms are compiler-enforced; the README table is not — check it
+  matches the `ToolId` variant count whenever adapters change.
 - **UI strings**: add keys to **both** `en` and `zh` in `src/i18n/resources.ts`. No hardcoded UI text.
 - **New `core/` module**: declare it in `src-tauri/src/core/mod.rs`.
 - **DB schema change**: consider `migrate_legacy_db_if_needed` in `core/skill_store.rs` — a migration path exists.
