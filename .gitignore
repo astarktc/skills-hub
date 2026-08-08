@@ -36,7 +36,6 @@ plans/
 
 bun.lock
 
-.planning/config.json.bak-*
 .mcp.json
 .bg-shell/
 Thumbs.db
