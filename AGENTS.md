@@ -117,3 +117,17 @@ This cost 18 features in v1.1.4 (`5e1f42e` "restore 18 features lost during para
 - `.planning/codebase/{STACK,STRUCTURE,ARCHITECTURE,INTEGRATIONS,CONVENTIONS,TESTING,CONCERNS}.md` —
   generated 2026-07-07. Useful for orientation, but **stale on versions**: verify anything version-related
   against `package.json` / `src-tauri/Cargo.toml` instead.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as local markdown files under `.scratch/<feature>/` in this repo. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary — role names used as-is (`needs-triage`, `needs-info`, …). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.

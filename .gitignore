@@ -65,3 +65,4 @@ vendor/
 .cache/
 tmp/
 docs/conversation-logs/
+.scratch/
