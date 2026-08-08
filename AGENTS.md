@@ -114,9 +114,6 @@ This cost 18 features in v1.1.4 (`5e1f42e` "restore 18 features lost during para
 
 - `README.md` — user-facing overview, supported-tools table, FAQ.
 - `CHANGELOG.md` — most reliable record of dependency/stack changes.
-- `.planning/codebase/{STACK,STRUCTURE,ARCHITECTURE,INTEGRATIONS,CONVENTIONS,TESTING,CONCERNS}.md` —
-  generated 2026-07-07. Useful for orientation, but **stale on versions**: verify anything version-related
-  against `package.json` / `src-tauri/Cargo.toml` instead.
 
 ## Agent skills
 
