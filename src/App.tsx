@@ -28,12 +28,11 @@ import SharedDirModal from "./components/skills/modals/SharedDirModal";
 import ToolConfigModal from "./components/skills/modals/ToolConfigModal";
 import SettingsPage from "./components/skills/SettingsPage";
 import ProjectsPage from "./components/projects/ProjectsPage";
-import {
-  describeCommandError,
-  errorCode,
-  toCommandError,
-} from "./commandError";
+import { describeCommandError } from "./commandError";
 import type {
+  BatchSyncOverrideDto,
+  BatchSyncReportDto,
+  BatchSyncSkillDto,
   FeaturedSkillDto,
   GitSkillCandidate,
   GlobalToolConfigDto,
@@ -42,6 +41,7 @@ import type {
   ManagedSkill,
   OnboardingPlan,
   OnlineSkillDto,
+  SyncProgressDto,
   ToolOption,
   ToolStatusDto,
   UpdateResultDto,
@@ -585,37 +585,84 @@ function App() {
   }, [tools]);
 
   const sharedToolIdsByToolId = useMemo(() => {
-    // toolId -> all toolIds that share the same skills_dir.
-    const byDir: Record<string, string[]> = {};
-    for (const info of toolInfos) {
-      const dir = info.skills_dir;
-      if (!byDir[dir]) byDir[dir] = [];
-      byDir[dir].push(info.key);
-    }
+    // toolId -> all toolIds sharing the same skills dir. The backend owns
+    // the grouping (ToolInfoDto.shared_with); this map only feeds the
+    // shared-dir confirmation UX.
     const out: Record<string, string[]> = {};
-    for (const dir of Object.keys(byDir)) {
-      const ids = byDir[dir];
-      if (ids.length <= 1) continue;
-      for (const id of ids) out[id] = ids;
+    for (const info of toolInfos) {
+      if (info.shared_with.length > 1) out[info.key] = info.shared_with;
     }
     return out;
   }, [toolInfos]);
 
-  const uniqueToolIdsBySkillsDir = useCallback(
-    (toolIds: string[]) => {
-      // Preserve UI order (tools array order), de-dupe by skills_dir.
-      const wanted = new Set(toolIds);
-      const seen = new Set<string>();
-      const out: string[] = [];
-      for (const tool of toolInfos) {
-        if (!wanted.has(tool.key)) continue;
-        if (seen.has(tool.skills_dir)) continue;
-        seen.add(tool.skills_dir);
-        out.push(tool.key);
-      }
-      return out;
+  // The one sync fan-out seam: the backend owns the choreography
+  // (installedness filtering, shared-dir dedupe, overwrite policy, DB record
+  // fan-out) and streams per-pair progress back over a channel. Nothing else
+  // may loop a per-pair sync command — sync_skill_to_tool no longer exists.
+  const syncSkillsToTools = useCallback(
+    async (
+      skills: BatchSyncSkillDto[],
+      toolIds: string[],
+      policy?: {
+        overwrite?: boolean;
+        overwriteIfSameContent?: boolean;
+        overrides?: BatchSyncOverrideDto[];
+      },
+    ): Promise<BatchSyncReportDto> => {
+      const { Channel } = await import("@tauri-apps/api/core");
+      const onProgress = new Channel<SyncProgressDto>();
+      onProgress.onmessage = (progress) => {
+        setActionMessage(
+          t("actions.syncStep", {
+            index: progress.index,
+            total: progress.total,
+            name: progress.skill_name,
+            tool: toolLabelById[progress.tool] ?? progress.tool,
+          }),
+        );
+      };
+      return invokeTauri<BatchSyncReportDto>("sync_skills_to_tools", {
+        skills,
+        tools: toolIds,
+        policy: {
+          overwrite: policy?.overwrite ?? false,
+          overwrite_if_same_content: policy?.overwriteIfSameContent ?? false,
+          overrides: policy?.overrides ?? [],
+        },
+        onProgress,
+      });
     },
-    [toolInfos],
+    [invokeTauri, t, toolLabelById],
+  );
+
+  // Failed targets as showActionErrors entries. Skips (tool absent, dir
+  // unwritable) stay silent by default — bulk flows ignore them — but flows
+  // that target user-selected tools surface not-writable skips.
+  const syncFailureEntries = useCallback(
+    (
+      report: BatchSyncReportDto,
+      opts?: { includeNotWritableSkips?: boolean },
+    ) => {
+      const entries: { title: string; message: string }[] = [];
+      for (const result of report.results) {
+        const status = result.status;
+        if (status.status === "synced") continue;
+        const surface =
+          status.status === "failed" ||
+          ((opts?.includeNotWritableSkips ?? false) &&
+            status.error.code === "TOOL_NOT_WRITABLE");
+        if (!surface) continue;
+        entries.push({
+          title: t("errors.syncFailedTitle", {
+            name: result.skill_name,
+            tool: toolLabelById[result.tool] ?? result.tool,
+          }),
+          message: formatError(status.error) ?? "",
+        });
+      }
+      return entries;
+    },
+    [formatError, t, toolLabelById],
   );
 
   const installedToolIds = useMemo(
@@ -791,38 +838,24 @@ function App() {
 
   const handleSyncSkillToAllTools = useCallback(
     async (skill: ManagedSkill) => {
-      const targetIds = uniqueToolIdsBySkillsDir(
-        installedToolIds.filter((id) => isInstalled(id)),
-      );
-      if (targetIds.length === 0) return;
+      if (installedToolIds.length === 0) return;
 
       setLoading(true);
       setLoadingStartAt(Date.now());
       setError(null);
       try {
-        for (const toolId of targetIds) {
-          const toolLabel =
-            tools.find((tl) => tl.id === toolId)?.label ?? toolId;
-          setActionMessage(
-            t("actions.syncing", { name: skill.name, tool: toolLabel }),
-          );
-          try {
-            await invokeTauri("sync_skill_to_tool", {
-              sourcePath: skill.central_path,
-              skillId: skill.id,
-              tool: toolId,
+        const report = await syncSkillsToTools(
+          [
+            {
+              skill_id: skill.id,
               name: skill.name,
-            });
-          } catch (err) {
-            const code = errorCode(err);
-            if (code === "TOOL_NOT_INSTALLED" || code === "TOOL_NOT_WRITABLE") {
-              continue;
-            }
-            const msg = formatError(err);
-            if (msg) toast.error(msg);
-          }
-        }
+              source_path: skill.central_path,
+            },
+          ],
+          installedToolIds,
+        );
         setActionMessage(null);
+        showActionErrors(syncFailureEntries(report));
         toast.success(t("status.syncCompleted"));
         await loadManagedSkills();
       } finally {
@@ -831,14 +864,12 @@ function App() {
       }
     },
     [
-      formatError,
       installedToolIds,
-      invokeTauri,
-      isInstalled,
       loadManagedSkills,
+      showActionErrors,
+      syncFailureEntries,
+      syncSkillsToTools,
       t,
-      tools,
-      uniqueToolIdsBySkillsDir,
     ],
   );
 
@@ -1282,45 +1313,16 @@ function App() {
       if (autoSyncEnabled) {
         const freshSkills =
           await invokeTauri<ManagedSkill[]>("get_managed_skills");
-        const syncTargetIds = uniqueToolIdsBySkillsDir(
-          installedToolIds.filter((id) => isInstalled(id)),
-        );
-        if (syncTargetIds.length > 0 && freshSkills.length > 0) {
-          for (let si = 0; si < freshSkills.length; si++) {
-            const skill = freshSkills[si];
-            for (let ti = 0; ti < syncTargetIds.length; ti++) {
-              const toolId = syncTargetIds[ti];
-              const toolLabel =
-                tools.find((tl) => tl.id === toolId)?.label ?? toolId;
-              setActionMessage(
-                t("actions.syncStep", {
-                  index: si + 1,
-                  total: freshSkills.length,
-                  name: skill.name,
-                  tool: toolLabel,
-                }),
-              );
-              try {
-                await invokeTauri("sync_skill_to_tool", {
-                  sourcePath: skill.central_path,
-                  skillId: skill.id,
-                  tool: toolId,
-                  name: skill.name,
-                });
-              } catch (err) {
-                const code = errorCode(err);
-                if (code === "TOOL_NOT_INSTALLED" || code === "TOOL_NOT_WRITABLE")
-                  continue;
-                collectedErrors.push({
-                  title: t("errors.syncFailedTitle", {
-                    name: skill.name,
-                    tool: toolLabel,
-                  }),
-                  message: formatError(err) ?? "",
-                });
-              }
-            }
-          }
+        if (installedToolIds.length > 0 && freshSkills.length > 0) {
+          const report = await syncSkillsToTools(
+            freshSkills.map((skill) => ({
+              skill_id: skill.id,
+              name: skill.name,
+              source_path: skill.central_path,
+            })),
+            installedToolIds,
+          );
+          collectedErrors.push(...syncFailureEntries(report));
         }
       }
 
@@ -1338,13 +1340,12 @@ function App() {
     formatError,
     installedToolIds,
     invokeTauri,
-    isInstalled,
     loadManagedSkills,
     managedSkills,
     showActionErrors,
+    syncFailureEntries,
+    syncSkillsToTools,
     t,
-    tools,
-    uniqueToolIdsBySkillsDir,
   ]);
 
   const handleReviewImport = useCallback(async () => {
@@ -1452,50 +1453,52 @@ function App() {
           const selectedInstalledIds = tools
             .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
             .map((t) => t.id);
-          const targets = uniqueToolIdsBySkillsDir(selectedInstalledIds)
-            .map((id) => tools.find((t) => t.id === id))
-            .filter(Boolean) as ToolOption[];
-          for (const tool of targets) {
-            setActionMessage(
-              t("actions.syncing", { name: group.name, tool: tool.label }),
-            );
-            try {
-              const overwrite = Boolean(
-                chosenVariantTool &&
-                (chosenVariantTool === tool.id ||
-                  (sharedToolIdsByToolId[chosenVariantTool] ?? []).includes(
-                    tool.id,
-                  )),
-              );
-              await invokeTauri("sync_skill_to_tool", {
-                sourcePath: installResult.central_path,
-                skillId: installResult.skill_id,
-                tool: tool.id,
+          // The chosen variant's own tool (and its shared-dir group, expanded
+          // backend-side) may be overwritten — that copy is the import source.
+          const report = await syncSkillsToTools(
+            [
+              {
+                skill_id: installResult.skill_id,
                 name: group.name,
-                overwrite,
-                overwriteIfSameContent: true,
+                source_path: installResult.central_path,
+              },
+            ],
+            selectedInstalledIds,
+            {
+              overwriteIfSameContent: true,
+              overrides: chosenVariantTool
+                ? [
+                    {
+                      skill_id: installResult.skill_id,
+                      tool: chosenVariantTool,
+                      overwrite: true,
+                    },
+                  ]
+                : [],
+            },
+          );
+          for (const result of report.results) {
+            const status = result.status;
+            if (status.status === "synced") continue;
+            const toolLabel = toolLabelById[result.tool] ?? result.tool;
+            if (status.error.code === "TARGET_EXISTS") {
+              collectedErrors.push({
+                title: t("errors.syncFailedTitle", {
+                  name: group.name,
+                  tool: toolLabel,
+                }),
+                message: t("errors.syncTargetExistsMessage", {
+                  path: status.error.path,
+                }),
               });
-            } catch (err) {
-              const e = toCommandError(err);
-              if (e.code === "TARGET_EXISTS") {
-                collectedErrors.push({
-                  title: t("errors.syncFailedTitle", {
-                    name: group.name,
-                    tool: tool.label,
-                  }),
-                  message: t("errors.syncTargetExistsMessage", {
-                    path: e.path,
-                  }),
-                });
-              } else {
-                collectedErrors.push({
-                  title: t("errors.syncFailedTitle", {
-                    name: group.name,
-                    tool: tool.label,
-                  }),
-                  message: formatError(err) ?? "",
-                });
-              }
+            } else {
+              collectedErrors.push({
+                title: t("errors.syncFailedTitle", {
+                  name: group.name,
+                  tool: toolLabel,
+                }),
+                message: formatError(status.error) ?? "",
+              });
             }
           }
         } else {
@@ -1572,42 +1575,23 @@ function App() {
           const selectedInstalledIds = tools
             .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
             .map((t) => t.id);
-          const targets = uniqueToolIdsBySkillsDir(selectedInstalledIds)
-            .map((id) => tools.find((t) => t.id === id))
-            .filter(Boolean) as ToolOption[];
-          if (targets.length === 0) {
+          if (selectedInstalledIds.length === 0) {
             setError(t("errors.noSyncTargets"));
           } else {
-            const collectedErrors: { title: string; message: string }[] = [];
-            for (let i = 0; i < targets.length; i++) {
-              const tool = targets[i];
-              setActionMessage(
-                t("actions.syncStep", {
-                  index: i + 1,
-                  total: targets.length,
+            const report = await syncSkillsToTools(
+              [
+                {
+                  skill_id: created.skill_id,
                   name: created.name,
-                  tool: tool.label,
-                }),
-              );
-              try {
-                await invokeTauri("sync_skill_to_tool", {
-                  sourcePath: created.central_path,
-                  skillId: created.skill_id,
-                  tool: tool.id,
-                  name: created.name,
-                  overwriteIfSameContent: true,
-                });
-              } catch (err) {
-                const raw = formatError(err) ?? "";
-                collectedErrors.push({
-                  title: t("errors.syncFailedTitle", {
-                    name: created.name,
-                    tool: tool.label,
-                  }),
-                  message: raw,
-                });
-              }
-            }
+                  source_path: created.central_path,
+                },
+              ],
+              selectedInstalledIds,
+              { overwriteIfSameContent: true },
+            );
+            const collectedErrors = syncFailureEntries(report, {
+              includeNotWritableSkips: true,
+            });
             if (collectedErrors.length > 0) showActionErrors(collectedErrors);
           }
         }
@@ -1699,42 +1683,23 @@ function App() {
           const selectedInstalledIds = tools
             .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
             .map((t) => t.id);
-          const targets = uniqueToolIdsBySkillsDir(selectedInstalledIds)
-            .map((id) => tools.find((t) => t.id === id))
-            .filter(Boolean) as ToolOption[];
-          if (targets.length === 0) {
+          if (selectedInstalledIds.length === 0) {
             setError(t("errors.noSyncTargets"));
           } else {
-            const collectedErrors: { title: string; message: string }[] = [];
-            for (let i = 0; i < targets.length; i++) {
-              const tool = targets[i];
-              setActionMessage(
-                t("actions.syncStep", {
-                  index: i + 1,
-                  total: targets.length,
+            const report = await syncSkillsToTools(
+              [
+                {
+                  skill_id: created.skill_id,
                   name: created.name,
-                  tool: tool.label,
-                }),
-              );
-              try {
-                await invokeTauri("sync_skill_to_tool", {
-                  sourcePath: created.central_path,
-                  skillId: created.skill_id,
-                  tool: tool.id,
-                  name: created.name,
-                  overwriteIfSameContent: true,
-                });
-              } catch (err) {
-                const raw = formatError(err) ?? "";
-                collectedErrors.push({
-                  title: t("errors.syncFailedTitle", {
-                    name: created.name,
-                    tool: tool.label,
-                  }),
-                  message: raw,
-                });
-              }
-            }
+                  source_path: created.central_path,
+                },
+              ],
+              selectedInstalledIds,
+              { overwriteIfSameContent: true },
+            );
+            const collectedErrors = syncFailureEntries(report, {
+              includeNotWritableSkips: true,
+            });
             if (collectedErrors.length > 0) showActionErrors(collectedErrors);
           }
         }
@@ -1768,42 +1733,23 @@ function App() {
             const selectedInstalledIds = tools
               .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
               .map((t) => t.id);
-            const targets = uniqueToolIdsBySkillsDir(selectedInstalledIds)
-              .map((id) => tools.find((t) => t.id === id))
-              .filter(Boolean) as ToolOption[];
-            if (targets.length === 0) {
+            if (selectedInstalledIds.length === 0) {
               setError(t("errors.noSyncTargets"));
             } else {
-              const collectedErrors: { title: string; message: string }[] = [];
-              for (let i = 0; i < targets.length; i++) {
-                const tool = targets[i];
-                setActionMessage(
-                  t("actions.syncStep", {
-                    index: i + 1,
-                    total: targets.length,
+              const report = await syncSkillsToTools(
+                [
+                  {
+                    skill_id: created.skill_id,
                     name: created.name,
-                    tool: tool.label,
-                  }),
-                );
-                try {
-                  await invokeTauri("sync_skill_to_tool", {
-                    sourcePath: created.central_path,
-                    skillId: created.skill_id,
-                    tool: tool.id,
-                    name: created.name,
-                    overwriteIfSameContent: true,
-                  });
-                } catch (err) {
-                  const raw = formatError(err) ?? "";
-                  collectedErrors.push({
-                    title: t("errors.syncFailedTitle", {
-                      name: created.name,
-                      tool: tool.label,
-                    }),
-                    message: raw,
-                  });
-                }
-              }
+                    source_path: created.central_path,
+                  },
+                ],
+                selectedInstalledIds,
+                { overwriteIfSameContent: true },
+              );
+              const collectedErrors = syncFailureEntries(report, {
+                includeNotWritableSkips: true,
+              });
               if (collectedErrors.length > 0) showActionErrors(collectedErrors);
             }
           }
@@ -1948,44 +1894,28 @@ function App() {
             const selectedInstalledIds = tools
               .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
               .map((t) => t.id);
-            const targets = uniqueToolIdsBySkillsDir(selectedInstalledIds)
-              .map((id) => tools.find((t) => t.id === id))
-              .filter(Boolean) as ToolOption[];
-            if (targets.length === 0) {
+            if (selectedInstalledIds.length === 0) {
               collectedErrors.push({
                 title: t("errors.unsyncedTitle", { name: created.name }),
                 message: t("errors.noSyncTargets"),
               });
             } else {
-              for (let ti = 0; ti < targets.length; ti++) {
-                const tool = targets[ti];
-                setActionMessage(
-                  t("actions.syncStep", {
-                    index: ti + 1,
-                    total: targets.length,
+              const report = await syncSkillsToTools(
+                [
+                  {
+                    skill_id: created.skill_id,
                     name: created.name,
-                    tool: tool.label,
-                  }),
-                );
-                try {
-                  await invokeTauri("sync_skill_to_tool", {
-                    sourcePath: created.central_path,
-                    skillId: created.skill_id,
-                    tool: tool.id,
-                    name: created.name,
-                    overwriteIfSameContent: true,
-                  });
-                } catch (err) {
-                  const raw = formatError(err) ?? "";
-                  collectedErrors.push({
-                    title: t("errors.syncFailedTitle", {
-                      name: created.name,
-                      tool: tool.label,
-                    }),
-                    message: raw,
-                  });
-                }
-              }
+                    source_path: created.central_path,
+                  },
+                ],
+                selectedInstalledIds,
+                { overwriteIfSameContent: true },
+              );
+              collectedErrors.push(
+                ...syncFailureEntries(report, {
+                  includeNotWritableSkips: true,
+                }),
+              );
             }
           }
         } catch (err) {
@@ -2060,44 +1990,28 @@ function App() {
             const selectedInstalledIds = tools
               .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
               .map((t) => t.id);
-            const targets = uniqueToolIdsBySkillsDir(selectedInstalledIds)
-              .map((id) => tools.find((t) => t.id === id))
-              .filter(Boolean) as ToolOption[];
-            if (targets.length === 0) {
+            if (selectedInstalledIds.length === 0) {
               collectedErrors.push({
                 title: t("errors.unsyncedTitle", { name: created.name }),
                 message: t("errors.noSyncTargets"),
               });
             } else {
-              for (let ti = 0; ti < targets.length; ti++) {
-                const tool = targets[ti];
-                setActionMessage(
-                  t("actions.syncStep", {
-                    index: ti + 1,
-                    total: targets.length,
+              const report = await syncSkillsToTools(
+                [
+                  {
+                    skill_id: created.skill_id,
                     name: created.name,
-                    tool: tool.label,
-                  }),
-                );
-                try {
-                  await invokeTauri("sync_skill_to_tool", {
-                    sourcePath: created.central_path,
-                    skillId: created.skill_id,
-                    tool: tool.id,
-                    name: created.name,
-                    overwriteIfSameContent: true,
-                  });
-                } catch (err) {
-                  const raw = formatError(err) ?? "";
-                  collectedErrors.push({
-                    title: t("errors.syncFailedTitle", {
-                      name: created.name,
-                      tool: tool.label,
-                    }),
-                    message: raw,
-                  });
-                }
-              }
+                    source_path: created.central_path,
+                  },
+                ],
+                selectedInstalledIds,
+                { overwriteIfSameContent: true },
+              );
+              collectedErrors.push(
+                ...syncFailureEntries(report, {
+                  includeNotWritableSkips: true,
+                }),
+              );
             }
           }
         } catch (err) {
@@ -2155,52 +2069,22 @@ function App() {
     async (toolIds: string[]) => {
       if (!autoSyncEnabled) return;
       if (managedSkills.length === 0) return;
-      const installedIds = uniqueToolIdsBySkillsDir(
-        toolIds.filter((id) => isInstalled(id)),
-      );
-      if (installedIds.length === 0) return;
+      if (toolIds.length === 0) return;
 
       setLoading(true);
       setLoadingStartAt(Date.now());
       setError(null);
       try {
-        const collectedErrors: { title: string; message: string }[] = [];
-        for (let si = 0; si < managedSkills.length; si++) {
-          const skill = managedSkills[si];
-          for (let ti = 0; ti < installedIds.length; ti++) {
-            const toolId = installedIds[ti];
-            const toolLabel =
-              tools.find((t) => t.id === toolId)?.label ?? toolId;
-            setActionMessage(
-              t("actions.syncStep", {
-                index: si + 1,
-                total: managedSkills.length,
-                name: skill.name,
-                tool: toolLabel,
-              }),
-            );
-            try {
-              await invokeTauri("sync_skill_to_tool", {
-                sourcePath: skill.central_path,
-                skillId: skill.id,
-                tool: toolId,
-                name: skill.name,
-                overwriteIfSameContent: true,
-              });
-            } catch (err) {
-              const code = errorCode(err);
-              if (code === "TOOL_NOT_INSTALLED" || code === "TOOL_NOT_WRITABLE")
-                continue;
-              collectedErrors.push({
-                title: t("errors.syncFailedTitle", {
-                  name: skill.name,
-                  tool: toolLabel,
-                }),
-                message: formatError(err) ?? "",
-              });
-            }
-          }
-        }
+        const report = await syncSkillsToTools(
+          managedSkills.map((skill) => ({
+            skill_id: skill.id,
+            name: skill.name,
+            source_path: skill.central_path,
+          })),
+          toolIds,
+          { overwriteIfSameContent: true },
+        );
+        const collectedErrors = syncFailureEntries(report);
         setActionMessage(t("status.syncCompleted"));
         setSuccessToastMessage(t("status.syncCompleted"));
         setActionMessage(null);
@@ -2213,15 +2097,12 @@ function App() {
     },
     [
       autoSyncEnabled,
-      formatError,
-      invokeTauri,
-      isInstalled,
       loadManagedSkills,
       managedSkills,
       showActionErrors,
+      syncFailureEntries,
+      syncSkillsToTools,
       t,
-      tools,
-      uniqueToolIdsBySkillsDir,
     ],
   );
 
@@ -2266,13 +2147,31 @@ function App() {
           setActionMessage(
             t("actions.syncing", { name: skill.name, tool: toolLabel }),
           );
-          await invokeTauri("sync_skill_to_tool", {
-            sourcePath: skill.central_path,
-            skillId: skill.id,
-            tool: toolId,
-            name: skill.name,
-            overwriteIfSameContent: true,
-          });
+          const report = await syncSkillsToTools(
+            [
+              {
+                skill_id: skill.id,
+                name: skill.name,
+                source_path: skill.central_path,
+              },
+            ],
+            [toolId],
+            { overwriteIfSameContent: true },
+          );
+          const status = report.results[0]?.status;
+          if (status && status.status !== "synced") {
+            // An explicit single toggle surfaces every non-success,
+            // including skips a bulk flow would ignore.
+            setActionMessage(null);
+            if (status.error.code === "TARGET_EXISTS") {
+              setError(
+                t("errors.targetExistsDetail", { path: status.error.path }),
+              );
+            } else {
+              setError(formatError(status.error));
+            }
+            return;
+          }
         }
         const statusText = synced
           ? t("status.syncDisabled")
@@ -2282,18 +2181,21 @@ function App() {
         setActionMessage(null);
         await loadManagedSkills();
       } catch (err) {
-        const e = toCommandError(err);
-        if (e.code === "TARGET_EXISTS") {
-          setError(t("errors.targetExistsDetail", { path: e.path }));
-        } else {
-          setError(formatError(err));
-        }
+        setError(formatError(err));
       } finally {
         setLoading(false);
         setLoadingStartAt(null);
       }
     },
-    [formatError, invokeTauri, loading, loadManagedSkills, t, tools],
+    [
+      formatError,
+      invokeTauri,
+      loading,
+      loadManagedSkills,
+      syncSkillsToTools,
+      t,
+      tools,
+    ],
   );
 
   const handleToggleToolForSkill = useCallback(

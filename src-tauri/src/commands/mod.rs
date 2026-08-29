@@ -3,8 +3,10 @@ pub mod projects;
 
 use anyhow::Context;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use tauri::ipc::Channel;
 use tauri::State;
+use ts_rs::TS;
 
 use std::sync::Arc;
 
@@ -19,7 +21,7 @@ use crate::core::central_repo::{ensure_central_repo, resolve_central_repo_path};
 use crate::core::errors::SignalError;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::github_search::{search_github_repos, RepoSummary};
-use crate::core::global_sync::OverwritePolicy;
+use crate::core::global_sync::{BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus};
 use crate::core::installer::{
     clone_for_explore_preview, install_git_skill, install_git_skill_from_selection,
     install_local_skill, install_local_skill_from_selection, list_git_skills, list_local_skills,
@@ -32,21 +34,27 @@ use crate::core::skills_search::{
 };
 use crate::core::sync_engine::{copy_dir_recursive, remove_path_any, sync_dir_hybrid};
 use crate::core::tool_adapters::{
-    adapter_by_key, default_tool_adapters, is_tool_installed, resolve_default_path, ToolId,
-    AGENTS_STANDARD_KEYS,
+    adapters_sharing_skills_dir, default_tool_adapters, is_tool_installed, resolve_default_path,
+    ToolId, AGENTS_STANDARD_KEYS,
 };
 
 pub use error::CommandError;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct ToolInfoDto {
     pub key: String,
     pub label: String,
     pub installed: bool,
     pub skills_dir: String,
+    /// Keys of every global tool sharing this tool's skills dir, in adapter
+    /// order, including this tool itself (len >= 1). The backend owns the
+    /// shared-dir invariant; the frontend only presents it.
+    pub shared_with: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct ToolStatusDto {
     pub tools: Vec<ToolInfoDto>,
     pub installed: Vec<String>,
@@ -69,11 +77,17 @@ pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusD
             let ok = is_tool_installed(adapter)?;
             let key = adapter.id.as_key().to_string();
             let skills_dir = resolve_default_path(adapter)?.to_string_lossy().to_string();
+            let shared_with: Vec<String> = adapters_sharing_skills_dir(adapter)
+                .iter()
+                .filter(|a| a.id != ToolId::AgentsStandard)
+                .map(|a| a.id.as_key().to_string())
+                .collect();
             tools.push(ToolInfoDto {
                 key: key.clone(),
                 label: adapter.display_name.to_string(),
                 installed: ok,
                 skills_dir,
+                shared_with,
             });
             if ok {
                 installed.push(key);
@@ -142,6 +156,10 @@ pub async fn get_project_tool_status() -> Result<ToolStatusDto, CommandError> {
                     label: adapter.display_name.to_string(),
                     installed: group_installed,
                     skills_dir,
+                    // Project scope: dir sharing is already absorbed into the
+                    // single AgentsStandard entry, so every entry is its own
+                    // group.
+                    shared_with: vec!["agents_skills".to_string()],
                 });
                 if group_installed {
                     installed.push("agents_skills".to_string());
@@ -155,6 +173,7 @@ pub async fn get_project_tool_status() -> Result<ToolStatusDto, CommandError> {
                     label: adapter.display_name.to_string(),
                     installed: ok,
                     skills_dir,
+                    shared_with: vec![key_str.clone()],
                 });
                 if ok {
                     installed.push(key_str);
@@ -472,39 +491,164 @@ pub async fn sync_skill_dir(
     .map_err(CommandError::from_anyhow)
 }
 
+/// One skill in a batch sync request.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export)]
+pub struct BatchSyncSkillDto {
+    pub skill_id: String,
+    pub name: String,
+    pub source_path: String,
+}
+
+/// Force-overwrite for one (skill, tool) pair; applies to any target tool
+/// sharing the named tool's skills dir.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export)]
+pub struct BatchSyncOverrideDto {
+    pub skill_id: String,
+    pub tool: String,
+    pub overwrite: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export)]
+pub struct BatchSyncPolicyDto {
+    #[serde(default)]
+    pub overwrite: bool,
+    #[serde(default)]
+    pub overwrite_if_same_content: bool,
+    #[serde(default)]
+    pub overrides: Vec<BatchSyncOverrideDto>,
+}
+
+/// Per-(skill, tool) result. `skipped` is the expected-and-ignorable class
+/// (tool absent, dir unwritable); `failed` is everything else. Both carry
+/// the typed error so call sites choose what to surface.
+#[derive(Debug, Serialize, TS)]
+#[serde(tag = "status", rename_all = "snake_case")]
+#[ts(export)]
+pub enum SyncTargetStatusDto {
+    Synced { mode_used: String },
+    Skipped { error: CommandError },
+    Failed { error: CommandError },
+}
+
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
+pub struct SyncTargetResultDto {
+    pub skill_id: String,
+    pub skill_name: String,
+    pub tool: String,
+    pub status: SyncTargetStatusDto,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
+pub struct BatchSyncReportDto {
+    pub results: Vec<SyncTargetResultDto>,
+    pub synced: u32,
+    pub skipped: u32,
+    pub failed: u32,
+}
+
+/// Progress tick streamed over the command's channel before each attempted
+/// (skill, tool) pair.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct SyncProgressDto {
+    pub index: u32,
+    pub total: u32,
+    pub skill_name: String,
+    pub tool: String,
+}
+
+/// Sync N skills to M tools in one call. The backend owns the whole
+/// choreography — installedness filtering, shared-dir dedupe, overwrite
+/// policy, DB record fan-out — and returns a per-target report; per-target
+/// failures are data, not command errors.
 #[tauri::command]
-#[allow(non_snake_case)]
-pub async fn sync_skill_to_tool(
+pub async fn sync_skills_to_tools(
     store: State<'_, SkillStore>,
-    sourcePath: String,
-    skillId: String,
-    tool: String,
-    name: String,
-    overwrite: Option<bool>,
-    overwriteIfSameContent: Option<bool>,
-) -> Result<SyncResultDto, CommandError> {
+    skills: Vec<BatchSyncSkillDto>,
+    tools: Vec<String>,
+    policy: BatchSyncPolicyDto,
+    on_progress: Channel<SyncProgressDto>,
+) -> Result<BatchSyncReportDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let adapter = adapter_by_key(&tool).ok_or_else(|| anyhow::anyhow!("unknown tool"))?;
-        let policy = OverwritePolicy {
-            overwrite: overwrite.unwrap_or(false),
-            overwrite_if_same_content: overwriteIfSameContent.unwrap_or(false),
+        let batch_skills: Vec<BatchSkill> = skills
+            .into_iter()
+            .map(|s| BatchSkill {
+                skill_id: s.skill_id,
+                skill_name: s.name,
+                source_path: std::path::PathBuf::from(s.source_path),
+            })
+            .collect();
+        let batch_policy = BatchPolicy {
+            overwrite: policy.overwrite,
+            overwrite_if_same_content: policy.overwrite_if_same_content,
+            overrides: policy
+                .overrides
+                .into_iter()
+                .map(|o| BatchOverride {
+                    skill_id: o.skill_id,
+                    tool_key: o.tool,
+                    overwrite: o.overwrite,
+                })
+                .collect(),
         };
-        let result = crate::core::global_sync::sync_skill_to_tool_with_records(
-            &store,
-            &adapter,
-            sourcePath.as_ref(),
-            &skillId,
-            &name,
-            &policy,
-            now_ms(),
-        )
-        .map_err(anyhow::Error::new)?;
 
-        Ok::<_, anyhow::Error>(SyncResultDto {
-            mode_used: result.mode_used.as_str().to_string(),
-            target_path: result.target_path.to_string_lossy().to_string(),
-        })
+        let outcomes = crate::core::global_sync::sync_skills_to_tools(
+            &store,
+            &batch_skills,
+            &tools,
+            &batch_policy,
+            now_ms(),
+            |p| {
+                let _ = on_progress.send(SyncProgressDto {
+                    index: p.index as u32,
+                    total: p.total as u32,
+                    skill_name: p.skill_name.to_string(),
+                    tool: p.tool_key.to_string(),
+                });
+            },
+        );
+
+        let mut report = BatchSyncReportDto {
+            results: Vec::with_capacity(outcomes.len()),
+            synced: 0,
+            skipped: 0,
+            failed: 0,
+        };
+        for outcome in outcomes {
+            let status = match outcome.status {
+                BatchTargetStatus::Synced { outcome } => {
+                    report.synced += 1;
+                    SyncTargetStatusDto::Synced {
+                        mode_used: outcome.mode_used.as_str().to_string(),
+                    }
+                }
+                BatchTargetStatus::Skipped { error } => {
+                    report.skipped += 1;
+                    SyncTargetStatusDto::Skipped {
+                        error: CommandError::from(error),
+                    }
+                }
+                BatchTargetStatus::Failed { error } => {
+                    report.failed += 1;
+                    SyncTargetStatusDto::Failed {
+                        error: CommandError::from(error),
+                    }
+                }
+            };
+            report.results.push(SyncTargetResultDto {
+                skill_id: outcome.skill_id,
+                skill_name: outcome.skill_name,
+                tool: outcome.tool_key,
+                status,
+            });
+        }
+        Ok::<_, anyhow::Error>(report)
     })
     .await
     .map_err(CommandError::internal)?

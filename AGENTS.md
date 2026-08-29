@@ -83,6 +83,12 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
 - Styles live in `src/App.css` / `src/index.css`. There are no CSS Modules — don't add the pattern.
 - Path handling must support `~` expansion (`expand_home_path()` in the backend).
 - Sync uses a triple fallback: symlink → junction (Windows) → copy.
+- **Global sync fan-out is backend-owned.** `sync_skills_to_tools` (one batch command; core engine in
+  `core/global_sync.rs`) handles installedness filtering, shared-dir dedupe, overwrite policy (batch
+  default + per-(skill,tool) overrides), DB record fan-out, and per-target results; progress streams
+  over a Tauri `Channel`. There is no per-pair sync command — never loop one in the frontend. Per-target
+  failures/skips are report data (`SyncTargetStatusDto`), not command errors. The shared-skills-dir
+  grouping reaches the UI only as `ToolInfoDto.shared_with`; do not re-derive it from `skills_dir`.
 
 ## Do not
 

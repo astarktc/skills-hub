@@ -13,7 +13,8 @@ use crate::core::{
     skill_store::{SkillStore, SkillTargetRecord},
     sync_engine::{self, SyncOutcome},
     tool_adapters::{
-        adapters_sharing_skills_dir, is_tool_installed, resolve_default_path, ToolAdapter,
+        adapter_by_key, adapters_sharing_skills_dir, is_tool_installed, resolve_default_path,
+        ToolAdapter,
     },
 };
 
@@ -89,49 +90,11 @@ pub fn target_has_same_content(source: &Path, target: &Path) -> bool {
     }
 }
 
-/// Sync a skill into a tool's global skills directory and record the result
-/// for every installed tool sharing that directory.
-///
-/// Environment probing (is the tool installed, where is its skills dir, which
-/// installed tools share it) happens here; the deterministic work is in
-/// [`sync_skill_into_root`], which tests drive directly.
-pub fn sync_skill_to_tool_with_records(
-    store: &SkillStore,
-    adapter: &ToolAdapter,
-    source: &Path,
-    skill_id: &str,
-    skill_name: &str,
-    policy: &OverwritePolicy,
-    now: i64,
-) -> Result<SyncOutcome, GlobalSyncError> {
-    if !is_tool_installed(adapter)? {
-        return Err(GlobalSyncError::ToolNotInstalled {
-            tool_key: adapter.id.as_key().to_string(),
-        });
-    }
-    let tool_root = resolve_default_path(adapter)?;
-    let mut record_tools: Vec<ToolAdapter> = Vec::new();
-    for a in adapters_sharing_skills_dir(adapter) {
-        if is_tool_installed(&a)? {
-            record_tools.push(a);
-        }
-    }
-    sync_skill_into_root(
-        store,
-        adapter,
-        &tool_root,
-        source,
-        skill_id,
-        skill_name,
-        policy,
-        &record_tools,
-        now,
-    )
-}
-
-/// Deterministic half of [`sync_skill_to_tool_with_records`]: probe
-/// writability of `tool_root`, apply the overwrite policy, sync, and upsert a
-/// `SkillTargetRecord` for each tool in `record_tools`.
+/// Deterministic single-pair sync: probe writability of `tool_root`, apply
+/// the overwrite policy, sync, and upsert a `SkillTargetRecord` for each
+/// tool in `record_tools`. The batch engine
+/// ([`sync_skills_to_planned_tools`]) drives this per attempted pair; tests
+/// drive it directly.
 #[allow(clippy::too_many_arguments)]
 pub fn sync_skill_into_root(
     store: &SkillStore,
@@ -264,6 +227,262 @@ pub fn remove_targets_for_tools(
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Batch sync: the single fan-out engine behind the `sync_skills_to_tools`
+// command. Skills × tools in one call; shared-dir dedupe, installedness
+// filtering, per-target overwrite policy, and per-target outcomes all live
+// here so no caller re-implements the choreography.
+// ---------------------------------------------------------------------------
+
+/// One skill to sync in a batch.
+#[derive(Debug, Clone)]
+pub struct BatchSkill {
+    pub skill_id: String,
+    pub skill_name: String,
+    pub source_path: PathBuf,
+}
+
+/// Force-overwrite for one (skill, tool) pair. Applies to any target tool
+/// sharing the named tool's skills dir (the dir, not the key, is the real
+/// identity of a sync target).
+#[derive(Debug, Clone)]
+pub struct BatchOverride {
+    pub skill_id: String,
+    pub tool_key: String,
+    pub overwrite: bool,
+}
+
+/// Batch-level default policy plus per-(skill, tool) overrides.
+#[derive(Debug, Default)]
+pub struct BatchPolicy {
+    pub overwrite: bool,
+    pub overwrite_if_same_content: bool,
+    pub overrides: Vec<BatchOverride>,
+}
+
+/// A probed tool target: adapter, resolved skills root, installedness, and
+/// the installed tools sharing that root (DB record fan-out). Produced by
+/// [`plan_batch_tool_targets`] (environment probing); consumed by the
+/// deterministic [`sync_skills_to_planned_tools`], which tests drive with
+/// fabricated roots.
+#[derive(Debug)]
+pub struct PlannedToolTarget {
+    pub adapter: ToolAdapter,
+    pub root: PathBuf,
+    pub installed: bool,
+    pub record_tools: Vec<ToolAdapter>,
+}
+
+/// Per-(skill, tool) result. `Skipped` is the expected-and-ignorable class
+/// (tool absent, dir unwritable) — callers decide whether to surface it;
+/// `Failed` is everything else. Both carry the typed error, so no
+/// information is lost by the classification.
+#[derive(Debug)]
+pub enum BatchTargetStatus {
+    Synced { outcome: SyncOutcome },
+    Skipped { error: GlobalSyncError },
+    Failed { error: GlobalSyncError },
+}
+
+#[derive(Debug)]
+pub struct BatchTargetOutcome {
+    pub skill_id: String,
+    pub skill_name: String,
+    pub tool_key: String,
+    pub status: BatchTargetStatus,
+}
+
+/// Progress tick emitted before each attempted (skill, tool) pair.
+pub struct BatchProgress<'a> {
+    /// 1-based index over attempted pairs.
+    pub index: usize,
+    pub total: usize,
+    pub skill_name: &'a str,
+    pub tool_key: &'a str,
+}
+
+/// Probe the environment for each requested tool key: resolve the adapter,
+/// its skills root, installedness, and the installed shared-dir group.
+/// Unknown keys and probe failures become not-installed-like planning
+/// entries via `Err`, which the batch turns into `Failed` outcomes.
+pub fn plan_batch_tool_targets(
+    tool_keys: &[String],
+) -> Vec<Result<PlannedToolTarget, (String, GlobalSyncError)>> {
+    tool_keys
+        .iter()
+        .map(|key| {
+            let adapter = adapter_by_key(key).ok_or_else(|| {
+                (
+                    key.clone(),
+                    GlobalSyncError::Other(anyhow::anyhow!("unknown tool: {}", key)),
+                )
+            })?;
+            let installed = is_tool_installed(&adapter)
+                .map_err(|err| (key.clone(), GlobalSyncError::Other(err)))?;
+            let root = resolve_default_path(&adapter)
+                .map_err(|err| (key.clone(), GlobalSyncError::Other(err)))?;
+            let mut record_tools: Vec<ToolAdapter> = Vec::new();
+            for a in adapters_sharing_skills_dir(&adapter) {
+                if is_tool_installed(&a).unwrap_or(false) {
+                    record_tools.push(a);
+                }
+            }
+            Ok(PlannedToolTarget {
+                adapter,
+                root,
+                installed,
+                record_tools,
+            })
+        })
+        .collect()
+}
+
+/// Deterministic batch engine: dedupe installed targets by skills root
+/// (first in caller order wins; shared-dir tools are covered via each
+/// target's `record_tools`), emit `Skipped` for not-installed tools, apply
+/// the per-pair overwrite policy, and isolate failures per target — one bad
+/// pair never aborts the batch.
+pub fn sync_skills_to_planned_tools(
+    store: &SkillStore,
+    skills: &[BatchSkill],
+    targets: &[PlannedToolTarget],
+    policy: &BatchPolicy,
+    now: i64,
+    mut on_progress: impl FnMut(BatchProgress),
+) -> Vec<BatchTargetOutcome> {
+    let mut outcomes: Vec<BatchTargetOutcome> = Vec::new();
+
+    // Partition: attempted = installed, deduped by root; the rest skip.
+    let mut seen_roots: Vec<&Path> = Vec::new();
+    let mut attempted: Vec<&PlannedToolTarget> = Vec::new();
+    let mut skipped_not_installed: Vec<&PlannedToolTarget> = Vec::new();
+    for target in targets {
+        if !target.installed {
+            skipped_not_installed.push(target);
+            continue;
+        }
+        if seen_roots.contains(&target.root.as_path()) {
+            continue; // covered by an earlier target's record_tools fan-out
+        }
+        seen_roots.push(target.root.as_path());
+        attempted.push(target);
+    }
+
+    for target in &skipped_not_installed {
+        let tool_key = target.adapter.id.as_key();
+        for skill in skills {
+            outcomes.push(BatchTargetOutcome {
+                skill_id: skill.skill_id.clone(),
+                skill_name: skill.skill_name.clone(),
+                tool_key: tool_key.to_string(),
+                status: BatchTargetStatus::Skipped {
+                    error: GlobalSyncError::ToolNotInstalled {
+                        tool_key: tool_key.to_string(),
+                    },
+                },
+            });
+        }
+    }
+
+    let total = skills.len() * attempted.len();
+    let mut index = 0usize;
+    for skill in skills {
+        for target in &attempted {
+            index += 1;
+            let tool_key = target.adapter.id.as_key();
+            on_progress(BatchProgress {
+                index,
+                total,
+                skill_name: &skill.skill_name,
+                tool_key,
+            });
+
+            let overwrite = policy.overwrite
+                || policy.overrides.iter().any(|o| {
+                    o.overwrite
+                        && o.skill_id == skill.skill_id
+                        && adapter_by_key(&o.tool_key).is_some_and(|oa| {
+                            oa.relative_skills_dir == target.adapter.relative_skills_dir
+                        })
+                });
+            let pair_policy = OverwritePolicy {
+                overwrite,
+                overwrite_if_same_content: policy.overwrite_if_same_content,
+            };
+
+            let status = match sync_skill_into_root(
+                store,
+                &target.adapter,
+                &target.root,
+                &skill.source_path,
+                &skill.skill_id,
+                &skill.skill_name,
+                &pair_policy,
+                &target.record_tools,
+                now,
+            ) {
+                Ok(outcome) => BatchTargetStatus::Synced { outcome },
+                Err(error @ GlobalSyncError::ToolNotWritable { .. }) => {
+                    BatchTargetStatus::Skipped { error }
+                }
+                Err(error) => BatchTargetStatus::Failed { error },
+            };
+            outcomes.push(BatchTargetOutcome {
+                skill_id: skill.skill_id.clone(),
+                skill_name: skill.skill_name.clone(),
+                tool_key: tool_key.to_string(),
+                status,
+            });
+        }
+    }
+
+    outcomes
+}
+
+/// Sync N skills to M tools in one call: environment probing
+/// ([`plan_batch_tool_targets`]) composed with the deterministic engine
+/// ([`sync_skills_to_planned_tools`]). Planning failures surface as `Failed`
+/// outcomes per skill; the function itself never errors.
+pub fn sync_skills_to_tools(
+    store: &SkillStore,
+    skills: &[BatchSkill],
+    tool_keys: &[String],
+    policy: &BatchPolicy,
+    now: i64,
+    on_progress: impl FnMut(BatchProgress),
+) -> Vec<BatchTargetOutcome> {
+    let mut targets: Vec<PlannedToolTarget> = Vec::new();
+    let mut outcomes: Vec<BatchTargetOutcome> = Vec::new();
+    for plan in plan_batch_tool_targets(tool_keys) {
+        match plan {
+            Ok(target) => targets.push(target),
+            Err((tool_key, error)) => {
+                // One planning failure per skill, mirroring attempted shape.
+                let msg = format!("{}", error);
+                for skill in skills {
+                    outcomes.push(BatchTargetOutcome {
+                        skill_id: skill.skill_id.clone(),
+                        skill_name: skill.skill_name.clone(),
+                        tool_key: tool_key.clone(),
+                        status: BatchTargetStatus::Failed {
+                            error: GlobalSyncError::Other(anyhow::anyhow!("{}", msg)),
+                        },
+                    });
+                }
+            }
+        }
+    }
+    outcomes.extend(sync_skills_to_planned_tools(
+        store,
+        skills,
+        &targets,
+        policy,
+        now,
+        on_progress,
+    ));
+    outcomes
 }
 
 #[cfg(test)]
