@@ -11,6 +11,17 @@ pub enum SyncMode {
     Copy,
 }
 
+impl SyncMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SyncMode::Auto => "auto",
+            SyncMode::Symlink => "symlink",
+            SyncMode::Junction => "junction",
+            SyncMode::Copy => "copy",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SyncOutcome {
     pub mode_used: SyncMode,

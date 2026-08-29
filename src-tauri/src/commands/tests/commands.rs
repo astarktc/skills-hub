@@ -1,5 +1,5 @@
 use super::*;
-use crate::core::skill_store::SkillRecord;
+use crate::core::skill_store::{SkillRecord, SkillTargetRecord};
 
 fn make_store() -> (tempfile::TempDir, SkillStore) {
     let dir = tempfile::tempdir().expect("tempdir");

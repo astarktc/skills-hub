@@ -1145,11 +1145,12 @@ fn update_resyncs_project_copy_assignments() {
     };
     store.register_project(&project).unwrap();
 
-    // 3. Create the tool skills directory structure under the project
-    // Cursor: .cursor/skills/proj-test/
+    // 3. Create the tool skills directory structure under the project,
+    // at the same paths project sync writes to (project_relative_skills_dir).
+    // Cursor: .agents/skills/proj-test/
     let cursor_target = project_root
         .path()
-        .join(".cursor")
+        .join(".agents")
         .join("skills")
         .join("proj-test");
     fs::create_dir_all(&cursor_target).unwrap();

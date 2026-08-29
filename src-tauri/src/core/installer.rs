@@ -19,6 +19,7 @@ use super::sync_engine::copy_dir_recursive;
 use super::sync_engine::sync_dir_copy_with_overwrite;
 use super::tool_adapters::adapter_by_key;
 use super::tool_adapters::is_tool_installed;
+use super::tool_adapters::project_relative_skills_dir;
 
 pub struct InstallResult {
     pub skill_id: String,
@@ -932,8 +933,11 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
             Some(a) => a,
             None => continue,
         };
-        let target =
-            resolve_project_sync_target(&project_path, adapter.relative_skills_dir, &record.name);
+        let target = resolve_project_sync_target(
+            &project_path,
+            project_relative_skills_dir(&adapter),
+            &record.name,
+        );
         match sync_dir_copy_with_overwrite(&central_path, &target, true) {
             Ok(_outcome) => {
                 let _ = store.update_assignment_status(

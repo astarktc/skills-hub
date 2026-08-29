@@ -1,4 +1,3 @@
-use anyhow::Context;
 use tauri::State;
 use uuid::Uuid;
 
@@ -399,7 +398,6 @@ pub async fn update_project_gitignore(
 ) -> Result<(), String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        use std::fs;
         use std::path::Path;
 
         let project = store
@@ -411,146 +409,19 @@ pub async fn update_project_gitignore(
             anyhow::bail!("project directory does not exist: {}", project.path);
         }
 
-        // Collect unique relative_skills_dir patterns from the project's configured tools.
         let tools = store.list_project_tools(&projectId)?;
-        let mut patterns: Vec<String> = Vec::new();
-        for tool_record in &tools {
-            if let Some(adapter) = crate::core::tool_adapters::adapter_by_key(&tool_record.tool) {
-                let pattern = format!("/{}/", adapter.relative_skills_dir);
-                if !patterns.contains(&pattern) {
-                    patterns.push(pattern);
-                }
-            }
-        }
+        let adapters: Vec<_> = tools
+            .iter()
+            .filter_map(|t| crate::core::tool_adapters::adapter_by_key(&t.tool))
+            .collect();
+        let patterns = crate::core::gitignore::patterns_for_tools(adapters.iter());
 
-        if patterns.is_empty() {
-            return Ok(());
-        }
-
-        let gitignore_block = format!(
-            "\n# Skills Hub — managed skill directories\n{}\n",
-            patterns.join("\n")
-        );
-
-        let marker = "# Skills Hub";
-
-        // Helper: remove ALL Skills Hub blocks from content.
-        // A block is: an optional preceding blank line, the marker comment line,
-        // and all immediately following lines that start with '/' (our gitignore
-        // patterns). Handles multiple blocks if present (e.g. from double-write).
-        let remove_block = |content: &str| -> String {
-            let lines: Vec<&str> = content.lines().collect();
-            let mut result: Vec<&str> = Vec::new();
-            let mut in_block = false;
-            for (i, line) in lines.iter().enumerate() {
-                if line.contains(marker) {
-                    in_block = true;
-                    // Remove preceding blank line if we just pushed one
-                    if let Some(last) = result.last() {
-                        if last.trim().is_empty() {
-                            result.pop();
-                        }
-                    }
-                    continue;
-                }
-                if in_block {
-                    // Block continues while lines are our gitignore patterns (start with '/')
-                    // or are blank lines between patterns within the block
-                    if line.starts_with('/') {
-                        continue;
-                    }
-                    // A trailing blank line right after the last pattern belongs to the block
-                    if line.trim().is_empty() {
-                        // Peek ahead: if the next non-empty line is also a pattern or marker, skip
-                        // Otherwise this blank separates from unrelated content — keep it
-                        let next_non_empty = lines[i + 1..].iter().find(|l| !l.trim().is_empty());
-                        if let Some(next) = next_non_empty {
-                            if next.starts_with('/') || next.contains(marker) {
-                                continue;
-                            }
-                        } else {
-                            // Blank line at EOF after block — skip it
-                            continue;
-                        }
-                    }
-                    in_block = false;
-                }
-                result.push(line);
-            }
-            let joined = result.join("\n");
-            if joined.is_empty() {
-                joined
-            } else {
-                format!("{}\n", joined)
-            }
-        };
-
-        // .gitignore
-        let gitignore_path = project_path.join(".gitignore");
-        if addToGitignore {
-            let existing = if gitignore_path.exists() {
-                fs::read_to_string(&gitignore_path)
-                    .with_context(|| format!("failed to read {}", gitignore_path.display()))?
-            } else {
-                String::new()
-            };
-
-            if !existing.contains(marker) {
-                let mut content = existing;
-                if !content.ends_with('\n') && !content.is_empty() {
-                    content.push('\n');
-                }
-                content.push_str(&gitignore_block);
-                fs::write(&gitignore_path, content)
-                    .with_context(|| format!("failed to write {}", gitignore_path.display()))?;
-            }
-        } else if gitignore_path.exists() {
-            let existing = fs::read_to_string(&gitignore_path)
-                .with_context(|| format!("failed to read {}", gitignore_path.display()))?;
-            if existing.contains(marker) {
-                let cleaned = remove_block(&existing);
-                fs::write(&gitignore_path, cleaned)
-                    .with_context(|| format!("failed to write {}", gitignore_path.display()))?;
-            }
-        }
-
-        // .git/info/exclude
-        let exclude_path = project_path.join(".git").join("info").join("exclude");
-        if addToExclude {
-            if let Some(parent) = exclude_path.parent() {
-                if !parent.exists() {
-                    fs::create_dir_all(parent)
-                        .with_context(|| format!("failed to create {}", parent.display()))?;
-                }
-            }
-
-            let existing = if exclude_path.exists() {
-                fs::read_to_string(&exclude_path)
-                    .with_context(|| format!("failed to read {}", exclude_path.display()))?
-            } else {
-                String::new()
-            };
-
-            if !existing.contains(marker) {
-                let mut content = existing;
-                if !content.ends_with('\n') && !content.is_empty() {
-                    content.push('\n');
-                }
-                content.push_str(&gitignore_block);
-                fs::write(&exclude_path, content)
-                    .with_context(|| format!("failed to write {}", exclude_path.display()))?;
-            }
-        } else if exclude_path.exists() {
-            let existing = fs::read_to_string(&exclude_path)
-                .with_context(|| format!("failed to read {}", exclude_path.display()))?;
-            if existing.contains(marker) {
-                let cleaned = remove_block(&existing);
-                fs::write(&exclude_path, cleaned)
-                    .with_context(|| format!("failed to write {}", exclude_path.display()))?;
-            }
-        }
-
-        Ok(())
+        crate::core::gitignore::update_project_ignore_files(
+            project_path,
+            &patterns,
+            addToGitignore,
+            addToExclude,
+        )
     })
     .await
     .map_err(|e| e.to_string())?

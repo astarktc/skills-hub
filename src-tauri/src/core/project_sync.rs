@@ -18,15 +18,6 @@ pub fn resolve_project_sync_target(
     project_path.join(relative_skills_dir).join(skill_name)
 }
 
-pub fn sync_mode_to_str(mode: &SyncMode) -> &'static str {
-    match mode {
-        SyncMode::Auto => "auto",
-        SyncMode::Symlink => "symlink",
-        SyncMode::Junction => "junction",
-        SyncMode::Copy => "copy",
-    }
-}
-
 pub fn assign_and_sync(
     store: &SkillStore,
     project: &ProjectRecord,
@@ -61,7 +52,7 @@ pub fn assign_and_sync(
 
     match sync_engine::sync_dir_for_tool_with_overwrite(tool_key, source, &target, false) {
         Ok(outcome) => {
-            let mode_str = sync_mode_to_str(&outcome.mode_used);
+            let mode_str = outcome.mode_used.as_str();
             let hash = if matches!(outcome.mode_used, SyncMode::Copy) {
                 match content_hash::hash_dir(source) {
                     Ok(h) => Some(h),
@@ -138,7 +129,7 @@ pub(crate) fn sync_single_assignment(
         overwrite,
     )?;
 
-    let mode_str = sync_mode_to_str(&outcome.mode_used);
+    let mode_str = outcome.mode_used.as_str();
     let hash = if matches!(outcome.mode_used, SyncMode::Copy) {
         match content_hash::hash_dir(source) {
             Ok(h) => Some(h),

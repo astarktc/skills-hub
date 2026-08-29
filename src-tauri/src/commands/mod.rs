@@ -1,6 +1,7 @@
 pub mod projects;
 
 use anyhow::Context;
+
 use serde::Serialize;
 use tauri::State;
 
@@ -14,28 +15,24 @@ use crate::core::cache_cleanup::{
 };
 use crate::core::cancel_token::CancelToken;
 use crate::core::central_repo::{ensure_central_repo, resolve_central_repo_path};
-use crate::core::content_hash::hash_dir;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::github_search::{search_github_repos, RepoSummary};
+use crate::core::global_sync::{GlobalSyncError, OverwritePolicy};
 use crate::core::installer::{
     clone_for_explore_preview, install_git_skill, install_git_skill_from_selection,
     install_local_skill, install_local_skill_from_selection, list_git_skills, list_local_skills,
     update_managed_skill_from_source, GitSkillCandidate, InstallResult, LocalSkillCandidate,
 };
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
-use crate::core::skill_store::{SkillStore, SkillTargetRecord};
+use crate::core::skill_store::SkillStore;
 use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
 };
-use crate::core::sync_engine::{
-    copy_dir_recursive, remove_path_any, sync_dir_for_tool_with_overwrite, sync_dir_hybrid,
-    SyncMode,
-};
+use crate::core::sync_engine::{copy_dir_recursive, remove_path_any, sync_dir_hybrid};
 use crate::core::tool_adapters::{
     adapter_by_key, default_tool_adapters, is_tool_installed, resolve_default_path, ToolId,
     AGENTS_STANDARD_KEYS,
 };
-use uuid::Uuid;
 
 pub(crate) fn format_anyhow_error(err: anyhow::Error) -> String {
     let first = err.to_string();
@@ -534,13 +531,7 @@ pub async fn sync_skill_dir(
     tauri::async_runtime::spawn_blocking(move || {
         let result = sync_dir_hybrid(source_path.as_ref(), target_path.as_ref())?;
         Ok::<_, anyhow::Error>(SyncResultDto {
-            mode_used: match result.mode_used {
-                SyncMode::Auto => "auto",
-                SyncMode::Symlink => "symlink",
-                SyncMode::Junction => "junction",
-                SyncMode::Copy => "copy",
-            }
-            .to_string(),
+            mode_used: result.mode_used.as_str().to_string(),
             target_path: result.target_path.to_string_lossy().to_string(),
         })
     })
@@ -549,13 +540,24 @@ pub async fn sync_skill_dir(
     .map_err(format_anyhow_error)
 }
 
-fn target_has_same_content(source: &std::path::Path, target: &std::path::Path) -> bool {
-    if !target.exists() {
-        return false;
-    }
-    match (hash_dir(source), hash_dir(target)) {
-        (Ok(s), Ok(t)) => s == t,
-        _ => false,
+/// Map core's typed sync failures onto the wire prefixes the frontend parses.
+fn format_global_sync_error(err: GlobalSyncError) -> anyhow::Error {
+    match err {
+        GlobalSyncError::ToolNotInstalled { tool_key } => {
+            anyhow::anyhow!("TOOL_NOT_INSTALLED|{}", tool_key)
+        }
+        GlobalSyncError::TargetExists { target_path } => {
+            anyhow::anyhow!("TARGET_EXISTS|{}", target_path.to_string_lossy())
+        }
+        GlobalSyncError::ToolNotWritable {
+            tool_display_name,
+            skills_dir,
+        } => anyhow::anyhow!(
+            "TOOL_NOT_WRITABLE|{}|{}",
+            tool_display_name,
+            skills_dir.to_string_lossy()
+        ),
+        GlobalSyncError::Other(err) => err,
     }
 }
 
@@ -573,78 +575,23 @@ pub async fn sync_skill_to_tool(
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let adapter = adapter_by_key(&tool).ok_or_else(|| anyhow::anyhow!("unknown tool"))?;
-        if !is_tool_installed(&adapter)? {
-            anyhow::bail!("TOOL_NOT_INSTALLED|{}", adapter.id.as_key());
-        }
-        let tool_root = resolve_default_path(&adapter)?;
-        // Pre-check: ensure the skills directory is writable (fixes #20 — Windows OS error 5).
-        if let Err(err) = std::fs::create_dir_all(&tool_root) {
-            if err.kind() == std::io::ErrorKind::PermissionDenied {
-                anyhow::bail!(
-                    "TOOL_NOT_WRITABLE|{}|{}",
-                    adapter.display_name,
-                    tool_root.to_string_lossy()
-                );
-            }
-            anyhow::bail!("failed to create skills dir {:?}: {}", tool_root, err);
-        }
-        let target = tool_root.join(&name);
-        let overwrite = overwrite.unwrap_or(false)
-            || (overwriteIfSameContent.unwrap_or(false)
-                && target_has_same_content(sourcePath.as_ref(), &target));
-        let result =
-            sync_dir_for_tool_with_overwrite(&tool, sourcePath.as_ref(), &target, overwrite)
-                .map_err(|err| {
-                    let msg = err.to_string();
-                    if msg.contains("target already exists") {
-                        anyhow::anyhow!("TARGET_EXISTS|{}", target.to_string_lossy())
-                    } else if msg.contains("os error 5")
-                        || msg.contains("Access is denied")
-                        || msg.contains("Permission denied")
-                    {
-                        anyhow::anyhow!(
-                            "TOOL_NOT_WRITABLE|{}|{}",
-                            adapter.display_name,
-                            tool_root.to_string_lossy()
-                        )
-                    } else {
-                        anyhow::anyhow!(msg)
-                    }
-                })?;
-
-        // Some tools share the same global skills directory; keep DB records consistent across them.
-        let group = crate::core::tool_adapters::adapters_sharing_skills_dir(&adapter);
-        for a in group {
-            if !is_tool_installed(&a)? {
-                continue;
-            }
-            let record = SkillTargetRecord {
-                id: Uuid::new_v4().to_string(),
-                skill_id: skillId.clone(),
-                tool: a.id.as_key().to_string(),
-                target_path: result.target_path.to_string_lossy().to_string(),
-                mode: match result.mode_used {
-                    SyncMode::Auto => "auto",
-                    SyncMode::Symlink => "symlink",
-                    SyncMode::Junction => "junction",
-                    SyncMode::Copy => "copy",
-                }
-                .to_string(),
-                status: "ok".to_string(),
-                last_error: None,
-                synced_at: Some(now_ms()),
-            };
-            store.upsert_skill_target(&record)?;
-        }
+        let policy = OverwritePolicy {
+            overwrite: overwrite.unwrap_or(false),
+            overwrite_if_same_content: overwriteIfSameContent.unwrap_or(false),
+        };
+        let result = crate::core::global_sync::sync_skill_to_tool_with_records(
+            &store,
+            &adapter,
+            sourcePath.as_ref(),
+            &skillId,
+            &name,
+            &policy,
+            now_ms(),
+        )
+        .map_err(format_global_sync_error)?;
 
         Ok::<_, anyhow::Error>(SyncResultDto {
-            mode_used: match result.mode_used {
-                SyncMode::Auto => "auto",
-                SyncMode::Symlink => "symlink",
-                SyncMode::Junction => "junction",
-                SyncMode::Copy => "copy",
-            }
-            .to_string(),
+            mode_used: result.mode_used.as_str().to_string(),
             target_path: result.target_path.to_string_lossy().to_string(),
         })
     })
@@ -662,41 +609,7 @@ pub async fn unsync_skill_from_tool(
 ) -> Result<(), String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        // Some tools share the same global skills directory; unsync should update all of them.
-        let group_tool_keys: Vec<String> = if let Some(adapter) = adapter_by_key(&tool) {
-            let group = crate::core::tool_adapters::adapters_sharing_skills_dir(&adapter);
-            // If none of the group tools are installed, do nothing (treat as already not effective).
-            let mut any_installed = false;
-            for a in &group {
-                if is_tool_installed(a)? {
-                    any_installed = true;
-                    break;
-                }
-            }
-            if !any_installed {
-                return Ok::<_, anyhow::Error>(());
-            }
-            group
-                .into_iter()
-                .map(|a| a.id.as_key().to_string())
-                .collect()
-        } else {
-            vec![tool.clone()]
-        };
-
-        // Remove filesystem target once (shared dir => shared target path).
-        let mut removed = false;
-        for k in &group_tool_keys {
-            if let Some(target) = store.get_skill_target(&skillId, k)? {
-                if !removed {
-                    remove_path_any(std::path::Path::new(&target.target_path))?;
-                    removed = true;
-                }
-                store.delete_skill_target(&skillId, k)?;
-            }
-        }
-
-        Ok::<_, anyhow::Error>(())
+        crate::core::global_sync::unsync_skill_from_tool_with_records(&store, &tool, &skillId)
     })
     .await
     .map_err(|err| err.to_string())?
