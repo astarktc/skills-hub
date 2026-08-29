@@ -10,6 +10,7 @@ import SkillDetailView from "./components/skills/SkillDetailView";
 import Header from "./components/skills/Header";
 import LoadingOverlay from "./components/skills/LoadingOverlay";
 import SkillsList from "./components/skills/SkillsList";
+import Modal from "./components/shared/Modal";
 import AddSkillModal from "./components/skills/modals/AddSkillModal";
 import DeleteModal from "./components/skills/modals/DeleteModal";
 import GitPickModal from "./components/skills/modals/GitPickModal";
@@ -551,16 +552,12 @@ function App() {
       />
 
       {updateAvailableVersion && (
-        <div
-          className="modal-backdrop"
-          onClick={updateInstalling ? undefined : dismissUpdate}
+        <Modal
+          open
+          plain
+          className="update-modal"
+          onRequestClose={updateInstalling ? undefined : dismissUpdate}
         >
-          <div
-            className="modal update-modal"
-            role="dialog"
-            aria-modal="true"
-            onClick={(e) => e.stopPropagation()}
-          >
             {!updateInstalling && !updateDone && (
               <button
                 className="modal-close update-modal-close"
@@ -619,8 +616,7 @@ function App() {
                 </>
               )}
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

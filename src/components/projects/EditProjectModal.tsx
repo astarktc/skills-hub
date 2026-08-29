@@ -4,6 +4,7 @@ import { memo, useEffect, useState } from "react";
 // callback and not importable here. Acceptable for Tauri-only components.
 import { invoke } from "@tauri-apps/api/core";
 import type { TFunction } from "i18next";
+import Modal from "../shared/Modal";
 import type { GitignoreStatusDto, ProjectDto } from "./types";
 
 type EditProjectModalProps = {
@@ -60,25 +61,25 @@ const EditProjectModalInner = ({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onRequestClose}>
-      <div
-        className="modal"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-      >
-        <div className="modal-header">
-          <div className="modal-title">{t("projects.configureProject")}</div>
-          <button
-            className="modal-close"
-            type="button"
-            onClick={onRequestClose}
-            aria-label={t("close")}
-          >
-            &#10005;
+    <Modal
+      open
+      title={t("projects.configureProject")}
+      onRequestClose={onRequestClose}
+      footer={
+        <>
+          <button className="btn btn-secondary" onClick={onRequestClose}>
+            {t("cancel")}
           </button>
-        </div>
-        <div className="modal-body">
+          <button
+            className="btn btn-primary"
+            onClick={handleSave}
+            disabled={loading || saving}
+          >
+            {t("projects.save")}
+          </button>
+        </>
+      }
+    >
           <div className="form-group">
             <label className="label">{t("projects.pathLabel")}</label>
             <input
@@ -117,21 +118,7 @@ const EditProjectModalInner = ({
               </>
             )}
           </div>
-        </div>
-        <div className="modal-footer">
-          <button className="btn btn-secondary" onClick={onRequestClose}>
-            {t("cancel")}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleSave}
-            disabled={loading || saving}
-          >
-            {t("projects.save")}
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 };
 

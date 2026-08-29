@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import type { TFunction } from 'i18next'
+import Modal from '../../shared/Modal'
 import type { ToolOption, ToolStatusDto } from '../types'
 
 type AddSkillModalProps = {
@@ -49,27 +50,31 @@ const AddSkillModal = ({
   onSubmit,
   t,
 }: AddSkillModalProps) => {
-  if (!open) return null
-
   return (
-    <div
-      className="modal-backdrop"
-      onClick={() => (canClose ? onRequestClose() : null)}
-    >
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <div className="modal-title">{t('addSkillTitle')}</div>
+    <Modal
+      open={open}
+      title={t('addSkillTitle')}
+      onRequestClose={onRequestClose}
+      closeDisabled={!canClose}
+      footer={
+        <>
           <button
-            className="modal-close"
-            type="button"
+            className="btn btn-secondary"
             onClick={onRequestClose}
-            aria-label={t('close')}
             disabled={!canClose}
           >
-            ✕
+            {t('cancel')}
           </button>
-        </div>
-        <div className="modal-body">
+          <button
+            className="btn btn-primary"
+            onClick={onSubmit}
+            disabled={loading}
+          >
+            {addModalTab === 'local' ? t('create') : t('install')}
+          </button>
+        </>
+      }
+    >
           <div className="tabs">
             <button
               className={`tab-item${addModalTab === 'local' ? ' active' : ''}`}
@@ -169,25 +174,7 @@ const AddSkillModal = ({
             )}
             <div className="helper-text">{t('syncAfterCreate')}</div>
           </div>
-        </div>
-        <div className="modal-footer">
-          <button
-            className="btn btn-secondary"
-            onClick={onRequestClose}
-            disabled={!canClose}
-          >
-            {t('cancel')}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={onSubmit}
-            disabled={loading}
-          >
-            {addModalTab === 'local' ? t('create') : t('install')}
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   )
 }
 

@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import { Download } from 'lucide-react'
 import type { TFunction } from 'i18next'
+import Modal from '../../shared/Modal'
 import type { OnboardingPlan } from '../types'
 
 type ImportModalProps = {
@@ -30,26 +31,32 @@ const ImportModal = ({
   onImport,
   t,
 }: ImportModalProps) => {
-  if (!open) return null
-
   return (
-    <div className="modal-backdrop" onClick={onRequestClose}>
-      <div
-        className="modal modal-lg modal-discovered"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-header">
-          <div className="modal-title">{t('importTitle')}</div>
+    <Modal
+      open={open}
+      title={t('importTitle')}
+      onRequestClose={onRequestClose}
+      className="modal-lg modal-discovered"
+      footer={
+        <>
           <button
-            className="modal-close"
-            type="button"
-            onClick={onRequestClose}
-            aria-label={t('close')}
+            className="btn btn-primary"
+            onClick={onImport}
+            disabled={loading}
           >
-            ✕
+            <Download size={14} />
+            {t('importAndSync')}
           </button>
-        </div>
-        <div className="modal-body">
+          <button
+            className="btn btn-secondary"
+            onClick={onRequestClose}
+            disabled={loading}
+          >
+            {t('close')}
+          </button>
+        </>
+      }
+    >
           <div className="import-summary">
             <div>{t('importSummary')}</div>
             <div className="import-metrics">
@@ -127,26 +134,7 @@ const ImportModal = ({
               </div>
             ))}
           </div>
-        </div>
-        <div className="modal-footer">
-          <button
-            className="btn btn-primary"
-            onClick={onImport}
-            disabled={loading}
-          >
-            <Download size={14} />
-            {t('importAndSync')}
-          </button>
-          <button
-            className="btn btn-secondary"
-            onClick={onRequestClose}
-            disabled={loading}
-          >
-            {t('close')}
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   )
 }
 

@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import type { TFunction } from 'i18next'
+import Modal from '../../shared/Modal'
 import type { GitSkillCandidate } from '../types'
 
 type GitPickModalProps = {
@@ -27,27 +28,26 @@ const GitPickModal = ({
   onInstall,
   t,
 }: GitPickModalProps) => {
-  if (!open) return null
-
   const selectedCount = gitCandidates.filter(
     (c) => gitCandidateSelected[c.subpath],
   ).length
 
   return (
-    <div className="modal-backdrop" onClick={onRequestClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <div className="modal-title">{t('gitPickTitle')}</div>
-          <button
-            className="modal-close"
-            type="button"
-            onClick={onRequestClose}
-            aria-label={t('close')}
-          >
-            ✕
+    <Modal
+      open={open}
+      title={t('gitPickTitle')}
+      onRequestClose={onRequestClose}
+      footer={
+        <>
+          <button className="btn btn-secondary" onClick={onCancel} disabled={loading}>
+            {t('cancel')}
           </button>
-        </div>
-        <div className="modal-body">
+          <button className="btn btn-primary" onClick={onInstall} disabled={loading}>
+            {t('installSelected')}
+          </button>
+        </>
+      }
+    >
           <p className="label">{t('gitPickBody')}</p>
           <div className="pick-toolbar">
             <label className="inline-checkbox">
@@ -88,17 +88,7 @@ const GitPickModal = ({
               </div>
             ))}
           </div>
-        </div>
-        <div className="modal-footer">
-          <button className="btn btn-secondary" onClick={onCancel} disabled={loading}>
-            {t('cancel')}
-          </button>
-          <button className="btn btn-primary" onClick={onInstall} disabled={loading}>
-            {t('installSelected')}
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   )
 }
 

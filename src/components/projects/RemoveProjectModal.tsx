@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { TriangleAlert } from "lucide-react";
 import type { TFunction } from "i18next";
+import Modal from "../shared/Modal";
 
 type RemoveProjectModalProps = {
   open: boolean;
@@ -19,32 +20,15 @@ const RemoveProjectModal = ({
   onRequestClose,
   t,
 }: RemoveProjectModalProps) => {
-  if (!open) return null;
-
   return (
-    <div className="modal-backdrop" onClick={onRequestClose}>
-      <div
-        className="modal modal-delete"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-      >
-        <div className="modal-body delete-body">
-          <div className="delete-title">
-            <TriangleAlert size={20} />
-            {t("projects.removeTitle")}
-          </div>
-          <div className="delete-desc">
-            {t("projects.removeBody", { name: projectName ?? "" })}
-          </div>
-          <div className="delete-warning">
-            <ul>
-              <li>{t("projects.removeWarning1")}</li>
-              <li>{t("projects.removeWarning2")}</li>
-            </ul>
-          </div>
-        </div>
-        <div className="modal-footer space-between">
+    <Modal
+      open={open}
+      onRequestClose={onRequestClose}
+      className="modal-delete"
+      bodyClassName="delete-body"
+      footerClassName="space-between"
+      footer={
+        <>
           <button
             className="btn btn-secondary"
             onClick={onRequestClose}
@@ -59,9 +43,23 @@ const RemoveProjectModal = ({
           >
             {t("projects.removeConfirm")}
           </button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+          <div className="delete-title">
+            <TriangleAlert size={20} />
+            {t("projects.removeTitle")}
+          </div>
+          <div className="delete-desc">
+            {t("projects.removeBody", { name: projectName ?? "" })}
+          </div>
+          <div className="delete-warning">
+            <ul>
+              <li>{t("projects.removeWarning1")}</li>
+              <li>{t("projects.removeWarning2")}</li>
+            </ul>
+          </div>
+    </Modal>
   );
 };
 

@@ -1,5 +1,6 @@
 import { memo, useState } from "react";
 import type { TFunction } from "i18next";
+import Modal from "./Modal";
 import type { ToolStatusDto } from "../skills/types";
 
 function buildInitialSelection(
@@ -93,25 +94,29 @@ const ToolConfigModalInner = ({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onRequestClose}>
-      <div
-        className="modal"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-      >
-        <div className="modal-header">
-          <div className="modal-title">{labels.title}</div>
+    <Modal
+      open
+      title={labels.title}
+      onRequestClose={onRequestClose}
+      footer={
+        <>
           <button
-            className="modal-close"
-            type="button"
+            className="btn btn-secondary"
             onClick={onRequestClose}
-            aria-label={t("close")}
+            disabled={loading}
           >
-            &#10005;
+            {t("cancel")}
           </button>
-        </div>
-        <div className="modal-body">
+          <button
+            className="btn btn-primary"
+            onClick={handleConfirm}
+            disabled={loading}
+          >
+            {labels.confirmLabel}
+          </button>
+        </>
+      }
+    >
           <p className="helper-text">{labels.description}</p>
           <label className="tool-filter-toggle">
             <input
@@ -154,25 +159,7 @@ const ToolConfigModalInner = ({
               {labels.scanToggleLabel}
             </label>
           )}
-        </div>
-        <div className="modal-footer">
-          <button
-            className="btn btn-secondary"
-            onClick={onRequestClose}
-            disabled={loading}
-          >
-            {t("cancel")}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleConfirm}
-            disabled={loading}
-          >
-            {labels.confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 };
 

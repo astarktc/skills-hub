@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import type { TFunction } from 'i18next'
+import Modal from '../../shared/Modal'
 
 type SharedDirModalProps = {
   open: boolean
@@ -20,26 +21,14 @@ const SharedDirModal = ({
   onConfirm,
   t,
 }: SharedDirModalProps) => {
-  if (!open) return null
-
   return (
-    <div className="modal-backdrop" onClick={onRequestClose}>
-      <div
-        className="modal"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-      >
-        <div className="modal-header">
-          <div className="modal-title">{t('appName')}</div>
-        </div>
-        <div className="modal-body">
-          {t('sharedDirConfirm', {
-            tool: toolLabel,
-            others: otherLabels,
-          })}
-        </div>
-        <div className="modal-footer">
+    <Modal
+      open={open}
+      title={t('appName')}
+      onRequestClose={onRequestClose}
+      showCloseButton={false}
+      footer={
+        <>
           <button
             className="btn btn-secondary"
             onClick={onRequestClose}
@@ -50,9 +39,14 @@ const SharedDirModal = ({
           <button className="btn btn-primary" onClick={onConfirm} disabled={loading}>
             {t('confirm')}
           </button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      {t('sharedDirConfirm', {
+        tool: toolLabel,
+        others: otherLabels,
+      })}
+    </Modal>
   )
 }
 

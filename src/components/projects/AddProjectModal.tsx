@@ -1,5 +1,6 @@
 import { memo, useState } from "react";
 import type { TFunction } from "i18next";
+import Modal from "../shared/Modal";
 import type { ProjectDto } from "./types";
 
 type AddProjectModalProps = {
@@ -25,8 +26,6 @@ const AddProjectModal = ({
   const [path, setPath] = useState("");
   const [addToGitignore, setAddToGitignore] = useState(false);
   const [addToExclude, setAddToExclude] = useState(false);
-
-  if (!open) return null;
 
   const normalizedPath = path.replace(/[/\\]+$/, "");
   const isDuplicate =
@@ -55,25 +54,25 @@ const AddProjectModal = ({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onRequestClose}>
-      <div
-        className="modal"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-      >
-        <div className="modal-header">
-          <div className="modal-title">{t("projects.addProjectTitle")}</div>
-          <button
-            className="modal-close"
-            type="button"
-            onClick={onRequestClose}
-            aria-label={t("close")}
-          >
-            &#10005;
+    <Modal
+      open={open}
+      title={t("projects.addProjectTitle")}
+      onRequestClose={onRequestClose}
+      footer={
+        <>
+          <button className="btn btn-secondary" onClick={onRequestClose}>
+            {t("cancel")}
           </button>
-        </div>
-        <div className="modal-body">
+          <button
+            className="btn btn-primary"
+            onClick={handleSubmit}
+            disabled={!path.trim() || isDuplicate || loading}
+          >
+            {t("projects.register")}
+          </button>
+        </>
+      }
+    >
           <div className="form-group">
             <label className="label">{t("projects.pathLabel")}</label>
             <div className="input-row">
@@ -116,21 +115,7 @@ const AddProjectModal = ({
               {t("projects.gitignorePrivate")}
             </label>
           </div>
-        </div>
-        <div className="modal-footer">
-          <button className="btn btn-secondary" onClick={onRequestClose}>
-            {t("cancel")}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleSubmit}
-            disabled={!path.trim() || isDuplicate || loading}
-          >
-            {t("projects.register")}
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 };
 

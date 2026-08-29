@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import type { TFunction } from 'i18next'
+import Modal from '../../shared/Modal'
 import type { LocalSkillCandidate } from '../types'
 
 type LocalPickModalProps = {
@@ -27,8 +28,6 @@ const LocalPickModal = ({
   onInstall,
   t,
 }: LocalPickModalProps) => {
-  if (!open) return null
-
   const selectedCount = localCandidates.filter(
     (c) => localCandidateSelected[c.subpath],
   ).length
@@ -44,20 +43,21 @@ const LocalPickModal = ({
   }
 
   return (
-    <div className="modal-backdrop" onClick={onRequestClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <div className="modal-title">{t('localPickTitle')}</div>
-          <button
-            className="modal-close"
-            type="button"
-            onClick={onRequestClose}
-            aria-label={t('close')}
-          >
-            ✕
+    <Modal
+      open={open}
+      title={t('localPickTitle')}
+      onRequestClose={onRequestClose}
+      footer={
+        <>
+          <button className="btn btn-secondary" onClick={onCancel} disabled={loading}>
+            {t('cancel')}
           </button>
-        </div>
-        <div className="modal-body">
+          <button className="btn btn-primary" onClick={onInstall} disabled={loading}>
+            {t('installSelected')}
+          </button>
+        </>
+      }
+    >
           <p className="label">{t('localPickBody')}</p>
           <div className="pick-toolbar">
             <label className="inline-checkbox">
@@ -109,17 +109,7 @@ const LocalPickModal = ({
               </div>
             ))}
           </div>
-        </div>
-        <div className="modal-footer">
-          <button className="btn btn-secondary" onClick={onCancel} disabled={loading}>
-            {t('cancel')}
-          </button>
-          <button className="btn btn-primary" onClick={onInstall} disabled={loading}>
-            {t('installSelected')}
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   )
 }
 
