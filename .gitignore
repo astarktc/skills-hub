@@ -61,3 +61,4 @@ vendor/
 tmp/
 docs/conversation-logs/
 .scratch/
+.pi-subagents/
