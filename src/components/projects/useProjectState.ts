@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-// Direct invoke import: projects subtree always runs inside Tauri context.
-import { invoke } from "@tauri-apps/api/core";
+// Backend calls go through the shared invokeTauri seam (src/lib/tauri.ts),
+// same as every world hook — one mock point for tests.
+import { invokeTauri } from "../../lib/tauri";
 import type {
   ProjectDto,
   ProjectToolDto,
@@ -107,7 +108,7 @@ export function useProjectState(): ProjectState {
     setProjectsLoading(true);
     setLoadError(null);
     try {
-      const result = await invoke<ProjectDto[]>("list_projects");
+      const result = await invokeTauri<ProjectDto[]>("list_projects");
       setProjects(result);
     } catch (err) {
       setLoadError(normalizeError(err));
@@ -118,7 +119,7 @@ export function useProjectState(): ProjectState {
 
   const loadSkills = useCallback(async () => {
     try {
-      const result = await invoke<ManagedSkill[]>("get_managed_skills");
+      const result = await invokeTauri<ManagedSkill[]>("get_managed_skills");
       setSkills(result);
     } catch {
       // Skills load failure is non-critical for projects tab
@@ -141,8 +142,8 @@ export function useProjectState(): ProjectState {
     const version = ++selectVersionRef.current;
     try {
       const [fetchedTools, fetchedAssignments] = await Promise.all([
-        invoke<ProjectToolDto[]>("list_project_tools", { projectId: id }),
-        invoke<ProjectSkillAssignmentDto[]>("list_project_skill_assignments", {
+        invokeTauri<ProjectToolDto[]>("list_project_tools", { projectId: id }),
+        invokeTauri<ProjectSkillAssignmentDto[]>("list_project_skill_assignments", {
           projectId: id,
         }),
       ]);
@@ -169,7 +170,7 @@ export function useProjectState(): ProjectState {
   // failed list surfaces to the caller.)
   const refreshAssignments = useCallback(async (projectId: string) => {
     try {
-      const updated = await invoke<ProjectSkillAssignmentDto[]>(
+      const updated = await invokeTauri<ProjectSkillAssignmentDto[]>(
         "list_project_skill_assignments",
         { projectId },
       );
@@ -181,7 +182,7 @@ export function useProjectState(): ProjectState {
 
   const registerProject = useCallback(
     async (path: string): Promise<ProjectDto> => {
-      const result = await invoke<ProjectDto>("register_project", { path });
+      const result = await invokeTauri<ProjectDto>("register_project", { path });
       await loadProjects();
       return result;
     },
@@ -190,7 +191,7 @@ export function useProjectState(): ProjectState {
 
   const removeProject = useCallback(
     async (id: string) => {
-      await invoke("remove_project", { projectId: id });
+      await invokeTauri("remove_project", { projectId: id });
       setSelectedProjectId((prev) => {
         if (prev === id) {
           setTools([]);
@@ -220,19 +221,19 @@ export function useProjectState(): ProjectState {
           (a) => a.skill_id === skillId && a.tool === tool,
         );
         if (exists) {
-          await invoke("remove_project_skill_assignment", {
+          await invokeTauri("remove_project_skill_assignment", {
             projectId: selectedProjectId,
             skillId,
             tool,
           });
         } else {
-          await invoke("add_project_skill_assignment", {
+          await invokeTauri("add_project_skill_assignment", {
             projectId: selectedProjectId,
             skillId,
             tool,
           });
         }
-        const updated = await invoke<ProjectSkillAssignmentDto[]>(
+        const updated = await invokeTauri<ProjectSkillAssignmentDto[]>(
           "list_project_skill_assignments",
           { projectId: selectedProjectId },
         );
@@ -264,11 +265,11 @@ export function useProjectState(): ProjectState {
         return next;
       });
       try {
-        const result = await invoke<BulkAssignResultDto>("bulk_assign_skill", {
+        const result = await invokeTauri<BulkAssignResultDto>("bulk_assign_skill", {
           projectId: selectedProjectId,
           skillId,
         });
-        const updated = await invoke<ProjectSkillAssignmentDto[]>(
+        const updated = await invokeTauri<ProjectSkillAssignmentDto[]>(
           "list_project_skill_assignments",
           { projectId: selectedProjectId },
         );
@@ -291,7 +292,7 @@ export function useProjectState(): ProjectState {
 
   const updateProjectPath = useCallback(
     async (projectId: string, newPath: string): Promise<ProjectDto> => {
-      const result = await invoke<ProjectDto>("update_project_path", {
+      const result = await invokeTauri<ProjectDto>("update_project_path", {
         projectId,
         path: newPath,
       });
@@ -303,7 +304,7 @@ export function useProjectState(): ProjectState {
 
   const resyncProject = useCallback(async (): Promise<ResyncSummaryDto> => {
     if (!selectedProjectId) throw new Error("No project selected");
-    const result = await invoke<ResyncSummaryDto>("resync_project", {
+    const result = await invokeTauri<ResyncSummaryDto>("resync_project", {
       projectId: selectedProjectId,
     });
     // Re-fetch assignments to reflect updated sync status
@@ -313,7 +314,7 @@ export function useProjectState(): ProjectState {
   }, [selectedProjectId, loadProjects, refreshAssignments]);
 
   const resyncAll = useCallback(async (): Promise<ResyncSummaryDto[]> => {
-    const result = await invoke<ResyncSummaryDto[]>("resync_all_projects");
+    const result = await invokeTauri<ResyncSummaryDto[]>("resync_all_projects");
     await loadProjects();
     // Re-fetch assignments for selected project if any
     if (selectedProjectId) {
@@ -323,7 +324,7 @@ export function useProjectState(): ProjectState {
   }, [selectedProjectId, loadProjects, refreshAssignments]);
 
   const loadToolStatus = useCallback(async () => {
-    const result = await invoke<ToolStatusDto>("get_project_tool_status");
+    const result = await invokeTauri<ToolStatusDto>("get_project_tool_status");
     setToolStatus(result);
   }, []);
 
@@ -331,12 +332,12 @@ export function useProjectState(): ProjectState {
     async (toolIds: string[]) => {
       if (!selectedProjectId) return;
       for (const tool of toolIds) {
-        await invoke("add_project_tool", {
+        await invokeTauri("add_project_tool", {
           projectId: selectedProjectId,
           tool,
         });
       }
-      const updated = await invoke<ProjectToolDto[]>("list_project_tools", {
+      const updated = await invokeTauri<ProjectToolDto[]>("list_project_tools", {
         projectId: selectedProjectId,
       });
       setTools(updated);
@@ -348,17 +349,17 @@ export function useProjectState(): ProjectState {
     async (toolIds: string[]) => {
       if (!selectedProjectId) return;
       for (const tool of toolIds) {
-        await invoke("remove_project_tool", {
+        await invokeTauri("remove_project_tool", {
           projectId: selectedProjectId,
           tool,
         });
       }
       // Re-fetch both tools and assignments (cascade may have removed assignments)
       const [updatedTools, updatedAssignments] = await Promise.all([
-        invoke<ProjectToolDto[]>("list_project_tools", {
+        invokeTauri<ProjectToolDto[]>("list_project_tools", {
           projectId: selectedProjectId,
         }),
-        invoke<ProjectSkillAssignmentDto[]>("list_project_skill_assignments", {
+        invokeTauri<ProjectSkillAssignmentDto[]>("list_project_skill_assignments", {
           projectId: selectedProjectId,
         }),
       ]);

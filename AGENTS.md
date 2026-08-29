@@ -10,7 +10,8 @@ npm run dev              # Vite dev server (port 5173, strict)
 npm run tauri:dev        # Tauri dev window (frontend + backend) — see live-data warning below
 npm run build            # node node_modules/typescript-7/lib/tsc.js -b && vite build
 npm run lint             # ESLint
-npm run check            # lint + build + rust:fmt:check + rust:clippy + rust:test
+npm run test             # vitest unit tests (hooks + commandError; jsdom, mocked seams)
+npm run check            # lint + test + build + rust:fmt:check + rust:clippy + rust:test
 npm run version:check    # verify the 3 version files are in sync
 npm run version:set X.Y.Z   # bump all 3 version files (never hand-edit)
 
@@ -76,6 +77,11 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   needs flow through interfaces App passes into hooks (e.g. the shared `useStatusReporter` surface, the
   sync seam) — hooks never import each other. Refresh data by re-invoking the relevant command
   (e.g. `invoke('get_managed_skills')`) after a mutation.
+- **Frontend tests are hook-level only** (vitest + `renderHook`, jsdom; colocated `src/**/*.test.ts`,
+  type-checked by `npm run build`): mock at module seams — `src/lib/tauri.ts` for backend calls,
+  `sonner` for toasts, `@tauri-apps/api/core` for `Channel`. Every hook (including `useProjectState`)
+  calls the backend only through `invokeTauri`; raw `invoke` is allowed only in components, and
+  components get no JSX tests by design.
 - **`commands/` is wiring only** (DTO conversion, error formatting); business logic goes in `core/`, which is
   independently testable. Async commands wrap sync work in `tauri::async_runtime::spawn_blocking`.
 - **Error wire contract** — commands return `Result<T, CommandError>` (`commands/error.rs`), a serde
