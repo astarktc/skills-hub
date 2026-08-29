@@ -32,7 +32,7 @@ use crate::core::skill_store::SkillStore;
 use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
 };
-use crate::core::sync_engine::{copy_dir_recursive, remove_path_any, sync_dir_hybrid};
+use crate::core::sync_engine::{copy_dir_recursive, remove_path_any};
 use crate::core::tool_adapters::{
     adapters_sharing_skills_dir, default_tool_adapters, is_tool_installed, resolve_default_path,
     ToolId, AGENTS_STANDARD_KEYS,
@@ -275,7 +275,8 @@ pub async fn set_git_cache_ttl_secs(
         .map_err(CommandError::from_anyhow)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct InstallResultDto {
     pub skill_id: String,
     pub name: String,
@@ -481,29 +482,6 @@ pub async fn install_git_selection(
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(Debug, Serialize)]
-pub struct SyncResultDto {
-    pub mode_used: String,
-    pub target_path: String,
-}
-
-#[tauri::command]
-pub async fn sync_skill_dir(
-    source_path: String,
-    target_path: String,
-) -> Result<SyncResultDto, CommandError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = sync_dir_hybrid(source_path.as_ref(), target_path.as_ref())?;
-        Ok::<_, anyhow::Error>(SyncResultDto {
-            mode_used: result.mode_used.as_str().to_string(),
-            target_path: result.target_path.to_string_lossy().to_string(),
-        })
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
 /// One skill in a batch sync request.
 #[derive(Debug, Clone, Deserialize, TS)]
 #[ts(export)]
@@ -684,7 +662,8 @@ pub async fn unsync_skill_from_tool(
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct UpdateResultDto {
     pub skill_id: String,
     pub name: String,
@@ -798,7 +777,8 @@ pub async fn set_auto_sync_enabled(
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct GlobalToolConfigDto {
     pub selected_tools: Option<Vec<String>>,
     pub scan_selected_only: bool,
@@ -991,7 +971,8 @@ pub async fn remove_skill_source(path: String) -> Result<(), CommandError> {
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct ManagedSkillDto {
     pub id: String,
     pub name: String,
@@ -1006,7 +987,8 @@ pub struct ManagedSkillDto {
     pub targets: Vec<SkillTargetDto>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct SkillTargetDto {
     pub tool: String,
     pub mode: String,
@@ -1144,7 +1126,8 @@ fn get_managed_skills_impl(store: &SkillStore) -> Result<Vec<ManagedSkillDto>, C
         .collect())
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct FeaturedSkillDto {
     pub slug: String,
     pub name: String,
@@ -1181,7 +1164,8 @@ pub async fn get_featured_skills(
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct OnlineSkillDto {
     pub name: String,
     pub installs: u64,
@@ -1215,7 +1199,8 @@ pub async fn search_skills_online(
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillFileEntry {
     pub path: String,

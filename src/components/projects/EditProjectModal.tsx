@@ -4,12 +4,7 @@ import { memo, useEffect, useState } from "react";
 // callback and not importable here. Acceptable for Tauri-only components.
 import { invoke } from "@tauri-apps/api/core";
 import type { TFunction } from "i18next";
-import type { ProjectDto } from "./types";
-
-type GitignoreStatusDto = {
-  in_gitignore: boolean;
-  in_exclude: boolean;
-};
+import type { GitignoreStatusDto, ProjectDto } from "./types";
 
 type EditProjectModalProps = {
   open: boolean;

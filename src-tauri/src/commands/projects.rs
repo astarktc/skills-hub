@@ -1,4 +1,5 @@
 use tauri::State;
+use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::core::errors::SignalError;
@@ -255,7 +256,8 @@ pub async fn list_project_skill_assignments(
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, TS)]
+#[ts(export)]
 pub struct ResyncSummaryDto {
     pub project_id: String,
     pub synced: usize,
@@ -316,13 +318,15 @@ pub async fn resync_all_projects(
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, TS)]
+#[ts(export)]
 pub struct BulkAssignResultDto {
     pub assigned: Vec<ProjectSkillAssignmentDto>,
     pub failed: Vec<BulkAssignErrorDto>,
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, TS)]
+#[ts(export)]
 pub struct BulkAssignErrorDto {
     pub tool: String,
     pub error: String,
@@ -477,7 +481,8 @@ pub async fn get_project_gitignore_status(
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, TS)]
+#[ts(export)]
 pub struct GitignoreStatusDto {
     pub in_gitignore: bool,
     pub in_exclude: bool,

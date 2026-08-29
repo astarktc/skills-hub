@@ -54,7 +54,12 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   `npm run version:set X.Y.Z` (`scripts/version.mjs`); never edit a version field by hand.
 - **New Tauri command**: define it in `src-tauri/src/commands/` (`mod.rs` or `projects.rs`) **and** register it
   in `src-tauri/src/lib.rs` under `generate_handler!`. Unregistered commands fail only at runtime.
-- **DTO changes**: `src/components/skills/types.ts` mirrors the Rust DTOs in `commands/`. Update both sides.
+- **IPC DTOs are generated, never hand-mirrored**: any struct/enum crossing `invoke` derives
+  `TS` + `#[ts(export)]` (including DTOs living in `core/`); `cargo test` regenerates `src/bindings/`
+  (committed; CI fails on drift *or* untracked bindings). Components import DTO types from the
+  per-world shims (`src/components/skills/types.ts`, `src/components/projects/types.ts`), never from
+  `src/bindings/` directly. Adding a DTO = derive + `cargo test` + re-export from the shim.
+  `Option<T>` maps to wire-accurate `T | null` (serde always emits the key) — don't add `#[ts(optional)]`.
 - **New AI tool adapter**: add the `ToolId` variant and the `default_tool_adapters()` entry in
   `core/tool_adapters/mod.rs` (plus the `project_relative_skills_dir()` arm), **and** add a row to the
   README supported-tools table. The Rust arms are compiler-enforced; the README table is not — check it

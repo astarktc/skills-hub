@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use ts_rs::TS;
 use uuid::Uuid;
 
 use super::errors::SignalError;
@@ -9,7 +10,8 @@ use super::skill_store::{ProjectRecord, SkillStore};
 use super::sync_engine;
 use super::tool_adapters;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
 pub struct ProjectDto {
     pub id: String,
     pub path: String,
@@ -23,14 +25,16 @@ pub struct ProjectDto {
     pub path_exists: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
 pub struct ProjectToolDto {
     pub id: String,
     pub project_id: String,
     pub tool: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
 pub struct ProjectSkillAssignmentDto {
     pub id: String,
     pub project_id: String,

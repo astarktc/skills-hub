@@ -975,14 +975,16 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
     })
 }
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct GitSkillCandidate {
     pub name: String,
     pub description: Option<String>,
     pub subpath: String,
 }
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct LocalSkillCandidate {
     pub name: String,
     pub description: Option<String>,

@@ -42,5 +42,8 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all
       # ts-rs regenerates src/bindings/ during cargo test; fail if committed
-      # bindings drifted from the Rust types.
-      - run: git diff --exit-code -- ../src/bindings
+      # bindings drifted from the Rust types. `git diff` alone misses brand-new
+      # (untracked) bindings, so also fail on any porcelain status.
+      - run: |
+          git diff -- ../src/bindings
+          test -z "$(git status --porcelain -- ../src/bindings)"
