@@ -1,15 +1,7 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type MutableRefObject,
-} from "react";
-import type { Update } from "@tauri-apps/plugin-updater";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
 import { useTranslation } from "react-i18next";
-import { Toaster, toast } from "sonner";
+import { Toaster } from "sonner";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import ExplorePage from "./components/skills/ExplorePage";
@@ -28,103 +20,39 @@ import SharedDirModal from "./components/skills/modals/SharedDirModal";
 import ToolConfigModal from "./components/shared/ToolConfigModal";
 import SettingsPage from "./components/skills/SettingsPage";
 import ProjectsPage from "./components/projects/ProjectsPage";
-import { describeCommandError } from "./commandError";
-import type {
-  BatchSyncOverrideDto,
-  BatchSyncReportDto,
-  BatchSyncSkillDto,
-  FeaturedSkillDto,
-  GitSkillCandidate,
-  GlobalToolConfigDto,
-  InstallResultDto,
-  LocalSkillCandidate,
-  ManagedSkill,
-  OnboardingPlan,
-  OnlineSkillDto,
-  SyncProgressDto,
-  ToolOption,
-  ToolStatusDto,
-  UpdateResultDto,
-} from "./components/skills/types";
+import { useAddSkillFlow } from "./hooks/useAddSkillFlow";
+import { useExploreState } from "./hooks/useExploreState";
+import { useSettingsState } from "./hooks/useSettingsState";
+import { useSkillLibrary } from "./hooks/useSkillLibrary";
+import { useStatusReporter } from "./hooks/useStatusReporter";
+import { useSyncOrchestration } from "./hooks/useSyncOrchestration";
+import { useUpdateChecker } from "./hooks/useUpdateChecker";
+import { invokeTauri, isTauri } from "./lib/tauri";
+import type { ManagedSkill } from "./components/skills/types";
 
-const ZOOM_PRESETS = [0.75, 1, 1.1, 1.25, 1.5, 1.75, 2];
-
+// App is the binder: it owns only i18n and view/navigation state, composes
+// the per-world hooks (each returning that world's data + actions), and wires
+// their interfaces together. State logic lives in src/hooks/, not here.
 function App() {
   const { t, i18n } = useTranslation();
   const language = i18n.resolvedLanguage ?? i18n.language ?? "en";
   const languageStorageKey = "skills-language";
-  const themeStorageKey = "skills-theme";
   const groupByRepoStorageKey = "skills-groupByRepo";
   const viewModeStorageKey = "skills-viewMode";
-  const showHiddenStorageKey = "explore-showHidden";
   const toggleLanguage = useCallback(() => {
     void i18n.changeLanguage(language === "en" ? "zh" : "en");
   }, [i18n, language]);
-  const [themePreference, setThemePreference] = useState<
-    "system" | "light" | "dark"
-  >(() => {
-    if (typeof window === "undefined") return "system";
-    const stored = window.localStorage.getItem(themeStorageKey);
-    if (stored === "light" || stored === "dark" || stored === "system")
-      return stored;
-    return "system";
-  });
-  const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
-  const [plan, setPlan] = useState<OnboardingPlan | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Record<string, boolean>>({});
-  const [variantChoice, setVariantChoice] = useState<Record<string, string>>(
-    {},
-  );
-  const [syncTargets, setSyncTargets] = useState<Record<string, boolean>>({});
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [successToastMessage, setSuccessToastMessage] = useState<string | null>(
-    null,
-  );
-  const [managedSkills, setManagedSkills] = useState<ManagedSkill[]>([]);
-  const [localPath, setLocalPath] = useState("");
-  const [localName, setLocalName] = useState("");
-  const [gitUrl, setGitUrl] = useState("");
-  const [gitName, setGitName] = useState("");
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [gitCandidates, setGitCandidates] = useState<GitSkillCandidate[]>([]);
-  const [gitCandidatesRepoUrl, setGitCandidatesRepoUrl] = useState<string>("");
-  const [showGitPickModal, setShowGitPickModal] = useState(false);
-  const [gitCandidateSelected, setGitCandidateSelected] = useState<
-    Record<string, boolean>
-  >({});
-  const [localCandidates, setLocalCandidates] = useState<LocalSkillCandidate[]>(
-    [],
-  );
-  const [localCandidatesBasePath, setLocalCandidatesBasePath] = useState("");
-  const [showLocalPickModal, setShowLocalPickModal] = useState(false);
-  const [localCandidateSelected, setLocalCandidateSelected] = useState<
-    Record<string, boolean>
-  >({});
-  const [loadingStartAt, setLoadingStartAt] = useState<number | null>(null);
-  const [toolStatus, setToolStatus] = useState<ToolStatusDto | null>(null);
-  const [showNewToolsModal, setShowNewToolsModal] = useState(false);
-  const [showToolConfigModal, setShowToolConfigModal] = useState(false);
-  const [globalSelectedTools, setGlobalSelectedTools] = useState<
-    string[] | null
-  >(null);
-  const [scanSelectedToolsOnly, setScanSelectedToolsOnly] = useState(true);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [showImportModal, setShowImportModal] = useState(false);
-  const [pendingSharedToggle, setPendingSharedToggle] = useState<{
-    skill: ManagedSkill;
-    toolId: string;
-  } | null>(null);
-  const [updateAvailableVersion, setUpdateAvailableVersion] = useState<
-    string | null
-  >(null);
-  const [updateBody, setUpdateBody] = useState<string | null>(null);
-  const [updateInstalling, setUpdateInstalling] = useState(false);
-  const [updateDone, setUpdateDone] = useState(false);
-  const updateObjRef = useRef<Update | null>(
-    null,
-  ) as MutableRefObject<Update | null>;
+
+  // View/navigation state (stays in the binder: it is what App composes for).
+  const [activeView, setActiveView] = useState<
+    | "myskills"
+    | "explore"
+    | "detail"
+    | "settings"
+    | "projects"
+    | "explore-detail"
+  >("myskills");
+  const [detailSkill, setDetailSkill] = useState<ManagedSkill | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "updated" | "added">("name");
   const [groupByRepo, setGroupByRepo] = useState(() => {
@@ -150,84 +78,70 @@ function App() {
       return "list";
     },
   );
-  const [activeView, setActiveView] = useState<
-    | "myskills"
-    | "explore"
-    | "detail"
-    | "settings"
-    | "projects"
-    | "explore-detail"
-  >("myskills");
-  const [detailSkill, setDetailSkill] = useState<ManagedSkill | null>(null);
-  const [addModalTab, setAddModalTab] = useState<"local" | "git">("git");
-  const [featuredSkills, setFeaturedSkills] = useState<FeaturedSkillDto[]>([]);
-  const [featuredLoading, setFeaturedLoading] = useState(false);
-  const [exploreFilter, setExploreFilter] = useState("");
-  const [searchResults, setSearchResults] = useState<OnlineSkillDto[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [autoSelectSkillName, setAutoSelectSkillName] = useState<string | null>(
-    null,
-  );
-  const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
-  const [zoomLevel, setZoomLevel] = useState(1.0);
-  const [hiddenSkills, setHiddenSkills] = useState<Set<string>>(new Set());
-  const [showHidden, setShowHidden] = useState(() => {
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (language !== "en" && language !== "zh") return;
     try {
-      return window.localStorage.getItem(showHiddenStorageKey) === "true";
+      window.localStorage.setItem(languageStorageKey, language);
     } catch {
-      return false;
+      // ignore storage failures
     }
+  }, [language, languageStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(groupByRepoStorageKey, String(groupByRepo));
+    } catch {
+      // ignore storage failures
+    }
+  }, [groupByRepo, groupByRepoStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(viewModeStorageKey, viewMode);
+    } catch {
+      // ignore storage failures
+    }
+  }, [viewMode, viewModeStorageKey]);
+
+  // World hooks, wired in dependency order: reporter → sync → library →
+  // settings/explore/addFlow. Hooks never import each other; every
+  // cross-world need flows through the interfaces passed here.
+  const reporter = useStatusReporter(t);
+  const updates = useUpdateChecker(t);
+  const sync = useSyncOrchestration({ t, reporter });
+  const library = useSkillLibrary({ t, reporter, sync });
+
+  const openExploreDetail = useCallback((skill: ManagedSkill) => {
+    setDetailSkill(skill);
+    setActiveView("explore-detail");
+  }, []);
+
+  const settings = useSettingsState({
+    t,
+    reporter,
+    onManagedSkillsChanged: library.loadManagedSkills,
   });
-  const [storagePath, setStoragePath] = useState<string>(t("notAvailable"));
-  const [gitCacheCleanupDays, setGitCacheCleanupDays] = useState<number>(30);
-  const [gitCacheTtlSecs, setGitCacheTtlSecs] = useState<number>(60);
-  const [githubToken, setGithubToken] = useState<string>("");
+  const explore = useExploreState({
+    t,
+    reporter,
+    onOpenExploreDetail: openExploreDetail,
+  });
+  const addFlow = useAddSkillFlow({ t, reporter, sync, library });
 
-  const isTauri =
-    typeof window !== "undefined" &&
-    Boolean(
-      (window as { __TAURI__?: unknown }).__TAURI__ ||
-      (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__,
-    );
-
-  const invokeTauri = useCallback(
-    async <T,>(command: string, args?: Record<string, unknown>) => {
-      if (!isTauri) {
-        throw new Error("Tauri API is not available");
-      }
-      const { invoke } = await import("@tauri-apps/api/core");
-      return invoke<T>(command, args);
-    },
-    [isTauri],
-  );
-  // Single narrow waist for command failures: localized copy (or null for
-  // silent cancellation) comes from describeCommandError.
-  const formatError = useCallback(
-    (err: unknown) => describeCommandError(err, t),
-    [t],
-  );
-  const showActionErrors = useCallback(
-    (errors: { title: string; message: string }[]) => {
-      // Entries with an empty message are silenced failures (e.g. cancelled).
-      const visible = errors.filter((entry) => entry.message);
-      if (visible.length === 0) return;
-      const head = visible[0];
-      const more =
-        visible.length > 1
-          ? t("errors.moreCount", { count: visible.length - 1 })
-          : "";
-      toast.error(`${head.title}\n${head.message}${more}`, { duration: 3200 });
-    },
-    [t],
-  );
-  const isSkillNameTaken = useCallback(
-    (name: string) =>
-      managedSkills.some(
-        (skill) => skill.name.toLowerCase() === name.toLowerCase(),
-      ),
-    [managedSkills],
-  );
+  const { loading, loadingStartAt, actionMessage, cancelLoading } = reporter;
+  const {
+    updateAvailableVersion,
+    updateBody,
+    updateInstalling,
+    updateDone,
+    dismissUpdate,
+    dismissUpdateForever,
+    updateNow,
+  } = updates;
 
   const formatRelative = (ms: number | null | undefined) => {
     if (!ms) return t("relative.empty");
@@ -280,404 +194,6 @@ function App() {
     }
   };
 
-  const loadPlan = useCallback(async () => {
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setError(null);
-    try {
-      const result = await invokeTauri<OnboardingPlan>("get_onboarding_plan");
-      setPlan(result);
-      const defaultSelected: Record<string, boolean> = {};
-      const defaultChoice: Record<string, string> = {};
-      result.groups.forEach((group) => {
-        defaultSelected[group.name] = true;
-        const first = group.variants[0];
-        if (first) {
-          defaultChoice[group.name] = first.path;
-        }
-      });
-      setSelected(defaultSelected);
-      setVariantChoice(defaultChoice);
-      return result;
-    } catch (err) {
-      setError(formatError(err));
-      return null;
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
-  }, [formatError, invokeTauri]);
-
-  const loadManagedSkills = useCallback(async () => {
-    try {
-      const result = await invokeTauri<ManagedSkill[]>("get_managed_skills");
-      setManagedSkills(result);
-    } catch (err) {
-      setError(formatError(err));
-    }
-  }, [formatError, invokeTauri]);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    // Fire-and-forget load on mount. Awaited inside an IIFE so the loader's
-    // setState runs in an async continuation rather than synchronously in the
-    // effect body (satisfies react-hooks/set-state-in-effect). Behavior is
-    // unchanged: loadManagedSkills only setStates after its await.
-    void (async () => {
-      await loadManagedSkills();
-    })();
-  }, [isTauri, loadManagedSkills]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (language !== "en" && language !== "zh") return;
-    try {
-      window.localStorage.setItem(languageStorageKey, language);
-    } catch {
-      // ignore storage failures
-    }
-  }, [language, languageStorageKey]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(groupByRepoStorageKey, String(groupByRepo));
-    } catch {
-      // ignore storage failures
-    }
-  }, [groupByRepo, groupByRepoStorageKey]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(viewModeStorageKey, viewMode);
-    } catch {
-      // ignore storage failures
-    }
-  }, [viewMode, viewModeStorageKey]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(showHiddenStorageKey, String(showHidden));
-    } catch {
-      // ignore
-    }
-  }, [showHidden, showHiddenStorageKey]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const update = () => {
-      setSystemTheme(media.matches ? "dark" : "light");
-    };
-    update();
-    if (media.addEventListener) {
-      media.addEventListener("change", update);
-    } else {
-      media.addListener(update);
-    }
-    return () => {
-      if (media.removeEventListener) {
-        media.removeEventListener("change", update);
-      } else {
-        media.removeListener(update);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const resolvedTheme =
-      themePreference === "system" ? systemTheme : themePreference;
-    document.documentElement.dataset.theme = resolvedTheme;
-    document.documentElement.style.colorScheme = resolvedTheme;
-    try {
-      window.localStorage.setItem(themeStorageKey, themePreference);
-    } catch {
-      // ignore storage failures
-    }
-  }, [systemTheme, themePreference, themeStorageKey]);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    invokeTauri<string>("get_central_repo_path")
-      .then((path) => setStoragePath(path))
-      .catch((err) => {
-        setError(formatError(err));
-      });
-  }, [formatError, invokeTauri, isTauri]);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    invokeTauri<number>("get_git_cache_cleanup_days")
-      .then((days) => setGitCacheCleanupDays(days))
-      .catch((err) => {
-        setError(formatError(err));
-      });
-  }, [formatError, invokeTauri, isTauri]);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    invokeTauri<number>("get_git_cache_ttl_secs")
-      .then((secs) => setGitCacheTtlSecs(secs))
-      .catch((err) => {
-        setError(formatError(err));
-      });
-  }, [formatError, invokeTauri, isTauri]);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    invokeTauri<string>("get_github_token")
-      .then((token) => setGithubToken(token))
-      .catch(() => {});
-  }, [isTauri, invokeTauri]);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    invokeTauri<boolean>("get_auto_sync_enabled")
-      .then(setAutoSyncEnabled)
-      .catch(() => {});
-  }, [isTauri, invokeTauri]);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    invokeTauri<number>("get_ui_zoom_level")
-      .then((level) => setZoomLevel(level))
-      .catch(() => {});
-  }, [isTauri, invokeTauri]);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    const handler = (e: KeyboardEvent) => {
-      const zoomIn =
-        (e.ctrlKey || e.metaKey) && (e.key === "=" || e.key === "+");
-      const zoomOut = (e.ctrlKey || e.metaKey) && e.key === "-";
-      if (!zoomIn && !zoomOut) return;
-      e.preventDefault();
-      setZoomLevel((prev) => {
-        const idx = ZOOM_PRESETS.indexOf(prev);
-        const curIdx =
-          idx >= 0 ? idx : ZOOM_PRESETS.findIndex((p) => p >= prev);
-        const nextIdx = zoomIn
-          ? Math.min((curIdx >= 0 ? curIdx : 0) + 1, ZOOM_PRESETS.length - 1)
-          : Math.max((curIdx >= 0 ? curIdx : ZOOM_PRESETS.length - 1) - 1, 0);
-        const next = ZOOM_PRESETS[nextIdx];
-        import("@tauri-apps/api/webview").then(({ getCurrentWebview }) => {
-          getCurrentWebview()
-            .setZoom(next)
-            .catch(() => {});
-        });
-        invokeTauri("set_ui_zoom_level", { zoomLevel: next }).catch(() => {});
-        return next;
-      });
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [isTauri, invokeTauri]);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    // Fire-and-forget load on mount (see loadManagedSkills effect). loadPlan's
-    // intentional eager loading-overlay setState is preserved exactly.
-    void (async () => {
-      await loadPlan();
-    })();
-  }, [isTauri, loadPlan]);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    const ignoredVersion = localStorage.getItem(
-      "skills-ignored-update-version",
-    );
-    import("@tauri-apps/plugin-updater")
-      .then(({ check }) => check())
-      .then(async (update) => {
-        if (update && update.version !== ignoredVersion) {
-          updateObjRef.current = update;
-          setUpdateAvailableVersion(update.version);
-          // Fetch full release notes from GitHub API
-          try {
-            const res = await fetch(
-              `https://api.github.com/repos/astarktc/skills-hub/releases/tags/v${update.version}`,
-            );
-            if (res.ok) {
-              const data = await res.json();
-              setUpdateBody(data.body ?? update.body ?? null);
-            } else {
-              setUpdateBody(update.body ?? null);
-            }
-          } catch {
-            setUpdateBody(update.body ?? null);
-          }
-        }
-      })
-      .catch(() => {});
-  }, [isTauri]);
-
-  const handleDismissUpdate = useCallback(() => {
-    setUpdateAvailableVersion(null);
-    setUpdateBody(null);
-  }, []);
-
-  const handleDismissUpdateForever = useCallback(() => {
-    if (updateAvailableVersion) {
-      localStorage.setItem(
-        "skills-ignored-update-version",
-        updateAvailableVersion,
-      );
-    }
-    setUpdateAvailableVersion(null);
-    setUpdateBody(null);
-  }, [updateAvailableVersion]);
-
-  const handleUpdateNow = useCallback(async () => {
-    const update = updateObjRef.current;
-    if (!update) return;
-    setUpdateInstalling(true);
-    try {
-      await update.downloadAndInstall();
-      setUpdateInstalling(false);
-      setUpdateDone(true);
-    } catch (err) {
-      setUpdateInstalling(false);
-      const msg = describeCommandError(err, t);
-      if (msg) toast.error(msg, { duration: 3200 });
-    }
-  }, [t]);
-
-  useEffect(() => {
-    if (!successToastMessage) return;
-    toast.success(successToastMessage, { duration: 1800 });
-    // Clear the one-shot trigger in a microtask so the reset is not a
-    // synchronous setState in the effect body (satisfies
-    // react-hooks/set-state-in-effect). The flag is internal and only consumed
-    // by this effect, so deferring it one microtask is behavior-preserving.
-    void Promise.resolve().then(() => setSuccessToastMessage(null));
-  }, [successToastMessage]);
-
-  useEffect(() => {
-    if (!error) return;
-    toast.error(error, { duration: 2600 });
-    // Reset the one-shot error/action triggers in a microtask (see the success
-    // toast effect above) to keep the setState out of the synchronous effect
-    // body. Behavior-preserving: these flags are only consumed here.
-    void Promise.resolve().then(() => {
-      setError(null);
-      setActionMessage(null);
-    });
-  }, [error]);
-
-  const toolInfos = useMemo(() => toolStatus?.tools ?? [], [toolStatus]);
-
-  const tools: ToolOption[] = useMemo(() => {
-    return toolInfos.map((info) => ({
-      id: info.key,
-      // Prefer i18n label if present; fallback to backend label.
-      label: t(`tools.${info.key}`, { defaultValue: info.label }),
-    }));
-  }, [t, toolInfos]);
-
-  const toolLabelById = useMemo(() => {
-    const out: Record<string, string> = {};
-    for (const tool of tools) out[tool.id] = tool.label;
-    return out;
-  }, [tools]);
-
-  const sharedToolIdsByToolId = useMemo(() => {
-    // toolId -> all toolIds sharing the same skills dir. The backend owns
-    // the grouping (ToolInfoDto.shared_with); this map only feeds the
-    // shared-dir confirmation UX.
-    const out: Record<string, string[]> = {};
-    for (const info of toolInfos) {
-      if (info.shared_with.length > 1) out[info.key] = info.shared_with;
-    }
-    return out;
-  }, [toolInfos]);
-
-  // The one sync fan-out seam: the backend owns the choreography
-  // (installedness filtering, shared-dir dedupe, overwrite policy, DB record
-  // fan-out) and streams per-pair progress back over a channel. Nothing else
-  // may loop a per-pair sync command — sync_skill_to_tool no longer exists.
-  const syncSkillsToTools = useCallback(
-    async (
-      skills: BatchSyncSkillDto[],
-      toolIds: string[],
-      policy?: {
-        overwrite?: boolean;
-        overwriteIfSameContent?: boolean;
-        overrides?: BatchSyncOverrideDto[];
-      },
-    ): Promise<BatchSyncReportDto> => {
-      const { Channel } = await import("@tauri-apps/api/core");
-      const onProgress = new Channel<SyncProgressDto>();
-      onProgress.onmessage = (progress) => {
-        setActionMessage(
-          t("actions.syncStep", {
-            index: progress.index,
-            total: progress.total,
-            name: progress.skill_name,
-            tool: toolLabelById[progress.tool] ?? progress.tool,
-          }),
-        );
-      };
-      return invokeTauri<BatchSyncReportDto>("sync_skills_to_tools", {
-        skills,
-        tools: toolIds,
-        policy: {
-          overwrite: policy?.overwrite ?? false,
-          overwrite_if_same_content: policy?.overwriteIfSameContent ?? false,
-          overrides: policy?.overrides ?? [],
-        },
-        onProgress,
-      });
-    },
-    [invokeTauri, t, toolLabelById],
-  );
-
-  // Failed targets as showActionErrors entries. Skips (tool absent, dir
-  // unwritable) stay silent by default — bulk flows ignore them — but flows
-  // that target user-selected tools surface not-writable skips.
-  const syncFailureEntries = useCallback(
-    (
-      report: BatchSyncReportDto,
-      opts?: { includeNotWritableSkips?: boolean },
-    ) => {
-      const entries: { title: string; message: string }[] = [];
-      for (const result of report.results) {
-        const status = result.status;
-        if (status.status === "synced") continue;
-        const surface =
-          status.status === "failed" ||
-          ((opts?.includeNotWritableSkips ?? false) &&
-            status.error.code === "TOOL_NOT_WRITABLE");
-        if (!surface) continue;
-        entries.push({
-          title: t("errors.syncFailedTitle", {
-            name: result.skill_name,
-            tool: toolLabelById[result.tool] ?? result.tool,
-          }),
-          message: formatError(status.error) ?? "",
-        });
-      }
-      return entries;
-    },
-    [formatError, t, toolLabelById],
-  );
-
-  const installedToolIds = useMemo(
-    () => toolStatus?.installed ?? [],
-    [toolStatus],
-  );
-  const isInstalled = useCallback(
-    (id: string) => installedToolIds.includes(id),
-    [installedToolIds],
-  );
-  const installedTools = useMemo(
-    () => tools.filter((tool) => installedToolIds.includes(tool.id)),
-    [tools, installedToolIds],
-  );
-
   const visibleSkills = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     const wildcardPattern = query.includes("*")
@@ -690,7 +206,7 @@ function App() {
       : null;
     const matchesQuery = (value: string) =>
       wildcardPattern ? wildcardPattern.test(value) : value.includes(query);
-    const filtered = managedSkills.filter((skill) => {
+    const filtered = library.managedSkills.filter((skill) => {
       if (!query) return true;
       return (
         matchesQuery(skill.name.toLowerCase()) ||
@@ -709,238 +225,17 @@ function App() {
       return (b.updated_at ?? 0) - (a.updated_at ?? 0);
     });
     return sorted;
-  }, [managedSkills, searchQuery, sortBy]);
-
-  const handlePickStoragePath = useCallback(async () => {
-    try {
-      if (!isTauri) {
-        throw new Error(t("errors.notTauri"));
-      }
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: t("selectStoragePath"),
-      });
-      if (!selected || Array.isArray(selected)) return;
-      const newPath = await invokeTauri<string>("set_central_repo_path", {
-        path: selected,
-      });
-      setStoragePath(newPath);
-      await loadManagedSkills();
-    } catch (err) {
-      setError(formatError(err));
-    }
-  }, [formatError, invokeTauri, isTauri, loadManagedSkills, t]);
-  const handleGitCacheCleanupDaysChange = useCallback(
-    async (nextDays: number) => {
-      const normalized = Math.max(0, Math.min(nextDays, 3650));
-      setGitCacheCleanupDays(normalized);
-      if (!isTauri) return;
-      try {
-        const updated = await invokeTauri<number>(
-          "set_git_cache_cleanup_days",
-          {
-            days: normalized,
-          },
-        );
-        setGitCacheCleanupDays(updated);
-      } catch (err) {
-        setError(formatError(err));
-      }
-    },
-    [formatError, invokeTauri, isTauri],
-  );
-  const handleGitCacheTtlSecsChange = useCallback(
-    async (nextSecs: number) => {
-      const normalized = Math.max(0, Math.min(nextSecs, 3600));
-      setGitCacheTtlSecs(normalized);
-      if (!isTauri) return;
-      try {
-        const updated = await invokeTauri<number>("set_git_cache_ttl_secs", {
-          secs: normalized,
-        });
-        setGitCacheTtlSecs(updated);
-      } catch (err) {
-        setError(formatError(err));
-      }
-    },
-    [formatError, invokeTauri, isTauri],
-  );
-  const handleGithubTokenChange = useCallback(
-    async (nextToken: string) => {
-      setGithubToken(nextToken);
-      if (!isTauri) return;
-      try {
-        await invokeTauri("set_github_token", { token: nextToken });
-      } catch (err) {
-        setError(formatError(err));
-      }
-    },
-    [formatError, invokeTauri, isTauri],
-  );
-  const handleClearGitCacheNow = useCallback(async () => {
-    if (!isTauri) {
-      setError(t("errors.notTauri"));
-      return;
-    }
-    try {
-      const removed = await invokeTauri<number>("clear_git_cache_now");
-      setSuccessToastMessage(t("status.gitCacheCleared", { count: removed }));
-    } catch (err) {
-      setError(formatError(err));
-    }
-  }, [formatError, invokeTauri, isTauri, t]);
-  const handleAutoSyncToggle = useCallback(
-    async (enabled: boolean) => {
-      try {
-        await invokeTauri("set_auto_sync_enabled", { enabled });
-        setAutoSyncEnabled(enabled);
-      } catch (err) {
-        {
-          const msg = formatError(err);
-          if (msg) toast.error(msg);
-        }
-      }
-    },
-    [formatError, invokeTauri],
-  );
-
-  const handleUnsyncAll = useCallback(async () => {
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    try {
-      const count = await invokeTauri<number>("unsync_all_skills");
-      setSuccessToastMessage(t("unsyncAllComplete", { count }));
-      await loadManagedSkills();
-    } catch (err) {
-      setError(formatError(err));
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
-  }, [formatError, invokeTauri, loadManagedSkills, t]);
-
-  const handleUnsyncSkill = useCallback(
-    async (skillId: string) => {
-      try {
-        await invokeTauri("unsync_skill", { skillId });
-        await loadManagedSkills();
-      } catch (err) {
-        {
-          const msg = formatError(err);
-          if (msg) toast.error(msg);
-        }
-      }
-    },
-    [formatError, invokeTauri, loadManagedSkills],
-  );
-
-  const handleSyncSkillToAllTools = useCallback(
-    async (skill: ManagedSkill) => {
-      if (installedToolIds.length === 0) return;
-
-      setLoading(true);
-      setLoadingStartAt(Date.now());
-      setError(null);
-      try {
-        const report = await syncSkillsToTools(
-          [
-            {
-              skill_id: skill.id,
-              name: skill.name,
-              source_path: skill.central_path,
-            },
-          ],
-          installedToolIds,
-        );
-        setActionMessage(null);
-        showActionErrors(syncFailureEntries(report));
-        toast.success(t("status.syncCompleted"));
-        await loadManagedSkills();
-      } finally {
-        setLoading(false);
-        setLoadingStartAt(null);
-      }
-    },
-    [
-      installedToolIds,
-      loadManagedSkills,
-      showActionErrors,
-      syncFailureEntries,
-      syncSkillsToTools,
-      t,
-    ],
-  );
-
-  const handlePickLocalPath = useCallback(async () => {
-    try {
-      if (!isTauri) {
-        throw new Error(t("errors.notTauri"));
-      }
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: t("selectLocalFolder"),
-      });
-      if (!selected || Array.isArray(selected)) return;
-      setLocalPath(selected);
-    } catch (err) {
-      setError(formatError(err));
-    }
-  }, [formatError, isTauri, t]);
-  const pendingDeleteSkill = useMemo(
-    () => managedSkills.find((skill) => skill.id === pendingDeleteId) ?? null,
-    [managedSkills, pendingDeleteId],
-  );
-  const relevantNewlyInstalled = useMemo(() => {
-    if (!toolStatus) return [] as string[];
-    // "Only scan selected tools": ignore newly detected tools that are not
-    // part of the saved global tool selection.
-    if (scanSelectedToolsOnly && globalSelectedTools) {
-      return toolStatus.newly_installed.filter((id) =>
-        globalSelectedTools.includes(id),
-      );
-    }
-    return toolStatus.newly_installed;
-  }, [toolStatus, scanSelectedToolsOnly, globalSelectedTools]);
-
-  const newlyInstalledToolsText = useMemo(() => {
-    if (relevantNewlyInstalled.length === 0) return "";
-    return relevantNewlyInstalled
-      .map((id) => tools.find((t) => t.id === id)?.label ?? id)
-      .join("、");
-  }, [relevantNewlyInstalled, tools]);
+  }, [library.managedSkills, searchQuery, sortBy]);
 
   const handleOpenSettings = useCallback(() => {
     setActiveView("settings");
   }, []);
 
-  const loadFeaturedSkills = useCallback(async () => {
-    if (featuredSkills.length > 0) return;
-    setFeaturedLoading(true);
-    try {
-      const result = await invokeTauri<FeaturedSkillDto[]>(
-        "get_featured_skills",
-      );
-      setFeaturedSkills(result);
-    } catch {
-      // silent — explore tab will show empty state
-    } finally {
-      setFeaturedLoading(false);
-    }
-  }, [featuredSkills.length, invokeTauri]);
+  const handleCloseSettings = useCallback(() => {
+    setActiveView("myskills");
+  }, []);
 
-  const loadHiddenSkills = useCallback(async () => {
-    try {
-      const urls = await invokeTauri<string[]>("get_hidden_explore_skills");
-      setHiddenSkills(new Set(urls));
-    } catch {
-      // silent
-    }
-  }, [invokeTauri]);
-
+  const { loadFeaturedSkills, loadHiddenSkills } = explore;
   const handleViewChange = useCallback(
     (view: "myskills" | "explore" | "projects") => {
       setActiveView(view);
@@ -955,40 +250,6 @@ function App() {
     [loadFeaturedSkills, loadHiddenSkills],
   );
 
-  const handleHideSkill = useCallback(
-    async (sourceUrl: string) => {
-      try {
-        await invokeTauri("hide_explore_skill", { sourceUrl });
-        setHiddenSkills((prev) => new Set([...prev, sourceUrl]));
-      } catch (err) {
-        {
-          const msg = formatError(err);
-          if (msg) toast.error(msg);
-        }
-      }
-    },
-    [formatError, invokeTauri],
-  );
-
-  const handleUnhideSkill = useCallback(
-    async (sourceUrl: string) => {
-      try {
-        await invokeTauri("unhide_explore_skill", { sourceUrl });
-        setHiddenSkills((prev) => {
-          const next = new Set(prev);
-          next.delete(sourceUrl);
-          return next;
-        });
-      } catch (err) {
-        {
-          const msg = formatError(err);
-          if (msg) toast.error(msg);
-        }
-      }
-    },
-    [formatError, invokeTauri],
-  );
-
   const handleOpenDetail = useCallback((skill: ManagedSkill) => {
     setDetailSkill(skill);
     setActiveView("detail");
@@ -999,187 +260,36 @@ function App() {
     setActiveView("myskills");
   }, []);
 
-  const handleOpenExploreDetail = useCallback(
-    async (sourceUrl: string, skillName: string, summary?: string) => {
-      setLoading(true);
-      setLoadingStartAt(Date.now());
-      try {
-        const cachePath = await invokeTauri<string>("clone_explore_skill", {
-          sourceUrl,
-          skillName,
-        });
-        const exploreManagedSkill: ManagedSkill = {
-          id: "",
-          name: skillName,
-          description: summary ?? null,
-          source_type: "github",
-          source_ref: sourceUrl,
-          central_path: cachePath,
-          created_at: 0,
-          updated_at: Date.now(),
-          last_sync_at: null,
-          status: "",
-          targets: [],
-        };
-        setDetailSkill(exploreManagedSkill);
-        setActiveView("explore-detail");
-      } catch (err) {
-        const msg = formatError(err);
-        if (msg) toast.error(msg, { duration: 3200 });
-      } finally {
-        setLoading(false);
-        setLoadingStartAt(null);
-      }
-    },
-    [invokeTauri, formatError],
-  );
-
   const handleBackToExplore = useCallback(() => {
     setDetailSkill(null);
     setActiveView("explore");
   }, []);
 
-  const handleExploreFilterChange = useCallback(
-    (value: string) => {
-      setExploreFilter(value);
-      if (searchTimerRef.current) {
-        clearTimeout(searchTimerRef.current);
-        searchTimerRef.current = null;
-      }
-      if (value.trim().length < 2) {
-        setSearchResults([]);
-        setSearchLoading(false);
-        return;
-      }
-      setSearchLoading(true);
-      searchTimerRef.current = setTimeout(async () => {
-        try {
-          const results = await invokeTauri<OnlineSkillDto[]>(
-            "search_skills_online",
-            { query: value.trim(), limit: 50 },
-          );
-          setSearchResults(results);
-        } catch {
-          toast.error(t("searchError"));
-          setSearchResults([]);
-        } finally {
-          setSearchLoading(false);
-        }
-      }, 500);
-    },
-    [invokeTauri, t],
-  );
+  const { handleExploreInstall } = addFlow;
+  const handleExploreInstallFromDetail = useCallback(() => {
+    if (!detailSkill?.source_ref) return;
+    const sourceUrl = detailSkill.source_ref;
+    handleExploreInstall(sourceUrl);
+    setDetailSkill(null);
+    setActiveView("explore");
+  }, [detailSkill, handleExploreInstall]);
 
-  const handleOpenAdd = useCallback(() => {
-    setShowAddModal(true);
-  }, []);
-
-  const handleCancelLoading = useCallback(() => {
-    void invokeTauri("cancel_current_operation").catch(() => {});
-    setLoading(false);
-    setLoadingStartAt(null);
-    setActionMessage(null);
-  }, [invokeTauri]);
-
-  const handleCloseAdd = useCallback(() => {
-    if (!loading) setShowAddModal(false);
-  }, [loading]);
-
-  const handleCloseImport = useCallback(() => {
-    if (!loading) setShowImportModal(false);
-  }, [loading]);
-
-  const handleCloseSettings = useCallback(() => {
-    setActiveView("myskills");
-  }, []);
-
-  const handleThemeChange = useCallback(
-    (nextTheme: "system" | "light" | "dark") => {
-      setThemePreference(nextTheme);
-    },
-    [],
-  );
-
-  const handleZoomLevelChange = useCallback(
-    async (nextLevel: number) => {
-      setZoomLevel(nextLevel);
-      if (!isTauri) return;
-      try {
-        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
-        await getCurrentWebview().setZoom(nextLevel);
-        await invokeTauri("set_ui_zoom_level", { zoomLevel: nextLevel });
-      } catch {
-        /* ignore -- zoom is best-effort */
-      }
-    },
-    [isTauri, invokeTauri],
-  );
-
-  const handleCloseNewTools = useCallback(() => {
-    if (!loading) setShowNewToolsModal(false);
-  }, [loading]);
-
-  const handleOpenToolConfig = useCallback(() => {
-    setShowToolConfigModal(true);
-  }, []);
-
-  const handleCloseToolConfig = useCallback(() => {
-    if (!loading) setShowToolConfigModal(false);
-  }, [loading]);
-
-  const handleToolConfigConfirm = useCallback(
-    async (selected: string[], scanOnly = false) => {
-      try {
-        await invokeTauri("set_global_tool_config", {
-          selectedTools: selected,
-          scanSelectedOnly: scanOnly,
-        });
-        setGlobalSelectedTools(selected);
-        setScanSelectedToolsOnly(scanOnly);
-        // Deploy targets follow the saved selection exactly.
-        setSyncTargets(() => {
-          const next: Record<string, boolean> = {};
-          for (const info of toolInfos) {
-            next[info.key] = selected.includes(info.key);
-          }
-          return next;
-        });
-        setShowToolConfigModal(false);
-        toast.success(t("status.toolConfigSaved"));
-      } catch (err) {
-        setError(formatError(err));
-      }
-    },
-    [formatError, invokeTauri, t, toolInfos],
-  );
-
-  const handleCloseDelete = useCallback(() => {
-    if (!loading) setPendingDeleteId(null);
-  }, [loading]);
-
-  const handleCloseGitPick = useCallback(() => {
-    if (!loading) setShowGitPickModal(false);
-  }, [loading]);
-
-  const handleCancelGitPick = useCallback(() => {
-    if (loading) return;
-    setShowGitPickModal(false);
-    setGitCandidates([]);
-    setGitCandidateSelected({});
-    setGitCandidatesRepoUrl("");
-  }, [loading]);
-
-  const handleCloseLocalPick = useCallback(() => {
-    if (!loading) setShowLocalPickModal(false);
-  }, [loading]);
-
-  const handleCancelLocalPick = useCallback(() => {
-    if (loading) return;
-    setShowLocalPickModal(false);
-    setLocalCandidates([]);
-    setLocalCandidateSelected({});
-    setLocalCandidatesBasePath("");
-  }, [loading]);
+  // "Sync all to the new tools" spans two worlds — enable the targets (sync)
+  // and push every managed skill (library) — so the binder composes it.
+  const { relevantNewlyInstalled, enableTargetsFor, setShowNewToolsModal } =
+    sync;
+  const { syncAllManagedToTools } = library;
+  const handleSyncAllNewTools = useCallback(() => {
+    if (relevantNewlyInstalled.length === 0) return;
+    enableTargetsFor(relevantNewlyInstalled);
+    setShowNewToolsModal(false);
+    void syncAllManagedToTools(relevantNewlyInstalled);
+  }, [
+    enableTargetsFor,
+    relevantNewlyInstalled,
+    setShowNewToolsModal,
+    syncAllManagedToTools,
+  ]);
 
   const handleSortChange = useCallback(
     (value: "name" | "updated" | "added") => {
@@ -1192,1080 +302,6 @@ function App() {
     setSearchQuery(value);
   }, []);
 
-  const handleSyncTargetChange = useCallback(
-    (toolId: string, checked: boolean) => {
-      const shared = sharedToolIdsByToolId[toolId] ?? [toolId];
-      if (shared.length > 1) {
-        const others = shared.filter((id) => id !== toolId);
-        const otherLabels = others
-          .map((id) => toolLabelById[id] ?? id)
-          .join(", ");
-        const ok = window.confirm(
-          t("sharedDirConfirm", {
-            tool: toolLabelById[toolId] ?? toolId,
-            others: otherLabels,
-          }),
-        );
-        if (!ok) return;
-      }
-      setSyncTargets((prev) => {
-        const next = { ...prev };
-        for (const id of shared) next[id] = checked;
-        return next;
-      });
-    },
-    [sharedToolIdsByToolId, t, toolLabelById],
-  );
-
-  const handleDeletePrompt = useCallback((skillId: string) => {
-    setPendingDeleteId(skillId);
-  }, []);
-
-  const handleToggleAllGitCandidates = useCallback(
-    (checked: boolean) => {
-      setGitCandidateSelected(
-        Object.fromEntries(gitCandidates.map((c) => [c.subpath, checked])),
-      );
-    },
-    [gitCandidates],
-  );
-
-  const handleToggleAllLocalCandidates = useCallback(
-    (checked: boolean) => {
-      setLocalCandidateSelected(
-        Object.fromEntries(
-          localCandidates.map((c) => [c.subpath, c.valid && checked]),
-        ),
-      );
-    },
-    [localCandidates],
-  );
-
-  const handleToggleGitCandidate = useCallback(
-    (subpath: string, checked: boolean) => {
-      setGitCandidateSelected((prev) => ({
-        ...prev,
-        [subpath]: checked,
-      }));
-    },
-    [],
-  );
-
-  const handleToggleLocalCandidate = useCallback(
-    (subpath: string, checked: boolean) => {
-      setLocalCandidateSelected((prev) => ({
-        ...prev,
-        [subpath]: checked,
-      }));
-    },
-    [],
-  );
-
-  const handleToggleGroup = useCallback(
-    (groupName: string, checked: boolean) => {
-      setSelected((prev) => ({
-        ...prev,
-        [groupName]: checked,
-      }));
-    },
-    [],
-  );
-
-  const handleSelectVariant = useCallback((groupName: string, path: string) => {
-    setVariantChoice((prev) => ({
-      ...prev,
-      [groupName]: path,
-    }));
-  }, []);
-
-  const handleRefresh = useCallback(async () => {
-    if (managedSkills.length === 0) return;
-
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setError(null);
-
-    try {
-      const collectedErrors: { title: string; message: string }[] = [];
-
-      for (let i = 0; i < managedSkills.length; i++) {
-        const skill = managedSkills[i];
-        setActionMessage(
-          t("actions.refreshStep", {
-            index: i + 1,
-            total: managedSkills.length,
-            name: skill.name,
-          }),
-        );
-        try {
-          await invokeTauri<UpdateResultDto>("update_managed_skill", {
-            skillId: skill.id,
-          });
-        } catch (err) {
-          const raw = formatError(err) ?? "";
-          collectedErrors.push({
-            title: t("errors.updateFailedTitle", { name: skill.name }),
-            message: raw,
-          });
-        }
-      }
-
-      if (autoSyncEnabled) {
-        const freshSkills =
-          await invokeTauri<ManagedSkill[]>("get_managed_skills");
-        if (installedToolIds.length > 0 && freshSkills.length > 0) {
-          const report = await syncSkillsToTools(
-            freshSkills.map((skill) => ({
-              skill_id: skill.id,
-              name: skill.name,
-              source_path: skill.central_path,
-            })),
-            installedToolIds,
-          );
-          collectedErrors.push(...syncFailureEntries(report));
-        }
-      }
-
-      setActionMessage(t("status.refreshCompleted"));
-      setSuccessToastMessage(t("status.refreshCompleted"));
-      setActionMessage(null);
-      await loadManagedSkills();
-      if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
-  }, [
-    autoSyncEnabled,
-    formatError,
-    installedToolIds,
-    invokeTauri,
-    loadManagedSkills,
-    managedSkills,
-    showActionErrors,
-    syncFailureEntries,
-    syncSkillsToTools,
-    t,
-  ]);
-
-  const handleReviewImport = useCallback(async () => {
-    if (plan) {
-      setShowImportModal(true);
-      return;
-    }
-    const result = await loadPlan();
-    if (result) {
-      setShowImportModal(true);
-    }
-  }, [loadPlan, plan]);
-
-  useEffect(() => {
-    const load = async () => {
-      if (!isTauri) return;
-      // Load the global tool config first so the new-tools popup and sync
-      // target defaults respect the saved selection.
-      let selectedTools: string[] | null = null;
-      let scanSelectedOnly = true;
-      try {
-        const config = await invokeTauri<GlobalToolConfigDto>(
-          "get_global_tool_config",
-        );
-        selectedTools = config.selected_tools;
-        scanSelectedOnly = config.scan_selected_only;
-        setGlobalSelectedTools(selectedTools);
-        setScanSelectedToolsOnly(scanSelectedOnly);
-      } catch (err) {
-        // Non-fatal; fall back to defaults.
-        console.warn(err);
-      }
-      try {
-        const status = await invokeTauri<ToolStatusDto>("get_tool_status");
-        setToolStatus(status);
-
-        // Default sync targets: saved global selection if configured,
-        // otherwise installed tools (if user hasn't toggled yet).
-        setSyncTargets((prev) => {
-          if (Object.keys(prev).length > 0) return prev;
-          const next: Record<string, boolean> = {};
-          for (const t of status.tools) {
-            next[t.key] = selectedTools
-              ? selectedTools.includes(t.key)
-              : status.installed.includes(t.key);
-          }
-          return next;
-        });
-
-        const relevantNew =
-          scanSelectedOnly && selectedTools
-            ? status.newly_installed.filter((key) =>
-                selectedTools.includes(key),
-              )
-            : status.newly_installed;
-        if (relevantNew.length > 0) {
-          setShowNewToolsModal(true);
-        }
-      } catch (err) {
-        // Non-fatal; app can still work without detection.
-        console.warn(err);
-      }
-    };
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTauri]);
-
-  const toggleAll = useCallback(
-    (checked: boolean) => {
-      if (!plan) return;
-      const next: Record<string, boolean> = {};
-      plan.groups.forEach((group) => {
-        next[group.name] = checked;
-      });
-      setSelected(next);
-    },
-    [plan],
-  );
-
-  const handleImport = async () => {
-    if (!plan) return;
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setActionMessage(null);
-    setError(null);
-    try {
-      const collectedErrors: { title: string; message: string }[] = [];
-      for (const group of plan.groups) {
-        if (!selected[group.name]) continue;
-        const chosenPath = variantChoice[group.name] ?? group.variants[0]?.path;
-        if (!chosenPath) continue;
-        const chosenVariantTool =
-          group.variants.find((v) => v.path === chosenPath)?.tool ?? null;
-
-        setActionMessage(t("actions.importExisting", { name: group.name }));
-        const installResult = await invokeTauri<{
-          skill_id: string;
-          central_path: string;
-        }>("import_existing_skill", {
-          sourcePath: chosenPath,
-          name: group.name,
-        });
-
-        if (autoSyncEnabled) {
-          const selectedInstalledIds = tools
-            .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
-            .map((t) => t.id);
-          // The chosen variant's own tool (and its shared-dir group, expanded
-          // backend-side) may be overwritten — that copy is the import source.
-          const report = await syncSkillsToTools(
-            [
-              {
-                skill_id: installResult.skill_id,
-                name: group.name,
-                source_path: installResult.central_path,
-              },
-            ],
-            selectedInstalledIds,
-            {
-              overwriteIfSameContent: true,
-              overrides: chosenVariantTool
-                ? [
-                    {
-                      skill_id: installResult.skill_id,
-                      tool: chosenVariantTool,
-                      overwrite: true,
-                    },
-                  ]
-                : [],
-            },
-          );
-          for (const result of report.results) {
-            const status = result.status;
-            if (status.status === "synced") continue;
-            const toolLabel = toolLabelById[result.tool] ?? result.tool;
-            if (status.error.code === "TARGET_EXISTS") {
-              collectedErrors.push({
-                title: t("errors.syncFailedTitle", {
-                  name: group.name,
-                  tool: toolLabel,
-                }),
-                message: t("errors.syncTargetExistsMessage", {
-                  path: status.error.path,
-                }),
-              });
-            } else {
-              collectedErrors.push({
-                title: t("errors.syncFailedTitle", {
-                  name: group.name,
-                  tool: toolLabel,
-                }),
-                message: formatError(status.error) ?? "",
-              });
-            }
-          }
-        } else {
-          // Auto-sync OFF: clean migration -- remove originals from all tool directories
-          for (const variant of group.variants) {
-            try {
-              await invokeTauri("remove_skill_source", { path: variant.path });
-            } catch (err) {
-              // Non-fatal: skill is already imported, cleanup failure is secondary
-              const raw = formatError(err) ?? "";
-              collectedErrors.push({
-                title: t("errors.syncFailedTitle", {
-                  name: group.name,
-                  tool: variant.tool,
-                }),
-                message: raw,
-              });
-            }
-          }
-        }
-      }
-
-      setActionMessage(t("status.importCompleted"));
-      setSuccessToastMessage(t("status.importCompleted"));
-      setActionMessage(null);
-      await loadManagedSkills();
-      await loadPlan();
-      if (collectedErrors.length > 0) {
-        showActionErrors(collectedErrors);
-      } else {
-        setShowImportModal(false);
-      }
-    } catch (err) {
-      setError(formatError(err));
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
-  };
-
-  const handleCreateLocal = async () => {
-    if (!localPath.trim()) {
-      setError(t("errors.requireLocalPath"));
-      return;
-    }
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setError(null);
-    setActionMessage(t("actions.creatingLocalSkill"));
-    try {
-      const basePath = localPath.trim();
-      const candidates = await invokeTauri<LocalSkillCandidate[]>(
-        "list_local_skills_cmd",
-        { basePath },
-      );
-      if (candidates.length === 0) {
-        throw new Error(t("errors.noSkillsFoundLocal"));
-      }
-      if (candidates.length === 1 && candidates[0].valid) {
-        const desiredName = localName.trim() || candidates[0].name;
-        if (isSkillNameTaken(desiredName)) {
-          setError(t("errors.skillAlreadyExists", { name: desiredName }));
-          return;
-        }
-        const created = await invokeTauri<InstallResultDto>(
-          "install_local_selection",
-          {
-            basePath,
-            subpath: candidates[0].subpath,
-            name: localName.trim() || undefined,
-          },
-        );
-        if (autoSyncEnabled) {
-          const selectedInstalledIds = tools
-            .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
-            .map((t) => t.id);
-          if (selectedInstalledIds.length === 0) {
-            setError(t("errors.noSyncTargets"));
-          } else {
-            const report = await syncSkillsToTools(
-              [
-                {
-                  skill_id: created.skill_id,
-                  name: created.name,
-                  source_path: created.central_path,
-                },
-              ],
-              selectedInstalledIds,
-              { overwriteIfSameContent: true },
-            );
-            const collectedErrors = syncFailureEntries(report, {
-              includeNotWritableSkips: true,
-            });
-            if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-          }
-        }
-        setLocalPath("");
-        setLocalName("");
-        setActionMessage(t("status.localSkillCreated"));
-        setSuccessToastMessage(t("status.localSkillCreated"));
-        setActionMessage(null);
-        setShowAddModal(false);
-        await loadManagedSkills();
-      } else {
-        setLocalCandidatesBasePath(basePath);
-        setLocalCandidates(candidates);
-        setLocalCandidateSelected(
-          Object.fromEntries(candidates.map((c) => [c.subpath, c.valid])),
-        );
-        setShowLocalPickModal(true);
-        setActionMessage(null);
-        setLoading(false);
-        setLoadingStartAt(null);
-        return;
-      }
-    } catch (err) {
-      setError(formatError(err));
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
-  };
-
-  const handleCreateGit = async () => {
-    if (!gitUrl.trim()) {
-      setError(t("errors.requireGitUrl"));
-      return;
-    }
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setError(null);
-    setActionMessage(t("actions.creatingGitSkill"));
-    try {
-      const url = gitUrl.trim();
-
-      // All URLs (including /tree/ and /blob/ folder URLs) route through the
-      // candidate-based flow. The backend's list_git_skills handles folder URL
-      // subpath extraction. This ensures every install goes through proper
-      // candidate discovery and name matching.
-      const candidates = await invokeTauri<GitSkillCandidate[]>(
-        "list_git_skills_cmd",
-        { repoUrl: url },
-      );
-      if (candidates.length === 0) {
-        throw new Error(t("errors.noSkillsFoundWithHint"));
-      }
-      if (candidates.length === 1) {
-        // When autoSelectSkillName is set (Explore page install), verify the
-        // single candidate actually matches the intended skill. If not, the
-        // backend scan missed the target skill -- show error instead of
-        // silently installing the wrong one.
-        if (autoSelectSkillName) {
-          const target = autoSelectSkillName.toLowerCase();
-          const candidateName = candidates[0].name.toLowerCase();
-          if (
-            candidateName !== target &&
-            !candidateName.includes(target) &&
-            !target.includes(candidateName)
-          ) {
-            setAutoSelectSkillName(null);
-            throw new Error(
-              t("errors.skillNotFoundInRepo", { name: autoSelectSkillName }),
-            );
-          }
-          setAutoSelectSkillName(null);
-        }
-        if (isSkillNameTaken(candidates[0].name)) {
-          setError(
-            t("errors.skillAlreadyExists", { name: candidates[0].name }),
-          );
-          return;
-        }
-        const created = await invokeTauri<InstallResultDto>(
-          "install_git_selection",
-          {
-            repoUrl: url,
-            subpath: candidates[0].subpath,
-            name: gitName.trim() || undefined,
-          },
-        );
-        if (autoSyncEnabled) {
-          const selectedInstalledIds = tools
-            .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
-            .map((t) => t.id);
-          if (selectedInstalledIds.length === 0) {
-            setError(t("errors.noSyncTargets"));
-          } else {
-            const report = await syncSkillsToTools(
-              [
-                {
-                  skill_id: created.skill_id,
-                  name: created.name,
-                  source_path: created.central_path,
-                },
-              ],
-              selectedInstalledIds,
-              { overwriteIfSameContent: true },
-            );
-            const collectedErrors = syncFailureEntries(report, {
-              includeNotWritableSkips: true,
-            });
-            if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-          }
-        }
-      } else if (autoSelectSkillName) {
-        // Auto-select the matching skill from online search results.
-        // skills.sh name may differ from SKILL.md name (e.g. "json-render-react" vs "react"),
-        // so try exact match first, then containment match.
-        const target = autoSelectSkillName.toLowerCase();
-        const containMatches = candidates.filter((c) => {
-          const n = c.name.toLowerCase();
-          return target.includes(n) || n.includes(target);
-        });
-        const match =
-          candidates.find((c) => c.name.toLowerCase() === target) ??
-          (containMatches.length === 1 ? containMatches[0] : undefined);
-        setAutoSelectSkillName(null);
-        if (match) {
-          if (isSkillNameTaken(match.name)) {
-            setError(t("errors.skillAlreadyExists", { name: match.name }));
-            return;
-          }
-          const created = await invokeTauri<InstallResultDto>(
-            "install_git_selection",
-            {
-              repoUrl: url,
-              subpath: match.subpath,
-              name: gitName.trim() || undefined,
-            },
-          );
-          if (autoSyncEnabled) {
-            const selectedInstalledIds = tools
-              .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
-              .map((t) => t.id);
-            if (selectedInstalledIds.length === 0) {
-              setError(t("errors.noSyncTargets"));
-            } else {
-              const report = await syncSkillsToTools(
-                [
-                  {
-                    skill_id: created.skill_id,
-                    name: created.name,
-                    source_path: created.central_path,
-                  },
-                ],
-                selectedInstalledIds,
-                { overwriteIfSameContent: true },
-              );
-              const collectedErrors = syncFailureEntries(report, {
-                includeNotWritableSkips: true,
-              });
-              if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-            }
-          }
-        } else {
-          // No match found, fall back to picker
-          setGitCandidatesRepoUrl(url);
-          setGitCandidates(candidates);
-          setGitCandidateSelected(
-            Object.fromEntries(candidates.map((c) => [c.subpath, true])),
-          );
-          setShowGitPickModal(true);
-          setActionMessage(null);
-          setLoading(false);
-          setLoadingStartAt(null);
-          return;
-        }
-      } else {
-        setGitCandidatesRepoUrl(url);
-        setGitCandidates(candidates);
-        setGitCandidateSelected(
-          Object.fromEntries(candidates.map((c) => [c.subpath, true])),
-        );
-        setShowGitPickModal(true);
-        setActionMessage(null);
-        setLoading(false);
-        setLoadingStartAt(null);
-        return;
-      }
-      setGitUrl("");
-      setGitName("");
-      setActionMessage(t("status.gitSkillCreated"));
-      setSuccessToastMessage(t("status.gitSkillCreated"));
-      setActionMessage(null);
-      setShowAddModal(false);
-      await loadManagedSkills();
-    } catch (err) {
-      setError(formatError(err));
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
-  };
-
-  const [exploreInstallTrigger, setExploreInstallTrigger] = useState(0);
-  const exploreInstallUrlRef = useRef<string | null>(null);
-
-  const handleExploreInstall = useCallback(
-    (sourceUrl: string, skillName?: string) => {
-      setGitUrl(sourceUrl);
-      if (skillName) setAutoSelectSkillName(skillName);
-      if (toolStatus) {
-        const targets: Record<string, boolean> = {};
-        for (const id of toolStatus.installed) {
-          targets[id] = true;
-        }
-        setSyncTargets(targets);
-      }
-      exploreInstallUrlRef.current = sourceUrl;
-      setExploreInstallTrigger((n) => n + 1);
-    },
-    [toolStatus],
-  );
-
-  const handleExploreInstallFromDetail = useCallback(() => {
-    if (!detailSkill?.source_ref) return;
-    const sourceUrl = detailSkill.source_ref;
-    handleExploreInstall(sourceUrl);
-    setDetailSkill(null);
-    setActiveView("explore");
-  }, [detailSkill, handleExploreInstall]);
-
-  useEffect(() => {
-    if (exploreInstallTrigger > 0 && exploreInstallUrlRef.current && !loading) {
-      exploreInstallUrlRef.current = null;
-      void handleCreateGit();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exploreInstallTrigger]);
-
-  const handleInstallSelectedLocalCandidates = async () => {
-    const selected = localCandidates.filter(
-      (c) => c.valid && localCandidateSelected[c.subpath],
-    );
-    if (selected.length === 0) {
-      setError(t("errors.selectAtLeastOneSkill"));
-      return;
-    }
-    if (selected.length > 1 && localName.trim()) {
-      setError(t("errors.multiSelectNoCustomName"));
-      return;
-    }
-    if (selected.length > 1) {
-      const seen = new Set<string>();
-      const dup = selected.find((c) => {
-        if (seen.has(c.name)) return true;
-        seen.add(c.name);
-        return false;
-      });
-      if (dup) {
-        setError(t("errors.duplicateSelectedSkills", { name: dup.name }));
-        return;
-      }
-    }
-    const desiredName =
-      selected.length === 1 && localName.trim()
-        ? localName.trim()
-        : selected[0].name;
-    if (selected.length === 1 && isSkillNameTaken(desiredName)) {
-      setError(t("errors.skillAlreadyExists", { name: desiredName }));
-      return;
-    }
-    const duplicated = selected.find((c) => isSkillNameTaken(c.name));
-    if (selected.length > 1 && duplicated) {
-      setError(t("errors.skillAlreadyExists", { name: duplicated.name }));
-      return;
-    }
-
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setError(null);
-    try {
-      const collectedErrors: { title: string; message: string }[] = [];
-      for (let i = 0; i < selected.length; i++) {
-        const candidate = selected[i];
-        setActionMessage(
-          t("actions.importStep", {
-            index: i + 1,
-            total: selected.length,
-            name: candidate.name,
-          }),
-        );
-        try {
-          const created = await invokeTauri<InstallResultDto>(
-            "install_local_selection",
-            {
-              basePath: localCandidatesBasePath,
-              subpath: candidate.subpath,
-              name: localName.trim() || undefined,
-            },
-          );
-          if (autoSyncEnabled) {
-            const selectedInstalledIds = tools
-              .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
-              .map((t) => t.id);
-            if (selectedInstalledIds.length === 0) {
-              collectedErrors.push({
-                title: t("errors.unsyncedTitle", { name: created.name }),
-                message: t("errors.noSyncTargets"),
-              });
-            } else {
-              const report = await syncSkillsToTools(
-                [
-                  {
-                    skill_id: created.skill_id,
-                    name: created.name,
-                    source_path: created.central_path,
-                  },
-                ],
-                selectedInstalledIds,
-                { overwriteIfSameContent: true },
-              );
-              collectedErrors.push(
-                ...syncFailureEntries(report, {
-                  includeNotWritableSkips: true,
-                }),
-              );
-            }
-          }
-        } catch (err) {
-          const raw = formatError(err) ?? "";
-          collectedErrors.push({
-            title: t("errors.importFailedTitle", { name: candidate.name }),
-            message: raw,
-          });
-        }
-      }
-
-      setShowLocalPickModal(false);
-      setLocalCandidates([]);
-      setLocalCandidateSelected({});
-      setLocalCandidatesBasePath("");
-      setLocalPath("");
-      setLocalName("");
-      setActionMessage(t("status.selectedSkillsInstalled"));
-      setSuccessToastMessage(t("status.selectedSkillsInstalled"));
-      setActionMessage(null);
-      setShowAddModal(false);
-      await loadManagedSkills();
-      if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
-  };
-
-  const handleInstallSelectedCandidates = async () => {
-    const selected = gitCandidates.filter(
-      (c) => gitCandidateSelected[c.subpath],
-    );
-    if (selected.length === 0) {
-      setError(t("errors.selectAtLeastOneSkill"));
-      return;
-    }
-    const duplicated = selected.find((c) => isSkillNameTaken(c.name));
-    if (duplicated) {
-      setError(t("errors.skillAlreadyExists", { name: duplicated.name }));
-      return;
-    }
-    if (selected.length > 1 && gitName.trim()) {
-      setError(t("errors.multiSelectNoCustomName"));
-      return;
-    }
-
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setError(null);
-    try {
-      const collectedErrors: { title: string; message: string }[] = [];
-      for (let i = 0; i < selected.length; i++) {
-        const candidate = selected[i];
-        setActionMessage(
-          t("actions.importStep", {
-            index: i + 1,
-            total: selected.length,
-            name: candidate.name,
-          }),
-        );
-        try {
-          const created = await invokeTauri<InstallResultDto>(
-            "install_git_selection",
-            {
-              repoUrl: gitCandidatesRepoUrl,
-              subpath: candidate.subpath,
-              name: gitName.trim() || undefined,
-            },
-          );
-          if (autoSyncEnabled) {
-            const selectedInstalledIds = tools
-              .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
-              .map((t) => t.id);
-            if (selectedInstalledIds.length === 0) {
-              collectedErrors.push({
-                title: t("errors.unsyncedTitle", { name: created.name }),
-                message: t("errors.noSyncTargets"),
-              });
-            } else {
-              const report = await syncSkillsToTools(
-                [
-                  {
-                    skill_id: created.skill_id,
-                    name: created.name,
-                    source_path: created.central_path,
-                  },
-                ],
-                selectedInstalledIds,
-                { overwriteIfSameContent: true },
-              );
-              collectedErrors.push(
-                ...syncFailureEntries(report, {
-                  includeNotWritableSkips: true,
-                }),
-              );
-            }
-          }
-        } catch (err) {
-          const raw = formatError(err) ?? "";
-          collectedErrors.push({
-            title: t("errors.importFailedTitle", { name: candidate.name }),
-            message: raw,
-          });
-        }
-      }
-
-      setShowGitPickModal(false);
-      setGitCandidates([]);
-      setGitCandidateSelected({});
-      setGitCandidatesRepoUrl("");
-      setGitUrl("");
-      setGitName("");
-      setActionMessage(t("status.selectedSkillsInstalled"));
-      setSuccessToastMessage(t("status.selectedSkillsInstalled"));
-      setActionMessage(null);
-      setShowGitPickModal(false);
-      setGitCandidates([]);
-      setGitCandidateSelected({});
-      setGitCandidatesRepoUrl("");
-      setShowAddModal(false);
-      await loadManagedSkills();
-      if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
-  };
-
-  const handleDeleteManaged = async (skill: ManagedSkill) => {
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setActionMessage(t("actions.removing", { name: skill.name }));
-    setError(null);
-    try {
-      await invokeTauri("delete_managed_skill", { skillId: skill.id });
-      setActionMessage(t("status.skillRemoved"));
-      setSuccessToastMessage(t("status.skillRemoved"));
-      setActionMessage(null);
-      await loadManagedSkills();
-      setPendingDeleteId(null);
-    } catch (err) {
-      setError(formatError(err));
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
-  };
-
-  const handleSyncAllManagedToTools = useCallback(
-    async (toolIds: string[]) => {
-      if (!autoSyncEnabled) return;
-      if (managedSkills.length === 0) return;
-      if (toolIds.length === 0) return;
-
-      setLoading(true);
-      setLoadingStartAt(Date.now());
-      setError(null);
-      try {
-        const report = await syncSkillsToTools(
-          managedSkills.map((skill) => ({
-            skill_id: skill.id,
-            name: skill.name,
-            source_path: skill.central_path,
-          })),
-          toolIds,
-          { overwriteIfSameContent: true },
-        );
-        const collectedErrors = syncFailureEntries(report);
-        setActionMessage(t("status.syncCompleted"));
-        setSuccessToastMessage(t("status.syncCompleted"));
-        setActionMessage(null);
-        await loadManagedSkills();
-        if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-      } finally {
-        setLoading(false);
-        setLoadingStartAt(null);
-      }
-    },
-    [
-      autoSyncEnabled,
-      loadManagedSkills,
-      managedSkills,
-      showActionErrors,
-      syncFailureEntries,
-      syncSkillsToTools,
-      t,
-    ],
-  );
-
-  const handleSyncAllNewTools = useCallback(() => {
-    if (relevantNewlyInstalled.length === 0) return;
-    setSyncTargets((prev) => {
-      const next = { ...prev };
-      for (const id of relevantNewlyInstalled) {
-        const shared = sharedToolIdsByToolId[id] ?? [id];
-        for (const sid of shared) next[sid] = true;
-      }
-      return next;
-    });
-    setShowNewToolsModal(false);
-    void handleSyncAllManagedToTools(relevantNewlyInstalled);
-  }, [
-    handleSyncAllManagedToTools,
-    relevantNewlyInstalled,
-    sharedToolIdsByToolId,
-  ]);
-
-  const runToggleToolForSkill = useCallback(
-    async (skill: ManagedSkill, toolId: string) => {
-      if (loading) return;
-      const toolLabel = tools.find((t) => t.id === toolId)?.label ?? toolId;
-      const target = skill.targets.find((t) => t.tool === toolId);
-      const synced = Boolean(target);
-
-      setLoading(true);
-      setLoadingStartAt(Date.now());
-      setError(null);
-      try {
-        if (synced) {
-          setActionMessage(
-            t("actions.unsyncing", { name: skill.name, tool: toolLabel }),
-          );
-          await invokeTauri("unsync_skill_from_tool", {
-            skillId: skill.id,
-            tool: toolId,
-          });
-        } else {
-          setActionMessage(
-            t("actions.syncing", { name: skill.name, tool: toolLabel }),
-          );
-          const report = await syncSkillsToTools(
-            [
-              {
-                skill_id: skill.id,
-                name: skill.name,
-                source_path: skill.central_path,
-              },
-            ],
-            [toolId],
-            { overwriteIfSameContent: true },
-          );
-          const status = report.results[0]?.status;
-          if (status && status.status !== "synced") {
-            // An explicit single toggle surfaces every non-success,
-            // including skips a bulk flow would ignore.
-            setActionMessage(null);
-            if (status.error.code === "TARGET_EXISTS") {
-              setError(
-                t("errors.targetExistsDetail", { path: status.error.path }),
-              );
-            } else {
-              setError(formatError(status.error));
-            }
-            return;
-          }
-        }
-        const statusText = synced
-          ? t("status.syncDisabled")
-          : t("status.syncEnabled");
-        setActionMessage(statusText);
-        setSuccessToastMessage(statusText);
-        setActionMessage(null);
-        await loadManagedSkills();
-      } catch (err) {
-        setError(formatError(err));
-      } finally {
-        setLoading(false);
-        setLoadingStartAt(null);
-      }
-    },
-    [
-      formatError,
-      invokeTauri,
-      loading,
-      loadManagedSkills,
-      syncSkillsToTools,
-      t,
-      tools,
-    ],
-  );
-
-  const handleToggleToolForSkill = useCallback(
-    (skill: ManagedSkill, toolId: string) => {
-      if (loading) return;
-      const shared = sharedToolIdsByToolId[toolId] ?? null;
-      if (shared && shared.length > 1) {
-        setPendingSharedToggle({ skill, toolId });
-        return;
-      }
-      void runToggleToolForSkill(skill, toolId);
-    },
-    [loading, runToggleToolForSkill, sharedToolIdsByToolId],
-  );
-
-  const handleUpdateManaged = useCallback(
-    async (skill: ManagedSkill) => {
-      setLoading(true);
-      setLoadingStartAt(Date.now());
-      setError(null);
-      try {
-        setActionMessage(t("actions.updating", { name: skill.name }));
-        await invokeTauri<UpdateResultDto>("update_managed_skill", {
-          skillId: skill.id,
-        });
-        const updatedText = t("status.updated", { name: skill.name });
-        setActionMessage(updatedText);
-        setSuccessToastMessage(updatedText);
-        setActionMessage(null);
-        await loadManagedSkills();
-      } catch (err) {
-        setError(formatError(err));
-      } finally {
-        setLoading(false);
-        setLoadingStartAt(null);
-      }
-    },
-    [formatError, invokeTauri, loadManagedSkills, t],
-  );
-
-  const handleUpdateSkill = useCallback(
-    (skill: ManagedSkill) => {
-      void handleUpdateManaged(skill);
-    },
-    [handleUpdateManaged],
-  );
-
-  const handleSharedCancel = useCallback(() => {
-    if (loading) return;
-    setPendingSharedToggle(null);
-  }, [loading]);
-
-  const handleSharedConfirm = useCallback(() => {
-    if (!pendingSharedToggle) return;
-    const payload = pendingSharedToggle;
-    setPendingSharedToggle(null);
-    void runToggleToolForSkill(payload.skill, payload.toolId);
-  }, [pendingSharedToggle, runToggleToolForSkill]);
-
-  const pendingSharedLabels = useMemo(() => {
-    if (!pendingSharedToggle) return null;
-    const toolId = pendingSharedToggle.toolId;
-    const shared = sharedToolIdsByToolId[toolId] ?? [];
-    const others = shared.filter((id) => id !== toolId);
-    return {
-      toolLabel: toolLabelById[toolId] ?? toolId,
-      otherLabels: others.map((id) => toolLabelById[id] ?? id).join(", "),
-    };
-  }, [pendingSharedToggle, sharedToolIdsByToolId, toolLabelById]);
-
   return (
     <div className="skills-app">
       <Toaster
@@ -2277,7 +313,7 @@ function App() {
         loading={loading}
         actionMessage={actionMessage}
         loadingStartAt={loadingStartAt}
-        onCancel={handleCancelLoading}
+        onCancel={cancelLoading}
         t={t}
       />
 
@@ -2319,11 +355,11 @@ function App() {
               loading={loading}
               onSortChange={handleSortChange}
               onSearchChange={handleSearchChange}
-              onRefresh={handleRefresh}
-              autoSyncEnabled={autoSyncEnabled}
-              onAutoSyncChange={handleAutoSyncToggle}
-              onUnsyncAll={handleUnsyncAll}
-              onConfigureTools={handleOpenToolConfig}
+              onRefresh={library.handleRefresh}
+              autoSyncEnabled={sync.autoSyncEnabled}
+              onAutoSyncChange={sync.handleAutoSyncToggle}
+              onUnsyncAll={library.handleUnsyncAll}
+              onConfigureTools={sync.handleOpenToolConfig}
               groupByRepo={groupByRepo}
               onGroupByRepoChange={setGroupByRepo}
               viewMode={viewMode}
@@ -2331,21 +367,21 @@ function App() {
               t={t}
             />
             <SkillsList
-              plan={plan}
+              plan={addFlow.plan}
               visibleSkills={visibleSkills}
               groupByRepo={groupByRepo}
               viewMode={viewMode}
-              installedTools={installedTools}
+              installedTools={sync.installedTools}
               loading={loading}
               getGithubInfo={getGithubInfo}
               getSkillSourceLabel={getSkillSourceLabel}
               formatRelative={formatRelative}
-              onReviewImport={handleReviewImport}
-              onUpdateSkill={handleUpdateSkill}
-              onDeleteSkill={handleDeletePrompt}
-              onToggleTool={handleToggleToolForSkill}
-              onUnsyncSkill={handleUnsyncSkill}
-              onSyncSkillToAllTools={handleSyncSkillToAllTools}
+              onReviewImport={addFlow.handleReviewImport}
+              onUpdateSkill={library.handleUpdateSkill}
+              onDeleteSkill={library.handleDeletePrompt}
+              onToggleTool={library.handleToggleToolForSkill}
+              onUnsyncSkill={library.handleUnsyncSkill}
+              onSyncSkillToAllTools={library.handleSyncSkillToAllTools}
               onOpenDetail={handleOpenDetail}
               t={t}
             />
@@ -2354,20 +390,20 @@ function App() {
           <SettingsPage
             isTauri={isTauri}
             language={language}
-            storagePath={storagePath}
-            gitCacheCleanupDays={gitCacheCleanupDays}
-            gitCacheTtlSecs={gitCacheTtlSecs}
-            themePreference={themePreference}
-            zoomLevel={zoomLevel}
-            onPickStoragePath={handlePickStoragePath}
+            storagePath={settings.storagePath}
+            gitCacheCleanupDays={settings.gitCacheCleanupDays}
+            gitCacheTtlSecs={settings.gitCacheTtlSecs}
+            themePreference={settings.themePreference}
+            zoomLevel={settings.zoomLevel}
+            onPickStoragePath={settings.handlePickStoragePath}
             onToggleLanguage={toggleLanguage}
-            onThemeChange={handleThemeChange}
-            onZoomLevelChange={handleZoomLevelChange}
-            onGitCacheCleanupDaysChange={handleGitCacheCleanupDaysChange}
-            onGitCacheTtlSecsChange={handleGitCacheTtlSecsChange}
-            onClearGitCacheNow={handleClearGitCacheNow}
-            githubToken={githubToken}
-            onGithubTokenChange={handleGithubTokenChange}
+            onThemeChange={settings.handleThemeChange}
+            onZoomLevelChange={settings.handleZoomLevelChange}
+            onGitCacheCleanupDaysChange={settings.handleGitCacheCleanupDaysChange}
+            onGitCacheTtlSecsChange={settings.handleGitCacheTtlSecsChange}
+            onClearGitCacheNow={settings.handleClearGitCacheNow}
+            githubToken={settings.githubToken}
+            onGithubTokenChange={settings.handleGithubTokenChange}
             onBack={handleCloseSettings}
             t={t}
           />
@@ -2375,144 +411,149 @@ function App() {
           <ProjectsPage />
         ) : (
           <ExplorePage
-            featuredSkills={featuredSkills}
-            featuredLoading={featuredLoading}
-            exploreFilter={exploreFilter}
-            searchResults={searchResults}
-            searchLoading={searchLoading}
-            managedSkills={managedSkills}
+            featuredSkills={explore.featuredSkills}
+            featuredLoading={explore.featuredLoading}
+            exploreFilter={explore.exploreFilter}
+            searchResults={explore.searchResults}
+            searchLoading={explore.searchLoading}
+            managedSkills={library.managedSkills}
             loading={loading}
-            hiddenSkills={hiddenSkills}
-            showHidden={showHidden}
-            onShowHiddenChange={setShowHidden}
-            onHideSkill={handleHideSkill}
-            onUnhideSkill={handleUnhideSkill}
-            onExploreFilterChange={handleExploreFilterChange}
-            onInstallSkill={handleExploreInstall}
-            onViewSkill={handleOpenExploreDetail}
-            onOpenManualAdd={handleOpenAdd}
+            hiddenSkills={explore.hiddenSkills}
+            showHidden={explore.showHidden}
+            onShowHiddenChange={explore.setShowHidden}
+            onHideSkill={explore.handleHideSkill}
+            onUnhideSkill={explore.handleUnhideSkill}
+            onExploreFilterChange={explore.handleExploreFilterChange}
+            onInstallSkill={addFlow.handleExploreInstall}
+            onViewSkill={explore.handleOpenExploreDetail}
+            onOpenManualAdd={addFlow.handleOpenAdd}
             t={t}
           />
         )}
       </main>
 
       <AddSkillModal
-        open={showAddModal}
+        open={addFlow.showAddModal}
         loading={loading}
         canClose={!loading}
-        addModalTab={addModalTab}
-        localPath={localPath}
-        localName={localName}
-        gitUrl={gitUrl}
-        gitName={gitName}
-        syncTargets={syncTargets}
-        installedTools={installedTools}
-        toolStatus={toolStatus}
-        onRequestClose={handleCloseAdd}
-        onTabChange={setAddModalTab}
-        onLocalPathChange={setLocalPath}
-        onPickLocalPath={handlePickLocalPath}
-        onLocalNameChange={setLocalName}
-        onGitUrlChange={setGitUrl}
-        onGitNameChange={setGitName}
-        onSyncTargetChange={handleSyncTargetChange}
-        onSubmit={addModalTab === "local" ? handleCreateLocal : handleCreateGit}
+        addModalTab={addFlow.addModalTab}
+        localPath={addFlow.localPath}
+        localName={addFlow.localName}
+        gitUrl={addFlow.gitUrl}
+        gitName={addFlow.gitName}
+        syncTargets={sync.syncTargets}
+        installedTools={sync.installedTools}
+        toolStatus={sync.toolStatus}
+        onRequestClose={addFlow.handleCloseAdd}
+        onTabChange={addFlow.setAddModalTab}
+        onLocalPathChange={addFlow.setLocalPath}
+        onPickLocalPath={addFlow.handlePickLocalPath}
+        onLocalNameChange={addFlow.setLocalName}
+        onGitUrlChange={addFlow.setGitUrl}
+        onGitNameChange={addFlow.setGitName}
+        onSyncTargetChange={sync.handleSyncTargetChange}
+        onSubmit={
+          addFlow.addModalTab === "local"
+            ? addFlow.handleCreateLocal
+            : addFlow.handleCreateGit
+        }
         t={t}
       />
 
-      {showImportModal && plan ? (
+      {addFlow.showImportModal && addFlow.plan ? (
         <ImportModal
-          open={showImportModal}
+          open={addFlow.showImportModal}
           loading={loading}
-          plan={plan}
-          selected={selected}
-          variantChoice={variantChoice}
-          onRequestClose={handleCloseImport}
-          onToggleAll={toggleAll}
-          onToggleGroup={handleToggleGroup}
-          onSelectVariant={handleSelectVariant}
-          onImport={handleImport}
+          plan={addFlow.plan}
+          selected={addFlow.selected}
+          variantChoice={addFlow.variantChoice}
+          onRequestClose={addFlow.handleCloseImport}
+          onToggleAll={addFlow.toggleAll}
+          onToggleGroup={addFlow.handleToggleGroup}
+          onSelectVariant={addFlow.handleSelectVariant}
+          onImport={addFlow.handleImport}
           t={t}
         />
       ) : null}
 
       <SharedDirModal
-        open={Boolean(pendingSharedToggle)}
+        open={Boolean(library.pendingSharedToggle)}
         loading={loading}
-        toolLabel={pendingSharedLabels?.toolLabel ?? ""}
-        otherLabels={pendingSharedLabels?.otherLabels ?? ""}
-        onRequestClose={handleSharedCancel}
-        onConfirm={handleSharedConfirm}
+        toolLabel={library.pendingSharedLabels?.toolLabel ?? ""}
+        otherLabels={library.pendingSharedLabels?.otherLabels ?? ""}
+        onRequestClose={library.handleSharedCancel}
+        onConfirm={library.handleSharedConfirm}
         t={t}
       />
 
       <ToolConfigModal
-        open={showToolConfigModal}
+        open={sync.showToolConfigModal}
         loading={loading}
-        toolStatus={toolStatus}
-        savedSelection={globalSelectedTools}
-        scanSelectedOnly={scanSelectedToolsOnly}
+        toolStatus={sync.toolStatus}
+        savedSelection={sync.globalSelectedTools}
+        scanSelectedOnly={sync.scanSelectedToolsOnly}
         labels={{
           title: t("globalToolConfigTitle"),
           description: t("globalToolConfigDesc"),
           confirmLabel: t("globalToolConfigConfirm"),
           scanToggleLabel: t("globalToolConfigScanSelectedOnly"),
         }}
-        onConfirm={handleToolConfigConfirm}
-        onRequestClose={handleCloseToolConfig}
+        onConfirm={sync.handleToolConfigConfirm}
+        onRequestClose={sync.handleCloseToolConfig}
         t={t}
       />
 
       <NewToolsModal
-        open={Boolean(showNewToolsModal && newlyInstalledToolsText)}
+        open={Boolean(sync.showNewToolsModal && sync.newlyInstalledToolsText)}
         loading={loading}
-        toolsLabelText={newlyInstalledToolsText}
-        onLater={handleCloseNewTools}
+        toolsLabelText={sync.newlyInstalledToolsText}
+        onLater={sync.handleCloseNewTools}
         onSyncAll={handleSyncAllNewTools}
         t={t}
       />
 
       <DeleteModal
-        open={Boolean(pendingDeleteId)}
+        open={Boolean(library.pendingDeleteId)}
         loading={loading}
-        skillName={pendingDeleteSkill?.name ?? null}
-        onRequestClose={handleCloseDelete}
+        skillName={library.pendingDeleteSkill?.name ?? null}
+        onRequestClose={library.handleCloseDelete}
         onConfirm={() => {
-          if (pendingDeleteSkill) void handleDeleteManaged(pendingDeleteSkill);
+          if (library.pendingDeleteSkill)
+            void library.handleDeleteManaged(library.pendingDeleteSkill);
         }}
         t={t}
       />
 
       <LocalPickModal
-        open={showLocalPickModal}
+        open={addFlow.showLocalPickModal}
         loading={loading}
-        localCandidates={localCandidates}
-        localCandidateSelected={localCandidateSelected}
-        onRequestClose={handleCloseLocalPick}
-        onCancel={handleCancelLocalPick}
-        onToggleAll={handleToggleAllLocalCandidates}
-        onToggleCandidate={handleToggleLocalCandidate}
-        onInstall={handleInstallSelectedLocalCandidates}
+        localCandidates={addFlow.localCandidates}
+        localCandidateSelected={addFlow.localCandidateSelected}
+        onRequestClose={addFlow.handleCloseLocalPick}
+        onCancel={addFlow.handleCancelLocalPick}
+        onToggleAll={addFlow.handleToggleAllLocalCandidates}
+        onToggleCandidate={addFlow.handleToggleLocalCandidate}
+        onInstall={addFlow.handleInstallSelectedLocalCandidates}
         t={t}
       />
 
       <GitPickModal
-        open={showGitPickModal}
+        open={addFlow.showGitPickModal}
         loading={loading}
-        gitCandidates={gitCandidates}
-        gitCandidateSelected={gitCandidateSelected}
-        onRequestClose={handleCloseGitPick}
-        onCancel={handleCancelGitPick}
-        onToggleAll={handleToggleAllGitCandidates}
-        onToggleCandidate={handleToggleGitCandidate}
-        onInstall={handleInstallSelectedCandidates}
+        gitCandidates={addFlow.gitCandidates}
+        gitCandidateSelected={addFlow.gitCandidateSelected}
+        onRequestClose={addFlow.handleCloseGitPick}
+        onCancel={addFlow.handleCancelGitPick}
+        onToggleAll={addFlow.handleToggleAllGitCandidates}
+        onToggleCandidate={addFlow.handleToggleGitCandidate}
+        onInstall={addFlow.handleInstallSelectedCandidates}
         t={t}
       />
 
       {updateAvailableVersion && (
         <div
           className="modal-backdrop"
-          onClick={updateInstalling ? undefined : handleDismissUpdate}
+          onClick={updateInstalling ? undefined : dismissUpdate}
         >
           <div
             className="modal update-modal"
@@ -2524,7 +565,7 @@ function App() {
               <button
                 className="modal-close update-modal-close"
                 type="button"
-                onClick={handleDismissUpdate}
+                onClick={dismissUpdate}
                 aria-label={t("close")}
               >
                 ✕
@@ -2552,7 +593,7 @@ function App() {
                 <button
                   className="btn btn-primary"
                   type="button"
-                  onClick={handleDismissUpdate}
+                  onClick={dismissUpdate}
                 >
                   {t("done")}
                 </button>
@@ -2562,7 +603,7 @@ function App() {
                     className="btn btn-primary"
                     type="button"
                     disabled={updateInstalling}
-                    onClick={handleUpdateNow}
+                    onClick={updateNow}
                   >
                     {updateInstalling ? t("installingUpdate") : t("updateNow")}
                   </button>
@@ -2570,7 +611,7 @@ function App() {
                     <button
                       className="btn btn-secondary"
                       type="button"
-                      onClick={handleDismissUpdateForever}
+                      onClick={dismissUpdateForever}
                     >
                       {t("updateBannerDismiss")}
                     </button>
