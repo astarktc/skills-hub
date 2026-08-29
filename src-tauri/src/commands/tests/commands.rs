@@ -1,5 +1,8 @@
 use super::*;
+use crate::core::errors::SignalError;
+use crate::core::global_sync::GlobalSyncError;
 use crate::core::skill_store::{SkillRecord, SkillTargetRecord};
+use error::GitCloneFailureKind;
 
 fn make_store() -> (tempfile::TempDir, SkillStore) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -9,24 +12,117 @@ fn make_store() -> (tempfile::TempDir, SkillStore) {
 }
 
 #[test]
-fn format_anyhow_error_passthrough_prefixes() {
-    let err = anyhow::anyhow!("MULTI_SKILLS|abc");
-    assert_eq!(format_anyhow_error(err), "MULTI_SKILLS|abc");
+fn from_anyhow_recovers_signal_errors_through_context() {
+    let err = anyhow::Error::new(SignalError::MultiSkills).context("install skill");
+    assert!(matches!(
+        CommandError::from_anyhow(err),
+        CommandError::MultiSkills
+    ));
+
+    let err = anyhow::anyhow!(SignalError::RateLimited { reset_minutes: 7 });
+    assert!(matches!(
+        CommandError::from_anyhow(err),
+        CommandError::RateLimited { reset_minutes: 7 }
+    ));
+
+    let err = anyhow::anyhow!(SignalError::NotFound {
+        kind: "project".to_string(),
+        id: "abc-123".to_string(),
+    });
+    match CommandError::from_anyhow(err) {
+        CommandError::NotFound { kind, id } => {
+            assert_eq!(kind, "project");
+            assert_eq!(id, "abc-123");
+        }
+        other => panic!("expected NotFound, got {other}"),
+    }
 }
 
 #[test]
-fn format_anyhow_error_redacts_clone_temp_path() {
-    let err = anyhow::anyhow!("clone https://example.com/a/b into /tmp/skills-hub-git-123");
-    let msg = format_anyhow_error(err);
-    assert!(msg.contains("已省略临时目录"));
-    assert!(!msg.contains("/tmp/skills-hub-git-123"));
+fn from_anyhow_recovers_global_sync_errors() {
+    let err = anyhow::Error::new(GlobalSyncError::ToolNotWritable {
+        tool_display_name: "Cursor".to_string(),
+        skills_dir: std::path::PathBuf::from("/tmp/skills"),
+    });
+    match CommandError::from_anyhow(err) {
+        CommandError::ToolNotWritable { tool, path } => {
+            assert_eq!(tool, "Cursor");
+            assert_eq!(path, "/tmp/skills");
+        }
+        other => panic!("expected ToolNotWritable, got {other}"),
+    }
 }
 
 #[test]
-fn format_anyhow_error_github_hint_auth() {
+fn from_anyhow_classifies_github_clone_failures() {
     let err = anyhow::anyhow!("git clone https://github.com/a/b failed: authentication failed");
-    let msg = format_anyhow_error(err);
-    assert!(msg.contains("无法访问该仓库"));
+    match CommandError::from_anyhow(err) {
+        CommandError::GitCloneFailed { kind, detail } => {
+            assert_eq!(kind, GitCloneFailureKind::Auth);
+            assert!(detail.contains("authentication failed"));
+        }
+        other => panic!("expected GitCloneFailed, got {other}"),
+    }
+
+    let err = anyhow::anyhow!("fetch https://github.com/a/b: connection timed out");
+    assert!(matches!(
+        CommandError::from_anyhow(err),
+        CommandError::GitCloneFailed {
+            kind: GitCloneFailureKind::Timeout,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn from_anyhow_redacts_clone_temp_path_in_other() {
+    let err = anyhow::anyhow!("clone https://example.com/a/b into /tmp/skills-hub-git-123");
+    match CommandError::from_anyhow(err) {
+        CommandError::Other { message } => {
+            assert!(
+                !message.contains("/tmp/skills-hub-git-123"),
+                "got: {message}"
+            );
+            assert!(message.contains("clone https://example.com/a/b"));
+        }
+        other => panic!("expected Other, got {other}"),
+    }
+}
+
+#[test]
+fn command_error_wire_shape_is_internally_tagged() {
+    let json = serde_json::to_value(CommandError::ToolNotWritable {
+        tool: "Cursor".to_string(),
+        path: "/tmp/skills".to_string(),
+    })
+    .unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "code": "TOOL_NOT_WRITABLE",
+            "tool": "Cursor",
+            "path": "/tmp/skills",
+        })
+    );
+
+    let json = serde_json::to_value(CommandError::Cancelled).unwrap();
+    assert_eq!(json, serde_json::json!({ "code": "CANCELLED" }));
+
+    let json = serde_json::to_value(CommandError::RateLimited { reset_minutes: 5 }).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "code": "RATE_LIMITED", "resetMinutes": 5 })
+    );
+
+    let json = serde_json::to_value(CommandError::GitCloneFailed {
+        kind: GitCloneFailureKind::NotFound,
+        detail: "404".to_string(),
+    })
+    .unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "code": "GIT_CLONE_FAILED", "kind": "notFound", "detail": "404" })
+    );
 }
 
 #[test]
@@ -114,50 +210,41 @@ fn get_managed_skills_impl_maps_targets() {
 }
 
 #[test]
-fn format_anyhow_error_passthrough_duplicate_project() {
-    let err = anyhow::anyhow!("DUPLICATE_PROJECT|/home/user/my-project");
+fn project_signal_errors_serialize_with_payload_fields() {
+    // The exact wire shapes the projects frontend discriminates on.
+    let json = serde_json::to_value(CommandError::from(SignalError::DuplicateProject {
+        path: "/home/user/my-project".to_string(),
+    }))
+    .unwrap();
     assert_eq!(
-        format_anyhow_error(err),
-        "DUPLICATE_PROJECT|/home/user/my-project"
+        json,
+        serde_json::json!({ "code": "DUPLICATE_PROJECT", "path": "/home/user/my-project" })
     );
-}
 
-#[test]
-fn format_anyhow_error_passthrough_assignment_exists() {
-    let err = anyhow::anyhow!("ASSIGNMENT_EXISTS|proj1:skill1:claude_code");
+    let json = serde_json::to_value(CommandError::from(SignalError::AssignmentExists {
+        project: "proj1".to_string(),
+        skill: "skill1".to_string(),
+        tool: "claude_code".to_string(),
+    }))
+    .unwrap();
     assert_eq!(
-        format_anyhow_error(err),
-        "ASSIGNMENT_EXISTS|proj1:skill1:claude_code"
-    );
-}
-
-#[test]
-fn format_anyhow_error_passthrough_not_found() {
-    let err = anyhow::anyhow!("NOT_FOUND|project:abc-123");
-    assert_eq!(format_anyhow_error(err), "NOT_FOUND|project:abc-123");
-}
-
-#[test]
-fn bulk_assign_skill_not_found_error_contract() {
-    // Verify the NOT_FOUND|project: error that bulk_assign_skill emits
-    // passes through format_anyhow_error unchanged -- this is the exact
-    // error shape the frontend receives when invoking bulk_assign_skill
-    // with a non-existent project ID.
-    let err = anyhow::anyhow!("NOT_FOUND|project:nonexistent-uuid");
-    let result = format_anyhow_error(err);
-    assert!(
-        result.starts_with("NOT_FOUND|project:"),
-        "bulk_assign_skill NOT_FOUND error must preserve prefix for frontend parsing, got: {}",
-        result
+        json,
+        serde_json::json!({
+            "code": "ASSIGNMENT_EXISTS",
+            "project": "proj1",
+            "skill": "skill1",
+            "tool": "claude_code",
+        })
     );
 
-    // Verify the NOT_FOUND|skill: variant as well
-    let err2 = anyhow::anyhow!("NOT_FOUND|skill:nonexistent-uuid");
-    let result2 = format_anyhow_error(err2);
-    assert!(
-        result2.starts_with("NOT_FOUND|skill:"),
-        "bulk_assign_skill NOT_FOUND error must preserve prefix for frontend parsing, got: {}",
-        result2
+    let json = serde_json::to_value(CommandError::from(SignalError::NotFound {
+        kind: "skill".to_string(),
+        id: "nonexistent-uuid".to_string(),
+    }))
+    .unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "code": "NOT_FOUND", "kind": "skill", "id": "nonexistent-uuid" })
     );
 }
 

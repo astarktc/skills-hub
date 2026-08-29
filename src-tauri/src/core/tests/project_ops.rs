@@ -99,11 +99,13 @@ fn register_rejects_duplicate() {
     let path = tmpdir.path().to_string_lossy().to_string();
     project_ops::register_project_path(&store, &path, now_ms(), test_expand_home).unwrap();
     let result = project_ops::register_project_path(&store, &path, now_ms(), test_expand_home);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
+    let err = result.expect_err("duplicate registration must fail");
     assert!(
-        err.starts_with("DUPLICATE_PROJECT|"),
-        "expected 'DUPLICATE_PROJECT|' prefix, got: {}",
+        matches!(
+            err.downcast_ref::<crate::core::errors::SignalError>(),
+            Some(crate::core::errors::SignalError::DuplicateProject { .. })
+        ),
+        "expected SignalError::DuplicateProject, got: {:#}",
         err
     );
 }

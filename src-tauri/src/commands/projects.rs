@@ -1,25 +1,26 @@
 use tauri::State;
 use uuid::Uuid;
 
+use crate::core::errors::SignalError;
 use crate::core::project_ops::{self, ProjectDto, ProjectSkillAssignmentDto, ProjectToolDto};
 use crate::core::project_sync;
 use crate::core::skill_store::{ProjectToolRecord, SkillStore};
 use crate::SyncMutex;
 
-use super::{expand_home_path, format_anyhow_error, now_ms};
+use super::{expand_home_path, now_ms, CommandError};
 
 #[tauri::command]
 pub async fn register_project(
     store: State<'_, SkillStore>,
     path: String,
-) -> Result<ProjectDto, String> {
+) -> Result<ProjectDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         project_ops::register_project_path(&store, &path, now_ms(), expand_home_path)
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -28,7 +29,7 @@ pub async fn remove_project(
     store: State<'_, SkillStore>,
     sync_mutex: State<'_, SyncMutex>,
     projectId: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let store = store.inner().clone();
     let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -36,17 +37,17 @@ pub async fn remove_project(
         project_ops::remove_project_with_cleanup(&store, &projectId)
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
-pub async fn list_projects(store: State<'_, SkillStore>) -> Result<Vec<ProjectDto>, String> {
+pub async fn list_projects(store: State<'_, SkillStore>) -> Result<Vec<ProjectDto>, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || project_ops::list_project_dtos(&store))
         .await
-        .map_err(|e| e.to_string())?
-        .map_err(format_anyhow_error)
+        .map_err(CommandError::internal)?
+        .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -55,14 +56,14 @@ pub async fn update_project_path(
     store: State<'_, SkillStore>,
     projectId: String,
     path: String,
-) -> Result<ProjectDto, String> {
+) -> Result<ProjectDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         project_ops::update_project_path(&store, &projectId, &path, now_ms(), expand_home_path)
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -71,7 +72,7 @@ pub async fn add_project_tool(
     store: State<'_, SkillStore>,
     projectId: String,
     tool: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         // Validate that the project exists before inserting
@@ -92,8 +93,8 @@ pub async fn add_project_tool(
         store.add_project_tool(&record)
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -103,7 +104,7 @@ pub async fn remove_project_tool(
     sync_mutex: State<'_, SyncMutex>,
     projectId: String,
     tool: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let store = store.inner().clone();
     let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -111,8 +112,8 @@ pub async fn remove_project_tool(
         project_ops::remove_tool_with_cleanup(&store, &projectId, &tool)
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -120,7 +121,7 @@ pub async fn remove_project_tool(
 pub async fn list_project_tools(
     store: State<'_, SkillStore>,
     projectId: String,
-) -> Result<Vec<ProjectToolDto>, String> {
+) -> Result<Vec<ProjectToolDto>, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let records = store.list_project_tools(&projectId)?;
@@ -136,8 +137,8 @@ pub async fn list_project_tools(
         )
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -148,7 +149,7 @@ pub async fn add_project_skill_assignment(
     projectId: String,
     skillId: String,
     tool: String,
-) -> Result<ProjectSkillAssignmentDto, String> {
+) -> Result<ProjectSkillAssignmentDto, CommandError> {
     let store = store.inner().clone();
     let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -164,7 +165,11 @@ pub async fn add_project_skill_assignment(
             .get_project_skill_assignment(&projectId, &skillId, &tool)?
             .is_some()
         {
-            anyhow::bail!("ASSIGNMENT_EXISTS|{}:{}:{}", projectId, skillId, tool);
+            anyhow::bail!(SignalError::AssignmentExists {
+                project: projectId,
+                skill: skillId,
+                tool,
+            });
         }
 
         let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -186,8 +191,8 @@ pub async fn add_project_skill_assignment(
         })
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -198,7 +203,7 @@ pub async fn remove_project_skill_assignment(
     projectId: String,
     skillId: String,
     tool: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let store = store.inner().clone();
     let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -213,8 +218,8 @@ pub async fn remove_project_skill_assignment(
         project_sync::unassign_and_cleanup(&store, &project, &skill, &tool)
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -222,7 +227,7 @@ pub async fn remove_project_skill_assignment(
 pub async fn list_project_skill_assignments(
     store: State<'_, SkillStore>,
     projectId: String,
-) -> Result<Vec<ProjectSkillAssignmentDto>, String> {
+) -> Result<Vec<ProjectSkillAssignmentDto>, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let records = project_sync::list_assignments_with_staleness(&store, &projectId)?;
@@ -246,8 +251,8 @@ pub async fn list_project_skill_assignments(
         )
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -264,7 +269,7 @@ pub async fn resync_project(
     store: State<'_, SkillStore>,
     sync_mutex: State<'_, SyncMutex>,
     projectId: String,
-) -> Result<ResyncSummaryDto, String> {
+) -> Result<ResyncSummaryDto, CommandError> {
     let store = store.inner().clone();
     let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -279,15 +284,15 @@ pub async fn resync_project(
         })
     })
     .await
-    .map_err(|e| format!("{}", e))?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
 pub async fn resync_all_projects(
     store: State<'_, SkillStore>,
     sync_mutex: State<'_, SyncMutex>,
-) -> Result<Vec<ResyncSummaryDto>, String> {
+) -> Result<Vec<ResyncSummaryDto>, CommandError> {
     let store = store.inner().clone();
     let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -307,8 +312,8 @@ pub async fn resync_all_projects(
         )
     })
     .await
-    .map_err(|e| format!("{}", e))?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -330,16 +335,22 @@ pub async fn bulk_assign_skill(
     sync_mutex: State<'_, SyncMutex>,
     projectId: String,
     skillId: String,
-) -> Result<BulkAssignResultDto, String> {
+) -> Result<BulkAssignResultDto, CommandError> {
     let store = store.inner().clone();
     let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let project = store
-            .get_project_by_id(&projectId)?
-            .ok_or_else(|| anyhow::anyhow!("NOT_FOUND|project:{}", projectId))?;
-        let skill = store
-            .get_skill_by_id(&skillId)?
-            .ok_or_else(|| anyhow::anyhow!("NOT_FOUND|skill:{}", skillId))?;
+        let project = store.get_project_by_id(&projectId)?.ok_or_else(|| {
+            anyhow::anyhow!(SignalError::NotFound {
+                kind: "project".to_string(),
+                id: projectId.clone(),
+            })
+        })?;
+        let skill = store.get_skill_by_id(&skillId)?.ok_or_else(|| {
+            anyhow::anyhow!(SignalError::NotFound {
+                kind: "skill".to_string(),
+                id: skillId.clone(),
+            })
+        })?;
         let tools = store.list_project_tools(&projectId)?;
 
         let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -384,8 +395,8 @@ pub async fn bulk_assign_skill(
         Ok::<_, anyhow::Error>(BulkAssignResultDto { assigned, failed })
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -395,7 +406,7 @@ pub async fn update_project_gitignore(
     projectId: String,
     addToGitignore: bool,
     addToExclude: bool,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         use std::path::Path;
@@ -424,8 +435,8 @@ pub async fn update_project_gitignore(
         )
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -433,7 +444,7 @@ pub async fn update_project_gitignore(
 pub async fn get_project_gitignore_status(
     store: State<'_, SkillStore>,
     projectId: String,
-) -> Result<GitignoreStatusDto, String> {
+) -> Result<GitignoreStatusDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         use std::fs;
@@ -462,8 +473,8 @@ pub async fn get_project_gitignore_status(
         })
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[derive(serde::Serialize, Clone)]

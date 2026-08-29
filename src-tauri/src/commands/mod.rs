@@ -1,3 +1,4 @@
+pub mod error;
 pub mod projects;
 
 use anyhow::Context;
@@ -15,9 +16,10 @@ use crate::core::cache_cleanup::{
 };
 use crate::core::cancel_token::CancelToken;
 use crate::core::central_repo::{ensure_central_repo, resolve_central_repo_path};
+use crate::core::errors::SignalError;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::github_search::{search_github_repos, RepoSummary};
-use crate::core::global_sync::{GlobalSyncError, OverwritePolicy};
+use crate::core::global_sync::OverwritePolicy;
 use crate::core::installer::{
     clone_for_explore_preview, install_git_skill, install_git_skill_from_selection,
     install_local_skill, install_local_skill_from_selection, list_git_skills, list_local_skills,
@@ -34,79 +36,7 @@ use crate::core::tool_adapters::{
     AGENTS_STANDARD_KEYS,
 };
 
-pub(crate) fn format_anyhow_error(err: anyhow::Error) -> String {
-    let first = err.to_string();
-    // Frontend relies on these prefixes for special flows.
-    if first.starts_with("MULTI_SKILLS|")
-        || first.starts_with("TARGET_EXISTS|")
-        || first.starts_with("TOOL_NOT_INSTALLED|")
-        || first.starts_with("TOOL_NOT_WRITABLE|")
-        || first.starts_with("SKILL_INVALID|")
-        || first.starts_with("DUPLICATE_PROJECT|")
-        || first.starts_with("ASSIGNMENT_EXISTS|")
-        || first.starts_with("NOT_FOUND|")
-    {
-        return first;
-    }
-
-    // Include the full error chain (causes), not just the top context.
-    let mut full = format!("{:#}", err);
-
-    // Redact noisy temp paths from clone context (we care about the cause, not the dest).
-    // Example: `clone https://... into "/Users/.../skills-hub-git-<uuid>"`
-    if let Some(head) = full.lines().next() {
-        if head.starts_with("clone ") {
-            if let Some(pos) = head.find(" into ") {
-                let head_redacted = format!("{} (已省略临时目录)", &head[..pos]);
-                let rest: String = full.lines().skip(1).collect::<Vec<_>>().join("\n");
-                full = if rest.is_empty() {
-                    head_redacted
-                } else {
-                    format!("{}\n{}", head_redacted, rest)
-                };
-            }
-        }
-    }
-
-    let root = err.root_cause().to_string();
-    let lower = full.to_lowercase();
-
-    // Heuristic-friendly messaging for GitHub clone failures.
-    if lower.contains("github.com")
-        && (lower.contains("clone ") || lower.contains("remote") || lower.contains("fetch"))
-    {
-        if lower.contains("securetransport") {
-            return format!(
-        "无法从 GitHub 拉取仓库：TLS/证书校验失败（macOS SecureTransport）。\n\n建议：\n- 检查网络/代理是否拦截 HTTPS\n- 如在公司网络，可能需要安装公司根证书或使用可信代理\n- 也可在终端确认 `git clone {}` 是否可用\n\n详细：{}",
-        "https://github.com/<owner>/<repo>",
-        root
-      );
-        }
-        let hint = if lower.contains("authentication")
-            || lower.contains("permission denied")
-            || lower.contains("credentials")
-        {
-            "无法访问该仓库：可能是私有仓库/权限不足/需要鉴权。"
-        } else if lower.contains("not found") {
-            "仓库不存在或无权限访问（GitHub 返回 not found）。"
-        } else if lower.contains("failed to resolve")
-            || lower.contains("could not resolve")
-            || lower.contains("dns")
-        {
-            "无法解析 GitHub 域名（DNS）。请检查网络/代理。"
-        } else if lower.contains("timed out") || lower.contains("timeout") {
-            "连接 GitHub 超时。请检查网络/代理。"
-        } else if lower.contains("connection refused") || lower.contains("connection reset") {
-            "连接 GitHub 失败（连接被拒绝/重置）。请检查网络/代理。"
-        } else {
-            "无法从 GitHub 拉取仓库。请检查网络/代理，或稍后重试。"
-        };
-
-        return format!("{}\n\n详细：{}", hint, root);
-    }
-
-    full
-}
+pub use error::CommandError;
 
 #[derive(Debug, Serialize)]
 pub struct ToolInfoDto {
@@ -124,7 +54,7 @@ pub struct ToolStatusDto {
 }
 
 #[tauri::command]
-pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusDto, String> {
+pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let adapters = crate::core::tool_adapters::default_tool_adapters();
@@ -177,12 +107,12 @@ pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusD
         })
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
-pub async fn get_project_tool_status() -> Result<ToolStatusDto, String> {
+pub async fn get_project_tool_status() -> Result<ToolStatusDto, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let adapters = default_tool_adapters();
         let mut tools: Vec<ToolInfoDto> = Vec::new();
@@ -241,76 +171,76 @@ pub async fn get_project_tool_status() -> Result<ToolStatusDto, String> {
         })
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
 pub async fn get_onboarding_plan(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
-) -> Result<OnboardingPlan, String> {
+) -> Result<OnboardingPlan, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || build_onboarding_plan(&app, &store))
         .await
-        .map_err(|err| err.to_string())?
-        .map_err(format_anyhow_error)
+        .map_err(CommandError::internal)?
+        .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
-pub async fn get_git_cache_cleanup_days(store: State<'_, SkillStore>) -> Result<i64, String> {
+pub async fn get_git_cache_cleanup_days(store: State<'_, SkillStore>) -> Result<i64, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         Ok::<_, anyhow::Error>(get_git_cache_cleanup_days_core(&store))
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
 pub async fn set_git_cache_cleanup_days(
     store: State<'_, SkillStore>,
     days: i64,
-) -> Result<i64, String> {
+) -> Result<i64, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || set_git_cache_cleanup_days_core(&store, days))
         .await
-        .map_err(|err| err.to_string())?
-        .map_err(format_anyhow_error)
+        .map_err(CommandError::internal)?
+        .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
-pub async fn clear_git_cache_now(app: tauri::AppHandle) -> Result<usize, String> {
+pub async fn clear_git_cache_now(app: tauri::AppHandle) -> Result<usize, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         cleanup_git_cache_dirs(&app, std::time::Duration::from_secs(0))
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
-pub async fn get_git_cache_ttl_secs(store: State<'_, SkillStore>) -> Result<i64, String> {
+pub async fn get_git_cache_ttl_secs(store: State<'_, SkillStore>) -> Result<i64, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         Ok::<_, anyhow::Error>(get_git_cache_ttl_secs_core(&store))
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
 pub async fn set_git_cache_ttl_secs(
     store: State<'_, SkillStore>,
     secs: i64,
-) -> Result<i64, String> {
+) -> Result<i64, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || set_git_cache_ttl_secs_core(&store, secs))
         .await
-        .map_err(|err| err.to_string())?
-        .map_err(format_anyhow_error)
+        .map_err(CommandError::internal)?
+        .map_err(CommandError::from_anyhow)
 }
 
 #[derive(Debug, Serialize)]
@@ -341,7 +271,7 @@ pub(crate) fn expand_home_path(input: &str) -> Result<std::path::PathBuf, anyhow
 pub async fn get_central_repo_path(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
-) -> Result<String, String> {
+) -> Result<String, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let path = resolve_central_repo_path(&app, &store)?;
@@ -349,8 +279,8 @@ pub async fn get_central_repo_path(
         Ok::<_, anyhow::Error>(path.to_string_lossy().to_string())
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -358,7 +288,7 @@ pub async fn set_central_repo_path(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     path: String,
-) -> Result<String, String> {
+) -> Result<String, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let new_base = expand_home_path(&path)?;
@@ -408,8 +338,8 @@ pub async fn set_central_repo_path(
         Ok::<_, anyhow::Error>(new_base.to_string_lossy().to_string())
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -419,27 +349,29 @@ pub async fn install_local(
     store: State<'_, SkillStore>,
     sourcePath: String,
     name: Option<String>,
-) -> Result<InstallResultDto, String> {
+) -> Result<InstallResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let result = install_local_skill(&app, &store, sourcePath.as_ref(), name)?;
         Ok::<_, anyhow::Error>(to_install_dto(result))
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn list_local_skills_cmd(basePath: String) -> Result<Vec<LocalSkillCandidate>, String> {
+pub async fn list_local_skills_cmd(
+    basePath: String,
+) -> Result<Vec<LocalSkillCandidate>, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let path = std::path::PathBuf::from(basePath);
         list_local_skills(&path)
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -450,7 +382,7 @@ pub async fn install_local_selection(
     basePath: String,
     subpath: String,
     name: Option<String>,
-) -> Result<InstallResultDto, String> {
+) -> Result<InstallResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let base = std::path::PathBuf::from(basePath);
@@ -459,8 +391,8 @@ pub async fn install_local_selection(
         Ok::<_, anyhow::Error>(to_install_dto(result))
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -471,7 +403,7 @@ pub async fn install_git(
     cancel: State<'_, Arc<CancelToken>>,
     repoUrl: String,
     name: Option<String>,
-) -> Result<InstallResultDto, String> {
+) -> Result<InstallResultDto, CommandError> {
     let store = store.inner().clone();
     cancel.reset();
     let cancel_token = Arc::clone(cancel.inner());
@@ -480,8 +412,8 @@ pub async fn install_git(
         Ok::<_, anyhow::Error>(to_install_dto(result))
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -490,12 +422,12 @@ pub async fn list_git_skills_cmd(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     repoUrl: String,
-) -> Result<Vec<GitSkillCandidate>, String> {
+) -> Result<Vec<GitSkillCandidate>, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || list_git_skills(&app, &store, &repoUrl))
         .await
-        .map_err(|err| err.to_string())?
-        .map_err(format_anyhow_error)
+        .map_err(CommandError::internal)?
+        .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -506,15 +438,15 @@ pub async fn install_git_selection(
     repoUrl: String,
     subpath: String,
     name: Option<String>,
-) -> Result<InstallResultDto, String> {
+) -> Result<InstallResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let result = install_git_skill_from_selection(&app, &store, &repoUrl, &subpath, name)?;
         Ok::<_, anyhow::Error>(to_install_dto(result))
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[derive(Debug, Serialize)]
@@ -527,7 +459,7 @@ pub struct SyncResultDto {
 pub async fn sync_skill_dir(
     source_path: String,
     target_path: String,
-) -> Result<SyncResultDto, String> {
+) -> Result<SyncResultDto, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let result = sync_dir_hybrid(source_path.as_ref(), target_path.as_ref())?;
         Ok::<_, anyhow::Error>(SyncResultDto {
@@ -536,29 +468,8 @@ pub async fn sync_skill_dir(
         })
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
-}
-
-/// Map core's typed sync failures onto the wire prefixes the frontend parses.
-fn format_global_sync_error(err: GlobalSyncError) -> anyhow::Error {
-    match err {
-        GlobalSyncError::ToolNotInstalled { tool_key } => {
-            anyhow::anyhow!("TOOL_NOT_INSTALLED|{}", tool_key)
-        }
-        GlobalSyncError::TargetExists { target_path } => {
-            anyhow::anyhow!("TARGET_EXISTS|{}", target_path.to_string_lossy())
-        }
-        GlobalSyncError::ToolNotWritable {
-            tool_display_name,
-            skills_dir,
-        } => anyhow::anyhow!(
-            "TOOL_NOT_WRITABLE|{}|{}",
-            tool_display_name,
-            skills_dir.to_string_lossy()
-        ),
-        GlobalSyncError::Other(err) => err,
-    }
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -571,7 +482,7 @@ pub async fn sync_skill_to_tool(
     name: String,
     overwrite: Option<bool>,
     overwriteIfSameContent: Option<bool>,
-) -> Result<SyncResultDto, String> {
+) -> Result<SyncResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let adapter = adapter_by_key(&tool).ok_or_else(|| anyhow::anyhow!("unknown tool"))?;
@@ -588,7 +499,7 @@ pub async fn sync_skill_to_tool(
             &policy,
             now_ms(),
         )
-        .map_err(format_global_sync_error)?;
+        .map_err(anyhow::Error::new)?;
 
         Ok::<_, anyhow::Error>(SyncResultDto {
             mode_used: result.mode_used.as_str().to_string(),
@@ -596,8 +507,8 @@ pub async fn sync_skill_to_tool(
         })
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -606,14 +517,14 @@ pub async fn unsync_skill_from_tool(
     store: State<'_, SkillStore>,
     skillId: String,
     tool: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         crate::core::global_sync::unsync_skill_from_tool_with_records(&store, &tool, &skillId)
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[derive(Debug, Serialize)]
@@ -631,7 +542,7 @@ pub async fn update_managed_skill(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     skillId: String,
-) -> Result<UpdateResultDto, String> {
+) -> Result<UpdateResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let res = update_managed_skill_from_source(&app, &store, &skillId)?;
@@ -644,8 +555,8 @@ pub async fn update_managed_skill(
         })
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -653,7 +564,7 @@ pub async fn search_github(
     store: State<'_, SkillStore>,
     query: String,
     limit: Option<u32>,
-) -> Result<Vec<RepoSummary>, String> {
+) -> Result<Vec<RepoSummary>, CommandError> {
     let store = store.inner().clone();
     let limit = limit.unwrap_or(10) as usize;
     tauri::async_runtime::spawn_blocking(move || {
@@ -666,23 +577,26 @@ pub async fn search_github(
         search_github_repos(&query, limit, token_opt)
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
-pub async fn get_github_token(store: State<'_, SkillStore>) -> Result<String, String> {
+pub async fn get_github_token(store: State<'_, SkillStore>) -> Result<String, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         Ok::<_, anyhow::Error>(store.get_setting("github_token")?.unwrap_or_default())
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
-pub async fn set_github_token(store: State<'_, SkillStore>, token: String) -> Result<(), String> {
+pub async fn set_github_token(
+    store: State<'_, SkillStore>,
+    token: String,
+) -> Result<(), CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let trimmed = token.trim();
@@ -694,12 +608,12 @@ pub async fn set_github_token(store: State<'_, SkillStore>, token: String) -> Re
         Ok::<_, anyhow::Error>(())
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
-pub async fn get_auto_sync_enabled(store: State<'_, SkillStore>) -> Result<bool, String> {
+pub async fn get_auto_sync_enabled(store: State<'_, SkillStore>) -> Result<bool, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let val = store
@@ -708,23 +622,23 @@ pub async fn get_auto_sync_enabled(store: State<'_, SkillStore>) -> Result<bool,
         Ok::<_, anyhow::Error>(val == "true")
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
 pub async fn set_auto_sync_enabled(
     store: State<'_, SkillStore>,
     enabled: bool,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         store.set_setting("auto_sync_enabled", if enabled { "true" } else { "false" })?;
         Ok::<_, anyhow::Error>(())
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[derive(Debug, Serialize)]
@@ -768,12 +682,12 @@ pub(crate) fn set_global_tool_config_impl(
 #[tauri::command]
 pub async fn get_global_tool_config(
     store: State<'_, SkillStore>,
-) -> Result<GlobalToolConfigDto, String> {
+) -> Result<GlobalToolConfigDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || get_global_tool_config_impl(&store))
         .await
-        .map_err(|err| err.to_string())?
-        .map_err(format_anyhow_error)
+        .map_err(CommandError::internal)?
+        .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -782,46 +696,49 @@ pub async fn set_global_tool_config(
     store: State<'_, SkillStore>,
     selectedTools: Vec<String>,
     scanSelectedOnly: bool,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         set_global_tool_config_impl(&store, &selectedTools, scanSelectedOnly)
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn get_ui_zoom_level(store: State<'_, SkillStore>) -> Result<f64, String> {
+pub async fn get_ui_zoom_level(store: State<'_, SkillStore>) -> Result<f64, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let val = store
             .get_setting("ui_zoom_level")
-            .map_err(format_anyhow_error)?;
-        Ok::<_, String>(val.and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0))
+            .map_err(CommandError::from_anyhow)?;
+        Ok::<_, CommandError>(val.and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0))
     })
     .await
-    .map_err(|err| err.to_string())?
+    .map_err(CommandError::internal)?
 }
 
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn set_ui_zoom_level(store: State<'_, SkillStore>, zoomLevel: f64) -> Result<(), String> {
+pub async fn set_ui_zoom_level(
+    store: State<'_, SkillStore>,
+    zoomLevel: f64,
+) -> Result<(), CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let clamped = zoomLevel.clamp(0.5, 3.0);
         store
             .set_setting("ui_zoom_level", &clamped.to_string())
-            .map_err(format_anyhow_error)
+            .map_err(CommandError::from_anyhow)
     })
     .await
-    .map_err(|err| err.to_string())?
+    .map_err(CommandError::internal)?
 }
 
 #[tauri::command]
-pub async fn unsync_all_skills(store: State<'_, SkillStore>) -> Result<usize, String> {
+pub async fn unsync_all_skills(store: State<'_, SkillStore>) -> Result<usize, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let skills = store.list_skills()?;
@@ -839,13 +756,16 @@ pub async fn unsync_all_skills(store: State<'_, SkillStore>) -> Result<usize, St
         Ok::<_, anyhow::Error>(removed_count)
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn unsync_skill(store: State<'_, SkillStore>, skillId: String) -> Result<usize, String> {
+pub async fn unsync_skill(
+    store: State<'_, SkillStore>,
+    skillId: String,
+) -> Result<usize, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let targets = store.list_skill_targets(&skillId)?;
@@ -859,8 +779,8 @@ pub async fn unsync_skill(store: State<'_, SkillStore>, skillId: String) -> Resu
         Ok::<_, anyhow::Error>(count)
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -870,25 +790,27 @@ pub async fn import_existing_skill(
     store: State<'_, SkillStore>,
     sourcePath: String,
     name: Option<String>,
-) -> Result<InstallResultDto, String> {
+) -> Result<InstallResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let source = std::path::Path::new(&sourcePath);
         // Validate SKILL.md exists before importing (fixes #8: prevents importing
         // directories that were "discovered" but lack a valid SKILL.md).
         if !source.join("SKILL.md").exists() {
-            anyhow::bail!("SKILL_INVALID|missing_skill_md");
+            anyhow::bail!(SignalError::SkillInvalid {
+                reason: "missing_skill_md".to_string(),
+            });
         }
         let result = install_local_skill(&app, &store, source, name)?;
         Ok::<_, anyhow::Error>(to_install_dto(result))
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
-pub async fn remove_skill_source(path: String) -> Result<(), String> {
+pub async fn remove_skill_source(path: String) -> Result<(), CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let target = std::path::PathBuf::from(&path);
 
@@ -901,18 +823,15 @@ pub async fn remove_skill_source(path: String) -> Result<(), String> {
             target.starts_with(&tool_skills_dir)
         });
         if !is_safe {
-            anyhow::bail!(
-                "UNSAFE_PATH|path is not under a known tool skills directory: {}",
-                path
-            );
+            anyhow::bail!("path is not under a known tool skills directory: {}", path);
         }
 
         remove_path_any(&target)?;
         Ok::<_, anyhow::Error>(())
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[derive(Debug, Serialize)]
@@ -940,7 +859,9 @@ pub struct SkillTargetDto {
 }
 
 #[tauri::command]
-pub fn get_managed_skills(store: State<'_, SkillStore>) -> Result<Vec<ManagedSkillDto>, String> {
+pub fn get_managed_skills(
+    store: State<'_, SkillStore>,
+) -> Result<Vec<ManagedSkillDto>, CommandError> {
     get_managed_skills_impl(store.inner())
 }
 
@@ -949,7 +870,7 @@ pub fn get_managed_skills(store: State<'_, SkillStore>) -> Result<Vec<ManagedSki
 pub async fn delete_managed_skill(
     store: State<'_, SkillStore>,
     skillId: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         log::debug!("[delete_managed_skill] skillId={}", skillId);
@@ -1011,8 +932,8 @@ pub async fn delete_managed_skill(
         Ok::<_, anyhow::Error>(())
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 fn to_install_dto(result: InstallResult) -> InstallResultDto {
@@ -1031,8 +952,8 @@ pub(crate) fn now_ms() -> i64 {
     now.as_millis() as i64
 }
 
-fn get_managed_skills_impl(store: &SkillStore) -> Result<Vec<ManagedSkillDto>, String> {
-    let skills = store.list_skills().map_err(|err| err.to_string())?;
+fn get_managed_skills_impl(store: &SkillStore) -> Result<Vec<ManagedSkillDto>, CommandError> {
+    let skills = store.list_skills().map_err(CommandError::internal)?;
     Ok(skills
         .into_iter()
         .map(|skill| {
@@ -1092,15 +1013,15 @@ impl From<FeaturedSkill> for FeaturedSkillDto {
 #[tauri::command]
 pub async fn get_featured_skills(
     store: State<'_, SkillStore>,
-) -> Result<Vec<FeaturedSkillDto>, String> {
+) -> Result<Vec<FeaturedSkillDto>, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let skills = fetch_featured_skills(&store)?;
         Ok::<_, anyhow::Error>(skills.into_iter().map(FeaturedSkillDto::from).collect())
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[derive(Debug, Serialize)]
@@ -1126,15 +1047,15 @@ impl From<OnlineSkillResult> for OnlineSkillDto {
 pub async fn search_skills_online(
     query: String,
     limit: Option<u32>,
-) -> Result<Vec<OnlineSkillDto>, String> {
+) -> Result<Vec<OnlineSkillDto>, CommandError> {
     let limit = limit.unwrap_or(20) as usize;
     tauri::async_runtime::spawn_blocking(move || {
         let results = search_skills_online_core(&query, limit)?;
         Ok::<_, anyhow::Error>(results.into_iter().map(OnlineSkillDto::from).collect())
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[derive(Debug, Serialize)]
@@ -1145,7 +1066,7 @@ pub struct SkillFileEntry {
 }
 
 #[tauri::command]
-pub async fn list_skill_files(central_path: String) -> Result<Vec<SkillFileEntry>, String> {
+pub async fn list_skill_files(central_path: String) -> Result<Vec<SkillFileEntry>, CommandError> {
     let path = std::path::PathBuf::from(&central_path);
     tauri::async_runtime::spawn_blocking(move || {
         let entries = crate::core::skill_files::list_files(&path)?;
@@ -1160,19 +1081,22 @@ pub async fn list_skill_files(central_path: String) -> Result<Vec<SkillFileEntry
         )
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
-pub async fn read_skill_file(central_path: String, file_path: String) -> Result<String, String> {
+pub async fn read_skill_file(
+    central_path: String,
+    file_path: String,
+) -> Result<String, CommandError> {
     let base = std::path::PathBuf::from(&central_path);
     tauri::async_runtime::spawn_blocking(move || {
         crate::core::skill_files::read_file(&base, &file_path)
     })
     .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -1183,7 +1107,7 @@ pub async fn clone_explore_skill(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     cancel: State<'_, Arc<CancelToken>>,
-) -> Result<String, String> {
+) -> Result<String, CommandError> {
     let store = store.inner().clone();
     let cancel = cancel.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -1195,15 +1119,15 @@ pub async fn clone_explore_skill(
             skillName.as_deref(),
             Some(&cancel),
         )
-        .map_err(format_anyhow_error)?;
+        .map_err(CommandError::from_anyhow)?;
         Ok(path.to_string_lossy().to_string())
     })
     .await
-    .map_err(|e| format!("task join error: {}", e))?
+    .map_err(CommandError::internal)?
 }
 
 #[tauri::command]
-pub fn cancel_current_operation(cancel: State<'_, Arc<CancelToken>>) -> Result<(), String> {
+pub fn cancel_current_operation(cancel: State<'_, Arc<CancelToken>>) -> Result<(), CommandError> {
     cancel.cancel();
     Ok(())
 }
@@ -1213,12 +1137,12 @@ pub fn cancel_current_operation(cancel: State<'_, Arc<CancelToken>>) -> Result<(
 pub async fn hide_explore_skill(
     store: State<'_, SkillStore>,
     sourceUrl: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || store.hide_explore_skill(&sourceUrl))
         .await
-        .map_err(|e| format!("{e}"))?
-        .map_err(format_anyhow_error)
+        .map_err(CommandError::internal)?
+        .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -1226,23 +1150,23 @@ pub async fn hide_explore_skill(
 pub async fn unhide_explore_skill(
     store: State<'_, SkillStore>,
     sourceUrl: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || store.unhide_explore_skill(&sourceUrl))
         .await
-        .map_err(|e| format!("{e}"))?
-        .map_err(format_anyhow_error)
+        .map_err(CommandError::internal)?
+        .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
 pub async fn get_hidden_explore_skills(
     store: State<'_, SkillStore>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || store.list_hidden_explore_skills())
         .await
-        .map_err(|e| format!("{e}"))?
-        .map_err(format_anyhow_error)
+        .map_err(CommandError::internal)?
+        .map_err(CommandError::from_anyhow)
 }
 
 #[cfg(test)]

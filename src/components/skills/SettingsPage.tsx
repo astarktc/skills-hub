@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { Update } from "@tauri-apps/plugin-updater";
+import { describeCommandError } from "../../commandError";
 
 type UpdateStatus =
   | "idle"
@@ -86,10 +87,10 @@ const SettingsPage = ({
         setUpdateStatus("up-to-date");
       }
     } catch (err) {
-      setUpdateError(err instanceof Error ? err.message : String(err));
+      setUpdateError(describeCommandError(err, t) ?? "");
       setUpdateStatus("error");
     }
-  }, [isTauri]);
+  }, [isTauri, t]);
 
   const handleInstallUpdate = useCallback(async () => {
     const update = updateRef.current;
@@ -100,10 +101,10 @@ const SettingsPage = ({
       await update.downloadAndInstall();
       setUpdateStatus("done");
     } catch (err) {
-      setUpdateError(err instanceof Error ? err.message : String(err));
+      setUpdateError(describeCommandError(err, t) ?? "");
       setUpdateStatus("error");
     }
-  }, []);
+  }, [t]);
 
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const versionText = useMemo(() => {

@@ -28,6 +28,11 @@ import SharedDirModal from "./components/skills/modals/SharedDirModal";
 import ToolConfigModal from "./components/skills/modals/ToolConfigModal";
 import SettingsPage from "./components/skills/SettingsPage";
 import ProjectsPage from "./components/projects/ProjectsPage";
+import {
+  describeCommandError,
+  errorCode,
+  toCommandError,
+} from "./commandError";
 import type {
   FeaturedSkillDto,
   GitSkillCandidate,
@@ -196,56 +201,25 @@ function App() {
     },
     [isTauri],
   );
-  const formatErrorMessage = useCallback(
-    (raw: string) => {
-      if (raw.includes("CANCELLED|")) {
-        return ""; // Silently ignore cancelled operations
-      }
-      if (raw.includes("skill already exists in central repo")) {
-        // Extract skill name from path like: skill already exists in central repo: "/path/to/react-best-practices"
-        const pathMatch = raw.match(/central repo:\s*"?([^"]+)"?/);
-        if (pathMatch) {
-          const skillName = pathMatch[1].split("/").pop() ?? "";
-          if (skillName) {
-            return t("errors.skillExistsInHubNamed", { name: skillName });
-          }
-        }
-        return t("errors.skillExistsInHub");
-      }
-      if (raw.startsWith("TARGET_EXISTS|")) {
-        return t("errors.targetExists");
-      }
-      if (raw.startsWith("TOOL_NOT_INSTALLED|")) {
-        return t("errors.toolNotInstalled");
-      }
-      if (raw.startsWith("TOOL_NOT_WRITABLE|")) {
-        const parts = raw.split("|");
-        return t("errors.toolNotWritable", {
-          tool: parts[1] ?? "",
-          path: parts[2] ?? "",
-        });
-      }
-      if (raw.includes("未在该仓库中发现可导入的 Skills")) {
-        return t("errors.noSkillsFoundInRepo");
-      }
-      return raw;
-    },
+  // Single narrow waist for command failures: localized copy (or null for
+  // silent cancellation) comes from describeCommandError.
+  const formatError = useCallback(
+    (err: unknown) => describeCommandError(err, t),
     [t],
   );
   const showActionErrors = useCallback(
     (errors: { title: string; message: string }[]) => {
-      if (errors.length === 0) return;
-      const head = errors[0];
+      // Entries with an empty message are silenced failures (e.g. cancelled).
+      const visible = errors.filter((entry) => entry.message);
+      if (visible.length === 0) return;
+      const head = visible[0];
       const more =
-        errors.length > 1
-          ? t("errors.moreCount", { count: errors.length - 1 })
+        visible.length > 1
+          ? t("errors.moreCount", { count: visible.length - 1 })
           : "";
-      toast.error(
-        `${formatErrorMessage(`${head.title}\n${head.message}`)}${more}`,
-        { duration: 3200 },
-      );
+      toast.error(`${head.title}\n${head.message}${more}`, { duration: 3200 });
     },
-    [formatErrorMessage, t],
+    [t],
   );
   const isSkillNameTaken = useCallback(
     (name: string) =>
@@ -326,22 +300,22 @@ function App() {
       setVariantChoice(defaultChoice);
       return result;
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
       return null;
     } finally {
       setLoading(false);
       setLoadingStartAt(null);
     }
-  }, [invokeTauri]);
+  }, [formatError, invokeTauri]);
 
   const loadManagedSkills = useCallback(async () => {
     try {
       const result = await invokeTauri<ManagedSkill[]>("get_managed_skills");
       setManagedSkills(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
     }
-  }, [invokeTauri]);
+  }, [formatError, invokeTauri]);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -430,27 +404,27 @@ function App() {
     invokeTauri<string>("get_central_repo_path")
       .then((path) => setStoragePath(path))
       .catch((err) => {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(formatError(err));
       });
-  }, [isTauri, invokeTauri]);
+  }, [formatError, invokeTauri, isTauri]);
 
   useEffect(() => {
     if (!isTauri) return;
     invokeTauri<number>("get_git_cache_cleanup_days")
       .then((days) => setGitCacheCleanupDays(days))
       .catch((err) => {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(formatError(err));
       });
-  }, [isTauri, invokeTauri]);
+  }, [formatError, invokeTauri, isTauri]);
 
   useEffect(() => {
     if (!isTauri) return;
     invokeTauri<number>("get_git_cache_ttl_secs")
       .then((secs) => setGitCacheTtlSecs(secs))
       .catch((err) => {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(formatError(err));
       });
-  }, [isTauri, invokeTauri]);
+  }, [formatError, invokeTauri, isTauri]);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -567,11 +541,10 @@ function App() {
       setUpdateDone(true);
     } catch (err) {
       setUpdateInstalling(false);
-      toast.error(err instanceof Error ? err.message : String(err), {
-        duration: 3200,
-      });
+      const msg = describeCommandError(err, t);
+      if (msg) toast.error(msg, { duration: 3200 });
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (!successToastMessage) return;
@@ -585,8 +558,7 @@ function App() {
 
   useEffect(() => {
     if (!error) return;
-    const msg = formatErrorMessage(error);
-    if (msg) toast.error(msg, { duration: 2600 });
+    toast.error(error, { duration: 2600 });
     // Reset the one-shot error/action triggers in a microtask (see the success
     // toast effect above) to keep the setState out of the synchronous effect
     // body. Behavior-preserving: these flags are only consumed here.
@@ -594,7 +566,7 @@ function App() {
       setError(null);
       setActionMessage(null);
     });
-  }, [error, formatErrorMessage]);
+  }, [error]);
 
   const toolInfos = useMemo(() => toolStatus?.tools ?? [], [toolStatus]);
 
@@ -710,9 +682,9 @@ function App() {
       setStoragePath(newPath);
       await loadManagedSkills();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
     }
-  }, [invokeTauri, isTauri, loadManagedSkills, t]);
+  }, [formatError, invokeTauri, isTauri, loadManagedSkills, t]);
   const handleGitCacheCleanupDaysChange = useCallback(
     async (nextDays: number) => {
       const normalized = Math.max(0, Math.min(nextDays, 3650));
@@ -727,10 +699,10 @@ function App() {
         );
         setGitCacheCleanupDays(updated);
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(formatError(err));
       }
     },
-    [invokeTauri, isTauri],
+    [formatError, invokeTauri, isTauri],
   );
   const handleGitCacheTtlSecsChange = useCallback(
     async (nextSecs: number) => {
@@ -743,10 +715,10 @@ function App() {
         });
         setGitCacheTtlSecs(updated);
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(formatError(err));
       }
     },
-    [invokeTauri, isTauri],
+    [formatError, invokeTauri, isTauri],
   );
   const handleGithubTokenChange = useCallback(
     async (nextToken: string) => {
@@ -755,10 +727,10 @@ function App() {
       try {
         await invokeTauri("set_github_token", { token: nextToken });
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(formatError(err));
       }
     },
-    [invokeTauri, isTauri],
+    [formatError, invokeTauri, isTauri],
   );
   const handleClearGitCacheNow = useCallback(async () => {
     if (!isTauri) {
@@ -769,19 +741,22 @@ function App() {
       const removed = await invokeTauri<number>("clear_git_cache_now");
       setSuccessToastMessage(t("status.gitCacheCleared", { count: removed }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
     }
-  }, [invokeTauri, isTauri, t]);
+  }, [formatError, invokeTauri, isTauri, t]);
   const handleAutoSyncToggle = useCallback(
     async (enabled: boolean) => {
       try {
         await invokeTauri("set_auto_sync_enabled", { enabled });
         setAutoSyncEnabled(enabled);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err));
+        {
+          const msg = formatError(err);
+          if (msg) toast.error(msg);
+        }
       }
     },
-    [invokeTauri],
+    [formatError, invokeTauri],
   );
 
   const handleUnsyncAll = useCallback(async () => {
@@ -792,12 +767,12 @@ function App() {
       setSuccessToastMessage(t("unsyncAllComplete", { count }));
       await loadManagedSkills();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
     } finally {
       setLoading(false);
       setLoadingStartAt(null);
     }
-  }, [invokeTauri, loadManagedSkills, t]);
+  }, [formatError, invokeTauri, loadManagedSkills, t]);
 
   const handleUnsyncSkill = useCallback(
     async (skillId: string) => {
@@ -805,10 +780,13 @@ function App() {
         await invokeTauri("unsync_skill", { skillId });
         await loadManagedSkills();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err));
+        {
+          const msg = formatError(err);
+          if (msg) toast.error(msg);
+        }
       }
     },
-    [invokeTauri, loadManagedSkills],
+    [formatError, invokeTauri, loadManagedSkills],
   );
 
   const handleSyncSkillToAllTools = useCallback(
@@ -836,14 +814,12 @@ function App() {
               name: skill.name,
             });
           } catch (err) {
-            const raw = err instanceof Error ? err.message : String(err);
-            if (
-              raw.startsWith("TOOL_NOT_INSTALLED|") ||
-              raw.startsWith("TOOL_NOT_WRITABLE|")
-            ) {
+            const code = errorCode(err);
+            if (code === "TOOL_NOT_INSTALLED" || code === "TOOL_NOT_WRITABLE") {
               continue;
             }
-            toast.error(raw);
+            const msg = formatError(err);
+            if (msg) toast.error(msg);
           }
         }
         setActionMessage(null);
@@ -855,6 +831,7 @@ function App() {
       }
     },
     [
+      formatError,
       installedToolIds,
       invokeTauri,
       isInstalled,
@@ -879,9 +856,9 @@ function App() {
       if (!selected || Array.isArray(selected)) return;
       setLocalPath(selected);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
     }
-  }, [isTauri, t]);
+  }, [formatError, isTauri, t]);
   const pendingDeleteSkill = useMemo(
     () => managedSkills.find((skill) => skill.id === pendingDeleteId) ?? null,
     [managedSkills, pendingDeleteId],
@@ -953,10 +930,13 @@ function App() {
         await invokeTauri("hide_explore_skill", { sourceUrl });
         setHiddenSkills((prev) => new Set([...prev, sourceUrl]));
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err));
+        {
+          const msg = formatError(err);
+          if (msg) toast.error(msg);
+        }
       }
     },
-    [invokeTauri],
+    [formatError, invokeTauri],
   );
 
   const handleUnhideSkill = useCallback(
@@ -969,10 +949,13 @@ function App() {
           return next;
         });
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err));
+        {
+          const msg = formatError(err);
+          if (msg) toast.error(msg);
+        }
       }
     },
-    [invokeTauri],
+    [formatError, invokeTauri],
   );
 
   const handleOpenDetail = useCallback((skill: ManagedSkill) => {
@@ -1010,16 +993,14 @@ function App() {
         setDetailSkill(exploreManagedSkill);
         setActiveView("explore-detail");
       } catch (err) {
-        const msg = formatErrorMessage(
-          err instanceof Error ? err.message : String(err),
-        );
+        const msg = formatError(err);
         if (msg) toast.error(msg, { duration: 3200 });
       } finally {
         setLoading(false);
         setLoadingStartAt(null);
       }
     },
-    [invokeTauri, formatErrorMessage],
+    [invokeTauri, formatError],
   );
 
   const handleBackToExplore = useCallback(() => {
@@ -1135,10 +1116,10 @@ function App() {
         setShowToolConfigModal(false);
         toast.success(t("status.toolConfigSaved"));
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(formatError(err));
       }
     },
-    [invokeTauri, t, toolInfos],
+    [formatError, invokeTauri, t, toolInfos],
   );
 
   const handleCloseDelete = useCallback(() => {
@@ -1290,7 +1271,7 @@ function App() {
             skillId: skill.id,
           });
         } catch (err) {
-          const raw = err instanceof Error ? err.message : String(err);
+          const raw = formatError(err) ?? "";
           collectedErrors.push({
             title: t("errors.updateFailedTitle", { name: skill.name }),
             message: raw,
@@ -1327,18 +1308,15 @@ function App() {
                   name: skill.name,
                 });
               } catch (err) {
-                const raw = err instanceof Error ? err.message : String(err);
-                if (
-                  raw.startsWith("TOOL_NOT_INSTALLED|") ||
-                  raw.startsWith("TOOL_NOT_WRITABLE|")
-                )
+                const code = errorCode(err);
+                if (code === "TOOL_NOT_INSTALLED" || code === "TOOL_NOT_WRITABLE")
                   continue;
                 collectedErrors.push({
                   title: t("errors.syncFailedTitle", {
                     name: skill.name,
                     tool: toolLabel,
                   }),
-                  message: raw,
+                  message: formatError(err) ?? "",
                 });
               }
             }
@@ -1357,6 +1335,7 @@ function App() {
     }
   }, [
     autoSyncEnabled,
+    formatError,
     installedToolIds,
     invokeTauri,
     isInstalled,
@@ -1497,16 +1476,15 @@ function App() {
                 overwriteIfSameContent: true,
               });
             } catch (err) {
-              const raw = err instanceof Error ? err.message : String(err);
-              if (raw.startsWith("TARGET_EXISTS|")) {
-                const targetPath = raw.split("|")[1] ?? "";
+              const e = toCommandError(err);
+              if (e.code === "TARGET_EXISTS") {
                 collectedErrors.push({
                   title: t("errors.syncFailedTitle", {
                     name: group.name,
                     tool: tool.label,
                   }),
                   message: t("errors.syncTargetExistsMessage", {
-                    path: targetPath,
+                    path: e.path,
                   }),
                 });
               } else {
@@ -1515,7 +1493,7 @@ function App() {
                     name: group.name,
                     tool: tool.label,
                   }),
-                  message: raw,
+                  message: formatError(err) ?? "",
                 });
               }
             }
@@ -1527,7 +1505,7 @@ function App() {
               await invokeTauri("remove_skill_source", { path: variant.path });
             } catch (err) {
               // Non-fatal: skill is already imported, cleanup failure is secondary
-              const raw = err instanceof Error ? err.message : String(err);
+              const raw = formatError(err) ?? "";
               collectedErrors.push({
                 title: t("errors.syncFailedTitle", {
                   name: group.name,
@@ -1551,7 +1529,7 @@ function App() {
         setShowImportModal(false);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
     } finally {
       setLoading(false);
       setLoadingStartAt(null);
@@ -1620,7 +1598,7 @@ function App() {
                   overwriteIfSameContent: true,
                 });
               } catch (err) {
-                const raw = err instanceof Error ? err.message : String(err);
+                const raw = formatError(err) ?? "";
                 collectedErrors.push({
                   title: t("errors.syncFailedTitle", {
                     name: created.name,
@@ -1653,7 +1631,7 @@ function App() {
         return;
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
     } finally {
       setLoading(false);
       setLoadingStartAt(null);
@@ -1747,7 +1725,7 @@ function App() {
                   overwriteIfSameContent: true,
                 });
               } catch (err) {
-                const raw = err instanceof Error ? err.message : String(err);
+                const raw = formatError(err) ?? "";
                 collectedErrors.push({
                   title: t("errors.syncFailedTitle", {
                     name: created.name,
@@ -1816,7 +1794,7 @@ function App() {
                     overwriteIfSameContent: true,
                   });
                 } catch (err) {
-                  const raw = err instanceof Error ? err.message : String(err);
+                  const raw = formatError(err) ?? "";
                   collectedErrors.push({
                     title: t("errors.syncFailedTitle", {
                       name: created.name,
@@ -1862,7 +1840,7 @@ function App() {
       setShowAddModal(false);
       await loadManagedSkills();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
     } finally {
       setLoading(false);
       setLoadingStartAt(null);
@@ -1998,7 +1976,7 @@ function App() {
                     overwriteIfSameContent: true,
                   });
                 } catch (err) {
-                  const raw = err instanceof Error ? err.message : String(err);
+                  const raw = formatError(err) ?? "";
                   collectedErrors.push({
                     title: t("errors.syncFailedTitle", {
                       name: created.name,
@@ -2011,7 +1989,7 @@ function App() {
             }
           }
         } catch (err) {
-          const raw = err instanceof Error ? err.message : String(err);
+          const raw = formatError(err) ?? "";
           collectedErrors.push({
             title: t("errors.importFailedTitle", { name: candidate.name }),
             message: raw,
@@ -2110,7 +2088,7 @@ function App() {
                     overwriteIfSameContent: true,
                   });
                 } catch (err) {
-                  const raw = err instanceof Error ? err.message : String(err);
+                  const raw = formatError(err) ?? "";
                   collectedErrors.push({
                     title: t("errors.syncFailedTitle", {
                       name: created.name,
@@ -2123,7 +2101,7 @@ function App() {
             }
           }
         } catch (err) {
-          const raw = err instanceof Error ? err.message : String(err);
+          const raw = formatError(err) ?? "";
           collectedErrors.push({
             title: t("errors.importFailedTitle", { name: candidate.name }),
             message: raw,
@@ -2166,7 +2144,7 @@ function App() {
       await loadManagedSkills();
       setPendingDeleteId(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatError(err));
     } finally {
       setLoading(false);
       setLoadingStartAt(null);
@@ -2210,18 +2188,15 @@ function App() {
                 overwriteIfSameContent: true,
               });
             } catch (err) {
-              const raw = err instanceof Error ? err.message : String(err);
-              if (
-                raw.startsWith("TOOL_NOT_INSTALLED|") ||
-                raw.startsWith("TOOL_NOT_WRITABLE|")
-              )
+              const code = errorCode(err);
+              if (code === "TOOL_NOT_INSTALLED" || code === "TOOL_NOT_WRITABLE")
                 continue;
               collectedErrors.push({
                 title: t("errors.syncFailedTitle", {
                   name: skill.name,
                   tool: toolLabel,
                 }),
-                message: raw,
+                message: formatError(err) ?? "",
               });
             }
           }
@@ -2238,6 +2213,7 @@ function App() {
     },
     [
       autoSyncEnabled,
+      formatError,
       invokeTauri,
       isInstalled,
       loadManagedSkills,
@@ -2306,29 +2282,18 @@ function App() {
         setActionMessage(null);
         await loadManagedSkills();
       } catch (err) {
-        const raw = err instanceof Error ? err.message : String(err);
-        if (raw.startsWith("TARGET_EXISTS|")) {
-          const targetPath = raw.split("|")[1] ?? "";
-          setError(t("errors.targetExistsDetail", { path: targetPath }));
-        } else if (raw.startsWith("TOOL_NOT_INSTALLED|")) {
-          setError(t("errors.toolNotInstalled"));
-        } else if (raw.startsWith("TOOL_NOT_WRITABLE|")) {
-          const parts = raw.split("|");
-          setError(
-            t("errors.toolNotWritable", {
-              tool: parts[1] ?? "",
-              path: parts[2] ?? "",
-            }),
-          );
+        const e = toCommandError(err);
+        if (e.code === "TARGET_EXISTS") {
+          setError(t("errors.targetExistsDetail", { path: e.path }));
         } else {
-          setError(raw);
+          setError(formatError(err));
         }
       } finally {
         setLoading(false);
         setLoadingStartAt(null);
       }
     },
-    [invokeTauri, loadManagedSkills, loading, t, tools],
+    [formatError, invokeTauri, loading, loadManagedSkills, t, tools],
   );
 
   const handleToggleToolForSkill = useCallback(
@@ -2360,14 +2325,13 @@ function App() {
         setActionMessage(null);
         await loadManagedSkills();
       } catch (err) {
-        const raw = err instanceof Error ? err.message : String(err);
-        setError(raw);
+        setError(formatError(err));
       } finally {
         setLoading(false);
         setLoadingStartAt(null);
       }
     },
-    [invokeTauri, loadManagedSkills, t],
+    [formatError, invokeTauri, loadManagedSkills, t],
   );
 
   const handleUpdateSkill = useCallback(

@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+use super::errors::SignalError;
 use super::project_sync;
 use super::skill_store::{ProjectRecord, SkillStore};
 use super::sync_engine;
@@ -87,7 +88,7 @@ pub fn register_project_path(
     let path_str = canonical.to_string_lossy().to_string();
 
     if store.get_project_by_path(&path_str)?.is_some() {
-        bail!("DUPLICATE_PROJECT|{}", path_str);
+        bail!(SignalError::DuplicateProject { path: path_str });
     }
 
     let record = ProjectRecord {
@@ -258,7 +259,7 @@ pub fn update_project_path(
     // Check for duplicates (different project using this path)
     if let Some(existing) = store.get_project_by_path(&path_str)? {
         if existing.id != project_id {
-            bail!("DUPLICATE_PROJECT|{}", path_str);
+            bail!(SignalError::DuplicateProject { path: path_str });
         }
     }
 

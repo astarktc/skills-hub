@@ -10,6 +10,7 @@ use super::cache_cleanup::get_git_cache_ttl_secs;
 use super::cancel_token::CancelToken;
 use super::central_repo::{ensure_central_repo, resolve_central_repo_path};
 use super::content_hash::hash_dir;
+use super::errors::SignalError;
 use super::git_fetcher::{clone_or_pull, clone_or_pull_sparse};
 use super::github_download::{download_github_directory, parse_github_api_params};
 use super::project_sync::resolve_project_sync_target;
@@ -552,9 +553,9 @@ fn ensure_installable_skill_dir(p: &Path) -> Result<()> {
     if is_skill_dir(p) {
         Ok(())
     } else {
-        anyhow::bail!(
-            "SKILL_INVALID|missing_skill_md|该路径不是有效 Skill 目录：未找到 SKILL.md。请粘贴具体 Skill 文件夹链接。"
-        );
+        anyhow::bail!(SignalError::SkillInvalid {
+            reason: "missing_skill_md".to_string(),
+        });
     }
 }
 
@@ -1421,10 +1422,16 @@ pub fn install_local_skill_from_selection<R: tauri::Runtime>(
 
     let skill_md = find_skill_md(&selected_dir);
     if skill_md.is_none() {
-        anyhow::bail!("SKILL_INVALID|missing_skill_md");
+        anyhow::bail!(SignalError::SkillInvalid {
+            reason: "missing_skill_md".to_string(),
+        });
     }
-    let (parsed_name, _desc) = parse_skill_md_with_reason(&skill_md.unwrap())
-        .map_err(|reason| anyhow::anyhow!("SKILL_INVALID|{}", reason))?;
+    let (parsed_name, _desc) =
+        parse_skill_md_with_reason(&skill_md.unwrap()).map_err(|reason| {
+            anyhow::anyhow!(SignalError::SkillInvalid {
+                reason: reason.to_string(),
+            })
+        })?;
 
     let display_name = name.unwrap_or(parsed_name);
 
@@ -1670,28 +1677,21 @@ fn fetch_skill_files<R: tauri::Runtime>(
             }
             Err(err) => {
                 let _ = std::fs::remove_dir_all(dest_dir);
-                let err_msg = format!("{:#}", err);
-                if err_msg.contains("CANCELLED|") {
+                // Typed signals propagate untouched so the command seam can
+                // classify them; no string sniffing.
+                if matches!(
+                    err.downcast_ref::<SignalError>(),
+                    Some(SignalError::Cancelled | SignalError::RateLimited { .. })
+                ) {
                     return Err(err);
                 }
+                let err_msg = format!("{:#}", err);
                 if err_msg.contains("404") || err_msg.contains("Not Found") {
                     anyhow::bail!(
                         "Skill not found on GitHub (may have been deleted or the path changed).\nPlease check: {}/tree/{}/{}",
                         parsed.clone_url.trim_end_matches(".git"),
                         branch,
                         subpath
-                    );
-                }
-                if let Some(rest) = err_msg.strip_prefix("RATE_LIMITED|") {
-                    let mins: i64 = rest.trim().parse().unwrap_or(0);
-                    if mins > 0 {
-                        anyhow::bail!(
-                            "GitHub API rate limit reached, resets in ~{} minutes. Configure a GitHub Token in Settings to increase the limit.",
-                            mins
-                        );
-                    }
-                    anyhow::bail!(
-                        "GitHub API rate limit reached. Configure a GitHub Token in Settings to increase the limit."
                     );
                 }
                 if err_msg.contains("403") || err_msg.contains("Forbidden") {
@@ -1762,11 +1762,7 @@ fn find_skill_by_name(
     repo_dir: &Path,
     skill_name: Option<&str>,
 ) -> Result<PathBuf> {
-    let target_name = skill_name.ok_or_else(|| {
-        anyhow::anyhow!(
-            "MULTI_SKILLS|This repository contains multiple Skills. Please copy the specific skill folder link (e.g. GitHub /tree/<branch>/<skill-folder>) and try again."
-        )
-    })?;
+    let target_name = skill_name.ok_or_else(|| anyhow::anyhow!(SignalError::MultiSkills))?;
     let target = target_name.to_lowercase();
 
     // Match by SKILL.md name
@@ -1790,9 +1786,7 @@ fn find_skill_by_name(
         return Ok(dir.clone());
     }
 
-    anyhow::bail!(
-        "MULTI_SKILLS|This repository contains multiple Skills. Please copy the specific skill folder link (e.g. GitHub /tree/<branch>/<skill-folder>) and try again."
-    );
+    anyhow::bail!(SignalError::MultiSkills);
 }
 
 /// Clone a skill into the explore-cache for preview (no DB registration).

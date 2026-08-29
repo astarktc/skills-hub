@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::core::errors::SignalError;
 use crate::core::skill_store::{
     ProjectRecord, ProjectSkillAssignmentRecord, SkillStore, SkillTargetRecord,
 };
@@ -289,7 +290,10 @@ fn install_git_skill_errors_on_multi_skills_repo_root() {
         Ok(_) => panic!("expected error"),
         Err(e) => e,
     };
-    assert!(format!("{:#}", err).contains("MULTI_SKILLS|"));
+    assert!(matches!(
+        err.downcast_ref::<SignalError>(),
+        Some(SignalError::MultiSkills)
+    ));
 }
 
 #[test]
@@ -365,7 +369,10 @@ fn install_local_selection_validates_skill_md() {
         Ok(_) => panic!("expected error"),
         Err(e) => e,
     };
-    assert!(format!("{:#}", err).contains("SKILL_INVALID|missing_skill_md"));
+    assert!(matches!(
+        err.downcast_ref::<SignalError>(),
+        Some(SignalError::SkillInvalid { reason }) if reason == "missing_skill_md"
+    ));
 }
 
 /// Issue #28: when a git subpath is "skills", the derived name should be replaced by the
@@ -445,7 +452,10 @@ fn install_git_skill_rejects_container_subpath_without_skill_md() {
         Ok(_) => panic!("expected invalid skill path"),
         Err(e) => e,
     };
-    assert!(format!("{:#}", err).contains("SKILL_INVALID|missing_skill_md"));
+    assert!(matches!(
+        err.downcast_ref::<SignalError>(),
+        Some(SignalError::SkillInvalid { reason }) if reason == "missing_skill_md"
+    ));
 }
 
 #[test]
@@ -582,7 +592,10 @@ fn install_git_skill_detects_root_level_multi_skills() {
         Ok(_) => panic!("expected MULTI_SKILLS error"),
         Err(e) => e,
     };
-    assert!(format!("{:#}", err).contains("MULTI_SKILLS|"));
+    assert!(matches!(
+        err.downcast_ref::<SignalError>(),
+        Some(SignalError::MultiSkills)
+    ));
 }
 
 /// Issue #18: list_git_skills should discover skills in root-level subdirectories.

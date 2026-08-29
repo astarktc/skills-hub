@@ -9,6 +9,7 @@ import type {
   BulkAssignResultDto,
 } from "./types";
 import type { ManagedSkill, ToolStatusDto } from "../skills/types";
+import { toCommandError } from "../../commandError";
 
 export type ProjectState = {
   // Data
@@ -56,25 +57,8 @@ export type ProjectState = {
 };
 
 function normalizeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-export function formatProjectError(
-  raw: string,
-  t: (key: string, opts?: Record<string, unknown>) => string,
-): string {
-  if (raw.startsWith("DUPLICATE_PROJECT|")) {
-    const path = raw.slice("DUPLICATE_PROJECT|".length);
-    return t("projects.duplicateError") + (path ? `: ${path}` : "");
-  }
-  if (raw.startsWith("ASSIGNMENT_EXISTS|")) {
-    return t("projects.assignmentExistsError");
-  }
-  if (raw.startsWith("NOT_FOUND|")) {
-    const detail = raw.slice("NOT_FOUND|".length);
-    return t("projects.notFoundError") + (detail ? `: ${detail}` : "");
-  }
-  return raw;
+  const e = toCommandError(err);
+  return e.code === "OTHER" ? e.message : e.code;
 }
 
 export function useProjectState(): ProjectState {
@@ -170,7 +154,7 @@ export function useProjectState(): ProjectState {
       if (selectVersionRef.current !== version) return;
       setTools([]);
       setAssignments([]);
-      throw new Error(normalizeError(err), { cause: err });
+      throw err;
     } finally {
       if (selectVersionRef.current === version) {
         setMatrixLoading(false);
@@ -248,7 +232,7 @@ export function useProjectState(): ProjectState {
         } catch {
           // Silent fallback — state may be stale
         }
-        throw new Error(normalizeError(err), { cause: err });
+        throw err;
       } finally {
         setPendingCells((prev) => {
           const next = new Set(prev);
@@ -292,7 +276,7 @@ export function useProjectState(): ProjectState {
         } catch {
           // Silent fallback
         }
-        throw new Error(normalizeError(err), { cause: err });
+        throw err;
       } finally {
         setPendingCells((prev) => {
           const next = new Set(prev);
@@ -354,12 +338,8 @@ export function useProjectState(): ProjectState {
   }, [selectedProjectId, loadProjects]);
 
   const loadToolStatus = useCallback(async () => {
-    try {
-      const result = await invoke<ToolStatusDto>("get_project_tool_status");
-      setToolStatus(result);
-    } catch (err) {
-      throw new Error(normalizeError(err), { cause: err });
-    }
+    const result = await invoke<ToolStatusDto>("get_project_tool_status");
+    setToolStatus(result);
   }, []);
 
   const addTools = useCallback(

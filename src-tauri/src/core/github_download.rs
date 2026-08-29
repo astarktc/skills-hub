@@ -8,6 +8,7 @@ use reqwest::blocking::Client;
 use serde::Deserialize;
 
 use super::cancel_token::CancelToken;
+use super::errors::SignalError;
 
 #[derive(Debug, Deserialize)]
 struct GithubContent {
@@ -56,7 +57,7 @@ fn download_dir_recursive(
     token: Option<&str>,
 ) -> Result<()> {
     if cancel.is_some_and(|c| c.is_cancelled()) {
-        anyhow::bail!("CANCELLED|操作已被用户取消。");
+        anyhow::bail!(SignalError::Cancelled);
     }
 
     let url = format!(
@@ -82,7 +83,7 @@ fn download_dir_recursive(
 
     for item in items {
         if cancel.is_some_and(|c| c.is_cancelled()) {
-            anyhow::bail!("CANCELLED|操作已被用户取消。");
+            anyhow::bail!(SignalError::Cancelled);
         }
 
         let local_path = dest.join(&item.name);
@@ -141,7 +142,7 @@ fn check_github_response(
         return Ok(resp);
     }
     if status.as_u16() == 403 {
-        let reset_hint = resp
+        let reset_minutes = resp
             .headers()
             .get("x-ratelimit-reset")
             .and_then(|v| v.to_str().ok())
@@ -151,11 +152,12 @@ fn check_github_response(
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs() as i64;
-                let wait_mins = ((ts - now).max(0) + 59) / 60; // round up
-                format!("RATE_LIMITED|{}", wait_mins)
-            })
-            .unwrap_or_else(|| "403 Forbidden".to_string());
-        anyhow::bail!("{}", reset_hint);
+                ((ts - now).max(0) + 59) / 60 // round up
+            });
+        match reset_minutes {
+            Some(reset_minutes) => anyhow::bail!(SignalError::RateLimited { reset_minutes }),
+            None => anyhow::bail!("403 Forbidden"),
+        }
     }
     // For other errors, use the standard error_for_status logic.
     Err(anyhow::anyhow!(
@@ -324,16 +326,16 @@ mod tests {
             .send()
             .unwrap();
         let err = check_github_response(resp, "test").unwrap_err();
-        let msg = format!("{:#}", err);
-        assert!(msg.contains("RATE_LIMITED|"), "got: {}", msg);
-        // Should contain a number of minutes (around 10)
-        let mins: i64 = msg
-            .strip_prefix("RATE_LIMITED|")
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        assert!((9..=11).contains(&mins), "expected ~10 mins, got {}", mins);
+        // The rate limit is raised as a typed signal, recoverable by downcast.
+        let Some(SignalError::RateLimited { reset_minutes }) = err.downcast_ref::<SignalError>()
+        else {
+            panic!("expected SignalError::RateLimited, got: {:#}", err);
+        };
+        assert!(
+            (9..=11).contains(reset_minutes),
+            "expected ~10 mins, got {}",
+            reset_minutes
+        );
     }
 
     #[test]

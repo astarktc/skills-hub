@@ -214,6 +214,29 @@ export const resources = {
         toolNotWritable:
           "Cannot sync to {{tool}}: permission denied on {{path}}. Please check directory permissions or run as administrator.",
         noSkillsFoundInRepo: "No skills found in this repository.",
+        skillInvalid: "This path is not a valid skill: {{reason}}.",
+        skillInvalidMissingSkillMd:
+          "This path is not a valid skill folder: SKILL.md not found. Please paste a link to a specific skill folder.",
+        multiSkillsRepo:
+          "This repository contains multiple skills. Please copy the specific skill folder link (e.g. GitHub /tree/<branch>/<skill-folder>) and try again.",
+        rateLimited:
+          "GitHub API rate limit reached, resets in ~{{minutes}} minutes. Configure a GitHub Token in Settings to increase the limit.",
+        rateLimitedNoEta:
+          "GitHub API rate limit reached. Configure a GitHub Token in Settings to increase the limit.",
+        gitCloneTls:
+          "Could not fetch the repository from GitHub: TLS/certificate verification failed. Check whether your network/proxy intercepts HTTPS; on a corporate network you may need the company root certificate.",
+        gitCloneAuth:
+          "Cannot access this repository: it may be private, or authentication is required.",
+        gitCloneNotFound:
+          "Repository not found or not accessible (GitHub returned not found).",
+        gitCloneDns:
+          "Could not resolve the GitHub domain (DNS). Please check your network/proxy.",
+        gitCloneTimeout:
+          "Connection to GitHub timed out. Please check your network/proxy.",
+        gitCloneRefused:
+          "Connection to GitHub failed (refused/reset). Please check your network/proxy.",
+        gitCloneUnknown:
+          "Could not fetch the repository from GitHub. Please check your network/proxy and try again.",
         requireLocalPath: "Please enter a local path.",
         requireGitUrl: "Please enter a Git repository URL.",
         noSyncTargets:
@@ -627,6 +650,23 @@ export const resources = {
         toolNotWritable:
           "无法同步到 {{tool}}：目录 {{path}} 权限不足。请检查目录权限或以管理员身份运行。",
         noSkillsFoundInRepo: "该仓库未发现可导入的 Skills。",
+        skillInvalid: "该路径不是有效 Skill：{{reason}}。",
+        skillInvalidMissingSkillMd:
+          "该路径不是有效 Skill 目录：未找到 SKILL.md。请粘贴具体 Skill 文件夹链接。",
+        multiSkillsRepo:
+          "该仓库包含多个 Skills。请复制具体 Skill 文件夹链接（如 GitHub /tree/<branch>/<skill-folder>）后重试。",
+        rateLimited:
+          "GitHub API 请求达到限额，约 {{minutes}} 分钟后重置。可在设置中配置 GitHub Token 提升限额。",
+        rateLimitedNoEta:
+          "GitHub API 请求达到限额。可在设置中配置 GitHub Token 提升限额。",
+        gitCloneTls:
+          "无法从 GitHub 拉取仓库：TLS/证书校验失败。请检查网络/代理是否拦截 HTTPS；如在公司网络，可能需要安装公司根证书。",
+        gitCloneAuth: "无法访问该仓库：可能是私有仓库/权限不足/需要鉴权。",
+        gitCloneNotFound: "仓库不存在或无权限访问（GitHub 返回 not found）。",
+        gitCloneDns: "无法解析 GitHub 域名（DNS）。请检查网络/代理。",
+        gitCloneTimeout: "连接 GitHub 超时。请检查网络/代理。",
+        gitCloneRefused: "连接 GitHub 失败（连接被拒绝/重置）。请检查网络/代理。",
+        gitCloneUnknown: "无法从 GitHub 拉取仓库。请检查网络/代理，或稍后重试。",
         requireLocalPath: "请输入本地路径",
         requireGitUrl: "请输入 Git 仓库地址",
         noSyncTargets:

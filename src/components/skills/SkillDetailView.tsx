@@ -20,6 +20,7 @@ import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import type { TFunction } from "i18next";
 import type { ManagedSkill, SkillFileEntry } from "./types";
+import { describeCommandError } from "../../commandError";
 
 // ─── Types ───────────────────────────────────────────
 type SkillDetailViewProps = {
@@ -468,8 +469,7 @@ const SkillDetailView = ({
         if (!cancelled) setFileContent(content);
       } catch (err) {
         if (!cancelled) {
-          const msg = err instanceof Error ? err.message : String(err);
-          setFileContent(msg);
+          setFileContent(describeCommandError(err, t) ?? "");
         }
       } finally {
         if (!cancelled) setLoadingContent(false);
@@ -479,7 +479,7 @@ const SkillDetailView = ({
     return () => {
       cancelled = true;
     };
-  }, [activeFile, invokeTauri, skill.central_path]);
+  }, [activeFile, invokeTauri, skill.central_path, t]);
 
   const handleSelectFile = useCallback((path: string) => {
     setActiveFile(path);

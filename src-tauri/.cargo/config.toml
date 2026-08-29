@@ -1,0 +1,6 @@
+# ts-rs binding generation (see commands/error.rs). Bindings are written by
+# `cargo test` into src/bindings/ and committed; CI diff-guards them.
+[env]
+TS_RS_EXPORT_DIR = { value = "../src/bindings", relative = true }
+# Tauri's IPC is JSON: i64/u64 arrive as JS numbers, not bigints.
+TS_RS_LARGE_INT = "number"

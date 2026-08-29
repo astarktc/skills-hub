@@ -1,0 +1,119 @@
+// The single frontend consumer of the backend's structured CommandError
+// (see src-tauri/src/commands/error.rs and the generated union in
+// src/bindings/CommandError.ts). All user-facing error copy is composed here
+// via i18n; nothing else in the frontend should inspect command failures.
+
+import type { CommandError } from "./bindings/CommandError";
+
+type TranslateFn = (key: string, opts?: Record<string, unknown>) => string;
+
+export type CommandErrorCode = CommandError["code"];
+
+const COMMAND_ERROR_CODES: ReadonlySet<string> = new Set([
+  "TOOL_NOT_INSTALLED",
+  "TARGET_EXISTS",
+  "TOOL_NOT_WRITABLE",
+  "SKILL_INVALID",
+  "MULTI_SKILLS",
+  "DUPLICATE_PROJECT",
+  "ASSIGNMENT_EXISTS",
+  "NOT_FOUND",
+  "CANCELLED",
+  "RATE_LIMITED",
+  "GIT_CLONE_FAILED",
+  "OTHER",
+]);
+
+export function isCommandError(err: unknown): err is CommandError {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    typeof (err as { code: unknown }).code === "string" &&
+    COMMAND_ERROR_CODES.has((err as { code: string }).code)
+  );
+}
+
+/** Normalize any rejection (structured payload, Error, string) to the union. */
+export function toCommandError(err: unknown): CommandError {
+  if (isCommandError(err)) return err;
+  if (err instanceof Error) return { code: "OTHER", message: err.message };
+  return { code: "OTHER", message: String(err) };
+}
+
+/** The discriminant of a rejection, for control flow (skip/collect/retry). */
+export function errorCode(err: unknown): CommandErrorCode {
+  return toCommandError(err).code;
+}
+
+const GIT_CLONE_HINT_KEYS: Record<string, string> = {
+  tls: "errors.gitCloneTls",
+  auth: "errors.gitCloneAuth",
+  notFound: "errors.gitCloneNotFound",
+  dns: "errors.gitCloneDns",
+  timeout: "errors.gitCloneTimeout",
+  refused: "errors.gitCloneRefused",
+  unknown: "errors.gitCloneUnknown",
+};
+
+function describeOther(message: string, t: TranslateFn): string {
+  // Prose fallbacks for core errors that are not (yet) typed signals.
+  if (message.includes("skill already exists in central repo")) {
+    // e.g. `skill already exists in central repo: "/path/to/react-best-practices"`
+    const pathMatch = message.match(/central repo:\s*"?([^"]+)"?/);
+    if (pathMatch) {
+      const skillName = pathMatch[1].split("/").pop() ?? "";
+      if (skillName) {
+        return t("errors.skillExistsInHubNamed", { name: skillName });
+      }
+    }
+    return t("errors.skillExistsInHub");
+  }
+  if (message.includes("未在该仓库中发现可导入的 Skills")) {
+    return t("errors.noSkillsFoundInRepo");
+  }
+  return message;
+}
+
+/**
+ * Localized user-facing message for a command failure, or `null` when the
+ * failure should be silently ignored (user-initiated cancellation).
+ */
+export function describeCommandError(
+  err: unknown,
+  t: TranslateFn,
+): string | null {
+  const e = toCommandError(err);
+  switch (e.code) {
+    case "TOOL_NOT_INSTALLED":
+      return t("errors.toolNotInstalled");
+    case "TARGET_EXISTS":
+      return t("errors.targetExists");
+    case "TOOL_NOT_WRITABLE":
+      return t("errors.toolNotWritable", { tool: e.tool, path: e.path });
+    case "SKILL_INVALID":
+      return e.reason === "missing_skill_md"
+        ? t("errors.skillInvalidMissingSkillMd")
+        : t("errors.skillInvalid", { reason: e.reason });
+    case "MULTI_SKILLS":
+      return t("errors.multiSkillsRepo");
+    case "DUPLICATE_PROJECT":
+      return t("projects.duplicateError") + (e.path ? `: ${e.path}` : "");
+    case "ASSIGNMENT_EXISTS":
+      return t("projects.assignmentExistsError");
+    case "NOT_FOUND":
+      return t("projects.notFoundError") + `: ${e.kind}:${e.id}`;
+    case "CANCELLED":
+      return null;
+    case "RATE_LIMITED":
+      return e.resetMinutes > 0
+        ? t("errors.rateLimited", { minutes: e.resetMinutes })
+        : t("errors.rateLimitedNoEta");
+    case "GIT_CLONE_FAILED": {
+      const hint = t(GIT_CLONE_HINT_KEYS[e.kind] ?? "errors.gitCloneUnknown");
+      return e.detail ? `${hint}\n\n${e.detail}` : hint;
+    }
+    case "OTHER":
+      return describeOther(e.message, t);
+  }
+}

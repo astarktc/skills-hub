@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use git2::{FetchOptions, Repository};
 
 use super::cancel_token::CancelToken;
+use super::errors::SignalError;
 
 pub fn clone_or_pull(
     repo_url: &str,
@@ -360,7 +361,7 @@ fn run_cmd_with_timeout(
         if cancel.is_some_and(|c| c.is_cancelled()) {
             let _ = child.kill();
             let _ = child.wait();
-            anyhow::bail!("CANCELLED|操作已被用户取消。");
+            anyhow::bail!(SignalError::Cancelled);
         }
 
         if start.elapsed() > timeout {

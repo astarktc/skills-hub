@@ -5,7 +5,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
 import { toast } from "sonner";
-import { useProjectState, formatProjectError } from "./useProjectState";
+import { useProjectState } from "./useProjectState";
+import { describeCommandError } from "../../commandError";
 import ProjectList from "./ProjectList";
 import AssignmentMatrix from "./AssignmentMatrix";
 import AddProjectModal from "./AddProjectModal";
@@ -50,12 +51,8 @@ const ProjectsPage = () => {
           pendingGitignoreRef.current = null;
         }
       } catch (err) {
-        toast.error(
-          formatProjectError(
-            err instanceof Error ? err.message : String(err),
-            t,
-          ),
-        );
+        const msg = describeCommandError(err, t);
+        if (msg) toast.error(msg);
       }
     },
     [state, t],
@@ -86,16 +83,16 @@ const ProjectsPage = () => {
               addToExclude: pending.addToExclude,
             });
           } catch (gitErr) {
-            toast.warning(
-              gitErr instanceof Error ? gitErr.message : String(gitErr),
-            );
+            const gitMsg = describeCommandError(gitErr, t);
+            if (gitMsg) toast.warning(gitMsg);
           }
         }
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err));
+        const msg = describeCommandError(err, t);
+        if (msg) toast.error(msg);
       }
     },
-    [state],
+    [state, t],
   );
 
   const handleRemoveProject = useCallback(async () => {
@@ -106,9 +103,8 @@ const ProjectsPage = () => {
       state.setRemoveTargetId(null);
       toast.success(t("projects.removeConfirm"));
     } catch (err) {
-      toast.error(
-        formatProjectError(err instanceof Error ? err.message : String(err), t),
-      );
+      const msg = describeCommandError(err, t);
+      if (msg) toast.error(msg);
     }
   }, [state, t]);
 
@@ -143,7 +139,8 @@ const ProjectsPage = () => {
         state.setEditTargetId(null);
         toast.success(t("projects.configureProject"));
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err));
+        const msg = describeCommandError(err, t);
+        if (msg) toast.error(msg);
       }
     },
     [state, t],
@@ -162,12 +159,8 @@ const ProjectsPage = () => {
       try {
         await state.toggleAssignment(skillId, tool);
       } catch (err) {
-        toast.error(
-          formatProjectError(
-            err instanceof Error ? err.message : String(err),
-            t,
-          ),
-        );
+        const msg = describeCommandError(err, t);
+        if (msg) toast.error(msg);
       }
     },
     [state, t],
@@ -188,12 +181,8 @@ const ProjectsPage = () => {
           );
         }
       } catch (err) {
-        toast.error(
-          formatProjectError(
-            err instanceof Error ? err.message : String(err),
-            t,
-          ),
-        );
+        const msg = describeCommandError(err, t);
+        if (msg) toast.error(msg);
       }
     },
     [state, t],
@@ -214,12 +203,8 @@ const ProjectsPage = () => {
         await state.updateProjectPath(projectId, newPath);
         toast.success(t("projects.updatePathSuccess"));
       } catch (err) {
-        toast.error(
-          formatProjectError(
-            err instanceof Error ? err.message : String(err),
-            t,
-          ),
-        );
+        const msg = describeCommandError(err, t);
+        if (msg) toast.error(msg);
       }
     },
     [state, t],

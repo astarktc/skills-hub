@@ -16,6 +16,7 @@ import type {
   ResyncSummaryDto,
 } from "./types";
 import type { ManagedSkill } from "../skills/types";
+import { describeCommandError } from "../../commandError";
 
 export type AssignmentMatrixProps = {
   project: ProjectDto | null;
@@ -166,7 +167,8 @@ const AssignmentMatrix = ({
         toast.success(t("projects.resyncSuccess", { synced: summary.synced }));
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
+      const msg = describeCommandError(err, t);
+      if (msg) toast.error(msg);
     }
   }, [onResyncProject, t]);
 
@@ -186,7 +188,8 @@ const AssignmentMatrix = ({
         toast.success(t("projects.resyncSuccess", { synced: totalSynced }));
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
+      const msg = describeCommandError(err, t);
+      if (msg) toast.error(msg);
     }
   }, [onResyncAll, t]);
 

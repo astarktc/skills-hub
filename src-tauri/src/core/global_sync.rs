@@ -18,8 +18,8 @@ use crate::core::{
 };
 
 /// Typed failures the frontend reacts to specially. The command layer maps
-/// these to its wire prefixes (`TOOL_NOT_INSTALLED|…`, `TARGET_EXISTS|…`,
-/// `TOOL_NOT_WRITABLE|…`); core tests assert on the variants, not strings.
+/// these onto `commands::error::CommandError` wire variants; core tests
+/// assert on the variants, not strings.
 #[derive(Debug)]
 pub enum GlobalSyncError {
     ToolNotInstalled {

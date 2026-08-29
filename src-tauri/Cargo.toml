@@ -6,7 +6,7 @@ authors = ["you"]
 license = ""
 repository = "https://github.com/astarktc/skills-hub"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.88"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -37,6 +37,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 junction = "1.1"
 uuid = { version = "1", features = ["v4"] }
 urlencoding = "2.1"
+ts-rs = "12"
 
 [dev-dependencies]
 tempfile = "3"
