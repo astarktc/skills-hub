@@ -1,16 +1,16 @@
 import { memo, useState } from "react";
 import type { TFunction } from "i18next";
-import type { ToolStatusDto } from "../types";
+import type { ToolStatusDto } from "../skills/types";
 
 function buildInitialSelection(
   toolStatus: ToolStatusDto | null,
-  selectedTools: string[] | null,
+  savedSelection: string[] | null,
 ): Set<string> {
-  // If a global selection is already saved, use it as the baseline.
-  if (selectedTools) {
-    return new Set(selectedTools);
+  // If a selection is already saved, use it as the baseline.
+  if (savedSelection) {
+    return new Set(savedSelection);
   }
-  // Otherwise pre-select installed tools (matches the default sync targets).
+  // Otherwise pre-select installed tools.
   const initial = new Set<string>();
   if (toolStatus) {
     for (const key of toolStatus.installed) {
@@ -20,15 +20,29 @@ function buildInitialSelection(
   return initial;
 }
 
+export type ToolConfigModalLabels = {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  /** Label for the scan-only checkbox; required when scanSelectedOnly is set. */
+  scanToggleLabel?: string;
+};
+
 type ToolConfigModalProps = {
   open: boolean;
   loading: boolean;
   toolStatus: ToolStatusDto | null;
-  selectedTools: string[] | null;
-  scanSelectedOnly: boolean;
+  /** Saved selection baseline; null = nothing saved yet, default to installed tools. */
+  savedSelection: string[] | null;
+  /**
+   * When provided, renders the "scan selected only" checkbox initialized to
+   * this value; the draft value is passed as onConfirm's second argument.
+   */
+  scanSelectedOnly?: boolean;
+  labels: ToolConfigModalLabels;
   onConfirm: (
     selectedTools: string[],
-    scanSelectedOnly: boolean,
+    scanSelectedOnly?: boolean,
   ) => Promise<void>;
   onRequestClose: () => void;
   t: TFunction;
@@ -37,8 +51,9 @@ type ToolConfigModalProps = {
 const ToolConfigModalInner = ({
   loading,
   toolStatus,
-  selectedTools: savedSelection,
+  savedSelection,
   scanSelectedOnly: savedScanSelectedOnly,
+  labels,
   onConfirm,
   onRequestClose,
   t,
@@ -48,8 +63,9 @@ const ToolConfigModalInner = ({
   );
   const [detectedOnly, setDetectedOnly] = useState(true);
   const [scanSelectedOnly, setScanSelectedOnly] = useState(
-    savedScanSelectedOnly,
+    savedScanSelectedOnly ?? false,
   );
+  const hasScanToggle = savedScanSelectedOnly !== undefined;
 
   const allTools = toolStatus?.tools ?? [];
   const installed = toolStatus?.installed ?? [];
@@ -70,7 +86,10 @@ const ToolConfigModalInner = ({
   };
 
   const handleConfirm = async () => {
-    await onConfirm(Array.from(selectedTools), scanSelectedOnly);
+    await onConfirm(
+      Array.from(selectedTools),
+      hasScanToggle ? scanSelectedOnly : undefined,
+    );
   };
 
   return (
@@ -82,7 +101,7 @@ const ToolConfigModalInner = ({
         aria-modal="true"
       >
         <div className="modal-header">
-          <div className="modal-title">{t("globalToolConfigTitle")}</div>
+          <div className="modal-title">{labels.title}</div>
           <button
             className="modal-close"
             type="button"
@@ -93,14 +112,14 @@ const ToolConfigModalInner = ({
           </button>
         </div>
         <div className="modal-body">
-          <p className="helper-text">{t("globalToolConfigDesc")}</p>
+          <p className="helper-text">{labels.description}</p>
           <label className="tool-filter-toggle">
             <input
               type="checkbox"
               checked={detectedOnly}
               onChange={() => setDetectedOnly((v) => !v)}
             />
-            {t("globalToolConfigDetectedOnly")}
+            {t("toolConfigDetectedOnly")}
           </label>
           <div className="tool-pick-list">
             {tools.map((tool) => (
@@ -117,17 +136,24 @@ const ToolConfigModalInner = ({
                     <span className="pick-item-badge"> (installed)</span>
                   )}
                 </label>
+                {tool.constituents.length > 0 && (
+                  <span className="pick-item-subtitle">
+                    {tool.constituents.join(", ")}
+                  </span>
+                )}
               </div>
             ))}
           </div>
-          <label className="tool-filter-toggle">
-            <input
-              type="checkbox"
-              checked={scanSelectedOnly}
-              onChange={() => setScanSelectedOnly((v) => !v)}
-            />
-            {t("globalToolConfigScanSelectedOnly")}
-          </label>
+          {hasScanToggle && (
+            <label className="tool-filter-toggle">
+              <input
+                type="checkbox"
+                checked={scanSelectedOnly}
+                onChange={() => setScanSelectedOnly((v) => !v)}
+              />
+              {labels.scanToggleLabel}
+            </label>
+          )}
         </div>
         <div className="modal-footer">
           <button
@@ -142,7 +168,7 @@ const ToolConfigModalInner = ({
             onClick={handleConfirm}
             disabled={loading}
           >
-            {t("globalToolConfigConfirm")}
+            {labels.confirmLabel}
           </button>
         </div>
       </div>

@@ -11,7 +11,7 @@ import ProjectList from "./ProjectList";
 import AssignmentMatrix from "./AssignmentMatrix";
 import AddProjectModal from "./AddProjectModal";
 import EditProjectModal from "./EditProjectModal";
-import ToolConfigModal from "./ToolConfigModal";
+import ToolConfigModal from "../shared/ToolConfigModal";
 import RemoveProjectModal from "./RemoveProjectModal";
 
 const ProjectsPage = () => {
@@ -297,7 +297,14 @@ const ProjectsPage = () => {
         open={state.showToolConfigModal}
         loading={false}
         toolStatus={state.toolStatus}
-        currentTools={state.tools}
+        savedSelection={
+          state.tools.length > 0 ? state.tools.map((ct) => ct.tool) : null
+        }
+        labels={{
+          title: t("projects.toolConfigTitle"),
+          description: t("projects.toolConfigDesc"),
+          confirmLabel: t("projects.toolConfigConfirm"),
+        }}
         onConfirm={handleToolConfigConfirm}
         onRequestClose={() => state.setShowToolConfigModal(false)}
         t={t}

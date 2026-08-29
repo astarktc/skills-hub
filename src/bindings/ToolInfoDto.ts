@@ -6,4 +6,10 @@ export type ToolInfoDto = { key: string, label: string, installed: boolean, skil
  * order, including this tool itself (len >= 1). The backend owns the
  * shared-dir invariant; the frontend only presents it.
  */
-shared_with: Array<string>, };
+shared_with: Array<string>, 
+/**
+ * Display labels of the constituent tools absorbed into this entry when
+ * it is a virtual group (project-scope AgentsStandard); empty for real
+ * tools. The backend owns group membership; the frontend only presents it.
+ */
+constituents: Array<string>, };

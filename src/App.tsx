@@ -25,7 +25,7 @@ import LocalPickModal from "./components/skills/modals/LocalPickModal";
 import ImportModal from "./components/skills/modals/ImportModal";
 import NewToolsModal from "./components/skills/modals/NewToolsModal";
 import SharedDirModal from "./components/skills/modals/SharedDirModal";
-import ToolConfigModal from "./components/skills/modals/ToolConfigModal";
+import ToolConfigModal from "./components/shared/ToolConfigModal";
 import SettingsPage from "./components/skills/SettingsPage";
 import ProjectsPage from "./components/projects/ProjectsPage";
 import { describeCommandError } from "./commandError";
@@ -1128,7 +1128,7 @@ function App() {
   }, [loading]);
 
   const handleToolConfigConfirm = useCallback(
-    async (selected: string[], scanOnly: boolean) => {
+    async (selected: string[], scanOnly = false) => {
       try {
         await invokeTauri("set_global_tool_config", {
           selectedTools: selected,
@@ -2450,8 +2450,14 @@ function App() {
         open={showToolConfigModal}
         loading={loading}
         toolStatus={toolStatus}
-        selectedTools={globalSelectedTools}
+        savedSelection={globalSelectedTools}
         scanSelectedOnly={scanSelectedToolsOnly}
+        labels={{
+          title: t("globalToolConfigTitle"),
+          description: t("globalToolConfigDesc"),
+          confirmLabel: t("globalToolConfigConfirm"),
+          scanToggleLabel: t("globalToolConfigScanSelectedOnly"),
+        }}
         onConfirm={handleToolConfigConfirm}
         onRequestClose={handleCloseToolConfig}
         t={t}

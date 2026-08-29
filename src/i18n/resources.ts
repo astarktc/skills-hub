@@ -175,7 +175,7 @@ export const resources = {
       globalToolConfigTitle: "Configure Tools",
       globalToolConfigDesc:
         "Select which AI tools skills are synced to when deploying. Installed tools are pre-selected.",
-      globalToolConfigDetectedOnly: "Show detected tools only",
+      toolConfigDetectedOnly: "Show detected tools only",
       globalToolConfigScanSelectedOnly:
         "Only scan for existing skills within selected tools",
       globalToolConfigConfirm: "Save Tools",
@@ -409,7 +409,6 @@ export const resources = {
         toolConfigDesc:
           "Select which AI tools to manage for this project. Installed tools are pre-selected.",
         toolConfigConfirm: "Save Tools",
-        toolConfigDetectedOnly: "Show detected tools only",
         removeTitle: "Remove Project",
         removeBody:
           'Remove "{{name}}" from Skills Hub? This will delete all synced skill symlinks and copies from this project\'s tool directories.',
@@ -618,7 +617,7 @@ export const resources = {
       globalToolConfigTitle: "配置工具",
       globalToolConfigDesc:
         "选择部署 Skills 时同步到哪些 AI 工具。已安装的工具会默认选中。",
-      globalToolConfigDetectedOnly: "仅显示已检测到的工具",
+      toolConfigDetectedOnly: "仅显示已检测到的工具",
       globalToolConfigScanSelectedOnly: "仅在所选工具中扫描已有 Skills",
       globalToolConfigConfirm: "保存工具",
       later: "稍后",

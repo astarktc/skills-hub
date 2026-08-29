@@ -51,6 +51,10 @@ pub struct ToolInfoDto {
     /// order, including this tool itself (len >= 1). The backend owns the
     /// shared-dir invariant; the frontend only presents it.
     pub shared_with: Vec<String>,
+    /// Display labels of the constituent tools absorbed into this entry when
+    /// it is a virtual group (project-scope AgentsStandard); empty for real
+    /// tools. The backend owns group membership; the frontend only presents it.
+    pub constituents: Vec<String>,
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -88,6 +92,7 @@ pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusD
                 installed: ok,
                 skills_dir,
                 shared_with,
+                constituents: vec![],
             });
             if ok {
                 installed.push(key);
@@ -151,6 +156,12 @@ pub async fn get_project_tool_status() -> Result<ToolStatusDto, CommandError> {
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default();
 
+                let constituents: Vec<String> = adapters
+                    .iter()
+                    .filter(|a| AGENTS_STANDARD_KEYS.contains(&a.id.as_key()))
+                    .map(|a| a.display_name.to_string())
+                    .collect();
+
                 tools.push(ToolInfoDto {
                     key: "agents_skills".to_string(),
                     label: adapter.display_name.to_string(),
@@ -160,6 +171,7 @@ pub async fn get_project_tool_status() -> Result<ToolStatusDto, CommandError> {
                     // single AgentsStandard entry, so every entry is its own
                     // group.
                     shared_with: vec!["agents_skills".to_string()],
+                    constituents,
                 });
                 if group_installed {
                     installed.push("agents_skills".to_string());
@@ -174,6 +186,7 @@ pub async fn get_project_tool_status() -> Result<ToolStatusDto, CommandError> {
                     installed: ok,
                     skills_dir,
                     shared_with: vec![key_str.clone()],
+                    constituents: vec![],
                 });
                 if ok {
                     installed.push(key_str);
