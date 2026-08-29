@@ -162,6 +162,23 @@ export function useProjectState(): ProjectState {
     }
   }, []);
 
+  // Silently re-fetch assignments for a project, keeping stale state when
+  // even the re-fetch fails. Shared by mutation error paths and the resync
+  // flows so the matrix converges on the backend's view of the assignments.
+  // (Success paths of toggle/bulk re-fetch unguarded on purpose: there a
+  // failed list surfaces to the caller.)
+  const refreshAssignments = useCallback(async (projectId: string) => {
+    try {
+      const updated = await invoke<ProjectSkillAssignmentDto[]>(
+        "list_project_skill_assignments",
+        { projectId },
+      );
+      setAssignments(updated);
+    } catch {
+      // Silent fallback — state may be stale
+    }
+  }, []);
+
   const registerProject = useCallback(
     async (path: string): Promise<ProjectDto> => {
       const result = await invoke<ProjectDto>("register_project", { path });
@@ -223,15 +240,7 @@ export function useProjectState(): ProjectState {
         await loadProjects();
       } catch (err) {
         // Re-fetch to get consistent state even on error
-        try {
-          const updated = await invoke<ProjectSkillAssignmentDto[]>(
-            "list_project_skill_assignments",
-            { projectId: selectedProjectId },
-          );
-          setAssignments(updated);
-        } catch {
-          // Silent fallback — state may be stale
-        }
+        await refreshAssignments(selectedProjectId);
         throw err;
       } finally {
         setPendingCells((prev) => {
@@ -241,7 +250,7 @@ export function useProjectState(): ProjectState {
         });
       }
     },
-    [selectedProjectId, loadProjects, pendingCells],
+    [selectedProjectId, loadProjects, pendingCells, refreshAssignments],
   );
 
   const bulkAssign = useCallback(
@@ -267,15 +276,7 @@ export function useProjectState(): ProjectState {
         await loadProjects();
         return result;
       } catch (err) {
-        try {
-          const updated = await invoke<ProjectSkillAssignmentDto[]>(
-            "list_project_skill_assignments",
-            { projectId: selectedProjectId },
-          );
-          setAssignments(updated);
-        } catch {
-          // Silent fallback
-        }
+        await refreshAssignments(selectedProjectId);
         throw err;
       } finally {
         setPendingCells((prev) => {
@@ -285,7 +286,7 @@ export function useProjectState(): ProjectState {
         });
       }
     },
-    [selectedProjectId, tools, loadProjects],
+    [selectedProjectId, tools, loadProjects, refreshAssignments],
   );
 
   const updateProjectPath = useCallback(
@@ -306,36 +307,20 @@ export function useProjectState(): ProjectState {
       projectId: selectedProjectId,
     });
     // Re-fetch assignments to reflect updated sync status
-    try {
-      const updated = await invoke<ProjectSkillAssignmentDto[]>(
-        "list_project_skill_assignments",
-        { projectId: selectedProjectId },
-      );
-      setAssignments(updated);
-    } catch {
-      // Silent fallback
-    }
+    await refreshAssignments(selectedProjectId);
     await loadProjects();
     return result;
-  }, [selectedProjectId, loadProjects]);
+  }, [selectedProjectId, loadProjects, refreshAssignments]);
 
   const resyncAll = useCallback(async (): Promise<ResyncSummaryDto[]> => {
     const result = await invoke<ResyncSummaryDto[]>("resync_all_projects");
     await loadProjects();
     // Re-fetch assignments for selected project if any
     if (selectedProjectId) {
-      try {
-        const updated = await invoke<ProjectSkillAssignmentDto[]>(
-          "list_project_skill_assignments",
-          { projectId: selectedProjectId },
-        );
-        setAssignments(updated);
-      } catch {
-        // Silent fallback
-      }
+      await refreshAssignments(selectedProjectId);
     }
     return result;
-  }, [selectedProjectId, loadProjects]);
+  }, [selectedProjectId, loadProjects, refreshAssignments]);
 
   const loadToolStatus = useCallback(async () => {
     const result = await invoke<ToolStatusDto>("get_project_tool_status");

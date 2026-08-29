@@ -65,9 +65,12 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
 
 ## Ambiguity resolution
 
-- **No state-management library.** All state lives in `src/App.tsx` via `useState` and reaches children by
-  props drilling. Do not introduce Zustand/Redux/Context refactors. Refresh data by re-invoking the
-  relevant command (e.g. `invoke('get_managed_skills')`) after a mutation.
+- **No state-management library** (no Zustand/Redux/Context). State lives in plain `useState` inside
+  per-world hooks (`src/hooks/`, `components/projects/useProjectState.ts`), each returning that world's
+  data + actions; `src/App.tsx` is the binder that composes the hooks and passes props down. Cross-world
+  needs flow through interfaces App passes into hooks (e.g. the shared `useStatusReporter` surface, the
+  sync seam) — hooks never import each other. Refresh data by re-invoking the relevant command
+  (e.g. `invoke('get_managed_skills')`) after a mutation.
 - **`commands/` is wiring only** (DTO conversion, error formatting); business logic goes in `core/`, which is
   independently testable. Async commands wrap sync work in `tauri::async_runtime::spawn_blocking`.
 - **Error wire contract** — commands return `Result<T, CommandError>` (`commands/error.rs`), a serde

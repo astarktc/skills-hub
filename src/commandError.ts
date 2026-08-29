@@ -7,8 +7,6 @@ import type { CommandError } from "./bindings/CommandError";
 
 type TranslateFn = (key: string, opts?: Record<string, unknown>) => string;
 
-export type CommandErrorCode = CommandError["code"];
-
 const COMMAND_ERROR_CODES: ReadonlySet<string> = new Set([
   "TOOL_NOT_INSTALLED",
   "TARGET_EXISTS",
@@ -39,11 +37,6 @@ export function toCommandError(err: unknown): CommandError {
   if (isCommandError(err)) return err;
   if (err instanceof Error) return { code: "OTHER", message: err.message };
   return { code: "OTHER", message: String(err) };
-}
-
-/** The discriminant of a rejection, for control flow (skip/collect/retry). */
-export function errorCode(err: unknown): CommandErrorCode {
-  return toCommandError(err).code;
 }
 
 const GIT_CLONE_HINT_KEYS: Record<string, string> = {
