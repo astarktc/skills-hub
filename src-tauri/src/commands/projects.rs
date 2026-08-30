@@ -77,9 +77,12 @@ pub async fn add_project_tool(
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         // Validate that the project exists before inserting
-        store
-            .get_project_by_id(&projectId)?
-            .ok_or_else(|| anyhow::anyhow!("project not found: {}", projectId))?;
+        store.get_project_by_id(&projectId)?.ok_or_else(|| {
+            anyhow::anyhow!(SignalError::NotFound {
+                kind: "project".to_string(),
+                id: projectId.clone(),
+            })
+        })?;
 
         // Validate that the tool key corresponds to a known tool adapter
         if crate::core::tool_adapters::adapter_by_key(&tool).is_none() {
@@ -154,9 +157,12 @@ pub async fn add_project_skill_assignment(
     let store = store.inner().clone();
     let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let project = store
-            .get_project_by_id(&projectId)?
-            .ok_or_else(|| anyhow::anyhow!("project not found: {}", projectId))?;
+        let project = store.get_project_by_id(&projectId)?.ok_or_else(|| {
+            anyhow::anyhow!(SignalError::NotFound {
+                kind: "project".to_string(),
+                id: projectId.clone(),
+            })
+        })?;
         let skill = store
             .get_skill_by_id(&skillId)?
             .ok_or_else(|| anyhow::anyhow!("skill not found: {}", skillId))?;
@@ -208,9 +214,12 @@ pub async fn remove_project_skill_assignment(
     let store = store.inner().clone();
     let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let project = store
-            .get_project_by_id(&projectId)?
-            .ok_or_else(|| anyhow::anyhow!("project not found: {}", projectId))?;
+        let project = store.get_project_by_id(&projectId)?.ok_or_else(|| {
+            anyhow::anyhow!(SignalError::NotFound {
+                kind: "project".to_string(),
+                id: projectId.clone(),
+            })
+        })?;
         let skill = store
             .get_skill_by_id(&skillId)?
             .ok_or_else(|| anyhow::anyhow!("skill not found: {}", skillId))?;
@@ -329,7 +338,7 @@ pub struct BulkAssignResultDto {
 #[ts(export)]
 pub struct BulkAssignErrorDto {
     pub tool: String,
-    pub error: String,
+    pub error: CommandError,
 }
 
 #[tauri::command]
@@ -390,7 +399,7 @@ pub async fn bulk_assign_skill(
                 Err(e) => {
                     failed.push(BulkAssignErrorDto {
                         tool: tool_record.tool.clone(),
-                        error: format!("{:#}", e),
+                        error: CommandError::from_anyhow(e),
                     });
                 }
             }
@@ -415,9 +424,12 @@ pub async fn update_project_gitignore(
     tauri::async_runtime::spawn_blocking(move || {
         use std::path::Path;
 
-        let project = store
-            .get_project_by_id(&projectId)?
-            .ok_or_else(|| anyhow::anyhow!("project not found: {}", projectId))?;
+        let project = store.get_project_by_id(&projectId)?.ok_or_else(|| {
+            anyhow::anyhow!(SignalError::NotFound {
+                kind: "project".to_string(),
+                id: projectId.clone(),
+            })
+        })?;
 
         let project_path = Path::new(&project.path);
         if !project_path.is_dir() {
@@ -454,9 +466,12 @@ pub async fn get_project_gitignore_status(
         use std::fs;
         use std::path::Path;
 
-        let project = store
-            .get_project_by_id(&projectId)?
-            .ok_or_else(|| anyhow::anyhow!("project not found: {}", projectId))?;
+        let project = store.get_project_by_id(&projectId)?.ok_or_else(|| {
+            anyhow::anyhow!(SignalError::NotFound {
+                kind: "project".to_string(),
+                id: projectId.clone(),
+            })
+        })?;
 
         let project_path = Path::new(&project.path);
         let marker = "# Skills Hub";

@@ -172,7 +172,10 @@ const ProjectsPage = () => {
         const result = await state.bulkAssign(skillId);
         if (result && result.failed.length > 0) {
           const details = result.failed
-            .map((f) => `${f.tool}: ${f.error}`)
+            .map(
+              (f) =>
+                `${f.tool}: ${describeCommandError(f.error, t) ?? f.error.code}`,
+            )
             .join(", ");
           toast.warning(
             t("projects.bulkAssignFailed", {
