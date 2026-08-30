@@ -22,6 +22,9 @@ fn cleanup_removes_only_marked_prefixed_dirs() {
     let removed = cleanup_old_git_temp_dirs_in(cache, Duration::from_secs(0)).unwrap();
     assert_eq!(removed, 1);
     assert!(!d1.exists());
-    assert!(d2.exists(), "未标记的不应删除");
-    assert!(d3.exists(), "前缀不匹配的不应删除");
+    assert!(d2.exists(), "unmarked directories should not be deleted");
+    assert!(
+        d3.exists(),
+        "directories whose prefix does not match should not be deleted"
+    );
 }

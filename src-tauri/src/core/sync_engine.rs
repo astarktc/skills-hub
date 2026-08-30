@@ -155,7 +155,7 @@ pub fn sync_dir_for_tool_with_overwrite(
     target: &Path,
     overwrite: bool,
 ) -> Result<SyncOutcome> {
-    // Cursor 目前不支持软链/junction：强制使用 copy，避免同步后在 Cursor 内不可用。
+    // Cursor currently does not support symlinks/junctions: force copy mode to avoid the skills being unusable inside Cursor after sync.
     if tool_key.eq_ignore_ascii_case("cursor") {
         return sync_dir_copy_with_overwrite(source, target, overwrite);
     }
@@ -177,7 +177,7 @@ pub(crate) fn remove_path_any(path: &Path) -> Result<()> {
     };
     let ft = meta.file_type();
 
-    // 软链接（即使指向目录）也应该用 remove_file 删除链接本身
+    // A symlink (even one pointing to a directory) should be removed with remove_file, which deletes the link itself
     if ft.is_symlink() {
         std::fs::remove_file(path).with_context(|| format!("remove symlink {:?}", path))?;
         return Ok(());

@@ -127,7 +127,7 @@ fn skill_targets_upsert_unique_constraint_and_list_order() {
     assert_eq!(
         store.get_skill_target("s1", "cursor").unwrap().unwrap().id,
         "t1",
-        "unique(skill_id, tool) 冲突时应更新现有行而不是替换 id"
+        "on unique(skill_id, tool) conflict, the existing row should be updated rather than the id replaced"
     );
     assert_eq!(
         store

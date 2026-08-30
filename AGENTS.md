@@ -46,7 +46,6 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   central repo, but the database path is not overridable.
 - `.claude/skills/` and `.agents/skills/` are **hardlinked to each other** (same inodes) and gitignored —
   editing a skill file in one silently edits the other.
-- Rust source carries **Chinese comments** in places (upstream fork heritage); this is expected, not corruption.
 - The Rust crate is `app_lib`, not the package name — import as `app_lib::...`.
 
 ## Invariants — touch X, then also update Y

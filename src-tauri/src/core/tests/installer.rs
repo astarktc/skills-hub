@@ -202,7 +202,7 @@ fn installs_local_skill_and_updates_from_source() {
     .exists());
     assert!(
         target.join("a.txt").exists(),
-        "目标路径应存在并包含同步后的文件"
+        "target path should exist and contain the synced file"
     );
     assert_eq!(fs::read(target.join("a.txt")).unwrap(), b"v2");
 

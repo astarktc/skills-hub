@@ -885,7 +885,7 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
     store.upsert_skill(&updated)?;
 
     // If any targets are "copy", re-sync them so changes propagate. Symlinks update automatically.
-    // Cursor 目前不支持软链/junction，因此无论历史 mode 如何，都需要强制 copy 回灌。
+    // Cursor currently does not support symlinks/junctions, so regardless of the historical mode, we must force a copy re-sync.
     let targets = store.list_skill_targets(skill_id)?;
     let mut updated_targets: Vec<String> = Vec::new();
     for t in targets {
