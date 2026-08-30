@@ -8,6 +8,13 @@ import { invokeTauri, isTauri } from "../lib/tauri";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type { StatusReporter, TranslateFn } from "./useStatusReporter";
 
+/** The `{skill_id, name, source_path}` batch item for a managed skill. */
+const toSyncItem = (skill: ManagedSkill) => ({
+  skill_id: skill.id,
+  name: skill.name,
+  source_path: skill.central_path,
+});
+
 export type SkillLibraryDeps = {
   t: TranslateFn;
   reporter: StatusReporter;
@@ -130,11 +137,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           // every target whose skill actually changed would fail with
           // TARGET_EXISTS — the one outcome refresh exists to avoid.
           const report = await syncSkillsToTools(
-            freshSkills.map((skill) => ({
-              skill_id: skill.id,
-              name: skill.name,
-              source_path: skill.central_path,
-            })),
+            freshSkills.map(toSyncItem),
             installedToolIds,
             { overwrite: true },
           );
@@ -215,13 +218,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
       setError(null);
       try {
         const report = await syncSkillsToTools(
-          [
-            {
-              skill_id: skill.id,
-              name: skill.name,
-              source_path: skill.central_path,
-            },
-          ],
+          [toSyncItem(skill)],
           installedToolIds,
         );
         setActionMessage(null);
@@ -258,11 +255,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
       setError(null);
       try {
         const report = await syncSkillsToTools(
-          managedSkills.map((skill) => ({
-            skill_id: skill.id,
-            name: skill.name,
-            source_path: skill.central_path,
-          })),
+          managedSkills.map(toSyncItem),
           toolIds,
           { overwriteIfSameContent: true },
         );
@@ -357,13 +350,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
             t("actions.syncing", { name: skill.name, tool: toolLabel }),
           );
           const report = await syncSkillsToTools(
-            [
-              {
-                skill_id: skill.id,
-                name: skill.name,
-                source_path: skill.central_path,
-              },
-            ],
+            [toSyncItem(skill)],
             [toolId],
             { overwriteIfSameContent: true },
           );

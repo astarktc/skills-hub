@@ -10,6 +10,13 @@ import type { SkillLibrary } from "./useSkillLibrary";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type { StatusReporter, TranslateFn } from "./useStatusReporter";
 
+/** The `{skill_id, name, source_path}` batch item for a freshly installed skill. */
+const toSyncItem = (created: InstallResultDto) => ({
+  skill_id: created.skill_id,
+  name: created.name,
+  source_path: created.central_path,
+});
+
 export type AddSkillFlowDeps = {
   t: TranslateFn;
   reporter: StatusReporter;
@@ -99,6 +106,48 @@ export function useAddSkillFlow({
         .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
         .map((t) => t.id),
     [isInstalled, syncTargets, tools],
+  );
+
+  /**
+   * Canonical install→deploy tail: after a skill is installed, auto-sync it
+   * to the user-selected installed targets (when auto-sync is on) and return
+   * the failure entries to surface. When no targets are selected+installed,
+   * `noTargets: "set-error"` reports it immediately via setError (single
+   * installs) while `noTargets: "collect"` returns it as an error entry
+   * (batch installs).
+   */
+  const deployNewSkill = useCallback(
+    async (
+      created: InstallResultDto,
+      opts: { noTargets: "set-error" | "collect" },
+    ): Promise<{ title: string; message: string }[]> => {
+      if (!autoSyncEnabled) return [];
+      const selectedInstalledIds = getSelectedInstalledIds();
+      if (selectedInstalledIds.length === 0) {
+        const message = t("errors.noSyncTargets");
+        if (opts.noTargets === "set-error") {
+          setError(message);
+          return [];
+        }
+        return [
+          { title: t("errors.unsyncedTitle", { name: created.name }), message },
+        ];
+      }
+      const report = await syncSkillsToTools(
+        [toSyncItem(created)],
+        selectedInstalledIds,
+        { overwriteIfSameContent: true },
+      );
+      return syncFailureEntries(report, { includeNotWritableSkips: true });
+    },
+    [
+      autoSyncEnabled,
+      getSelectedInstalledIds,
+      setError,
+      syncFailureEntries,
+      syncSkillsToTools,
+      t,
+    ],
   );
 
   const loadPlan = useCallback(async () => {
@@ -288,13 +337,13 @@ export function useAddSkillFlow({
           group.variants.find((v) => v.path === chosenPath)?.tool ?? null;
 
         setActionMessage(t("actions.importExisting", { name: group.name }));
-        const installResult = await invokeTauri<{
-          skill_id: string;
-          central_path: string;
-        }>("import_existing_skill", {
-          sourcePath: chosenPath,
-          name: group.name,
-        });
+        const installResult = await invokeTauri<InstallResultDto>(
+          "import_existing_skill",
+          {
+            sourcePath: chosenPath,
+            name: group.name,
+          },
+        );
 
         if (autoSyncEnabled) {
           const selectedInstalledIds = getSelectedInstalledIds();
@@ -416,28 +465,10 @@ export function useAddSkillFlow({
             name: localName.trim() || undefined,
           },
         );
-        if (autoSyncEnabled) {
-          const selectedInstalledIds = getSelectedInstalledIds();
-          if (selectedInstalledIds.length === 0) {
-            setError(t("errors.noSyncTargets"));
-          } else {
-            const report = await syncSkillsToTools(
-              [
-                {
-                  skill_id: created.skill_id,
-                  name: created.name,
-                  source_path: created.central_path,
-                },
-              ],
-              selectedInstalledIds,
-              { overwriteIfSameContent: true },
-            );
-            const collectedErrors = syncFailureEntries(report, {
-              includeNotWritableSkips: true,
-            });
-            if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-          }
-        }
+        const deployErrors = await deployNewSkill(created, {
+          noTargets: "set-error",
+        });
+        if (deployErrors.length > 0) showActionErrors(deployErrors);
         setLocalPath("");
         setLocalName("");
         setActionMessage(t("status.localSkillCreated"));
@@ -522,28 +553,10 @@ export function useAddSkillFlow({
             name: gitName.trim() || undefined,
           },
         );
-        if (autoSyncEnabled) {
-          const selectedInstalledIds = getSelectedInstalledIds();
-          if (selectedInstalledIds.length === 0) {
-            setError(t("errors.noSyncTargets"));
-          } else {
-            const report = await syncSkillsToTools(
-              [
-                {
-                  skill_id: created.skill_id,
-                  name: created.name,
-                  source_path: created.central_path,
-                },
-              ],
-              selectedInstalledIds,
-              { overwriteIfSameContent: true },
-            );
-            const collectedErrors = syncFailureEntries(report, {
-              includeNotWritableSkips: true,
-            });
-            if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-          }
-        }
+        const deployErrors = await deployNewSkill(created, {
+          noTargets: "set-error",
+        });
+        if (deployErrors.length > 0) showActionErrors(deployErrors);
       } else if (autoSelectSkillName) {
         // Auto-select the matching skill from online search results.
         // skills.sh name may differ from SKILL.md name (e.g. "json-render-react" vs "react"),
@@ -570,28 +583,10 @@ export function useAddSkillFlow({
               name: gitName.trim() || undefined,
             },
           );
-          if (autoSyncEnabled) {
-            const selectedInstalledIds = getSelectedInstalledIds();
-            if (selectedInstalledIds.length === 0) {
-              setError(t("errors.noSyncTargets"));
-            } else {
-              const report = await syncSkillsToTools(
-                [
-                  {
-                    skill_id: created.skill_id,
-                    name: created.name,
-                    source_path: created.central_path,
-                  },
-                ],
-                selectedInstalledIds,
-                { overwriteIfSameContent: true },
-              );
-              const collectedErrors = syncFailureEntries(report, {
-                includeNotWritableSkips: true,
-              });
-              if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-            }
-          }
+          const deployErrors = await deployNewSkill(created, {
+            noTargets: "set-error",
+          });
+          if (deployErrors.length > 0) showActionErrors(deployErrors);
         } else {
           // No match found, fall back to picker
           setGitCandidatesRepoUrl(url);
@@ -651,6 +646,58 @@ export function useAddSkillFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exploreInstallTrigger]);
 
+  /**
+   * Shared core of the two "install the picked candidates" flows: install
+   * each selected candidate via `installOne`, deploy it through the canonical
+   * install→deploy tail, then reset that flow's pick state and finish up.
+   * Validation stays in the callers.
+   */
+  const runBatchInstall = async <C extends { name: string; subpath: string }>(
+    selected: C[],
+    installOne: (candidate: C) => Promise<InstallResultDto>,
+    resetPickState: () => void,
+  ) => {
+    setLoading(true);
+    setLoadingStartAt(Date.now());
+    setError(null);
+    try {
+      const collectedErrors: { title: string; message: string }[] = [];
+      for (let i = 0; i < selected.length; i++) {
+        const candidate = selected[i];
+        setActionMessage(
+          t("actions.importStep", {
+            index: i + 1,
+            total: selected.length,
+            name: candidate.name,
+          }),
+        );
+        try {
+          const created = await installOne(candidate);
+          collectedErrors.push(
+            ...(await deployNewSkill(created, { noTargets: "collect" })),
+          );
+        } catch (err) {
+          const raw = formatError(err) ?? "";
+          collectedErrors.push({
+            title: t("errors.importFailedTitle", { name: candidate.name }),
+            message: raw,
+          });
+        }
+      }
+
+      resetPickState();
+      setActionMessage(t("status.selectedSkillsInstalled"));
+      setSuccessToastMessage(t("status.selectedSkillsInstalled"));
+      setActionMessage(null);
+      setShowAddModal(false);
+      await loadManagedSkills();
+      if (collectedErrors.length > 0) showActionErrors(collectedErrors);
+    } finally {
+      setLoading(false);
+      setLoadingStartAt(null);
+    }
+  };
+
   const handleInstallSelectedLocalCandidates = async () => {
     const selected = localCandidates.filter(
       (c) => c.valid && localCandidateSelected[c.subpath],
@@ -689,80 +736,23 @@ export function useAddSkillFlow({
       return;
     }
 
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setError(null);
-    try {
-      const collectedErrors: { title: string; message: string }[] = [];
-      for (let i = 0; i < selected.length; i++) {
-        const candidate = selected[i];
-        setActionMessage(
-          t("actions.importStep", {
-            index: i + 1,
-            total: selected.length,
-            name: candidate.name,
-          }),
-        );
-        try {
-          const created = await invokeTauri<InstallResultDto>(
-            "install_local_selection",
-            {
-              basePath: localCandidatesBasePath,
-              subpath: candidate.subpath,
-              name: localName.trim() || undefined,
-            },
-          );
-          if (autoSyncEnabled) {
-            const selectedInstalledIds = getSelectedInstalledIds();
-            if (selectedInstalledIds.length === 0) {
-              collectedErrors.push({
-                title: t("errors.unsyncedTitle", { name: created.name }),
-                message: t("errors.noSyncTargets"),
-              });
-            } else {
-              const report = await syncSkillsToTools(
-                [
-                  {
-                    skill_id: created.skill_id,
-                    name: created.name,
-                    source_path: created.central_path,
-                  },
-                ],
-                selectedInstalledIds,
-                { overwriteIfSameContent: true },
-              );
-              collectedErrors.push(
-                ...syncFailureEntries(report, {
-                  includeNotWritableSkips: true,
-                }),
-              );
-            }
-          }
-        } catch (err) {
-          const raw = formatError(err) ?? "";
-          collectedErrors.push({
-            title: t("errors.importFailedTitle", { name: candidate.name }),
-            message: raw,
-          });
-        }
-      }
-
-      setShowLocalPickModal(false);
-      setLocalCandidates([]);
-      setLocalCandidateSelected({});
-      setLocalCandidatesBasePath("");
-      setLocalPath("");
-      setLocalName("");
-      setActionMessage(t("status.selectedSkillsInstalled"));
-      setSuccessToastMessage(t("status.selectedSkillsInstalled"));
-      setActionMessage(null);
-      setShowAddModal(false);
-      await loadManagedSkills();
-      if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
+    await runBatchInstall(
+      selected,
+      (candidate) =>
+        invokeTauri<InstallResultDto>("install_local_selection", {
+          basePath: localCandidatesBasePath,
+          subpath: candidate.subpath,
+          name: localName.trim() || undefined,
+        }),
+      () => {
+        setShowLocalPickModal(false);
+        setLocalCandidates([]);
+        setLocalCandidateSelected({});
+        setLocalCandidatesBasePath("");
+        setLocalPath("");
+        setLocalName("");
+      },
+    );
   };
 
   const handleInstallSelectedCandidates = async () => {
@@ -783,80 +773,23 @@ export function useAddSkillFlow({
       return;
     }
 
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setError(null);
-    try {
-      const collectedErrors: { title: string; message: string }[] = [];
-      for (let i = 0; i < selected.length; i++) {
-        const candidate = selected[i];
-        setActionMessage(
-          t("actions.importStep", {
-            index: i + 1,
-            total: selected.length,
-            name: candidate.name,
-          }),
-        );
-        try {
-          const created = await invokeTauri<InstallResultDto>(
-            "install_git_selection",
-            {
-              repoUrl: gitCandidatesRepoUrl,
-              subpath: candidate.subpath,
-              name: gitName.trim() || undefined,
-            },
-          );
-          if (autoSyncEnabled) {
-            const selectedInstalledIds = getSelectedInstalledIds();
-            if (selectedInstalledIds.length === 0) {
-              collectedErrors.push({
-                title: t("errors.unsyncedTitle", { name: created.name }),
-                message: t("errors.noSyncTargets"),
-              });
-            } else {
-              const report = await syncSkillsToTools(
-                [
-                  {
-                    skill_id: created.skill_id,
-                    name: created.name,
-                    source_path: created.central_path,
-                  },
-                ],
-                selectedInstalledIds,
-                { overwriteIfSameContent: true },
-              );
-              collectedErrors.push(
-                ...syncFailureEntries(report, {
-                  includeNotWritableSkips: true,
-                }),
-              );
-            }
-          }
-        } catch (err) {
-          const raw = formatError(err) ?? "";
-          collectedErrors.push({
-            title: t("errors.importFailedTitle", { name: candidate.name }),
-            message: raw,
-          });
-        }
-      }
-
-      setShowGitPickModal(false);
-      setGitCandidates([]);
-      setGitCandidateSelected({});
-      setGitCandidatesRepoUrl("");
-      setGitUrl("");
-      setGitName("");
-      setActionMessage(t("status.selectedSkillsInstalled"));
-      setSuccessToastMessage(t("status.selectedSkillsInstalled"));
-      setActionMessage(null);
-      setShowAddModal(false);
-      await loadManagedSkills();
-      if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
+    await runBatchInstall(
+      selected,
+      (candidate) =>
+        invokeTauri<InstallResultDto>("install_git_selection", {
+          repoUrl: gitCandidatesRepoUrl,
+          subpath: candidate.subpath,
+          name: gitName.trim() || undefined,
+        }),
+      () => {
+        setShowGitPickModal(false);
+        setGitCandidates([]);
+        setGitCandidateSelected({});
+        setGitCandidatesRepoUrl("");
+        setGitUrl("");
+        setGitName("");
+      },
+    );
   };
 
   return {
