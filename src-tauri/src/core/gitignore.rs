@@ -40,7 +40,7 @@ pub fn patterns_for_tools<'a>(adapters: impl IntoIterator<Item = &'a ToolAdapter
 /// marker comment, one pattern per line, and a trailing newline.
 pub fn managed_block(patterns: &[String]) -> String {
     format!(
-        "\n# Skills Hub — managed skill directories\n{}\n",
+        "\n{MARKER} — managed skill directories\n{}\n",
         patterns.join("\n")
     )
 }
@@ -119,7 +119,7 @@ fn apply_to_file(
     enabled: bool,
     create_parents: bool,
 ) -> Result<()> {
-    if enabled {
+    if enabled && !patterns.is_empty() {
         if create_parents {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)
@@ -149,18 +149,39 @@ fn apply_to_file(
     Ok(())
 }
 
+/// Status of the managed block in a project's ignore files, as detected
+/// beside the writer (same `MARKER`).
+pub struct IgnoreStatus {
+    pub in_gitignore: bool,
+    pub in_exclude: bool,
+}
+
+/// Whether a managed block is currently present in the project's
+/// `.gitignore` and `.git/info/exclude`.
+pub fn project_ignore_status(project_path: &Path) -> IgnoreStatus {
+    let has_marker = |path: &Path| {
+        path.exists()
+            && fs::read_to_string(path)
+                .unwrap_or_default()
+                .contains(MARKER)
+    };
+    IgnoreStatus {
+        in_gitignore: has_marker(&project_path.join(".gitignore")),
+        in_exclude: has_marker(&project_path.join(".git").join("info").join("exclude")),
+    }
+}
+
 /// Update the managed block in a project's `.gitignore` and
 /// `.git/info/exclude` according to the two toggles. A project with no
-/// resolvable patterns is left untouched.
+/// resolvable patterns (e.g. its last tool was removed) has any existing
+/// managed block stripped, so stale entries self-heal on any toggle/edit;
+/// no files are created in that case.
 pub fn update_project_ignore_files(
     project_path: &Path,
     patterns: &[String],
     add_to_gitignore: bool,
     add_to_exclude: bool,
 ) -> Result<()> {
-    if patterns.is_empty() {
-        return Ok(());
-    }
     apply_to_file(
         &project_path.join(".gitignore"),
         patterns,

@@ -463,7 +463,6 @@ pub async fn get_project_gitignore_status(
 ) -> Result<GitignoreStatusDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        use std::fs;
         use std::path::Path;
 
         let project = store.get_project_by_id(&projectId)?.ok_or_else(|| {
@@ -473,22 +472,11 @@ pub async fn get_project_gitignore_status(
             })
         })?;
 
-        let project_path = Path::new(&project.path);
-        let marker = "# Skills Hub";
-
-        let in_gitignore = {
-            let p = project_path.join(".gitignore");
-            p.exists() && fs::read_to_string(&p).unwrap_or_default().contains(marker)
-        };
-
-        let in_exclude = {
-            let p = project_path.join(".git").join("info").join("exclude");
-            p.exists() && fs::read_to_string(&p).unwrap_or_default().contains(marker)
-        };
+        let status = crate::core::gitignore::project_ignore_status(Path::new(&project.path));
 
         Ok::<_, anyhow::Error>(GitignoreStatusDto {
-            in_gitignore,
-            in_exclude,
+            in_gitignore: status.in_gitignore,
+            in_exclude: status.in_exclude,
         })
     })
     .await

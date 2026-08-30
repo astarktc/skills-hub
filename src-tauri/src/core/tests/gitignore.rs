@@ -7,8 +7,8 @@
 use std::fs;
 
 use crate::core::gitignore::{
-    managed_block, patterns_for_tools, remove_managed_block, set_managed_block,
-    update_project_ignore_files, MARKER,
+    managed_block, patterns_for_tools, project_ignore_status, remove_managed_block,
+    set_managed_block, update_project_ignore_files, MARKER,
 };
 use crate::core::tool_adapters::{adapter_by_key, project_relative_skills_dir};
 
@@ -84,7 +84,7 @@ fn set_preserves_existing_content() {
     let patterns = pat(&["/.claude/skills/"]);
     let out = set_managed_block(existing, &patterns);
     assert!(out.starts_with("node_modules/\n.env\n"));
-    assert!(out.contains("# Skills Hub — managed skill directories"));
+    assert!(out.contains(&format!("{MARKER} — managed skill directories")));
     assert!(out.contains("/.claude/skills/"));
 }
 
@@ -156,7 +156,8 @@ fn remove_block_at_end_of_file() {
 
 #[test]
 fn remove_when_entire_file_is_block() {
-    let content = "# Skills Hub — managed skill directories\n/.claude/skills/\n";
+    let content = format!("{MARKER} — managed skill directories\n/.claude/skills/\n");
+    let content = content.as_str();
     let out = remove_managed_block(content);
     assert_eq!(out, "");
 }
@@ -244,6 +245,54 @@ fn file_update_with_no_patterns_is_a_no_op() {
     update_project_ignore_files(dir.path(), &[], true, true).expect("update");
     assert!(!dir.path().join(".gitignore").exists());
     assert!(!dir.path().join(".git").exists());
+}
+
+#[test]
+fn file_update_empty_patterns_strips_stale_block() {
+    // Ticket 14: removing a project's last tool must let the stale managed
+    // block self-heal on the next toggle/edit.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let patterns = pat(&["/.claude/skills/"]);
+    fs::write(dir.path().join(".gitignore"), "node_modules/\n").expect("seed");
+    update_project_ignore_files(dir.path(), &patterns, true, true).expect("add");
+    assert!(fs::read_to_string(dir.path().join(".gitignore"))
+        .expect("read")
+        .contains(MARKER));
+
+    // Last tool removed → empty patterns, toggles still true.
+    update_project_ignore_files(dir.path(), &[], true, true).expect("strip");
+    let gitignore = fs::read_to_string(dir.path().join(".gitignore")).expect("read");
+    assert!(!gitignore.contains(MARKER), "stale block must be stripped");
+    assert!(
+        gitignore.contains("node_modules/"),
+        "unrelated content kept"
+    );
+    let exclude = fs::read_to_string(dir.path().join(".git/info/exclude")).expect("read");
+    assert!(!exclude.contains(MARKER));
+}
+
+#[test]
+fn status_detection_agrees_with_writer() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let status = project_ignore_status(dir.path());
+    assert!(!status.in_gitignore);
+    assert!(!status.in_exclude);
+
+    let patterns = pat(&["/.claude/skills/"]);
+    update_project_ignore_files(dir.path(), &patterns, true, false).expect("add gitignore");
+    let status = project_ignore_status(dir.path());
+    assert!(status.in_gitignore);
+    assert!(!status.in_exclude);
+
+    update_project_ignore_files(dir.path(), &patterns, true, true).expect("add exclude");
+    let status = project_ignore_status(dir.path());
+    assert!(status.in_gitignore);
+    assert!(status.in_exclude);
+
+    update_project_ignore_files(dir.path(), &patterns, false, false).expect("remove");
+    let status = project_ignore_status(dir.path());
+    assert!(!status.in_gitignore);
+    assert!(!status.in_exclude);
 }
 
 #[test]
