@@ -7,22 +7,30 @@ import type { CommandError } from "./bindings/CommandError";
 
 type TranslateFn = (key: string, opts?: Record<string, unknown>) => string;
 
-const COMMAND_ERROR_CODES: ReadonlySet<string> = new Set([
-  "TOOL_NOT_INSTALLED",
-  "TARGET_EXISTS",
-  "TOOL_NOT_WRITABLE",
-  "SKILL_INVALID",
-  "MULTI_SKILLS",
-  "DUPLICATE_PROJECT",
-  "ASSIGNMENT_EXISTS",
-  "NOT_FOUND",
-  "CANCELLED",
-  "RATE_LIMITED",
-  "GIT_CLONE_FAILED",
-  "OTHER",
-]);
+// Compiler-derived whitelist of wire codes: `satisfies` forces this map to
+// stay in exact sync with the generated union, so adding a Rust variant
+// (which regenerates src/bindings/CommandError.ts) fails `npm run build`
+// until the frontend handles the new code here and in describeCommandError.
+const COMMAND_ERROR_CODE_MAP = {
+  TOOL_NOT_INSTALLED: true,
+  TARGET_EXISTS: true,
+  TOOL_NOT_WRITABLE: true,
+  SKILL_INVALID: true,
+  MULTI_SKILLS: true,
+  DUPLICATE_PROJECT: true,
+  ASSIGNMENT_EXISTS: true,
+  NOT_FOUND: true,
+  CANCELLED: true,
+  RATE_LIMITED: true,
+  GIT_CLONE_FAILED: true,
+  OTHER: true,
+} as const satisfies Record<CommandError["code"], true>;
 
-export function isCommandError(err: unknown): err is CommandError {
+const COMMAND_ERROR_CODES: ReadonlySet<string> = new Set(
+  Object.keys(COMMAND_ERROR_CODE_MAP),
+);
+
+function isCommandError(err: unknown): err is CommandError {
   return (
     typeof err === "object" &&
     err !== null &&

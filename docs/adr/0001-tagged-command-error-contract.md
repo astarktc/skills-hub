@@ -24,5 +24,8 @@ emitted Chinese-only hints to all locales).
 
 - Adding an error variant = Rust variant + regenerated `src/bindings/` + a
   `describeCommandError` branch + i18n keys (EN & ZH). CI diff-guards the bindings.
+  The runtime code whitelist in `src/commandError.ts` is compiler-derived from the
+  generated union (`satisfies Record<CommandError["code"], true>`), so a new variant
+  fails `npm run build` until the frontend handles it — no manual list to update.
 - `CommandError::Other { message }` is the deliberate safety valve for unclassified
   failures; raw prose reaching users through it is a smell that a typed variant is due.

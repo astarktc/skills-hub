@@ -5,11 +5,7 @@
 // key names in src/i18n/resources.ts.
 
 import { describe, expect, it } from "vitest";
-import {
-  describeCommandError,
-  isCommandError,
-  toCommandError,
-} from "./commandError";
+import { describeCommandError, toCommandError } from "./commandError";
 
 // Deterministic translate stub: renders the key plus any interpolation
 // values, so assertions can verify both key choice and passed params
@@ -17,23 +13,23 @@ import {
 const t = (key: string, opts?: Record<string, unknown>) =>
   opts ? `${key} ${JSON.stringify(opts)}` : key;
 
-describe("isCommandError", () => {
-  it("accepts a structured payload with a known code", () => {
-    expect(isCommandError({ code: "TARGET_EXISTS" })).toBe(true);
-  });
-
-  it("rejects unknown codes, plain Errors, and strings", () => {
-    expect(isCommandError({ code: "NOT_A_REAL_CODE" })).toBe(false);
-    expect(isCommandError(new Error("boom"))).toBe(false);
-    expect(isCommandError("boom")).toBe(false);
-    expect(isCommandError(null)).toBe(false);
-  });
-});
-
 describe("toCommandError", () => {
-  it("passes a structured payload through unchanged", () => {
+  it("passes a structured payload with a known code through unchanged", () => {
     const err = { code: "CANCELLED" };
     expect(toCommandError(err)).toBe(err);
+  });
+
+  it("passes another known code through unchanged", () => {
+    const err = { code: "TARGET_EXISTS", path: "/x" };
+    expect(toCommandError(err)).toBe(err);
+  });
+
+  it("wraps payloads with unknown codes and null as OTHER", () => {
+    expect(toCommandError({ code: "NOT_A_REAL_CODE" })).toEqual({
+      code: "OTHER",
+      message: "[object Object]",
+    });
+    expect(toCommandError(null)).toEqual({ code: "OTHER", message: "null" });
   });
 
   it("wraps an Error as OTHER with its message", () => {
