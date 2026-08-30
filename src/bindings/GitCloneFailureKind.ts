@@ -4,4 +4,4 @@
  * Why a GitHub clone/fetch failed, classified backend-side from the error
  * chain (the backend has the chain; the frontend owns the copy).
  */
-export type GitCloneFailureKind = "tls" | "auth" | "notFound" | "dns" | "timeout" | "refused" | "unknown";
+export type GitCloneFailureKind = "tls" | "auth" | "notFound" | "dns" | "timeout" | "refused" | "execFailed" | "unknown";

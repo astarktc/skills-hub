@@ -1687,17 +1687,24 @@ fn fetch_skill_files<R: tauri::Runtime>(
                 ) {
                     return Err(err);
                 }
+                // Classification heuristic: the GitHub HTTP layer currently
+                // surfaces status codes only as strings in the error chain, so
+                // we sniff 404/403 here (the closest reachable point to the
+                // origin) and raise typed conditions instead of prose.
                 let err_msg = format!("{:#}", err);
                 if err_msg.contains("404") || err_msg.contains("Not Found") {
-                    anyhow::bail!(
-                        "Skill not found on GitHub (may have been deleted or the path changed).\nPlease check: {}/tree/{}/{}",
-                        parsed.clone_url.trim_end_matches(".git"),
-                        branch,
-                        subpath
-                    );
+                    anyhow::bail!(SignalError::GithubSkillNotFound {
+                        url: format!(
+                            "{}/tree/{}/{}",
+                            parsed.clone_url.trim_end_matches(".git"),
+                            branch,
+                            subpath
+                        ),
+                    });
                 }
                 if err_msg.contains("403") || err_msg.contains("Forbidden") {
-                    anyhow::bail!("GitHub API access denied (may have hit rate limit). Please try again later.");
+                    // Reset ETA unknown at this layer; 0 = "no ETA" on the wire.
+                    anyhow::bail!(SignalError::RateLimited { reset_minutes: 0 });
                 }
                 // Fall back to git clone.
                 log::warn!(

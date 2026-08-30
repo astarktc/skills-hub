@@ -235,6 +235,12 @@ export const resources = {
           "Connection to GitHub timed out. Please check your network/proxy.",
         gitCloneRefused:
           "Connection to GitHub failed (refused/reset). Please check your network/proxy.",
+        gitCloneExecFailed:
+          "Running the system git command failed (stopped without falling back to the built-in git, to avoid hangs). Please check your git installation, network, or proxy.",
+        githubSkillNotFound:
+          "Skill not found on GitHub (it may have been deleted or the path changed). Please check: {{url}}",
+        deleteCleanupFailed:
+          "The managed record was deleted, but cleaning up some tool directories failed:",
         gitCloneUnknown:
           "Could not fetch the repository from GitHub. Please check your network/proxy and try again.",
         requireLocalPath: "Please enter a local path.",
@@ -665,6 +671,11 @@ export const resources = {
         gitCloneDns: "无法解析 GitHub 域名（DNS）。请检查网络/代理。",
         gitCloneTimeout: "连接 GitHub 超时。请检查网络/代理。",
         gitCloneRefused: "连接 GitHub 失败（连接被拒绝/重置）。请检查网络/代理。",
+        gitCloneExecFailed:
+          "git 命令执行失败（为避免卡死，已停止并不再回退到内置 git）。请检查系统 git/网络/代理。",
+        githubSkillNotFound:
+          "在 GitHub 上未找到该 Skill（可能已被删除或路径已变更）。请检查：{{url}}",
+        deleteCleanupFailed: "已删除托管记录，但清理部分工具目录失败：",
         gitCloneUnknown: "无法从 GitHub 拉取仓库。请检查网络/代理，或稍后重试。",
         requireLocalPath: "请输入本地路径",
         requireGitUrl: "请输入 Git 仓库地址",

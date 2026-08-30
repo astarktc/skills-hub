@@ -33,6 +33,18 @@ pub enum SignalError {
     },
     /// An entity referenced by id does not exist. `kind` is e.g. `project`/`skill`.
     NotFound { kind: String, id: String },
+    /// Running the system `git` CLI failed (and the libgit2 fallback is disabled).
+    /// `detail` is diagnostic text (error chain + env-var hint), not user copy.
+    GitExecFailed { detail: String },
+    /// A git CLI operation exceeded the configured timeout.
+    /// `detail` is diagnostic text (elapsed seconds, env-var hint, stderr).
+    GitTimeout { detail: String },
+    /// A GitHub-hosted skill path could not be found (404). `url` is the
+    /// human-checkable tree URL the frontend can surface.
+    GithubSkillNotFound { url: String },
+    /// The managed record was deleted but some tool directories could not be
+    /// cleaned up. Each entry is `"<path>: <io error>"` diagnostics.
+    DeleteCleanupFailed { failures: Vec<String> },
 }
 
 impl fmt::Display for SignalError {
@@ -61,6 +73,18 @@ impl fmt::Display for SignalError {
                 tool,
             } => write!(f, "assignment already exists: {project}:{skill}:{tool}"),
             SignalError::NotFound { kind, id } => write!(f, "{kind} not found: {id}"),
+            SignalError::GitExecFailed { detail } => {
+                write!(f, "git command execution failed: {detail}")
+            }
+            SignalError::GitTimeout { detail } => write!(f, "git operation timed out: {detail}"),
+            SignalError::GithubSkillNotFound { url } => {
+                write!(f, "skill not found on GitHub: {url}")
+            }
+            SignalError::DeleteCleanupFailed { failures } => write!(
+                f,
+                "managed record deleted, but cleanup failed for: {}",
+                failures.join(", ")
+            ),
         }
     }
 }

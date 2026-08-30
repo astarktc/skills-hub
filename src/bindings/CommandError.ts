@@ -8,4 +8,12 @@ export type CommandError = { "code": "TOOL_NOT_INSTALLED", tool: string, } | { "
 /**
  * Rounded-up minutes until the limit resets; 0 = unknown.
  */
-resetMinutes: number, } | { "code": "GIT_CLONE_FAILED", kind: GitCloneFailureKind, detail: string, } | { "code": "OTHER", message: string, };
+resetMinutes: number, } | { "code": "GIT_CLONE_FAILED", kind: GitCloneFailureKind, detail: string, } | { "code": "GITHUB_SKILL_NOT_FOUND", 
+/**
+ * Human-checkable GitHub tree URL for the missing skill path.
+ */
+url: string, } | { "code": "DELETE_CLEANUP_FAILED", 
+/**
+ * `"<path>: <io error>"` diagnostics per failed cleanup target.
+ */
+failures: Array<string>, } | { "code": "OTHER", message: string, };

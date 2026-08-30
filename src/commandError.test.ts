@@ -104,6 +104,33 @@ describe("describeCommandError", () => {
     ).toBe("errors.gitCloneUnknown");
   });
 
+  it("maps the execFailed git kind to its dedicated hint", () => {
+    expect(
+      describeCommandError(
+        { code: "GIT_CLONE_FAILED", kind: "execFailed", detail: "boom" },
+        t,
+      ),
+    ).toBe("errors.gitCloneExecFailed\n\nboom");
+  });
+
+  it("interpolates the checkable URL for GITHUB_SKILL_NOT_FOUND", () => {
+    expect(
+      describeCommandError(
+        { code: "GITHUB_SKILL_NOT_FOUND", url: "https://g/tree/main/s" },
+        t,
+      ),
+    ).toBe('errors.githubSkillNotFound {"url":"https://g/tree/main/s"}');
+  });
+
+  it("lists failed paths for DELETE_CLEANUP_FAILED", () => {
+    expect(
+      describeCommandError(
+        { code: "DELETE_CLEANUP_FAILED", failures: ["/a: denied", "/b: busy"] },
+        t,
+      ),
+    ).toBe("errors.deleteCleanupFailed\n- /a: denied\n- /b: busy");
+  });
+
   it("recovers the skill name from the legacy central-repo prose", () => {
     expect(
       describeCommandError(

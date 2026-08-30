@@ -1062,10 +1062,10 @@ pub async fn delete_managed_skill(
         }
 
         if !remove_failures.is_empty() {
-            anyhow::bail!(
-                "已删除托管记录，但清理部分工具目录失败：\n- {}",
-                remove_failures.join("\n- ")
-            );
+            // Typed condition; user copy lives in the frontend catalog.
+            anyhow::bail!(crate::core::errors::SignalError::DeleteCleanupFailed {
+                failures: remove_failures,
+            });
         }
 
         Ok::<_, anyhow::Error>(())

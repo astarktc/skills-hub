@@ -43,10 +43,14 @@ pub fn clone_or_pull(
                     err
                 );
                 if !allow_fallback {
-                    anyhow::bail!(
-                        "git 命令执行失败（为避免卡死，已停止并不再回退到内置 git）。请检查系统 git/网络/代理；或设置环境变量 SKILLS_HUB_ALLOW_LIBGIT2_FALLBACK=1 允许回退。\n{:#}",
-                        err
-                    );
+                    // Typed condition; user copy lives in the frontend catalog.
+                    // The detail field carries diagnostics only.
+                    anyhow::bail!(SignalError::GitExecFailed {
+                        detail: format!(
+                            "set SKILLS_HUB_ALLOW_LIBGIT2_FALLBACK=1 to allow the built-in git fallback\n{:#}",
+                            err
+                        ),
+                    });
                 }
                 log::warn!(
                     "[git_fetcher] falling back to libgit2 (SKILLS_HUB_ALLOW_LIBGIT2_FALLBACK=1)"
@@ -370,11 +374,15 @@ fn run_cmd_with_timeout(
                 .wait_with_output()
                 .map(|out| String::from_utf8_lossy(&out.stderr).to_string())
                 .unwrap_or_default();
-            anyhow::bail!(
-                "git 操作超时（{}s）。请检查网络/代理是否可访问 GitHub；也可设置环境变量 SKILLS_HUB_GIT_TIMEOUT_SECS 增大超时。\n{}",
-                timeout.as_secs(),
-                stderr.trim()
-            );
+            // Typed condition; user copy lives in the frontend catalog.
+            // The detail field carries diagnostics only.
+            anyhow::bail!(SignalError::GitTimeout {
+                detail: format!(
+                    "timed out after {}s (set SKILLS_HUB_GIT_TIMEOUT_SECS to increase)\n{}",
+                    timeout.as_secs(),
+                    stderr.trim()
+                ),
+            });
         }
 
         match child.try_wait() {

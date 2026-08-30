@@ -30,6 +30,8 @@ pub enum GitCloneFailureKind {
     Dns,
     Timeout,
     Refused,
+    /// Running the system `git` CLI itself failed (fallback disabled).
+    ExecFailed,
     Unknown,
 }
 
@@ -76,6 +78,14 @@ pub enum CommandError {
     GitCloneFailed {
         kind: GitCloneFailureKind,
         detail: String,
+    },
+    GithubSkillNotFound {
+        /// Human-checkable GitHub tree URL for the missing skill path.
+        url: String,
+    },
+    DeleteCleanupFailed {
+        /// `"<path>: <io error>"` diagnostics per failed cleanup target.
+        failures: Vec<String>,
     },
     Other {
         message: String,
@@ -179,6 +189,18 @@ impl From<SignalError> for CommandError {
                 tool,
             },
             SignalError::NotFound { kind, id } => CommandError::NotFound { kind, id },
+            SignalError::GitExecFailed { detail } => CommandError::GitCloneFailed {
+                kind: GitCloneFailureKind::ExecFailed,
+                detail,
+            },
+            SignalError::GitTimeout { detail } => CommandError::GitCloneFailed {
+                kind: GitCloneFailureKind::Timeout,
+                detail,
+            },
+            SignalError::GithubSkillNotFound { url } => CommandError::GithubSkillNotFound { url },
+            SignalError::DeleteCleanupFailed { failures } => {
+                CommandError::DeleteCleanupFailed { failures }
+            }
         }
     }
 }

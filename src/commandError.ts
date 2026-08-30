@@ -23,6 +23,8 @@ const COMMAND_ERROR_CODE_MAP = {
   CANCELLED: true,
   RATE_LIMITED: true,
   GIT_CLONE_FAILED: true,
+  GITHUB_SKILL_NOT_FOUND: true,
+  DELETE_CLEANUP_FAILED: true,
   OTHER: true,
 } as const satisfies Record<CommandError["code"], true>;
 
@@ -54,6 +56,7 @@ const GIT_CLONE_HINT_KEYS: Record<string, string> = {
   dns: "errors.gitCloneDns",
   timeout: "errors.gitCloneTimeout",
   refused: "errors.gitCloneRefused",
+  execFailed: "errors.gitCloneExecFailed",
   unknown: "errors.gitCloneUnknown",
 };
 
@@ -69,9 +72,6 @@ function describeOther(message: string, t: TranslateFn): string {
       }
     }
     return t("errors.skillExistsInHub");
-  }
-  if (message.includes("未在该仓库中发现可导入的 Skills")) {
-    return t("errors.noSkillsFoundInRepo");
   }
   return message;
 }
@@ -114,6 +114,12 @@ export function describeCommandError(
       const hint = t(GIT_CLONE_HINT_KEYS[e.kind] ?? "errors.gitCloneUnknown");
       return e.detail ? `${hint}\n\n${e.detail}` : hint;
     }
+    case "GITHUB_SKILL_NOT_FOUND":
+      return t("errors.githubSkillNotFound", { url: e.url });
+    case "DELETE_CLEANUP_FAILED":
+      return (
+        t("errors.deleteCleanupFailed") + "\n- " + e.failures.join("\n- ")
+      );
     case "OTHER":
       return describeOther(e.message, t);
   }
