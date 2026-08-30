@@ -20,7 +20,6 @@ use crate::core::cancel_token::CancelToken;
 use crate::core::central_repo::{ensure_central_repo, resolve_central_repo_path};
 use crate::core::errors::SignalError;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
-use crate::core::github_search::{search_github_repos, RepoSummary};
 use crate::core::global_sync::{BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus};
 use crate::core::installer::{
     clone_for_explore_preview, install_git_skill, install_git_skill_from_selection,
@@ -689,28 +688,6 @@ pub async fn update_managed_skill(
             source_revision: res.source_revision,
             updated_targets: res.updated_targets,
         })
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-pub async fn search_github(
-    store: State<'_, SkillStore>,
-    query: String,
-    limit: Option<u32>,
-) -> Result<Vec<RepoSummary>, CommandError> {
-    let store = store.inner().clone();
-    let limit = limit.unwrap_or(10) as usize;
-    tauri::async_runtime::spawn_blocking(move || {
-        let token = store.get_setting("github_token")?.unwrap_or_default();
-        let token_opt = if token.is_empty() {
-            None
-        } else {
-            Some(token.as_str())
-        };
-        search_github_repos(&query, limit, token_opt)
     })
     .await
     .map_err(CommandError::internal)?

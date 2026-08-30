@@ -22,6 +22,21 @@ export type SyncPolicy = {
   overrides?: BatchSyncOverrideDto[];
 };
 
+/**
+ * "Only scan selected tools": ignore newly detected tools that are not
+ * part of the saved global tool selection.
+ */
+function filterRelevantNewlyInstalled(
+  newlyInstalled: string[],
+  scanSelectedOnly: boolean,
+  selectedTools: string[] | null,
+): string[] {
+  if (scanSelectedOnly && selectedTools) {
+    return newlyInstalled.filter((id) => selectedTools.includes(id));
+  }
+  return newlyInstalled;
+}
+
 export type SyncOrchestrationDeps = {
   t: TranslateFn;
   reporter: Pick<
@@ -92,22 +107,19 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
 
   const relevantNewlyInstalled = useMemo(() => {
     if (!toolStatus) return [] as string[];
-    // "Only scan selected tools": ignore newly detected tools that are not
-    // part of the saved global tool selection.
-    if (scanSelectedToolsOnly && globalSelectedTools) {
-      return toolStatus.newly_installed.filter((id) =>
-        globalSelectedTools.includes(id),
-      );
-    }
-    return toolStatus.newly_installed;
+    return filterRelevantNewlyInstalled(
+      toolStatus.newly_installed,
+      scanSelectedToolsOnly,
+      globalSelectedTools,
+    );
   }, [toolStatus, scanSelectedToolsOnly, globalSelectedTools]);
 
   const newlyInstalledToolsText = useMemo(() => {
     if (relevantNewlyInstalled.length === 0) return "";
     return relevantNewlyInstalled
       .map((id) => tools.find((t) => t.id === id)?.label ?? id)
-      .join("、");
-  }, [relevantNewlyInstalled, tools]);
+      .join(t("common.listSeparator"));
+  }, [relevantNewlyInstalled, t, tools]);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -152,12 +164,11 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
           return next;
         });
 
-        const relevantNew =
-          scanSelectedOnly && selectedTools
-            ? status.newly_installed.filter((key) =>
-                selectedTools.includes(key),
-              )
-            : status.newly_installed;
+        const relevantNew = filterRelevantNewlyInstalled(
+          status.newly_installed,
+          scanSelectedOnly,
+          selectedTools,
+        );
         if (relevantNew.length > 0) {
           setShowNewToolsModal(true);
         }
@@ -237,10 +248,8 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
         await invokeTauri("set_auto_sync_enabled", { enabled });
         setAutoSyncEnabled(enabled);
       } catch (err) {
-        {
-          const msg = formatError(err);
-          if (msg) toast.error(msg);
-        }
+        const msg = formatError(err);
+        if (msg) toast.error(msg);
       }
     },
     [formatError],

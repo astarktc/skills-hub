@@ -115,49 +115,52 @@ const ToolConfigModalInner = ({
             {labels.confirmLabel}
           </button>
         </>
-      }
-    >
-          <p className="helper-text">{labels.description}</p>
-          <label className="tool-filter-toggle">
-            <input
-              type="checkbox"
-              checked={detectedOnly}
-              onChange={() => setDetectedOnly((v) => !v)}
-            />
-            {t("toolConfigDetectedOnly")}
-          </label>
-          <div className="tool-pick-list">
-            {tools.map((tool) => (
-              <div key={tool.key} className="pick-item">
-                <label className="pick-item-label">
-                  <input
-                    className="pick-item-checkbox"
-                    type="checkbox"
-                    checked={selectedTools.has(tool.key)}
-                    onChange={() => handleToggle(tool.key)}
-                  />
-                  <span>{tool.label}</span>
-                  {installed.includes(tool.key) && (
-                    <span className="pick-item-badge"> (installed)</span>
-                  )}
-                </label>
-                {tool.constituents.length > 0 && (
-                  <span className="pick-item-subtitle">
-                    {tool.constituents.join(", ")}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-          {hasScanToggle && (
-            <label className="tool-filter-toggle">
+  }
+>
+      <p className="helper-text">{labels.description}</p>
+      <label className="tool-filter-toggle">
+        <input
+          type="checkbox"
+          checked={detectedOnly}
+          onChange={() => setDetectedOnly((v) => !v)}
+        />
+        {t("toolConfigDetectedOnly")}
+      </label>
+      <div className="tool-pick-list">
+        {tools.map((tool) => (
+          <div key={tool.key} className="pick-item">
+            <label className="pick-item-label">
               <input
+                className="pick-item-checkbox"
                 type="checkbox"
-                checked={scanSelectedOnly}
-                onChange={() => setScanSelectedOnly((v) => !v)}
+                checked={selectedTools.has(tool.key)}
+                onChange={() => handleToggle(tool.key)}
               />
-              {labels.scanToggleLabel}
+              <span>{tool.label}</span>
+              {installed.includes(tool.key) && (
+                <span className="pick-item-badge">
+                  {" "}
+                  ({t("status.installed")})
+                </span>
+              )}
             </label>
+            {tool.constituents.length > 0 && (
+              <span className="pick-item-subtitle">
+                {tool.constituents.join(", ")}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+      {hasScanToggle && (
+        <label className="tool-filter-toggle">
+          <input
+            type="checkbox"
+            checked={scanSelectedOnly}
+            onChange={() => setScanSelectedOnly((v) => !v)}
+          />
+          {labels.scanToggleLabel}
+        </label>
           )}
     </Modal>
   );

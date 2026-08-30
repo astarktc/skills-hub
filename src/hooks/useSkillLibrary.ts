@@ -200,10 +200,8 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
         await invokeTauri("unsync_skill", { skillId });
         await loadManagedSkills();
       } catch (err) {
-        {
-          const msg = formatError(err);
-          if (msg) toast.error(msg);
-        }
+        const msg = formatError(err);
+        if (msg) toast.error(msg);
       }
     },
     [formatError, loadManagedSkills],

@@ -188,6 +188,9 @@ export const resources = {
       localPickBody:
         "Multiple skills found in this folder. Choose which ones to install.",
       localPickInvalidReason: "Invalid: {{reason}}",
+      common: {
+        listSeparator: ", ",
+      },
       localSkillInvalid: {
         missingSkillMd: "Missing SKILL.md",
         invalidFrontmatter: "Invalid frontmatter",
@@ -213,7 +216,6 @@ export const resources = {
           "The selected tool is not installed. Please refresh and retry.",
         toolNotWritable:
           "Cannot sync to {{tool}}: permission denied on {{path}}. Please check directory permissions or run as administrator.",
-        noSkillsFoundInRepo: "No skills found in this repository.",
         skillInvalid: "This path is not a valid skill: {{reason}}.",
         skillInvalidMissingSkillMd:
           "This path is not a valid skill folder: SKILL.md not found. Please paste a link to a specific skill folder.",
@@ -633,6 +635,9 @@ export const resources = {
       localPickTitle: "选择要导入的 Skill",
       localPickBody: "目录内发现多个 Skills，可多选后统一安装。",
       localPickInvalidReason: "不可用：{{reason}}",
+      common: {
+        listSeparator: "、",
+      },
       localSkillInvalid: {
         missingSkillMd: "缺少 SKILL.md",
         invalidFrontmatter: "Frontmatter 格式不合法",
@@ -654,7 +659,6 @@ export const resources = {
         toolNotInstalled: "未检测到该工具已安装，请刷新后重试。",
         toolNotWritable:
           "无法同步到 {{tool}}：目录 {{path}} 权限不足。请检查目录权限或以管理员身份运行。",
-        noSkillsFoundInRepo: "该仓库未发现可导入的 Skills。",
         skillInvalid: "该路径不是有效 Skill：{{reason}}。",
         skillInvalidMissingSkillMd:
           "该路径不是有效 Skill 目录：未找到 SKILL.md。请粘贴具体 Skill 文件夹链接。",

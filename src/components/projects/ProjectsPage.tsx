@@ -216,7 +216,7 @@ const ProjectsPage = () => {
   return (
     <div className="projects-page">
       {!state.projectsLoading &&
-      !state.loadError &&
+      !state.loadFailed &&
       state.projects.length === 0 ? (
         <div className="projects-empty-fullwidth">
           <FolderOpen size={48} className="projects-empty-icon" />
@@ -235,7 +235,7 @@ const ProjectsPage = () => {
             projects={state.projects}
             selectedProjectId={state.selectedProjectId}
             loading={state.projectsLoading}
-            loadError={state.loadError}
+            loadFailed={state.loadFailed}
             onSelectProject={state.selectProject}
             onAddProject={() => state.setShowAddModal(true)}
             onEditProject={handlePromptEdit}

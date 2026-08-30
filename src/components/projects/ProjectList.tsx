@@ -13,7 +13,7 @@ type ProjectListProps = {
   projects: ProjectDto[];
   selectedProjectId: string | null;
   loading: boolean;
-  loadError: string | null;
+  loadFailed: boolean;
   onSelectProject: (id: string) => void;
   onAddProject: () => void;
   onEditProject: (id: string) => void;
@@ -26,7 +26,7 @@ const ProjectList = ({
   projects,
   selectedProjectId,
   loading,
-  loadError,
+  loadFailed,
   onSelectProject,
   onAddProject,
   onEditProject,
@@ -48,7 +48,7 @@ const ProjectList = ({
         </button>
       </div>
 
-      {loadError ? (
+      {loadFailed ? (
         <div className="project-list-error">{t("projects.loadError")}</div>
       ) : loading ? (
         <div className="project-list-skeleton" aria-hidden="true">

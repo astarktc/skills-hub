@@ -10,7 +10,6 @@ import type {
   BulkAssignResultDto,
 } from "./types";
 import type { ManagedSkill, ToolStatusDto } from "../skills/types";
-import { toCommandError } from "../../commandError";
 
 export type ProjectState = {
   // Data
@@ -25,7 +24,7 @@ export type ProjectState = {
   matrixLoading: boolean;
   pendingCells: Set<string>;
   // Errors
-  loadError: string | null;
+  loadFailed: boolean;
   // Modal state
   showAddModal: boolean;
   showEditModal: boolean;
@@ -57,11 +56,6 @@ export type ProjectState = {
   setRemoveTargetId: (id: string | null) => void;
 };
 
-function normalizeError(err: unknown): string {
-  const e = toCommandError(err);
-  return e.code === "OTHER" ? e.message : e.code;
-}
-
 export function useProjectState(): ProjectState {
   // Data state
   const [projects, setProjects] = useState<ProjectDto[]>([]);
@@ -81,7 +75,7 @@ export function useProjectState(): ProjectState {
   const [pendingCells, setPendingCells] = useState<Set<string>>(new Set());
 
   // Error state
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   // Modal state
   const [showAddModal, setShowAddModal] = useState(false);
@@ -106,12 +100,12 @@ export function useProjectState(): ProjectState {
 
   const loadProjects = useCallback(async () => {
     setProjectsLoading(true);
-    setLoadError(null);
+    setLoadFailed(false);
     try {
       const result = await invokeTauri<ProjectDto[]>("list_projects");
       setProjects(result);
-    } catch (err) {
-      setLoadError(normalizeError(err));
+    } catch {
+      setLoadFailed(true);
     } finally {
       setProjectsLoading(false);
     }
@@ -379,7 +373,7 @@ export function useProjectState(): ProjectState {
     projectsLoading,
     matrixLoading,
     pendingCells,
-    loadError,
+    loadFailed,
     showAddModal,
     showEditModal,
     editTargetId,

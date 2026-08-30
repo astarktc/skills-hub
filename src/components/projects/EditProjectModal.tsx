@@ -81,44 +81,44 @@ const EditProjectModalInner = ({
       }
     >
           <div className="form-group">
-            <label className="label">{t("projects.pathLabel")}</label>
-            <input
-              className="input"
-              type="text"
-              value={project.path}
-              disabled
-            />
-          </div>
+        <label className="label">{t("projects.pathLabel")}</label>
+        <input
+          className="input"
+          type="text"
+          value={project.path}
+          disabled
+        />
+      </div>
 
-          <div className="gitignore-section">
-            <label>{t("projects.gitignoreLabel")}</label>
-            {loading ? (
-              <div
-                className="skeleton-row"
-                style={{ width: "60%", height: 20 }}
+      <div className="gitignore-section">
+        <label>{t("projects.gitignoreLabel")}</label>
+        {loading ? (
+          <div
+            className="skeleton-row"
+            style={{ width: "60%", height: 20 }}
+          />
+        ) : (
+          <>
+            <label className="gitignore-checkbox">
+              <input
+                type="checkbox"
+                checked={addToGitignore}
+                onChange={(e) => setAddToGitignore(e.target.checked)}
               />
-            ) : (
-              <>
-                <label className="gitignore-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={addToGitignore}
-                    onChange={(e) => setAddToGitignore(e.target.checked)}
-                  />
-                  {t("projects.gitignoreShared")}
-                </label>
-                <label className="gitignore-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={addToExclude}
-                    onChange={(e) => setAddToExclude(e.target.checked)}
-                  />
-                  {t("projects.gitignorePrivate")}
-                </label>
-              </>
-            )}
-          </div>
-    </Modal>
+              {t("projects.gitignoreShared")}
+            </label>
+            <label className="gitignore-checkbox">
+              <input
+                type="checkbox"
+                checked={addToExclude}
+                onChange={(e) => setAddToExclude(e.target.checked)}
+              />
+              {t("projects.gitignorePrivate")}
+            </label>
+          </>
+        )}
+      </div>
+</Modal>
   );
 };
 

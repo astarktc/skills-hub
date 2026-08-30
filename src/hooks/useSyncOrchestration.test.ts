@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BatchSyncReportDto,
   GlobalToolConfigDto,
+  SyncProgressDto,
   ToolInfoDto,
   ToolStatusDto,
 } from "../components/skills/types";
@@ -262,7 +263,7 @@ describe("syncSkillsToTools", () => {
       skills: unknown;
       tools: unknown;
       policy: unknown;
-      onProgress: FakeChannel<unknown>;
+      onProgress: FakeChannel<SyncProgressDto>;
     };
     expect(args.skills).toBe(skills);
     expect(args.tools).toEqual(["claude"]);
@@ -286,14 +287,13 @@ describe("syncSkillsToTools", () => {
     const call = mockInvoke.mock.calls.find(
       ([cmd]) => cmd === "sync_skills_to_tools",
     );
-    const channel = (call![1] as { onProgress: FakeChannel<unknown> })
+    const channel = (call![1] as { onProgress: FakeChannel<SyncProgressDto> })
       .onProgress;
 
     act(() => {
       channel.onmessage!({
         index: 2,
         total: 5,
-        skill_id: "s1",
         skill_name: "Skill One",
         tool: "claude",
       });

@@ -118,7 +118,6 @@ pub fn run() {
             commands::sync_skills_to_tools,
             commands::unsync_skill_from_tool,
             commands::update_managed_skill,
-            commands::search_github,
             commands::get_github_token,
             commands::set_github_token,
             commands::import_existing_skill,

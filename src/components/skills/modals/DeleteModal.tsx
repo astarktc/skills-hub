@@ -47,27 +47,27 @@ const DeleteModal = ({
         </>
       }
     >
-          <div className="delete-title">
-            <TriangleAlert size={20} />
-            {t('deleteTitle')}
-          </div>
-          <div className="delete-desc">
-            {skillName ? (
-              <>
-                {t('delete.confirmPrefix')}
-                <strong>{skillName}</strong>
-                {t('delete.confirmSuffix')}
-              </>
-            ) : (
-              t('deleteBody')
-            )}
-          </div>
-          <div className="delete-warning">
-            <ul>
-              <li>{t('delete.warningRemoveFromTools')}</li>
-              <li>{t('delete.warningDeleteFromHub')}</li>
-            </ul>
-          </div>
+      <div className="delete-title">
+        <TriangleAlert size={20} />
+        {t('deleteTitle')}
+      </div>
+      <div className="delete-desc">
+        {skillName ? (
+          <>
+            {t('delete.confirmPrefix')}
+            <strong>{skillName}</strong>
+            {t('delete.confirmSuffix')}
+          </>
+        ) : (
+          t('deleteBody')
+        )}
+      </div>
+      <div className="delete-warning">
+        <ul>
+          <li>{t('delete.warningRemoveFromTools')}</li>
+          <li>{t('delete.warningDeleteFromHub')}</li>
+        </ul>
+      </div>
     </Modal>
   )
 }

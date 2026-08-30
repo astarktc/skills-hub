@@ -559,64 +559,64 @@ function App() {
           className="update-modal"
           onRequestClose={updateInstalling ? undefined : dismissUpdate}
         >
-            {!updateInstalling && !updateDone && (
+          {!updateInstalling && !updateDone && (
+            <button
+              className="modal-close update-modal-close"
+              type="button"
+              onClick={dismissUpdate}
+              aria-label={t("close")}
+            >
+              ✕
+            </button>
+          )}
+          <div className="update-modal-body">
+            <div className="update-modal-title">
+              {updateDone
+                ? t("updateInstalledRestart")
+                : t("updateAvailable")}
+            </div>
+            {!updateDone && (
+              <div className="update-modal-text">
+                {t("updateBannerText", { version: updateAvailableVersion })}
+              </div>
+            )}
+            {!updateDone && updateBody && (
+              <div className="update-modal-notes">
+                <Markdown remarkPlugins={[remarkGfm]}>{updateBody}</Markdown>
+              </div>
+            )}
+          </div>
+          <div className="update-modal-actions">
+            {updateDone ? (
               <button
-                className="modal-close update-modal-close"
+                className="btn btn-primary"
                 type="button"
                 onClick={dismissUpdate}
-                aria-label={t("close")}
               >
-                ✕
+                {t("done")}
               </button>
-            )}
-            <div className="update-modal-body">
-              <div className="update-modal-title">
-                {updateDone
-                  ? t("updateInstalledRestart")
-                  : t("updateAvailable")}
-              </div>
-              {!updateDone && (
-                <div className="update-modal-text">
-                  {t("updateBannerText", { version: updateAvailableVersion })}
-                </div>
-              )}
-              {!updateDone && updateBody && (
-                <div className="update-modal-notes">
-                  <Markdown remarkPlugins={[remarkGfm]}>{updateBody}</Markdown>
-                </div>
-              )}
-            </div>
-            <div className="update-modal-actions">
-              {updateDone ? (
+            ) : (
+              <>
                 <button
                   className="btn btn-primary"
                   type="button"
-                  onClick={dismissUpdate}
+                  disabled={updateInstalling}
+                  onClick={updateNow}
                 >
-                  {t("done")}
+                  {updateInstalling ? t("installingUpdate") : t("updateNow")}
                 </button>
-              ) : (
-                <>
+                {!updateInstalling && (
                   <button
-                    className="btn btn-primary"
+                    className="btn btn-secondary"
                     type="button"
-                    disabled={updateInstalling}
-                    onClick={updateNow}
+                    onClick={dismissUpdateForever}
                   >
-                    {updateInstalling ? t("installingUpdate") : t("updateNow")}
+                    {t("updateBannerDismiss")}
                   </button>
-                  {!updateInstalling && (
-                    <button
-                      className="btn btn-secondary"
-                      type="button"
-                      onClick={dismissUpdateForever}
-                    >
-                      {t("updateBannerDismiss")}
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
+                )}
+              </>
+            )}
+          </div>
         </Modal>
       )}
     </div>

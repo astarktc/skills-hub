@@ -84,10 +84,8 @@ export function useExploreState({
         await invokeTauri("hide_explore_skill", { sourceUrl });
         setHiddenSkills((prev) => new Set([...prev, sourceUrl]));
       } catch (err) {
-        {
-          const msg = formatError(err);
-          if (msg) toast.error(msg);
-        }
+        const msg = formatError(err);
+        if (msg) toast.error(msg);
       }
     },
     [formatError],
@@ -103,10 +101,8 @@ export function useExploreState({
           return next;
         });
       } catch (err) {
-        {
-          const msg = formatError(err);
-          if (msg) toast.error(msg);
-        }
+        const msg = formatError(err);
+        if (msg) toast.error(msg);
       }
     },
     [formatError],
