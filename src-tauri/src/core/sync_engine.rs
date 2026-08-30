@@ -1,6 +1,24 @@
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+
+/// Typed condition: the sync target already exists and overwrite was not
+/// permitted. Raised through `anyhow` chains so callers (e.g.
+/// `global_sync::classify_sync_error`) recover it by downcast — never by
+/// matching the message text (see ADR 0001).
+#[derive(Debug)]
+pub struct TargetExistsError {
+    pub target: PathBuf,
+}
+
+impl fmt::Display for TargetExistsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "target already exists: {:?}", self.target)
+    }
+}
+
+impl std::error::Error for TargetExistsError {}
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
@@ -38,7 +56,9 @@ pub fn sync_dir_hybrid(source: &Path, target: &Path) -> Result<SyncOutcome> {
                 replaced: false,
             });
         }
-        anyhow::bail!("target already exists: {:?}", target);
+        anyhow::bail!(TargetExistsError {
+            target: target.to_path_buf()
+        });
     }
 
     ensure_parent_dir(target)?;
@@ -88,7 +108,9 @@ pub fn sync_dir_hybrid_with_overwrite(
                 .with_context(|| format!("remove existing target {:?}", target))?;
             did_replace = true;
         } else {
-            anyhow::bail!("target already exists: {:?}", target);
+            anyhow::bail!(TargetExistsError {
+                target: target.to_path_buf()
+            });
         }
     }
 
@@ -111,7 +133,9 @@ pub fn sync_dir_copy_with_overwrite(
                 .with_context(|| format!("remove existing target {:?}", target))?;
             did_replace = true;
         } else {
-            anyhow::bail!("target already exists: {:?}", target);
+            anyhow::bail!(TargetExistsError {
+                target: target.to_path_buf()
+            });
         }
     }
 

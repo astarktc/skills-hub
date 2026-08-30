@@ -53,7 +53,11 @@ fn hybrid_sync_with_overwrite_replaces_existing() {
     fs::write(target.join("old.txt"), b"old").unwrap();
 
     let err = sync_dir_hybrid_with_overwrite(src_dir.path(), &target, false).unwrap_err();
-    assert!(format!("{:#}", err).contains("target already exists"));
+    // Typed condition, recovered by downcast — not by message text (ADR 0001).
+    let typed = err
+        .downcast_ref::<crate::core::sync_engine::TargetExistsError>()
+        .expect("TargetExistsError must be downcastable through the anyhow chain");
+    assert_eq!(typed.target, target);
 
     let out = sync_dir_hybrid_with_overwrite(src_dir.path(), &target, true).unwrap();
     assert!(out.replaced);

@@ -621,3 +621,58 @@ fn batch_direct_override_forces_overwrite_for_that_skill_only() {
         }
     ));
 }
+
+// ---------------------------------------------------------------------------
+// classify_sync_error: classification is downcast-based, so it must survive
+// arbitrary message rewording/context wrapping (ADR 0001 — no prose sniffing).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn classification_recovers_target_exists_by_downcast_despite_reworded_message() {
+    let adapter = claude();
+    let tool_root = Path::new("/tmp/root");
+    let target = Path::new("/tmp/root/my-skill");
+
+    // Bury the typed value under context layers with completely different prose.
+    let err = anyhow::Error::new(crate::core::sync_engine::TargetExistsError {
+        target: target.to_path_buf(),
+    })
+    .context("some totally reworded wrapper text");
+
+    let classified = super::classify_sync_error(err, &adapter, tool_root, target);
+    match classified {
+        GlobalSyncError::TargetExists { target_path } => assert_eq!(target_path, target),
+        other => panic!("expected TargetExists, got {:?}", other),
+    }
+}
+
+#[test]
+fn classification_recovers_permission_denied_by_io_error_kind() {
+    let adapter = claude();
+    let tool_root = Path::new("/tmp/root");
+    let target = Path::new("/tmp/root/my-skill");
+
+    let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "nope");
+    let err = anyhow::Error::new(io_err).context("copy file somewhere");
+
+    let classified = super::classify_sync_error(err, &adapter, tool_root, target);
+    match classified {
+        GlobalSyncError::ToolNotWritable { skills_dir, .. } => assert_eq!(skills_dir, tool_root),
+        other => panic!("expected ToolNotWritable, got {:?}", other),
+    }
+}
+
+#[test]
+fn classification_leaves_unrelated_errors_as_other_even_with_suspicious_prose() {
+    let adapter = claude();
+    let tool_root = Path::new("/tmp/root");
+    let target = Path::new("/tmp/root/my-skill");
+
+    // Prose that the old substring sniffer would have misclassified.
+    let err = anyhow::anyhow!(
+        "upstream said: target already exists (but this is not our typed condition)"
+    );
+
+    let classified = super::classify_sync_error(err, &adapter, tool_root, target);
+    assert!(matches!(classified, GlobalSyncError::Other(_)));
+}

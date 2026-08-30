@@ -158,22 +158,38 @@ fn classify_sync_error(
     tool_root: &Path,
     target: &Path,
 ) -> GlobalSyncError {
-    let msg = format!("{:#}", err);
-    if msg.contains("target already exists") {
-        GlobalSyncError::TargetExists {
+    // Typed condition raised by `sync_engine` — recovered by downcast through
+    // the anyhow chain, never by matching message text (ADR 0001).
+    if err.chain().any(|cause| {
+        cause
+            .downcast_ref::<sync_engine::TargetExistsError>()
+            .is_some()
+    }) {
+        return GlobalSyncError::TargetExists {
             target_path: target.to_path_buf(),
-        }
-    } else if msg.contains("os error 5")
-        || msg.contains("Access is denied")
-        || msg.contains("Permission denied")
-    {
-        GlobalSyncError::ToolNotWritable {
+        };
+    }
+
+    // External OS failures: inspect the underlying `io::Error` kind instead of
+    // sniffing platform-specific message strings. The raw-code check covers
+    // Windows ERROR_ACCESS_DENIED (5) in case a wrapper surfaces it with a
+    // kind other than `PermissionDenied` (e.g. `Uncategorized`); it is gated
+    // to Windows because raw code 5 means EIO on Unix.
+    if err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io_err| {
+                io_err.kind() == std::io::ErrorKind::PermissionDenied
+                    || (cfg!(windows) && io_err.raw_os_error() == Some(5))
+            })
+    }) {
+        return GlobalSyncError::ToolNotWritable {
             tool_display_name: adapter.display_name.to_string(),
             skills_dir: tool_root.to_path_buf(),
-        }
-    } else {
-        GlobalSyncError::Other(err)
+        };
     }
+
+    GlobalSyncError::Other(err)
 }
 
 /// Remove a skill's sync target for a tool, updating every tool that shares
