@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 type ModalProps = {
@@ -30,6 +30,11 @@ type ModalProps = {
    * no header/body/footer wrappers. For dialogs with fully custom insides.
    */
   plain?: boolean;
+  /**
+   * Accessible name for the dialog when no title is rendered (or in plain
+   * mode). Ignored when a title is present — the title labels the dialog.
+   */
+  "aria-label"?: string;
   children: ReactNode;
 };
 
@@ -51,13 +56,33 @@ const Modal = ({
   footer,
   footerClassName,
   plain = false,
+  "aria-label": ariaLabel,
   children,
 }: ModalProps) => {
   const { t } = useTranslation();
-
-  if (!open) return null;
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   const canClose = onRequestClose !== undefined && !closeDisabled;
+  const hasTitle = !plain && title !== undefined;
+
+  // Move focus into the dialog on open (component unmounts while closed,
+  // so mount === open).
+  useEffect(() => {
+    if (open) dialogRef.current?.focus();
+  }, [open]);
+
+  // Escape closes exactly when the backdrop click would.
+  useEffect(() => {
+    if (!open || !canClose) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onRequestClose?.();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open, canClose, onRequestClose]);
+
+  if (!open) return null;
   const showClose =
     title !== undefined &&
     (showCloseButton ?? onRequestClose !== undefined);
@@ -68,10 +93,14 @@ const Modal = ({
       onClick={canClose ? onRequestClose : undefined}
     >
       <div
+        ref={dialogRef}
         className={className ? `modal ${className}` : "modal"}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={hasTitle ? titleId : undefined}
+        aria-label={hasTitle ? undefined : ariaLabel}
+        tabIndex={-1}
       >
         {plain ? (
           children
@@ -79,7 +108,9 @@ const Modal = ({
           <>
             {title !== undefined && (
               <div className="modal-header">
-                <div className="modal-title">{title}</div>
+                <div className="modal-title" id={titleId}>
+                  {title}
+                </div>
                 {showClose && (
                   <button
                     className="modal-close"

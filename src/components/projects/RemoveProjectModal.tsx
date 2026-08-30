@@ -24,6 +24,7 @@ const RemoveProjectModal = ({
     <Modal
       open={open}
       onRequestClose={onRequestClose}
+      aria-label={t("projects.removeTitle")}
       className="modal-delete"
       bodyClassName="delete-body"
       footerClassName="space-between"

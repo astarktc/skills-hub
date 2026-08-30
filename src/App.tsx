@@ -555,6 +555,7 @@ function App() {
         <Modal
           open
           plain
+          aria-label={t("appUpdates")}
           className="update-modal"
           onRequestClose={updateInstalling ? undefined : dismissUpdate}
         >
