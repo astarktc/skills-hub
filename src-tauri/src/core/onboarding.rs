@@ -5,10 +5,11 @@ use anyhow::Result;
 use serde::Serialize;
 use ts_rs::TS;
 
-use super::central_repo::resolve_central_repo_path;
 use super::content_hash::hash_dir;
 use super::skill_store::SkillStore;
-use super::tool_adapters::{default_tool_adapters, scan_tool_dir, DetectedSkill};
+use super::tool_adapters::{
+    default_tool_adapters, is_installed_in, scan_tool_dir, skills_dir_in, DetectedSkill,
+};
 
 #[derive(Clone, Debug, Serialize, TS)]
 #[ts(export)]
@@ -37,20 +38,21 @@ pub struct OnboardingPlan {
     pub groups: Vec<OnboardingGroup>,
 }
 
-pub fn build_onboarding_plan<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+/// Scan every installed tool under `home` for unmanaged skills, excluding
+/// anything already living in (or linked into) `central_dir` and every
+/// target the store already manages.
+pub fn build_onboarding_plan(
+    home: &Path,
+    central_dir: &Path,
     store: &SkillStore,
 ) -> Result<OnboardingPlan> {
-    let home =
-        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("failed to resolve home directory"))?;
-    let central = resolve_central_repo_path(app, store)?;
     let managed_targets = store
         .list_all_skill_target_paths()
         .unwrap_or_default()
         .into_iter()
         .map(|(tool, path)| managed_target_key(&tool, Path::new(&path)))
         .collect::<std::collections::HashSet<_>>();
-    build_onboarding_plan_in_home(&home, Some(&central), Some(&managed_targets))
+    build_onboarding_plan_in_home(home, Some(central_dir), Some(&managed_targets))
 }
 
 fn build_onboarding_plan_in_home(
@@ -63,12 +65,11 @@ fn build_onboarding_plan_in_home(
     let mut scanned = 0usize;
 
     for adapter in &adapters {
-        if !home.join(adapter.relative_detect_dir).exists() {
+        if !is_installed_in(home, adapter) {
             continue;
         }
         scanned += 1;
-        let dir = home.join(adapter.relative_skills_dir);
-        let detected = scan_tool_dir(adapter, &dir)?;
+        let detected = scan_tool_dir(adapter, &skills_dir_in(home, adapter))?;
         all_detected.extend(filter_detected(
             detected,
             exclude_root,

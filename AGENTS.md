@@ -98,7 +98,12 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
 - **`src/Layout.tsx` and `src/Dashboard.tsx` are dormant by design** — not imported by `main.tsx` or `App.tsx`.
   Leave them alone unless explicitly wiring them up.
 - Styles live in `src/App.css` / `src/index.css`. There are no CSS Modules — don't add the pattern.
-- Path handling must support `~` expansion (`expand_home_path()` in the backend).
+- Path handling must support `~` expansion (`core/environment.rs::expand_home_path_in(home, input)`).
+- **Core never reads the environment.** `core/environment.rs` is the only core caller of `dirs::home_dir()`;
+  every other core function takes explicit roots (`home: &Path`, `InstallerPaths { home, central_dir,
+  cache_dir }`) so tests substitute a temp dir. Commands resolve roots once at the seam (`installer_paths`,
+  `resolve_central_repo_path_for_app` in `commands/mod.rs`) — never thread `tauri::AppHandle` into `core/`
+  (`cache_cleanup.rs`/`temp_cleanup.rs`/`skill_store::default_db_path` keep thin adapters by exception).
 - Sync uses a triple fallback: symlink → junction (Windows) → copy.
 - **Global sync fan-out is backend-owned.** `sync_skills_to_tools` (one batch command; core engine in
   `core/global_sync.rs`) handles installedness filtering, shared-dir dedupe, overwrite policy (batch

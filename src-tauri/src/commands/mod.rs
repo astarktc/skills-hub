@@ -5,9 +5,10 @@ use anyhow::Context;
 
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
-use tauri::State;
+use tauri::{Manager, State};
 use ts_rs::TS;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::core::cache_cleanup::{
@@ -18,13 +19,15 @@ use crate::core::cache_cleanup::{
 };
 use crate::core::cancel_token::CancelToken;
 use crate::core::central_repo::{ensure_central_repo, resolve_central_repo_path};
+use crate::core::environment::{expand_home_path, home_dir};
 use crate::core::errors::SignalError;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::global_sync::{BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus};
 use crate::core::installer::{
     clone_for_explore_preview, install_git_skill, install_git_skill_from_selection,
     install_local_skill, install_local_skill_from_selection, list_git_skills, list_local_skills,
-    update_managed_skill_from_source, GitSkillCandidate, InstallResult, LocalSkillCandidate,
+    update_managed_skill_from_source, GitSkillCandidate, InstallResult, InstallerPaths,
+    LocalSkillCandidate,
 };
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
 use crate::core::skill_store::SkillStore;
@@ -33,11 +36,43 @@ use crate::core::skills_search::{
 };
 use crate::core::sync_engine::{copy_dir_recursive, remove_path_any};
 use crate::core::tool_adapters::{
-    adapters_sharing_skills_dir, default_tool_adapters, is_tool_installed, resolve_default_path,
-    ToolId, AGENTS_STANDARD_KEYS,
+    adapters_sharing_skills_dir, default_tool_adapters, is_installed_in, skills_dir_in, ToolId,
+    AGENTS_STANDARD_KEYS,
 };
 
 pub use error::CommandError;
+
+/// Production environment adapter for the central repo: `.skillshub` lives
+/// under the operator's home, or under the app data dir when no home can be
+/// resolved. The only place the wiring tier reads Tauri paths for core.
+pub(crate) fn resolve_central_repo_path_for_app(
+    app: &tauri::AppHandle,
+    store: &SkillStore,
+) -> Result<PathBuf, anyhow::Error> {
+    let fallback_root = match home_dir() {
+        Ok(home) => home,
+        Err(_) => app
+            .path()
+            .app_data_dir()
+            .context("failed to resolve app data dir")?,
+    };
+    resolve_central_repo_path(store, &fallback_root)
+}
+
+/// Resolve every root the installer needs once, at the command seam.
+fn installer_paths(
+    app: &tauri::AppHandle,
+    store: &SkillStore,
+) -> Result<InstallerPaths, anyhow::Error> {
+    Ok(InstallerPaths {
+        home: home_dir()?,
+        central_dir: resolve_central_repo_path_for_app(app, store)?,
+        cache_dir: app
+            .path()
+            .app_cache_dir()
+            .context("failed to resolve app cache dir")?,
+    })
+}
 
 #[derive(Debug, Serialize, TS)]
 #[ts(export)]
@@ -68,6 +103,7 @@ pub struct ToolStatusDto {
 pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let home = home_dir()?;
         let adapters = crate::core::tool_adapters::default_tool_adapters();
         let mut tools: Vec<ToolInfoDto> = Vec::new();
         let mut installed: Vec<String> = Vec::new();
@@ -77,9 +113,9 @@ pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusD
             if adapter.id == ToolId::AgentsStandard {
                 continue;
             }
-            let ok = is_tool_installed(adapter)?;
+            let ok = is_installed_in(&home, adapter);
             let key = adapter.id.as_key().to_string();
-            let skills_dir = resolve_default_path(adapter)?.to_string_lossy().to_string();
+            let skills_dir = skills_dir_in(&home, adapter).to_string_lossy().to_string();
             let shared_with: Vec<String> = adapters_sharing_skills_dir(adapter)
                 .iter()
                 .filter(|a| a.id != ToolId::AgentsStandard)
@@ -132,6 +168,7 @@ pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusD
 #[tauri::command]
 pub async fn get_project_tool_status() -> Result<ToolStatusDto, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
+        let home = home_dir()?;
         let adapters = default_tool_adapters();
         let mut tools: Vec<ToolInfoDto> = Vec::new();
         let mut installed: Vec<String> = Vec::new();
@@ -149,11 +186,9 @@ pub async fn get_project_tool_status() -> Result<ToolStatusDto, CommandError> {
                 let group_installed = adapters
                     .iter()
                     .filter(|a| AGENTS_STANDARD_KEYS.contains(&a.id.as_key()))
-                    .any(|a| is_tool_installed(a).unwrap_or(false));
+                    .any(|a| is_installed_in(&home, a));
 
-                let skills_dir = resolve_default_path(adapter)
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
+                let skills_dir = skills_dir_in(&home, adapter).to_string_lossy().to_string();
 
                 let constituents: Vec<String> = adapters
                     .iter()
@@ -176,9 +211,9 @@ pub async fn get_project_tool_status() -> Result<ToolStatusDto, CommandError> {
                     installed.push("agents_skills".to_string());
                 }
             } else {
-                let ok = is_tool_installed(adapter)?;
+                let ok = is_installed_in(&home, adapter);
                 let key_str = key.to_string();
-                let skills_dir = resolve_default_path(adapter)?.to_string_lossy().to_string();
+                let skills_dir = skills_dir_in(&home, adapter).to_string_lossy().to_string();
                 tools.push(ToolInfoDto {
                     key: key_str.clone(),
                     label: adapter.display_name.to_string(),
@@ -212,10 +247,14 @@ pub async fn get_onboarding_plan(
     store: State<'_, SkillStore>,
 ) -> Result<OnboardingPlan, CommandError> {
     let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || build_onboarding_plan(&app, &store))
-        .await
-        .map_err(CommandError::internal)?
-        .map_err(CommandError::from_anyhow)
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = home_dir()?;
+        let central = resolve_central_repo_path_for_app(&app, &store)?;
+        build_onboarding_plan(&home, &central, &store)
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -283,22 +322,6 @@ pub struct InstallResultDto {
     pub content_hash: Option<String>,
 }
 
-pub(crate) fn expand_home_path(input: &str) -> Result<std::path::PathBuf, anyhow::Error> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        anyhow::bail!("storage path is empty");
-    }
-    if trimmed == "~" {
-        let home = dirs::home_dir().context("failed to resolve home directory")?;
-        return Ok(home);
-    }
-    if let Some(stripped) = trimmed.strip_prefix("~/") {
-        let home = dirs::home_dir().context("failed to resolve home directory")?;
-        return Ok(home.join(stripped));
-    }
-    Ok(std::path::PathBuf::from(trimmed))
-}
-
 #[tauri::command]
 pub async fn get_central_repo_path(
     app: tauri::AppHandle,
@@ -306,7 +329,7 @@ pub async fn get_central_repo_path(
 ) -> Result<String, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let path = resolve_central_repo_path(&app, &store)?;
+        let path = resolve_central_repo_path_for_app(&app, &store)?;
         ensure_central_repo(&path)?;
         Ok::<_, anyhow::Error>(path.to_string_lossy().to_string())
     })
@@ -329,7 +352,7 @@ pub async fn set_central_repo_path(
         }
         ensure_central_repo(&new_base)?;
 
-        let current_base = resolve_central_repo_path(&app, &store)?;
+        let current_base = resolve_central_repo_path_for_app(&app, &store)?;
         let skills = store.list_skills()?;
         if current_base == new_base {
             store.set_setting("central_repo_path", new_base.to_string_lossy().as_ref())?;
@@ -384,7 +407,8 @@ pub async fn install_local(
 ) -> Result<InstallResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let result = install_local_skill(&app, &store, sourcePath.as_ref(), name)?;
+        let paths = installer_paths(&app, &store)?;
+        let result = install_local_skill(&paths, &store, sourcePath.as_ref(), name)?;
         Ok::<_, anyhow::Error>(to_install_dto(result))
     })
     .await
@@ -418,8 +442,9 @@ pub async fn install_local_selection(
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let base = std::path::PathBuf::from(basePath);
+        let paths = installer_paths(&app, &store)?;
         let result =
-            install_local_skill_from_selection(&app, &store, base.as_ref(), &subpath, name)?;
+            install_local_skill_from_selection(&paths, &store, base.as_ref(), &subpath, name)?;
         Ok::<_, anyhow::Error>(to_install_dto(result))
     })
     .await
@@ -440,7 +465,8 @@ pub async fn install_git(
     cancel.reset();
     let cancel_token = Arc::clone(cancel.inner());
     tauri::async_runtime::spawn_blocking(move || {
-        let result = install_git_skill(&app, &store, &repoUrl, name, Some(&cancel_token))?;
+        let paths = installer_paths(&app, &store)?;
+        let result = install_git_skill(&paths, &store, &repoUrl, name, Some(&cancel_token))?;
         Ok::<_, anyhow::Error>(to_install_dto(result))
     })
     .await
@@ -456,10 +482,13 @@ pub async fn list_git_skills_cmd(
     repoUrl: String,
 ) -> Result<Vec<GitSkillCandidate>, CommandError> {
     let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || list_git_skills(&app, &store, &repoUrl))
-        .await
-        .map_err(CommandError::internal)?
-        .map_err(CommandError::from_anyhow)
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = installer_paths(&app, &store)?;
+        list_git_skills(&paths, &store, &repoUrl)
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
@@ -473,7 +502,8 @@ pub async fn install_git_selection(
 ) -> Result<InstallResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let result = install_git_skill_from_selection(&app, &store, &repoUrl, &subpath, name)?;
+        let paths = installer_paths(&app, &store)?;
+        let result = install_git_skill_from_selection(&paths, &store, &repoUrl, &subpath, name)?;
         Ok::<_, anyhow::Error>(to_install_dto(result))
     })
     .await
@@ -588,7 +618,9 @@ pub async fn sync_skills_to_tools(
                 .collect(),
         };
 
+        let home = home_dir()?;
         let outcomes = crate::core::global_sync::sync_skills_to_tools(
+            &home,
             &store,
             &batch_skills,
             &tools,
@@ -654,7 +686,10 @@ pub async fn unsync_skill_from_tool(
 ) -> Result<(), CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::core::global_sync::unsync_skill_from_tool_with_records(&store, &tool, &skillId)
+        let home = home_dir()?;
+        crate::core::global_sync::unsync_skill_from_tool_with_records(
+            &home, &store, &tool, &skillId,
+        )
     })
     .await
     .map_err(CommandError::internal)?
@@ -680,7 +715,8 @@ pub async fn update_managed_skill(
 ) -> Result<UpdateResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let res = update_managed_skill_from_source(&app, &store, &skillId)?;
+        let paths = installer_paths(&app, &store)?;
+        let res = update_managed_skill_from_source(&paths, &store, &skillId)?;
         Ok::<_, anyhow::Error>(UpdateResultDto {
             skill_id: res.skill_id,
             name: res.name,
@@ -915,7 +951,8 @@ pub async fn import_existing_skill(
                 reason: "missing_skill_md".to_string(),
             });
         }
-        let result = install_local_skill(&app, &store, source, name)?;
+        let paths = installer_paths(&app, &store)?;
+        let result = install_local_skill(&paths, &store, source, name)?;
         Ok::<_, anyhow::Error>(to_install_dto(result))
     })
     .await
@@ -929,13 +966,11 @@ pub async fn remove_skill_source(path: String) -> Result<(), CommandError> {
         let target = std::path::PathBuf::from(&path);
 
         // Safety: only allow deletion of paths under known tool skill directories.
-        let home =
-            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot resolve home directory"))?;
+        let home = home_dir()?;
         let adapters = default_tool_adapters();
-        let is_safe = adapters.iter().any(|adapter| {
-            let tool_skills_dir = home.join(adapter.relative_skills_dir);
-            target.starts_with(&tool_skills_dir)
-        });
+        let is_safe = adapters
+            .iter()
+            .any(|adapter| target.starts_with(skills_dir_in(&home, adapter)));
         if !is_safe {
             anyhow::bail!("path is not under a known tool skills directory: {}", path);
         }
@@ -1230,8 +1265,9 @@ pub async fn clone_explore_skill(
     let cancel = cancel.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         cancel.reset();
+        let paths = installer_paths(&app, &store).map_err(CommandError::from_anyhow)?;
         let path = clone_for_explore_preview(
-            &app,
+            &paths,
             &store,
             &sourceUrl,
             skillName.as_deref(),

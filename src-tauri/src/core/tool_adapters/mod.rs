@@ -533,18 +533,19 @@ pub fn adapter_by_key(key: &str) -> Option<ToolAdapter> {
         .find(|adapter| adapter.id.as_key() == key)
 }
 
-pub fn resolve_default_path(adapter: &ToolAdapter) -> Result<PathBuf> {
-    let home = dirs::home_dir().context("failed to resolve home directory")?;
-    Ok(home.join(adapter.relative_skills_dir))
+/// The tool's global skills directory under `home`.
+pub fn skills_dir_in(home: &Path, adapter: &ToolAdapter) -> PathBuf {
+    home.join(adapter.relative_skills_dir)
 }
 
-pub fn resolve_detect_path(adapter: &ToolAdapter) -> Result<PathBuf> {
-    let home = dirs::home_dir().context("failed to resolve home directory")?;
-    Ok(home.join(adapter.relative_detect_dir))
+/// The directory whose presence under `home` marks the tool as installed.
+pub fn detect_dir_in(home: &Path, adapter: &ToolAdapter) -> PathBuf {
+    home.join(adapter.relative_detect_dir)
 }
 
-pub fn is_tool_installed(adapter: &ToolAdapter) -> Result<bool> {
-    Ok(resolve_detect_path(adapter)?.exists())
+/// Whether the tool is installed for the operator whose home is `home`.
+pub fn is_installed_in(home: &Path, adapter: &ToolAdapter) -> bool {
+    detect_dir_in(home, adapter).exists()
 }
 
 pub fn scan_tool_dir(tool: &ToolAdapter, dir: &Path) -> Result<Vec<DetectedSkill>> {

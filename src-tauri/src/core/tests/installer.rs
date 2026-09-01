@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::core::errors::SignalError;
+use crate::core::installer::InstallerPaths;
 use crate::core::skill_store::{
     ProjectRecord, ProjectSkillAssignmentRecord, SkillStore, SkillTargetRecord,
 };
@@ -13,10 +14,17 @@ fn make_store() -> (tempfile::TempDir, SkillStore) {
     (dir, store)
 }
 
-fn set_central_path(store: &SkillStore, central: &Path) {
-    store
-        .set_setting("central_repo_path", central.to_string_lossy().as_ref())
-        .unwrap();
+/// Installer roots isolated under one temp dir: an empty home (no tool is
+/// installed), a central repo, and a git cache.
+fn make_paths() -> (tempfile::TempDir, InstallerPaths) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let paths = InstallerPaths {
+        home: dir.path().join("home"),
+        central_dir: dir.path().join("central"),
+        cache_dir: dir.path().join("cache"),
+    };
+    fs::create_dir_all(&paths.home).unwrap();
+    (dir, paths)
 }
 
 fn init_git_repo(dir: &Path) -> git2::Repository {
@@ -151,23 +159,15 @@ body
 
 #[test]
 fn installs_local_skill_and_updates_from_source() {
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     let source = tempfile::tempdir().unwrap();
     fs::write(source.path().join("SKILL.md"), b"---\nname: x\n---\n").unwrap();
     fs::write(source.path().join("a.txt"), b"v1").unwrap();
 
-    let res = super::install_local_skill(
-        app.handle(),
-        &store,
-        source.path(),
-        Some("local1".to_string()),
-    )
-    .unwrap();
+    let res = super::install_local_skill(&paths, &store, source.path(), Some("local1".to_string()))
+        .unwrap();
     assert!(res.central_path.exists());
 
     let skill = store.get_skill_by_id(&res.skill_id).unwrap().unwrap();
@@ -189,7 +189,7 @@ fn installs_local_skill_and_updates_from_source() {
     store.upsert_skill_target(&t).unwrap();
 
     fs::write(source.path().join("a.txt"), b"v2").unwrap();
-    let up = super::update_managed_skill_from_source(app.handle(), &store, &res.skill_id).unwrap();
+    let up = super::update_managed_skill_from_source(&paths, &store, &res.skill_id).unwrap();
     assert_eq!(up.skill_id, res.skill_id);
     assert!(up.updated_targets.contains(&"unknown_tool".to_string()));
     assert!(PathBuf::from(
@@ -206,24 +206,19 @@ fn installs_local_skill_and_updates_from_source() {
     );
     assert_eq!(fs::read(target.join("a.txt")).unwrap(), b"v2");
 
-    let err = match super::install_local_skill(
-        app.handle(),
-        &store,
-        source.path(),
-        Some("local1".to_string()),
-    ) {
-        Ok(_) => panic!("expected error"),
-        Err(e) => e,
-    };
+    let err =
+        match super::install_local_skill(&paths, &store, source.path(), Some("local1".to_string()))
+        {
+            Ok(_) => panic!("expected error"),
+            Err(e) => e,
+        };
     assert!(format!("{:#}", err).contains("skill already exists"));
 }
 
 #[test]
 fn lists_and_installs_git_skills_without_network() {
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     let repo_dir = tempfile::tempdir().unwrap();
     fs::write(repo_dir.path().join("SKILL.md"), "---\nname: Root\n---\n").unwrap();
@@ -236,18 +231,14 @@ fn lists_and_installs_git_skills_without_network() {
     let repo = init_git_repo(repo_dir.path());
     commit_all(&repo, "add skills");
 
-    let candidates = super::list_git_skills(
-        app.handle(),
-        &store,
-        repo_dir.path().to_string_lossy().as_ref(),
-    )
-    .unwrap();
+    let candidates =
+        super::list_git_skills(&paths, &store, repo_dir.path().to_string_lossy().as_ref()).unwrap();
     let subpaths: Vec<String> = candidates.into_iter().map(|c| c.subpath).collect();
     assert!(subpaths.contains(&".".to_string()));
     assert!(subpaths.iter().any(|s| s.ends_with("skills/a")));
 
     let res = super::install_git_skill_from_selection(
-        app.handle(),
+        &paths,
         &store,
         repo_dir.path().to_string_lossy().as_ref(),
         "skills/a",
@@ -259,10 +250,8 @@ fn lists_and_installs_git_skills_without_network() {
 
 #[test]
 fn install_git_skill_errors_on_multi_skills_repo_root() {
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     let repo_dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(repo_dir.path().join("skills/a")).unwrap();
@@ -281,7 +270,7 @@ fn install_git_skill_errors_on_multi_skills_repo_root() {
     commit_all(&repo, "multi skills");
 
     let err = match super::install_git_skill(
-        app.handle(),
+        &paths,
         &store,
         repo_dir.path().to_string_lossy().as_ref(),
         None,
@@ -332,11 +321,8 @@ fn lists_local_skills_with_invalid_entries() {
 
 #[test]
 fn install_local_selection_validates_skill_md() {
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     let base = tempfile::tempdir().unwrap();
     fs::create_dir_all(base.path().join("skills/a")).unwrap();
@@ -347,20 +333,15 @@ fn install_local_selection_validates_skill_md() {
     )
     .unwrap();
 
-    let res = super::install_local_skill_from_selection(
-        app.handle(),
-        &store,
-        base.path(),
-        "skills/a",
-        None,
-    )
-    .unwrap();
+    let res =
+        super::install_local_skill_from_selection(&paths, &store, base.path(), "skills/a", None)
+            .unwrap();
     assert!(res.central_path.exists());
     let skill = store.get_skill_by_id(&res.skill_id).unwrap().unwrap();
     assert_eq!(skill.name, "Local A");
 
     let err = match super::install_local_skill_from_selection(
-        app.handle(),
+        &paths,
         &store,
         base.path(),
         "skills/b",
@@ -379,10 +360,8 @@ fn install_local_selection_validates_skill_md() {
 /// SKILL.md name to avoid path duplication (e.g. `~/.claude/skills/skills/`).
 #[test]
 fn install_git_skill_uses_skill_md_name_over_subpath_skills() {
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     // Build a repo with skills/<folder> where the folder is named "skills" (simulating
     // a URL like https://github.com/owner/repo/tree/main/skills).
@@ -400,7 +379,7 @@ fn install_git_skill_uses_skill_md_name_over_subpath_skills() {
 
     // install_git_skill_from_selection with subpath "skills" (no user-provided name)
     let res = super::install_git_skill_from_selection(
-        app.handle(),
+        &paths,
         &store,
         repo_dir.path().to_string_lossy().as_ref(),
         "skills",
@@ -420,10 +399,8 @@ fn install_git_skill_uses_skill_md_name_over_subpath_skills() {
 
 #[test]
 fn install_git_skill_rejects_container_subpath_without_skill_md() {
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     let repo_dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(
@@ -443,7 +420,7 @@ fn install_git_skill_rejects_container_subpath_without_skill_md() {
     commit_all(&repo, "add container skill");
 
     let err = match super::install_git_skill_from_selection(
-        app.handle(),
+        &paths,
         &store,
         repo_dir.path().to_string_lossy().as_ref(),
         "awesome_agent_skills",
@@ -460,10 +437,8 @@ fn install_git_skill_rejects_container_subpath_without_skill_md() {
 
 #[test]
 fn install_git_skill_selection_accepts_specific_child_under_container() {
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     let repo_dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(
@@ -483,7 +458,7 @@ fn install_git_skill_selection_accepts_specific_child_under_container() {
     commit_all(&repo, "add container skill");
 
     let res = super::install_git_skill_from_selection(
-        app.handle(),
+        &paths,
         &store,
         repo_dir.path().to_string_lossy().as_ref(),
         "awesome_agent_skills/technical-writer",
@@ -498,10 +473,8 @@ fn install_git_skill_selection_accepts_specific_child_under_container() {
 /// Issue #28: when user explicitly provides a name, SKILL.md should NOT override it.
 #[test]
 fn install_git_skill_respects_user_provided_name() {
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     let repo_dir = tempfile::tempdir().unwrap();
     let skills_dir = repo_dir.path().join("skills");
@@ -511,7 +484,7 @@ fn install_git_skill_respects_user_provided_name() {
     commit_all(&repo, "add skill");
 
     let res = super::install_git_skill_from_selection(
-        app.handle(),
+        &paths,
         &store,
         repo_dir.path().to_string_lossy().as_ref(),
         "skills",
@@ -526,10 +499,8 @@ fn install_git_skill_respects_user_provided_name() {
 /// Issue #28: install_git_skill (non-selection variant) also uses SKILL.md name.
 #[test]
 fn install_git_skill_derives_name_from_skill_md() {
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     let repo_dir = tempfile::tempdir().unwrap();
     fs::write(
@@ -543,7 +514,7 @@ fn install_git_skill_derives_name_from_skill_md() {
     // The repo name (derived from path) will be something like a temp dir name.
     // After install, the name should be "proper-name" from SKILL.md.
     let res = super::install_git_skill(
-        app.handle(),
+        &paths,
         &store,
         repo_dir.path().to_string_lossy().as_ref(),
         None,
@@ -559,10 +530,8 @@ fn install_git_skill_derives_name_from_skill_md() {
 /// should be detected as multi-skill repos.
 #[test]
 fn install_git_skill_detects_root_level_multi_skills() {
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     // Build a repo with skills directly in root subdirectories (no skills/ parent)
     let repo_dir = tempfile::tempdir().unwrap();
@@ -583,7 +552,7 @@ fn install_git_skill_detects_root_level_multi_skills() {
 
     // install_git_skill should detect multiple skills and bail with MULTI_SKILLS
     let err = match super::install_git_skill(
-        app.handle(),
+        &paths,
         &store,
         repo_dir.path().to_string_lossy().as_ref(),
         None,
@@ -601,10 +570,8 @@ fn install_git_skill_detects_root_level_multi_skills() {
 /// Issue #18: list_git_skills should discover skills in root-level subdirectories.
 #[test]
 fn list_git_skills_finds_root_level_skills() {
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     let repo_dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(repo_dir.path().join("my-skill-1")).unwrap();
@@ -624,12 +591,8 @@ fn list_git_skills_finds_root_level_skills() {
     let repo = init_git_repo(repo_dir.path());
     commit_all(&repo, "add root-level skills");
 
-    let candidates = super::list_git_skills(
-        app.handle(),
-        &store,
-        repo_dir.path().to_string_lossy().as_ref(),
-    )
-    .unwrap();
+    let candidates =
+        super::list_git_skills(&paths, &store, repo_dir.path().to_string_lossy().as_ref()).unwrap();
 
     let names: Vec<String> = candidates.iter().map(|c| c.name.clone()).collect();
     assert!(names.contains(&"First".to_string()), "should find First");
@@ -644,17 +607,15 @@ fn list_git_skills_finds_root_level_skills() {
 /// Non-symlink local skills retain source_type "local" (enrichment is skipped).
 #[test]
 fn install_local_skill_non_symlink_stays_local() {
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     let source = tempfile::tempdir().unwrap();
     fs::write(source.path().join("SKILL.md"), b"---\nname: plain\n---\n").unwrap();
     fs::write(source.path().join("readme.txt"), b"hello").unwrap();
 
     let res = super::install_local_skill(
-        app.handle(),
+        &paths,
         &store,
         source.path(),
         Some("plain-skill".to_string()),
@@ -826,10 +787,8 @@ fn parse_marketplace_json_returns_empty_for_malformed_json() {
 
 #[test]
 fn list_git_skills_discovers_deeply_nested_via_recursive_fallback() {
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     // Build wshobson/agents-like repo with NO standard skill dirs
     let repo_dir = tempfile::tempdir().unwrap();
@@ -848,12 +807,8 @@ fn list_git_skills_discovers_deeply_nested_via_recursive_fallback() {
     let repo = init_git_repo(repo_dir.path());
     commit_all(&repo, "add nested skills");
 
-    let candidates = super::list_git_skills(
-        app.handle(),
-        &store,
-        repo_dir.path().to_string_lossy().as_ref(),
-    )
-    .unwrap();
+    let candidates =
+        super::list_git_skills(&paths, &store, repo_dir.path().to_string_lossy().as_ref()).unwrap();
 
     assert!(
         candidates.len() >= 2,
@@ -942,10 +897,8 @@ fn list_local_skills_discovers_deeply_nested() {
 #[test]
 fn existing_shallow_repos_still_work() {
     // Verify that repos with standard skill dirs continue working unchanged
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     let repo_dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(repo_dir.path().join("skills/a")).unwrap();
@@ -963,12 +916,8 @@ fn existing_shallow_repos_still_work() {
     let repo = init_git_repo(repo_dir.path());
     commit_all(&repo, "add standard skills");
 
-    let candidates = super::list_git_skills(
-        app.handle(),
-        &store,
-        repo_dir.path().to_string_lossy().as_ref(),
-    )
-    .unwrap();
+    let candidates =
+        super::list_git_skills(&paths, &store, repo_dir.path().to_string_lossy().as_ref()).unwrap();
     let names: Vec<String> = candidates.iter().map(|c| c.name.clone()).collect();
     assert!(names.contains(&"Skill A".to_string()));
     assert!(names.contains(&"Skill B".to_string()));
@@ -980,10 +929,8 @@ fn existing_shallow_repos_still_work() {
 
 #[test]
 fn list_git_skills_finds_root_skill_container_layout() {
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     let repo_dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(repo_dir.path().join("custom-agent-skills/technical-writer")).unwrap();
@@ -997,12 +944,8 @@ fn list_git_skills_finds_root_skill_container_layout() {
     let repo = init_git_repo(repo_dir.path());
     commit_all(&repo, "add container skill");
 
-    let candidates = super::list_git_skills(
-        app.handle(),
-        &store,
-        repo_dir.path().to_string_lossy().as_ref(),
-    )
-    .unwrap();
+    let candidates =
+        super::list_git_skills(&paths, &store, repo_dir.path().to_string_lossy().as_ref()).unwrap();
 
     let candidate = candidates
         .iter()
@@ -1124,11 +1067,8 @@ fn collect_skill_dirs_deduplicates_known_root_containers() {
 /// should be skipped (they auto-update via the central path).
 #[test]
 fn update_resyncs_project_copy_assignments() {
-    let app = tauri::test::mock_app();
     let (_dir, store) = make_store();
-
-    let central_root = tempfile::tempdir().unwrap();
-    set_central_path(&store, central_root.path());
+    let (_roots, paths) = make_paths();
 
     // 1. Create a local skill source with a.txt = "v1"
     let source = tempfile::tempdir().unwrap();
@@ -1139,13 +1079,9 @@ fn update_resyncs_project_copy_assignments() {
     .unwrap();
     fs::write(source.path().join("a.txt"), b"v1").unwrap();
 
-    let res = super::install_local_skill(
-        app.handle(),
-        &store,
-        source.path(),
-        Some("proj-test".to_string()),
-    )
-    .unwrap();
+    let res =
+        super::install_local_skill(&paths, &store, source.path(), Some("proj-test".to_string()))
+            .unwrap();
 
     // 2. Register a project (using a tempdir as the project root)
     let project_root = tempfile::tempdir().unwrap();
@@ -1216,7 +1152,7 @@ fn update_resyncs_project_copy_assignments() {
 
     // 6. Modify source to "v2" and update the skill
     fs::write(source.path().join("a.txt"), b"v2").unwrap();
-    let up = super::update_managed_skill_from_source(app.handle(), &store, &res.skill_id).unwrap();
+    let up = super::update_managed_skill_from_source(&paths, &store, &res.skill_id).unwrap();
 
     // 7. Assert: copy-mode (cursor) project target has updated content
     assert_eq!(

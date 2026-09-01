@@ -13,14 +13,22 @@ fn make_store() -> (tempfile::TempDir, SkillStore) {
 #[test]
 fn resolve_uses_setting_when_present() {
     let (dir, store) = make_store();
-    let app = tauri::test::mock_app();
     let expected = dir.path().join("central");
     store
         .set_setting("central_repo_path", expected.to_string_lossy().as_ref())
         .unwrap();
 
-    let got = resolve_central_repo_path(app.handle(), &store).unwrap();
+    let got = resolve_central_repo_path(&store, &dir.path().join("ignored-home")).unwrap();
     assert_eq!(got, expected);
+}
+
+#[test]
+fn resolve_defaults_to_skillshub_under_fallback_root() {
+    let (dir, store) = make_store();
+    let home = dir.path().join("home");
+
+    let got = resolve_central_repo_path(&store, &home).unwrap();
+    assert_eq!(got, home.join(".skillshub"));
 }
 
 #[test]

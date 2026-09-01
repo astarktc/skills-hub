@@ -70,13 +70,6 @@ pub fn derive_subpath(skill_path: &str) -> Option<String> {
 }
 
 /// Try to enrich a source path with git provenance from the skill lock file.
-/// Uses the real home directory from dirs::home_dir().
-pub fn try_enrich_from_skill_lock(source_path: &Path) -> Option<SkillLockEntry> {
-    let home = dirs::home_dir()?;
-    try_enrich_from_skill_lock_with_home(source_path, &home)
-}
-
-/// Testable variant that accepts an explicit home directory.
 /// Checks if source_path is a symlink pointing into {home}/.agents/skills/,
 /// then looks up the skill name in {home}/.agents/.skill-lock.json.
 pub fn try_enrich_from_skill_lock_with_home(

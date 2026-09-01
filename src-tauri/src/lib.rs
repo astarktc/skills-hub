@@ -84,7 +84,7 @@ pub fn run() {
 
                 // Wipe explore-cache on startup (session-scoped)
                 if let Ok(central) =
-                    core::central_repo::resolve_central_repo_path(&handle, &store_for_cleanup)
+                    commands::resolve_central_repo_path_for_app(&handle, &store_for_cleanup)
                 {
                     let explore_cache = central.join(".explore-cache");
                     if explore_cache.exists() {

@@ -2,13 +2,14 @@ use tauri::State;
 use ts_rs::TS;
 use uuid::Uuid;
 
+use crate::core::environment::home_dir;
 use crate::core::errors::SignalError;
 use crate::core::project_ops::{self, ProjectDto, ProjectSkillAssignmentDto, ProjectToolDto};
 use crate::core::project_sync;
 use crate::core::skill_store::{ProjectToolRecord, SkillStore};
 use crate::SyncMutex;
 
-use super::{expand_home_path, now_ms, CommandError};
+use super::{now_ms, CommandError};
 
 #[tauri::command]
 pub async fn register_project(
@@ -17,7 +18,8 @@ pub async fn register_project(
 ) -> Result<ProjectDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        project_ops::register_project_path(&store, &path, now_ms(), expand_home_path)
+        let home = home_dir()?;
+        project_ops::register_project_path(&store, &home, &path, now_ms())
     })
     .await
     .map_err(CommandError::internal)?
@@ -60,7 +62,8 @@ pub async fn update_project_path(
 ) -> Result<ProjectDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        project_ops::update_project_path(&store, &projectId, &path, now_ms(), expand_home_path)
+        let home = home_dir()?;
+        project_ops::update_project_path(&store, &home, &projectId, &path, now_ms())
     })
     .await
     .map_err(CommandError::internal)?

@@ -1,9 +1,10 @@
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use ts_rs::TS;
 use uuid::Uuid;
 
+use super::environment::expand_home_path_in;
 use super::errors::SignalError;
 use super::project_sync;
 use super::skill_store::{ProjectRecord, SkillStore};
@@ -75,13 +76,14 @@ pub fn to_project_dto(record: &ProjectRecord, store: &SkillStore) -> Result<Proj
     })
 }
 
+/// Register `path` (may start with `~`, expanded against `home`) as a project.
 pub fn register_project_path(
     store: &SkillStore,
+    home: &Path,
     path: &str,
     now_ms: i64,
-    expand_home: impl Fn(&str) -> Result<PathBuf>,
 ) -> Result<ProjectDto> {
-    let expanded = expand_home(path)?;
+    let expanded = expand_home_path_in(home, path)?;
     let canonical = std::fs::canonicalize(&expanded)
         .with_context(|| format!("failed to resolve path: {:?}", expanded))?;
 
@@ -245,14 +247,15 @@ pub fn list_project_dtos(store: &SkillStore) -> Result<Vec<ProjectDto>> {
     Ok(dtos)
 }
 
+/// Re-point a project at `new_path` (may start with `~`, expanded against `home`).
 pub fn update_project_path(
     store: &SkillStore,
+    home: &Path,
     project_id: &str,
     new_path: &str,
     now_ms: i64,
-    expand_home: impl Fn(&str) -> Result<PathBuf>,
 ) -> Result<ProjectDto> {
-    let expanded = expand_home(new_path)?;
+    let expanded = expand_home_path_in(home, new_path)?;
     let canonical = std::fs::canonicalize(&expanded)
         .with_context(|| format!("failed to resolve path: {:?}", expanded))?;
 

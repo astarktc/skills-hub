@@ -13,13 +13,6 @@ fn make_store() -> (tempfile::TempDir, SkillStore) {
     (dir, store)
 }
 
-fn test_expand_home(input: &str) -> anyhow::Result<std::path::PathBuf> {
-    if input.is_empty() {
-        anyhow::bail!("path is empty");
-    }
-    Ok(std::path::PathBuf::from(input))
-}
-
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
@@ -55,7 +48,7 @@ fn register_rejects_non_dir() {
     let (_dir, store) = make_store();
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     let path = tmp.path().to_string_lossy().to_string();
-    let result = project_ops::register_project_path(&store, &path, now_ms(), test_expand_home);
+    let result = project_ops::register_project_path(&store, _dir.path(), &path, now_ms());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -68,7 +61,7 @@ fn register_rejects_non_dir() {
 #[test]
 fn register_rejects_empty_path() {
     let (_dir, store) = make_store();
-    let result = project_ops::register_project_path(&store, "", now_ms(), test_expand_home);
+    let result = project_ops::register_project_path(&store, _dir.path(), "", now_ms());
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -83,8 +76,7 @@ fn register_stores_canonical_path() {
     let tmpdir = tempfile::tempdir().expect("tempdir");
     let (_db_dir, store) = make_store();
     let path = tmpdir.path().to_string_lossy().to_string();
-    let dto =
-        project_ops::register_project_path(&store, &path, now_ms(), test_expand_home).unwrap();
+    let dto = project_ops::register_project_path(&store, _db_dir.path(), &path, now_ms()).unwrap();
     let canonical = std::fs::canonicalize(tmpdir.path())
         .unwrap()
         .to_string_lossy()
@@ -97,8 +89,8 @@ fn register_rejects_duplicate() {
     let tmpdir = tempfile::tempdir().expect("tempdir");
     let (_db_dir, store) = make_store();
     let path = tmpdir.path().to_string_lossy().to_string();
-    project_ops::register_project_path(&store, &path, now_ms(), test_expand_home).unwrap();
-    let result = project_ops::register_project_path(&store, &path, now_ms(), test_expand_home);
+    project_ops::register_project_path(&store, _db_dir.path(), &path, now_ms()).unwrap();
+    let result = project_ops::register_project_path(&store, _db_dir.path(), &path, now_ms());
     let err = result.expect_err("duplicate registration must fail");
     assert!(
         matches!(
@@ -622,4 +614,17 @@ fn remove_tool_with_cleanup_orphan_branch_removes_project_scope_target() {
         .list_project_skill_assignments_for_project_tool(&project.id, "pi")
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn register_expands_tilde_against_home() {
+    let home = tempfile::tempdir().expect("home");
+    fs::create_dir_all(home.path().join("proj")).unwrap();
+    let (_db_dir, store) = make_store();
+    let dto = project_ops::register_project_path(&store, home.path(), "~/proj", now_ms()).unwrap();
+    let canonical = std::fs::canonicalize(home.path().join("proj"))
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    assert_eq!(dto.path, canonical);
 }

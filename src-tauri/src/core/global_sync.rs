@@ -13,8 +13,7 @@ use crate::core::{
     skill_store::{SkillStore, SkillTargetRecord},
     sync_engine::{self, SyncOutcome},
     tool_adapters::{
-        adapter_by_key, adapters_sharing_skills_dir, is_tool_installed, resolve_default_path,
-        ToolAdapter,
+        adapter_by_key, adapters_sharing_skills_dir, is_installed_in, skills_dir_in, ToolAdapter,
     },
 };
 
@@ -193,9 +192,11 @@ fn classify_sync_error(
 }
 
 /// Remove a skill's sync target for a tool, updating every tool that shares
-/// the same global skills directory. Environment probing lives here; the
-/// deterministic removal is in [`remove_targets_for_tools`].
+/// the same global skills directory. Environment probing (installedness
+/// under `home`) lives here; the deterministic removal is in
+/// [`remove_targets_for_tools`].
 pub fn unsync_skill_from_tool_with_records(
+    home: &Path,
     store: &SkillStore,
     tool_key: &str,
     skill_id: &str,
@@ -204,14 +205,7 @@ pub fn unsync_skill_from_tool_with_records(
         if let Some(adapter) = crate::core::tool_adapters::adapter_by_key(tool_key) {
             let group = adapters_sharing_skills_dir(&adapter);
             // If none of the group tools are installed, do nothing (treat as already not effective).
-            let mut any_installed = false;
-            for a in &group {
-                if is_tool_installed(a)? {
-                    any_installed = true;
-                    break;
-                }
-            }
-            if !any_installed {
+            if !group.iter().any(|a| is_installed_in(home, a)) {
                 return Ok(());
             }
             group
@@ -319,11 +313,12 @@ pub struct BatchProgress<'a> {
     pub tool_key: &'a str,
 }
 
-/// Probe the environment for each requested tool key: resolve the adapter,
-/// its skills root, installedness, and the installed shared-dir group.
-/// Unknown keys and probe failures become not-installed-like planning
-/// entries via `Err`, which the batch turns into `Failed` outcomes.
+/// Probe the environment under `home` for each requested tool key: resolve
+/// the adapter, its skills root, installedness, and the installed shared-dir
+/// group. Unknown keys become planning entries via `Err`, which the batch
+/// turns into `Failed` outcomes.
 pub fn plan_batch_tool_targets(
+    home: &Path,
     tool_keys: &[String],
 ) -> Vec<Result<PlannedToolTarget, (String, GlobalSyncError)>> {
     tool_keys
@@ -335,16 +330,12 @@ pub fn plan_batch_tool_targets(
                     GlobalSyncError::Other(anyhow::anyhow!("unknown tool: {}", key)),
                 )
             })?;
-            let installed = is_tool_installed(&adapter)
-                .map_err(|err| (key.clone(), GlobalSyncError::Other(err)))?;
-            let root = resolve_default_path(&adapter)
-                .map_err(|err| (key.clone(), GlobalSyncError::Other(err)))?;
-            let mut record_tools: Vec<ToolAdapter> = Vec::new();
-            for a in adapters_sharing_skills_dir(&adapter) {
-                if is_tool_installed(&a).unwrap_or(false) {
-                    record_tools.push(a);
-                }
-            }
+            let installed = is_installed_in(home, &adapter);
+            let root = skills_dir_in(home, &adapter);
+            let record_tools: Vec<ToolAdapter> = adapters_sharing_skills_dir(&adapter)
+                .into_iter()
+                .filter(|a| is_installed_in(home, a))
+                .collect();
             Ok(PlannedToolTarget {
                 adapter,
                 root,
@@ -457,11 +448,12 @@ pub fn sync_skills_to_planned_tools(
     outcomes
 }
 
-/// Sync N skills to M tools in one call: environment probing
+/// Sync N skills to M tools in one call: environment probing under `home`
 /// ([`plan_batch_tool_targets`]) composed with the deterministic engine
 /// ([`sync_skills_to_planned_tools`]). Planning failures surface as `Failed`
 /// outcomes per skill; the function itself never errors.
 pub fn sync_skills_to_tools(
+    home: &Path,
     store: &SkillStore,
     skills: &[BatchSkill],
     tool_keys: &[String],
@@ -471,7 +463,7 @@ pub fn sync_skills_to_tools(
 ) -> Vec<BatchTargetOutcome> {
     let mut targets: Vec<PlannedToolTarget> = Vec::new();
     let mut outcomes: Vec<BatchTargetOutcome> = Vec::new();
-    for plan in plan_batch_tool_targets(tool_keys) {
+    for plan in plan_batch_tool_targets(home, tool_keys) {
         match plan {
             Ok(target) => targets.push(target),
             Err((tool_key, error)) => {

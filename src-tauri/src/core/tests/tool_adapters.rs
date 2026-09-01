@@ -1,8 +1,74 @@
 use std::fs;
 
 use crate::core::tool_adapters::{
-    adapter_by_key, adapters_sharing_skills_dir, scan_tool_dir, ToolAdapter, ToolId,
+    adapter_by_key, adapters_sharing_skills_dir, default_tool_adapters, detect_dir_in,
+    is_installed_in, scan_tool_dir, skills_dir_in, ToolAdapter, ToolId,
 };
+
+#[test]
+fn path_resolution_joins_adapter_dirs_onto_home() {
+    let home = tempfile::tempdir().unwrap();
+    let cases = [
+        ("claude_code", ".claude/skills", ".claude"),
+        ("codex", ".codex/skills", ".codex"),
+        ("cursor", ".cursor/skills", ".cursor"),
+        ("amp", ".config/agents/skills", ".config/agents"),
+        ("kimi_cli", ".config/agents/skills", ".config/agents"),
+        ("pi", ".pi/agent/skills", ".pi"),
+    ];
+    for (key, skills, detect) in cases {
+        let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {key}"));
+        assert_eq!(
+            skills_dir_in(home.path(), &adapter),
+            home.path().join(skills),
+            "skills dir for {key}"
+        );
+        assert_eq!(
+            detect_dir_in(home.path(), &adapter),
+            home.path().join(detect),
+            "detect dir for {key}"
+        );
+    }
+}
+
+#[test]
+fn every_adapter_resolves_under_home() {
+    let home = tempfile::tempdir().unwrap();
+    for adapter in default_tool_adapters() {
+        assert!(skills_dir_in(home.path(), &adapter).starts_with(home.path()));
+        assert!(detect_dir_in(home.path(), &adapter).starts_with(home.path()));
+        assert!(
+            !is_installed_in(home.path(), &adapter),
+            "{} must not be installed in an empty home",
+            adapter.id.as_key()
+        );
+    }
+}
+
+#[test]
+fn installedness_is_decided_by_detect_dir_not_skills_dir() {
+    let home = tempfile::tempdir().unwrap();
+    let codex = adapter_by_key("codex").unwrap();
+    let claude = adapter_by_key("claude_code").unwrap();
+
+    assert!(!is_installed_in(home.path(), &codex));
+
+    // Detect dir present (even without a skills dir) => installed.
+    fs::create_dir_all(home.path().join(".codex")).unwrap();
+    assert!(is_installed_in(home.path(), &codex));
+    assert!(!is_installed_in(home.path(), &claude));
+
+    // Only the adapter's own detect dir counts — a sibling under the same
+    // parent does not.
+    let amp = adapter_by_key("amp").unwrap();
+    fs::create_dir_all(home.path().join(".config/other")).unwrap();
+    assert!(!is_installed_in(home.path(), &amp));
+    fs::create_dir_all(home.path().join(".config/agents")).unwrap();
+    assert!(is_installed_in(home.path(), &amp));
+    // Shared-dir tools are detected independently by the same dir.
+    let kimi = adapter_by_key("kimi_cli").unwrap();
+    assert!(is_installed_in(home.path(), &kimi));
+}
 
 #[test]
 fn adapter_by_key_finds_known_tool() {

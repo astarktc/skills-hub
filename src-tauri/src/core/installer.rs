@@ -3,23 +3,35 @@ use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
 use uuid::Uuid;
 
 use super::cache_cleanup::get_git_cache_ttl_secs;
 use super::cancel_token::CancelToken;
-use super::central_repo::{ensure_central_repo, resolve_central_repo_path};
+use super::central_repo::ensure_central_repo;
 use super::content_hash::hash_dir;
 use super::errors::SignalError;
 use super::git_fetcher::{clone_or_pull, clone_or_pull_sparse};
 use super::github_download::{download_github_directory, parse_github_api_params};
 use super::project_sync::resolve_project_sync_target;
-use super::skill_lock::try_enrich_from_skill_lock;
+use super::skill_lock::try_enrich_from_skill_lock_with_home;
 use super::skill_store::{SkillRecord, SkillStore};
 use super::sync_engine::copy_dir_recursive;
 use super::sync_engine::sync_dir_copy_with_overwrite;
 use super::tool_adapters::adapter_by_key;
-use super::tool_adapters::is_tool_installed;
+use super::tool_adapters::is_installed_in;
+
+/// Filesystem roots the installer reads. Resolved once per command at the
+/// wiring seam (home, central repo setting, app cache dir) so core never
+/// touches `dirs` or `tauri` and tests substitute temp directories.
+#[derive(Clone, Debug)]
+pub struct InstallerPaths {
+    /// Operator home: decides tool installedness and skill-lock provenance.
+    pub home: PathBuf,
+    /// Central skills repo root (see `central_repo::resolve_central_repo_path`).
+    pub central_dir: PathBuf,
+    /// App cache root; the git clone cache lives at `cache_dir/skills-hub-git-cache`.
+    pub cache_dir: PathBuf,
+}
 
 pub struct InstallResult {
     pub skill_id: String,
@@ -35,8 +47,8 @@ pub struct SkillFetchResult {
     pub revision: Option<String>,
 }
 
-pub fn install_local_skill<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+pub fn install_local_skill(
+    paths: &InstallerPaths,
     store: &SkillStore,
     source_path: &Path,
     name: Option<String>,
@@ -52,8 +64,8 @@ pub fn install_local_skill<R: tauri::Runtime>(
             .unwrap_or_else(|| "unnamed-skill".to_string())
     });
 
-    let central_dir = resolve_central_repo_path(app, store)?;
-    ensure_central_repo(&central_dir)?;
+    let central_dir = &paths.central_dir;
+    ensure_central_repo(central_dir)?;
     let central_path = central_dir.join(&name);
 
     if central_path.exists() {
@@ -72,7 +84,7 @@ pub fn install_local_skill<R: tauri::Runtime>(
     // Enrich with git provenance from ~/.agents/.skill-lock.json if source is a
     // symlink into ~/.agents/skills/ (skills installed via `npx skills add`).
     let (source_type, source_ref, source_subpath) =
-        if let Some(lock_entry) = try_enrich_from_skill_lock(source_path) {
+        if let Some(lock_entry) = try_enrich_from_skill_lock_with_home(source_path, &paths.home) {
             (
                 "git".to_string(),
                 Some(lock_entry.source_url),
@@ -113,8 +125,8 @@ pub fn install_local_skill<R: tauri::Runtime>(
     })
 }
 
-pub fn install_git_skill<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+pub fn install_git_skill(
+    paths: &InstallerPaths,
     store: &SkillStore,
     repo_url: &str,
     name: Option<String>,
@@ -138,15 +150,22 @@ pub fn install_git_skill<R: tauri::Runtime>(
         }
     });
 
-    let central_dir = resolve_central_repo_path(app, store)?;
-    ensure_central_repo(&central_dir)?;
+    let central_dir = &paths.central_dir;
+    ensure_central_repo(central_dir)?;
     let mut central_path = central_dir.join(&name);
 
     if central_path.exists() {
         anyhow::bail!("skill already exists in central repo: {:?}", central_path);
     }
 
-    let result = fetch_skill_files(app, store, &parsed, None, &central_path, cancel)?;
+    let result = fetch_skill_files(
+        &paths.cache_dir,
+        store,
+        &parsed,
+        None,
+        &central_path,
+        cancel,
+    )?;
     let revision = result
         .revision
         .unwrap_or_else(|| "api-download".to_string());
@@ -731,8 +750,8 @@ pub struct UpdateResult {
     pub updated_targets: Vec<String>,
 }
 
-pub fn update_managed_skill_from_source<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+pub fn update_managed_skill_from_source(
+    paths: &InstallerPaths,
     store: &SkillStore,
     skill_id: &str,
 ) -> Result<UpdateResult> {
@@ -768,7 +787,7 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
 
         let (repo_dir, rev) = if let Some(subpath) = record.source_subpath.as_deref() {
             clone_to_cache_subpath(
-                app,
+                &paths.cache_dir,
                 store,
                 &parsed.clone_url,
                 parsed.branch.as_deref(),
@@ -777,7 +796,7 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
             )?
         } else {
             clone_to_cache(
-                app,
+                &paths.cache_dir,
                 store,
                 &parsed.clone_url,
                 parsed.branch.as_deref(),
@@ -890,7 +909,7 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
     for t in targets {
         // Skip if tool not installed anymore.
         if let Some(adapter) = adapter_by_key(&t.tool) {
-            if !is_tool_installed(&adapter).unwrap_or(false) {
+            if !is_installed_in(&paths.home, &adapter) {
                 continue;
             }
         }
@@ -988,14 +1007,14 @@ pub struct LocalSkillCandidate {
     pub reason: Option<String>,
 }
 
-pub fn list_git_skills<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+pub fn list_git_skills(
+    paths: &InstallerPaths,
     store: &SkillStore,
     repo_url: &str,
 ) -> Result<Vec<GitSkillCandidate>> {
     let parsed = parse_github_url(repo_url);
     let (repo_dir, _rev) = clone_to_cache(
-        app,
+        &paths.cache_dir,
         store,
         &parsed.clone_url,
         parsed.branch.as_deref(),
@@ -1291,8 +1310,8 @@ pub fn list_local_skills(base_path: &Path) -> Result<Vec<LocalSkillCandidate>> {
     Ok(out)
 }
 
-pub fn install_git_skill_from_selection<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+pub fn install_git_skill_from_selection(
+    paths: &InstallerPaths,
     store: &SkillStore,
     repo_url: &str,
     subpath: &str,
@@ -1312,15 +1331,15 @@ pub fn install_git_skill_from_selection<R: tauri::Runtime>(
         }
     });
 
-    let central_dir = resolve_central_repo_path(app, store)?;
-    ensure_central_repo(&central_dir)?;
+    let central_dir = &paths.central_dir;
+    ensure_central_repo(central_dir)?;
     let mut central_path = central_dir.join(&display_name);
     if central_path.exists() {
         anyhow::bail!("skill already exists in central repo: {:?}", central_path);
     }
 
     let (repo_dir, revision) = clone_to_cache(
-        app,
+        &paths.cache_dir,
         store,
         &parsed.clone_url,
         parsed.branch.as_deref(),
@@ -1397,8 +1416,8 @@ pub fn install_git_skill_from_selection<R: tauri::Runtime>(
     })
 }
 
-pub fn install_local_skill_from_selection<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+pub fn install_local_skill_from_selection(
+    paths: &InstallerPaths,
     store: &SkillStore,
     base_path: &Path,
     subpath: &str,
@@ -1432,7 +1451,7 @@ pub fn install_local_skill_from_selection<R: tauri::Runtime>(
 
     let display_name = name.unwrap_or(parsed_name);
 
-    install_local_skill(app, store, &selected_dir, Some(display_name))
+    install_local_skill(paths, store, &selected_dir, Some(display_name))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1443,18 +1462,15 @@ struct RepoCacheMeta {
 
 static GIT_CACHE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
-fn clone_to_cache<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+/// Clone (or refresh) `clone_url` into the git cache under `cache_dir`.
+fn clone_to_cache(
+    cache_dir: &Path,
     store: &SkillStore,
     clone_url: &str,
     branch: Option<&str>,
     cancel: Option<&CancelToken>,
 ) -> Result<(PathBuf, String)> {
     let started = std::time::Instant::now();
-    let cache_dir = app
-        .path()
-        .app_cache_dir()
-        .context("failed to resolve app cache dir")?;
     let cache_root = cache_dir.join("skills-hub-git-cache");
     std::fs::create_dir_all(&cache_root)
         .with_context(|| format!("failed to create cache dir {:?}", cache_root))?;
@@ -1524,8 +1540,9 @@ fn clone_to_cache<R: tauri::Runtime>(
     Ok((repo_dir, rev))
 }
 
-fn clone_to_cache_subpath<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+/// Sparse variant of [`clone_to_cache`] fetching only `subpath`.
+fn clone_to_cache_subpath(
+    cache_dir: &Path,
     store: &SkillStore,
     clone_url: &str,
     branch: Option<&str>,
@@ -1533,10 +1550,6 @@ fn clone_to_cache_subpath<R: tauri::Runtime>(
     cancel: Option<&CancelToken>,
 ) -> Result<(PathBuf, String)> {
     let started = std::time::Instant::now();
-    let cache_dir = app
-        .path()
-        .app_cache_dir()
-        .context("failed to resolve app cache dir")?;
     let cache_root = cache_dir.join("skills-hub-git-cache");
     std::fs::create_dir_all(&cache_root)
         .with_context(|| format!("failed to create cache dir {:?}", cache_root))?;
@@ -1633,8 +1646,8 @@ fn repo_cache_key(clone_url: &str, branch: Option<&str>, subpath: Option<&str>) 
 /// - Choosing and preparing `dest_dir`
 /// - Any caching around the destination (explore-cache hit check, etc.)
 /// - Post-download processing (DB registration, name renaming, content hash)
-fn fetch_skill_files<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+fn fetch_skill_files(
+    cache_dir: &Path,
     store: &SkillStore,
     parsed: &ParsedGitSource,
     skill_name: Option<&str>,
@@ -1708,7 +1721,7 @@ fn fetch_skill_files<R: tauri::Runtime>(
                 );
                 std::fs::create_dir_all(dest_dir)?;
                 let (repo_dir, rev) = clone_to_cache(
-                    app,
+                    cache_dir,
                     store,
                     &parsed.clone_url,
                     parsed.branch.as_deref(),
@@ -1729,7 +1742,7 @@ fn fetch_skill_files<R: tauri::Runtime>(
 
     // Path B: No subpath or non-GitHub URL — full clone, then resolve copy source.
     let (repo_dir, rev) = clone_to_cache(
-        app,
+        cache_dir,
         store,
         &parsed.clone_url,
         parsed.branch.as_deref(),
@@ -1796,8 +1809,8 @@ fn find_skill_by_name(
 /// Clone a skill into the explore-cache for preview (no DB registration).
 /// Delegates to `fetch_skill_files` for the actual download — the only
 /// preview-specific logic is the explore-cache hit check.
-pub fn clone_for_explore_preview<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+pub fn clone_for_explore_preview(
+    paths: &InstallerPaths,
     store: &SkillStore,
     source_url: &str,
     skill_name: Option<&str>,
@@ -1805,8 +1818,7 @@ pub fn clone_for_explore_preview<R: tauri::Runtime>(
 ) -> Result<PathBuf> {
     let parsed = parse_github_url(source_url);
 
-    let central_dir = resolve_central_repo_path(app, store)?;
-    let explore_cache_root = central_dir.join(".explore-cache");
+    let explore_cache_root = paths.central_dir.join(".explore-cache");
     std::fs::create_dir_all(&explore_cache_root).with_context(|| {
         format!(
             "failed to create explore-cache dir {:?}",
@@ -1847,7 +1859,14 @@ pub fn clone_for_explore_preview<R: tauri::Runtime>(
         })?;
     } // _guard dropped — lock released before download paths
 
-    fetch_skill_files(app, store, &parsed, skill_name, &explore_skill_dir, cancel)?;
+    fetch_skill_files(
+        &paths.cache_dir,
+        store,
+        &parsed,
+        skill_name,
+        &explore_skill_dir,
+        cancel,
+    )?;
     Ok(explore_skill_dir)
 }
 

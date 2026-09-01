@@ -126,19 +126,6 @@ fn command_error_wire_shape_is_internally_tagged() {
 }
 
 #[test]
-fn expand_home_path_basic() {
-    let home = dirs::home_dir().expect("home");
-    assert_eq!(expand_home_path("~").unwrap(), home);
-    assert_eq!(expand_home_path("~/abc").unwrap(), home.join("abc"));
-}
-
-#[test]
-fn expand_home_path_empty_is_error() {
-    let err = expand_home_path("  ").unwrap_err().to_string();
-    assert!(err.contains("storage path is empty"));
-}
-
-#[test]
 fn remove_path_any_handles_file_dir_and_missing() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("f.txt");

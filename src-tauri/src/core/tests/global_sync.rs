@@ -1,20 +1,20 @@
 //! Tests for `core::global_sync` — the deterministic half of global-tool
 //! sync: overwrite policy, error classification, record fan-out, and unsync.
 //!
-//! `sync_skill_into_root` / `remove_targets_for_tools` are driven directly so
-//! the tests never touch the operator's real home directory or installed
-//! tools (the environment probing lives in the thin `*_with_records`
-//! wrappers).
+//! `sync_skill_into_root` / `remove_targets_for_tools` are driven directly;
+//! the environment-probing entry points take an explicit `home`, so no test
+//! touches the operator's real home directory or installed tools.
 
 use std::fs;
 use std::path::Path;
 
 use crate::core::global_sync::{
-    remove_targets_for_tools, sync_skill_into_root, sync_skills_to_planned_tools,
-    target_has_same_content, BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus,
+    plan_batch_tool_targets, remove_targets_for_tools, sync_skill_into_root,
+    sync_skills_to_planned_tools, sync_skills_to_tools, target_has_same_content,
+    unsync_skill_from_tool_with_records, BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus,
     GlobalSyncError, OverwritePolicy, PlannedToolTarget,
 };
-use crate::core::skill_store::{SkillRecord, SkillStore};
+use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
 use crate::core::tool_adapters::{adapter_by_key, ToolAdapter};
 
 fn make_store(base: &Path) -> SkillStore {
@@ -675,4 +675,158 @@ fn classification_leaves_unrelated_errors_as_other_even_with_suspicious_prose() 
 
     let classified = super::classify_sync_error(err, &adapter, tool_root, target);
     assert!(matches!(classified, GlobalSyncError::Other(_)));
+}
+
+// ---------------------------------------------------------------------------
+// Environment probing (`plan_batch_tool_targets` / `sync_skills_to_tools` /
+// `unsync_skill_from_tool_with_records`) — driven against a temp home so
+// installedness and skills roots are fully controlled.
+// ---------------------------------------------------------------------------
+
+fn install_tool(home: &Path, key: &str) {
+    let adapter = adapter_by_key(key).expect("adapter");
+    fs::create_dir_all(home.join(adapter.relative_detect_dir)).expect("detect dir");
+}
+
+#[test]
+fn plan_resolves_root_installedness_and_installed_shared_group_from_home() {
+    let home = tempfile::tempdir().expect("home");
+    install_tool(home.path(), "claude_code");
+    // amp and kimi_cli share ~/.config/agents/skills; only amp's detect dir
+    // exists — but they share the same detect dir too, so both are installed.
+    install_tool(home.path(), "amp");
+
+    let keys = ["claude_code", "cursor", "amp", "nope"]
+        .iter()
+        .map(|k| k.to_string())
+        .collect::<Vec<_>>();
+    let plans = plan_batch_tool_targets(home.path(), &keys);
+    assert_eq!(plans.len(), 4);
+
+    let claude = plans[0].as_ref().expect("claude plan");
+    assert!(claude.installed);
+    assert_eq!(claude.root, home.path().join(".claude/skills"));
+    assert_eq!(
+        claude
+            .record_tools
+            .iter()
+            .map(|a| a.id.as_key())
+            .collect::<Vec<_>>(),
+        vec!["claude_code"]
+    );
+
+    let cursor = plans[1].as_ref().expect("cursor plan");
+    assert!(!cursor.installed);
+    assert_eq!(cursor.root, home.path().join(".cursor/skills"));
+    assert!(cursor.record_tools.is_empty());
+
+    let amp = plans[2].as_ref().expect("amp plan");
+    assert!(amp.installed);
+    assert_eq!(amp.root, home.path().join(".config/agents/skills"));
+    let group: Vec<&str> = amp.record_tools.iter().map(|a| a.id.as_key()).collect();
+    assert!(group.contains(&"amp"), "got {:?}", group);
+    assert!(group.contains(&"kimi_cli"), "got {:?}", group);
+
+    let (key, err) = plans[3].as_ref().expect_err("unknown tool fails planning");
+    assert_eq!(key, "nope");
+    assert!(matches!(err, GlobalSyncError::Other(_)));
+}
+
+#[test]
+fn sync_skills_to_tools_writes_under_temp_home_and_reports_unknown_tools() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let home = dir.path().join("home");
+    install_tool(&home, "claude_code");
+    let store = make_store(dir.path());
+    seed_skill(&store, "skill-1");
+    let source = make_skill_dir(dir.path(), "central-a", "# A");
+
+    let keys = ["claude_code", "cursor", "nope"]
+        .iter()
+        .map(|k| k.to_string())
+        .collect::<Vec<_>>();
+    let outcomes = sync_skills_to_tools(
+        &home,
+        &store,
+        &[batch_skill("skill-1", "skill-1", &source)],
+        &keys,
+        &BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: false,
+            overrides: vec![],
+        },
+        42,
+        |_| {},
+    );
+
+    let status_for = |tool: &str| {
+        &outcomes
+            .iter()
+            .find(|o| o.tool_key == tool)
+            .unwrap_or_else(|| panic!("outcome for {tool}"))
+            .status
+    };
+    assert!(matches!(
+        status_for("claude_code"),
+        BatchTargetStatus::Synced { .. }
+    ));
+    assert!(home.join(".claude/skills/skill-1/SKILL.md").exists());
+    assert!(matches!(
+        status_for("cursor"),
+        BatchTargetStatus::Skipped {
+            error: GlobalSyncError::ToolNotInstalled { .. }
+        }
+    ));
+    assert!(matches!(
+        status_for("nope"),
+        BatchTargetStatus::Failed {
+            error: GlobalSyncError::Other(_)
+        }
+    ));
+    let record = store
+        .get_skill_target("skill-1", "claude_code")
+        .expect("query")
+        .expect("record for claude_code");
+    assert_eq!(
+        record.target_path,
+        home.join(".claude/skills/skill-1").to_string_lossy()
+    );
+
+    // Unsync through the environment-probing wrapper removes the target.
+    unsync_skill_from_tool_with_records(&home, &store, "claude_code", "skill-1").expect("unsync");
+    assert!(!home.join(".claude/skills/skill-1").exists());
+    assert!(store
+        .get_skill_target("skill-1", "claude_code")
+        .expect("query")
+        .is_none());
+}
+
+#[test]
+fn unsync_is_a_no_op_when_no_group_tool_is_installed() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let home = dir.path().join("home");
+    fs::create_dir_all(&home).expect("home");
+    let store = make_store(dir.path());
+    seed_skill(&store, "skill-1");
+    let target = dir.path().join("stale-target");
+    fs::create_dir_all(&target).expect("target");
+    store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "t1".to_string(),
+            skill_id: "skill-1".to_string(),
+            tool: "claude_code".to_string(),
+            target_path: target.to_string_lossy().to_string(),
+            mode: "symlink".to_string(),
+            status: "ok".to_string(),
+            last_error: None,
+            synced_at: None,
+        })
+        .expect("seed target");
+
+    unsync_skill_from_tool_with_records(&home, &store, "claude_code", "skill-1").expect("unsync");
+    assert!(target.exists(), "nothing installed => nothing touched");
+    assert!(store
+        .get_skill_target("skill-1", "claude_code")
+        .expect("query")
+        .is_some());
 }
