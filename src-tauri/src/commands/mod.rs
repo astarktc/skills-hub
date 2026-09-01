@@ -25,7 +25,9 @@ use crate::core::installer::{
     LocalSkillCandidate,
 };
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
-use crate::core::settings::{apply_setting, load_settings, AppSettings, SettingUpdate};
+use crate::core::settings::{
+    apply_setting, load_settings, record_installed_tools, AppSettings, SettingUpdate,
+};
 use crate::core::skill_store::SkillStore;
 use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
@@ -112,32 +114,6 @@ impl From<ToolCatalogEntry> for ToolInfoDto {
             constituents: entry.constituents.iter().map(|k| k.to_string()).collect(),
         }
     }
-}
-
-/// Persist the currently installed global tool keys and report which ones
-/// were not recorded before. The write is best effort: a failed write never
-/// fails the status read.
-fn record_installed_tools(
-    store: &SkillStore,
-    installed: &[String],
-) -> Result<Vec<String>, anyhow::Error> {
-    const SETTING_KEY: &str = "installed_tools_v1";
-    let prev: std::collections::HashSet<String> = store
-        .get_setting(SETTING_KEY)?
-        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
-    let newly_installed: Vec<String> = installed
-        .iter()
-        .filter(|k| !prev.contains(*k))
-        .cloned()
-        .collect();
-    let _ = store.set_setting(
-        SETTING_KEY,
-        &serde_json::to_string(installed).unwrap_or_else(|_| "[]".to_string()),
-    );
-    Ok(newly_installed)
 }
 
 #[tauri::command]

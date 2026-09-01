@@ -30,6 +30,7 @@ mod keys {
     pub const SCAN_SELECTED_TOOLS_ONLY: &str = "scan_selected_tools_only";
     pub const UI_ZOOM_LEVEL: &str = "ui_zoom_level";
     pub const FEATURED_SKILLS_CACHE: &str = "featured_skills_cache";
+    pub const INSTALLED_TOOLS: &str = "installed_tools_v1";
 }
 
 /// Default central repo dir name under `fallback_root`.
@@ -306,6 +307,30 @@ pub fn featured_skills_cache(store: &SkillStore) -> Option<String> {
 
 pub fn set_featured_skills_cache(store: &SkillStore, json: &str) -> Result<()> {
     write_str(store, keys::FEATURED_SKILLS_CACHE, json)
+}
+
+/// Persist the currently installed global tool keys and report which of them
+/// were not recorded before (the "newly installed" set the UI announces). A
+/// malformed stored value counts as nothing recorded; the write is best
+/// effort so a failed write never fails the status read.
+pub fn record_installed_tools(store: &SkillStore, installed: &[String]) -> Result<Vec<String>> {
+    let prev: std::collections::HashSet<String> = store
+        .get_setting(keys::INSTALLED_TOOLS)?
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let newly_installed = installed
+        .iter()
+        .filter(|k| !prev.contains(*k))
+        .cloned()
+        .collect();
+    let _ = write_str(
+        store,
+        keys::INSTALLED_TOOLS,
+        &serde_json::to_string(installed).unwrap_or_else(|_| "[]".to_string()),
+    );
+    Ok(newly_installed)
 }
 
 // ---------------------------------------------------------------------------

@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use crate::core::settings::{
     apply_setting, featured_skills_cache, git_cache_cleanup_days, git_cache_ttl_secs, github_token,
-    load_settings, resolve_central_repo_path, set_featured_skills_cache, ui_zoom_level,
-    SettingUpdate, DEFAULT_AUTO_SYNC_ENABLED, DEFAULT_GIT_CACHE_CLEANUP_DAYS,
+    load_settings, record_installed_tools, resolve_central_repo_path, set_featured_skills_cache,
+    ui_zoom_level, SettingUpdate, DEFAULT_AUTO_SYNC_ENABLED, DEFAULT_GIT_CACHE_CLEANUP_DAYS,
     DEFAULT_GIT_CACHE_TTL_SECS, DEFAULT_SCAN_SELECTED_TOOLS_ONLY, DEFAULT_UI_ZOOM_LEVEL,
     GIT_CACHE_CLEANUP_DAYS_RANGE, GIT_CACHE_TTL_SECS_RANGE, UI_ZOOM_LEVEL_RANGE,
 };
@@ -445,6 +445,28 @@ fn featured_skills_cache_round_trips() {
         featured_skills_cache(&store).as_deref(),
         Some("{\"skills\":[]}")
     );
+}
+
+#[test]
+fn record_installed_tools_reports_only_tools_not_seen_before() {
+    let (_dir, store) = make_store();
+    let first = record_installed_tools(&store, &["claude".into(), "cursor".into()]).unwrap();
+    assert_eq!(first, vec!["claude".to_string(), "cursor".to_string()]);
+
+    let second = record_installed_tools(&store, &["claude".into(), "pi".into()]).unwrap();
+    assert_eq!(second, vec!["pi".to_string()]);
+
+    // A tool that disappeared and comes back is new again.
+    let third = record_installed_tools(&store, &["cursor".into()]).unwrap();
+    assert_eq!(third, vec!["cursor".to_string()]);
+}
+
+#[test]
+fn record_installed_tools_treats_malformed_stored_value_as_empty() {
+    let (_dir, store) = make_store();
+    store.set_setting("installed_tools_v1", "not json").unwrap();
+    let newly = record_installed_tools(&store, &["claude".into()]).unwrap();
+    assert_eq!(newly, vec!["claude".to_string()]);
 }
 
 // ---------------------------------------------------------------------------
