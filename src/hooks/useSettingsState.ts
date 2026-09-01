@@ -71,7 +71,7 @@ export function useSettingsState({
 
   const updateSetting = useCallback(
     (update: SettingUpdate) =>
-      invokeTauri<AppSettings>("update_setting", { update }),
+      invokeTauri("updateSetting", update),
     [],
   );
 
@@ -111,7 +111,7 @@ export function useSettingsState({
 
   useEffect(() => {
     if (!isTauri) return;
-    invokeTauri<AppSettings>("get_settings")
+    invokeTauri("getSettings")
       .then(adoptSettings)
       .catch((err) => {
         setError(formatError(err));
@@ -231,7 +231,7 @@ export function useSettingsState({
       return;
     }
     try {
-      const removed = await invokeTauri<number>("clear_git_cache_now");
+      const removed = await invokeTauri("clearGitCacheNow");
       setSuccessToastMessage(t("status.gitCacheCleared", { count: removed }));
     } catch (err) {
       setError(formatError(err));

@@ -4,7 +4,6 @@ import type {
   BatchSyncOverrideDto,
   BatchSyncReportDto,
   BatchSyncSkillDto,
-  AppSettings,
   SyncProgressDto,
   ToolOption,
   ToolStatusDto,
@@ -129,7 +128,7 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
       let selectedTools: string[] | null = null;
       let scanSelectedOnly = true;
       try {
-        const settings = await invokeTauri<AppSettings>("get_settings");
+        const settings = await invokeTauri("getSettings");
         selectedTools = settings.global_selected_tools;
         scanSelectedOnly = settings.scan_selected_tools_only;
         setAutoSyncEnabled(settings.auto_sync_enabled);
@@ -140,7 +139,7 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
         console.warn(err);
       }
       try {
-        const status = await invokeTauri<ToolStatusDto>("get_tool_status");
+        const status = await invokeTauri("getToolStatus");
         setToolStatus(status);
 
         // Default sync targets: saved global selection if configured,
@@ -190,16 +189,17 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
           }),
         );
       };
-      return invokeTauri<BatchSyncReportDto>("sync_skills_to_tools", {
+      return invokeTauri(
+        "syncSkillsToTools",
         skills,
-        tools: toolIds,
-        policy: {
+        toolIds,
+        {
           overwrite: policy?.overwrite ?? false,
           overwrite_if_same_content: policy?.overwriteIfSameContent ?? false,
           overrides: policy?.overrides ?? [],
         },
         onProgress,
-      });
+      );
     },
     [setActionMessage, t, toolLabelById],
   );
@@ -237,8 +237,9 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
   const handleAutoSyncToggle = useCallback(
     async (enabled: boolean) => {
       try {
-        await invokeTauri("update_setting", {
-          update: { key: "auto_sync_enabled", value: enabled },
+        await invokeTauri("updateSetting", {
+          key: "auto_sync_enabled",
+          value: enabled,
         });
         setAutoSyncEnabled(enabled);
       } catch (err) {
@@ -264,11 +265,9 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
   const handleToolConfigConfirm = useCallback(
     async (selected: string[], scanOnly = false) => {
       try {
-        await invokeTauri("update_setting", {
-          update: {
-            key: "global_tool_config",
-            value: { selected_tools: selected, scan_selected_only: scanOnly },
-          },
+        await invokeTauri("updateSetting", {
+          key: "global_tool_config",
+          value: { selected_tools: selected, scan_selected_only: scanOnly },
         });
         setGlobalSelectedTools(selected);
         setScanSelectedToolsOnly(scanOnly);

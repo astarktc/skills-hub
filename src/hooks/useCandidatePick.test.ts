@@ -91,7 +91,7 @@ function makeDeps(overrides?: { takenNames?: string[]; loading?: boolean }) {
 
 function makeSource(overrides?: Partial<CandidatePickSource<Cand, string>>) {
   const installOne = vi.fn<
-    (ctx: string, c: Cand, name: string | undefined) => Promise<InstallResultDto>
+    (ctx: string, c: Cand, name: string | null) => Promise<InstallResultDto>
   >(async (_ctx, c) => installed(c.name));
   const resetForm = vi.fn();
   const source: CandidatePickSource<Cand, string> = {
@@ -352,7 +352,7 @@ describe("useCandidatePick batch install", () => {
       2,
       "/base",
       cand("beta", "beta"),
-      undefined,
+      null,
     );
   });
 

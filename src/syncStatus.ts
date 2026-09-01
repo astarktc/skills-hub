@@ -1,12 +1,11 @@
 // The single frontend consumer of the backend's sync-status lifecycle
 // (see src-tauri/src/core/sync_status.rs and the generated unions in
-// src/bindings/SyncStatus.ts and src/bindings/ProjectSyncStatus.ts).
+// src/bindings/index.ts).
 // The maps below are compiler-derived whitelists: `satisfies` forces them to
 // stay in exact sync with the generated unions, so adding a Rust variant
 // fails `npm run build` until the frontend decides how to render it.
 
-import type { ProjectSyncStatus } from "./bindings/ProjectSyncStatus";
-import type { SyncStatus } from "./bindings/SyncStatus";
+import type { ProjectSyncStatus, SyncStatus } from "./bindings";
 
 /** CSS modifier class for an assignment cell (`.matrix-cell.<class>`). */
 export const SYNC_STATUS_CLASS = {

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   GitSkillCandidate,
-  GitSkillListing,
   InstallResultDto,
   LocalSkillCandidate,
   OnboardingPlan,
@@ -156,11 +155,7 @@ export function useAddSkillFlow({
     {
       customName: gitName,
       installOne: (repoUrl, candidate, name) =>
-        invokeTauri<InstallResultDto>("install_git_selection", {
-          repoUrl,
-          subpath: candidate.subpath,
-          name,
-        }),
+        invokeTauri("installGitSelection", repoUrl, candidate.subpath, name),
       resetForm: () => {
         setGitUrl("");
         setGitName("");
@@ -175,11 +170,7 @@ export function useAddSkillFlow({
       customName: localName,
       selectable: (candidate) => candidate.valid,
       installOne: (basePath, candidate, name) =>
-        invokeTauri<InstallResultDto>("install_local_selection", {
-          basePath,
-          subpath: candidate.subpath,
-          name,
-        }),
+        invokeTauri("installLocalSelection", basePath, candidate.subpath, name),
       resetForm: () => {
         setLocalPath("");
         setLocalName("");
@@ -190,7 +181,7 @@ export function useAddSkillFlow({
 
   /** Fetch the onboarding plan and reset the selection to its defaults. */
   const fetchPlan = useCallback(async () => {
-    const result = await invokeTauri<OnboardingPlan>("get_onboarding_plan");
+    const result = await invokeTauri("getOnboardingPlan");
     setPlan(result);
     const defaultSelected: Record<string, boolean> = {};
     const defaultChoice: Record<string, string> = {};
@@ -314,12 +305,10 @@ export function useAddSkillFlow({
           group.variants.find((v) => v.path === chosenPath)?.tool ?? null;
 
         setActionMessage(t("actions.importExisting", { name: group.name }));
-        const installResult = await invokeTauri<InstallResultDto>(
-          "import_existing_skill",
-          {
-            sourcePath: chosenPath,
-            name: group.name,
-          },
+        const installResult = await invokeTauri(
+          "importExistingSkill",
+          chosenPath,
+          group.name,
         );
 
         if (autoSyncEnabled) {
@@ -376,7 +365,7 @@ export function useAddSkillFlow({
           // Auto-sync OFF: clean migration -- remove originals from all tool directories
           for (const variant of group.variants) {
             try {
-              await invokeTauri("remove_skill_source", { path: variant.path });
+              await invokeTauri("removeSkillSource", variant.path);
             } catch (err) {
               // Non-fatal: skill is already imported, cleanup failure is secondary
               const raw = formatError(err) ?? "";
@@ -414,10 +403,7 @@ export function useAddSkillFlow({
       },
       async (action) => {
         const basePath = localPath.trim();
-        const candidates = await invokeTauri<LocalSkillCandidate[]>(
-          "list_local_skills_cmd",
-          { basePath },
-        );
+        const candidates = await invokeTauri("listLocalSkillsCmd", basePath);
         if (candidates.length === 0) {
           return action.fail(t("errors.noSkillsFoundLocal"));
         }
@@ -431,13 +417,11 @@ export function useAddSkillFlow({
             t("errors.skillAlreadyExists", { name: desiredName }),
           );
         }
-        const created = await invokeTauri<InstallResultDto>(
-          "install_local_selection",
-          {
-            basePath,
-            subpath: candidates[0].subpath,
-            name: localName.trim() || undefined,
-          },
+        const created = await invokeTauri(
+          "installLocalSelection",
+          basePath,
+          candidates[0].subpath,
+          localName.trim() || null,
         );
         const deployErrors = await deployNewSkill(created, {
           noTargets: "set-error",
@@ -471,10 +455,7 @@ export function useAddSkillFlow({
         const target = autoSelectSkillName;
         setAutoSelectSkillName(null);
         const { candidates, target_match } =
-          await invokeTauri<GitSkillListing>("list_git_skills_cmd", {
-            repoUrl: url,
-            targetName: target,
-          });
+          await invokeTauri("listGitSkillsCmd", url, target);
         if (candidates.length === 0) {
           return action.fail(t("errors.noSkillsFoundWithHint"));
         }
@@ -506,13 +487,11 @@ export function useAddSkillFlow({
             t("errors.skillAlreadyExists", { name: chosen.name }),
           );
         }
-        const created = await invokeTauri<InstallResultDto>(
-          "install_git_selection",
-          {
-            repoUrl: url,
-            subpath: chosen.subpath,
-            name: gitName.trim() || undefined,
-          },
+        const created = await invokeTauri(
+          "installGitSelection",
+          url,
+          chosen.subpath,
+          gitName.trim() || null,
         );
         const deployErrors = await deployNewSkill(created, {
           noTargets: "set-error",

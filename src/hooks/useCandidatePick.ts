@@ -24,7 +24,8 @@ export type CandidatePickSource<C extends PickCandidate, Ctx> = {
   installOne: (
     ctx: Ctx,
     candidate: C,
-    name: string | undefined,
+    /** Custom name for a single selection; `null` = keep the skill's own. */
+    name: string | null,
   ) => Promise<InstallResultDto>;
   /** Clear the add-form fields this flow owns, after a successful batch. */
   resetForm: () => void;
@@ -188,7 +189,7 @@ export function useCandidatePick<C extends PickCandidate, Ctx>(
       setError(rejection);
       return;
     }
-    const name = picked.length === 1 && customName ? customName : undefined;
+    const name = picked.length === 1 && customName ? customName : null;
     await runAction(
       { successToast: t("status.selectedSkillsInstalled") },
       async () => {

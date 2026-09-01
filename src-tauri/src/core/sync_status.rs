@@ -14,12 +14,11 @@
 //! decides the legacy policy (see `skill_store::read_lifecycle`).
 
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
+use specta::Type;
 
 /// Lifecycle of one synced artifact (an assignment row or a skill target row).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
-#[ts(export)]
 pub enum SyncStatus {
     /// Row created, sync not yet attempted.
     Pending,
@@ -85,9 +84,8 @@ const LEGACY_TARGET_OK: &str = "ok";
 
 /// How an artifact was materialised. Stored on the row so a later pass knows
 /// whether content drift is possible (copies) or not (links).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
-#[ts(export)]
 pub enum SyncMode {
     Symlink,
     /// Windows directory junction (the symlink fallback).
@@ -190,9 +188,8 @@ impl SyncStatus {
 
 /// Roll-up of a project's assignments as shown on the project list.
 /// `Missing` folds into `Error` (both need the user's attention).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
-#[ts(export)]
 pub enum ProjectSyncStatus {
     /// No assignments at all.
     #[serde(rename = "none")]

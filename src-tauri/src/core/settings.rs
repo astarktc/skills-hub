@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
+use specta::Type;
 
 use super::central_repo::{ensure_central_repo, move_central_repo};
 use super::skill_store::SkillStore;
@@ -43,8 +43,7 @@ pub const DEFAULT_SCAN_SELECTED_TOOLS_ONLY: bool = true;
 pub const DEFAULT_UI_ZOOM_LEVEL: f64 = 1.0;
 
 /// Inclusive integer bound, shipped to the frontend inside `AppSettings`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 pub struct IntRange {
     pub min: i64,
     pub max: i64,
@@ -60,10 +59,15 @@ impl IntRange {
 }
 
 /// Inclusive float bound, shipped to the frontend inside `AppSettings`.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, TS)]
-#[ts(export)]
+///
+/// specta types `f64` as `number | null` because serde_json writes
+/// NaN/±Infinity as `null`; these bounds are finite constants, so the
+/// field-level override asserts the plain `number` the frontend clamps with.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Type)]
 pub struct FloatRange {
+    #[specta(type = specta_typescript::Number)]
     pub min: f64,
+    #[specta(type = specta_typescript::Number)]
     pub max: f64,
 }
 
@@ -78,8 +82,7 @@ pub const GIT_CACHE_TTL_SECS_RANGE: IntRange = IntRange { min: 0, max: 3600 };
 pub const UI_ZOOM_LEVEL_RANGE: FloatRange = FloatRange { min: 0.5, max: 3.0 };
 
 /// Every bound the frontend needs to clamp input before sending it.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Type)]
 pub struct SettingsBounds {
     pub git_cache_cleanup_days: IntRange,
     pub git_cache_ttl_secs: IntRange,
@@ -94,8 +97,7 @@ pub const BOUNDS: SettingsBounds = SettingsBounds {
 
 /// Snapshot of every backend-persisted setting, already parsed, defaulted
 /// and (for the central repo path) resolved.
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Clone, PartialEq, Serialize, Type)]
 pub struct AppSettings {
     /// Resolved central skills repo root (override or default).
     pub central_repo_path: String,
@@ -107,13 +109,15 @@ pub struct AppSettings {
     /// `None` = never configured (distinct from an empty selection).
     pub global_selected_tools: Option<Vec<String>>,
     pub scan_selected_tools_only: bool,
+    /// Always finite (clamped into `UI_ZOOM_LEVEL_RANGE`), hence `number`
+    /// rather than specta's default `number | null` for `f64`.
+    #[specta(type = specta_typescript::Number)]
     pub ui_zoom_level: f64,
     pub bounds: SettingsBounds,
 }
 
 /// One setting write, as sent by the frontend: `{ key, value }`.
-#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
-#[ts(export)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Type)]
 #[serde(tag = "key", content = "value", rename_all = "snake_case")]
 pub enum SettingUpdate {
     /// Absolute path; `~` expansion happens at the command seam. Moving the
@@ -131,7 +135,9 @@ pub enum SettingUpdate {
         scan_selected_only: bool,
     },
     /// Clamped into `UI_ZOOM_LEVEL_RANGE`; non-finite falls back to default.
-    UiZoomLevel(f64),
+    /// Typed `number` (not specta's `number | null` for `f64`): `null` would
+    /// fail deserialization, so it is not a value the frontend may send.
+    UiZoomLevel(#[specta(type = specta_typescript::Number)] f64),
 }
 
 // ---------------------------------------------------------------------------

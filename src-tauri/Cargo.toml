@@ -37,7 +37,9 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 junction = "1.1"
 uuid = { version = "1", features = ["v4"] }
 urlencoding = "2.1"
-ts-rs = "12"
+specta = "=2.0.0-rc.25"
+specta-typescript = "0.0.12"
+tauri-specta = { version = "=2.0.0-rc.25", features = ["typescript"] }
 
 [dev-dependencies]
 tempfile = "3"

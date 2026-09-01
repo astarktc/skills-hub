@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
+use specta::Type;
 use std::path::Path;
-use ts_rs::TS;
 use uuid::Uuid;
 
 use super::environment::expand_home_path_in;
@@ -13,8 +13,7 @@ use super::sync_engine;
 use super::sync_status::{ProjectSyncStatus, SyncMode, SyncStatus};
 use super::tool_adapters;
 
-#[derive(Debug, Clone, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Clone, Serialize, Type)]
 pub struct ProjectDto {
     pub id: String,
     pub path: String,
@@ -28,16 +27,14 @@ pub struct ProjectDto {
     pub path_exists: bool,
 }
 
-#[derive(Debug, Clone, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Clone, Serialize, Type)]
 pub struct ProjectToolDto {
     pub id: String,
     pub project_id: String,
     pub tool: String,
 }
 
-#[derive(Debug, Clone, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Clone, Serialize, Type)]
 pub struct ProjectSkillAssignmentDto {
     pub id: String,
     pub project_id: String,

@@ -19,6 +19,7 @@ import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import type { TFunction } from "i18next";
+import type { InvokeTauri } from "../../lib/tauri";
 import type { ManagedSkill, SkillFileEntry } from "./types";
 import { describeCommandError } from "../../commandError";
 
@@ -26,10 +27,7 @@ import { describeCommandError } from "../../commandError";
 type SkillDetailViewProps = {
   skill: ManagedSkill;
   onBack: () => void;
-  invokeTauri: <T>(
-    command: string,
-    args?: Record<string, unknown>,
-  ) => Promise<T>;
+  invokeTauri: InvokeTauri;
   formatRelative: (ms: number | null | undefined) => string;
   t: TFunction;
   isExplorePreview?: boolean;
@@ -432,9 +430,7 @@ const SkillDetailView = ({
     const load = async () => {
       setLoadingFiles(true);
       try {
-        const result = await invokeTauri<SkillFileEntry[]>("list_skill_files", {
-          centralPath: skill.central_path,
-        });
+        const result = await invokeTauri("listSkillFiles", skill.central_path);
         if (cancelled) return;
         setFiles(result);
         // Start with all folders collapsed
@@ -462,10 +458,11 @@ const SkillDetailView = ({
     const load = async () => {
       setLoadingContent(true);
       try {
-        const content = await invokeTauri<string>("read_skill_file", {
-          centralPath: skill.central_path,
-          filePath: activeFile,
-        });
+        const content = await invokeTauri(
+          "readSkillFile",
+          skill.central_path,
+          activeFile,
+        );
         if (!cancelled) setFileContent(content);
       } catch (err) {
         if (!cancelled) {

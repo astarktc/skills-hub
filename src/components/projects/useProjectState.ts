@@ -126,7 +126,7 @@ export function useProjectState(): ProjectState {
     setProjectsLoading(true);
     setLoadFailed(false);
     try {
-      const result = await invokeTauri<ProjectDto[]>("list_projects");
+      const result = await invokeTauri("listProjects");
       setProjects(result);
     } catch {
       setLoadFailed(true);
@@ -137,7 +137,7 @@ export function useProjectState(): ProjectState {
 
   const loadSkills = useCallback(async () => {
     try {
-      const result = await invokeTauri<ManagedSkill[]>("get_managed_skills");
+      const result = await invokeTauri("getManagedSkills");
       setSkills(result);
     } catch {
       // Skills load failure is non-critical for projects tab
@@ -160,10 +160,8 @@ export function useProjectState(): ProjectState {
     const version = ++selectVersionRef.current;
     try {
       const [fetchedTools, fetchedAssignments] = await Promise.all([
-        invokeTauri<ProjectToolDto[]>("list_project_tools", { projectId: id }),
-        invokeTauri<ProjectSkillAssignmentDto[]>("list_project_skill_assignments", {
-          projectId: id,
-        }),
+        invokeTauri("listProjectTools", id),
+        invokeTauri("listProjectSkillAssignments", id),
       ]);
       // Discard stale results if another selection happened
       if (selectVersionRef.current !== version) return;
@@ -188,9 +186,9 @@ export function useProjectState(): ProjectState {
   // failed list surfaces to the caller.)
   const refreshAssignments = useCallback(async (projectId: string) => {
     try {
-      const updated = await invokeTauri<ProjectSkillAssignmentDto[]>(
-        "list_project_skill_assignments",
-        { projectId },
+      const updated = await invokeTauri(
+        "listProjectSkillAssignments",
+        projectId,
       );
       setAssignments(updated);
     } catch {
@@ -203,7 +201,7 @@ export function useProjectState(): ProjectState {
       path: string,
       gitignore: IgnoreUpdateOptions,
     ): Promise<ProjectDto> => {
-      const result = await invokeTauri<ProjectDto>("register_project", { path });
+      const result = await invokeTauri("registerProject", path);
       setPendingIgnore(
         gitignore.add_to_gitignore || gitignore.add_to_exclude
           ? { projectId: result.id, options: gitignore }
@@ -217,7 +215,7 @@ export function useProjectState(): ProjectState {
 
   const removeProject = useCallback(
     async (id: string) => {
-      await invokeTauri("remove_project", { projectId: id });
+      await invokeTauri("removeProject", id);
       setSelectedProjectId((prev) => {
         if (prev === id) {
           setTools([]);
@@ -247,21 +245,23 @@ export function useProjectState(): ProjectState {
           (a) => a.skill_id === skillId && a.tool === tool,
         );
         if (exists) {
-          await invokeTauri("remove_project_skill_assignment", {
-            projectId: selectedProjectId,
+          await invokeTauri(
+            "removeProjectSkillAssignment",
+            selectedProjectId,
             skillId,
             tool,
-          });
+          );
         } else {
-          await invokeTauri("add_project_skill_assignment", {
-            projectId: selectedProjectId,
+          await invokeTauri(
+            "addProjectSkillAssignment",
+            selectedProjectId,
             skillId,
             tool,
-          });
+          );
         }
-        const updated = await invokeTauri<ProjectSkillAssignmentDto[]>(
-          "list_project_skill_assignments",
-          { projectId: selectedProjectId },
+        const updated = await invokeTauri(
+          "listProjectSkillAssignments",
+          selectedProjectId,
         );
         setAssignments(updated);
         await loadProjects();
@@ -291,13 +291,14 @@ export function useProjectState(): ProjectState {
         return next;
       });
       try {
-        const result = await invokeTauri<BulkAssignResultDto>("bulk_assign_skill", {
-          projectId: selectedProjectId,
+        const result = await invokeTauri(
+          "bulkAssignSkill",
+          selectedProjectId,
           skillId,
-        });
-        const updated = await invokeTauri<ProjectSkillAssignmentDto[]>(
-          "list_project_skill_assignments",
-          { projectId: selectedProjectId },
+        );
+        const updated = await invokeTauri(
+          "listProjectSkillAssignments",
+          selectedProjectId,
         );
         setAssignments(updated);
         await loadProjects();
@@ -318,10 +319,7 @@ export function useProjectState(): ProjectState {
 
   const updateProjectPath = useCallback(
     async (projectId: string, newPath: string): Promise<ProjectDto> => {
-      const result = await invokeTauri<ProjectDto>("update_project_path", {
-        projectId,
-        path: newPath,
-      });
+      const result = await invokeTauri("updateProjectPath", projectId, newPath);
       await loadProjects();
       return result;
     },
@@ -330,9 +328,7 @@ export function useProjectState(): ProjectState {
 
   const resyncProject = useCallback(async (): Promise<ResyncSummaryDto> => {
     if (!selectedProjectId) throw new Error("No project selected");
-    const result = await invokeTauri<ResyncSummaryDto>("resync_project", {
-      projectId: selectedProjectId,
-    });
+    const result = await invokeTauri("resyncProject", selectedProjectId);
     // Re-fetch assignments to reflect updated sync status
     await refreshAssignments(selectedProjectId);
     await loadProjects();
@@ -340,7 +336,7 @@ export function useProjectState(): ProjectState {
   }, [selectedProjectId, loadProjects, refreshAssignments]);
 
   const resyncAll = useCallback(async (): Promise<ResyncSummaryDto[]> => {
-    const result = await invokeTauri<ResyncSummaryDto[]>("resync_all_projects");
+    const result = await invokeTauri("resyncAllProjects");
     await loadProjects();
     // Re-fetch assignments for selected project if any
     if (selectedProjectId) {
@@ -350,7 +346,7 @@ export function useProjectState(): ProjectState {
   }, [selectedProjectId, loadProjects, refreshAssignments]);
 
   const loadToolStatus = useCallback(async () => {
-    const result = await invokeTauri<ToolStatusDto>("get_project_tool_status");
+    const result = await invokeTauri("getProjectToolStatus");
     setToolStatus(result);
   }, []);
 
@@ -363,9 +359,11 @@ export function useProjectState(): ProjectState {
           : null;
       setPendingIgnore(null);
       try {
-        const updatedTools = await invokeTauri<ProjectToolDto[]>(
-          "configure_project_tools",
-          { projectId: selectedProjectId, tools: toolIds, gitignore },
+        const updatedTools = await invokeTauri(
+          "configureProjectTools",
+          selectedProjectId,
+          toolIds,
+          gitignore,
         );
         setTools(updatedTools);
       } catch (err) {
@@ -373,9 +371,7 @@ export function useProjectState(): ProjectState {
         // converge on the backend's view (silently, like refreshAssignments).
         try {
           setTools(
-            await invokeTauri<ProjectToolDto[]>("list_project_tools", {
-              projectId: selectedProjectId,
-            }),
+            await invokeTauri("listProjectTools", selectedProjectId),
           );
         } catch {
           // Silent fallback — state may be stale
@@ -392,19 +388,18 @@ export function useProjectState(): ProjectState {
 
   const getGitignoreStatus = useCallback(
     (projectId: string) =>
-      invokeTauri<GitignoreStatusDto>("get_project_gitignore_status", {
-        projectId,
-      }),
+      invokeTauri("getProjectGitignoreStatus", projectId),
     [],
   );
 
   const updateGitignore = useCallback(
     async (projectId: string, options: IgnoreUpdateOptions) => {
-      await invokeTauri("update_project_gitignore", {
+      await invokeTauri(
+        "updateProjectGitignore",
         projectId,
-        addToGitignore: options.add_to_gitignore,
-        addToExclude: options.add_to_exclude,
-      });
+        options.add_to_gitignore,
+        options.add_to_exclude,
+      );
     },
     [],
   );

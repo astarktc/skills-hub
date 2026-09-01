@@ -19,10 +19,21 @@ vi.mock("../../lib/tauri", () => ({
   invokeTauri: vi.fn(),
 }));
 
-import { invokeTauri } from "../../lib/tauri";
+import {
+  invokeTauri,
+  type CommandName,
+  type Commands,
+} from "../../lib/tauri";
 import { useProjectState } from "./useProjectState";
 
-const mockInvoke = vi.mocked(invokeTauri);
+// The seam is generic over the command table; the stub switches on the
+// command name, so it is typed loosely (positional args, unknown result).
+const mockInvoke = vi.mocked(
+  invokeTauri as unknown as (
+    command: CommandName,
+    ...args: unknown[]
+  ) => Promise<unknown>,
+);
 
 function project(id: string, toolCount = 0): ProjectDto {
   return {
@@ -48,39 +59,38 @@ function stubBackend() {
   const projects: ProjectDto[] = [];
   const toolsByProject = new Map<string, string[]>();
   let nextId = 1;
-  mockInvoke.mockImplementation((command: string, args?: unknown) => {
+  mockInvoke.mockImplementation((command, ...args) => {
     switch (command) {
-      case "list_projects":
+      case "listProjects":
         return Promise.resolve([...projects]);
-      case "get_managed_skills":
+      case "getManagedSkills":
         return Promise.resolve([]);
-      case "register_project": {
+      case "registerProject": {
         const created = project(`p${nextId++}`);
         projects.push(created);
         return Promise.resolve(created);
       }
-      case "list_project_tools": {
-        const { projectId } = args as { projectId: string };
+      case "listProjectTools": {
+        const [projectId] = args as Parameters<Commands["listProjectTools"]>;
         return Promise.resolve(
           toolRecords(projectId, toolsByProject.get(projectId) ?? []),
         );
       }
-      case "list_project_skill_assignments":
+      case "listProjectSkillAssignments":
         return Promise.resolve([]);
-      case "configure_project_tools": {
-        const { projectId, tools } = args as {
-          projectId: string;
-          tools: string[];
-        };
+      case "configureProjectTools": {
+        const [projectId, tools] = args as Parameters<
+          Commands["configureProjectTools"]
+        >;
         toolsByProject.set(projectId, tools);
         return Promise.resolve(toolRecords(projectId, tools));
       }
-      case "get_project_gitignore_status":
+      case "getProjectGitignoreStatus":
         return Promise.resolve({
           in_gitignore: true,
           in_exclude: false,
         } satisfies GitignoreStatusDto);
-      case "update_project_gitignore":
+      case "updateProjectGitignore":
         return Promise.resolve(undefined);
       default:
         return Promise.resolve(undefined);
@@ -88,10 +98,11 @@ function stubBackend() {
   });
 }
 
-const callsTo = (command: string) =>
+/** Positional args of every call to `command`, typed from the bindings. */
+const callsTo = <K extends CommandName>(command: K) =>
   mockInvoke.mock.calls
     .filter(([name]) => name === command)
-    .map(([, args]) => args as Record<string, unknown>);
+    .map(([, ...args]) => args as Parameters<Commands[K]>);
 
 const commandOrder = () => mockInvoke.mock.calls.map(([name]) => name);
 
@@ -123,8 +134,8 @@ describe("useProjectState add-project → configure-tools → gitignore", () => 
     expect(created?.id).toBe("p1");
     // Registration alone never touches ignore files: the patterns come
     // from persisted tools, which do not exist yet.
-    expect(callsTo("update_project_gitignore")).toEqual([]);
-    expect(callsTo("configure_project_tools")).toEqual([]);
+    expect(callsTo("updateProjectGitignore")).toEqual([]);
+    expect(callsTo("configureProjectTools")).toEqual([]);
 
     await act(async () => {
       await result.current.selectProject("p1");
@@ -133,17 +144,13 @@ describe("useProjectState add-project → configure-tools → gitignore", () => 
       await result.current.configureTools(["claude_code", "windsurf"]);
     });
 
-    expect(callsTo("configure_project_tools")).toEqual([
-      {
-        projectId: "p1",
-        tools: ["claude_code", "windsurf"],
-        gitignore: intent,
-      },
+    expect(callsTo("configureProjectTools")).toEqual([
+      ["p1", ["claude_code", "windsurf"], intent],
     ]);
     // One command owns the whole sequence — no separate gitignore replay.
-    expect(callsTo("update_project_gitignore")).toEqual([]);
-    expect(commandOrder().indexOf("register_project")).toBeLessThan(
-      commandOrder().indexOf("configure_project_tools"),
+    expect(callsTo("updateProjectGitignore")).toEqual([]);
+    expect(commandOrder().indexOf("registerProject")).toBeLessThan(
+      commandOrder().indexOf("configureProjectTools"),
     );
     expect(result.current.tools.map((t) => t.tool)).toEqual([
       "claude_code",
@@ -169,7 +176,9 @@ describe("useProjectState add-project → configure-tools → gitignore", () => 
       await result.current.configureTools(["claude_code", "pi"]);
     });
 
-    expect(callsTo("configure_project_tools").map((a) => a.gitignore)).toEqual([
+    expect(
+      callsTo("configureProjectTools").map(([, , gitignore]) => gitignore),
+    ).toEqual([
       { add_to_gitignore: true, add_to_exclude: true },
       null,
     ]);
@@ -190,7 +199,7 @@ describe("useProjectState add-project → configure-tools → gitignore", () => 
       await result.current.configureTools(["claude_code"]);
     });
 
-    expect(callsTo("configure_project_tools")[0]?.gitignore).toBeNull();
+    expect(callsTo("configureProjectTools")[0]?.[2]).toBeNull();
   });
 
   it("drops the intent when tools are configured for a different project", async () => {
@@ -215,8 +224,8 @@ describe("useProjectState add-project → configure-tools → gitignore", () => 
     });
 
     // p2's registration superseded p1's intent; nothing is written for p1.
-    expect(callsTo("configure_project_tools")).toEqual([
-      { projectId: "p1", tools: ["claude_code"], gitignore: null },
+    expect(callsTo("configureProjectTools")).toEqual([
+      ["p1", ["claude_code"], null],
     ]);
   });
 
@@ -234,13 +243,13 @@ describe("useProjectState add-project → configure-tools → gitignore", () => 
     // Tools persisted, ignore write failed: the command errors but the
     // backend now lists the new tool set.
     const base = mockInvoke.getMockImplementation()!;
-    mockInvoke.mockImplementation((command, args) => {
-      if (command === "configure_project_tools") {
-        return base("configure_project_tools", args).then(() =>
+    mockInvoke.mockImplementation((command, ...args) => {
+      if (command === "configureProjectTools") {
+        return base("configureProjectTools", ...args).then(() =>
           Promise.reject({ code: "INTERNAL", message: "disk full" }),
         );
       }
-      return base(command, args);
+      return base(command, ...args);
     });
 
     await act(async () => {
@@ -269,9 +278,9 @@ describe("useProjectState add-project → configure-tools → gitignore", () => 
     });
 
     const order = commandOrder();
-    expect(order[0]).toBe("configure_project_tools");
-    expect(order).toContain("list_project_skill_assignments");
-    expect(order).toContain("list_projects");
+    expect(order[0]).toBe("configureProjectTools");
+    expect(order).toContain("listProjectSkillAssignments");
+    expect(order).toContain("listProjects");
     expect(result.current.tools.map((t) => t.tool)).toEqual(["pi"]);
   });
 });
@@ -285,9 +294,7 @@ describe("useProjectState edit-project gitignore", () => {
       status = await result.current.getGitignoreStatus("p9");
     });
     expect(status).toEqual({ in_gitignore: true, in_exclude: false });
-    expect(callsTo("get_project_gitignore_status")).toEqual([
-      { projectId: "p9" },
-    ]);
+    expect(callsTo("getProjectGitignoreStatus")).toEqual([["p9"]]);
 
     await act(async () => {
       await result.current.updateGitignore("p9", {
@@ -295,8 +302,6 @@ describe("useProjectState edit-project gitignore", () => {
         add_to_exclude: true,
       });
     });
-    expect(callsTo("update_project_gitignore")).toEqual([
-      { projectId: "p9", addToGitignore: false, addToExclude: true },
-    ]);
+    expect(callsTo("updateProjectGitignore")).toEqual([["p9", false, true]]);
   });
 });

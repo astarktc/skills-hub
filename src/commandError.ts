@@ -1,15 +1,15 @@
 // The single frontend consumer of the backend's structured CommandError
 // (see src-tauri/src/commands/error.rs and the generated union in
-// src/bindings/CommandError.ts). All user-facing error copy is composed here
+// src/bindings/index.ts). All user-facing error copy is composed here
 // via i18n; nothing else in the frontend should inspect command failures.
 
-import type { CommandError } from "./bindings/CommandError";
+import type { CommandError } from "./bindings";
 
 type TranslateFn = (key: string, opts?: Record<string, unknown>) => string;
 
 // Compiler-derived whitelist of wire codes: `satisfies` forces this map to
 // stay in exact sync with the generated union, so adding a Rust variant
-// (which regenerates src/bindings/CommandError.ts) fails `npm run build`
+// (which regenerates src/bindings/index.ts) fails `npm run build`
 // until the frontend handles the new code here and in describeCommandError.
 const COMMAND_ERROR_CODE_MAP = {
   TOOL_NOT_INSTALLED: true,

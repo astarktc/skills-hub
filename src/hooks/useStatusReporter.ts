@@ -163,7 +163,7 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
   }, [error]);
 
   const cancelLoading = useCallback(() => {
-    void invokeTauri("cancel_current_operation").catch(() => {});
+    void invokeTauri("cancelCurrentOperation").catch(() => {});
     setLoading(false);
     setLoadingStartAt(null);
     setActionMessage(null);

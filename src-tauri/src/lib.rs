@@ -13,6 +13,67 @@ use tauri_plugin_log::{Target, TargetKind};
 #[derive(Clone)]
 pub struct SyncMutex(pub Arc<std::sync::Mutex<()>>);
 
+/// The single command registry: every `#[tauri::command]` is listed here
+/// once, and this builder feeds both Tauri's invoke handler and the
+/// TypeScript export (`export_bindings` test), so registration and the
+/// generated `src/bindings/index.ts` cannot drift from each other.
+pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
+    tauri_specta::Builder::<tauri::Wry>::new()
+        // Errors keep the throw-based contract `describeCommandError`
+        // consumes (`ErrorHandlingMode::Result` would wrap every result in a
+        // `{ status, data | error }` envelope instead).
+        .error_handling(tauri_specta::ErrorHandlingMode::Throw)
+        // i64/u64/usize fields are timestamps and counters far below 2^53;
+        // the frontend has always consumed them as plain `number`.
+        .dangerously_cast_bigints_to_number()
+        .commands(tauri_specta::collect_commands![
+            commands::get_settings,
+            commands::update_setting,
+            commands::get_tool_status,
+            commands::get_project_tool_status,
+            commands::clear_git_cache_now,
+            commands::get_onboarding_plan,
+            commands::install_local,
+            commands::list_local_skills_cmd,
+            commands::install_local_selection,
+            commands::install_git,
+            commands::list_git_skills_cmd,
+            commands::install_git_selection,
+            commands::sync_skills_to_tools,
+            commands::unsync_skill_from_tool,
+            commands::update_managed_skill,
+            commands::import_existing_skill,
+            commands::remove_skill_source,
+            commands::get_managed_skills,
+            commands::delete_managed_skill,
+            commands::unsync_all_skills,
+            commands::unsync_skill,
+            commands::get_featured_skills,
+            commands::search_skills_online,
+            commands::list_skill_files,
+            commands::read_skill_file,
+            commands::clone_explore_skill,
+            commands::hide_explore_skill,
+            commands::unhide_explore_skill,
+            commands::get_hidden_explore_skills,
+            commands::cancel_current_operation,
+            commands::projects::register_project,
+            commands::projects::remove_project,
+            commands::projects::list_projects,
+            commands::projects::update_project_path,
+            commands::projects::configure_project_tools,
+            commands::projects::list_project_tools,
+            commands::projects::add_project_skill_assignment,
+            commands::projects::remove_project_skill_assignment,
+            commands::projects::list_project_skill_assignments,
+            commands::projects::resync_project,
+            commands::projects::resync_all_projects,
+            commands::projects::bulk_assign_skill,
+            commands::projects::update_project_gitignore,
+            commands::projects::get_project_gitignore_status,
+        ])
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -96,52 +157,20 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            commands::get_settings,
-            commands::update_setting,
-            commands::get_tool_status,
-            commands::get_project_tool_status,
-            commands::clear_git_cache_now,
-            commands::get_onboarding_plan,
-            commands::install_local,
-            commands::list_local_skills_cmd,
-            commands::install_local_selection,
-            commands::install_git,
-            commands::list_git_skills_cmd,
-            commands::install_git_selection,
-            commands::sync_skills_to_tools,
-            commands::unsync_skill_from_tool,
-            commands::update_managed_skill,
-            commands::import_existing_skill,
-            commands::remove_skill_source,
-            commands::get_managed_skills,
-            commands::delete_managed_skill,
-            commands::unsync_all_skills,
-            commands::unsync_skill,
-            commands::get_featured_skills,
-            commands::search_skills_online,
-            commands::list_skill_files,
-            commands::read_skill_file,
-            commands::clone_explore_skill,
-            commands::hide_explore_skill,
-            commands::unhide_explore_skill,
-            commands::get_hidden_explore_skills,
-            commands::cancel_current_operation,
-            commands::projects::register_project,
-            commands::projects::remove_project,
-            commands::projects::list_projects,
-            commands::projects::update_project_path,
-            commands::projects::configure_project_tools,
-            commands::projects::list_project_tools,
-            commands::projects::add_project_skill_assignment,
-            commands::projects::remove_project_skill_assignment,
-            commands::projects::list_project_skill_assignments,
-            commands::projects::resync_project,
-            commands::projects::resync_all_projects,
-            commands::projects::bulk_assign_skill,
-            commands::projects::update_project_gitignore,
-            commands::projects::get_project_gitignore_status,
-        ])
+        .invoke_handler(specta_builder().invoke_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod bindings_export {
+    /// Regenerates `src/bindings/index.ts` on every `cargo test`; CI fails
+    /// when the committed file drifts from the Rust types.
+    #[test]
+    fn export_bindings() {
+        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/bindings/index.ts");
+        super::specta_builder()
+            .export(specta_typescript::Typescript::default(), out)
+            .expect("failed to export TypeScript bindings");
+    }
 }

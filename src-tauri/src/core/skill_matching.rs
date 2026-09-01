@@ -11,7 +11,7 @@
 //! several are ambiguous, none at all is no match.
 
 use serde::Serialize;
-use ts_rs::TS;
+use specta::Type;
 
 /// Anything with a skill name and a discovery-root-relative subpath.
 pub trait MatchableSkill {
@@ -43,9 +43,8 @@ pub enum SkillMatch<'a, T> {
 
 /// Wire form of [`SkillMatch`]: candidates are referenced by subpath, the
 /// identity the frontend already keys its selection by.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-#[ts(export)]
 pub enum CandidateMatch {
     Resolved { subpath: String },
     Ambiguous { subpaths: Vec<String> },

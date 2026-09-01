@@ -4,9 +4,9 @@ pub mod projects;
 use anyhow::Context;
 
 use serde::{Deserialize, Serialize};
+use specta::Type;
 use tauri::ipc::Channel;
 use tauri::{Manager, State};
-use ts_rs::TS;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -78,8 +78,7 @@ fn installer_paths(
     })
 }
 
-#[derive(Debug, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Type)]
 pub struct ToolInfoDto {
     pub key: String,
     pub label: String,
@@ -96,8 +95,7 @@ pub struct ToolInfoDto {
     pub constituents: Vec<String>,
 }
 
-#[derive(Debug, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Type)]
 pub struct ToolStatusDto {
     pub tools: Vec<ToolInfoDto>,
     pub installed: Vec<String>,
@@ -118,6 +116,7 @@ impl From<ToolCatalogEntry> for ToolInfoDto {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -137,6 +136,7 @@ pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusD
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn get_project_tool_status() -> Result<ToolStatusDto, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let home = home_dir()?;
@@ -154,6 +154,7 @@ pub async fn get_project_tool_status() -> Result<ToolStatusDto, CommandError> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn get_onboarding_plan(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
@@ -170,6 +171,7 @@ pub async fn get_onboarding_plan(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn clear_git_cache_now(app: tauri::AppHandle) -> Result<usize, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         cleanup_git_cache_dirs(&app, std::time::Duration::from_secs(0))
@@ -179,8 +181,7 @@ pub async fn clear_git_cache_now(app: tauri::AppHandle) -> Result<usize, Command
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(Debug, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Type)]
 pub struct InstallResultDto {
     pub skill_id: String,
     pub name: String,
@@ -189,6 +190,7 @@ pub struct InstallResultDto {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn get_settings(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
@@ -208,6 +210,7 @@ pub async fn get_settings(
 /// repo path is expanded here — the only environment-aware step — before
 /// the policy layer validates and applies it.
 #[tauri::command]
+#[specta::specta]
 pub async fn update_setting(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
@@ -229,6 +232,7 @@ pub async fn update_setting(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn install_local(
     app: tauri::AppHandle,
@@ -248,6 +252,7 @@ pub async fn install_local(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn list_local_skills_cmd(
     basePath: String,
@@ -262,6 +267,7 @@ pub async fn list_local_skills_cmd(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn install_local_selection(
     app: tauri::AppHandle,
@@ -284,6 +290,7 @@ pub async fn install_local_selection(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn install_git(
     app: tauri::AppHandle,
@@ -306,6 +313,7 @@ pub async fn install_git(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn list_git_skills_cmd(
     app: tauri::AppHandle,
@@ -324,6 +332,7 @@ pub async fn list_git_skills_cmd(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn install_git_selection(
     app: tauri::AppHandle,
@@ -344,8 +353,7 @@ pub async fn install_git_selection(
 }
 
 /// One skill in a batch sync request.
-#[derive(Debug, Clone, Deserialize, TS)]
-#[ts(export)]
+#[derive(Debug, Clone, Deserialize, Type)]
 pub struct BatchSyncSkillDto {
     pub skill_id: String,
     pub name: String,
@@ -354,16 +362,14 @@ pub struct BatchSyncSkillDto {
 
 /// Force-overwrite for one (skill, tool) pair; applies to any target tool
 /// sharing the named tool's skills dir.
-#[derive(Debug, Clone, Deserialize, TS)]
-#[ts(export)]
+#[derive(Debug, Clone, Deserialize, Type)]
 pub struct BatchSyncOverrideDto {
     pub skill_id: String,
     pub tool: String,
     pub overwrite: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, TS)]
-#[ts(export)]
+#[derive(Debug, Clone, Deserialize, Type)]
 pub struct BatchSyncPolicyDto {
     #[serde(default)]
     pub overwrite: bool,
@@ -376,17 +382,15 @@ pub struct BatchSyncPolicyDto {
 /// Per-(skill, tool) result. `skipped` is the expected-and-ignorable class
 /// (tool absent, dir unwritable); `failed` is everything else. Both carry
 /// the typed error so call sites choose what to surface.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, Type)]
 #[serde(tag = "status", rename_all = "snake_case")]
-#[ts(export)]
 pub enum SyncTargetStatusDto {
     Synced { mode_used: SyncMode },
     Skipped { error: CommandError },
     Failed { error: CommandError },
 }
 
-#[derive(Debug, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Type)]
 pub struct SyncTargetResultDto {
     pub skill_id: String,
     pub skill_name: String,
@@ -394,8 +398,7 @@ pub struct SyncTargetResultDto {
     pub status: SyncTargetStatusDto,
 }
 
-#[derive(Debug, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Type)]
 pub struct BatchSyncReportDto {
     pub results: Vec<SyncTargetResultDto>,
     pub synced: u32,
@@ -405,8 +408,7 @@ pub struct BatchSyncReportDto {
 
 /// Progress tick streamed over the command's channel before each attempted
 /// (skill, tool) pair.
-#[derive(Debug, Clone, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Clone, Serialize, Type)]
 pub struct SyncProgressDto {
     pub index: u32,
     pub total: u32,
@@ -419,6 +421,7 @@ pub struct SyncProgressDto {
 /// policy, DB record fan-out — and returns a per-target report; per-target
 /// failures are data, not command errors.
 #[tauri::command]
+#[specta::specta]
 pub async fn sync_skills_to_tools(
     store: State<'_, SkillStore>,
     skills: Vec<BatchSyncSkillDto>,
@@ -510,6 +513,7 @@ pub async fn sync_skills_to_tools(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn unsync_skill_from_tool(
     store: State<'_, SkillStore>,
@@ -528,8 +532,7 @@ pub async fn unsync_skill_from_tool(
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(Debug, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Type)]
 pub struct UpdateResultDto {
     pub skill_id: String,
     pub name: String,
@@ -539,6 +542,7 @@ pub struct UpdateResultDto {
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn update_managed_skill(
     app: tauri::AppHandle,
@@ -563,6 +567,7 @@ pub async fn update_managed_skill(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn unsync_all_skills(store: State<'_, SkillStore>) -> Result<usize, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -586,6 +591,7 @@ pub async fn unsync_all_skills(store: State<'_, SkillStore>) -> Result<usize, Co
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn unsync_skill(
     store: State<'_, SkillStore>,
@@ -609,6 +615,7 @@ pub async fn unsync_skill(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn import_existing_skill(
     app: tauri::AppHandle,
@@ -636,6 +643,7 @@ pub async fn import_existing_skill(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn remove_skill_source(path: String) -> Result<(), CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let target = std::path::PathBuf::from(&path);
@@ -658,8 +666,7 @@ pub async fn remove_skill_source(path: String) -> Result<(), CommandError> {
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(Debug, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Type)]
 pub struct ManagedSkillDto {
     pub id: String,
     pub name: String,
@@ -674,8 +681,7 @@ pub struct ManagedSkillDto {
     pub targets: Vec<SkillTargetDto>,
 }
 
-#[derive(Debug, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Type)]
 pub struct SkillTargetDto {
     pub tool: String,
     pub mode: SyncMode,
@@ -685,6 +691,7 @@ pub struct SkillTargetDto {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_managed_skills(
     store: State<'_, SkillStore>,
 ) -> Result<Vec<ManagedSkillDto>, CommandError> {
@@ -692,6 +699,7 @@ pub fn get_managed_skills(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn delete_managed_skill(
     store: State<'_, SkillStore>,
@@ -759,8 +767,7 @@ fn get_managed_skills_impl(store: &SkillStore) -> Result<Vec<ManagedSkillDto>, C
         .collect())
 }
 
-#[derive(Debug, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Type)]
 pub struct FeaturedSkillDto {
     pub slug: String,
     pub name: String,
@@ -784,6 +791,7 @@ impl From<FeaturedSkill> for FeaturedSkillDto {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn get_featured_skills(
     store: State<'_, SkillStore>,
 ) -> Result<Vec<FeaturedSkillDto>, CommandError> {
@@ -797,8 +805,7 @@ pub async fn get_featured_skills(
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(Debug, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Type)]
 pub struct OnlineSkillDto {
     pub name: String,
     pub installs: u64,
@@ -818,6 +825,7 @@ impl From<OnlineSkillResult> for OnlineSkillDto {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn search_skills_online(
     query: String,
     limit: Option<u32>,
@@ -832,8 +840,7 @@ pub async fn search_skills_online(
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(Debug, Serialize, TS)]
-#[ts(export)]
+#[derive(Debug, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillFileEntry {
     pub path: String,
@@ -841,6 +848,7 @@ pub struct SkillFileEntry {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn list_skill_files(central_path: String) -> Result<Vec<SkillFileEntry>, CommandError> {
     let path = std::path::PathBuf::from(&central_path);
     tauri::async_runtime::spawn_blocking(move || {
@@ -861,6 +869,7 @@ pub async fn list_skill_files(central_path: String) -> Result<Vec<SkillFileEntry
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn read_skill_file(
     central_path: String,
     file_path: String,
@@ -875,6 +884,7 @@ pub async fn read_skill_file(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn clone_explore_skill(
     sourceUrl: String,
@@ -903,12 +913,14 @@ pub async fn clone_explore_skill(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn cancel_current_operation(cancel: State<'_, Arc<CancelToken>>) -> Result<(), CommandError> {
     cancel.cancel();
     Ok(())
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn hide_explore_skill(
     store: State<'_, SkillStore>,
@@ -922,6 +934,7 @@ pub async fn hide_explore_skill(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn unhide_explore_skill(
     store: State<'_, SkillStore>,
@@ -935,6 +948,7 @@ pub async fn unhide_explore_skill(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn get_hidden_explore_skills(
     store: State<'_, SkillStore>,
 ) -> Result<Vec<String>, CommandError> {

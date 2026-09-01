@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import type {
-  ManagedSkill,
-  UpdateResultDto,
-} from "../components/skills/types";
+import type { ManagedSkill } from "../components/skills/types";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type { StatusReporter, TranslateFn } from "./useStatusReporter";
@@ -64,7 +61,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
 
   const loadManagedSkills = useCallback(async () => {
     try {
-      const result = await invokeTauri<ManagedSkill[]>("get_managed_skills");
+      const result = await invokeTauri("getManagedSkills");
       setManagedSkills(result);
     } catch (err) {
       setError(formatError(err));
@@ -111,9 +108,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           }),
         );
         try {
-          await invokeTauri<UpdateResultDto>("update_managed_skill", {
-            skillId: skill.id,
-          });
+          await invokeTauri("updateManagedSkill", skill.id);
         } catch (err) {
           const raw = formatError(err) ?? "";
           collectedErrors.push({
@@ -125,7 +120,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
 
       if (autoSyncEnabled) {
         const freshSkills =
-          await invokeTauri<ManagedSkill[]>("get_managed_skills");
+          await invokeTauri("getManagedSkills");
         if (installedToolIds.length > 0 && freshSkills.length > 0) {
           // Refresh means "push the updated content": without overwrite,
           // every target whose skill actually changed would fail with
@@ -162,7 +157,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
         successToast: (count: number) => t("unsyncAllComplete", { count }),
       },
       async () => {
-        const count = await invokeTauri<number>("unsync_all_skills");
+        const count = await invokeTauri("unsyncAllSkills");
         await loadManagedSkills();
         return count;
       },
@@ -172,7 +167,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   const handleUnsyncSkill = useCallback(
     async (skillId: string) => {
       try {
-        await invokeTauri("unsync_skill", { skillId });
+        await invokeTauri("unsyncSkill", skillId);
         await loadManagedSkills();
       } catch (err) {
         const msg = formatError(err);
@@ -243,7 +238,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           successToast: t("status.skillRemoved"),
         },
         async () => {
-          await invokeTauri("delete_managed_skill", { skillId: skill.id });
+          await invokeTauri("deleteManagedSkill", skill.id);
           await loadManagedSkills();
           setPendingDeleteId(null);
         },
@@ -278,10 +273,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
         },
         async (action) => {
           if (synced) {
-            await invokeTauri("unsync_skill_from_tool", {
-              skillId: skill.id,
-              tool: toolId,
-            });
+            await invokeTauri("unsyncSkillFromTool", skill.id, toolId);
           } else {
             const report = await syncSkillsToTools(
               [toSyncItem(skill)],
@@ -335,9 +327,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           successToast: t("status.updated", { name: skill.name }),
         },
         async () => {
-          await invokeTauri<UpdateResultDto>("update_managed_skill", {
-            skillId: skill.id,
-          });
+          await invokeTauri("updateManagedSkill", skill.id);
           await loadManagedSkills();
         },
       );

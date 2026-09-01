@@ -30,10 +30,17 @@ class FakeChannel<T> {
 }
 vi.mock("@tauri-apps/api/core", () => ({ Channel: FakeChannel }));
 
-import { invokeTauri } from "../lib/tauri";
+import { invokeTauri, type CommandName } from "../lib/tauri";
 import { useSyncOrchestration } from "./useSyncOrchestration";
 
-const mockInvoke = vi.mocked(invokeTauri);
+// The seam is generic over the command table; the stub switches on the
+// command name, so it is typed loosely (positional args, unknown result).
+const mockInvoke = vi.mocked(
+  invokeTauri as unknown as (
+    command: CommandName,
+    ...args: unknown[]
+  ) => Promise<unknown>,
+);
 
 // Mimics i18next for a catalog-less test: a missing key falls back to the
 // caller-provided defaultValue (how tool labels resolve), everything else
@@ -94,13 +101,13 @@ function stubBackend(overrides?: {
   status?: Partial<ToolStatusDto>;
   syncReport?: BatchSyncReportDto;
 }) {
-  mockInvoke.mockImplementation((command: string) => {
+  mockInvoke.mockImplementation((command) => {
     switch (command) {
-      case "get_settings":
+      case "getSettings":
         return Promise.resolve(appSettings(overrides?.config));
-      case "get_tool_status":
+      case "getToolStatus":
         return Promise.resolve({ ...TOOL_STATUS, ...overrides?.status });
-      case "sync_skills_to_tools":
+      case "syncSkillsToTools":
         return Promise.resolve(
           overrides?.syncReport ?? {
             results: [],
@@ -278,23 +285,18 @@ describe("syncSkillsToTools", () => {
     });
 
     const call = mockInvoke.mock.calls.find(
-      ([cmd]) => cmd === "sync_skills_to_tools",
+      ([cmd]) => cmd === "syncSkillsToTools",
     );
     expect(call).toBeDefined();
-    const args = call![1] as {
-      skills: unknown;
-      tools: unknown;
-      policy: unknown;
-      onProgress: FakeChannel<SyncProgressDto>;
-    };
-    expect(args.skills).toBe(skills);
-    expect(args.tools).toEqual(["claude"]);
-    expect(args.policy).toEqual({
+    const [, sentSkills, tools, policy, onProgress] = call!;
+    expect(sentSkills).toBe(skills);
+    expect(tools).toEqual(["claude"]);
+    expect(policy).toEqual({
       overwrite: false,
       overwrite_if_same_content: false,
       overrides: [],
     });
-    expect(args.onProgress).toBeInstanceOf(FakeChannel);
+    expect(onProgress).toBeInstanceOf(FakeChannel);
   });
 
   it("streams progress into the reporter with localized tool labels", async () => {
@@ -307,10 +309,9 @@ describe("syncSkillsToTools", () => {
       await result.current.syncSkillsToTools([], ["claude"]);
     });
     const call = mockInvoke.mock.calls.find(
-      ([cmd]) => cmd === "sync_skills_to_tools",
+      ([cmd]) => cmd === "syncSkillsToTools",
     );
-    const channel = (call![1] as { onProgress: FakeChannel<SyncProgressDto> })
-      .onProgress;
+    const channel = call![4] as FakeChannel<SyncProgressDto>;
 
     act(() => {
       channel.onmessage!({

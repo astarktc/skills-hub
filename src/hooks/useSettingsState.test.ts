@@ -13,10 +13,17 @@ vi.mock("../lib/tauri", () => ({
   invokeTauri: vi.fn(),
 }));
 
-import { invokeTauri } from "../lib/tauri";
+import { invokeTauri, type CommandName } from "../lib/tauri";
 import { useSettingsState } from "./useSettingsState";
 
-const mockInvoke = vi.mocked(invokeTauri);
+// The seam is generic over the command table; the stub switches on the
+// command name, so it is typed loosely (positional args, unknown result).
+const mockInvoke = vi.mocked(
+  invokeTauri as unknown as (
+    command: CommandName,
+    ...args: unknown[]
+  ) => Promise<unknown>,
+);
 
 const t = (key: string) => key;
 
@@ -42,15 +49,15 @@ function appSettings(overrides?: Partial<AppSettings>): AppSettings {
   };
 }
 
-/** Echo backend: `update_setting` applies the update onto the snapshot. */
+/** Echo backend: `updateSetting` applies the update onto the snapshot. */
 function stubBackend(initial = appSettings()) {
   let current = initial;
-  mockInvoke.mockImplementation((command: string, args?: unknown) => {
+  mockInvoke.mockImplementation((command, ...args) => {
     switch (command) {
-      case "get_settings":
+      case "getSettings":
         return Promise.resolve(current);
-      case "update_setting": {
-        const { update } = args as { update: SettingUpdate };
+      case "updateSetting": {
+        const [update] = args as [SettingUpdate];
         switch (update.key) {
           case "central_repo_path":
             current = { ...current, central_repo_path: update.value };
@@ -101,8 +108,8 @@ function renderSettings(reporter = makeReporter()) {
 
 const updateCalls = () =>
   mockInvoke.mock.calls
-    .filter(([command]) => command === "update_setting")
-    .map(([, args]) => (args as { update: SettingUpdate }).update);
+    .filter(([command]) => command === "updateSetting")
+    .map(([, update]) => update as SettingUpdate);
 
 // jsdom lacks the browser theme surfaces the hook touches on mount; the
 // frontend-only theme preference is out of scope here, so stub minimally.
@@ -145,8 +152,8 @@ describe("useSettingsState load", () => {
     expect(result.current.bounds).toEqual(BOUNDS);
 
     const commands = mockInvoke.mock.calls.map(([command]) => command);
-    expect(commands.filter((c) => c === "get_settings")).toHaveLength(1);
-    expect(commands).not.toContain("update_setting");
+    expect(commands.filter((c) => c === "getSettings")).toHaveLength(1);
+    expect(commands).not.toContain("updateSetting");
   });
 
   it("reports a failed load through the reporter", async () => {

@@ -524,16 +524,14 @@ pub fn update_managed_skill_from_source(
     })
 }
 
-#[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
-#[ts(export)]
+#[derive(Clone, Debug, serde::Serialize, specta::Type)]
 pub struct GitSkillCandidate {
     pub name: String,
     pub description: Option<String>,
     pub subpath: String,
 }
 
-#[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
-#[ts(export)]
+#[derive(Clone, Debug, serde::Serialize, specta::Type)]
 pub struct LocalSkillCandidate {
     pub name: String,
     pub description: Option<String>,
@@ -575,8 +573,7 @@ impl MatchableSkill for GitSkillCandidate {
 /// What the git add flow gets back from a listing: the candidates plus, when
 /// the caller named the skill it is after (Explore install), that name
 /// resolved against them by the one core matching rule.
-#[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
-#[ts(export)]
+#[derive(Clone, Debug, serde::Serialize, specta::Type)]
 pub struct GitSkillListing {
     pub candidates: Vec<GitSkillCandidate>,
     /// `None` when no `target_name` was given.

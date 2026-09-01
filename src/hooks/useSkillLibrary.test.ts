@@ -19,7 +19,7 @@ vi.mock("../lib/tauri", () => ({
   invokeTauri: vi.fn(),
 }));
 
-import { invokeTauri } from "../lib/tauri";
+import { invokeTauri, type CommandName } from "../lib/tauri";
 import { useSkillLibrary } from "./useSkillLibrary";
 import {
   ActionExit,
@@ -28,7 +28,14 @@ import {
   type StatusReporter,
 } from "./useStatusReporter";
 
-const mockInvoke = vi.mocked(invokeTauri);
+// The seam is generic over the command table; the stub switches on the
+// command name, so it is typed loosely (positional args, unknown result).
+const mockInvoke = vi.mocked(
+  invokeTauri as unknown as (
+    command: CommandName,
+    ...args: unknown[]
+  ) => Promise<unknown>,
+);
 
 const t = (key: string, opts?: Record<string, unknown>) =>
   opts ? `${key} ${JSON.stringify(opts)}` : key;
@@ -70,9 +77,9 @@ function makeDeps(overrides?: {
   syncReport?: BatchSyncReportDto;
 }) {
   const skills = overrides?.skills ?? [skill("s1", "alpha")];
-  mockInvoke.mockImplementation((command: string) => {
+  mockInvoke.mockImplementation((command) => {
     switch (command) {
-      case "get_managed_skills":
+      case "getManagedSkills":
         return Promise.resolve(skills);
       default:
         return Promise.resolve(undefined);
@@ -173,12 +180,9 @@ describe("useSkillLibrary refresh", () => {
     });
     const { result } = await renderLibrary(setup);
     // beta's update fails; alpha's succeeds.
-    mockInvoke.mockImplementation((command: string, args?) => {
-      if (command === "get_managed_skills") return Promise.resolve(setup.skills);
-      if (
-        command === "update_managed_skill" &&
-        (args as { skillId: string }).skillId === "s2"
-      ) {
+    mockInvoke.mockImplementation((command, skillId) => {
+      if (command === "getManagedSkills") return Promise.resolve(setup.skills);
+      if (command === "updateManagedSkill" && skillId === "s2") {
         return Promise.reject({ code: "GIT_CLONE_FAILED" });
       }
       return Promise.resolve(undefined);
@@ -303,10 +307,11 @@ describe("useSkillLibrary per-tool toggle", () => {
     });
 
     await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith("unsync_skill_from_tool", {
-        skillId: "s1",
-        tool: "claude",
-      }),
+      expect(mockInvoke).toHaveBeenCalledWith(
+        "unsyncSkillFromTool",
+        "s1",
+        "claude",
+      ),
     );
     expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
     expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(

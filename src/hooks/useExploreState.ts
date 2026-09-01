@@ -55,9 +55,7 @@ export function useExploreState({
     if (featuredSkills.length > 0) return;
     setFeaturedLoading(true);
     try {
-      const result = await invokeTauri<FeaturedSkillDto[]>(
-        "get_featured_skills",
-      );
+      const result = await invokeTauri("getFeaturedSkills");
       setFeaturedSkills(result);
     } catch {
       // silent — explore tab will show empty state
@@ -68,7 +66,7 @@ export function useExploreState({
 
   const loadHiddenSkills = useCallback(async () => {
     try {
-      const urls = await invokeTauri<string[]>("get_hidden_explore_skills");
+      const urls = await invokeTauri("getHiddenExploreSkills");
       setHiddenSkills(new Set(urls));
     } catch {
       // silent
@@ -78,7 +76,7 @@ export function useExploreState({
   const handleHideSkill = useCallback(
     async (sourceUrl: string) => {
       try {
-        await invokeTauri("hide_explore_skill", { sourceUrl });
+        await invokeTauri("hideExploreSkill", sourceUrl);
         setHiddenSkills((prev) => new Set([...prev, sourceUrl]));
       } catch (err) {
         const msg = formatError(err);
@@ -91,7 +89,7 @@ export function useExploreState({
   const handleUnhideSkill = useCallback(
     async (sourceUrl: string) => {
       try {
-        await invokeTauri("unhide_explore_skill", { sourceUrl });
+        await invokeTauri("unhideExploreSkill", sourceUrl);
         setHiddenSkills((prev) => {
           const next = new Set(prev);
           next.delete(sourceUrl);
@@ -120,9 +118,10 @@ export function useExploreState({
       setSearchLoading(true);
       searchTimerRef.current = setTimeout(async () => {
         try {
-          const results = await invokeTauri<OnlineSkillDto[]>(
-            "search_skills_online",
-            { query: value.trim(), limit: 50 },
+          const results = await invokeTauri(
+            "searchSkillsOnline",
+            value.trim(),
+            50,
           );
           setSearchResults(results);
         } catch {
@@ -139,10 +138,11 @@ export function useExploreState({
   const handleOpenExploreDetail = useCallback(
     async (sourceUrl: string, skillName: string, summary?: string) => {
       await runAction({}, async () => {
-        const cachePath = await invokeTauri<string>("clone_explore_skill", {
+        const cachePath = await invokeTauri(
+          "cloneExploreSkill",
           sourceUrl,
           skillName,
-        });
+        );
         const exploreManagedSkill: ManagedSkill = {
           id: "",
           name: skillName,

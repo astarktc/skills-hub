@@ -1,5 +1,5 @@
+use specta::Type;
 use tauri::State;
-use ts_rs::TS;
 
 use crate::core::environment::home_dir;
 use crate::core::errors::SignalError;
@@ -12,6 +12,7 @@ use crate::SyncMutex;
 use super::{now_ms, CommandError};
 
 #[tauri::command]
+#[specta::specta]
 pub async fn register_project(
     store: State<'_, SkillStore>,
     path: String,
@@ -27,6 +28,7 @@ pub async fn register_project(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn remove_project(
     store: State<'_, SkillStore>,
@@ -45,6 +47,7 @@ pub async fn remove_project(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn list_projects(store: State<'_, SkillStore>) -> Result<Vec<ProjectDto>, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || project_ops::list_project_dtos(&store))
@@ -54,6 +57,7 @@ pub async fn list_projects(store: State<'_, SkillStore>) -> Result<Vec<ProjectDt
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn update_project_path(
     store: State<'_, SkillStore>,
@@ -74,6 +78,7 @@ pub async fn update_project_path(
 /// update its ignore files afterwards. Core owns the ordering
 /// (`project_ops::configure_project_tools`); returns the resulting tools.
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn configure_project_tools(
     store: State<'_, SkillStore>,
@@ -94,6 +99,7 @@ pub async fn configure_project_tools(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn list_project_tools(
     store: State<'_, SkillStore>,
@@ -119,6 +125,7 @@ pub async fn list_project_tools(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn add_project_skill_assignment(
     store: State<'_, SkillStore>,
@@ -146,6 +153,7 @@ pub async fn add_project_skill_assignment(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn remove_project_skill_assignment(
     store: State<'_, SkillStore>,
@@ -192,6 +200,7 @@ fn to_assignment_dto(record: ProjectSkillAssignmentRecord) -> ProjectSkillAssign
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn list_project_skill_assignments(
     store: State<'_, SkillStore>,
@@ -207,8 +216,7 @@ pub async fn list_project_skill_assignments(
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(serde::Serialize, Clone, TS)]
-#[ts(export)]
+#[derive(serde::Serialize, Clone, Type)]
 pub struct ResyncSummaryDto {
     pub project_id: String,
     pub synced: usize,
@@ -217,6 +225,7 @@ pub struct ResyncSummaryDto {
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn resync_project(
     store: State<'_, SkillStore>,
@@ -242,6 +251,7 @@ pub async fn resync_project(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn resync_all_projects(
     store: State<'_, SkillStore>,
     sync_mutex: State<'_, SyncMutex>,
@@ -269,21 +279,20 @@ pub async fn resync_all_projects(
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(serde::Serialize, Clone, TS)]
-#[ts(export)]
+#[derive(serde::Serialize, Clone, Type)]
 pub struct BulkAssignResultDto {
     pub assigned: Vec<ProjectSkillAssignmentDto>,
     pub failed: Vec<BulkAssignErrorDto>,
 }
 
-#[derive(serde::Serialize, Clone, TS)]
-#[ts(export)]
+#[derive(serde::Serialize, Clone, Type)]
 pub struct BulkAssignErrorDto {
     pub tool: String,
     pub error: CommandError,
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn bulk_assign_skill(
     store: State<'_, SkillStore>,
@@ -323,6 +332,7 @@ pub async fn bulk_assign_skill(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn update_project_gitignore(
     store: State<'_, SkillStore>,
@@ -347,6 +357,7 @@ pub async fn update_project_gitignore(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn get_project_gitignore_status(
     store: State<'_, SkillStore>,
@@ -375,8 +386,7 @@ pub async fn get_project_gitignore_status(
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(serde::Serialize, Clone, TS)]
-#[ts(export)]
+#[derive(serde::Serialize, Clone, Type)]
 pub struct GitignoreStatusDto {
     pub in_gitignore: bool,
     pub in_exclude: bool,

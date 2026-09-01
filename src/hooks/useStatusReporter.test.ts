@@ -95,7 +95,7 @@ describe("useStatusReporter", () => {
       result.current.cancelLoading();
     });
 
-    expect(invokeTauri).toHaveBeenCalledWith("cancel_current_operation");
+    expect(invokeTauri).toHaveBeenCalledWith("cancelCurrentOperation");
     expect(result.current.loading).toBe(false);
     expect(result.current.loadingStartAt).toBeNull();
     expect(result.current.actionMessage).toBeNull();

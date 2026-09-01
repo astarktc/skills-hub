@@ -23,7 +23,11 @@ vi.mock("../lib/tauri", () => ({
   invokeTauri: vi.fn(),
 }));
 
-import { invokeTauri } from "../lib/tauri";
+import {
+  invokeTauri,
+  type CommandName,
+  type Commands,
+} from "../lib/tauri";
 import { useAddSkillFlow } from "./useAddSkillFlow";
 import {
   ActionExit,
@@ -32,7 +36,14 @@ import {
   type StatusReporter,
 } from "./useStatusReporter";
 
-const mockInvoke = vi.mocked(invokeTauri);
+// The seam is generic over the command table; the stub switches on the
+// command name, so it is typed loosely (positional args, unknown result).
+const mockInvoke = vi.mocked(
+  invokeTauri as unknown as (
+    command: CommandName,
+    ...args: unknown[]
+  ) => Promise<unknown>,
+);
 
 const t = (key: string, opts?: Record<string, unknown>) =>
   opts ? `${key} ${JSON.stringify(opts)}` : key;
@@ -49,12 +60,12 @@ function stubBackend(overrides?: {
   targetMatch?: CandidateMatch;
   localCandidates?: LocalSkillCandidate[];
 }) {
-  mockInvoke.mockImplementation((command: string, args?: unknown) => {
+  mockInvoke.mockImplementation((command, ...args) => {
     switch (command) {
-      case "get_onboarding_plan":
+      case "getOnboardingPlan":
         return Promise.resolve(EMPTY_PLAN);
-      case "list_git_skills_cmd": {
-        const { targetName } = args as { targetName: string | null };
+      case "listGitSkillsCmd": {
+        const [, targetName] = args as Parameters<Commands["listGitSkillsCmd"]>;
         const listing: GitSkillListing = {
           candidates: overrides?.gitCandidates ?? [],
           target_match: targetName
@@ -63,10 +74,10 @@ function stubBackend(overrides?: {
         };
         return Promise.resolve(listing);
       }
-      case "list_local_skills_cmd":
+      case "listLocalSkillsCmd":
         return Promise.resolve(overrides?.localCandidates ?? []);
-      case "install_git_selection":
-      case "install_local_selection":
+      case "installGitSelection":
+      case "installLocalSelection":
         return Promise.resolve({
           skill_id: "new-id",
           name: "installed-skill",
@@ -162,7 +173,7 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
 
 function installGitCalls() {
   return mockInvoke.mock.calls.filter(
-    ([cmd]) => cmd === "install_git_selection",
+    ([cmd]) => cmd === "installGitSelection",
   );
 }
 
@@ -184,7 +195,7 @@ describe("useAddSkillFlow git flow", () => {
       "errors.requireGitUrl",
     );
     expect(
-      mockInvoke.mock.calls.some(([cmd]) => cmd === "list_git_skills_cmd"),
+      mockInvoke.mock.calls.some(([cmd]) => cmd === "listGitSkillsCmd"),
     ).toBe(false);
   });
 
@@ -214,11 +225,12 @@ describe("useAddSkillFlow git flow", () => {
       await result.current.handleCreate();
     });
 
-    expect(mockInvoke).toHaveBeenCalledWith("install_git_selection", {
-      repoUrl: "https://github.com/x/y",
-      subpath: "skills/alpha",
-      name: undefined,
-    });
+    expect(mockInvoke).toHaveBeenCalledWith(
+      "installGitSelection",
+      "https://github.com/x/y",
+      "skills/alpha",
+      null,
+    );
     // goose is selected but not installed; cursor installed but deselected.
     expect(setup.sync.syncSkillsToTools).toHaveBeenCalledWith(
       [
@@ -285,16 +297,18 @@ describe("useAddSkillFlow explore auto-select", () => {
     });
 
     await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith("install_git_selection", {
-        repoUrl: "https://github.com/x/y",
-        subpath: "skills/react",
-        name: undefined,
-      }),
+      expect(mockInvoke).toHaveBeenCalledWith(
+        "installGitSelection",
+        "https://github.com/x/y",
+        "skills/react",
+        null,
+      ),
     );
-    expect(mockInvoke).toHaveBeenCalledWith("list_git_skills_cmd", {
-      repoUrl: "https://github.com/x/y",
-      targetName: "json-render-react",
-    });
+    expect(mockInvoke).toHaveBeenCalledWith(
+      "listGitSkillsCmd",
+      "https://github.com/x/y",
+      "json-render-react",
+    );
     // The explore path resets deploy targets to all installed tools first.
     expect(setup.sync.targetAllInstalled).toHaveBeenCalled();
   });
@@ -309,10 +323,11 @@ describe("useAddSkillFlow explore auto-select", () => {
       await result.current.handleCreate();
     });
 
-    expect(mockInvoke).toHaveBeenCalledWith("list_git_skills_cmd", {
-      repoUrl: "https://github.com/x/y",
-      targetName: null,
-    });
+    expect(mockInvoke).toHaveBeenCalledWith(
+      "listGitSkillsCmd",
+      "https://github.com/x/y",
+      null,
+    );
   });
 
   it("falls back to the pick modal when the backend resolves nothing", async () => {
@@ -413,7 +428,7 @@ describe("useAddSkillFlow local flow", () => {
       broken: false,
     });
     expect(
-      mockInvoke.mock.calls.some(([cmd]) => cmd === "install_local_selection"),
+      mockInvoke.mock.calls.some(([cmd]) => cmd === "installLocalSelection"),
     ).toBe(false);
     // A hand-off to the picker is neither a success nor a failure.
     expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
@@ -447,7 +462,7 @@ describe("useAddSkillFlow local flow", () => {
       'errors.skillAlreadyExists {"name":"alpha"}',
     );
     expect(
-      mockInvoke.mock.calls.some(([cmd]) => cmd === "install_local_selection"),
+      mockInvoke.mock.calls.some(([cmd]) => cmd === "installLocalSelection"),
     ).toBe(false);
   });
 });

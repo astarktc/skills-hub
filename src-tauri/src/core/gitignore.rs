@@ -16,7 +16,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
-use ts_rs::TS;
+use specta::Type;
 
 use crate::core::errors::SignalError;
 use crate::core::skill_store::SkillStore;
@@ -199,8 +199,7 @@ pub fn update_project_ignore_files(
 
 /// The two toggles behind `update_project_gitignore`; also the optional
 /// ignore intent carried by `configure_project_tools`, hence an IPC DTO.
-#[derive(Debug, Clone, Copy, Deserialize, TS)]
-#[ts(export)]
+#[derive(Debug, Clone, Copy, Deserialize, Type)]
 pub struct IgnoreUpdateOptions {
     pub add_to_gitignore: bool,
     pub add_to_exclude: bool,

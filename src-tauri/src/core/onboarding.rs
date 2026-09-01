@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde::Serialize;
-use ts_rs::TS;
+use specta::Type;
 
 use super::content_hash::hash_dir;
 use super::skill_store::SkillStore;
@@ -11,8 +11,7 @@ use super::tool_adapters::{
     default_tool_adapters, is_installed_in, scan_tool_dir, skills_dir_in, DetectedSkill,
 };
 
-#[derive(Clone, Debug, Serialize, TS)]
-#[ts(export)]
+#[derive(Clone, Debug, Serialize, Type)]
 pub struct OnboardingVariant {
     pub tool: String,
     pub name: String,
@@ -22,16 +21,14 @@ pub struct OnboardingVariant {
     pub link_target: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, Serialize, TS)]
-#[ts(export)]
+#[derive(Clone, Debug, Serialize, Type)]
 pub struct OnboardingGroup {
     pub name: String,
     pub variants: Vec<OnboardingVariant>,
     pub has_conflict: bool,
 }
 
-#[derive(Clone, Debug, Serialize, TS)]
-#[ts(export)]
+#[derive(Clone, Debug, Serialize, Type)]
 pub struct OnboardingPlan {
     pub total_tools_scanned: usize,
     pub total_skills_found: usize,
