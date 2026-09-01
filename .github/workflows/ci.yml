@@ -42,7 +42,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all
-      # ts-rs regenerates src/bindings/ during cargo test; fail if committed
+      # tauri-specta regenerates src/bindings/index.ts during cargo test; fail if committed
       # bindings drifted from the Rust types. `git diff --exit-code` fails on
       # tracked-file drift (and prints the diff); it misses brand-new
       # (untracked) bindings, so the porcelain check also fails on any status.

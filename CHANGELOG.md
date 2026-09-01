@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Typed IPC end to end**: `tauri-specta` (`=2.0.0-rc.25`) replaces `ts-rs` as the single generator of `src/bindings/index.ts`, which now carries every DTO plus one typed function per command; the frontend seam `invokeTauri(name, ...args)` is generic over that table, so a wrong command name or argument fails the build.
+
 ## [1.1.9] - 2026-07-12
 
 ### Added
