@@ -77,8 +77,10 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   per-world hooks (`src/hooks/`, `components/projects/useProjectState.ts`), each returning that world's
   data + actions; `src/App.tsx` is the binder that composes the hooks and passes props down. Cross-world
   needs flow through interfaces App passes into hooks (e.g. the shared `useStatusReporter` surface, the
-  sync seam) — hooks never import each other at runtime (type-only imports of another hook's
-  types, narrowed with `Pick<>`, are the established pattern for declaring deps). Refresh data by re-invoking the relevant command
+  sync seam) — **world** hooks never import each other at runtime (type-only imports of another hook's
+  types, narrowed with `Pick<>`, are the established pattern for declaring deps). A world may be built
+  from smaller building-block hooks it owns (e.g. `useAddSkillFlow` instantiates `useCandidatePick`
+  twice); those are internal to that world, not a cross-world seam. Refresh data by re-invoking the relevant command
   (e.g. `invoke('get_managed_skills')`) after a mutation.
 - **Frontend tests are hook-level only** (vitest + `renderHook`, jsdom; colocated `src/**/*.test.ts`,
   type-checked by `npm run build`): mock at module seams — `src/lib/tauri.ts` for backend calls,
