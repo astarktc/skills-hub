@@ -16,6 +16,10 @@ use super::install_finalize::{
     StagingDir,
 };
 use super::project_sync::resolve_project_sync_target;
+use super::skill_discovery::{
+    discover_skills, find_skill_md, is_skill_dir, parse_skill_md, parse_skill_md_with_reason,
+    DiscoveredSkill,
+};
 use super::skill_lock::try_enrich_from_skill_lock_with_home;
 use super::skill_store::SkillStore;
 use super::sync_engine::copy_dir_recursive;
@@ -306,187 +310,6 @@ fn derive_name_from_repo_url(repo_url: &str) -> String {
     }
 }
 
-/// Scan base directories used for skill discovery.
-const SKILL_SCAN_BASES: [&str; 5] = [
-    "skills",
-    "skills/.curated",
-    "skills/.experimental",
-    "skills/.system",
-    ".claude/skills",
-];
-
-/// Directories to skip during recursive skill scanning (performance + correctness).
-const SKIP_DIRS: [&str; 7] = [
-    "node_modules",
-    ".git",
-    "dist",
-    "build",
-    "target",
-    ".next",
-    ".cache",
-];
-
-/// Check if a directory contains a SKILL.md file (case-insensitive).
-/// Handles both SKILL.md and SKILL.MD and any other casing.
-fn has_skill_md(dir: &Path) -> bool {
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for entry in rd.flatten() {
-            if !entry.path().is_file() {
-                continue;
-            }
-            let name = entry.file_name();
-            if name.to_string_lossy().eq_ignore_ascii_case("skill.md") {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Find the actual SKILL.md file path in a directory (case-insensitive).
-/// Returns the real filesystem path preserving original casing.
-pub(super) fn find_skill_md(dir: &Path) -> Option<PathBuf> {
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for entry in rd.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let name = entry.file_name();
-            if name.to_string_lossy().eq_ignore_ascii_case("skill.md") {
-                return Some(path);
-            }
-        }
-    }
-    None
-}
-
-/// Recursively find directories containing SKILL.md, up to max_depth levels deep.
-/// This is a fallback for repos that don't use standard skill directory layouts
-/// (e.g., wshobson/agents with skills at depth 4: plugins/*/skills/*/SKILL.md).
-fn find_skill_dirs_recursive(dir: &Path, depth: usize, max_depth: usize) -> Vec<PathBuf> {
-    if depth > max_depth {
-        return vec![];
-    }
-    let mut results = Vec::new();
-    if has_skill_md(dir) {
-        results.push(dir.to_path_buf());
-    }
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for entry in rd.flatten() {
-            let p = entry.path();
-            if !p.is_dir() {
-                continue;
-            }
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            // Skip known heavy/irrelevant directories
-            if SKIP_DIRS.iter().any(|&s| name_str == s) {
-                continue;
-            }
-            // Skip hidden dirs (starting with .) except known scan bases like .claude
-            if name_str.starts_with('.') && name_str != ".claude" {
-                continue;
-            }
-            results.extend(find_skill_dirs_recursive(&p, depth + 1, max_depth));
-        }
-    }
-    results
-}
-
-#[derive(Deserialize)]
-struct MarketplaceManifest {
-    plugins: Option<Vec<MarketplacePlugin>>,
-}
-
-#[derive(Deserialize)]
-struct MarketplacePlugin {
-    #[allow(dead_code)]
-    name: Option<String>,
-    source: Option<String>,
-    #[allow(dead_code)]
-    description: Option<String>,
-}
-
-/// Parse .claude-plugin/marketplace.json to extract plugin source directories.
-/// Returns absolute paths to plugin dirs that exist on disk.
-fn parse_marketplace_json(repo_dir: &Path) -> Vec<PathBuf> {
-    let manifest_path = repo_dir.join(".claude-plugin/marketplace.json");
-    let content = match std::fs::read_to_string(&manifest_path) {
-        Ok(c) => c,
-        Err(_) => return vec![],
-    };
-    let manifest: MarketplaceManifest = match serde_json::from_str(&content) {
-        Ok(m) => m,
-        Err(_) => return vec![],
-    };
-    let plugins = match manifest.plugins {
-        Some(p) => p,
-        None => return vec![],
-    };
-
-    let repo_root = match repo_dir.canonicalize() {
-        Ok(p) => p,
-        Err(_) => return vec![],
-    };
-
-    plugins
-        .iter()
-        .filter_map(|plugin| {
-            let source = plugin.source.as_ref()?;
-            let cleaned = source.strip_prefix("./").unwrap_or(source);
-            let resolved = repo_dir.join(cleaned).canonicalize().ok()?;
-            if resolved.starts_with(&repo_root) && resolved.exists() {
-                Some(resolved)
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-/// Scan marketplace plugin dirs for skills. Checks each plugin dir's `skills/*/SKILL.md`
-/// pattern and direct children for SKILL.md.
-fn scan_marketplace_skills(
-    marketplace_dirs: &[PathBuf],
-    repo_dir: &Path,
-) -> Vec<(PathBuf, String, Option<String>)> {
-    let mut results = Vec::new();
-    for plugin_dir in marketplace_dirs {
-        // Check plugin_dir/skills/*/SKILL.md (primary pattern for wshobson/agents)
-        let skills_subdir = plugin_dir.join("skills");
-        if let Ok(rd) = std::fs::read_dir(&skills_subdir) {
-            for entry in rd.flatten() {
-                let p = entry.path();
-                if p.is_dir() && has_skill_md(&p) {
-                    let (name, desc) = extract_skill_info(&p, repo_dir);
-                    results.push((p, name, desc));
-                }
-            }
-        }
-        // Also check direct children of plugin dir
-        if let Ok(rd) = std::fs::read_dir(plugin_dir) {
-            for entry in rd.flatten() {
-                let p = entry.path();
-                if p.is_dir() && has_skill_md(&p) {
-                    let dir_name = entry.file_name();
-                    if dir_name.to_string_lossy() == "skills" {
-                        continue; // Already scanned above
-                    }
-                    let (name, desc) = extract_skill_info(&p, repo_dir);
-                    results.push((p, name, desc));
-                }
-            }
-        }
-    }
-    results
-}
-
-/// Check if a directory is a valid skill (has SKILL.md or is under .claude/skills/).
-fn is_skill_dir(p: &Path) -> bool {
-    p.is_dir() && (has_skill_md(p) || is_claude_skill_dir(p))
-}
-
 fn ensure_installable_skill_dir(p: &Path) -> Result<()> {
     if is_skill_dir(p) {
         Ok(())
@@ -495,151 +318,6 @@ fn ensure_installable_skill_dir(p: &Path) -> Result<()> {
             reason: "missing_skill_md".to_string(),
         });
     }
-}
-
-/// Check if a directory is a Claude plugin skill (under .claude/skills/ without SKILL.md).
-fn is_claude_skill_dir(p: &Path) -> bool {
-    // A directory under .claude/skills/ is treated as a valid skill even without SKILL.md
-    if let Some(parent) = p.parent() {
-        let parent_str = parent.to_string_lossy();
-        if parent_str.ends_with(".claude/skills") || parent_str.ends_with(".claude\\skills") {
-            return p.is_dir();
-        }
-    }
-    false
-}
-
-/// Try to read the description for a skill from .claude-plugin/plugin.json.
-fn read_plugin_description(repo_dir: &Path) -> Option<String> {
-    let plugin_json = repo_dir.join(".claude-plugin/plugin.json");
-    if !plugin_json.exists() {
-        return None;
-    }
-    let content = std::fs::read_to_string(&plugin_json).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
-    json.get("description")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-}
-
-/// Extract name and description for a skill directory.
-/// Prefers SKILL.md frontmatter; falls back to folder name + plugin.json description.
-fn extract_skill_info(skill_dir: &Path, repo_dir: &Path) -> (String, Option<String>) {
-    if let Some(skill_md) = find_skill_md(skill_dir) {
-        if let Some((name, desc)) = parse_skill_md(&skill_md) {
-            return (name, desc);
-        }
-    }
-    // Fallback: folder name + optional plugin.json description
-    let name = skill_dir
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-    let desc = read_plugin_description(repo_dir);
-    (name, desc)
-}
-
-fn is_hidden_dir_name(name: &str) -> bool {
-    name.starts_with('.')
-}
-
-fn is_known_root_scan_dir(name: &str) -> bool {
-    SKILL_SCAN_BASES
-        .iter()
-        .filter_map(|base| base.split('/').next())
-        .any(|base| base == name)
-}
-
-fn is_skill_container_dir_name(name: &str) -> bool {
-    let normalized = name.to_ascii_lowercase();
-    normalized.contains("skill")
-}
-
-fn push_skill_dirs_from_base(out: &mut Vec<PathBuf>, base_dir: &Path) {
-    if let Ok(rd) = std::fs::read_dir(base_dir) {
-        for entry in rd.flatten() {
-            let p = entry.path();
-            if is_skill_dir(&p) {
-                out.push(p);
-            }
-        }
-    }
-}
-
-fn collect_skill_dirs(repo_dir: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-
-    // 1) Fast path: known skill locations such as skills/* and .claude/skills/*.
-    for base in SKILL_SCAN_BASES {
-        push_skill_dirs_from_base(&mut out, &repo_dir.join(base));
-    }
-
-    // 2) Root-level skills: repo/my-skill/SKILL.md.
-    // 3) Root-level skill containers: repo/*skill*/my-skill/SKILL.md.
-    if let Ok(rd) = std::fs::read_dir(repo_dir) {
-        for entry in rd.flatten() {
-            let p = entry.path();
-            if !p.is_dir() {
-                continue;
-            }
-            let dir_name = entry.file_name();
-            let dir_name = dir_name.to_string_lossy();
-            if is_hidden_dir_name(&dir_name) || is_known_root_scan_dir(&dir_name) {
-                continue;
-            }
-            if is_skill_dir(&p) {
-                out.push(p);
-            } else if is_skill_container_dir_name(&dir_name) {
-                push_skill_dirs_from_base(&mut out, &p);
-            }
-        }
-    }
-
-    // Marketplace scanning (our addition — catches plugins with marketplace.json)
-    let marketplace_dirs = parse_marketplace_json(repo_dir);
-    if !marketplace_dirs.is_empty() {
-        for (p, _, _) in scan_marketplace_skills(&marketplace_dirs, repo_dir) {
-            out.push(p);
-        }
-    }
-    // Recursive fallback (our addition — catches deeply nested skills up to depth 5)
-    let recursive = find_skill_dirs_recursive(repo_dir, 0, 5);
-    for p in recursive {
-        let rel = p
-            .strip_prefix(repo_dir)
-            .unwrap_or(&p)
-            .to_string_lossy()
-            .to_string();
-        if rel != "." && !rel.is_empty() {
-            out.push(p);
-        }
-    }
-
-    out.sort();
-    out.dedup();
-    out
-}
-
-/// Scan all skill candidates in a repo directory, returning (name, relative_subpath) pairs.
-/// Used for auto-matching when updating legacy skills with missing source_subpath.
-fn scan_skill_candidates_in_dir(repo_dir: &Path) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for p in collect_skill_dirs(repo_dir) {
-        let (name, _) = extract_skill_info(&p, repo_dir);
-        let rel = p
-            .strip_prefix(repo_dir)
-            .unwrap_or(&p)
-            .to_string_lossy()
-            .to_string();
-        out.push((name, rel));
-    }
-    out
-}
-
-/// Count skill directories in a repo: checks both `skills/*` and root-level subdirectories.
-fn count_skills_in_repo(repo_dir: &Path) -> usize {
-    collect_skill_dirs(repo_dir).len()
 }
 
 pub struct UpdateResult {
@@ -713,30 +391,37 @@ pub fn update_managed_skill_from_source(
             .as_deref()
             .or(parsed.subpath.as_deref())
             .map(|s| s.to_string());
-        if resolved_subpath.is_none() && count_skills_in_repo(&repo_dir) >= 2 {
+        if resolved_subpath.is_none() {
             // Multi-skill repo with no stored subpath: match by name
-            let candidates = scan_skill_candidates_in_dir(&repo_dir);
-            let skill_name = record.name.to_lowercase();
-            if let Some(matched) = candidates.iter().find(|c| c.0 == record.name).or_else(|| {
-                // Fuzzy: bidirectional containment (e.g. "react-best-practices" vs "vercel-react-best-practices")
-                let fuzzy: Vec<_> = candidates
-                    .iter()
-                    .filter(|c| {
-                        let cn = c.0.to_lowercase();
-                        cn.contains(&skill_name) || skill_name.contains(&cn)
-                    })
-                    .collect();
-                if fuzzy.len() == 1 {
-                    Some(fuzzy[0])
-                } else {
-                    None
+            let candidates = installable_skills_in_repo(&repo_dir);
+            if candidates.len() >= 2 {
+                let skill_name = record.name.to_lowercase();
+                if let Some(matched) =
+                    candidates
+                        .iter()
+                        .find(|c| c.name == record.name)
+                        .or_else(|| {
+                            // Fuzzy: bidirectional containment (e.g. "react-best-practices" vs "vercel-react-best-practices")
+                            let fuzzy: Vec<_> = candidates
+                                .iter()
+                                .filter(|c| {
+                                    let cn = c.name.to_lowercase();
+                                    cn.contains(&skill_name) || skill_name.contains(&cn)
+                                })
+                                .collect();
+                            if fuzzy.len() == 1 {
+                                Some(fuzzy[0])
+                            } else {
+                                None
+                            }
+                        })
+                {
+                    resolved_subpath = Some(matched.subpath.clone());
+                    // Backfill source_subpath for future updates (carried into the
+                    // refreshed record by finalize_update as well).
+                    record.source_subpath = Some(matched.subpath.clone());
+                    let _ = store.upsert_skill(&record);
                 }
-            }) {
-                resolved_subpath = Some(matched.1.clone());
-                // Backfill source_subpath for future updates (carried into the
-                // refreshed record by finalize_update as well).
-                record.source_subpath = Some(matched.1.clone());
-                let _ = store.upsert_skill(&record);
             }
         }
         let copy_src = if let Some(subpath) = &resolved_subpath {
@@ -875,6 +560,27 @@ pub struct LocalSkillCandidate {
     pub reason: Option<String>,
 }
 
+/// Skill candidates a git flow may install from a cloned repo: everything
+/// discovery found that has skill bytes (a `SKILL.md`, even a broken one, or
+/// a `.claude/skills/` child), excluding the repo root itself. The root is
+/// never one of the "skills in a multi-skill repo".
+fn installable_skills_in_repo(repo_dir: &Path) -> Vec<DiscoveredSkill> {
+    discover_skills(repo_dir)
+        .into_iter()
+        .filter(|c| c.validity.is_installable() && c.subpath != ".")
+        .collect()
+}
+
+/// Git listing adapter: the git side admits any installable candidate;
+/// validity is not surfaced on this wire shape.
+fn git_candidate(c: DiscoveredSkill) -> GitSkillCandidate {
+    GitSkillCandidate {
+        name: c.name,
+        description: c.description,
+        subpath: c.subpath,
+    }
+}
+
 pub fn list_git_skills(
     paths: &InstallerPaths,
     store: &SkillStore,
@@ -889,293 +595,58 @@ pub fn list_git_skills(
         None,
     )?;
 
-    let mut out: Vec<GitSkillCandidate> = Vec::new();
-
-    // If user provided a folder URL, treat it as a single candidate.
-    if let Some(subpath) = &parsed.subpath {
-        let dir = repo_dir.join(subpath);
-        if dir.is_dir() && (has_skill_md(&dir) || is_claude_skill_dir(&dir)) {
-            let (name, desc) = extract_skill_info(&dir, &repo_dir);
-            out.push(GitSkillCandidate {
-                name,
-                description: desc,
-                subpath: subpath.to_string(),
-            });
-        } else if dir.is_dir() {
-            for p in collect_skill_dirs(&dir) {
-                let (name, desc) = extract_skill_info(&p, &repo_dir);
-                let rel = p
-                    .strip_prefix(&repo_dir)
-                    .unwrap_or(&p)
-                    .to_string_lossy()
-                    .to_string();
-                out.push(GitSkillCandidate {
-                    name,
-                    description: desc,
-                    subpath: rel,
-                });
-            }
-        }
-        out.sort_by(|a, b| a.name.cmp(&b.name));
-        out.dedup_by(|a, b| a.subpath == b.subpath);
-        return Ok(out);
-    }
-
-    // Root-level skill
-    if let Some(root_skill) = find_skill_md(&repo_dir) {
-        let (name, desc) = parse_skill_md(&root_skill).unwrap_or(("root-skill".to_string(), None));
-        out.push(GitSkillCandidate {
-            name,
-            description: desc,
-            subpath: ".".to_string(),
-        });
-    }
-
-    for p in collect_skill_dirs(&repo_dir) {
-        let (name, desc) = extract_skill_info(&p, &repo_dir);
-        let rel = p
-            .strip_prefix(&repo_dir)
-            .unwrap_or(&p)
-            .to_string_lossy()
-            .to_string();
-        out.push(GitSkillCandidate {
-            name,
-            description: desc,
-            subpath: rel,
-        });
-    }
-
-    // Always run marketplace + recursive scan to catch deeply nested skills
-    // (e.g., better-auth/skills has skills at depth 2 inside better-auth/*/).
-    // Dedup by subpath at the end handles any overlap with the priority scan above.
-    let marketplace_dirs = parse_marketplace_json(&repo_dir);
-    if !marketplace_dirs.is_empty() {
-        for (p, name, desc) in scan_marketplace_skills(&marketplace_dirs, &repo_dir) {
-            let rel = p
-                .strip_prefix(&repo_dir)
-                .unwrap_or(&p)
-                .to_string_lossy()
-                .to_string();
-            out.push(GitSkillCandidate {
-                name,
-                description: desc,
-                subpath: rel,
-            });
-        }
-    }
-    let recursive = find_skill_dirs_recursive(&repo_dir, 0, 5);
-    for p in recursive {
-        let rel = p
-            .strip_prefix(&repo_dir)
-            .unwrap_or(&p)
-            .to_string_lossy()
-            .to_string();
-        if rel == "." || rel.is_empty() {
-            continue;
-        }
-        let (name, desc) = extract_skill_info(&p, &repo_dir);
-        out.push(GitSkillCandidate {
-            name,
-            description: desc,
-            subpath: rel,
-        });
-    }
-
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    out.dedup_by(|a, b| a.subpath == b.subpath);
-
-    Ok(out)
+    Ok(git_candidates_in(&repo_dir, parsed.subpath.as_deref()))
 }
 
+/// Git listing over a cloned repo. A folder URL (`subpath`) scopes discovery
+/// to that folder while subpaths stay repo-relative; when the folder is itself
+/// a skill it is the single candidate.
+fn git_candidates_in(repo_dir: &Path, subpath: Option<&str>) -> Vec<GitSkillCandidate> {
+    let scan_root = match subpath {
+        Some(sub) => repo_dir.join(sub),
+        None => repo_dir.to_path_buf(),
+    };
+    if !scan_root.is_dir() {
+        return Vec::new();
+    }
+    let mut found = discover_skills(&scan_root);
+    if subpath.is_some() && found.iter().any(|c| c.subpath == ".") {
+        found.retain(|c| c.subpath == ".");
+    }
+
+    found
+        .into_iter()
+        .filter(|c| c.validity.is_installable())
+        .map(|mut c| {
+            if let Some(prefix) = subpath {
+                c.subpath = if c.subpath == "." {
+                    prefix.to_string()
+                } else {
+                    format!("{}/{}", prefix.trim_end_matches('/'), c.subpath)
+                };
+            }
+            git_candidate(c)
+        })
+        .collect()
+}
+
+/// Local listing adapter: every discovered candidate is shown, with its
+/// validity and reason, so the picker can explain why a folder under a
+/// declared skills dir is not selectable.
 pub fn list_local_skills(base_path: &Path) -> Result<Vec<LocalSkillCandidate>> {
     if !base_path.exists() {
         anyhow::bail!("source path not found: {:?}", base_path);
     }
-
-    let mut out: Vec<LocalSkillCandidate> = Vec::new();
-
-    if let Some(root_skill) = find_skill_md(base_path) {
-        match parse_skill_md_with_reason(&root_skill) {
-            Ok((name, desc)) => {
-                out.push(LocalSkillCandidate {
-                    name,
-                    description: desc,
-                    subpath: ".".to_string(),
-                    valid: true,
-                    reason: None,
-                });
-            }
-            Err(reason) => {
-                let fallback_name = base_path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                out.push(LocalSkillCandidate {
-                    name: if fallback_name.is_empty() {
-                        "root-skill".to_string()
-                    } else {
-                        fallback_name
-                    },
-                    description: None,
-                    subpath: ".".to_string(),
-                    valid: false,
-                    reason: Some(reason.to_string()),
-                });
-            }
-        }
-    }
-
-    for base in SKILL_SCAN_BASES {
-        let base_dir = base_path.join(base);
-        if !base_dir.exists() {
-            continue;
-        }
-        if let Ok(rd) = std::fs::read_dir(&base_dir) {
-            for entry in rd.flatten() {
-                let p = entry.path();
-                if !p.is_dir() {
-                    continue;
-                }
-                let skill_md_path = find_skill_md(&p);
-                let rel = p
-                    .strip_prefix(base_path)
-                    .unwrap_or(&p)
-                    .to_string_lossy()
-                    .to_string();
-                if let Some(skill_md) = skill_md_path {
-                    match parse_skill_md_with_reason(&skill_md) {
-                        Ok((name, desc)) => {
-                            out.push(LocalSkillCandidate {
-                                name,
-                                description: desc,
-                                subpath: rel,
-                                valid: true,
-                                reason: None,
-                            });
-                        }
-                        Err(reason) => {
-                            out.push(LocalSkillCandidate {
-                                name: p
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                                    .to_string(),
-                                description: None,
-                                subpath: rel,
-                                valid: false,
-                                reason: Some(reason.to_string()),
-                            });
-                        }
-                    }
-                } else if is_claude_skill_dir(&p) {
-                    // .claude/skills/* directories are valid without SKILL.md
-                    let name = p
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-                    let desc = read_plugin_description(base_path);
-                    out.push(LocalSkillCandidate {
-                        name,
-                        description: desc,
-                        subpath: rel,
-                        valid: true,
-                        reason: None,
-                    });
-                } else {
-                    out.push(LocalSkillCandidate {
-                        name: p
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string(),
-                        description: None,
-                        subpath: rel,
-                        valid: false,
-                        reason: Some("missing_skill_md".to_string()),
-                    });
-                }
-            }
-        }
-    }
-
-    // Always run marketplace + recursive scan to catch deeply nested skills
-    let marketplace_dirs = parse_marketplace_json(base_path);
-    if !marketplace_dirs.is_empty() {
-        for (p, name, desc) in scan_marketplace_skills(&marketplace_dirs, base_path) {
-            let rel = p
-                .strip_prefix(base_path)
-                .unwrap_or(&p)
-                .to_string_lossy()
-                .to_string();
-            if let Some(skill_md) = find_skill_md(&p) {
-                match parse_skill_md_with_reason(&skill_md) {
-                    Ok((parsed_name, parsed_desc)) => {
-                        out.push(LocalSkillCandidate {
-                            name: parsed_name,
-                            description: parsed_desc,
-                            subpath: rel,
-                            valid: true,
-                            reason: None,
-                        });
-                    }
-                    Err(reason) => {
-                        out.push(LocalSkillCandidate {
-                            name,
-                            description: desc,
-                            subpath: rel,
-                            valid: false,
-                            reason: Some(reason.to_string()),
-                        });
-                    }
-                }
-            }
-        }
-    }
-    let recursive = find_skill_dirs_recursive(base_path, 0, 5);
-    for p in recursive {
-        let rel = p
-            .strip_prefix(base_path)
-            .unwrap_or(&p)
-            .to_string_lossy()
-            .to_string();
-        if rel == "." || rel.is_empty() {
-            continue;
-        }
-        if let Some(skill_md) = find_skill_md(&p) {
-            match parse_skill_md_with_reason(&skill_md) {
-                Ok((name, desc)) => {
-                    out.push(LocalSkillCandidate {
-                        name,
-                        description: desc,
-                        subpath: rel,
-                        valid: true,
-                        reason: None,
-                    });
-                }
-                Err(reason) => {
-                    let name = p
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-                    out.push(LocalSkillCandidate {
-                        name,
-                        description: None,
-                        subpath: rel,
-                        valid: false,
-                        reason: Some(reason.to_string()),
-                    });
-                }
-            }
-        }
-    }
-
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    out.dedup_by(|a, b| a.subpath == b.subpath);
-
-    Ok(out)
+    Ok(discover_skills(base_path)
+        .into_iter()
+        .map(|c| LocalSkillCandidate {
+            name: c.name,
+            description: c.description,
+            subpath: c.subpath,
+            valid: c.validity.is_valid(),
+            reason: c.validity.reason().map(str::to_string),
+        })
+        .collect())
 }
 
 pub fn install_git_skill_from_selection(
@@ -1572,9 +1043,9 @@ fn fetch_skill_files(
         sub_src
     } else {
         // Multi-skill repo: find the matching skill by name.
-        let skill_dirs = collect_skill_dirs(&repo_dir);
-        if skill_dirs.len() >= 2 {
-            find_skill_by_name(&skill_dirs, &repo_dir, skill_name)?
+        let candidates = installable_skills_in_repo(&repo_dir);
+        if candidates.len() >= 2 {
+            repo_dir.join(find_skill_by_name(&candidates, skill_name)?)
         } else {
             repo_dir.clone()
         }
@@ -1587,38 +1058,25 @@ fn fetch_skill_files(
     })
 }
 
-/// Find a skill directory by name within a multi-skill repo.
+/// Find a skill's subpath by name within a multi-skill repo.
 /// Matches against SKILL.md name first, then directory name.
-fn find_skill_by_name(
-    skill_dirs: &[PathBuf],
-    repo_dir: &Path,
+fn find_skill_by_name<'a>(
+    candidates: &'a [DiscoveredSkill],
     skill_name: Option<&str>,
-) -> Result<PathBuf> {
+) -> Result<&'a str> {
     let target_name = skill_name.ok_or_else(|| anyhow::anyhow!(SignalError::MultiSkills))?;
     let target = target_name.to_lowercase();
-
-    // Match by SKILL.md name
-    if let Some(dir) = skill_dirs.iter().find(|dir| {
-        let (name, _) = extract_skill_info(dir, repo_dir);
-        let n = name.to_lowercase();
+    let matches = |n: &str| {
+        let n = n.to_lowercase();
         n == target || n.contains(&target) || target.contains(&n)
-    }) {
-        return Ok(dir.clone());
-    }
+    };
 
-    // Match by directory name
-    if let Some(dir) = skill_dirs.iter().find(|dir| {
-        dir.file_name()
-            .map(|n| {
-                let n = n.to_string_lossy().to_lowercase();
-                n == target || n.contains(&target) || target.contains(&n)
-            })
-            .unwrap_or(false)
-    }) {
-        return Ok(dir.clone());
-    }
-
-    anyhow::bail!(SignalError::MultiSkills);
+    candidates
+        .iter()
+        .find(|c| matches(&c.name))
+        .or_else(|| candidates.iter().find(|c| matches(c.dir_name())))
+        .map(|c| c.subpath.as_str())
+        .ok_or_else(|| anyhow::anyhow!(SignalError::MultiSkills))
 }
 
 /// Clone a skill into the explore-cache for preview (no DB registration).
@@ -1697,81 +1155,6 @@ pub fn backfill_skill_descriptions(store: &SkillStore) {
         if let Some((_, Some(desc))) = find_skill_md(central).and_then(|md| parse_skill_md(&md)) {
             let _ = store.update_skill_description(&skill.id, Some(&desc));
         }
-    }
-}
-
-pub(super) fn parse_skill_md(path: &Path) -> Option<(String, Option<String>)> {
-    parse_skill_md_with_reason(path).ok()
-}
-
-fn parse_skill_md_with_reason(path: &Path) -> Result<(String, Option<String>), &'static str> {
-    let text = std::fs::read_to_string(path).map_err(|_| "read_failed")?;
-    let lines: Vec<&str> = text.lines().collect();
-    if lines.first().map(|v| v.trim()) != Some("---") {
-        return Err("invalid_frontmatter");
-    }
-    let mut name: Option<String> = None;
-    let mut desc: Option<String> = None;
-    let mut found_end = false;
-    let mut i = 1usize;
-    while i < lines.len() {
-        let raw = lines[i];
-        let l = raw.trim();
-        if l == "---" {
-            found_end = true;
-            break;
-        }
-        if let Some(v) = l.strip_prefix("name:") {
-            name = Some(clean_frontmatter_value(v));
-        } else if let Some(v) = l.strip_prefix("description:") {
-            let v = v.trim();
-            if v == "|" || v == ">" {
-                let folded = v == ">";
-                let mut block_lines: Vec<String> = Vec::new();
-                while i + 1 < lines.len() {
-                    let next = lines[i + 1];
-                    if next.trim() == "---" {
-                        break;
-                    }
-                    if !next.trim().is_empty() && !next.starts_with(char::is_whitespace) {
-                        break;
-                    }
-                    block_lines.push(next.strip_prefix("  ").unwrap_or(next).to_string());
-                    i += 1;
-                }
-                let value = if folded {
-                    block_lines
-                        .iter()
-                        .map(|line| line.trim())
-                        .filter(|line| !line.is_empty())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                } else {
-                    block_lines.join("\n").trim().to_string()
-                };
-                desc = Some(value);
-            } else {
-                desc = Some(clean_frontmatter_value(v));
-            }
-        }
-        i += 1;
-    }
-    if !found_end {
-        return Err("invalid_frontmatter");
-    }
-    let name = name.ok_or("missing_name")?;
-    Ok((name, desc))
-}
-
-fn clean_frontmatter_value(value: &str) -> String {
-    let value = value.trim();
-    if value.len() >= 2
-        && ((value.starts_with('"') && value.ends_with('"'))
-            || (value.starts_with('\'') && value.ends_with('\'')))
-    {
-        value[1..value.len() - 1].to_string()
-    } else {
-        value.to_string()
     }
 }
 

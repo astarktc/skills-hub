@@ -19,7 +19,8 @@ use uuid::Uuid;
 
 use super::content_hash::hash_dir;
 use super::errors::SignalError;
-use super::installer::{find_skill_md, now_ms, parse_skill_md};
+use super::installer::now_ms;
+use super::skill_discovery::{find_skill_md, parse_skill_md};
 use super::skill_store::{SkillRecord, SkillStore};
 use super::sync_engine::copy_dir_recursive;
 

@@ -43,3 +43,11 @@ _Avoid_: temp dir, download dir
 **Finalize (install)**:
 The single last mile that turns a staging dir into a managed skill: final-name choice (SKILL.md `name` beats a derived name; an operator-provided name always wins), typed collision check, move, description + content hash, record upsert. Flows acquire bytes; only finalize records them.
 _Avoid_: register, materialise
+
+**Skill discovery**:
+The single scan ladder (`core/skill_discovery.rs::discover_skills`) that turns a directory tree into skill candidates: root `SKILL.md`, known scan bases, root-level skills/containers, `marketplace.json` plugins, then a depth-5 walk; one dedup by subpath, one sort by name. Every candidate carries a validity (valid / invalid `SKILL.md` with reason / missing `SKILL.md`); listings and the update backfill are adapters that decide what to admit.
+_Avoid_: scan, collect skill dirs
+
+**Skill candidate**:
+One discovered directory with its subpath, name, description and validity. "Installable" means it has skill bytes (any `SKILL.md`, or a `.claude/skills/` child) — the git side's admission rule; "valid" means the manifest parsed — the local picker's rule.
+_Avoid_: skill entry, hit

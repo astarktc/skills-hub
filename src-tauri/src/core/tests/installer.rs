@@ -110,54 +110,6 @@ fn parses_github_urls() {
 }
 
 #[test]
-fn parses_skill_md_frontmatter() {
-    let dir = tempfile::tempdir().unwrap();
-    let p = dir.path().join("SKILL.md");
-    fs::write(
-        &p,
-        r#"---
-name: "My Skill"
-description: "Desc"
----
-
-body
-"#,
-    )
-    .unwrap();
-
-    let (name, desc) = super::parse_skill_md(&p).unwrap();
-    assert_eq!(name, "My Skill");
-    assert_eq!(desc.as_deref(), Some("Desc"));
-}
-
-#[test]
-fn parses_skill_md_frontmatter_literal_description() {
-    let dir = tempfile::tempdir().unwrap();
-    let p = dir.path().join("SKILL.md");
-    fs::write(
-        &p,
-        r#"---
-name: technical-writer
-description: |
-  Creates clear documentation, API references, guides, and
-  technical content for developers and users.
-author: awesome-llm-apps
----
-
-body
-"#,
-    )
-    .unwrap();
-
-    let (name, desc) = super::parse_skill_md(&p).unwrap();
-    assert_eq!(name, "technical-writer");
-    assert_eq!(
-        desc.as_deref(),
-        Some("Creates clear documentation, API references, guides, and\ntechnical content for developers and users.")
-    );
-}
-
-#[test]
 fn installs_local_skill_and_updates_from_source() {
     let (_dir, store) = make_store();
     let (_roots, paths) = make_paths();
@@ -646,157 +598,6 @@ fn install_local_skill_non_symlink_stays_local() {
     );
 }
 
-// ── Deep discovery tests ──
-
-#[test]
-fn find_skill_dirs_recursive_finds_deeply_nested_skills() {
-    let dir = tempfile::tempdir().unwrap();
-    let base = dir.path();
-
-    // Create wshobson/agents-like structure: plugins/<plugin>/skills/<skill>/SKILL.md (depth 4)
-    let depths = [
-        "plugins/backend/skills/api-design",
-        "plugins/frontend/skills/tailwind-design",
-        "plugins/accessibility/skills/wcag-audit",
-    ];
-    for d in &depths {
-        fs::create_dir_all(base.join(d)).unwrap();
-        fs::write(
-            base.join(d).join("SKILL.md"),
-            format!("---\nname: {}\n---\n", d.rsplit('/').next().unwrap()),
-        )
-        .unwrap();
-    }
-
-    let found = super::find_skill_dirs_recursive(base, 0, 5);
-    assert_eq!(found.len(), 3, "should find all 3 deeply nested skills");
-    for d in &depths {
-        assert!(
-            found.iter().any(|p: &PathBuf| p.ends_with(d)),
-            "should find {}",
-            d
-        );
-    }
-}
-
-#[test]
-fn find_skill_dirs_recursive_respects_max_depth() {
-    let dir = tempfile::tempdir().unwrap();
-    let base = dir.path();
-
-    // Skill at depth 5 (within limit)
-    let d5 = "a/b/c/d/e";
-    fs::create_dir_all(base.join(d5)).unwrap();
-    fs::write(base.join(d5).join("SKILL.md"), "---\nname: deep5\n---\n").unwrap();
-
-    // Skill at depth 6 (beyond limit)
-    let d6 = "a/b/c/d/e/f";
-    fs::create_dir_all(base.join(d6)).unwrap();
-    fs::write(base.join(d6).join("SKILL.md"), "---\nname: deep6\n---\n").unwrap();
-
-    let found = super::find_skill_dirs_recursive(base, 0, 5);
-    assert!(
-        found.iter().any(|p: &PathBuf| p.ends_with(d5)),
-        "should find skill at depth 5"
-    );
-    assert!(
-        !found.iter().any(|p: &PathBuf| p.ends_with(d6)),
-        "should NOT find skill at depth 6"
-    );
-}
-
-#[test]
-fn find_skill_dirs_recursive_skips_excluded_dirs() {
-    let dir = tempfile::tempdir().unwrap();
-    let base = dir.path();
-
-    // Valid skill
-    fs::create_dir_all(base.join("valid/my-skill")).unwrap();
-    fs::write(
-        base.join("valid/my-skill/SKILL.md"),
-        "---\nname: valid\n---\n",
-    )
-    .unwrap();
-
-    // Skills inside dirs that should be skipped
-    let skip_dirs = [
-        "node_modules",
-        ".git",
-        "dist",
-        "build",
-        "target",
-        ".next",
-        ".cache",
-    ];
-    for skip in &skip_dirs {
-        let skip_path = base.join(skip).join("hidden-skill");
-        fs::create_dir_all(&skip_path).unwrap();
-        fs::write(skip_path.join("SKILL.md"), "---\nname: hidden\n---\n").unwrap();
-    }
-
-    let found = super::find_skill_dirs_recursive(base, 0, 5);
-    assert_eq!(
-        found.len(),
-        1,
-        "should only find the valid skill, not those in excluded dirs"
-    );
-    assert!(found[0].ends_with("valid/my-skill"));
-}
-
-#[test]
-fn parse_marketplace_json_extracts_plugin_dirs() {
-    let dir = tempfile::tempdir().unwrap();
-    let base = dir.path();
-
-    // Create .claude-plugin/marketplace.json
-    fs::create_dir_all(base.join(".claude-plugin")).unwrap();
-    let manifest = serde_json::json!({
-        "plugins": [
-            {"name": "api-scaffolding", "source": "./plugins/api-scaffolding"},
-            {"name": "tailwind-design", "source": "./plugins/tailwind-design"},
-            {"name": "no-source"}
-        ]
-    });
-    fs::write(
-        base.join(".claude-plugin/marketplace.json"),
-        serde_json::to_string_pretty(&manifest).unwrap(),
-    )
-    .unwrap();
-
-    // Create the plugin dirs on disk
-    fs::create_dir_all(base.join("plugins/api-scaffolding")).unwrap();
-    fs::create_dir_all(base.join("plugins/tailwind-design")).unwrap();
-
-    let dirs = super::parse_marketplace_json(base);
-    assert_eq!(dirs.len(), 2);
-    assert!(dirs
-        .iter()
-        .any(|p: &PathBuf| p.ends_with("plugins/api-scaffolding")));
-    assert!(dirs
-        .iter()
-        .any(|p: &PathBuf| p.ends_with("plugins/tailwind-design")));
-}
-
-#[test]
-fn parse_marketplace_json_returns_empty_for_missing_file() {
-    let dir = tempfile::tempdir().unwrap();
-    let dirs = super::parse_marketplace_json(dir.path());
-    assert!(dirs.is_empty());
-}
-
-#[test]
-fn parse_marketplace_json_returns_empty_for_malformed_json() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::create_dir_all(dir.path().join(".claude-plugin")).unwrap();
-    fs::write(
-        dir.path().join(".claude-plugin/marketplace.json"),
-        "not json {{{",
-    )
-    .unwrap();
-    let dirs = super::parse_marketplace_json(dir.path());
-    assert!(dirs.is_empty());
-}
-
 #[test]
 fn list_git_skills_discovers_deeply_nested_via_recursive_fallback() {
     let (_dir, store) = make_store();
@@ -830,51 +631,6 @@ fn list_git_skills_discovers_deeply_nested_via_recursive_fallback() {
     let names: Vec<String> = candidates.iter().map(|c| c.name.clone()).collect();
     assert!(names.contains(&"api-design".to_string()));
     assert!(names.contains(&"tailwind".to_string()));
-}
-
-#[test]
-fn count_skills_in_repo_counts_deeply_nested() {
-    let dir = tempfile::tempdir().unwrap();
-    let base = dir.path();
-
-    // No skills in standard locations, but 3 deeply nested
-    let skills = [
-        "plugins/a/skills/s1",
-        "plugins/b/skills/s2",
-        "plugins/c/skills/s3",
-    ];
-    for s in &skills {
-        fs::create_dir_all(base.join(s)).unwrap();
-        fs::write(base.join(s).join("SKILL.md"), "---\nname: x\n---\n").unwrap();
-    }
-
-    let count = super::count_skills_in_repo(base);
-    assert_eq!(count, 3, "should count all 3 deeply nested skills");
-}
-
-#[test]
-fn scan_skill_candidates_in_dir_finds_deeply_nested() {
-    let dir = tempfile::tempdir().unwrap();
-    let base = dir.path();
-
-    let skills = [
-        ("plugins/a/skills/api-design", "API Design"),
-        ("plugins/b/skills/tailwind", "Tailwind"),
-    ];
-    for (path, name) in &skills {
-        fs::create_dir_all(base.join(path)).unwrap();
-        fs::write(
-            base.join(path).join("SKILL.md"),
-            format!("---\nname: {}\n---\n", name),
-        )
-        .unwrap();
-    }
-
-    let candidates = super::scan_skill_candidates_in_dir(base);
-    assert_eq!(candidates.len(), 2, "should find 2 deep candidates");
-    let names: Vec<&str> = candidates.iter().map(|c| c.0.as_str()).collect();
-    assert!(names.contains(&"API Design"));
-    assert!(names.contains(&"Tailwind"));
 }
 
 #[test]
@@ -934,9 +690,126 @@ fn existing_shallow_repos_still_work() {
     assert!(names.contains(&"Skill A".to_string()));
     assert!(names.contains(&"Skill B".to_string()));
 
-    // count_skills_in_repo should still work
-    let count = super::count_skills_in_repo(repo_dir.path());
+    // The multi-skill detection used by install/update sees the same two.
+    let count = super::installable_skills_in_repo(repo_dir.path()).len();
     assert_eq!(count, 2);
+}
+
+// ── Listing adapters over skill discovery ──
+
+/// Git listing policy: anything with skill bytes is offered (a broken SKILL.md
+/// still installs, named after its folder); a dir with no SKILL.md under a
+/// scan base is not; a broken root is named `root-skill`.
+#[test]
+fn git_candidates_admit_installable_only_and_carry_no_validity() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+    fs::write(base.join("SKILL.md"), "no frontmatter\n").unwrap();
+    fs::create_dir_all(base.join("skills/good")).unwrap();
+    fs::write(base.join("skills/good/SKILL.md"), "---\nname: Good\n---\n").unwrap();
+    fs::create_dir_all(base.join("skills/broken")).unwrap();
+    fs::write(
+        base.join("skills/broken/SKILL.md"),
+        "---\ndescription: x\n---\n",
+    )
+    .unwrap();
+    fs::create_dir_all(base.join("skills/empty")).unwrap();
+
+    let list = super::git_candidates_in(base, None);
+    let pairs: Vec<(&str, &str)> = list
+        .iter()
+        .map(|c| (c.name.as_str(), c.subpath.as_str()))
+        .collect();
+    assert_eq!(
+        pairs,
+        vec![
+            ("Good", "skills/good"),
+            ("broken", "skills/broken"),
+            ("root-skill", "."),
+        ]
+    );
+}
+
+#[test]
+fn git_candidates_for_folder_url_are_scoped_and_repo_relative() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+    fs::create_dir_all(base.join("skills/outside")).unwrap();
+    fs::write(
+        base.join("skills/outside/SKILL.md"),
+        "---\nname: Outside\n---\n",
+    )
+    .unwrap();
+    fs::create_dir_all(base.join("pack/skills/inside")).unwrap();
+    fs::write(
+        base.join("pack/skills/inside/SKILL.md"),
+        "---\nname: Inside\n---\n",
+    )
+    .unwrap();
+
+    // Folder that is a container: only its skills, with repo-relative subpaths.
+    let list = super::git_candidates_in(base, Some("pack"));
+    let pairs: Vec<(&str, &str)> = list
+        .iter()
+        .map(|c| (c.name.as_str(), c.subpath.as_str()))
+        .collect();
+    assert_eq!(pairs, vec![("Inside", "pack/skills/inside")]);
+
+    // Folder that is itself a skill: the single candidate.
+    let list = super::git_candidates_in(base, Some("pack/skills/inside"));
+    let pairs: Vec<(&str, &str)> = list
+        .iter()
+        .map(|c| (c.name.as_str(), c.subpath.as_str()))
+        .collect();
+    assert_eq!(pairs, vec![("Inside", "pack/skills/inside")]);
+
+    // Missing folder: nothing.
+    assert!(super::git_candidates_in(base, Some("nope")).is_empty());
+}
+
+/// Local listing policy: every candidate is shown with validity, the root
+/// included.
+#[test]
+fn list_local_skills_reports_root_validity() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("picked-folder");
+    fs::create_dir_all(&base).unwrap();
+    fs::write(base.join("SKILL.md"), "---\ndescription: x\n---\n").unwrap();
+
+    let list = super::list_local_skills(&base).unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].subpath, ".");
+    assert_eq!(list[0].name, "root-skill");
+    assert!(!list[0].valid);
+    assert_eq!(list[0].reason.as_deref(), Some("missing_name"));
+}
+
+/// The update flow's name backfill and the fetch path's multi-skill check both
+/// rely on this view: deep hits count, the repo root and non-skill dirs under
+/// a scan base do not.
+#[test]
+fn installable_skills_in_repo_excludes_root_and_missing_skill_md() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+    fs::write(base.join("SKILL.md"), "---\nname: Root\n---\n").unwrap();
+    fs::create_dir_all(base.join("skills/empty")).unwrap();
+    let skills = [
+        ("plugins/a/skills/api-design", "API Design"),
+        ("plugins/b/skills/tailwind", "Tailwind"),
+    ];
+    for (path, name) in &skills {
+        fs::create_dir_all(base.join(path)).unwrap();
+        fs::write(
+            base.join(path).join("SKILL.md"),
+            format!("---\nname: {}\n---\n", name),
+        )
+        .unwrap();
+    }
+
+    let candidates = super::installable_skills_in_repo(base);
+    let names: Vec<&str> = candidates.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, vec!["API Design", "Tailwind"]);
+    assert_eq!(candidates[0].subpath, "plugins/a/skills/api-design");
 }
 
 #[test]
@@ -965,113 +838,6 @@ fn list_git_skills_finds_root_skill_container_layout() {
         .expect("technical-writer should be discovered");
     assert_eq!(candidate.subpath, "custom-agent-skills/technical-writer");
     assert_eq!(candidate.description.as_deref(), Some("docs"));
-}
-
-#[test]
-fn collect_skill_dirs_finds_skills_under_explicit_container() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::create_dir_all(dir.path().join("technical-writer")).unwrap();
-    fs::create_dir_all(dir.path().join("not-a-skill")).unwrap();
-    fs::write(
-        dir.path().join("technical-writer/SKILL.md"),
-        "---\nname: technical-writer\n---\n",
-    )
-    .unwrap();
-
-    let dirs = super::collect_skill_dirs(dir.path());
-    let rels: Vec<String> = dirs
-        .iter()
-        .map(|p| {
-            p.strip_prefix(dir.path())
-                .unwrap_or(p)
-                .to_string_lossy()
-                .to_string()
-        })
-        .collect();
-    assert_eq!(rels, vec!["technical-writer".to_string()]);
-}
-
-#[test]
-fn collect_skill_dirs_finds_multiple_skills_under_explicit_container() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::create_dir_all(dir.path().join("technical-writer")).unwrap();
-    fs::create_dir_all(dir.path().join("python-expert")).unwrap();
-    fs::create_dir_all(dir.path().join("not-a-skill")).unwrap();
-    fs::write(
-        dir.path().join("technical-writer/SKILL.md"),
-        "---\nname: technical-writer\n---\n",
-    )
-    .unwrap();
-    fs::write(
-        dir.path().join("python-expert/SKILL.md"),
-        "---\nname: python-expert\n---\n",
-    )
-    .unwrap();
-
-    let dirs = super::collect_skill_dirs(dir.path());
-    let rels: Vec<String> = dirs
-        .iter()
-        .map(|p| {
-            p.strip_prefix(dir.path())
-                .unwrap_or(p)
-                .to_string_lossy()
-                .to_string()
-        })
-        .collect();
-    assert_eq!(
-        rels,
-        vec!["python-expert".to_string(), "technical-writer".to_string()]
-    );
-}
-
-#[test]
-fn collect_skill_dirs_scans_named_skill_containers_but_not_generic_dirs() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::create_dir_all(dir.path().join("agent-pack/hidden-skill")).unwrap();
-    fs::create_dir_all(dir.path().join("agent-skills/visible-skill")).unwrap();
-    fs::write(
-        dir.path().join("agent-pack/hidden-skill/SKILL.md"),
-        "---\nname: hidden\n---\n",
-    )
-    .unwrap();
-    fs::write(
-        dir.path().join("agent-skills/visible-skill/SKILL.md"),
-        "---\nname: visible\n---\n",
-    )
-    .unwrap();
-
-    let dirs = super::collect_skill_dirs(dir.path());
-    let rels: Vec<String> = dirs
-        .iter()
-        .map(|p| {
-            p.strip_prefix(dir.path())
-                .unwrap_or(p)
-                .to_string_lossy()
-                .to_string()
-        })
-        .collect();
-    assert_eq!(
-        rels,
-        vec![
-            "agent-pack/hidden-skill".to_string(),
-            "agent-skills/visible-skill".to_string()
-        ]
-    );
-}
-
-#[test]
-fn collect_skill_dirs_deduplicates_known_root_containers() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::create_dir_all(dir.path().join("skills/technical-writer")).unwrap();
-    fs::write(
-        dir.path().join("skills/technical-writer/SKILL.md"),
-        "---\nname: technical-writer\n---\n",
-    )
-    .unwrap();
-
-    let dirs = super::collect_skill_dirs(dir.path());
-    assert_eq!(dirs.len(), 1);
-    assert!(dirs[0].ends_with("skills/technical-writer"));
 }
 
 /// After `update_managed_skill_from_source`, copy-mode project assignments
