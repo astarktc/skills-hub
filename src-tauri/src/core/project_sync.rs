@@ -5,6 +5,7 @@ use anyhow::Result;
 
 use crate::core::{
     content_hash,
+    errors::SignalError,
     skill_store::{ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore},
     sync_engine::{self, SyncMode},
     tool_adapters::{self, ToolAdapter},
@@ -96,6 +97,133 @@ pub fn assign_and_sync(
                 .unwrap_or(record);
             Ok(updated)
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Project-scope fan-out: one skill × N tools with per-target outcomes as
+// data (the project counterpart of `global_sync::sync_skills_to_planned_tools`).
+// `assign_skill_to_tools` is the deterministic engine; the two `*_project_*`
+// entry points add the store lookups (typed `NotFound`) in front of it.
+// ---------------------------------------------------------------------------
+
+/// Per-tool result of a fan-out. A *sync* failure is not a fan-out failure:
+/// `assign_and_sync` records it on the assignment row (`status = "error"`),
+/// so it arrives as `Assigned` with that record. `Failed` is reserved for
+/// the assignment itself not happening (unknown tool, store error).
+#[derive(Debug)]
+pub enum AssignTargetStatus {
+    Assigned {
+        record: Box<ProjectSkillAssignmentRecord>,
+    },
+    AlreadyAssigned,
+    Failed {
+        error: anyhow::Error,
+    },
+}
+
+#[derive(Debug)]
+pub struct AssignTargetOutcome {
+    pub tool_key: String,
+    pub status: AssignTargetStatus,
+}
+
+/// Deterministic engine: for each tool key in caller order, skip tools the
+/// skill is already assigned to, otherwise assign and sync. Failures are
+/// isolated per tool — one bad tool never aborts the batch.
+pub fn assign_skill_to_tools(
+    store: &SkillStore,
+    project: &ProjectRecord,
+    skill: &SkillRecord,
+    tool_keys: &[String],
+    now: i64,
+) -> Vec<AssignTargetOutcome> {
+    tool_keys
+        .iter()
+        .map(|tool_key| {
+            let status = match store.get_project_skill_assignment(&project.id, &skill.id, tool_key)
+            {
+                Ok(Some(_)) => AssignTargetStatus::AlreadyAssigned,
+                Ok(None) => match assign_and_sync(store, project, skill, tool_key, now) {
+                    Ok(record) => AssignTargetStatus::Assigned {
+                        record: Box::new(record),
+                    },
+                    Err(error) => AssignTargetStatus::Failed { error },
+                },
+                Err(error) => AssignTargetStatus::Failed { error },
+            };
+            AssignTargetOutcome {
+                tool_key: tool_key.clone(),
+                status,
+            }
+        })
+        .collect()
+}
+
+fn lookup_project_and_skill(
+    store: &SkillStore,
+    project_id: &str,
+    skill_id: &str,
+) -> Result<(ProjectRecord, SkillRecord)> {
+    let project = store.get_project_by_id(project_id)?.ok_or_else(|| {
+        anyhow::anyhow!(SignalError::NotFound {
+            kind: "project".to_string(),
+            id: project_id.to_string(),
+        })
+    })?;
+    let skill = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
+        anyhow::anyhow!(SignalError::NotFound {
+            kind: "skill".to_string(),
+            id: skill_id.to_string(),
+        })
+    })?;
+    Ok((project, skill))
+}
+
+/// Assign one skill to every tool persisted for the project (the
+/// `bulk_assign_skill` command). Only the lookups can error; per-tool
+/// results are data.
+pub fn assign_skill_to_project_tools(
+    store: &SkillStore,
+    project_id: &str,
+    skill_id: &str,
+    now: i64,
+) -> Result<Vec<AssignTargetOutcome>> {
+    let (project, skill) = lookup_project_and_skill(store, project_id, skill_id)?;
+    let tool_keys: Vec<String> = store
+        .list_project_tools(project_id)?
+        .into_iter()
+        .map(|t| t.tool)
+        .collect();
+    Ok(assign_skill_to_tools(
+        store, &project, &skill, &tool_keys, now,
+    ))
+}
+
+/// Assign one skill to one tool (the `add_project_skill_assignment`
+/// command): the single-target view of the same engine, where
+/// `AlreadyAssigned` is the typed `AssignmentExists` condition.
+pub fn assign_skill_to_project_tool(
+    store: &SkillStore,
+    project_id: &str,
+    skill_id: &str,
+    tool_key: &str,
+    now: i64,
+) -> Result<ProjectSkillAssignmentRecord> {
+    let (project, skill) = lookup_project_and_skill(store, project_id, skill_id)?;
+    let outcome = assign_skill_to_tools(store, &project, &skill, &[tool_key.to_string()], now)
+        .pop()
+        .expect("one tool key yields one outcome");
+    match outcome.status {
+        AssignTargetStatus::Assigned { record } => Ok(*record),
+        AssignTargetStatus::AlreadyAssigned => {
+            Err(anyhow::anyhow!(SignalError::AssignmentExists {
+                project: project_id.to_string(),
+                skill: skill_id.to_string(),
+                tool: tool_key.to_string(),
+            }))
+        }
+        AssignTargetStatus::Failed { error } => Err(error),
     }
 }
 

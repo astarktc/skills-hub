@@ -963,3 +963,281 @@ fn missing_status_source_and_target_both_absent() {
         "both absent should produce missing status"
     );
 }
+
+// ---------------------------------------------------------------------------
+// assign_skill_to_tools / assign_skill_to_project_tools — the project-scope
+// fan-out engine behind `bulk_assign_skill` and `add_project_skill_assignment`.
+// ---------------------------------------------------------------------------
+
+use crate::core::errors::SignalError;
+use crate::core::project_sync::{
+    assign_skill_to_project_tool, assign_skill_to_project_tools, assign_skill_to_tools,
+    AssignTargetStatus,
+};
+use crate::core::skill_store::ProjectToolRecord;
+
+fn add_tools(store: &SkillStore, project: &ProjectRecord, tools: &[&str]) {
+    for tool in tools {
+        store
+            .add_project_tool(&ProjectToolRecord {
+                id: uuid::Uuid::new_v4().to_string(),
+                project_id: project.id.clone(),
+                tool: tool.to_string(),
+            })
+            .unwrap();
+    }
+}
+
+fn keys(strs: &[&str]) -> Vec<String> {
+    strs.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn fanout_assigns_every_tool_in_caller_order() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let skill_dir = make_skill_dir(tmpdir.path(), "fan-skill");
+    let project_dir = tmpdir.path().join("fan-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "fan-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    let outcomes = assign_skill_to_tools(
+        &store,
+        &project,
+        &skill,
+        &keys(&["claude_code", "cursor"]),
+        3000,
+    );
+
+    let tool_keys: Vec<&str> = outcomes.iter().map(|o| o.tool_key.as_str()).collect();
+    assert_eq!(tool_keys, vec!["claude_code", "cursor"]);
+    for o in &outcomes {
+        match &o.status {
+            AssignTargetStatus::Assigned { record } => {
+                assert_eq!(record.status, "synced", "tool {}", o.tool_key)
+            }
+            other => panic!("expected Assigned for {}, got {:?}", o.tool_key, other),
+        }
+    }
+    assert!(project_dir.join(".claude/skills/fan-skill").exists());
+    assert!(project_dir.join(".agents/skills/fan-skill").exists());
+}
+
+#[test]
+fn fanout_reports_already_assigned_as_data_and_does_not_duplicate() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let skill_dir = make_skill_dir(tmpdir.path(), "dedupe-skill");
+    let project_dir = tmpdir.path().join("dedupe-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "dedupe-skill",
+        &skill_dir.to_string_lossy(),
+    );
+    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000).unwrap();
+
+    let outcomes = assign_skill_to_tools(
+        &store,
+        &project,
+        &skill,
+        &keys(&["claude_code", "cursor"]),
+        3000,
+    );
+
+    assert!(matches!(
+        outcomes[0].status,
+        AssignTargetStatus::AlreadyAssigned
+    ));
+    assert!(matches!(
+        outcomes[1].status,
+        AssignTargetStatus::Assigned { .. }
+    ));
+    assert_eq!(
+        store
+            .list_project_skill_assignments(&project.id)
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn fanout_isolates_an_unknown_tool_and_continues() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let skill_dir = make_skill_dir(tmpdir.path(), "iso-skill");
+    let project_dir = tmpdir.path().join("iso-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "iso-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    let outcomes = assign_skill_to_tools(
+        &store,
+        &project,
+        &skill,
+        &keys(&["claude_code", "no-such-tool", "cursor"]),
+        3000,
+    );
+
+    assert!(matches!(
+        outcomes[0].status,
+        AssignTargetStatus::Assigned { .. }
+    ));
+    match &outcomes[1].status {
+        AssignTargetStatus::Failed { error } => {
+            assert!(format!("{:#}", error).contains("unknown tool"));
+        }
+        other => panic!("expected Failed, got {:?}", other),
+    }
+    assert!(matches!(
+        outcomes[2].status,
+        AssignTargetStatus::Assigned { .. }
+    ));
+    assert_eq!(
+        store
+            .list_project_skill_assignments(&project.id)
+            .unwrap()
+            .len(),
+        2,
+        "the unknown tool leaves no record behind"
+    );
+}
+
+#[test]
+fn fanout_keeps_sync_failures_inside_the_assignment_record() {
+    // A sync failure is not a fan-out failure: the assignment row exists with
+    // status "error" (what the UI shows per cell), so the outcome is Assigned.
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let skill_dir = make_skill_dir(tmpdir.path(), "gone-skill");
+    let project_dir = tmpdir.path().join("gone-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "gone-skill",
+        &skill_dir.to_string_lossy(),
+    );
+    fs::remove_dir_all(&skill_dir).unwrap();
+
+    let outcomes = assign_skill_to_tools(&store, &project, &skill, &keys(&["cursor"]), 3000);
+
+    match &outcomes[0].status {
+        AssignTargetStatus::Assigned { record } => assert_eq!(record.status, "error"),
+        other => panic!("expected Assigned with error status, got {:?}", other),
+    }
+}
+
+#[test]
+fn project_fanout_uses_persisted_project_tools() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let skill_dir = make_skill_dir(tmpdir.path(), "pt-skill");
+    let project_dir = tmpdir.path().join("pt-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "pt-skill",
+        &skill_dir.to_string_lossy(),
+    );
+    add_tools(&store, &project, &["claude_code", "pi"]);
+
+    let outcomes =
+        assign_skill_to_project_tools(&store, &project.id, &skill.id, 3000).expect("fan-out");
+
+    let mut tool_keys: Vec<&str> = outcomes.iter().map(|o| o.tool_key.as_str()).collect();
+    tool_keys.sort();
+    assert_eq!(tool_keys, vec!["claude_code", "pi"]);
+    assert!(outcomes
+        .iter()
+        .all(|o| matches!(o.status, AssignTargetStatus::Assigned { .. })));
+    // pi's project-scope dir, not its global one
+    let pi = crate::core::tool_adapters::adapter_by_key("pi").unwrap();
+    assert!(
+        project_sync::resolve_project_sync_target(&project_dir, &pi, "pt-skill")
+            .symlink_metadata()
+            .is_ok()
+    );
+}
+
+#[test]
+fn project_fanout_raises_typed_not_found_for_project_and_skill() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let skill_dir = make_skill_dir(tmpdir.path(), "nf-skill");
+    let project_dir = tmpdir.path().join("nf-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "nf-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    let err = assign_skill_to_project_tools(&store, "missing-project", &skill.id, 1)
+        .expect_err("project must be missing");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::NotFound {
+            kind: "project".to_string(),
+            id: "missing-project".to_string(),
+        })
+    );
+
+    let err = assign_skill_to_project_tools(&store, &project.id, "missing-skill", 1)
+        .expect_err("skill must be missing");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::NotFound {
+            kind: "skill".to_string(),
+            id: "missing-skill".to_string(),
+        })
+    );
+}
+
+#[test]
+fn single_tool_assign_returns_record_and_raises_assignment_exists_on_repeat() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let skill_dir = make_skill_dir(tmpdir.path(), "single-skill");
+    let project_dir = tmpdir.path().join("single-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "single-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    let record = assign_skill_to_project_tool(&store, &project.id, &skill.id, "claude_code", 3000)
+        .expect("first assign");
+    assert_eq!(record.status, "synced");
+    assert_eq!(record.tool, "claude_code");
+
+    let err = assign_skill_to_project_tool(&store, &project.id, &skill.id, "claude_code", 3001)
+        .expect_err("second assign must fail");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::AssignmentExists {
+            project: project.id.clone(),
+            skill: skill.id.clone(),
+            tool: "claude_code".to_string(),
+        })
+    );
+
+    let err = assign_skill_to_project_tool(&store, &project.id, &skill.id, "no-such-tool", 3002)
+        .expect_err("unknown tool must fail");
+    assert!(format!("{:#}", err).contains("unknown tool"));
+}

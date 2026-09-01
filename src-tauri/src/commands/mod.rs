@@ -697,61 +697,8 @@ pub async fn delete_managed_skill(
 ) -> Result<(), CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        log::debug!("[delete_managed_skill] skillId={}", skillId);
-
-        let record = store.get_skill_by_id(&skillId)?;
-        let skill_name = record.as_ref().map(|s| s.name.clone());
-
-        // Remove global tool directory symlinks/copies
-        let targets = store.list_skill_targets(&skillId)?;
-        let mut remove_failures: Vec<String> = Vec::new();
-        for target in targets {
-            if let Err(err) = remove_path_any(std::path::Path::new(&target.target_path)) {
-                remove_failures.push(format!("{}: {}", target.target_path, err));
-            }
-        }
-
-        // INFR-03: Clean up project directory artifacts before cascade delete
-        if let Some(ref name) = skill_name {
-            let project_assignments = store.list_project_skill_assignments_by_skill(&skillId)?;
-            for assignment in &project_assignments {
-                if assignment.status == "synced"
-                    || assignment.status == "stale"
-                    || assignment.status == "error"
-                {
-                    if let Ok(Some(project)) = store.get_project_by_id(&assignment.project_id) {
-                        if let Some(adapter) =
-                            crate::core::tool_adapters::adapter_by_key(&assignment.tool)
-                        {
-                            let target = crate::core::project_sync::resolve_project_sync_target(
-                                std::path::Path::new(&project.path),
-                                &adapter,
-                                name,
-                            );
-                            if let Err(e) = remove_path_any(&target) {
-                                remove_failures.push(format!("{}: {}", target.display(), e));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Some(skill) = record {
-            let path = std::path::PathBuf::from(skill.central_path);
-            if path.exists() {
-                std::fs::remove_dir_all(&path)?;
-            }
-            store.delete_skill(&skillId)?;
-        }
-
-        if !remove_failures.is_empty() {
-            // Typed condition; user copy lives in the frontend catalog.
-            anyhow::bail!(crate::core::errors::SignalError::DeleteCleanupFailed {
-                failures: remove_failures,
-            });
-        }
-
+        let report = crate::core::skill_removal::remove_skill(&store, &skillId)?;
+        log::debug!("[delete_managed_skill] {}", report);
         Ok::<_, anyhow::Error>(())
     })
     .await

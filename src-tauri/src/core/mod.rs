@@ -17,6 +17,7 @@ pub mod project_sync;
 pub mod settings;
 pub mod skill_files;
 pub mod skill_lock;
+pub mod skill_removal;
 pub mod skill_store;
 pub mod skills_search;
 pub mod sync_engine;

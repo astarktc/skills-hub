@@ -14,9 +14,11 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
-use crate::core::tool_adapters::ToolAdapter;
+use crate::core::errors::SignalError;
+use crate::core::skill_store::SkillStore;
+use crate::core::tool_adapters::{adapter_by_key, ToolAdapter};
 
 /// Marker identifying the managed block. Any line containing this string
 /// starts a managed block; the block extends over the following pattern
@@ -191,6 +193,49 @@ pub fn update_project_ignore_files(
     let exclude_path = project_path.join(".git").join("info").join("exclude");
     apply_to_file(&exclude_path, patterns, add_to_exclude, true)?;
     Ok(())
+}
+
+/// The two toggles behind `update_project_gitignore`.
+#[derive(Debug, Clone, Copy)]
+pub struct IgnoreUpdateOptions {
+    pub add_to_gitignore: bool,
+    pub add_to_exclude: bool,
+}
+
+/// Update a registered project's ignore files from its *persisted* tool
+/// list: look the project up (typed `NotFound`), require its directory to
+/// exist, derive patterns from the tools' adapters (unknown keys are
+/// ignored), and apply [`update_project_ignore_files`].
+pub fn update_for_project(
+    store: &SkillStore,
+    project_id: &str,
+    options: IgnoreUpdateOptions,
+) -> Result<()> {
+    let project = store.get_project_by_id(project_id)?.ok_or_else(|| {
+        anyhow::anyhow!(SignalError::NotFound {
+            kind: "project".to_string(),
+            id: project_id.to_string(),
+        })
+    })?;
+
+    let project_path = Path::new(&project.path);
+    if !project_path.is_dir() {
+        bail!("project directory does not exist: {}", project.path);
+    }
+
+    let tools = store.list_project_tools(project_id)?;
+    let adapters: Vec<ToolAdapter> = tools
+        .iter()
+        .filter_map(|t| adapter_by_key(&t.tool))
+        .collect();
+    let patterns = patterns_for_tools(adapters.iter());
+
+    update_project_ignore_files(
+        project_path,
+        &patterns,
+        options.add_to_gitignore,
+        options.add_to_exclude,
+    )
 }
 
 #[cfg(test)]
