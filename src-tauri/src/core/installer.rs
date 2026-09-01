@@ -1468,12 +1468,8 @@ fn fetch_skill_files(
     dest_dir: &Path,
     cancel: Option<&CancelToken>,
 ) -> Result<SkillFetchResult> {
-    let github_token = store.get_setting("github_token")?.unwrap_or_default();
-    let github_token_opt = if github_token.is_empty() {
-        None
-    } else {
-        Some(github_token.as_str())
-    };
+    let github_token = super::settings::github_token(store)?;
+    let github_token_opt = github_token.as_deref();
 
     // Path A: GitHub URL with subpath — try API download, fall back to git clone.
     if let Some((owner, repo, branch, subpath)) = parse_github_api_params(

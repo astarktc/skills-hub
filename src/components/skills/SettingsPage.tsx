@@ -3,6 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { describeCommandError } from "../../commandError";
+import type { SettingsBounds } from "./types";
 
 type UpdateStatus =
   | "idle"
@@ -19,6 +20,8 @@ type SettingsPageProps = {
   storagePath: string;
   gitCacheCleanupDays: number;
   gitCacheTtlSecs: number;
+  /** Clamp bounds from the backend settings snapshot; null until loaded. */
+  bounds: SettingsBounds | null;
   themePreference: "system" | "light" | "dark";
   zoomLevel: number;
   githubToken: string;
@@ -40,6 +43,7 @@ const SettingsPage = ({
   storagePath,
   gitCacheCleanupDays,
   gitCacheTtlSecs,
+  bounds,
   themePreference,
   zoomLevel,
   onPickStoragePath,
@@ -288,8 +292,8 @@ const SettingsPage = ({
               id="settings-git-cache-days"
               className="settings-input"
               type="number"
-              min={0}
-              max={3650}
+              min={bounds?.git_cache_cleanup_days.min}
+              max={bounds?.git_cache_cleanup_days.max}
               step={1}
               value={gitCacheCleanupDays}
               onChange={(event) => {
@@ -319,8 +323,8 @@ const SettingsPage = ({
               id="settings-git-cache-ttl"
               className="settings-input"
               type="number"
-              min={0}
-              max={3600}
+              min={bounds?.git_cache_ttl_secs.min}
+              max={bounds?.git_cache_ttl_secs.max}
               step={1}
               value={gitCacheTtlSecs}
               onChange={(event) => {

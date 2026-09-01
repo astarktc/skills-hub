@@ -2,12 +2,11 @@ use anyhow::{Context, Result};
 use reqwest::blocking::Client;
 use serde::Deserialize;
 
+use super::settings::{featured_skills_cache, set_featured_skills_cache};
 use super::skill_store::SkillStore;
 
 const FEATURED_SKILLS_URL: &str =
     "https://raw.githubusercontent.com/astarktc/skills-hub/main/featured-skills.json";
-
-const CACHE_KEY: &str = "featured_skills_cache";
 
 // Bundled fallback so the app works even before the first network fetch succeeds.
 const BUNDLED_JSON: &str = include_str!("../../../featured-skills.json");
@@ -49,13 +48,13 @@ fn fetch_featured_skills_inner(url: &str, store: &SkillStore) -> Result<Vec<Feat
     if let Ok(json_str) = fetch_from_url(url) {
         if let Ok(skills) = parse_and_filter(&json_str) {
             if !skills.is_empty() {
-                let _ = store.set_setting(CACHE_KEY, &json_str);
+                let _ = set_featured_skills_cache(store, &json_str);
                 return Ok(skills);
             }
         }
     }
     // Fallback to cache
-    if let Ok(Some(cached)) = store.get_setting(CACHE_KEY) {
+    if let Some(cached) = featured_skills_cache(store) {
         if let Ok(skills) = parse_and_filter(&cached) {
             if !skills.is_empty() {
                 return Ok(skills);

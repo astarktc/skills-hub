@@ -11,14 +11,9 @@ use ts_rs::TS;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::core::cache_cleanup::{
-    cleanup_git_cache_dirs, get_git_cache_cleanup_days as get_git_cache_cleanup_days_core,
-    get_git_cache_ttl_secs as get_git_cache_ttl_secs_core,
-    set_git_cache_cleanup_days as set_git_cache_cleanup_days_core,
-    set_git_cache_ttl_secs as set_git_cache_ttl_secs_core,
-};
+use crate::core::cache_cleanup::cleanup_git_cache_dirs;
 use crate::core::cancel_token::CancelToken;
-use crate::core::central_repo::{ensure_central_repo, resolve_central_repo_path};
+use crate::core::central_repo::ensure_central_repo;
 use crate::core::environment::{expand_home_path, home_dir};
 use crate::core::errors::SignalError;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
@@ -30,11 +25,12 @@ use crate::core::installer::{
     LocalSkillCandidate,
 };
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
+use crate::core::settings::{apply_setting, load_settings, AppSettings, SettingUpdate};
 use crate::core::skill_store::SkillStore;
 use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
 };
-use crate::core::sync_engine::{copy_dir_recursive, remove_path_any};
+use crate::core::sync_engine::remove_path_any;
 use crate::core::tool_adapters::{
     default_tool_adapters, global_tool_entries, installed_keys, project_tool_entries,
     skills_dir_in, ToolCatalogEntry,
@@ -49,14 +45,19 @@ pub(crate) fn resolve_central_repo_path_for_app(
     app: &tauri::AppHandle,
     store: &SkillStore,
 ) -> Result<PathBuf, anyhow::Error> {
-    let fallback_root = match home_dir() {
-        Ok(home) => home,
+    crate::core::settings::resolve_central_repo_path(store, &settings_fallback_root(app)?)
+}
+
+/// Root under which the default central repo lives (see
+/// `settings::resolve_central_repo_path`): home, else the app data dir.
+fn settings_fallback_root(app: &tauri::AppHandle) -> Result<PathBuf, anyhow::Error> {
+    match home_dir() {
+        Ok(home) => Ok(home),
         Err(_) => app
             .path()
             .app_data_dir()
-            .context("failed to resolve app data dir")?,
-    };
-    resolve_central_repo_path(store, &fallback_root)
+            .context("failed to resolve app data dir"),
+    }
 }
 
 /// Resolve every root the installer needs once, at the command seam.
@@ -192,29 +193,6 @@ pub async fn get_onboarding_plan(
 }
 
 #[tauri::command]
-pub async fn get_git_cache_cleanup_days(store: State<'_, SkillStore>) -> Result<i64, CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        Ok::<_, anyhow::Error>(get_git_cache_cleanup_days_core(&store))
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-pub async fn set_git_cache_cleanup_days(
-    store: State<'_, SkillStore>,
-    days: i64,
-) -> Result<i64, CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || set_git_cache_cleanup_days_core(&store, days))
-        .await
-        .map_err(CommandError::internal)?
-        .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
 pub async fn clear_git_cache_now(app: tauri::AppHandle) -> Result<usize, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         cleanup_git_cache_dirs(&app, std::time::Duration::from_secs(0))
@@ -222,29 +200,6 @@ pub async fn clear_git_cache_now(app: tauri::AppHandle) -> Result<usize, Command
     .await
     .map_err(CommandError::internal)?
     .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-pub async fn get_git_cache_ttl_secs(store: State<'_, SkillStore>) -> Result<i64, CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        Ok::<_, anyhow::Error>(get_git_cache_ttl_secs_core(&store))
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-pub async fn set_git_cache_ttl_secs(
-    store: State<'_, SkillStore>,
-    secs: i64,
-) -> Result<i64, CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || set_git_cache_ttl_secs_core(&store, secs))
-        .await
-        .map_err(CommandError::internal)?
-        .map_err(CommandError::from_anyhow)
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -257,74 +212,39 @@ pub struct InstallResultDto {
 }
 
 #[tauri::command]
-pub async fn get_central_repo_path(
+pub async fn get_settings(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
-) -> Result<String, CommandError> {
+) -> Result<AppSettings, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let path = resolve_central_repo_path_for_app(&app, &store)?;
-        ensure_central_repo(&path)?;
-        Ok::<_, anyhow::Error>(path.to_string_lossy().to_string())
+        let settings = load_settings(&store, &settings_fallback_root(&app)?)?;
+        ensure_central_repo(std::path::Path::new(&settings.central_repo_path))?;
+        Ok::<_, anyhow::Error>(settings)
     })
     .await
     .map_err(CommandError::internal)?
     .map_err(CommandError::from_anyhow)
 }
 
+/// Persist one setting and return the effective snapshot. `~` in a central
+/// repo path is expanded here — the only environment-aware step — before
+/// the policy layer validates and applies it.
 #[tauri::command]
-pub async fn set_central_repo_path(
+pub async fn update_setting(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
-    path: String,
-) -> Result<String, CommandError> {
+    update: SettingUpdate,
+) -> Result<AppSettings, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let new_base = expand_home_path(&path)?;
-        if !new_base.is_absolute() {
-            anyhow::bail!("storage path must be absolute");
-        }
-        ensure_central_repo(&new_base)?;
-
-        let current_base = resolve_central_repo_path_for_app(&app, &store)?;
-        let skills = store.list_skills()?;
-        if current_base == new_base {
-            store.set_setting("central_repo_path", new_base.to_string_lossy().as_ref())?;
-            return Ok::<_, anyhow::Error>(new_base.to_string_lossy().to_string());
-        }
-
-        if !skills.is_empty() {
-            for skill in skills {
-                let old_path = std::path::PathBuf::from(&skill.central_path);
-                if !old_path.exists() {
-                    anyhow::bail!("central path not found: {:?}", old_path);
-                }
-                let file_name = old_path
-                    .file_name()
-                    .ok_or_else(|| anyhow::anyhow!("invalid central path: {:?}", old_path))?;
-                let new_path = new_base.join(file_name);
-                if new_path.exists() {
-                    anyhow::bail!("target path already exists: {:?}", new_path);
-                }
-
-                if let Err(err) = std::fs::rename(&old_path, &new_path) {
-                    copy_dir_recursive(&old_path, &new_path)
-                        .with_context(|| format!("copy {:?} -> {:?}", old_path, new_path))?;
-                    std::fs::remove_dir_all(&old_path)
-                        .with_context(|| format!("cleanup {:?}", old_path))?;
-                    // Surface rename error in logs for troubleshooting.
-                    log::warn!("rename failed, fallback used: {}", err);
-                }
-
-                let mut updated = skill.clone();
-                updated.central_path = new_path.to_string_lossy().to_string();
-                updated.updated_at = now_ms();
-                store.upsert_skill(&updated)?;
-            }
-        }
-
-        store.set_setting("central_repo_path", new_base.to_string_lossy().as_ref())?;
-        Ok::<_, anyhow::Error>(new_base.to_string_lossy().to_string())
+        let update = match update {
+            SettingUpdate::CentralRepoPath(raw) => SettingUpdate::CentralRepoPath(
+                expand_home_path(&raw)?.to_string_lossy().to_string(),
+            ),
+            other => other,
+        };
+        apply_setting(&store, &settings_fallback_root(&app)?, update)
     })
     .await
     .map_err(CommandError::internal)?
@@ -662,163 +582,6 @@ pub async fn update_managed_skill(
     .await
     .map_err(CommandError::internal)?
     .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-pub async fn get_github_token(store: State<'_, SkillStore>) -> Result<String, CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        Ok::<_, anyhow::Error>(store.get_setting("github_token")?.unwrap_or_default())
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-pub async fn set_github_token(
-    store: State<'_, SkillStore>,
-    token: String,
-) -> Result<(), CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let trimmed = token.trim();
-        if trimmed.is_empty() {
-            store.set_setting("github_token", "")?;
-        } else {
-            store.set_setting("github_token", trimmed)?;
-        }
-        Ok::<_, anyhow::Error>(())
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-pub async fn get_auto_sync_enabled(store: State<'_, SkillStore>) -> Result<bool, CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let val = store
-            .get_setting("auto_sync_enabled")?
-            .unwrap_or_else(|| "true".to_string());
-        Ok::<_, anyhow::Error>(val == "true")
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-pub async fn set_auto_sync_enabled(
-    store: State<'_, SkillStore>,
-    enabled: bool,
-) -> Result<(), CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        store.set_setting("auto_sync_enabled", if enabled { "true" } else { "false" })?;
-        Ok::<_, anyhow::Error>(())
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
-#[derive(Debug, Serialize, TS)]
-#[ts(export)]
-pub struct GlobalToolConfigDto {
-    pub selected_tools: Option<Vec<String>>,
-    pub scan_selected_only: bool,
-}
-
-pub(crate) fn get_global_tool_config_impl(
-    store: &SkillStore,
-) -> anyhow::Result<GlobalToolConfigDto> {
-    let selected_tools = store
-        .get_setting("global_selected_tools_v1")?
-        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok());
-    let scan_selected_only = store
-        .get_setting("scan_selected_tools_only")?
-        .map(|v| v == "true")
-        .unwrap_or(true);
-    Ok(GlobalToolConfigDto {
-        selected_tools,
-        scan_selected_only,
-    })
-}
-
-pub(crate) fn set_global_tool_config_impl(
-    store: &SkillStore,
-    selected_tools: &[String],
-    scan_selected_only: bool,
-) -> anyhow::Result<()> {
-    store.set_setting(
-        "global_selected_tools_v1",
-        &serde_json::to_string(selected_tools).unwrap_or_else(|_| "[]".to_string()),
-    )?;
-    store.set_setting(
-        "scan_selected_tools_only",
-        if scan_selected_only { "true" } else { "false" },
-    )?;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn get_global_tool_config(
-    store: State<'_, SkillStore>,
-) -> Result<GlobalToolConfigDto, CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || get_global_tool_config_impl(&store))
-        .await
-        .map_err(CommandError::internal)?
-        .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-#[allow(non_snake_case)]
-pub async fn set_global_tool_config(
-    store: State<'_, SkillStore>,
-    selectedTools: Vec<String>,
-    scanSelectedOnly: bool,
-) -> Result<(), CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        set_global_tool_config_impl(&store, &selectedTools, scanSelectedOnly)
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-#[allow(non_snake_case)]
-pub async fn get_ui_zoom_level(store: State<'_, SkillStore>) -> Result<f64, CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let val = store
-            .get_setting("ui_zoom_level")
-            .map_err(CommandError::from_anyhow)?;
-        Ok::<_, CommandError>(val.and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0))
-    })
-    .await
-    .map_err(CommandError::internal)?
-}
-
-#[tauri::command]
-#[allow(non_snake_case)]
-pub async fn set_ui_zoom_level(
-    store: State<'_, SkillStore>,
-    zoomLevel: f64,
-) -> Result<(), CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let clamped = zoomLevel.clamp(0.5, 3.0);
-        store
-            .set_setting("ui_zoom_level", &clamped.to_string())
-            .map_err(CommandError::from_anyhow)
-    })
-    .await
-    .map_err(CommandError::internal)?
 }
 
 #[tauri::command]

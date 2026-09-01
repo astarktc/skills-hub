@@ -60,9 +60,7 @@ fn falls_back_to_cache_on_http_failure() {
     let store = temp_store();
 
     // Pre-populate cache
-    store
-        .set_setting("featured_skills_cache", &json_payload())
-        .unwrap();
+    crate::core::settings::set_featured_skills_cache(&store, &json_payload()).unwrap();
 
     let mut server = mockito::Server::new();
     let _m = server

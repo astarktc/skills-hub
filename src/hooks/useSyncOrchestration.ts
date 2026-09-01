@@ -4,7 +4,7 @@ import type {
   BatchSyncOverrideDto,
   BatchSyncReportDto,
   BatchSyncSkillDto,
-  GlobalToolConfigDto,
+  AppSettings,
   SyncProgressDto,
   ToolOption,
   ToolStatusDto,
@@ -122,25 +122,17 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
   }, [relevantNewlyInstalled, t, tools]);
 
   useEffect(() => {
-    if (!isTauri) return;
-    invokeTauri<boolean>("get_auto_sync_enabled")
-      .then(setAutoSyncEnabled)
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
     const load = async () => {
       if (!isTauri) return;
-      // Load the global tool config first so the new-tools popup and sync
+      // Load the settings snapshot first so the new-tools popup and sync
       // target defaults respect the saved selection.
       let selectedTools: string[] | null = null;
       let scanSelectedOnly = true;
       try {
-        const config = await invokeTauri<GlobalToolConfigDto>(
-          "get_global_tool_config",
-        );
-        selectedTools = config.selected_tools;
-        scanSelectedOnly = config.scan_selected_only;
+        const settings = await invokeTauri<AppSettings>("get_settings");
+        selectedTools = settings.global_selected_tools;
+        scanSelectedOnly = settings.scan_selected_tools_only;
+        setAutoSyncEnabled(settings.auto_sync_enabled);
         setGlobalSelectedTools(selectedTools);
         setScanSelectedToolsOnly(scanSelectedOnly);
       } catch (err) {
@@ -245,7 +237,9 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
   const handleAutoSyncToggle = useCallback(
     async (enabled: boolean) => {
       try {
-        await invokeTauri("set_auto_sync_enabled", { enabled });
+        await invokeTauri("update_setting", {
+          update: { key: "auto_sync_enabled", value: enabled },
+        });
         setAutoSyncEnabled(enabled);
       } catch (err) {
         const msg = formatError(err);
@@ -270,9 +264,11 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
   const handleToolConfigConfirm = useCallback(
     async (selected: string[], scanOnly = false) => {
       try {
-        await invokeTauri("set_global_tool_config", {
-          selectedTools: selected,
-          scanSelectedOnly: scanOnly,
+        await invokeTauri("update_setting", {
+          update: {
+            key: "global_tool_config",
+            value: { selected_tools: selected, scan_selected_only: scanOnly },
+          },
         });
         setGlobalSelectedTools(selected);
         setScanSelectedToolsOnly(scanOnly);

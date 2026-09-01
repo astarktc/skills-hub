@@ -394,6 +394,7 @@ function App() {
             storagePath={settings.storagePath}
             gitCacheCleanupDays={settings.gitCacheCleanupDays}
             gitCacheTtlSecs={settings.gitCacheTtlSecs}
+            bounds={settings.bounds}
             themePreference={settings.themePreference}
             zoomLevel={settings.zoomLevel}
             onPickStoragePath={settings.handlePickStoragePath}

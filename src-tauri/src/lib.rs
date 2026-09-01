@@ -41,8 +41,7 @@ pub fn run() {
 
             // Apply persisted zoom level before first paint.
             {
-                let zoom_str = store.get_setting("ui_zoom_level").unwrap_or(None);
-                let zoom_level: f64 = zoom_str.and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0);
+                let zoom_level = core::settings::ui_zoom_level(&store);
                 if (zoom_level - 1.0).abs() > f64::EPSILON {
                     if let Some(webview_window) = app.get_webview_window("main") {
                         let _ = webview_window.set_zoom(zoom_level);
@@ -70,8 +69,7 @@ pub fn run() {
                     log::info!("cleaned up {} old git temp dirs", removed);
                 }
 
-                let cleanup_days =
-                    core::cache_cleanup::get_git_cache_cleanup_days(&store_for_cleanup);
+                let cleanup_days = core::settings::git_cache_cleanup_days(&store_for_cleanup);
                 if cleanup_days > 0 {
                     let max_age =
                         std::time::Duration::from_secs(cleanup_days as u64 * 24 * 60 * 60);
@@ -99,14 +97,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::get_central_repo_path,
-            commands::set_central_repo_path,
+            commands::get_settings,
+            commands::update_setting,
             commands::get_tool_status,
             commands::get_project_tool_status,
-            commands::get_git_cache_cleanup_days,
-            commands::get_git_cache_ttl_secs,
-            commands::set_git_cache_cleanup_days,
-            commands::set_git_cache_ttl_secs,
             commands::clear_git_cache_now,
             commands::get_onboarding_plan,
             commands::install_local,
@@ -118,18 +112,10 @@ pub fn run() {
             commands::sync_skills_to_tools,
             commands::unsync_skill_from_tool,
             commands::update_managed_skill,
-            commands::get_github_token,
-            commands::set_github_token,
             commands::import_existing_skill,
             commands::remove_skill_source,
             commands::get_managed_skills,
             commands::delete_managed_skill,
-            commands::get_auto_sync_enabled,
-            commands::set_auto_sync_enabled,
-            commands::get_global_tool_config,
-            commands::set_global_tool_config,
-            commands::get_ui_zoom_level,
-            commands::set_ui_zoom_level,
             commands::unsync_all_skills,
             commands::unsync_skill,
             commands::get_featured_skills,

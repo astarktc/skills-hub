@@ -8,7 +8,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BatchSyncReportDto,
-  GlobalToolConfigDto,
+  AppSettings,
   SyncProgressDto,
   ToolInfoDto,
   ToolStatusDto,
@@ -67,21 +67,37 @@ const TOOL_STATUS: ToolStatusDto = {
   newly_installed: [],
 };
 
+// Only the fields this hook reads; the rest of the snapshot is filler.
+function appSettings(overrides?: Partial<AppSettings>): AppSettings {
+  return {
+    central_repo_path: "/tmp/central",
+    git_cache_cleanup_days: 30,
+    git_cache_ttl_secs: 60,
+    github_token: "",
+    auto_sync_enabled: true,
+    global_selected_tools: null,
+    scan_selected_tools_only: true,
+    ui_zoom_level: 1,
+    bounds: {
+      git_cache_cleanup_days: { min: 0, max: 3650 },
+      git_cache_ttl_secs: { min: 0, max: 3600 },
+      ui_zoom_level: { min: 0.5, max: 3 },
+    },
+    ...overrides,
+  };
+}
+
 function stubBackend(overrides?: {
-  config?: Partial<GlobalToolConfigDto>;
+  config?: Partial<
+    Pick<AppSettings, "global_selected_tools" | "scan_selected_tools_only">
+  >;
   status?: Partial<ToolStatusDto>;
   syncReport?: BatchSyncReportDto;
 }) {
   mockInvoke.mockImplementation((command: string) => {
     switch (command) {
-      case "get_auto_sync_enabled":
-        return Promise.resolve(true);
-      case "get_global_tool_config":
-        return Promise.resolve({
-          selected_tools: null,
-          scan_selected_only: true,
-          ...overrides?.config,
-        });
+      case "get_settings":
+        return Promise.resolve(appSettings(overrides?.config));
       case "get_tool_status":
         return Promise.resolve({ ...TOOL_STATUS, ...overrides?.status });
       case "sync_skills_to_tools":
@@ -141,7 +157,10 @@ describe("useSyncOrchestration target defaulting", () => {
 
   it("defaults sync targets to the saved selection when one exists", async () => {
     stubBackend({
-      config: { selected_tools: ["cursor"], scan_selected_only: true },
+      config: {
+        global_selected_tools: ["cursor"],
+        scan_selected_tools_only: true,
+      },
     });
     const { result } = renderSync();
 
@@ -157,7 +176,10 @@ describe("useSyncOrchestration target defaulting", () => {
 
   it("scan-selected-only hides newly installed tools outside the selection", async () => {
     stubBackend({
-      config: { selected_tools: ["cursor"], scan_selected_only: true },
+      config: {
+        global_selected_tools: ["cursor"],
+        scan_selected_tools_only: true,
+      },
       status: { newly_installed: ["goose"] },
     });
     const { result } = renderSync();
@@ -225,7 +247,7 @@ describe("useSyncOrchestration shared-dir groups", () => {
 
   it("enableTargetsFor expands to the shared-dir group", async () => {
     stubBackend({
-      config: { selected_tools: [], scan_selected_only: true },
+      config: { global_selected_tools: [], scan_selected_tools_only: true },
     });
     const { result } = renderSync();
     await waitFor(() => expect(result.current.toolStatus).not.toBeNull());

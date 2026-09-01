@@ -14,6 +14,7 @@ pub mod installer;
 pub mod onboarding;
 pub mod project_ops;
 pub mod project_sync;
+pub mod settings;
 pub mod skill_files;
 pub mod skill_lock;
 pub mod skill_store;
