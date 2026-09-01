@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   GitSkillCandidate,
+  GitSkillListing,
   InstallResultDto,
   LocalSkillCandidate,
   OnboardingPlan,
 } from "../components/skills/types";
 import { invokeTauri, isTauri } from "../lib/tauri";
+import { useCandidatePick } from "./useCandidatePick";
 import type { SkillLibrary } from "./useSkillLibrary";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type { StatusReporter, TranslateFn } from "./useStatusReporter";
@@ -77,20 +79,6 @@ export function useAddSkillFlow({
   const [localName, setLocalName] = useState("");
   const [gitUrl, setGitUrl] = useState("");
   const [gitName, setGitName] = useState("");
-  const [gitCandidates, setGitCandidates] = useState<GitSkillCandidate[]>([]);
-  const [gitCandidatesRepoUrl, setGitCandidatesRepoUrl] = useState<string>("");
-  const [showGitPickModal, setShowGitPickModal] = useState(false);
-  const [gitCandidateSelected, setGitCandidateSelected] = useState<
-    Record<string, boolean>
-  >({});
-  const [localCandidates, setLocalCandidates] = useState<LocalSkillCandidate[]>(
-    [],
-  );
-  const [localCandidatesBasePath, setLocalCandidatesBasePath] = useState("");
-  const [showLocalPickModal, setShowLocalPickModal] = useState(false);
-  const [localCandidateSelected, setLocalCandidateSelected] = useState<
-    Record<string, boolean>
-  >({});
   const [autoSelectSkillName, setAutoSelectSkillName] = useState<string | null>(
     null,
   );
@@ -148,6 +136,58 @@ export function useAddSkillFlow({
     ],
   );
 
+  /** After any install (single or batch): the add modal is done, the library has changed. */
+  const finishInstall = useCallback(async () => {
+    setShowAddModal(false);
+    await loadManagedSkills();
+  }, [loadManagedSkills]);
+
+  const pickDeps = {
+    t,
+    reporter,
+    isSkillNameTaken,
+    deploy: (created: InstallResultDto) =>
+      deployNewSkill(created, { noTargets: "collect" }),
+    afterBatch: finishInstall,
+  };
+
+  /** Git picker: candidates of one repo URL (the picker's context). */
+  const git = useCandidatePick<GitSkillCandidate, string>(
+    {
+      customName: gitName,
+      installOne: (repoUrl, candidate, name) =>
+        invokeTauri<InstallResultDto>("install_git_selection", {
+          repoUrl,
+          subpath: candidate.subpath,
+          name,
+        }),
+      resetForm: () => {
+        setGitUrl("");
+        setGitName("");
+      },
+    },
+    pickDeps,
+  );
+
+  /** Local picker: candidates under one base path (the picker's context). */
+  const local = useCandidatePick<LocalSkillCandidate, string>(
+    {
+      customName: localName,
+      selectable: (candidate) => candidate.valid,
+      installOne: (basePath, candidate, name) =>
+        invokeTauri<InstallResultDto>("install_local_selection", {
+          basePath,
+          subpath: candidate.subpath,
+          name,
+        }),
+      resetForm: () => {
+        setLocalPath("");
+        setLocalName("");
+      },
+    },
+    pickDeps,
+  );
+
   /** Fetch the onboarding plan and reset the selection to its defaults. */
   const fetchPlan = useCallback(async () => {
     const result = await invokeTauri<OnboardingPlan>("get_onboarding_plan");
@@ -188,13 +228,21 @@ export function useAddSkillFlow({
     setShowAddModal(true);
   }, []);
 
-  const handleCloseAdd = useCallback(() => {
-    if (!loading) setShowAddModal(false);
-  }, [loading]);
-
-  const handleCloseImport = useCallback(() => {
-    if (!loading) setShowImportModal(false);
-  }, [loading]);
+  /** Modals stay put while an action runs (the overlay owns the screen). */
+  const closeUnlessLoading = useCallback(
+    (setShow: (open: boolean) => void) => {
+      if (!loading) setShow(false);
+    },
+    [loading],
+  );
+  const handleCloseAdd = useCallback(
+    () => closeUnlessLoading(setShowAddModal),
+    [closeUnlessLoading],
+  );
+  const handleCloseImport = useCallback(
+    () => closeUnlessLoading(setShowImportModal),
+    [closeUnlessLoading],
+  );
 
   const handleReviewImport = useCallback(async () => {
     if (plan) {
@@ -206,30 +254,6 @@ export function useAddSkillFlow({
       setShowImportModal(true);
     }
   }, [loadPlan, plan]);
-
-  const handleCloseGitPick = useCallback(() => {
-    if (!loading) setShowGitPickModal(false);
-  }, [loading]);
-
-  const handleCancelGitPick = useCallback(() => {
-    if (loading) return;
-    setShowGitPickModal(false);
-    setGitCandidates([]);
-    setGitCandidateSelected({});
-    setGitCandidatesRepoUrl("");
-  }, [loading]);
-
-  const handleCloseLocalPick = useCallback(() => {
-    if (!loading) setShowLocalPickModal(false);
-  }, [loading]);
-
-  const handleCancelLocalPick = useCallback(() => {
-    if (loading) return;
-    setShowLocalPickModal(false);
-    setLocalCandidates([]);
-    setLocalCandidateSelected({});
-    setLocalCandidatesBasePath("");
-  }, [loading]);
 
   const handlePickLocalPath = useCallback(async () => {
     try {
@@ -248,46 +272,6 @@ export function useAddSkillFlow({
       setError(formatError(err));
     }
   }, [formatError, setError, t]);
-
-  const handleToggleAllGitCandidates = useCallback(
-    (checked: boolean) => {
-      setGitCandidateSelected(
-        Object.fromEntries(gitCandidates.map((c) => [c.subpath, checked])),
-      );
-    },
-    [gitCandidates],
-  );
-
-  const handleToggleAllLocalCandidates = useCallback(
-    (checked: boolean) => {
-      setLocalCandidateSelected(
-        Object.fromEntries(
-          localCandidates.map((c) => [c.subpath, c.valid && checked]),
-        ),
-      );
-    },
-    [localCandidates],
-  );
-
-  const handleToggleGitCandidate = useCallback(
-    (subpath: string, checked: boolean) => {
-      setGitCandidateSelected((prev) => ({
-        ...prev,
-        [subpath]: checked,
-      }));
-    },
-    [],
-  );
-
-  const handleToggleLocalCandidate = useCallback(
-    (subpath: string, checked: boolean) => {
-      setLocalCandidateSelected((prev) => ({
-        ...prev,
-        [subpath]: checked,
-      }));
-    },
-    [],
-  );
 
   const handleToggleGroup = useCallback(
     (groupName: string, checked: boolean) => {
@@ -418,29 +402,6 @@ export function useAddSkillFlow({
     });
   };
 
-  /** Hand the local flow to the picker modal with the discovered candidates. */
-  const openLocalPicker = (
-    basePath: string,
-    candidates: LocalSkillCandidate[],
-  ) => {
-    setLocalCandidatesBasePath(basePath);
-    setLocalCandidates(candidates);
-    setLocalCandidateSelected(
-      Object.fromEntries(candidates.map((c) => [c.subpath, c.valid])),
-    );
-    setShowLocalPickModal(true);
-  };
-
-  /** Hand the git flow to the picker modal with the discovered candidates. */
-  const openGitPicker = (url: string, candidates: GitSkillCandidate[]) => {
-    setGitCandidatesRepoUrl(url);
-    setGitCandidates(candidates);
-    setGitCandidateSelected(
-      Object.fromEntries(candidates.map((c) => [c.subpath, true])),
-    );
-    setShowGitPickModal(true);
-  };
-
   const handleCreateLocal = async () => {
     if (!localPath.trim()) {
       setError(t("errors.requireLocalPath"));
@@ -461,7 +422,7 @@ export function useAddSkillFlow({
           return action.fail(t("errors.noSkillsFoundLocal"));
         }
         if (candidates.length !== 1 || !candidates[0].valid) {
-          openLocalPicker(basePath, candidates);
+          local.open(basePath, candidates);
           return action.handOff();
         }
         const desiredName = localName.trim() || candidates[0].name;
@@ -484,8 +445,7 @@ export function useAddSkillFlow({
         if (deployErrors.length > 0) showActionErrors(deployErrors);
         setLocalPath("");
         setLocalName("");
-        setShowAddModal(false);
-        await loadManagedSkills();
+        await finishInstall();
       },
     );
   };
@@ -505,60 +465,39 @@ export function useAddSkillFlow({
 
         // All URLs (including /tree/ and /blob/ folder URLs) route through
         // the candidate-based flow. The backend's list_git_skills handles
-        // folder URL subpath extraction. This ensures every install goes
-        // through proper candidate discovery and name matching.
-        const candidates = await invokeTauri<GitSkillCandidate[]>(
-          "list_git_skills_cmd",
-          { repoUrl: url },
-        );
+        // folder URL subpath extraction and, for an Explore install, resolves
+        // the intended skill name against the candidates (the one core
+        // matching rule) -- this side only decides between install / pick.
+        const target = autoSelectSkillName;
+        setAutoSelectSkillName(null);
+        const { candidates, target_match } =
+          await invokeTauri<GitSkillListing>("list_git_skills_cmd", {
+            repoUrl: url,
+            targetName: target,
+          });
         if (candidates.length === 0) {
           return action.fail(t("errors.noSkillsFoundWithHint"));
         }
 
         /** Which candidate to install, or hand off to the picker. */
-        let chosen: GitSkillCandidate;
-        if (candidates.length === 1) {
-          // When autoSelectSkillName is set (Explore page install), verify
-          // the single candidate actually matches the intended skill. If
-          // not, the backend scan missed the target skill -- show error
-          // instead of silently installing the wrong one.
-          if (autoSelectSkillName) {
-            const target = autoSelectSkillName.toLowerCase();
-            const candidateName = candidates[0].name.toLowerCase();
-            setAutoSelectSkillName(null);
-            if (
-              candidateName !== target &&
-              !candidateName.includes(target) &&
-              !target.includes(candidateName)
-            ) {
-              return action.fail(
-                t("errors.skillNotFoundInRepo", { name: autoSelectSkillName }),
-              );
-            }
+        let chosen: GitSkillCandidate | undefined;
+        if (target) {
+          chosen =
+            target_match?.kind === "resolved"
+              ? candidates.find((c) => c.subpath === target_match.subpath)
+              : undefined;
+          // A lone candidate that is not the intended skill means the scan
+          // missed it: report, never silently install the wrong one.
+          if (!chosen && candidates.length === 1) {
+            return action.fail(
+              t("errors.skillNotFoundInRepo", { name: target }),
+            );
           }
+        } else if (candidates.length === 1) {
           chosen = candidates[0];
-        } else if (autoSelectSkillName) {
-          // Auto-select the matching skill from online search results.
-          // skills.sh name may differ from SKILL.md name (e.g.
-          // "json-render-react" vs "react"), so try exact match first, then
-          // containment match.
-          const target = autoSelectSkillName.toLowerCase();
-          const containMatches = candidates.filter((c) => {
-            const n = c.name.toLowerCase();
-            return target.includes(n) || n.includes(target);
-          });
-          const match =
-            candidates.find((c) => c.name.toLowerCase() === target) ??
-            (containMatches.length === 1 ? containMatches[0] : undefined);
-          setAutoSelectSkillName(null);
-          if (!match) {
-            // No match found, fall back to picker
-            openGitPicker(url, candidates);
-            return action.handOff();
-          }
-          chosen = match;
-        } else {
-          openGitPicker(url, candidates);
+        }
+        if (!chosen) {
+          git.open(url, candidates);
           return action.handOff();
         }
 
@@ -581,11 +520,14 @@ export function useAddSkillFlow({
         if (deployErrors.length > 0) showActionErrors(deployErrors);
         setGitUrl("");
         setGitName("");
-        setShowAddModal(false);
-        await loadManagedSkills();
+        await finishInstall();
       },
     );
   };
+
+  /** The add modal's primary action: whichever tab is showing. */
+  const handleCreate = () =>
+    addModalTab === "local" ? handleCreateLocal() : handleCreateGit();
 
   const handleExploreInstall = useCallback(
     (sourceUrl: string, skillName?: string) => {
@@ -606,146 +548,6 @@ export function useAddSkillFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exploreInstallTrigger]);
 
-  /**
-   * Shared core of the two "install the picked candidates" flows: install
-   * each selected candidate via `installOne`, deploy it through the canonical
-   * install→deploy tail, then reset that flow's pick state and finish up.
-   * Validation stays in the callers.
-   */
-  const runBatchInstall = async <C extends { name: string; subpath: string }>(
-    selected: C[],
-    installOne: (candidate: C) => Promise<InstallResultDto>,
-    resetPickState: () => void,
-  ) => {
-    await runAction(
-      { successToast: t("status.selectedSkillsInstalled") },
-      async () => {
-        const collectedErrors: { title: string; message: string }[] = [];
-        for (let i = 0; i < selected.length; i++) {
-          const candidate = selected[i];
-          setActionMessage(
-            t("actions.importStep", {
-              index: i + 1,
-              total: selected.length,
-              name: candidate.name,
-            }),
-          );
-          try {
-            const created = await installOne(candidate);
-            collectedErrors.push(
-              ...(await deployNewSkill(created, { noTargets: "collect" })),
-            );
-          } catch (err) {
-            const raw = formatError(err) ?? "";
-            collectedErrors.push({
-              title: t("errors.importFailedTitle", { name: candidate.name }),
-              message: raw,
-            });
-          }
-        }
-
-        resetPickState();
-        setShowAddModal(false);
-        await loadManagedSkills();
-        if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-      },
-    );
-  };
-
-  const handleInstallSelectedLocalCandidates = async () => {
-    const selected = localCandidates.filter(
-      (c) => c.valid && localCandidateSelected[c.subpath],
-    );
-    if (selected.length === 0) {
-      setError(t("errors.selectAtLeastOneSkill"));
-      return;
-    }
-    if (selected.length > 1 && localName.trim()) {
-      setError(t("errors.multiSelectNoCustomName"));
-      return;
-    }
-    if (selected.length > 1) {
-      const seen = new Set<string>();
-      const dup = selected.find((c) => {
-        if (seen.has(c.name)) return true;
-        seen.add(c.name);
-        return false;
-      });
-      if (dup) {
-        setError(t("errors.duplicateSelectedSkills", { name: dup.name }));
-        return;
-      }
-    }
-    const desiredName =
-      selected.length === 1 && localName.trim()
-        ? localName.trim()
-        : selected[0].name;
-    if (selected.length === 1 && isSkillNameTaken(desiredName)) {
-      setError(t("errors.skillAlreadyExists", { name: desiredName }));
-      return;
-    }
-    const duplicated = selected.find((c) => isSkillNameTaken(c.name));
-    if (selected.length > 1 && duplicated) {
-      setError(t("errors.skillAlreadyExists", { name: duplicated.name }));
-      return;
-    }
-
-    await runBatchInstall(
-      selected,
-      (candidate) =>
-        invokeTauri<InstallResultDto>("install_local_selection", {
-          basePath: localCandidatesBasePath,
-          subpath: candidate.subpath,
-          name: localName.trim() || undefined,
-        }),
-      () => {
-        setShowLocalPickModal(false);
-        setLocalCandidates([]);
-        setLocalCandidateSelected({});
-        setLocalCandidatesBasePath("");
-        setLocalPath("");
-        setLocalName("");
-      },
-    );
-  };
-
-  const handleInstallSelectedCandidates = async () => {
-    const selected = gitCandidates.filter(
-      (c) => gitCandidateSelected[c.subpath],
-    );
-    if (selected.length === 0) {
-      setError(t("errors.selectAtLeastOneSkill"));
-      return;
-    }
-    const duplicated = selected.find((c) => isSkillNameTaken(c.name));
-    if (duplicated) {
-      setError(t("errors.skillAlreadyExists", { name: duplicated.name }));
-      return;
-    }
-    if (selected.length > 1 && gitName.trim()) {
-      setError(t("errors.multiSelectNoCustomName"));
-      return;
-    }
-
-    await runBatchInstall(
-      selected,
-      (candidate) =>
-        invokeTauri<InstallResultDto>("install_git_selection", {
-          repoUrl: gitCandidatesRepoUrl,
-          subpath: candidate.subpath,
-          name: gitName.trim() || undefined,
-        }),
-      () => {
-        setShowGitPickModal(false);
-        setGitCandidates([]);
-        setGitCandidateSelected({});
-        setGitCandidatesRepoUrl("");
-        setGitUrl("");
-        setGitName("");
-      },
-    );
-  };
-
   return {
     plan,
     selected,
@@ -762,33 +564,18 @@ export function useAddSkillFlow({
     setGitUrl,
     gitName,
     setGitName,
-    gitCandidates,
-    gitCandidateSelected,
-    localCandidates,
-    localCandidateSelected,
-    showGitPickModal,
-    showLocalPickModal,
+    git,
+    local,
     handleOpenAdd,
     handleCloseAdd,
     handleCloseImport,
     handleReviewImport,
-    handleCloseGitPick,
-    handleCancelGitPick,
-    handleCloseLocalPick,
-    handleCancelLocalPick,
     handlePickLocalPath,
-    handleToggleAllGitCandidates,
-    handleToggleAllLocalCandidates,
-    handleToggleGitCandidate,
-    handleToggleLocalCandidate,
     handleToggleGroup,
     handleSelectVariant,
     toggleAll,
     handleImport,
-    handleCreateLocal,
-    handleCreateGit,
+    handleCreate,
     handleExploreInstall,
-    handleInstallSelectedLocalCandidates,
-    handleInstallSelectedCandidates,
   };
 }

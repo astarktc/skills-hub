@@ -454,11 +454,7 @@ function App() {
         onGitUrlChange={addFlow.setGitUrl}
         onGitNameChange={addFlow.setGitName}
         onSyncTargetChange={sync.handleSyncTargetChange}
-        onSubmit={
-          addFlow.addModalTab === "local"
-            ? addFlow.handleCreateLocal
-            : addFlow.handleCreateGit
-        }
+        onSubmit={addFlow.handleCreate}
         t={t}
       />
 
@@ -527,28 +523,28 @@ function App() {
       />
 
       <LocalPickModal
-        open={addFlow.showLocalPickModal}
+        open={addFlow.local.visible}
         loading={loading}
-        localCandidates={addFlow.localCandidates}
-        localCandidateSelected={addFlow.localCandidateSelected}
-        onRequestClose={addFlow.handleCloseLocalPick}
-        onCancel={addFlow.handleCancelLocalPick}
-        onToggleAll={addFlow.handleToggleAllLocalCandidates}
-        onToggleCandidate={addFlow.handleToggleLocalCandidate}
-        onInstall={addFlow.handleInstallSelectedLocalCandidates}
+        localCandidates={addFlow.local.candidates}
+        localCandidateSelected={addFlow.local.selected}
+        onRequestClose={addFlow.local.close}
+        onCancel={addFlow.local.cancel}
+        onToggleAll={addFlow.local.toggleAll}
+        onToggleCandidate={addFlow.local.toggle}
+        onInstall={addFlow.local.install}
         t={t}
       />
 
       <GitPickModal
-        open={addFlow.showGitPickModal}
+        open={addFlow.git.visible}
         loading={loading}
-        gitCandidates={addFlow.gitCandidates}
-        gitCandidateSelected={addFlow.gitCandidateSelected}
-        onRequestClose={addFlow.handleCloseGitPick}
-        onCancel={addFlow.handleCancelGitPick}
-        onToggleAll={addFlow.handleToggleAllGitCandidates}
-        onToggleCandidate={addFlow.handleToggleGitCandidate}
-        onInstall={addFlow.handleInstallSelectedCandidates}
+        gitCandidates={addFlow.git.candidates}
+        gitCandidateSelected={addFlow.git.selected}
+        onRequestClose={addFlow.git.close}
+        onCancel={addFlow.git.cancel}
+        onToggleAll={addFlow.git.toggleAll}
+        onToggleCandidate={addFlow.git.toggle}
+        onInstall={addFlow.git.install}
         t={t}
       />
 

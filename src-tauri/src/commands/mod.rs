@@ -21,7 +21,7 @@ use crate::core::global_sync::{BatchOverride, BatchPolicy, BatchSkill, BatchTarg
 use crate::core::installer::{
     clone_for_explore_preview, install_git_skill, install_git_skill_from_selection,
     install_local_skill, install_local_skill_from_selection, list_git_skills, list_local_skills,
-    update_managed_skill_from_source, GitSkillCandidate, InstallResult, InstallerPaths,
+    update_managed_skill_from_source, GitSkillListing, InstallResult, InstallerPaths,
     LocalSkillCandidate,
 };
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
@@ -311,11 +311,12 @@ pub async fn list_git_skills_cmd(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     repoUrl: String,
-) -> Result<Vec<GitSkillCandidate>, CommandError> {
+    targetName: Option<String>,
+) -> Result<GitSkillListing, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let paths = installer_paths(&app, &store)?;
-        list_git_skills(&paths, &store, &repoUrl)
+        list_git_skills(&paths, &store, &repoUrl, targetName.as_deref())
     })
     .await
     .map_err(CommandError::internal)?

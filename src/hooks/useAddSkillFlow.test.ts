@@ -1,13 +1,16 @@
 // Tests at the AddSkillFlow seam: git/local candidate discovery routing
 // (single-candidate fast path vs pick modal), name-collision guards, the
-// Explore-page auto-select matching, and the deploy-target intersection
+// Explore-page auto-select (the backend resolves the name; this side only
+// decides install / pick / not-found), and the deploy-target intersection
 // (user-selected ∩ installed). Backend mocked at the invokeTauri module
 // seam; sync and library worlds enter as mocked dependency interfaces.
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  CandidateMatch,
   GitSkillCandidate,
+  GitSkillListing,
   LocalSkillCandidate,
 } from "../components/skills/types";
 import type { AddSkillFlowDeps } from "./useAddSkillFlow";
@@ -42,14 +45,24 @@ function gitCandidate(name: string, subpath: string): GitSkillCandidate {
 
 function stubBackend(overrides?: {
   gitCandidates?: GitSkillCandidate[];
+  /** What the backend resolved a `targetName` to; `none` by default. */
+  targetMatch?: CandidateMatch;
   localCandidates?: LocalSkillCandidate[];
 }) {
-  mockInvoke.mockImplementation((command: string) => {
+  mockInvoke.mockImplementation((command: string, args?: unknown) => {
     switch (command) {
       case "get_onboarding_plan":
         return Promise.resolve(EMPTY_PLAN);
-      case "list_git_skills_cmd":
-        return Promise.resolve(overrides?.gitCandidates ?? []);
+      case "list_git_skills_cmd": {
+        const { targetName } = args as { targetName: string | null };
+        const listing: GitSkillListing = {
+          candidates: overrides?.gitCandidates ?? [],
+          target_match: targetName
+            ? (overrides?.targetMatch ?? { kind: "none" })
+            : null,
+        };
+        return Promise.resolve(listing);
+      }
       case "list_local_skills_cmd":
         return Promise.resolve(overrides?.localCandidates ?? []);
       case "install_git_selection":
@@ -164,7 +177,7 @@ describe("useAddSkillFlow git flow", () => {
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
 
     await act(async () => {
-      await result.current.handleCreateGit();
+      await result.current.handleCreate();
     });
 
     expect(setup.reporter.setError).toHaveBeenCalledWith(
@@ -182,7 +195,7 @@ describe("useAddSkillFlow git flow", () => {
 
     act(() => result.current.setGitUrl("https://github.com/x/y"));
     await act(async () => {
-      await result.current.handleCreateGit();
+      await result.current.handleCreate();
     });
 
     expect(setup.reporter.setError).toHaveBeenCalledWith(
@@ -198,7 +211,7 @@ describe("useAddSkillFlow git flow", () => {
 
     act(() => result.current.setGitUrl("https://github.com/x/y"));
     await act(async () => {
-      await result.current.handleCreateGit();
+      await result.current.handleCreate();
     });
 
     expect(mockInvoke).toHaveBeenCalledWith("install_git_selection", {
@@ -235,11 +248,11 @@ describe("useAddSkillFlow git flow", () => {
 
     act(() => result.current.setGitUrl("https://github.com/x/y"));
     await act(async () => {
-      await result.current.handleCreateGit();
+      await result.current.handleCreate();
     });
 
-    expect(result.current.showGitPickModal).toBe(true);
-    expect(result.current.gitCandidateSelected).toEqual({
+    expect(result.current.git.visible).toBe(true);
+    expect(result.current.git.selected).toEqual({
       "skills/alpha": true,
       "skills/beta": true,
     });
@@ -251,37 +264,15 @@ describe("useAddSkillFlow git flow", () => {
 });
 
 describe("useAddSkillFlow explore auto-select", () => {
-  it("installs the exact-name match from a multi-candidate repo", async () => {
-    stubBackend({
-      gitCandidates: [
-        gitCandidate("alpha", "skills/alpha"),
-        gitCandidate("beta", "skills/beta"),
-      ],
-    });
-    const setup = makeDeps();
-    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-
-    act(() => {
-      result.current.handleExploreInstall("https://github.com/x/y", "beta");
-    });
-
-    await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith("install_git_selection", {
-        repoUrl: "https://github.com/x/y",
-        subpath: "skills/beta",
-        name: undefined,
-      }),
-    );
-    // The explore path resets deploy targets to all installed tools first.
-    expect(setup.sync.targetAllInstalled).toHaveBeenCalled();
-  });
-
-  it("installs a unique containment match (skills.sh name vs SKILL.md name)", async () => {
+  it("hands the target name to the listing and installs what the backend resolved", async () => {
+    // skills.sh name vs SKILL.md name ("json-render-react" vs "react"): the
+    // matching rule lives in core; the flow only follows the resolution.
     stubBackend({
       gitCandidates: [
         gitCandidate("react", "skills/react"),
         gitCandidate("vue", "skills/vue"),
       ],
+      targetMatch: { kind: "resolved", subpath: "skills/react" },
     });
     const setup = makeDeps();
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
@@ -300,9 +291,31 @@ describe("useAddSkillFlow explore auto-select", () => {
         name: undefined,
       }),
     );
+    expect(mockInvoke).toHaveBeenCalledWith("list_git_skills_cmd", {
+      repoUrl: "https://github.com/x/y",
+      targetName: "json-render-react",
+    });
+    // The explore path resets deploy targets to all installed tools first.
+    expect(setup.sync.targetAllInstalled).toHaveBeenCalled();
   });
 
-  it("falls back to the pick modal when nothing matches", async () => {
+  it("a manual git install lists without a target name", async () => {
+    stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha")] });
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+
+    act(() => result.current.setGitUrl("https://github.com/x/y"));
+    await act(async () => {
+      await result.current.handleCreate();
+    });
+
+    expect(mockInvoke).toHaveBeenCalledWith("list_git_skills_cmd", {
+      repoUrl: "https://github.com/x/y",
+      targetName: null,
+    });
+  });
+
+  it("falls back to the pick modal when the backend resolves nothing", async () => {
     stubBackend({
       gitCandidates: [
         gitCandidate("alpha", "skills/alpha"),
@@ -316,7 +329,32 @@ describe("useAddSkillFlow explore auto-select", () => {
       result.current.handleExploreInstall("https://github.com/x/y", "gamma");
     });
 
-    await waitFor(() => expect(result.current.showGitPickModal).toBe(true));
+    await waitFor(() => expect(result.current.git.visible).toBe(true));
+    expect(installGitCalls()).toHaveLength(0);
+  });
+
+  it("falls back to the pick modal when the backend reports ambiguity", async () => {
+    stubBackend({
+      gitCandidates: [
+        gitCandidate("react", "skills/react"),
+        gitCandidate("render", "skills/render"),
+      ],
+      targetMatch: {
+        kind: "ambiguous",
+        subpaths: ["skills/react", "skills/render"],
+      },
+    });
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+
+    act(() => {
+      result.current.handleExploreInstall(
+        "https://github.com/x/y",
+        "json-render-react",
+      );
+    });
+
+    await waitFor(() => expect(result.current.git.visible).toBe(true));
     expect(installGitCalls()).toHaveLength(0);
   });
 
@@ -361,13 +399,16 @@ describe("useAddSkillFlow local flow", () => {
     const setup = makeDeps();
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
 
-    act(() => result.current.setLocalPath("/some/dir"));
+    act(() => {
+      result.current.setAddModalTab("local");
+      result.current.setLocalPath("/some/dir");
+    });
     await act(async () => {
-      await result.current.handleCreateLocal();
+      await result.current.handleCreate();
     });
 
-    expect(result.current.showLocalPickModal).toBe(true);
-    expect(result.current.localCandidateSelected).toEqual({
+    expect(result.current.local.visible).toBe(true);
+    expect(result.current.local.selected).toEqual({
       alpha: true,
       broken: false,
     });
@@ -394,9 +435,12 @@ describe("useAddSkillFlow local flow", () => {
     const setup = makeDeps({ takenNames: ["alpha"] });
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
 
-    act(() => result.current.setLocalPath("/some/dir"));
+    act(() => {
+      result.current.setAddModalTab("local");
+      result.current.setLocalPath("/some/dir");
+    });
     await act(async () => {
-      await result.current.handleCreateLocal();
+      await result.current.handleCreate();
     });
 
     expect(setup.reporter.setError).toHaveBeenCalledWith(

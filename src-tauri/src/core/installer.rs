@@ -21,6 +21,7 @@ use super::skill_discovery::{
     DiscoveredSkill,
 };
 use super::skill_lock::try_enrich_from_skill_lock_with_home;
+use super::skill_matching::{match_skill_candidate, CandidateMatch, MatchableSkill, SkillMatch};
 use super::skill_store::{AssignmentTransition, SkillStore};
 use super::sync_engine::copy_dir_recursive;
 use super::sync_engine::sync_dir_copy_with_overwrite;
@@ -396,26 +397,8 @@ pub fn update_managed_skill_from_source(
             // Multi-skill repo with no stored subpath: match by name
             let candidates = installable_skills_in_repo(&repo_dir);
             if candidates.len() >= 2 {
-                let skill_name = record.name.to_lowercase();
-                if let Some(matched) =
-                    candidates
-                        .iter()
-                        .find(|c| c.name == record.name)
-                        .or_else(|| {
-                            // Fuzzy: bidirectional containment (e.g. "react-best-practices" vs "vercel-react-best-practices")
-                            let fuzzy: Vec<_> = candidates
-                                .iter()
-                                .filter(|c| {
-                                    let cn = c.name.to_lowercase();
-                                    cn.contains(&skill_name) || skill_name.contains(&cn)
-                                })
-                                .collect();
-                            if fuzzy.len() == 1 {
-                                Some(fuzzy[0])
-                            } else {
-                                None
-                            }
-                        })
+                if let SkillMatch::Resolved(matched) =
+                    match_skill_candidate(&record.name, &candidates)
                 {
                     resolved_subpath = Some(matched.subpath.clone());
                     // Backfill source_subpath for future updates (carried into the
@@ -580,11 +563,32 @@ fn git_candidate(c: DiscoveredSkill) -> GitSkillCandidate {
     }
 }
 
+impl MatchableSkill for GitSkillCandidate {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn subpath(&self) -> &str {
+        &self.subpath
+    }
+}
+
+/// What the git add flow gets back from a listing: the candidates plus, when
+/// the caller named the skill it is after (Explore install), that name
+/// resolved against them by the one core matching rule.
+#[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
+#[ts(export)]
+pub struct GitSkillListing {
+    pub candidates: Vec<GitSkillCandidate>,
+    /// `None` when no `target_name` was given.
+    pub target_match: Option<CandidateMatch>,
+}
+
 pub fn list_git_skills(
     paths: &InstallerPaths,
     store: &SkillStore,
     repo_url: &str,
-) -> Result<Vec<GitSkillCandidate>> {
+    target_name: Option<&str>,
+) -> Result<GitSkillListing> {
     let parsed = parse_github_url(repo_url);
     let (repo_dir, _rev) = clone_to_cache(
         &paths.cache_dir,
@@ -594,7 +598,12 @@ pub fn list_git_skills(
         None,
     )?;
 
-    Ok(git_candidates_in(&repo_dir, parsed.subpath.as_deref()))
+    let candidates = git_candidates_in(&repo_dir, parsed.subpath.as_deref());
+    let target_match = target_name.map(|target| match_skill_candidate(target, &candidates).into());
+    Ok(GitSkillListing {
+        candidates,
+        target_match,
+    })
 }
 
 /// Git listing over a cloned repo. A folder URL (`subpath`) scopes discovery
@@ -1057,25 +1066,20 @@ fn fetch_skill_files(
     })
 }
 
-/// Find a skill's subpath by name within a multi-skill repo.
-/// Matches against SKILL.md name first, then directory name.
+/// Find a skill's subpath by name within a multi-skill repo. Anything short
+/// of one unambiguous match (no name, no hit, several hits) is the
+/// `MultiSkills` condition: the caller must name the skill precisely.
 fn find_skill_by_name<'a>(
     candidates: &'a [DiscoveredSkill],
     skill_name: Option<&str>,
 ) -> Result<&'a str> {
     let target_name = skill_name.ok_or_else(|| anyhow::anyhow!(SignalError::MultiSkills))?;
-    let target = target_name.to_lowercase();
-    let matches = |n: &str| {
-        let n = n.to_lowercase();
-        n == target || n.contains(&target) || target.contains(&n)
-    };
-
-    candidates
-        .iter()
-        .find(|c| matches(&c.name))
-        .or_else(|| candidates.iter().find(|c| matches(c.dir_name())))
-        .map(|c| c.subpath.as_str())
-        .ok_or_else(|| anyhow::anyhow!(SignalError::MultiSkills))
+    match match_skill_candidate(target_name, candidates) {
+        SkillMatch::Resolved(c) => Ok(c.subpath.as_str()),
+        SkillMatch::Ambiguous(_) | SkillMatch::None => {
+            Err(anyhow::anyhow!(SignalError::MultiSkills))
+        }
+    }
 }
 
 /// Clone a skill into the explore-cache for preview (no DB registration).

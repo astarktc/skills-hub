@@ -13,6 +13,8 @@ export type { SkillTargetDto } from "../../bindings/SkillTargetDto";
 export type { SyncStatus } from "../../bindings/SyncStatus";
 export type { SyncMode } from "../../bindings/SyncMode";
 export type { GitSkillCandidate } from "../../bindings/GitSkillCandidate";
+export type { GitSkillListing } from "../../bindings/GitSkillListing";
+export type { CandidateMatch } from "../../bindings/CandidateMatch";
 export type { LocalSkillCandidate } from "../../bindings/LocalSkillCandidate";
 export type { InstallResultDto } from "../../bindings/InstallResultDto";
 export type { UpdateResultDto } from "../../bindings/UpdateResultDto";

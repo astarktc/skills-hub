@@ -24,6 +24,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use super::skill_matching::MatchableSkill;
+
 /// Directories relative to a root that are declared skill homes.
 const SKILL_SCAN_BASES: [&str; 5] = [
     "skills",
@@ -96,13 +98,12 @@ pub struct DiscoveredSkill {
     pub validity: Validity,
 }
 
-impl DiscoveredSkill {
-    /// Last component of the subpath (the directory's own name).
-    pub fn dir_name(&self) -> &str {
-        self.subpath
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(&self.subpath)
+impl MatchableSkill for DiscoveredSkill {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn subpath(&self) -> &str {
+        &self.subpath
     }
 }
 

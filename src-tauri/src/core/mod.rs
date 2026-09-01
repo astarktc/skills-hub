@@ -18,6 +18,7 @@ pub mod settings;
 pub mod skill_discovery;
 pub mod skill_files;
 pub mod skill_lock;
+pub mod skill_matching;
 pub mod skill_removal;
 pub mod skill_store;
 pub mod skills_search;

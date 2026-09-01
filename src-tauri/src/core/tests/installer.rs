@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::core::errors::SignalError;
 use crate::core::installer::InstallerPaths;
+use crate::core::skill_matching::CandidateMatch;
 use crate::core::skill_store::{
     ProjectRecord, ProjectSkillAssignmentRecord, SkillStore, SkillTargetRecord,
 };
@@ -196,8 +197,14 @@ fn lists_and_installs_git_skills_without_network() {
     let repo = init_git_repo(repo_dir.path());
     commit_all(&repo, "add skills");
 
-    let candidates =
-        super::list_git_skills(&paths, &store, repo_dir.path().to_string_lossy().as_ref()).unwrap();
+    let candidates = super::list_git_skills(
+        &paths,
+        &store,
+        repo_dir.path().to_string_lossy().as_ref(),
+        None,
+    )
+    .unwrap()
+    .candidates;
     let subpaths: Vec<String> = candidates.into_iter().map(|c| c.subpath).collect();
     assert!(subpaths.contains(&".".to_string()));
     assert!(subpaths.iter().any(|s| s.ends_with("skills/a")));
@@ -532,6 +539,47 @@ fn install_git_skill_detects_root_level_multi_skills() {
     ));
 }
 
+/// The listing resolves an optional target name with the core matching rule
+/// (exact, else unique containment) and reports it on the wire shape.
+#[test]
+fn list_git_skills_resolves_target_name() {
+    let (_dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+
+    let repo_dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(repo_dir.path().join("skills/react")).unwrap();
+    fs::create_dir_all(repo_dir.path().join("skills/vue")).unwrap();
+    fs::write(
+        repo_dir.path().join("skills/react/SKILL.md"),
+        "---\nname: react\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        repo_dir.path().join("skills/vue/SKILL.md"),
+        "---\nname: vue\n---\n",
+    )
+    .unwrap();
+    let repo = init_git_repo(repo_dir.path());
+    commit_all(&repo, "add skills");
+    let url = repo_dir.path().to_string_lossy().to_string();
+
+    let listing = super::list_git_skills(&paths, &store, &url, None).unwrap();
+    assert_eq!(listing.candidates.len(), 2);
+    assert!(listing.target_match.is_none());
+
+    // skills.sh name vs SKILL.md name: containment resolves.
+    let listing = super::list_git_skills(&paths, &store, &url, Some("json-render-react")).unwrap();
+    assert_eq!(
+        listing.target_match,
+        Some(CandidateMatch::Resolved {
+            subpath: "skills/react".to_string()
+        })
+    );
+
+    let listing = super::list_git_skills(&paths, &store, &url, Some("gamma")).unwrap();
+    assert_eq!(listing.target_match, Some(CandidateMatch::None));
+}
+
 /// Issue #18: list_git_skills should discover skills in root-level subdirectories.
 #[test]
 fn list_git_skills_finds_root_level_skills() {
@@ -556,8 +604,14 @@ fn list_git_skills_finds_root_level_skills() {
     let repo = init_git_repo(repo_dir.path());
     commit_all(&repo, "add root-level skills");
 
-    let candidates =
-        super::list_git_skills(&paths, &store, repo_dir.path().to_string_lossy().as_ref()).unwrap();
+    let candidates = super::list_git_skills(
+        &paths,
+        &store,
+        repo_dir.path().to_string_lossy().as_ref(),
+        None,
+    )
+    .unwrap()
+    .candidates;
 
     let names: Vec<String> = candidates.iter().map(|c| c.name.clone()).collect();
     assert!(names.contains(&"First".to_string()), "should find First");
@@ -621,8 +675,14 @@ fn list_git_skills_discovers_deeply_nested_via_recursive_fallback() {
     let repo = init_git_repo(repo_dir.path());
     commit_all(&repo, "add nested skills");
 
-    let candidates =
-        super::list_git_skills(&paths, &store, repo_dir.path().to_string_lossy().as_ref()).unwrap();
+    let candidates = super::list_git_skills(
+        &paths,
+        &store,
+        repo_dir.path().to_string_lossy().as_ref(),
+        None,
+    )
+    .unwrap()
+    .candidates;
 
     assert!(
         candidates.len() >= 2,
@@ -685,8 +745,14 @@ fn existing_shallow_repos_still_work() {
     let repo = init_git_repo(repo_dir.path());
     commit_all(&repo, "add standard skills");
 
-    let candidates =
-        super::list_git_skills(&paths, &store, repo_dir.path().to_string_lossy().as_ref()).unwrap();
+    let candidates = super::list_git_skills(
+        &paths,
+        &store,
+        repo_dir.path().to_string_lossy().as_ref(),
+        None,
+    )
+    .unwrap()
+    .candidates;
     let names: Vec<String> = candidates.iter().map(|c| c.name.clone()).collect();
     assert!(names.contains(&"Skill A".to_string()));
     assert!(names.contains(&"Skill B".to_string()));
@@ -830,8 +896,14 @@ fn list_git_skills_finds_root_skill_container_layout() {
     let repo = init_git_repo(repo_dir.path());
     commit_all(&repo, "add container skill");
 
-    let candidates =
-        super::list_git_skills(&paths, &store, repo_dir.path().to_string_lossy().as_ref()).unwrap();
+    let candidates = super::list_git_skills(
+        &paths,
+        &store,
+        repo_dir.path().to_string_lossy().as_ref(),
+        None,
+    )
+    .unwrap()
+    .candidates;
 
     let candidate = candidates
         .iter()
