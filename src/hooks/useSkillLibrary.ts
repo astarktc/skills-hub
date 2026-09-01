@@ -39,11 +39,9 @@ export type SkillLibraryDeps = {
 export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   const {
     loading,
-    setLoading,
-    setLoadingStartAt,
+    runAction,
     setActionMessage,
     setError,
-    setSuccessToastMessage,
     formatError,
     showActionErrors,
   } = reporter;
@@ -100,11 +98,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   const handleRefresh = useCallback(async () => {
     if (managedSkills.length === 0) return;
 
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setError(null);
-
-    try {
+    await runAction({ successToast: t("status.refreshCompleted") }, async () => {
       const collectedErrors: { title: string; message: string }[] = [];
 
       for (let i = 0; i < managedSkills.length; i++) {
@@ -145,26 +139,17 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
         }
       }
 
-      setActionMessage(t("status.refreshCompleted"));
-      setSuccessToastMessage(t("status.refreshCompleted"));
-      setActionMessage(null);
       await loadManagedSkills();
       if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
+    });
   }, [
     autoSyncEnabled,
     formatError,
     installedToolIds,
     loadManagedSkills,
     managedSkills,
+    runAction,
     setActionMessage,
-    setError,
-    setLoading,
-    setLoadingStartAt,
-    setSuccessToastMessage,
     showActionErrors,
     syncFailureEntries,
     syncSkillsToTools,
@@ -172,27 +157,17 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   ]);
 
   const handleUnsyncAll = useCallback(async () => {
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    try {
-      const count = await invokeTauri<number>("unsync_all_skills");
-      setSuccessToastMessage(t("unsyncAllComplete", { count }));
-      await loadManagedSkills();
-    } catch (err) {
-      setError(formatError(err));
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
-  }, [
-    formatError,
-    loadManagedSkills,
-    setError,
-    setLoading,
-    setLoadingStartAt,
-    setSuccessToastMessage,
-    t,
-  ]);
+    await runAction(
+      {
+        successToast: (count: number) => t("unsyncAllComplete", { count }),
+      },
+      async () => {
+        const count = await invokeTauri<number>("unsync_all_skills");
+        await loadManagedSkills();
+        return count;
+      },
+    );
+  }, [loadManagedSkills, runAction, t]);
 
   const handleUnsyncSkill = useCallback(
     async (skillId: string) => {
@@ -211,30 +186,19 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     async (skill: ManagedSkill) => {
       if (installedToolIds.length === 0) return;
 
-      setLoading(true);
-      setLoadingStartAt(Date.now());
-      setError(null);
-      try {
+      await runAction({ successToast: t("status.syncCompleted") }, async () => {
         const report = await syncSkillsToTools(
           [toSyncItem(skill)],
           installedToolIds,
         );
-        setActionMessage(null);
         showActionErrors(syncFailureEntries(report));
-        toast.success(t("status.syncCompleted"));
         await loadManagedSkills();
-      } finally {
-        setLoading(false);
-        setLoadingStartAt(null);
-      }
+      });
     },
     [
       installedToolIds,
       loadManagedSkills,
-      setActionMessage,
-      setError,
-      setLoading,
-      setLoadingStartAt,
+      runAction,
       showActionErrors,
       syncFailureEntries,
       syncSkillsToTools,
@@ -248,35 +212,22 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
       if (managedSkills.length === 0) return;
       if (toolIds.length === 0) return;
 
-      setLoading(true);
-      setLoadingStartAt(Date.now());
-      setError(null);
-      try {
+      await runAction({ successToast: t("status.syncCompleted") }, async () => {
         const report = await syncSkillsToTools(
           managedSkills.map(toSyncItem),
           toolIds,
           { overwriteIfSameContent: true },
         );
         const collectedErrors = syncFailureEntries(report);
-        setActionMessage(t("status.syncCompleted"));
-        setSuccessToastMessage(t("status.syncCompleted"));
-        setActionMessage(null);
         await loadManagedSkills();
         if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-      } finally {
-        setLoading(false);
-        setLoadingStartAt(null);
-      }
+      });
     },
     [
       autoSyncEnabled,
       loadManagedSkills,
       managedSkills,
-      setActionMessage,
-      setError,
-      setLoading,
-      setLoadingStartAt,
-      setSuccessToastMessage,
+      runAction,
       showActionErrors,
       syncFailureEntries,
       syncSkillsToTools,
@@ -286,34 +237,19 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
 
   const handleDeleteManaged = useCallback(
     async (skill: ManagedSkill) => {
-      setLoading(true);
-      setLoadingStartAt(Date.now());
-      setActionMessage(t("actions.removing", { name: skill.name }));
-      setError(null);
-      try {
-        await invokeTauri("delete_managed_skill", { skillId: skill.id });
-        setActionMessage(t("status.skillRemoved"));
-        setSuccessToastMessage(t("status.skillRemoved"));
-        setActionMessage(null);
-        await loadManagedSkills();
-        setPendingDeleteId(null);
-      } catch (err) {
-        setError(formatError(err));
-      } finally {
-        setLoading(false);
-        setLoadingStartAt(null);
-      }
+      await runAction(
+        {
+          message: t("actions.removing", { name: skill.name }),
+          successToast: t("status.skillRemoved"),
+        },
+        async () => {
+          await invokeTauri("delete_managed_skill", { skillId: skill.id });
+          await loadManagedSkills();
+          setPendingDeleteId(null);
+        },
+      );
     },
-    [
-      formatError,
-      loadManagedSkills,
-      setActionMessage,
-      setError,
-      setLoading,
-      setLoadingStartAt,
-      setSuccessToastMessage,
-      t,
-    ],
+    [loadManagedSkills, runAction, t],
   );
 
   const handleDeletePrompt = useCallback((skillId: string) => {
@@ -331,65 +267,47 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
       const target = skill.targets.find((t) => t.tool === toolId);
       const synced = Boolean(target);
 
-      setLoading(true);
-      setLoadingStartAt(Date.now());
-      setError(null);
-      try {
-        if (synced) {
-          setActionMessage(
-            t("actions.unsyncing", { name: skill.name, tool: toolLabel }),
-          );
-          await invokeTauri("unsync_skill_from_tool", {
-            skillId: skill.id,
-            tool: toolId,
-          });
-        } else {
-          setActionMessage(
-            t("actions.syncing", { name: skill.name, tool: toolLabel }),
-          );
-          const report = await syncSkillsToTools(
-            [toSyncItem(skill)],
-            [toolId],
-            { overwriteIfSameContent: true },
-          );
-          const status = report.results[0]?.status;
-          if (status && status.status !== "synced") {
-            // An explicit single toggle surfaces every non-success,
-            // including skips a bulk flow would ignore.
-            setActionMessage(null);
-            if (status.error.code === "TARGET_EXISTS") {
-              setError(
-                t("errors.targetExistsDetail", { path: status.error.path }),
+      await runAction(
+        {
+          message: synced
+            ? t("actions.unsyncing", { name: skill.name, tool: toolLabel })
+            : t("actions.syncing", { name: skill.name, tool: toolLabel }),
+          successToast: synced
+            ? t("status.syncDisabled")
+            : t("status.syncEnabled"),
+        },
+        async (action) => {
+          if (synced) {
+            await invokeTauri("unsync_skill_from_tool", {
+              skillId: skill.id,
+              tool: toolId,
+            });
+          } else {
+            const report = await syncSkillsToTools(
+              [toSyncItem(skill)],
+              [toolId],
+              { overwriteIfSameContent: true },
+            );
+            const status = report.results[0]?.status;
+            if (status && status.status !== "synced") {
+              // An explicit single toggle surfaces every non-success,
+              // including skips a bulk flow would ignore.
+              return action.fail(
+                status.error.code === "TARGET_EXISTS"
+                  ? t("errors.targetExistsDetail", { path: status.error.path })
+                  : formatError(status.error),
               );
-            } else {
-              setError(formatError(status.error));
             }
-            return;
           }
-        }
-        const statusText = synced
-          ? t("status.syncDisabled")
-          : t("status.syncEnabled");
-        setActionMessage(statusText);
-        setSuccessToastMessage(statusText);
-        setActionMessage(null);
-        await loadManagedSkills();
-      } catch (err) {
-        setError(formatError(err));
-      } finally {
-        setLoading(false);
-        setLoadingStartAt(null);
-      }
+          await loadManagedSkills();
+        },
+      );
     },
     [
       formatError,
       loading,
       loadManagedSkills,
-      setActionMessage,
-      setError,
-      setLoading,
-      setLoadingStartAt,
-      setSuccessToastMessage,
+      runAction,
       syncSkillsToTools,
       t,
       tools,
@@ -411,36 +329,20 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
 
   const handleUpdateManaged = useCallback(
     async (skill: ManagedSkill) => {
-      setLoading(true);
-      setLoadingStartAt(Date.now());
-      setError(null);
-      try {
-        setActionMessage(t("actions.updating", { name: skill.name }));
-        await invokeTauri<UpdateResultDto>("update_managed_skill", {
-          skillId: skill.id,
-        });
-        const updatedText = t("status.updated", { name: skill.name });
-        setActionMessage(updatedText);
-        setSuccessToastMessage(updatedText);
-        setActionMessage(null);
-        await loadManagedSkills();
-      } catch (err) {
-        setError(formatError(err));
-      } finally {
-        setLoading(false);
-        setLoadingStartAt(null);
-      }
+      await runAction(
+        {
+          message: t("actions.updating", { name: skill.name }),
+          successToast: t("status.updated", { name: skill.name }),
+        },
+        async () => {
+          await invokeTauri<UpdateResultDto>("update_managed_skill", {
+            skillId: skill.id,
+          });
+          await loadManagedSkills();
+        },
+      );
     },
-    [
-      formatError,
-      loadManagedSkills,
-      setActionMessage,
-      setError,
-      setLoading,
-      setLoadingStartAt,
-      setSuccessToastMessage,
-      t,
-    ],
+    [loadManagedSkills, runAction, t],
   );
 
   const handleUpdateSkill = useCallback(

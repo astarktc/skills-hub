@@ -21,6 +21,12 @@ vi.mock("../lib/tauri", () => ({
 
 import { invokeTauri } from "../lib/tauri";
 import { useSkillLibrary } from "./useSkillLibrary";
+import {
+  ActionExit,
+  type ActionHandle,
+  type RunActionOptions,
+  type StatusReporter,
+} from "./useStatusReporter";
 
 const mockInvoke = vi.mocked(invokeTauri);
 
@@ -73,19 +79,52 @@ function makeDeps(overrides?: {
     }
   });
 
-  const reporter = {
+  const formatError = vi.fn((err: unknown) => {
+    const code = (err as { code?: string })?.code;
+    return code === "CANCELLED" ? null : `formatted:${code ?? String(err)}`;
+  });
+  const setError = vi.fn();
+  const setSuccessToastMessage = vi.fn();
+  // Stub of the runAction contract: the body's outcome lands on the same
+  // one-shot setters the real reporter uses, so assertions read naturally.
+  // The lifecycle itself (loading surface) is the reporter's own test.
+  const runAction = vi.fn(
+    async <T,>(
+      opts: RunActionOptions<T>,
+      fn: (action: ActionHandle) => Promise<T | ActionExit>,
+    ): Promise<T | undefined> => {
+      try {
+        const outcome = await fn({
+          handOff: () => ActionExit.handOff(),
+          fail: (message) => ActionExit.failed(message),
+        });
+        if (outcome instanceof ActionExit) {
+          if (outcome.kind === "failed") setError(outcome.message);
+          return undefined;
+        }
+        const { successToast } = opts;
+        if (typeof successToast === "function") {
+          setSuccessToastMessage(successToast(outcome));
+        } else if (successToast) {
+          setSuccessToastMessage(successToast);
+        }
+        return outcome;
+      } catch (err) {
+        setError(formatError(err));
+        return undefined;
+      }
+    },
+  );
+  const reporter: StatusReporter = {
     loading: false,
     loadingStartAt: null,
     actionMessage: null,
-    setLoading: vi.fn(),
-    setLoadingStartAt: vi.fn(),
+    // vi.fn erases the generic; the spy still records calls.
+    runAction: runAction as StatusReporter["runAction"],
     setActionMessage: vi.fn(),
-    setError: vi.fn(),
-    setSuccessToastMessage: vi.fn(),
-    formatError: vi.fn((err: unknown) => {
-      const code = (err as { code?: string })?.code;
-      return code === "CANCELLED" ? null : `formatted:${code ?? String(err)}`;
-    }),
+    setError,
+    setSuccessToastMessage,
+    formatError,
     showActionErrors: vi.fn(),
     cancelLoading: vi.fn(),
   };
@@ -156,9 +195,11 @@ describe("useSkillLibrary refresh", () => {
         message: "formatted:GIT_CLONE_FAILED",
       },
     ]);
-    // Loading surface opened and closed around the whole pass.
-    expect(setup.reporter.setLoading).toHaveBeenNthCalledWith(1, true);
-    expect(setup.reporter.setLoading).toHaveBeenLastCalledWith(false);
+    // The whole pass ran as one action (the loading surface wraps it).
+    expect(setup.reporter.runAction).toHaveBeenCalledTimes(1);
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
+      "status.refreshCompleted",
+    );
   });
 
   it("with auto-sync on, pushes updated content with overwrite (the refresh contract)", async () => {

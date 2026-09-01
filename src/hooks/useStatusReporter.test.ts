@@ -78,14 +78,19 @@ describe("useStatusReporter", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
-  it("cancelLoading fires the backend cancel and resets the loading surface", () => {
+  it("cancelLoading fires the backend cancel and resets the loading surface", async () => {
     const { result } = renderHook(() => useStatusReporter(t));
-
-    act(() => {
-      result.current.setLoading(true);
-      result.current.setLoadingStartAt(123);
-      result.current.setActionMessage("working…");
+    let finish: () => void = () => {};
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
     });
+
+    let run: Promise<unknown> = Promise.resolve();
+    act(() => {
+      run = result.current.runAction({ message: "working…" }, () => pending);
+    });
+    expect(result.current.loading).toBe(true);
+
     act(() => {
       result.current.cancelLoading();
     });
@@ -94,6 +99,11 @@ describe("useStatusReporter", () => {
     expect(result.current.loading).toBe(false);
     expect(result.current.loadingStartAt).toBeNull();
     expect(result.current.actionMessage).toBeNull();
+
+    await act(async () => {
+      finish();
+      await run;
+    });
   });
 
   it("formatError localizes via describeCommandError and silences CANCELLED", () => {
@@ -103,5 +113,192 @@ describe("useStatusReporter", () => {
       "errors.targetExists",
     );
     expect(result.current.formatError({ code: "CANCELLED" })).toBeNull();
+  });
+});
+
+// The action lifecycle invariant lives in exactly one place — runAction — so
+// it is tested exactly once, here, through the reporter's own interface.
+describe("useStatusReporter runAction", () => {
+  /** A body whose completion the test controls. */
+  function deferred<T>() {
+    let resolve: (value: T) => void = () => {};
+    let reject: (err: unknown) => void = () => {};
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  it("opens the loading surface with the message, then resets it on success and toasts", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    const body = deferred<number>();
+
+    let run: Promise<number | undefined> = Promise.resolve(undefined);
+    act(() => {
+      run = result.current.runAction(
+        { message: "working…", successToast: "done!" },
+        () => body.promise,
+      );
+    });
+
+    expect(result.current.loading).toBe(true);
+    expect(result.current.loadingStartAt).toEqual(expect.any(Number));
+    expect(result.current.actionMessage).toBe("working…");
+    expect(toast.success).not.toHaveBeenCalled();
+
+    let value: number | undefined;
+    await act(async () => {
+      body.resolve(42);
+      value = await run;
+    });
+
+    expect(value).toBe(42);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.loadingStartAt).toBeNull();
+    expect(result.current.actionMessage).toBeNull();
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("done!", { duration: 1800 }),
+    );
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("a successToast function receives the body's value", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+
+    await act(async () => {
+      await result.current.runAction(
+        { successToast: (count: number) => `removed ${count}` },
+        async () => 3,
+      );
+    });
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("removed 3", {
+        duration: 1800,
+      }),
+    );
+  });
+
+  it("without a successToast, completes silently", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+
+    await act(async () => {
+      await result.current.runAction({}, async () => undefined);
+    });
+
+    expect(result.current.loading).toBe(false);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("routes a thrown failure through formatError to the error toast and still resets", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+
+    let value: unknown = "unset";
+    await act(async () => {
+      value = await result.current.runAction(
+        { message: "working…", successToast: "done!" },
+        async () => {
+          throw { code: "TARGET_EXISTS" };
+        },
+      );
+    });
+
+    expect(value).toBeUndefined();
+    expect(result.current.loading).toBe(false);
+    expect(result.current.loadingStartAt).toBeNull();
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("errors.targetExists", {
+        duration: 2600,
+      }),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current.actionMessage).toBeNull());
+  });
+
+  it("a cancelled command resets silently: no error, no success toast", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+
+    await act(async () => {
+      await result.current.runAction({ successToast: "done!" }, async () => {
+        throw { code: "CANCELLED" };
+      });
+    });
+
+    expect(result.current.loading).toBe(false);
+    expect(result.current.loadingStartAt).toBeNull();
+    expect(result.current.actionMessage).toBeNull();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("handOff ends the action with neither toast nor error (another surface takes over)", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+
+    let value: unknown = "unset";
+    await act(async () => {
+      value = await result.current.runAction(
+        { message: "scanning…", successToast: "installed!" },
+        async (action) => action.handOff(),
+      );
+    });
+
+    expect(value).toBeUndefined();
+    expect(result.current.loading).toBe(false);
+    expect(result.current.loadingStartAt).toBeNull();
+    expect(result.current.actionMessage).toBeNull();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("fail ends the action with the given message and no success toast", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+
+    let value: unknown = "unset";
+    await act(async () => {
+      value = await result.current.runAction(
+        { successToast: "installed!" },
+        async (action) => action.fail("name taken"),
+      );
+    });
+
+    expect(value).toBeUndefined();
+    expect(result.current.loading).toBe(false);
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("name taken", {
+        duration: 2600,
+      }),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("fail(null) is the silent-cancel contract: resets without any toast", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+
+    await act(async () => {
+      await result.current.runAction({ successToast: "x" }, async (action) =>
+        action.fail(null),
+      );
+    });
+
+    expect(result.current.loading).toBe(false);
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("starting an action clears a pending error so it cannot re-fire", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+
+    act(() => {
+      result.current.setError("stale");
+    });
+    expect(toast.error).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await result.current.runAction({}, async () => undefined);
+    });
+
+    expect(toast.error).toHaveBeenCalledTimes(1);
   });
 });

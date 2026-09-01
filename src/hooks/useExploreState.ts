@@ -12,10 +12,7 @@ const showHiddenStorageKey = "explore-showHidden";
 
 export type ExploreStateDeps = {
   t: TranslateFn;
-  reporter: Pick<
-    StatusReporter,
-    "setLoading" | "setLoadingStartAt" | "formatError"
-  >;
+  reporter: Pick<StatusReporter, "runAction" | "formatError">;
   /** Navigate to the explore-detail view with the cloned preview skill. */
   onOpenExploreDetail: (skill: ManagedSkill) => void;
 };
@@ -29,7 +26,7 @@ export function useExploreState({
   reporter,
   onOpenExploreDetail,
 }: ExploreStateDeps) {
-  const { setLoading, setLoadingStartAt, formatError } = reporter;
+  const { runAction, formatError } = reporter;
   const [featuredSkills, setFeaturedSkills] = useState<FeaturedSkillDto[]>([]);
   const [featuredLoading, setFeaturedLoading] = useState(false);
   const [exploreFilter, setExploreFilter] = useState("");
@@ -141,9 +138,7 @@ export function useExploreState({
 
   const handleOpenExploreDetail = useCallback(
     async (sourceUrl: string, skillName: string, summary?: string) => {
-      setLoading(true);
-      setLoadingStartAt(Date.now());
-      try {
+      await runAction({}, async () => {
         const cachePath = await invokeTauri<string>("clone_explore_skill", {
           sourceUrl,
           skillName,
@@ -162,15 +157,9 @@ export function useExploreState({
           targets: [],
         };
         onOpenExploreDetail(exploreManagedSkill);
-      } catch (err) {
-        const msg = formatError(err);
-        if (msg) toast.error(msg, { duration: 3200 });
-      } finally {
-        setLoading(false);
-        setLoadingStartAt(null);
-      }
+      });
     },
-    [formatError, onOpenExploreDetail, setLoading, setLoadingStartAt],
+    [onOpenExploreDetail, runAction],
   );
 
   return {

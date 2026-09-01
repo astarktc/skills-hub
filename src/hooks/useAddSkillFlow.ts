@@ -47,11 +47,9 @@ export function useAddSkillFlow({
 }: AddSkillFlowDeps) {
   const {
     loading,
-    setLoading,
-    setLoadingStartAt,
+    runAction,
     setActionMessage,
     setError,
-    setSuccessToastMessage,
     formatError,
     showActionErrors,
   } = reporter;
@@ -150,33 +148,32 @@ export function useAddSkillFlow({
     ],
   );
 
-  const loadPlan = useCallback(async () => {
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setError(null);
-    try {
-      const result = await invokeTauri<OnboardingPlan>("get_onboarding_plan");
-      setPlan(result);
-      const defaultSelected: Record<string, boolean> = {};
-      const defaultChoice: Record<string, string> = {};
-      result.groups.forEach((group) => {
-        defaultSelected[group.name] = true;
-        const first = group.variants[0];
-        if (first) {
-          defaultChoice[group.name] = first.path;
-        }
-      });
-      setSelected(defaultSelected);
-      setVariantChoice(defaultChoice);
-      return result;
-    } catch (err) {
-      setError(formatError(err));
-      return null;
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
-  }, [formatError, setError, setLoading, setLoadingStartAt]);
+  /** Fetch the onboarding plan and reset the selection to its defaults. */
+  const fetchPlan = useCallback(async () => {
+    const result = await invokeTauri<OnboardingPlan>("get_onboarding_plan");
+    setPlan(result);
+    const defaultSelected: Record<string, boolean> = {};
+    const defaultChoice: Record<string, string> = {};
+    result.groups.forEach((group) => {
+      defaultSelected[group.name] = true;
+      const first = group.variants[0];
+      if (first) {
+        defaultChoice[group.name] = first.path;
+      }
+    });
+    setSelected(defaultSelected);
+    setVariantChoice(defaultChoice);
+    return result;
+  }, []);
+
+  /**
+   * fetchPlan as its own action (loading overlay, error toast). Resolves to
+   * the plan, or undefined when loading it failed.
+   */
+  const loadPlan = useCallback(
+    () => runAction({}, fetchPlan),
+    [fetchPlan, runAction],
+  );
 
   useEffect(() => {
     if (!isTauri) return;
@@ -323,11 +320,7 @@ export function useAddSkillFlow({
 
   const handleImport = async () => {
     if (!plan) return;
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setActionMessage(null);
-    setError(null);
-    try {
+    await runAction({ successToast: t("status.importCompleted") }, async () => {
       const collectedErrors: { title: string; message: string }[] = [];
       for (const group of plan.groups) {
         if (!selected[group.name]) continue;
@@ -415,22 +408,37 @@ export function useAddSkillFlow({
         }
       }
 
-      setActionMessage(t("status.importCompleted"));
-      setSuccessToastMessage(t("status.importCompleted"));
-      setActionMessage(null);
       await loadManagedSkills();
-      await loadPlan();
+      await fetchPlan();
       if (collectedErrors.length > 0) {
         showActionErrors(collectedErrors);
       } else {
         setShowImportModal(false);
       }
-    } catch (err) {
-      setError(formatError(err));
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
+    });
+  };
+
+  /** Hand the local flow to the picker modal with the discovered candidates. */
+  const openLocalPicker = (
+    basePath: string,
+    candidates: LocalSkillCandidate[],
+  ) => {
+    setLocalCandidatesBasePath(basePath);
+    setLocalCandidates(candidates);
+    setLocalCandidateSelected(
+      Object.fromEntries(candidates.map((c) => [c.subpath, c.valid])),
+    );
+    setShowLocalPickModal(true);
+  };
+
+  /** Hand the git flow to the picker modal with the discovered candidates. */
+  const openGitPicker = (url: string, candidates: GitSkillCandidate[]) => {
+    setGitCandidatesRepoUrl(url);
+    setGitCandidates(candidates);
+    setGitCandidateSelected(
+      Object.fromEntries(candidates.map((c) => [c.subpath, true])),
+    );
+    setShowGitPickModal(true);
   };
 
   const handleCreateLocal = async () => {
@@ -438,24 +446,29 @@ export function useAddSkillFlow({
       setError(t("errors.requireLocalPath"));
       return;
     }
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setError(null);
-    setActionMessage(t("actions.creatingLocalSkill"));
-    try {
-      const basePath = localPath.trim();
-      const candidates = await invokeTauri<LocalSkillCandidate[]>(
-        "list_local_skills_cmd",
-        { basePath },
-      );
-      if (candidates.length === 0) {
-        throw new Error(t("errors.noSkillsFoundLocal"));
-      }
-      if (candidates.length === 1 && candidates[0].valid) {
+    await runAction(
+      {
+        message: t("actions.creatingLocalSkill"),
+        successToast: t("status.localSkillCreated"),
+      },
+      async (action) => {
+        const basePath = localPath.trim();
+        const candidates = await invokeTauri<LocalSkillCandidate[]>(
+          "list_local_skills_cmd",
+          { basePath },
+        );
+        if (candidates.length === 0) {
+          return action.fail(t("errors.noSkillsFoundLocal"));
+        }
+        if (candidates.length !== 1 || !candidates[0].valid) {
+          openLocalPicker(basePath, candidates);
+          return action.handOff();
+        }
         const desiredName = localName.trim() || candidates[0].name;
         if (isSkillNameTaken(desiredName)) {
-          setError(t("errors.skillAlreadyExists", { name: desiredName }));
-          return;
+          return action.fail(
+            t("errors.skillAlreadyExists", { name: desiredName }),
+          );
         }
         const created = await invokeTauri<InstallResultDto>(
           "install_local_selection",
@@ -471,29 +484,10 @@ export function useAddSkillFlow({
         if (deployErrors.length > 0) showActionErrors(deployErrors);
         setLocalPath("");
         setLocalName("");
-        setActionMessage(t("status.localSkillCreated"));
-        setSuccessToastMessage(t("status.localSkillCreated"));
-        setActionMessage(null);
         setShowAddModal(false);
         await loadManagedSkills();
-      } else {
-        setLocalCandidatesBasePath(basePath);
-        setLocalCandidates(candidates);
-        setLocalCandidateSelected(
-          Object.fromEntries(candidates.map((c) => [c.subpath, c.valid])),
-        );
-        setShowLocalPickModal(true);
-        setActionMessage(null);
-        setLoading(false);
-        setLoadingStartAt(null);
-        return;
-      }
-    } catch (err) {
-      setError(formatError(err));
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
+      },
+    );
   };
 
   const handleCreateGit = async () => {
@@ -501,55 +495,83 @@ export function useAddSkillFlow({
       setError(t("errors.requireGitUrl"));
       return;
     }
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setError(null);
-    setActionMessage(t("actions.creatingGitSkill"));
-    try {
-      const url = gitUrl.trim();
+    await runAction(
+      {
+        message: t("actions.creatingGitSkill"),
+        successToast: t("status.gitSkillCreated"),
+      },
+      async (action) => {
+        const url = gitUrl.trim();
 
-      // All URLs (including /tree/ and /blob/ folder URLs) route through the
-      // candidate-based flow. The backend's list_git_skills handles folder URL
-      // subpath extraction. This ensures every install goes through proper
-      // candidate discovery and name matching.
-      const candidates = await invokeTauri<GitSkillCandidate[]>(
-        "list_git_skills_cmd",
-        { repoUrl: url },
-      );
-      if (candidates.length === 0) {
-        throw new Error(t("errors.noSkillsFoundWithHint"));
-      }
-      if (candidates.length === 1) {
-        // When autoSelectSkillName is set (Explore page install), verify the
-        // single candidate actually matches the intended skill. If not, the
-        // backend scan missed the target skill -- show error instead of
-        // silently installing the wrong one.
-        if (autoSelectSkillName) {
-          const target = autoSelectSkillName.toLowerCase();
-          const candidateName = candidates[0].name.toLowerCase();
-          if (
-            candidateName !== target &&
-            !candidateName.includes(target) &&
-            !target.includes(candidateName)
-          ) {
-            setAutoSelectSkillName(null);
-            throw new Error(
-              t("errors.skillNotFoundInRepo", { name: autoSelectSkillName }),
-            );
-          }
-          setAutoSelectSkillName(null);
+        // All URLs (including /tree/ and /blob/ folder URLs) route through
+        // the candidate-based flow. The backend's list_git_skills handles
+        // folder URL subpath extraction. This ensures every install goes
+        // through proper candidate discovery and name matching.
+        const candidates = await invokeTauri<GitSkillCandidate[]>(
+          "list_git_skills_cmd",
+          { repoUrl: url },
+        );
+        if (candidates.length === 0) {
+          return action.fail(t("errors.noSkillsFoundWithHint"));
         }
-        if (isSkillNameTaken(candidates[0].name)) {
-          setError(
-            t("errors.skillAlreadyExists", { name: candidates[0].name }),
+
+        /** Which candidate to install, or hand off to the picker. */
+        let chosen: GitSkillCandidate;
+        if (candidates.length === 1) {
+          // When autoSelectSkillName is set (Explore page install), verify
+          // the single candidate actually matches the intended skill. If
+          // not, the backend scan missed the target skill -- show error
+          // instead of silently installing the wrong one.
+          if (autoSelectSkillName) {
+            const target = autoSelectSkillName.toLowerCase();
+            const candidateName = candidates[0].name.toLowerCase();
+            setAutoSelectSkillName(null);
+            if (
+              candidateName !== target &&
+              !candidateName.includes(target) &&
+              !target.includes(candidateName)
+            ) {
+              return action.fail(
+                t("errors.skillNotFoundInRepo", { name: autoSelectSkillName }),
+              );
+            }
+          }
+          chosen = candidates[0];
+        } else if (autoSelectSkillName) {
+          // Auto-select the matching skill from online search results.
+          // skills.sh name may differ from SKILL.md name (e.g.
+          // "json-render-react" vs "react"), so try exact match first, then
+          // containment match.
+          const target = autoSelectSkillName.toLowerCase();
+          const containMatches = candidates.filter((c) => {
+            const n = c.name.toLowerCase();
+            return target.includes(n) || n.includes(target);
+          });
+          const match =
+            candidates.find((c) => c.name.toLowerCase() === target) ??
+            (containMatches.length === 1 ? containMatches[0] : undefined);
+          setAutoSelectSkillName(null);
+          if (!match) {
+            // No match found, fall back to picker
+            openGitPicker(url, candidates);
+            return action.handOff();
+          }
+          chosen = match;
+        } else {
+          openGitPicker(url, candidates);
+          return action.handOff();
+        }
+
+        if (isSkillNameTaken(chosen.name)) {
+          return action.fail(
+            t("errors.skillAlreadyExists", { name: chosen.name }),
           );
-          return;
         }
         const created = await invokeTauri<InstallResultDto>(
           "install_git_selection",
           {
             repoUrl: url,
-            subpath: candidates[0].subpath,
+            subpath: chosen.subpath,
             name: gitName.trim() || undefined,
           },
         );
@@ -557,74 +579,12 @@ export function useAddSkillFlow({
           noTargets: "set-error",
         });
         if (deployErrors.length > 0) showActionErrors(deployErrors);
-      } else if (autoSelectSkillName) {
-        // Auto-select the matching skill from online search results.
-        // skills.sh name may differ from SKILL.md name (e.g. "json-render-react" vs "react"),
-        // so try exact match first, then containment match.
-        const target = autoSelectSkillName.toLowerCase();
-        const containMatches = candidates.filter((c) => {
-          const n = c.name.toLowerCase();
-          return target.includes(n) || n.includes(target);
-        });
-        const match =
-          candidates.find((c) => c.name.toLowerCase() === target) ??
-          (containMatches.length === 1 ? containMatches[0] : undefined);
-        setAutoSelectSkillName(null);
-        if (match) {
-          if (isSkillNameTaken(match.name)) {
-            setError(t("errors.skillAlreadyExists", { name: match.name }));
-            return;
-          }
-          const created = await invokeTauri<InstallResultDto>(
-            "install_git_selection",
-            {
-              repoUrl: url,
-              subpath: match.subpath,
-              name: gitName.trim() || undefined,
-            },
-          );
-          const deployErrors = await deployNewSkill(created, {
-            noTargets: "set-error",
-          });
-          if (deployErrors.length > 0) showActionErrors(deployErrors);
-        } else {
-          // No match found, fall back to picker
-          setGitCandidatesRepoUrl(url);
-          setGitCandidates(candidates);
-          setGitCandidateSelected(
-            Object.fromEntries(candidates.map((c) => [c.subpath, true])),
-          );
-          setShowGitPickModal(true);
-          setActionMessage(null);
-          setLoading(false);
-          setLoadingStartAt(null);
-          return;
-        }
-      } else {
-        setGitCandidatesRepoUrl(url);
-        setGitCandidates(candidates);
-        setGitCandidateSelected(
-          Object.fromEntries(candidates.map((c) => [c.subpath, true])),
-        );
-        setShowGitPickModal(true);
-        setActionMessage(null);
-        setLoading(false);
-        setLoadingStartAt(null);
-        return;
-      }
-      setGitUrl("");
-      setGitName("");
-      setActionMessage(t("status.gitSkillCreated"));
-      setSuccessToastMessage(t("status.gitSkillCreated"));
-      setActionMessage(null);
-      setShowAddModal(false);
-      await loadManagedSkills();
-    } catch (err) {
-      setError(formatError(err));
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
+        setGitUrl("");
+        setGitName("");
+        setShowAddModal(false);
+        await loadManagedSkills();
+      },
+    );
   };
 
   const handleExploreInstall = useCallback(
@@ -657,45 +617,39 @@ export function useAddSkillFlow({
     installOne: (candidate: C) => Promise<InstallResultDto>,
     resetPickState: () => void,
   ) => {
-    setLoading(true);
-    setLoadingStartAt(Date.now());
-    setError(null);
-    try {
-      const collectedErrors: { title: string; message: string }[] = [];
-      for (let i = 0; i < selected.length; i++) {
-        const candidate = selected[i];
-        setActionMessage(
-          t("actions.importStep", {
-            index: i + 1,
-            total: selected.length,
-            name: candidate.name,
-          }),
-        );
-        try {
-          const created = await installOne(candidate);
-          collectedErrors.push(
-            ...(await deployNewSkill(created, { noTargets: "collect" })),
+    await runAction(
+      { successToast: t("status.selectedSkillsInstalled") },
+      async () => {
+        const collectedErrors: { title: string; message: string }[] = [];
+        for (let i = 0; i < selected.length; i++) {
+          const candidate = selected[i];
+          setActionMessage(
+            t("actions.importStep", {
+              index: i + 1,
+              total: selected.length,
+              name: candidate.name,
+            }),
           );
-        } catch (err) {
-          const raw = formatError(err) ?? "";
-          collectedErrors.push({
-            title: t("errors.importFailedTitle", { name: candidate.name }),
-            message: raw,
-          });
+          try {
+            const created = await installOne(candidate);
+            collectedErrors.push(
+              ...(await deployNewSkill(created, { noTargets: "collect" })),
+            );
+          } catch (err) {
+            const raw = formatError(err) ?? "";
+            collectedErrors.push({
+              title: t("errors.importFailedTitle", { name: candidate.name }),
+              message: raw,
+            });
+          }
         }
-      }
 
-      resetPickState();
-      setActionMessage(t("status.selectedSkillsInstalled"));
-      setSuccessToastMessage(t("status.selectedSkillsInstalled"));
-      setActionMessage(null);
-      setShowAddModal(false);
-      await loadManagedSkills();
-      if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-    } finally {
-      setLoading(false);
-      setLoadingStartAt(null);
-    }
+        resetPickState();
+        setShowAddModal(false);
+        await loadManagedSkills();
+        if (collectedErrors.length > 0) showActionErrors(collectedErrors);
+      },
+    );
   };
 
   const handleInstallSelectedLocalCandidates = async () => {

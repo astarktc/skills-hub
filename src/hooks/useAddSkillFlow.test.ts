@@ -22,6 +22,12 @@ vi.mock("../lib/tauri", () => ({
 
 import { invokeTauri } from "../lib/tauri";
 import { useAddSkillFlow } from "./useAddSkillFlow";
+import {
+  ActionExit,
+  type ActionHandle,
+  type RunActionOptions,
+  type StatusReporter,
+} from "./useStatusReporter";
 
 const mockInvoke = vi.mocked(invokeTauri);
 
@@ -64,18 +70,51 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
   const taken = new Set(
     (overrides?.takenNames ?? []).map((n) => n.toLowerCase()),
   );
-  const reporter = {
+  const formatError = vi.fn((err: unknown) =>
+    err instanceof Error ? err.message : `formatted:${String(err)}`,
+  );
+  const setError = vi.fn();
+  const setSuccessToastMessage = vi.fn();
+  // Stub of the runAction contract: the body's outcome lands on the same
+  // one-shot setters the real reporter uses, so assertions read naturally.
+  // The lifecycle itself (loading surface) is the reporter's own test.
+  const runAction = vi.fn(
+    async <T,>(
+      opts: RunActionOptions<T>,
+      fn: (action: ActionHandle) => Promise<T | ActionExit>,
+    ): Promise<T | undefined> => {
+      try {
+        const outcome = await fn({
+          handOff: () => ActionExit.handOff(),
+          fail: (message) => ActionExit.failed(message),
+        });
+        if (outcome instanceof ActionExit) {
+          if (outcome.kind === "failed") setError(outcome.message);
+          return undefined;
+        }
+        const { successToast } = opts;
+        if (typeof successToast === "function") {
+          setSuccessToastMessage(successToast(outcome));
+        } else if (successToast) {
+          setSuccessToastMessage(successToast);
+        }
+        return outcome;
+      } catch (err) {
+        setError(formatError(err));
+        return undefined;
+      }
+    },
+  );
+  const reporter: StatusReporter = {
     loading: false,
     loadingStartAt: null,
     actionMessage: null,
-    setLoading: vi.fn(),
-    setLoadingStartAt: vi.fn(),
+    // vi.fn erases the generic; the spy still records calls.
+    runAction: runAction as StatusReporter["runAction"],
     setActionMessage: vi.fn(),
-    setError: vi.fn(),
-    setSuccessToastMessage: vi.fn(),
-    formatError: vi.fn((err: unknown) =>
-      err instanceof Error ? err.message : `formatted:${String(err)}`,
-    ),
+    setError,
+    setSuccessToastMessage,
+    formatError,
     showActionErrors: vi.fn(),
     cancelLoading: vi.fn(),
   };
@@ -205,6 +244,9 @@ describe("useAddSkillFlow git flow", () => {
       "skills/beta": true,
     });
     expect(installGitCalls()).toHaveLength(0);
+    // A hand-off to the picker is neither a success nor a failure.
+    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
+    expect(setup.reporter.setError).not.toHaveBeenCalled();
   });
 });
 
@@ -332,6 +374,9 @@ describe("useAddSkillFlow local flow", () => {
     expect(
       mockInvoke.mock.calls.some(([cmd]) => cmd === "install_local_selection"),
     ).toBe(false);
+    // A hand-off to the picker is neither a success nor a failure.
+    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
+    expect(setup.reporter.setError).not.toHaveBeenCalled();
   });
 
   it("a single valid candidate with a taken name blocks the install", async () => {
