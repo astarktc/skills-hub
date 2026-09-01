@@ -627,3 +627,166 @@ fn register_expands_tilde_against_home() {
         .to_string();
     assert_eq!(dto.path, canonical);
 }
+
+// ---------------------------------------------------------------------------
+// configure_project_tools — one batch write owning the persist → derive →
+// gitignore ordering. The frontend used to replay the ignore intent after the
+// per-tool commands returned; here core sequences both writes.
+// ---------------------------------------------------------------------------
+
+use crate::core::errors::SignalError;
+use crate::core::gitignore::{project_ignore_status, IgnoreUpdateOptions, MARKER};
+
+fn register_dir_project(store: &SkillStore, dir: &std::path::Path) -> ProjectRecord {
+    let project = ProjectRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        path: dir.to_string_lossy().to_string(),
+        created_at: 1,
+        updated_at: 1,
+    };
+    store.register_project(&project).expect("register_project");
+    project
+}
+
+fn strs(keys: &[&str]) -> Vec<String> {
+    keys.iter().map(|k| k.to_string()).collect()
+}
+
+#[test]
+fn configure_tools_writes_gitignore_from_the_tools_just_persisted() {
+    let (dir, store) = make_store();
+    let project_dir = dir.path().join("proj");
+    fs::create_dir_all(&project_dir).unwrap();
+    // Fresh project: nothing persisted yet. Deriving patterns before the
+    // tools are written would yield an empty pattern set and no file.
+    let project = register_dir_project(&store, &project_dir);
+
+    let tools = project_ops::configure_project_tools(
+        &store,
+        &project.id,
+        &strs(&["claude_code", "windsurf"]),
+        Some(IgnoreUpdateOptions {
+            add_to_gitignore: true,
+            add_to_exclude: true,
+        }),
+    )
+    .expect("configure");
+
+    let mut keys: Vec<String> = tools.into_iter().map(|t| t.tool).collect();
+    keys.sort();
+    assert_eq!(keys, strs(&["claude_code", "windsurf"]));
+    assert_eq!(store.list_project_tools(&project.id).unwrap().len(), 2);
+
+    let gitignore = fs::read_to_string(project_dir.join(".gitignore")).expect(".gitignore");
+    assert!(gitignore.contains(MARKER));
+    assert!(gitignore.contains("/.claude/skills/"));
+    assert!(gitignore.contains("/.windsurf/skills/"));
+    let exclude = fs::read_to_string(project_dir.join(".git/info/exclude")).expect("exclude");
+    assert!(exclude.contains("/.windsurf/skills/"));
+}
+
+#[test]
+fn configure_tools_diffs_against_persisted_tools_and_rewrites_the_block() {
+    let (dir, store) = make_store();
+    let project_dir = dir.path().join("proj");
+    fs::create_dir_all(&project_dir).unwrap();
+    let project = register_dir_project(&store, &project_dir);
+    project_ops::configure_project_tools(
+        &store,
+        &project.id,
+        &strs(&["claude_code", "windsurf"]),
+        Some(IgnoreUpdateOptions {
+            add_to_gitignore: true,
+            add_to_exclude: false,
+        }),
+    )
+    .unwrap();
+    let first_ids: Vec<String> = store
+        .list_project_tools(&project.id)
+        .unwrap()
+        .into_iter()
+        .filter(|t| t.tool == "claude_code")
+        .map(|t| t.id)
+        .collect();
+
+    // Drop windsurf, add pi; claude_code stays (same record id, not re-inserted).
+    let tools = project_ops::configure_project_tools(
+        &store,
+        &project.id,
+        &strs(&["claude_code", "pi"]),
+        Some(IgnoreUpdateOptions {
+            add_to_gitignore: true,
+            add_to_exclude: false,
+        }),
+    )
+    .unwrap();
+
+    let mut keys: Vec<String> = tools.iter().map(|t| t.tool.clone()).collect();
+    keys.sort();
+    assert_eq!(keys, strs(&["claude_code", "pi"]));
+    let kept: Vec<String> = tools
+        .iter()
+        .filter(|t| t.tool == "claude_code")
+        .map(|t| t.id.clone())
+        .collect();
+    assert_eq!(kept, first_ids, "unchanged tool keeps its record");
+
+    let gitignore = fs::read_to_string(project_dir.join(".gitignore")).unwrap();
+    assert!(gitignore.contains("/.claude/skills/"));
+    assert!(gitignore.contains("/.pi/skills/"), "{gitignore}");
+    assert!(!gitignore.contains("/.windsurf/skills/"), "{gitignore}");
+    assert!(!project_dir.join(".git/info/exclude").exists());
+}
+
+#[test]
+fn configure_tools_without_intent_leaves_ignore_files_alone() {
+    let (dir, store) = make_store();
+    let project_dir = dir.path().join("proj");
+    fs::create_dir_all(&project_dir).unwrap();
+    let project = register_dir_project(&store, &project_dir);
+
+    project_ops::configure_project_tools(&store, &project.id, &strs(&["claude_code"]), None)
+        .unwrap();
+
+    assert_eq!(store.list_project_tools(&project.id).unwrap().len(), 1);
+    let status = project_ignore_status(&project_dir);
+    assert!(!status.in_gitignore && !status.in_exclude);
+    assert!(!project_dir.join(".gitignore").exists());
+}
+
+#[test]
+fn configure_tools_rejects_unknown_tool_before_writing_anything() {
+    let (dir, store) = make_store();
+    let project_dir = dir.path().join("proj");
+    fs::create_dir_all(&project_dir).unwrap();
+    let project = register_dir_project(&store, &project_dir);
+
+    let err = project_ops::configure_project_tools(
+        &store,
+        &project.id,
+        &strs(&["claude_code", "not-a-tool"]),
+        Some(IgnoreUpdateOptions {
+            add_to_gitignore: true,
+            add_to_exclude: true,
+        }),
+    )
+    .expect_err("unknown tool must fail");
+    assert!(format!("{:#}", err).contains("unknown tool"));
+    assert!(store.list_project_tools(&project.id).unwrap().is_empty());
+    assert!(!project_dir.join(".gitignore").exists());
+}
+
+#[test]
+fn configure_tools_raises_typed_not_found_for_unknown_project() {
+    let (_dir, store) = make_store();
+    let err =
+        project_ops::configure_project_tools(&store, "missing", &strs(&["claude_code"]), None)
+            .expect_err("must fail");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::NotFound {
+            kind: "project".to_string(),
+            id: "missing".to_string(),
+        })
+    );
+}

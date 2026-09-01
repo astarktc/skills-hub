@@ -6,8 +6,9 @@ use uuid::Uuid;
 
 use super::environment::expand_home_path_in;
 use super::errors::SignalError;
+use super::gitignore::{self, IgnoreUpdateOptions};
 use super::project_sync;
-use super::skill_store::{ProjectRecord, SkillStore};
+use super::skill_store::{ProjectRecord, ProjectToolRecord, SkillStore};
 use super::sync_engine;
 use super::tool_adapters;
 
@@ -174,6 +175,62 @@ pub fn remove_tool_with_cleanup(store: &SkillStore, project_id: &str, tool: &str
 
     store.remove_project_tool(project_id, tool)?;
     Ok(())
+}
+
+/// Make `tools` the project's configured tool set, then (optionally) update
+/// its ignore files. Owns the ordering the ignore writer depends on: patterns
+/// are derived from the *persisted* tools, so tools are written first and the
+/// managed block is rewritten afterwards — callers cannot get the sequence
+/// wrong. Tools already configured keep their records; removed tools go
+/// through [`remove_tool_with_cleanup`]. Unknown tool keys fail before any
+/// write. Returns the resulting tool list.
+pub fn configure_project_tools(
+    store: &SkillStore,
+    project_id: &str,
+    tools: &[String],
+    ignore: Option<IgnoreUpdateOptions>,
+) -> Result<Vec<ProjectToolDto>> {
+    store.get_project_by_id(project_id)?.ok_or_else(|| {
+        anyhow::anyhow!(SignalError::NotFound {
+            kind: "project".to_string(),
+            id: project_id.to_string(),
+        })
+    })?;
+    for tool in tools {
+        if tool_adapters::adapter_by_key(tool).is_none() {
+            bail!("unknown tool: {}", tool);
+        }
+    }
+
+    let persisted = store.list_project_tools(project_id)?;
+    for tool in tools {
+        if !persisted.iter().any(|record| &record.tool == tool) {
+            store.add_project_tool(&ProjectToolRecord {
+                id: Uuid::new_v4().to_string(),
+                project_id: project_id.to_string(),
+                tool: tool.clone(),
+            })?;
+        }
+    }
+    for record in &persisted {
+        if !tools.contains(&record.tool) {
+            remove_tool_with_cleanup(store, project_id, &record.tool)?;
+        }
+    }
+
+    if let Some(options) = ignore {
+        gitignore::update_for_project(store, project_id, options)?;
+    }
+
+    Ok(store
+        .list_project_tools(project_id)?
+        .into_iter()
+        .map(|r| ProjectToolDto {
+            id: r.id,
+            project_id: r.project_id,
+            tool: r.tool,
+        })
+        .collect())
 }
 
 pub fn remove_project_with_cleanup(store: &SkillStore, project_id: &str) -> Result<()> {

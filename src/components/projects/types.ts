@@ -10,3 +10,4 @@ export type { ResyncSummaryDto } from "../../bindings/ResyncSummaryDto";
 export type { BulkAssignResultDto } from "../../bindings/BulkAssignResultDto";
 export type { BulkAssignErrorDto } from "../../bindings/BulkAssignErrorDto";
 export type { GitignoreStatusDto } from "../../bindings/GitignoreStatusDto";
+export type { IgnoreUpdateOptions } from "../../bindings/IgnoreUpdateOptions";

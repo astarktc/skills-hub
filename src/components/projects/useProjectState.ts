@@ -8,6 +8,8 @@ import type {
   ProjectSkillAssignmentDto,
   ResyncSummaryDto,
   BulkAssignResultDto,
+  GitignoreStatusDto,
+  IgnoreUpdateOptions,
 } from "./types";
 import type { ManagedSkill, ToolStatusDto } from "../skills/types";
 
@@ -35,7 +37,16 @@ export type ProjectState = {
   // Actions
   loadProjects: () => Promise<void>;
   selectProject: (id: string) => Promise<void>;
-  registerProject: (path: string) => Promise<ProjectDto>;
+  /**
+   * Register a project and remember its ignore intent. The intent is not
+   * applied here — ignore patterns derive from the project's persisted
+   * tools, which don't exist yet — but handed to the backend by the next
+   * `configureTools` for this project, which sequences both writes.
+   */
+  registerProject: (
+    path: string,
+    gitignore: IgnoreUpdateOptions,
+  ) => Promise<ProjectDto>;
   removeProject: (id: string) => Promise<void>;
   toggleAssignment: (skillId: string, tool: string) => Promise<void>;
   bulkAssign: (skillId: string) => Promise<BulkAssignResultDto | undefined>;
@@ -46,8 +57,13 @@ export type ProjectState = {
   ) => Promise<ProjectDto>;
   resyncAll: () => Promise<ResyncSummaryDto[]>;
   loadToolStatus: () => Promise<void>;
-  addTools: (tools: string[]) => Promise<void>;
-  removeTools: (tools: string[]) => Promise<void>;
+  /** Make `tools` the selected project's tool set (one backend command). */
+  configureTools: (tools: string[]) => Promise<void>;
+  getGitignoreStatus: (projectId: string) => Promise<GitignoreStatusDto>;
+  updateGitignore: (
+    projectId: string,
+    options: IgnoreUpdateOptions,
+  ) => Promise<void>;
   setShowAddModal: (show: boolean) => void;
   setShowEditModal: (show: boolean) => void;
   setEditTargetId: (id: string | null) => void;
@@ -87,6 +103,14 @@ export function useProjectState(): ProjectState {
 
   // Version counter for stale result discard on project selection
   const selectVersionRef = useRef(0);
+
+  // Ignore intent captured by registerProject, consumed by the next
+  // configureTools for that project (and dropped by any other registration
+  // or configuration in between).
+  const [pendingIgnore, setPendingIgnore] = useState<{
+    projectId: string;
+    options: IgnoreUpdateOptions;
+  } | null>(null);
 
   // Track latest assignments for stale-closure protection in toggleAssignment.
   // Write the ref in an effect (after commit) rather than during render to
@@ -175,8 +199,16 @@ export function useProjectState(): ProjectState {
   }, []);
 
   const registerProject = useCallback(
-    async (path: string): Promise<ProjectDto> => {
+    async (
+      path: string,
+      gitignore: IgnoreUpdateOptions,
+    ): Promise<ProjectDto> => {
       const result = await invokeTauri<ProjectDto>("register_project", { path });
+      setPendingIgnore(
+        gitignore.add_to_gitignore || gitignore.add_to_exclude
+          ? { projectId: result.id, options: gitignore }
+          : null,
+      );
       await loadProjects();
       return result;
     },
@@ -322,45 +354,59 @@ export function useProjectState(): ProjectState {
     setToolStatus(result);
   }, []);
 
-  const addTools = useCallback(
+  const configureTools = useCallback(
     async (toolIds: string[]) => {
       if (!selectedProjectId) return;
-      for (const tool of toolIds) {
-        await invokeTauri("add_project_tool", {
-          projectId: selectedProjectId,
-          tool,
-        });
+      const gitignore =
+        pendingIgnore?.projectId === selectedProjectId
+          ? pendingIgnore.options
+          : null;
+      setPendingIgnore(null);
+      try {
+        const updatedTools = await invokeTauri<ProjectToolDto[]>(
+          "configure_project_tools",
+          { projectId: selectedProjectId, tools: toolIds, gitignore },
+        );
+        setTools(updatedTools);
+      } catch (err) {
+        // The tools may have been persisted before the ignore write failed;
+        // converge on the backend's view (silently, like refreshAssignments).
+        try {
+          setTools(
+            await invokeTauri<ProjectToolDto[]>("list_project_tools", {
+              projectId: selectedProjectId,
+            }),
+          );
+        } catch {
+          // Silent fallback — state may be stale
+        }
+        throw err;
+      } finally {
+        // Removing a tool cascades to its assignments; tool_count changed.
+        await refreshAssignments(selectedProjectId);
+        await loadProjects();
       }
-      const updated = await invokeTauri<ProjectToolDto[]>("list_project_tools", {
-        projectId: selectedProjectId,
-      });
-      setTools(updated);
     },
-    [selectedProjectId],
+    [selectedProjectId, pendingIgnore, refreshAssignments, loadProjects],
   );
 
-  const removeTools = useCallback(
-    async (toolIds: string[]) => {
-      if (!selectedProjectId) return;
-      for (const tool of toolIds) {
-        await invokeTauri("remove_project_tool", {
-          projectId: selectedProjectId,
-          tool,
-        });
-      }
-      // Re-fetch both tools and assignments (cascade may have removed assignments)
-      const [updatedTools, updatedAssignments] = await Promise.all([
-        invokeTauri<ProjectToolDto[]>("list_project_tools", {
-          projectId: selectedProjectId,
-        }),
-        invokeTauri<ProjectSkillAssignmentDto[]>("list_project_skill_assignments", {
-          projectId: selectedProjectId,
-        }),
-      ]);
-      setTools(updatedTools);
-      setAssignments(updatedAssignments);
+  const getGitignoreStatus = useCallback(
+    (projectId: string) =>
+      invokeTauri<GitignoreStatusDto>("get_project_gitignore_status", {
+        projectId,
+      }),
+    [],
+  );
+
+  const updateGitignore = useCallback(
+    async (projectId: string, options: IgnoreUpdateOptions) => {
+      await invokeTauri("update_project_gitignore", {
+        projectId,
+        addToGitignore: options.add_to_gitignore,
+        addToExclude: options.add_to_exclude,
+      });
     },
-    [selectedProjectId],
+    [],
   );
 
   return {
@@ -390,8 +436,9 @@ export function useProjectState(): ProjectState {
     updateProjectPath,
     resyncAll,
     loadToolStatus,
-    addTools,
-    removeTools,
+    configureTools,
+    getGitignoreStatus,
+    updateGitignore,
     setShowAddModal,
     setShowEditModal,
     setEditTargetId,

@@ -1,13 +1,12 @@
 use tauri::State;
 use ts_rs::TS;
-use uuid::Uuid;
 
 use crate::core::environment::home_dir;
 use crate::core::errors::SignalError;
 use crate::core::gitignore::{self, IgnoreUpdateOptions};
 use crate::core::project_ops::{self, ProjectDto, ProjectSkillAssignmentDto, ProjectToolDto};
 use crate::core::project_sync::{self, AssignTargetStatus};
-use crate::core::skill_store::{ProjectSkillAssignmentRecord, ProjectToolRecord, SkillStore};
+use crate::core::skill_store::{ProjectSkillAssignmentRecord, SkillStore};
 use crate::SyncMutex;
 
 use super::{now_ms, CommandError};
@@ -71,53 +70,23 @@ pub async fn update_project_path(
     .map_err(CommandError::from_anyhow)
 }
 
+/// Replace the project's configured tool set and, when `gitignore` is given,
+/// update its ignore files afterwards. Core owns the ordering
+/// (`project_ops::configure_project_tools`); returns the resulting tools.
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn add_project_tool(
-    store: State<'_, SkillStore>,
-    projectId: String,
-    tool: String,
-) -> Result<(), CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        // Validate that the project exists before inserting
-        store.get_project_by_id(&projectId)?.ok_or_else(|| {
-            anyhow::anyhow!(SignalError::NotFound {
-                kind: "project".to_string(),
-                id: projectId.clone(),
-            })
-        })?;
-
-        // Validate that the tool key corresponds to a known tool adapter
-        if crate::core::tool_adapters::adapter_by_key(&tool).is_none() {
-            anyhow::bail!("unknown tool: {}", tool);
-        }
-
-        let record = ProjectToolRecord {
-            id: Uuid::new_v4().to_string(),
-            project_id: projectId,
-            tool,
-        };
-        store.add_project_tool(&record)
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-#[allow(non_snake_case)]
-pub async fn remove_project_tool(
+pub async fn configure_project_tools(
     store: State<'_, SkillStore>,
     sync_mutex: State<'_, SyncMutex>,
     projectId: String,
-    tool: String,
-) -> Result<(), CommandError> {
+    tools: Vec<String>,
+    gitignore: Option<IgnoreUpdateOptions>,
+) -> Result<Vec<ProjectToolDto>, CommandError> {
     let store = store.inner().clone();
     let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
-        project_ops::remove_tool_with_cleanup(&store, &projectId, &tool)
+        project_ops::configure_project_tools(&store, &projectId, &tools, gitignore)
     })
     .await
     .map_err(CommandError::internal)?

@@ -1,7 +1,5 @@
-import { memo, useCallback, useRef } from "react";
+import { memo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-// Direct invoke import: projects subtree always runs inside Tauri context.
-import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
 import { toast } from "sonner";
@@ -18,38 +16,22 @@ const ProjectsPage = () => {
   const { t } = useTranslation();
   const state = useProjectState();
 
-  // D-13: Store gitignore options from AddProjectModal so they survive
-  // the modal transition to ToolConfigModal. The backend command
-  // update_project_gitignore derives patterns from list_project_tools,
-  // so it MUST be called AFTER tools are persisted -- not after registration.
-  const pendingGitignoreRef = useRef<{
-    projectId: string;
-    addToGitignore: boolean;
-    addToExclude: boolean;
-  } | null>(null);
-
   const handleAddProject = useCallback(
     async (
       path: string,
       gitignoreOptions: { addToGitignore: boolean; addToExclude: boolean },
     ) => {
       try {
-        const project = await state.registerProject(path);
+        // The ignore intent rides along with registration; the hook hands
+        // it to the backend once the tool set is confirmed.
+        const project = await state.registerProject(path, {
+          add_to_gitignore: gitignoreOptions.addToGitignore,
+          add_to_exclude: gitignoreOptions.addToExclude,
+        });
         state.setShowAddModal(false);
         await state.selectProject(project.id);
         state.setShowToolConfigModal(true);
         await state.loadToolStatus();
-
-        // D-13: Store gitignore options for use AFTER tool config confirmation.
-        if (gitignoreOptions.addToGitignore || gitignoreOptions.addToExclude) {
-          pendingGitignoreRef.current = {
-            projectId: project.id,
-            addToGitignore: gitignoreOptions.addToGitignore,
-            addToExclude: gitignoreOptions.addToExclude,
-          };
-        } else {
-          pendingGitignoreRef.current = null;
-        }
       } catch (err) {
         const msg = describeCommandError(err, t);
         if (msg) toast.error(msg);
@@ -61,32 +43,8 @@ const ProjectsPage = () => {
   const handleToolConfigConfirm = useCallback(
     async (selectedTools: string[]) => {
       try {
-        const currentToolKeys = state.tools.map((t) => t.tool);
-        const toAdd = selectedTools.filter((t) => !currentToolKeys.includes(t));
-        const toRemove = currentToolKeys.filter(
-          (t) => !selectedTools.includes(t),
-        );
-        if (toAdd.length > 0) await state.addTools(toAdd);
-        if (toRemove.length > 0) await state.removeTools(toRemove);
+        await state.configureTools(selectedTools);
         state.setShowToolConfigModal(false);
-
-        // D-13 full delivery: NOW that tools are persisted in the database,
-        // call update_project_gitignore. The backend derives gitignore patterns
-        // from list_project_tools, which requires tools to already exist.
-        const pending = pendingGitignoreRef.current;
-        if (pending) {
-          pendingGitignoreRef.current = null;
-          try {
-            await invoke("update_project_gitignore", {
-              projectId: pending.projectId,
-              addToGitignore: pending.addToGitignore,
-              addToExclude: pending.addToExclude,
-            });
-          } catch (gitErr) {
-            const gitMsg = describeCommandError(gitErr, t);
-            if (gitMsg) toast.warning(gitMsg);
-          }
-        }
       } catch (err) {
         const msg = describeCommandError(err, t);
         if (msg) toast.error(msg);
@@ -130,10 +88,9 @@ const ProjectsPage = () => {
       gitignoreOptions: { addToGitignore: boolean; addToExclude: boolean },
     ) => {
       try {
-        await invoke("update_project_gitignore", {
-          projectId,
-          addToGitignore: gitignoreOptions.addToGitignore,
-          addToExclude: gitignoreOptions.addToExclude,
+        await state.updateGitignore(projectId, {
+          add_to_gitignore: gitignoreOptions.addToGitignore,
+          add_to_exclude: gitignoreOptions.addToExclude,
         });
         state.setShowEditModal(false);
         state.setEditTargetId(null);
@@ -289,6 +246,7 @@ const ProjectsPage = () => {
           state.projects.find((p) => p.id === state.editTargetId) ?? null
         }
         onSave={handleEditSave}
+        loadStatus={state.getGitignoreStatus}
         onRequestClose={() => {
           state.setShowEditModal(false);
           state.setEditTargetId(null);

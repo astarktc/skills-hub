@@ -1,8 +1,4 @@
 import { memo, useEffect, useState } from "react";
-// Direct invoke import: projects subtree always runs inside Tauri context.
-// App.tsx uses invokeTauri() for lazy import, but that pattern is a hook-local
-// callback and not importable here. Acceptable for Tauri-only components.
-import { invoke } from "@tauri-apps/api/core";
 import type { TFunction } from "i18next";
 import Modal from "../shared/Modal";
 import type { GitignoreStatusDto, ProjectDto } from "./types";
@@ -14,6 +10,8 @@ type EditProjectModalProps = {
     projectId: string,
     gitignoreOptions: { addToGitignore: boolean; addToExclude: boolean },
   ) => Promise<void>;
+  /** Backend access goes through the hook (useProjectState.getGitignoreStatus). */
+  loadStatus: (projectId: string) => Promise<GitignoreStatusDto>;
   onRequestClose: () => void;
   t: TFunction;
 };
@@ -21,6 +19,7 @@ type EditProjectModalProps = {
 const EditProjectModalInner = ({
   project,
   onSave,
+  loadStatus,
   onRequestClose,
   t,
 }: Omit<EditProjectModalProps, "open"> & { project: ProjectDto }) => {
@@ -31,9 +30,7 @@ const EditProjectModalInner = ({
 
   useEffect(() => {
     let cancelled = false;
-    invoke<GitignoreStatusDto>("get_project_gitignore_status", {
-      projectId: project.id,
-    })
+    loadStatus(project.id)
       .then((status) => {
         if (cancelled) return;
         setAddToGitignore(status.in_gitignore);
@@ -49,7 +46,7 @@ const EditProjectModalInner = ({
     return () => {
       cancelled = true;
     };
-  }, [project.id]);
+  }, [project.id, loadStatus]);
 
   const handleSave = async () => {
     setSaving(true);
