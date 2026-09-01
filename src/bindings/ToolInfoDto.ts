@@ -2,7 +2,8 @@
 
 export type ToolInfoDto = { key: string, label: string, installed: boolean, skills_dir: string, 
 /**
- * Keys of every global tool sharing this tool's skills dir, in adapter
+ * Keys of every listed tool sharing this tool's skills dir (global dir
+ * for the global list, project dir for the project list), in adapter
  * order, including this tool itself (len >= 1). The backend owns the
  * shared-dir invariant; the frontend only presents it.
  */

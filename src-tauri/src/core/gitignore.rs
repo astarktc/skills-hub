@@ -1,7 +1,7 @@
 //! Maintenance of the managed "Skills Hub" block in a project's `.gitignore`
 //! and `.git/info/exclude`.
 //!
-//! The ignore patterns are derived from `project_relative_skills_dir()` — the
+//! The ignore patterns are derived from `ToolAdapter::project_relative_skills_dir` — the
 //! same mapping project sync writes with — so the dir-mapping decision is made
 //! exactly once, here. (An earlier version derived patterns from the *global*
 //! `relative_skills_dir`, producing entries that never matched what project
@@ -16,7 +16,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::core::tool_adapters::{project_relative_skills_dir, ToolAdapter};
+use crate::core::tool_adapters::ToolAdapter;
 
 /// Marker identifying the managed block. Any line containing this string
 /// starts a managed block; the block extends over the following pattern
@@ -24,11 +24,11 @@ use crate::core::tool_adapters::{project_relative_skills_dir, ToolAdapter};
 pub const MARKER: &str = "# Skills Hub";
 
 /// Ignore patterns for a set of configured tools, deduplicated, in input
-/// order. Uses the project-scope mapping (`project_relative_skills_dir`).
+/// order. Uses the project-scope mapping (`ToolAdapter::project_relative_skills_dir`).
 pub fn patterns_for_tools<'a>(adapters: impl IntoIterator<Item = &'a ToolAdapter>) -> Vec<String> {
     let mut patterns: Vec<String> = Vec::new();
     for adapter in adapters {
-        let pattern = format!("/{}/", project_relative_skills_dir(adapter));
+        let pattern = format!("/{}/", adapter.project_relative_skills_dir);
         if !patterns.contains(&pattern) {
             patterns.push(pattern);
         }

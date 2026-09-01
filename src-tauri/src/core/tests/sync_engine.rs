@@ -4,6 +4,7 @@ use crate::core::sync_engine::{
     copy_dir_recursive, sync_dir_for_tool_with_overwrite, sync_dir_hybrid,
     sync_dir_hybrid_with_overwrite, SyncMode,
 };
+use crate::core::tool_adapters::adapter_by_key;
 
 #[test]
 fn copy_dir_recursive_skips_git_dir() {
@@ -72,10 +73,61 @@ fn cursor_sync_forces_copy() {
     let dst_dir = tempfile::tempdir().unwrap();
     let target = dst_dir.path().join("t");
 
-    let out = sync_dir_for_tool_with_overwrite("cursor", src_dir.path(), &target, false).unwrap();
+    let cursor = adapter_by_key("cursor").expect("cursor adapter");
+    assert!(
+        !cursor.supports_symlink,
+        "test premise: Cursor cannot symlink"
+    );
+    let out = sync_dir_for_tool_with_overwrite(&cursor, src_dir.path(), &target, false).unwrap();
     assert!(matches!(out.mode_used, SyncMode::Copy));
     assert!(target.join("s/a.txt").exists());
     assert_eq!(fs::read(target.join("s/a.txt")).unwrap(), b"ok");
+    assert!(
+        !fs::symlink_metadata(&target)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "target must be a real directory"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_capable_tool_gets_a_link() {
+    let src_dir = tempfile::tempdir().unwrap();
+    fs::write(src_dir.path().join("a.txt"), b"ok").unwrap();
+
+    let dst_dir = tempfile::tempdir().unwrap();
+    let target = dst_dir.path().join("t");
+
+    let claude = adapter_by_key("claude_code").expect("claude adapter");
+    assert!(claude.supports_symlink);
+    let out = sync_dir_for_tool_with_overwrite(&claude, src_dir.path(), &target, false).unwrap();
+    assert!(matches!(out.mode_used, SyncMode::Symlink));
+    assert!(fs::symlink_metadata(&target)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+}
+
+/// The capability, not the tool's identity, decides the mode: a hypothetical
+/// non-Cursor adapter with `supports_symlink: false` is copied too.
+#[test]
+fn any_adapter_without_symlink_support_is_copied() {
+    let src_dir = tempfile::tempdir().unwrap();
+    fs::write(src_dir.path().join("a.txt"), b"ok").unwrap();
+
+    let dst_dir = tempfile::tempdir().unwrap();
+    let target = dst_dir.path().join("t");
+
+    let mut claude = adapter_by_key("claude_code").expect("claude adapter");
+    claude.supports_symlink = false;
+    let out = sync_dir_for_tool_with_overwrite(&claude, src_dir.path(), &target, false).unwrap();
+    assert!(matches!(out.mode_used, SyncMode::Copy));
+    assert!(!fs::symlink_metadata(&target)
+        .unwrap()
+        .file_type()
+        .is_symlink());
 }
 
 #[cfg(unix)]

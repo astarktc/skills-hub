@@ -60,10 +60,13 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   per-world shims (`src/components/skills/types.ts`, `src/components/projects/types.ts`), never from
   `src/bindings/` directly. Adding a DTO = derive + `cargo test` + re-export from the shim.
   `Option<T>` maps to wire-accurate `T | null` (serde always emits the key) — don't add `#[ts(optional)]`.
-- **New AI tool adapter**: add the `ToolId` variant and the `default_tool_adapters()` entry in
-  `core/tool_adapters/mod.rs` (plus the `project_relative_skills_dir()` arm), **and** add a row to the
-  README supported-tools table. The Rust arms are compiler-enforced; the README table is not — check it
-  matches the `ToolId` variant count whenever adapters change.
+- **New AI tool adapter**: add the `ToolId` variant (+ its `as_key` arm) and one `ToolAdapter` literal in
+  the `TOOL_ADAPTERS` registry (`core/tool_adapters/mod.rs`) — every per-tool fact lives in that literal
+  (global/detect/project dirs, `group` for virtual-group membership, `supports_symlink`), **and** add a row
+  to the README supported-tools table, **and** extend the `project_relative_skills_dir_for_every_tool`
+  table test (`core/tests/tool_adapters.rs`). The Rust side is compiler-enforced; the README table is not —
+  check it matches the `ToolId` variant count whenever adapters change. Tool lists shown to the UI come
+  from `tool_adapters::global_tool_entries` / `project_tool_entries` — commands only map them to DTOs.
 - **UI strings**: add keys to **both** `en` and `zh` in `src/i18n/resources.ts`. No hardcoded UI text.
 - **New `core/` module**: declare it in `src-tauri/src/core/mod.rs`.
 - **DB schema change**: consider `migrate_legacy_db_if_needed` in `core/skill_store.rs` — a migration path exists.
@@ -116,7 +119,9 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
 
 - Never hand-edit version numbers (use `version:set`).
 - Never "fix" the Cursor adapter to use symlinks — Cursor does not support symlink/junction skill dirs, so
-  `sync_dir_for_tool_with_overwrite` forces copy mode for it deliberately (`core/sync_engine.rs`).
+  its registry entry sets `supports_symlink: false` and `sync_dir_for_tool_with_overwrite` forces copy
+  mode from that capability deliberately (`core/sync_engine.rs`). Never re-encode this as a `"cursor"`
+  string check.
 - Never commit `.claude/`, `.agents/`, `.gsd/`, `.mcp.json`, or `docs/conversation-logs/` (all gitignored).
 - Don't refactor, reformat, or "improve" code unrelated to the requested change.
 - Git uses vendored-openssl and HTTP uses rustls-tls on purpose — don't switch to system SSL.

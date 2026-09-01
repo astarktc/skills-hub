@@ -125,13 +125,9 @@ pub fn sync_skill_into_root(
     let overwrite = policy.overwrite
         || (policy.overwrite_if_same_content && target_has_same_content(source, &target));
 
-    let outcome = sync_engine::sync_dir_for_tool_with_overwrite(
-        adapter.id.as_key(),
-        source,
-        &target,
-        overwrite,
-    )
-    .map_err(|err| classify_sync_error(err, adapter, tool_root, &target))?;
+    let outcome =
+        sync_engine::sync_dir_for_tool_with_overwrite(adapter, source, &target, overwrite)
+            .map_err(|err| classify_sync_error(err, adapter, tool_root, &target))?;
 
     // Some tools share the same global skills directory; keep DB records consistent across them.
     for a in record_tools {

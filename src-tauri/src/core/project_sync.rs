@@ -7,13 +7,13 @@ use crate::core::{
     content_hash,
     skill_store::{ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore},
     sync_engine::{self, SyncMode},
-    tool_adapters::{self, project_relative_skills_dir, ToolAdapter},
+    tool_adapters::{self, ToolAdapter},
 };
 
 /// The single place that joins a project root with a tool's skills dir.
 ///
 /// Takes the adapter (not a bare dir string) so the project-scope mapping
-/// (`project_relative_skills_dir`) is chosen here and callers cannot reach for
+/// (`ToolAdapter::project_relative_skills_dir`) is chosen here and callers cannot reach for
 /// the global `relative_skills_dir` by mistake — that mix-up has shipped more
 /// than once (see `gitignore.rs` and the cleanup paths in `project_ops.rs`).
 pub fn resolve_project_sync_target(
@@ -22,7 +22,7 @@ pub fn resolve_project_sync_target(
     skill_name: &str,
 ) -> PathBuf {
     project_path
-        .join(project_relative_skills_dir(adapter))
+        .join(adapter.project_relative_skills_dir)
         .join(skill_name)
 }
 
@@ -54,7 +54,7 @@ pub fn assign_and_sync(
     let source = Path::new(&skill.central_path);
     let target = resolve_project_sync_target(Path::new(&project.path), &adapter, &skill.name);
 
-    match sync_engine::sync_dir_for_tool_with_overwrite(tool_key, source, &target, false) {
+    match sync_engine::sync_dir_for_tool_with_overwrite(&adapter, source, &target, false) {
         Ok(outcome) => {
             let mode_str = outcome.mode_used.as_str();
             let hash = if matches!(outcome.mode_used, SyncMode::Copy) {
@@ -122,12 +122,8 @@ pub(crate) fn sync_single_assignment(
     let source = Path::new(&skill.central_path);
     let target = resolve_project_sync_target(Path::new(&project.path), &adapter, &skill.name);
 
-    let outcome = sync_engine::sync_dir_for_tool_with_overwrite(
-        &assignment.tool,
-        source,
-        &target,
-        overwrite,
-    )?;
+    let outcome =
+        sync_engine::sync_dir_for_tool_with_overwrite(&adapter, source, &target, overwrite)?;
 
     let mode_str = outcome.mode_used.as_str();
     let hash = if matches!(outcome.mode_used, SyncMode::Copy) {

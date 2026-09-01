@@ -36,8 +36,8 @@ use crate::core::skills_search::{
 };
 use crate::core::sync_engine::{copy_dir_recursive, remove_path_any};
 use crate::core::tool_adapters::{
-    adapters_sharing_skills_dir, default_tool_adapters, is_installed_in, skills_dir_in, ToolId,
-    AGENTS_STANDARD_KEYS,
+    default_tool_adapters, global_tool_entries, installed_keys, project_tool_entries,
+    skills_dir_in, ToolCatalogEntry,
 };
 
 pub use error::CommandError;
@@ -81,7 +81,8 @@ pub struct ToolInfoDto {
     pub label: String,
     pub installed: bool,
     pub skills_dir: String,
-    /// Keys of every global tool sharing this tool's skills dir, in adapter
+    /// Keys of every listed tool sharing this tool's skills dir (global dir
+    /// for the global list, project dir for the project list), in adapter
     /// order, including this tool itself (len >= 1). The backend owns the
     /// shared-dir invariant; the frontend only presents it.
     pub shared_with: Vec<String>,
@@ -99,63 +100,55 @@ pub struct ToolStatusDto {
     pub newly_installed: Vec<String>,
 }
 
+impl From<ToolCatalogEntry> for ToolInfoDto {
+    fn from(entry: ToolCatalogEntry) -> Self {
+        ToolInfoDto {
+            key: entry.key.to_string(),
+            label: entry.label.to_string(),
+            installed: entry.installed,
+            skills_dir: entry.skills_dir.to_string_lossy().to_string(),
+            shared_with: entry.shared_with.iter().map(|k| k.to_string()).collect(),
+            constituents: entry.constituents.iter().map(|k| k.to_string()).collect(),
+        }
+    }
+}
+
+/// Persist the currently installed global tool keys and report which ones
+/// were not recorded before. The write is best effort: a failed write never
+/// fails the status read.
+fn record_installed_tools(
+    store: &SkillStore,
+    installed: &[String],
+) -> Result<Vec<String>, anyhow::Error> {
+    const SETTING_KEY: &str = "installed_tools_v1";
+    let prev: std::collections::HashSet<String> = store
+        .get_setting(SETTING_KEY)?
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let newly_installed: Vec<String> = installed
+        .iter()
+        .filter(|k| !prev.contains(*k))
+        .cloned()
+        .collect();
+    let _ = store.set_setting(
+        SETTING_KEY,
+        &serde_json::to_string(installed).unwrap_or_else(|_| "[]".to_string()),
+    );
+    Ok(newly_installed)
+}
+
 #[tauri::command]
 pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let home = home_dir()?;
-        let adapters = crate::core::tool_adapters::default_tool_adapters();
-        let mut tools: Vec<ToolInfoDto> = Vec::new();
-        let mut installed: Vec<String> = Vec::new();
-
-        for adapter in &adapters {
-            // AgentsStandard is project-only -- excluded from global tool list
-            if adapter.id == ToolId::AgentsStandard {
-                continue;
-            }
-            let ok = is_installed_in(&home, adapter);
-            let key = adapter.id.as_key().to_string();
-            let skills_dir = skills_dir_in(&home, adapter).to_string_lossy().to_string();
-            let shared_with: Vec<String> = adapters_sharing_skills_dir(adapter)
-                .iter()
-                .filter(|a| a.id != ToolId::AgentsStandard)
-                .map(|a| a.id.as_key().to_string())
-                .collect();
-            tools.push(ToolInfoDto {
-                key: key.clone(),
-                label: adapter.display_name.to_string(),
-                installed: ok,
-                skills_dir,
-                shared_with,
-                constituents: vec![],
-            });
-            if ok {
-                installed.push(key);
-            }
-        }
-
-        installed.dedup();
-
-        let prev: Vec<String> = store
-            .get_setting("installed_tools_v1")?
-            .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
-            .unwrap_or_default();
-
-        let prev_set: std::collections::HashSet<String> = prev.into_iter().collect();
-        let newly_installed: Vec<String> = installed
-            .iter()
-            .filter(|k| !prev_set.contains(*k))
-            .cloned()
-            .collect();
-
-        // Persist current set (best effort).
-        let _ = store.set_setting(
-            "installed_tools_v1",
-            &serde_json::to_string(&installed).unwrap_or_else(|_| "[]".to_string()),
-        );
-
+        let entries = global_tool_entries(&home);
+        let installed = installed_keys(&entries);
+        let newly_installed = record_installed_tools(&store, &installed)?;
         Ok::<_, anyhow::Error>(ToolStatusDto {
-            tools,
+            tools: entries.into_iter().map(ToolInfoDto::from).collect(),
             installed,
             newly_installed,
         })
@@ -169,69 +162,10 @@ pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusD
 pub async fn get_project_tool_status() -> Result<ToolStatusDto, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let home = home_dir()?;
-        let adapters = default_tool_adapters();
-        let mut tools: Vec<ToolInfoDto> = Vec::new();
-        let mut installed: Vec<String> = Vec::new();
-
-        for adapter in &adapters {
-            let key = adapter.id.as_key();
-
-            // Skip individual constituent tools -- they're absorbed into AgentsStandard
-            if AGENTS_STANDARD_KEYS.contains(&key) {
-                continue;
-            }
-
-            if adapter.id == ToolId::AgentsStandard {
-                // Installed if ANY of the 9 constituent detect dirs exist
-                let group_installed = adapters
-                    .iter()
-                    .filter(|a| AGENTS_STANDARD_KEYS.contains(&a.id.as_key()))
-                    .any(|a| is_installed_in(&home, a));
-
-                let skills_dir = skills_dir_in(&home, adapter).to_string_lossy().to_string();
-
-                let constituents: Vec<String> = adapters
-                    .iter()
-                    .filter(|a| AGENTS_STANDARD_KEYS.contains(&a.id.as_key()))
-                    .map(|a| a.display_name.to_string())
-                    .collect();
-
-                tools.push(ToolInfoDto {
-                    key: "agents_skills".to_string(),
-                    label: adapter.display_name.to_string(),
-                    installed: group_installed,
-                    skills_dir,
-                    // Project scope: dir sharing is already absorbed into the
-                    // single AgentsStandard entry, so every entry is its own
-                    // group.
-                    shared_with: vec!["agents_skills".to_string()],
-                    constituents,
-                });
-                if group_installed {
-                    installed.push("agents_skills".to_string());
-                }
-            } else {
-                let ok = is_installed_in(&home, adapter);
-                let key_str = key.to_string();
-                let skills_dir = skills_dir_in(&home, adapter).to_string_lossy().to_string();
-                tools.push(ToolInfoDto {
-                    key: key_str.clone(),
-                    label: adapter.display_name.to_string(),
-                    installed: ok,
-                    skills_dir,
-                    shared_with: vec![key_str.clone()],
-                    constituents: vec![],
-                });
-                if ok {
-                    installed.push(key_str);
-                }
-            }
-        }
-
-        installed.dedup();
-
+        let entries = project_tool_entries(&home);
+        let installed = installed_keys(&entries);
         Ok::<_, anyhow::Error>(ToolStatusDto {
-            tools,
+            tools: entries.into_iter().map(ToolInfoDto::from).collect(),
             installed,
             newly_installed: vec![],
         })

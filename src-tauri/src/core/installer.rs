@@ -903,7 +903,7 @@ pub fn update_managed_skill_from_source(
     store.upsert_skill(&updated)?;
 
     // If any targets are "copy", re-sync them so changes propagate. Symlinks update automatically.
-    // Cursor currently does not support symlinks/junctions, so regardless of the historical mode, we must force a copy re-sync.
+    // Tools without symlink support (see `ToolAdapter::supports_symlink`) are always copies, so regardless of the historical mode, we must force a copy re-sync.
     let targets = store.list_skill_targets(skill_id)?;
     let mut updated_targets: Vec<String> = Vec::new();
     for t in targets {
@@ -913,7 +913,8 @@ pub fn update_managed_skill_from_source(
                 continue;
             }
         }
-        let force_copy = t.mode == "copy" || t.tool == "cursor";
+        let force_copy =
+            t.mode == "copy" || adapter_by_key(&t.tool).is_some_and(|a| !a.supports_symlink);
         if force_copy {
             let target_path = PathBuf::from(&t.target_path);
             let sync_res = sync_dir_copy_with_overwrite(&central_path, &target_path, true)?;
@@ -936,7 +937,8 @@ pub fn update_managed_skill_from_source(
     // Symlinks auto-update since they point to the central path that was just refreshed.
     let project_assignments = store.list_project_skill_assignments_by_skill(skill_id)?;
     for pa in project_assignments {
-        let force_copy = pa.mode == "copy" || pa.tool == "cursor";
+        let force_copy =
+            pa.mode == "copy" || adapter_by_key(&pa.tool).is_some_and(|a| !a.supports_symlink);
         if !force_copy {
             continue;
         }

@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use super::tool_adapters::ToolAdapter;
+
 /// Typed condition: the sync target already exists and overwrite was not
 /// permitted. Raised through `anyhow` chains so callers (e.g.
 /// `global_sync::classify_sync_error`) recover it by downcast — never by
@@ -149,14 +151,17 @@ pub fn sync_dir_copy_with_overwrite(
     })
 }
 
+/// The tool-aware sync entry point: tools that cannot consume a symlinked
+/// skills dir (`ToolAdapter::supports_symlink == false`) are always copied so
+/// the skills stay usable after sync; every other tool gets the hybrid
+/// symlink -> junction -> copy fallback.
 pub fn sync_dir_for_tool_with_overwrite(
-    tool_key: &str,
+    adapter: &ToolAdapter,
     source: &Path,
     target: &Path,
     overwrite: bool,
 ) -> Result<SyncOutcome> {
-    // Cursor currently does not support symlinks/junctions: force copy mode to avoid the skills being unusable inside Cursor after sync.
-    if tool_key.eq_ignore_ascii_case("cursor") {
+    if !adapter.supports_symlink {
         return sync_dir_copy_with_overwrite(source, target, overwrite);
     }
     sync_dir_hybrid_with_overwrite(source, target, overwrite)

@@ -479,8 +479,7 @@ fn remove_tool_with_cleanup_handles_missing_skill_gracefully() {
 fn pi_adapter() -> crate::core::tool_adapters::ToolAdapter {
     let adapter = crate::core::tool_adapters::adapter_by_key("pi").expect("pi adapter");
     assert_ne!(
-        adapter.relative_skills_dir,
-        crate::core::tool_adapters::project_relative_skills_dir(&adapter),
+        adapter.relative_skills_dir, adapter.project_relative_skills_dir,
         "test precondition: pi's global and project mappings must diverge"
     );
     adapter

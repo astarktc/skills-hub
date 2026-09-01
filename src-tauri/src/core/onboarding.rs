@@ -64,7 +64,7 @@ fn build_onboarding_plan_in_home(
     let mut all_detected: Vec<DetectedSkill> = Vec::new();
     let mut scanned = 0usize;
 
-    for adapter in &adapters {
+    for adapter in adapters {
         if !is_installed_in(home, adapter) {
             continue;
         }
