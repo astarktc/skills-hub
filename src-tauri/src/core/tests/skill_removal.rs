@@ -3,6 +3,7 @@
 //! central copy, and the DB record, with per-target outcomes as data and the
 //! typed `DeleteCleanupFailed` raised only by the composed entry point.
 
+use crate::core::sync_status::{SyncMode, SyncStatus};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -61,8 +62,8 @@ fn seed_global_target(store: &SkillStore, skill: &SkillRecord, tool: &str, root:
             skill_id: skill.id.clone(),
             tool: tool.to_string(),
             target_path: target.to_string_lossy().to_string(),
-            mode: "copy".to_string(),
-            status: "ok".to_string(),
+            mode: SyncMode::Copy,
+            status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(1),
         })
@@ -90,7 +91,7 @@ fn seed_assignment(
     project: &ProjectRecord,
     skill: &SkillRecord,
     tool: &str,
-    status: &str,
+    status: SyncStatus,
 ) -> PathBuf {
     store
         .add_project_skill_assignment(&ProjectSkillAssignmentRecord {
@@ -99,8 +100,8 @@ fn seed_assignment(
             skill_id: skill.id.clone(),
             skill_name: skill.name.clone(),
             tool: tool.to_string(),
-            mode: "copy".to_string(),
-            status: status.to_string(),
+            mode: SyncMode::Copy,
+            status,
             last_error: None,
             synced_at: None,
             content_hash: None,
@@ -134,7 +135,7 @@ fn plan_collects_global_and_project_targets_using_project_scope_mapping() {
     // pi's global and project mappings diverge — the plan must use the project one.
     let pi = adapter_by_key("pi").unwrap();
     assert_ne!(pi.relative_skills_dir, pi.project_relative_skills_dir);
-    let project_target = seed_assignment(&store, &project, &skill, "pi", "synced");
+    let project_target = seed_assignment(&store, &project, &skill, "pi", SyncStatus::Synced);
 
     let plan = plan_skill_removal(&store, &skill.id).expect("plan");
 
@@ -174,11 +175,23 @@ fn plan_includes_only_deployed_assignment_statuses() {
     let p_error = seed_project(&store, tmp.path(), "p-error");
     let p_pending = seed_project(&store, tmp.path(), "p-pending");
     let p_missing = seed_project(&store, tmp.path(), "p-missing");
-    seed_assignment(&store, &p_synced, &skill, "claude_code", "synced");
-    seed_assignment(&store, &p_stale, &skill, "claude_code", "stale");
-    seed_assignment(&store, &p_error, &skill, "claude_code", "error");
-    seed_assignment(&store, &p_pending, &skill, "claude_code", "pending");
-    seed_assignment(&store, &p_missing, &skill, "claude_code", "missing");
+    seed_assignment(&store, &p_synced, &skill, "claude_code", SyncStatus::Synced);
+    seed_assignment(&store, &p_stale, &skill, "claude_code", SyncStatus::Stale);
+    seed_assignment(&store, &p_error, &skill, "claude_code", SyncStatus::Error);
+    seed_assignment(
+        &store,
+        &p_pending,
+        &skill,
+        "claude_code",
+        SyncStatus::Pending,
+    );
+    seed_assignment(
+        &store,
+        &p_missing,
+        &skill,
+        "claude_code",
+        SyncStatus::Missing,
+    );
 
     let plan = plan_skill_removal(&store, &skill.id).expect("plan");
 
@@ -237,7 +250,7 @@ fn execute_removes_global_project_central_and_record() {
     let skill = seed_skill(&store, "delta", &central);
     let global = seed_global_target(&store, &skill, "claude_code", &tmp.path().join("home"));
     let project = seed_project(&store, tmp.path(), "proj");
-    let project_target = seed_assignment(&store, &project, &skill, "pi", "synced");
+    let project_target = seed_assignment(&store, &project, &skill, "pi", SyncStatus::Synced);
 
     let plan = plan_skill_removal(&store, &skill.id).unwrap();
     let report = execute_skill_removal(&store, &skill.id, plan).expect("execute");
@@ -370,7 +383,8 @@ fn remove_skill_happy_path_returns_clean_report() {
     let central = make_skill_dir(&tmp.path().join("central"), "theta");
     let skill = seed_skill(&store, "theta", &central);
     let project = seed_project(&store, tmp.path(), "proj");
-    let project_target = seed_assignment(&store, &project, &skill, "claude_code", "stale");
+    let project_target =
+        seed_assignment(&store, &project, &skill, "claude_code", SyncStatus::Stale);
 
     let report = remove_skill(&store, &skill.id).expect("remove");
 
@@ -419,7 +433,7 @@ fn remove_skill_cleans_project_artifacts_before_the_cascade() {
     let central = make_skill_dir(&tmp.path().join("central"), "kappa");
     let skill = seed_skill(&store, "kappa", &central);
     let project = seed_project(&store, tmp.path(), "proj");
-    let target = seed_assignment(&store, &project, &skill, "windsurf", "synced");
+    let target = seed_assignment(&store, &project, &skill, "windsurf", SyncStatus::Synced);
 
     remove_skill(&store, &skill.id).expect("remove");
 

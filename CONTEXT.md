@@ -51,3 +51,15 @@ _Avoid_: scan, collect skill dirs
 **Skill candidate**:
 One discovered directory with its subpath, name, description and validity. "Installable" means it has skill bytes (any `SKILL.md`, or a `.claude/skills/` child) — the git side's admission rule; "valid" means the manifest parsed — the local picker's rule.
 _Avoid_: skill entry, hit
+
+**Sync status**:
+The lifecycle of one synced artifact (a project assignment row or a global skill target row): `pending` → `synced` / `stale` / `missing` / `error`. A typed enum (`SyncStatus`, `core/sync_status.rs`) whose stored and wire spelling are those strings; the store parses it at its seam (legacy `ok` reads as `synced`; an unrecognised value surfaces as `error` with the raw value as diagnostic, never as healthy). Status changes are typed transitions (`AssignmentTransition`), and the "what should it be" decision (`next_status`) is pure so a reconcile pass can plan before it writes.
+_Avoid_: state, health, "ok"
+
+**Sync mode**:
+How an artifact was materialised — `symlink`, `junction` (Windows fallback) or `copy` — recorded on the row because only copies can drift from their source (`SyncMode`, same module).
+_Avoid_: link type, strategy
+
+**Project sync status**:
+The precedence fold of a project's assignment statuses shown on the project list: error/missing > stale > pending > synced, `none` when the project has no assignments (`ProjectSyncStatus`, `aggregate`).
+_Avoid_: project health, overall status

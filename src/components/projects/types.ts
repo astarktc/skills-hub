@@ -6,6 +6,9 @@
 export type { ProjectDto } from "../../bindings/ProjectDto";
 export type { ProjectToolDto } from "../../bindings/ProjectToolDto";
 export type { ProjectSkillAssignmentDto } from "../../bindings/ProjectSkillAssignmentDto";
+export type { ProjectSyncStatus } from "../../bindings/ProjectSyncStatus";
+export type { SyncStatus } from "../../bindings/SyncStatus";
+export type { SyncMode } from "../../bindings/SyncMode";
 export type { ResyncSummaryDto } from "../../bindings/ResyncSummaryDto";
 export type { BulkAssignResultDto } from "../../bindings/BulkAssignResultDto";
 export type { BulkAssignErrorDto } from "../../bindings/BulkAssignErrorDto";

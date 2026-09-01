@@ -4,6 +4,8 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 use tauri::Manager;
 
+use super::sync_status::{aggregate, ProjectSyncStatus, SyncMode, SyncStatus};
+
 const DB_FILE_NAME: &str = "skills_hub.db";
 const LEGACY_APP_IDENTIFIERS: &[&str] = &[
     "com.tauri.dev",
@@ -131,8 +133,8 @@ pub struct SkillTargetRecord {
     pub skill_id: String,
     pub tool: String,
     pub target_path: String,
-    pub mode: String,
-    pub status: String,
+    pub mode: SyncMode,
+    pub status: SyncStatus,
     pub last_error: Option<String>,
     pub synced_at: Option<i64>,
 }
@@ -159,12 +161,73 @@ pub struct ProjectSkillAssignmentRecord {
     pub skill_id: String,
     pub skill_name: String,
     pub tool: String,
-    pub mode: String,
-    pub status: String,
+    pub mode: SyncMode,
+    pub status: SyncStatus,
     pub last_error: Option<String>,
     pub synced_at: Option<i64>,
     pub content_hash: Option<String>,
     pub created_at: i64,
+}
+
+/// The store seam for the lifecycle columns: parse the stored `mode` and
+/// `status` strings into the typed vocabulary.
+///
+/// Legacy policy (no schema change, so any string may be on disk): a value
+/// `sync_status` does not recognise cannot be treated as healthy and must not
+/// abort the whole listing. The row surfaces as `Error` with the raw value in
+/// `last_error` (a diagnostic, not user copy) and a warning is logged; an
+/// unknown mode is read as `Copy` so the next update re-syncs it rather than
+/// assuming a link that follows the source. A re-sync then rewrites the row
+/// with canonical strings. Never a panic, never a silent coercion.
+fn read_lifecycle(
+    row_id: &str,
+    raw_mode: String,
+    raw_status: String,
+    last_error: Option<String>,
+) -> (SyncMode, SyncStatus, Option<String>) {
+    let mode = SyncMode::from_stored(&raw_mode);
+    let status = SyncStatus::from_stored(&raw_status);
+    match (mode, status) {
+        (Some(mode), Some(status)) => (mode, status, last_error),
+        _ => {
+            let diagnostic = format!(
+                "unrecognised stored sync lifecycle (mode: {:?}, status: {:?})",
+                raw_mode, raw_status
+            );
+            log::warn!("row {}: {}", row_id, diagnostic);
+            (
+                mode.unwrap_or(SyncMode::Copy),
+                SyncStatus::Error,
+                Some(diagnostic),
+            )
+        }
+    }
+}
+
+/// A typed write to an assignment's lifecycle columns — the only way the
+/// `status`/`mode`/`last_error`/`synced_at`/`content_hash` group changes
+/// after insertion, so the legal combinations are spelled out here rather
+/// than left to positional `None`s.
+#[derive(Clone, Copy, Debug)]
+pub enum AssignmentTransition<'a> {
+    /// A sync just succeeded: records the mode used, the timestamp, and the
+    /// source content hash (copies only) so drift can be detected later.
+    SyncCompleted {
+        mode: SyncMode,
+        synced_at: i64,
+        content_hash: Option<&'a str>,
+    },
+    /// A sync or cleanup failed; `error` is the diagnostic chain. The
+    /// recorded hash is dropped (the target's content is unknown).
+    SyncFailed { error: &'a str },
+    /// A reconcile pass decided the row's true status (see
+    /// `sync_status::next_status`). `content_hash` is the confirmed source
+    /// hash for a `Synced` copy, `None` otherwise. Mode and `synced_at` are
+    /// untouched — nothing was written to disk.
+    Reconciled {
+        status: SyncStatus,
+        content_hash: Option<&'a str>,
+    },
 }
 
 impl SkillStore {
@@ -362,8 +425,8 @@ impl SkillStore {
                     record.skill_id,
                     record.tool,
                     record.target_path,
-                    record.mode,
-                    record.status,
+                    record.mode.as_str(),
+                    record.status.as_str(),
                     record.last_error,
                     record.synced_at
                 ],
@@ -514,14 +577,17 @@ impl SkillStore {
          ORDER BY tool ASC",
             )?;
             let rows = stmt.query_map(params![skill_id], |row| {
+                let id: String = row.get(0)?;
+                let (mode, status, last_error) =
+                    read_lifecycle(&id, row.get(4)?, row.get(5)?, row.get(6)?);
                 Ok(SkillTargetRecord {
-                    id: row.get(0)?,
+                    id,
                     skill_id: row.get(1)?,
                     tool: row.get(2)?,
                     target_path: row.get(3)?,
-                    mode: row.get(4)?,
-                    status: row.get(5)?,
-                    last_error: row.get(6)?,
+                    mode,
+                    status,
+                    last_error,
                     synced_at: row.get(7)?,
                 })
             })?;
@@ -563,14 +629,17 @@ impl SkillStore {
             )?;
             let mut rows = stmt.query(params![skill_id, tool])?;
             if let Some(row) = rows.next()? {
+                let id: String = row.get(0)?;
+                let (mode, status, last_error) =
+                    read_lifecycle(&id, row.get(4)?, row.get(5)?, row.get(6)?);
                 Ok(Some(SkillTargetRecord {
-                    id: row.get(0)?,
+                    id,
                     skill_id: row.get(1)?,
                     tool: row.get(2)?,
                     target_path: row.get(3)?,
-                    mode: row.get(4)?,
-                    status: row.get(5)?,
-                    last_error: row.get(6)?,
+                    mode,
+                    status,
+                    last_error,
                     synced_at: row.get(7)?,
                 }))
             } else {
@@ -617,15 +686,18 @@ impl SkillStore {
                  WHERE skill_id = ?1",
             )?;
             let rows = stmt.query_map(params![skill_id], |row| {
+                let id: String = row.get(0)?;
+                let (mode, status, last_error) =
+                    read_lifecycle(&id, row.get(5)?, row.get(6)?, row.get(7)?);
                 Ok(ProjectSkillAssignmentRecord {
-                    id: row.get(0)?,
+                    id,
                     project_id: row.get(1)?,
                     skill_id: row.get(2)?,
                     skill_name: row.get(3)?,
                     tool: row.get(4)?,
-                    mode: row.get(5)?,
-                    status: row.get(6)?,
-                    last_error: row.get(7)?,
+                    mode,
+                    status,
+                    last_error,
                     synced_at: row.get(8)?,
                     content_hash: row.get(9)?,
                     created_at: row.get(10)?,
@@ -791,8 +863,8 @@ impl SkillStore {
                     record.skill_id,
                     record.skill_name,
                     record.tool,
-                    record.mode,
-                    record.status,
+                    record.mode.as_str(),
+                    record.status.as_str(),
                     record.last_error,
                     record.synced_at,
                     record.content_hash,
@@ -815,15 +887,18 @@ impl SkillStore {
                  ORDER BY tool ASC, created_at ASC",
             )?;
             let rows = stmt.query_map(params![project_id], |row| {
+                let id: String = row.get(0)?;
+                let (mode, status, last_error) =
+                    read_lifecycle(&id, row.get(5)?, row.get(6)?, row.get(7)?);
                 Ok(ProjectSkillAssignmentRecord {
-                    id: row.get(0)?,
+                    id,
                     project_id: row.get(1)?,
                     skill_id: row.get(2)?,
                     skill_name: row.get(3)?,
                     tool: row.get(4)?,
-                    mode: row.get(5)?,
-                    status: row.get(6)?,
-                    last_error: row.get(7)?,
+                    mode,
+                    status,
+                    last_error,
                     synced_at: row.get(8)?,
                     content_hash: row.get(9)?,
                     created_at: row.get(10)?,
@@ -854,16 +929,32 @@ impl SkillStore {
         })
     }
 
-    #[allow(dead_code)] // Used in Phase 2 (project_sync module)
-    pub fn update_assignment_status(
+    /// Apply a typed lifecycle transition to one assignment row.
+    pub fn transition_assignment(
         &self,
         assignment_id: &str,
-        status: &str,
-        last_error: Option<&str>,
-        synced_at: Option<i64>,
-        mode: Option<&str>,
-        content_hash: Option<&str>,
+        transition: AssignmentTransition<'_>,
     ) -> Result<()> {
+        let (status, last_error, synced_at, mode, content_hash) = match transition {
+            AssignmentTransition::SyncCompleted {
+                mode,
+                synced_at,
+                content_hash,
+            } => (
+                SyncStatus::Synced,
+                None,
+                Some(synced_at),
+                Some(mode),
+                content_hash,
+            ),
+            AssignmentTransition::SyncFailed { error } => {
+                (SyncStatus::Error, Some(error), None, None, None)
+            }
+            AssignmentTransition::Reconciled {
+                status,
+                content_hash,
+            } => (status, None, None, None, content_hash),
+        };
         self.with_conn(|conn| {
             conn.execute(
                 "UPDATE project_skill_assignments
@@ -873,10 +964,10 @@ impl SkillStore {
                      content_hash = ?5
                  WHERE id = ?6",
                 params![
-                    status,
+                    status.as_str(),
                     last_error,
                     synced_at,
-                    mode,
+                    mode.map(SyncMode::as_str),
                     content_hash,
                     assignment_id
                 ],
@@ -902,19 +993,24 @@ impl SkillStore {
             )?;
             let mut rows = stmt.query(params![project_id, skill_id, tool])?;
             match rows.next()? {
-                Some(row) => Ok(Some(ProjectSkillAssignmentRecord {
-                    id: row.get(0)?,
-                    project_id: row.get(1)?,
-                    skill_id: row.get(2)?,
-                    skill_name: row.get(3)?,
-                    tool: row.get(4)?,
-                    mode: row.get(5)?,
-                    status: row.get(6)?,
-                    last_error: row.get(7)?,
-                    synced_at: row.get(8)?,
-                    content_hash: row.get(9)?,
-                    created_at: row.get(10)?,
-                })),
+                Some(row) => {
+                    let id: String = row.get(0)?;
+                    let (mode, status, last_error) =
+                        read_lifecycle(&id, row.get(5)?, row.get(6)?, row.get(7)?);
+                    Ok(Some(ProjectSkillAssignmentRecord {
+                        id,
+                        project_id: row.get(1)?,
+                        skill_id: row.get(2)?,
+                        skill_name: row.get(3)?,
+                        tool: row.get(4)?,
+                        mode,
+                        status,
+                        last_error,
+                        synced_at: row.get(8)?,
+                        content_hash: row.get(9)?,
+                        created_at: row.get(10)?,
+                    }))
+                }
                 None => Ok(None),
             }
         })
@@ -934,15 +1030,18 @@ impl SkillStore {
                  ORDER BY created_at ASC",
             )?;
             let rows = stmt.query_map(params![project_id, tool], |row| {
+                let id: String = row.get(0)?;
+                let (mode, status, last_error) =
+                    read_lifecycle(&id, row.get(5)?, row.get(6)?, row.get(7)?);
                 Ok(ProjectSkillAssignmentRecord {
-                    id: row.get(0)?,
+                    id,
                     project_id: row.get(1)?,
                     skill_id: row.get(2)?,
                     skill_name: row.get(3)?,
                     tool: row.get(4)?,
-                    mode: row.get(5)?,
-                    status: row.get(6)?,
-                    last_error: row.get(7)?,
+                    mode,
+                    status,
+                    last_error,
                     synced_at: row.get(8)?,
                     content_hash: row.get(9)?,
                     created_at: row.get(10)?,
@@ -990,47 +1089,26 @@ impl SkillStore {
         })
     }
 
-    pub fn aggregate_project_sync_status(&self, project_id: &str) -> Result<String> {
+    /// Fold the project's assignment statuses (see `sync_status::aggregate`).
+    /// Statuses pass through the same legacy seam as row reads: an
+    /// unrecognised value counts as `Error`.
+    pub fn aggregate_project_sync_status(&self, project_id: &str) -> Result<ProjectSyncStatus> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT status, COUNT(*) as cnt
+                "SELECT id, mode, status, last_error
                  FROM project_skill_assignments
-                 WHERE project_id = ?1
-                 GROUP BY status",
+                 WHERE project_id = ?1",
             )?;
             let rows = stmt.query_map(params![project_id], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                let id: String = row.get(0)?;
+                let (_, status, _) = read_lifecycle(&id, row.get(1)?, row.get(2)?, row.get(3)?);
+                Ok(status)
             })?;
-
-            let mut has_any = false;
-            let mut has_error = false;
-            let mut has_stale = false;
-            let mut has_pending = false;
-
+            let mut statuses = Vec::new();
             for row in rows {
-                let (status, _count) = row?;
-                has_any = true;
-                match status.as_str() {
-                    "error" | "missing" => has_error = true,
-                    "stale" => has_stale = true,
-                    "pending" => has_pending = true,
-                    _ => {}
-                }
+                statuses.push(row?);
             }
-
-            if !has_any {
-                return Ok("none".to_string());
-            }
-            if has_error {
-                return Ok("error".to_string());
-            }
-            if has_stale {
-                return Ok("stale".to_string());
-            }
-            if has_pending {
-                return Ok("pending".to_string());
-            }
-            Ok("synced".to_string())
+            Ok(aggregate(statuses))
         })
     }
 

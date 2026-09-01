@@ -22,5 +22,6 @@ pub mod skill_removal;
 pub mod skill_store;
 pub mod skills_search;
 pub mod sync_engine;
+pub mod sync_status;
 pub mod temp_cleanup;
 pub mod tool_adapters;

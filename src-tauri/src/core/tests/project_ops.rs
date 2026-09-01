@@ -1,3 +1,4 @@
+use crate::core::sync_status::{ProjectSyncStatus, SyncMode, SyncStatus};
 use std::fs;
 
 use crate::core::project_ops;
@@ -134,8 +135,8 @@ fn to_project_dto_includes_sync_status() {
         skill_id,
         skill_name: "test-skill".to_string(),
         tool: "claude_code".to_string(),
-        mode: "symlink".to_string(),
-        status: "error".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Error,
         last_error: Some("test error".to_string()),
         synced_at: None,
         content_hash: None,
@@ -144,7 +145,7 @@ fn to_project_dto_includes_sync_status() {
     store.add_project_skill_assignment(&assignment).unwrap();
 
     let dto = project_ops::to_project_dto(&project, &store).unwrap();
-    assert_eq!(dto.sync_status, "error");
+    assert_eq!(dto.sync_status, ProjectSyncStatus::Error);
 }
 
 #[test]
@@ -185,8 +186,8 @@ fn list_project_dtos_returns_counts() {
             skill_id,
             skill_name: "test-skill-counts".to_string(),
             tool: "claude_code".to_string(),
-            mode: "symlink".to_string(),
-            status: "pending".to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Pending,
             last_error: None,
             synced_at: None,
             content_hash: None,

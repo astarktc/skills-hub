@@ -5,6 +5,7 @@
 //! the environment-probing entry points take an explicit `home`, so no test
 //! touches the operator's real home directory or installed tools.
 
+use crate::core::sync_status::{SyncMode, SyncStatus};
 use std::fs;
 use std::path::Path;
 
@@ -97,8 +98,8 @@ fn sync_creates_target_and_records_for_all_group_tools() {
             .expect("query")
             .unwrap_or_else(|| panic!("record for {}", key));
         assert_eq!(record.target_path, outcome.target_path.to_string_lossy());
-        assert_eq!(record.mode, outcome.mode_used.as_str());
-        assert_eq!(record.status, "ok");
+        assert_eq!(record.mode, outcome.mode_used);
+        assert_eq!(record.status, SyncStatus::Synced);
         assert_eq!(record.synced_at, Some(1000));
     }
 }
@@ -246,7 +247,7 @@ fn cursor_gets_copy_mode() {
         .get_skill_target("skill-1", "cursor")
         .expect("query")
         .expect("record");
-    assert_eq!(record.mode, "copy");
+    assert_eq!(record.mode, SyncMode::Copy);
 }
 
 #[test]
@@ -816,8 +817,8 @@ fn unsync_is_a_no_op_when_no_group_tool_is_installed() {
             skill_id: "skill-1".to_string(),
             tool: "claude_code".to_string(),
             target_path: target.to_string_lossy().to_string(),
-            mode: "symlink".to_string(),
-            status: "ok".to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Synced,
             last_error: None,
             synced_at: None,
         })

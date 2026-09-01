@@ -1,3 +1,4 @@
+use crate::core::sync_status::{SyncMode, SyncStatus};
 use std::fs;
 use std::path::Path;
 
@@ -73,8 +74,8 @@ fn assign_creates_symlink() {
     let result = project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000);
     let record = result.expect("assign_and_sync should succeed");
 
-    assert_eq!(record.status, "synced");
-    assert_eq!(record.mode, "symlink");
+    assert_eq!(record.status, SyncStatus::Synced);
+    assert_eq!(record.mode, SyncMode::Symlink);
     assert!(
         record.content_hash.is_none(),
         "symlink mode should not store content_hash"
@@ -110,8 +111,8 @@ fn assign_stores_hash_for_copy() {
     let result = project_sync::assign_and_sync(&store, &project, &skill, "cursor", 2000);
     let record = result.expect("assign_and_sync should succeed");
 
-    assert_eq!(record.status, "synced");
-    assert_eq!(record.mode, "copy");
+    assert_eq!(record.status, SyncStatus::Synced);
+    assert_eq!(record.mode, SyncMode::Copy);
     assert!(
         record.content_hash.is_some(),
         "copy mode should store content_hash"
@@ -148,7 +149,7 @@ fn assign_records_error_on_sync_failure() {
     let result = project_sync::assign_and_sync(&store, &project, &skill, "cursor", 2000);
     let record = result.expect("assign_and_sync should return Ok even on sync failure");
 
-    assert_eq!(record.status, "error");
+    assert_eq!(record.status, SyncStatus::Error);
     assert!(record.last_error.is_some(), "should have an error message");
 }
 
@@ -346,14 +347,14 @@ fn resync_continues_on_error() {
         .get_project_skill_assignment(&project.id, &bad_skill.id, "cursor")
         .unwrap()
         .expect("bad assignment should exist");
-    assert_eq!(bad_assignment.status, "error");
+    assert_eq!(bad_assignment.status, SyncStatus::Error);
 
     // Verify the successful assignment has synced status
     let ok_assignment = store
         .get_project_skill_assignment(&project.id, &skill1.id, "cursor")
         .unwrap()
         .expect("ok assignment should exist");
-    assert_eq!(ok_assignment.status, "synced");
+    assert_eq!(ok_assignment.status, SyncStatus::Synced);
 }
 
 #[test]
@@ -423,7 +424,7 @@ fn staleness_detected_for_copy() {
         .get_project_skill_assignment(&project.id, &skill.id, "cursor")
         .unwrap()
         .expect("assignment exists");
-    assert_eq!(before.status, "synced");
+    assert_eq!(before.status, SyncStatus::Synced);
     assert!(before.content_hash.is_some());
 
     // Modify source to change the hash
@@ -433,14 +434,14 @@ fn staleness_detected_for_copy() {
     let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
         .expect("list should succeed");
     assert_eq!(assignments.len(), 1);
-    assert_eq!(assignments[0].status, "stale");
+    assert_eq!(assignments[0].status, SyncStatus::Stale);
 
     // DB should also be updated to stale
     let after = store
         .get_project_skill_assignment(&project.id, &skill.id, "cursor")
         .unwrap()
         .expect("assignment exists");
-    assert_eq!(after.status, "stale");
+    assert_eq!(after.status, SyncStatus::Stale);
 }
 
 #[test]
@@ -471,7 +472,8 @@ fn staleness_skipped_for_symlink() {
         .expect("list should succeed");
     assert_eq!(assignments.len(), 1);
     assert_eq!(
-        assignments[0].status, "synced",
+        assignments[0].status,
+        SyncStatus::Synced,
         "symlink-mode should not become stale"
     );
 }
@@ -504,7 +506,8 @@ fn missing_status_when_source_absent() {
         .expect("list should not crash");
     assert_eq!(assignments.len(), 1);
     assert_eq!(
-        assignments[0].status, "missing",
+        assignments[0].status,
+        SyncStatus::Missing,
         "source absent should produce missing status"
     );
 
@@ -514,7 +517,8 @@ fn missing_status_when_source_absent() {
         .unwrap()
         .expect("assignment should exist in DB");
     assert_eq!(
-        db_record.status, "missing",
+        db_record.status,
+        SyncStatus::Missing,
         "missing status should be persisted to DB"
     );
 }
@@ -541,8 +545,8 @@ fn global_and_project_sync_independent() {
         skill_id: skill.id.clone(),
         tool: "claude_code".to_string(),
         target_path: "/home/user/.claude/skills/shared-skill".to_string(),
-        mode: "symlink".to_string(),
-        status: "synced".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: Some(2000),
     };
@@ -796,7 +800,7 @@ fn bulk_assign_continues_on_error() {
     // Assign claude_code first (will succeed via symlink)
     let r1 = project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 3000)
         .expect("claude_code assign");
-    assert_eq!(r1.status, "synced");
+    assert_eq!(r1.status, SyncStatus::Synced);
 
     // Delete source to cause cursor (copy mode) to fail on resync
     fs::remove_dir_all(&skill_dir).expect("remove source");
@@ -805,7 +809,8 @@ fn bulk_assign_continues_on_error() {
     let r2 = project_sync::assign_and_sync(&store, &project, &skill, "cursor", 3000);
     let record = r2.expect("assign_and_sync returns Ok even on sync failure");
     assert_eq!(
-        record.status, "error",
+        record.status,
+        SyncStatus::Error,
         "cursor should fail since source is gone"
     );
 
@@ -851,7 +856,8 @@ fn missing_status_when_target_absent() {
         .expect("list should succeed");
     assert_eq!(assignments.len(), 1);
     assert_eq!(
-        assignments[0].status, "missing",
+        assignments[0].status,
+        SyncStatus::Missing,
         "target absent should produce missing status"
     );
 
@@ -861,7 +867,8 @@ fn missing_status_when_target_absent() {
         .unwrap()
         .expect("assignment should exist");
     assert_eq!(
-        db_record.status, "missing",
+        db_record.status,
+        SyncStatus::Missing,
         "missing status should be persisted to DB"
     );
 }
@@ -885,7 +892,7 @@ fn missing_status_recovers_when_source_restored() {
     // cursor forces copy mode
     let record = project_sync::assign_and_sync(&store, &project, &skill, "cursor", 2000)
         .expect("assign should succeed");
-    assert_eq!(record.status, "synced");
+    assert_eq!(record.status, SyncStatus::Synced);
 
     // Delete source directory -> should become missing
     fs::remove_dir_all(&skill_dir).expect("remove source");
@@ -893,7 +900,8 @@ fn missing_status_recovers_when_source_restored() {
     let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
         .expect("list should succeed");
     assert_eq!(
-        assignments[0].status, "missing",
+        assignments[0].status,
+        SyncStatus::Missing,
         "should be missing after source deleted"
     );
 
@@ -916,13 +924,14 @@ fn missing_status_recovers_when_source_restored() {
         .expect("list should succeed after recovery");
     assert_eq!(assignments.len(), 1);
     assert_ne!(
-        assignments[0].status, "missing",
+        assignments[0].status,
+        SyncStatus::Missing,
         "D-07: recovered assignment must not stay missing"
     );
     // Should be either "synced" or "stale" depending on hash match
     assert!(
-        assignments[0].status == "synced" || assignments[0].status == "stale",
-        "recovered assignment should be synced or stale, got: {}",
+        assignments[0].status == SyncStatus::Synced || assignments[0].status == SyncStatus::Stale,
+        "recovered assignment should be synced or stale, got: {:?}",
         assignments[0].status
     );
 }
@@ -959,7 +968,8 @@ fn missing_status_source_and_target_both_absent() {
         .expect("list should succeed");
     assert_eq!(assignments.len(), 1);
     assert_eq!(
-        assignments[0].status, "missing",
+        assignments[0].status,
+        SyncStatus::Missing,
         "both absent should produce missing status"
     );
 }
@@ -1019,7 +1029,7 @@ fn fanout_assigns_every_tool_in_caller_order() {
     for o in &outcomes {
         match &o.status {
             AssignTargetStatus::Assigned { record } => {
-                assert_eq!(record.status, "synced", "tool {}", o.tool_key)
+                assert_eq!(record.status, SyncStatus::Synced, "tool {}", o.tool_key)
             }
             other => panic!("expected Assigned for {}, got {:?}", o.tool_key, other),
         }
@@ -1134,7 +1144,7 @@ fn fanout_keeps_sync_failures_inside_the_assignment_record() {
     let outcomes = assign_skill_to_tools(&store, &project, &skill, &keys(&["cursor"]), 3000);
 
     match &outcomes[0].status {
-        AssignTargetStatus::Assigned { record } => assert_eq!(record.status, "error"),
+        AssignTargetStatus::Assigned { record } => assert_eq!(record.status, SyncStatus::Error),
         other => panic!("expected Assigned with error status, got {:?}", other),
     }
 }
@@ -1223,7 +1233,7 @@ fn single_tool_assign_returns_record_and_raises_assignment_exists_on_repeat() {
 
     let record = assign_skill_to_project_tool(&store, &project.id, &skill.id, "claude_code", 3000)
         .expect("first assign");
-    assert_eq!(record.status, "synced");
+    assert_eq!(record.status, SyncStatus::Synced);
     assert_eq!(record.tool, "claude_code");
 
     let err = assign_skill_to_project_tool(&store, &project.id, &skill.id, "claude_code", 3001)

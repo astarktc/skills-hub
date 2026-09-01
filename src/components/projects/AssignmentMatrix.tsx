@@ -17,6 +17,7 @@ import type {
 } from "./types";
 import type { ManagedSkill } from "../skills/types";
 import { describeCommandError } from "../../commandError";
+import { SYNC_STATUS_CLASS } from "../../syncStatus";
 
 export type AssignmentMatrixProps = {
   project: ProjectDto | null;
@@ -417,9 +418,9 @@ const MatrixRow = memo(
           const isGlobal = skill.targets.some((gt) => gt.tool === tool.tool);
           const lockedGlobal = isGlobal && !assignment;
           const statusClass = isPending
-            ? "pending"
+            ? SYNC_STATUS_CLASS.pending
             : assignment
-              ? assignment.status
+              ? SYNC_STATUS_CLASS[assignment.status]
               : "";
           const isError = assignment?.status === "error";
           const errorTitle = isError

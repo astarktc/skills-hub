@@ -33,6 +33,7 @@ use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
 };
 use crate::core::sync_engine::remove_path_any;
+use crate::core::sync_status::{SyncMode, SyncStatus};
 use crate::core::tool_adapters::{
     default_tool_adapters, global_tool_entries, installed_keys, project_tool_entries,
     skills_dir_in, ToolCatalogEntry,
@@ -378,7 +379,7 @@ pub struct BatchSyncPolicyDto {
 #[serde(tag = "status", rename_all = "snake_case")]
 #[ts(export)]
 pub enum SyncTargetStatusDto {
-    Synced { mode_used: String },
+    Synced { mode_used: SyncMode },
     Skipped { error: CommandError },
     Failed { error: CommandError },
 }
@@ -477,7 +478,7 @@ pub async fn sync_skills_to_tools(
                 BatchTargetStatus::Synced { outcome } => {
                     report.synced += 1;
                     SyncTargetStatusDto::Synced {
-                        mode_used: outcome.mode_used.as_str().to_string(),
+                        mode_used: outcome.mode_used,
                     }
                 }
                 BatchTargetStatus::Skipped { error } => {
@@ -676,8 +677,8 @@ pub struct ManagedSkillDto {
 #[ts(export)]
 pub struct SkillTargetDto {
     pub tool: String,
-    pub mode: String,
-    pub status: String,
+    pub mode: SyncMode,
+    pub status: SyncStatus,
     pub target_path: String,
     pub synced_at: Option<i64>,
 }

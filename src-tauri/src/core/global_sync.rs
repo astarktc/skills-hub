@@ -12,6 +12,7 @@ use crate::core::{
     content_hash,
     skill_store::{SkillStore, SkillTargetRecord},
     sync_engine::{self, SyncOutcome},
+    sync_status::SyncStatus,
     tool_adapters::{
         adapter_by_key, adapters_sharing_skills_dir, is_installed_in, skills_dir_in, ToolAdapter,
     },
@@ -136,8 +137,8 @@ pub fn sync_skill_into_root(
             skill_id: skill_id.to_string(),
             tool: a.id.as_key().to_string(),
             target_path: outcome.target_path.to_string_lossy().to_string(),
-            mode: outcome.mode_used.as_str().to_string(),
-            status: "ok".to_string(),
+            mode: outcome.mode_used,
+            status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(now),
         };

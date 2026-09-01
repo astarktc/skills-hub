@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { ProjectDto } from "./types";
+import { PROJECT_SYNC_STATUS_CLASS } from "../../syncStatus";
 
 type ProjectListProps = {
   projects: ProjectDto[];
@@ -131,7 +132,9 @@ const ProjectList = ({
                     skills: p.skill_count,
                   })}
                 </span>
-                <span className={`project-status-dot ${p.sync_status}`} />
+                <span
+                  className={`project-status-dot ${PROJECT_SYNC_STATUS_CLASS[p.sync_status]}`}
+                />
               </div>
             </div>
           ))}

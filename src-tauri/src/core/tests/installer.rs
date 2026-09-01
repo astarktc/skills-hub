@@ -1,3 +1,4 @@
+use crate::core::sync_status::{SyncMode, SyncStatus};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -133,8 +134,8 @@ fn installs_local_skill_and_updates_from_source() {
         skill_id: res.skill_id.clone(),
         tool: "unknown_tool".to_string(),
         target_path: target.to_string_lossy().to_string(),
-        mode: "copy".to_string(),
-        status: "ok".to_string(),
+        mode: SyncMode::Copy,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: None,
     };
@@ -899,8 +900,8 @@ fn update_resyncs_project_copy_assignments() {
         skill_id: res.skill_id.clone(),
         skill_name: "proj-test".to_string(),
         tool: "cursor".to_string(),
-        mode: "copy".to_string(),
-        status: "synced".to_string(),
+        mode: SyncMode::Copy,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: Some(now),
         content_hash: None,
@@ -917,8 +918,8 @@ fn update_resyncs_project_copy_assignments() {
         skill_id: res.skill_id.clone(),
         skill_name: "proj-test".to_string(),
         tool: "claude_code".to_string(),
-        mode: "symlink".to_string(),
-        status: "synced".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: Some(now),
         content_hash: None,
@@ -962,7 +963,7 @@ fn update_resyncs_project_copy_assignments() {
         .list_project_skill_assignments_by_skill(&res.skill_id)
         .unwrap();
     let copy_rec = assignments.iter().find(|a| a.id == "pa-copy").unwrap();
-    assert_eq!(copy_rec.status, "synced");
+    assert_eq!(copy_rec.status, SyncStatus::Synced);
     assert!(
         copy_rec.content_hash.is_some(),
         "content_hash should be set after re-sync"

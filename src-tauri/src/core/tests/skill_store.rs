@@ -1,8 +1,9 @@
+use crate::core::sync_status::{ProjectSyncStatus, SyncMode, SyncStatus};
 use std::path::PathBuf;
 
 use crate::core::skill_store::{
-    ProjectRecord, ProjectSkillAssignmentRecord, ProjectToolRecord, SkillRecord, SkillStore,
-    SkillTargetRecord,
+    AssignmentTransition, ProjectRecord, ProjectSkillAssignmentRecord, ProjectToolRecord,
+    SkillRecord, SkillStore, SkillTargetRecord,
 };
 
 fn make_store() -> (tempfile::TempDir, SkillStore) {
@@ -105,8 +106,8 @@ fn skill_targets_upsert_unique_constraint_and_list_order() {
         skill_id: "s1".to_string(),
         tool: "cursor".to_string(),
         target_path: "/target/1".to_string(),
-        mode: "copy".to_string(),
-        status: "ok".to_string(),
+        mode: SyncMode::Copy,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: None,
     };
@@ -143,8 +144,8 @@ fn skill_targets_upsert_unique_constraint_and_list_order() {
         skill_id: "s1".to_string(),
         tool: "claude_code".to_string(),
         target_path: "/target/cc".to_string(),
-        mode: "copy".to_string(),
-        status: "ok".to_string(),
+        mode: SyncMode::Copy,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: None,
     };
@@ -170,8 +171,8 @@ fn deleting_skill_cascades_targets() {
         skill_id: "s1".to_string(),
         tool: "cursor".to_string(),
         target_path: "/target/1".to_string(),
-        mode: "copy".to_string(),
-        status: "ok".to_string(),
+        mode: SyncMode::Copy,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: None,
     };
@@ -291,8 +292,8 @@ fn v4_migration_preserves_existing_data() {
         skill_id: "s1".to_string(),
         tool: "cursor".to_string(),
         target_path: "/target/1".to_string(),
-        mode: "copy".to_string(),
-        status: "ok".to_string(),
+        mode: SyncMode::Copy,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: None,
     };
@@ -448,8 +449,8 @@ fn delete_project_cascades_tools_and_assignments() {
         skill_id: "s1".to_string(),
         skill_name: "S1".to_string(),
         tool: "cursor".to_string(),
-        mode: "symlink".to_string(),
-        status: "pending".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Pending,
         last_error: None,
         synced_at: None,
         content_hash: None,
@@ -501,8 +502,8 @@ fn delete_skill_cascades_project_assignments() {
         skill_id: "s1".to_string(),
         skill_name: "S1".to_string(),
         tool: "cursor".to_string(),
-        mode: "symlink".to_string(),
-        status: "synced".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: Some(100),
         content_hash: None,
@@ -601,8 +602,8 @@ fn assignment_crud() {
         skill_id: "s1".to_string(),
         skill_name: "S1".to_string(),
         tool: "cursor".to_string(),
-        mode: "symlink".to_string(),
-        status: "pending".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Pending,
         last_error: None,
         synced_at: None,
         content_hash: None,
@@ -614,8 +615,8 @@ fn assignment_crud() {
     assert_eq!(assignments.len(), 1);
     assert_eq!(assignments[0].skill_id, "s1");
     assert_eq!(assignments[0].tool, "cursor");
-    assert_eq!(assignments[0].mode, "symlink");
-    assert_eq!(assignments[0].status, "pending");
+    assert_eq!(assignments[0].mode, SyncMode::Symlink);
+    assert_eq!(assignments[0].status, SyncStatus::Pending);
 
     store
         .remove_project_skill_assignment("p1", "s1", "cursor")
@@ -644,8 +645,8 @@ fn assignment_unique_constraint() {
         skill_id: "s1".to_string(),
         skill_name: "S1".to_string(),
         tool: "cursor".to_string(),
-        mode: "symlink".to_string(),
-        status: "pending".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Pending,
         last_error: None,
         synced_at: None,
         content_hash: None,
@@ -660,8 +661,8 @@ fn assignment_unique_constraint() {
         skill_id: "s1".to_string(),
         skill_name: "S1".to_string(),
         tool: "cursor".to_string(),
-        mode: "copy".to_string(),
-        status: "pending".to_string(),
+        mode: SyncMode::Copy,
+        status: SyncStatus::Pending,
         last_error: None,
         synced_at: None,
         content_hash: None,
@@ -706,8 +707,8 @@ fn list_project_assignments_by_project() {
         skill_id: "s1".to_string(),
         skill_name: "S1".to_string(),
         tool: "cursor".to_string(),
-        mode: "symlink".to_string(),
-        status: "synced".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: Some(100),
         content_hash: None,
@@ -719,8 +720,8 @@ fn list_project_assignments_by_project() {
         skill_id: "s2".to_string(),
         skill_name: "S2".to_string(),
         tool: "cursor".to_string(),
-        mode: "symlink".to_string(),
-        status: "synced".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: Some(200),
         content_hash: None,
@@ -762,8 +763,8 @@ fn aggregate_sync_status_all_synced() {
         skill_id: "s1".to_string(),
         skill_name: "S1".to_string(),
         tool: "cursor".to_string(),
-        mode: "symlink".to_string(),
-        status: "synced".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: Some(100),
         content_hash: None,
@@ -775,8 +776,8 @@ fn aggregate_sync_status_all_synced() {
         skill_id: "s2".to_string(),
         skill_name: "S2".to_string(),
         tool: "cursor".to_string(),
-        mode: "symlink".to_string(),
-        status: "synced".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: Some(200),
         content_hash: None,
@@ -785,7 +786,10 @@ fn aggregate_sync_status_all_synced() {
     store.add_project_skill_assignment(&a1).unwrap();
     store.add_project_skill_assignment(&a2).unwrap();
 
-    assert_eq!(store.aggregate_project_sync_status("p1").unwrap(), "synced");
+    assert_eq!(
+        store.aggregate_project_sync_status("p1").unwrap(),
+        ProjectSyncStatus::Synced
+    );
 }
 
 #[test]
@@ -811,8 +815,8 @@ fn aggregate_sync_status_mixed() {
         skill_id: "s1".to_string(),
         skill_name: "S1".to_string(),
         tool: "cursor".to_string(),
-        mode: "symlink".to_string(),
-        status: "synced".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: Some(100),
         content_hash: None,
@@ -824,8 +828,8 @@ fn aggregate_sync_status_mixed() {
         skill_id: "s2".to_string(),
         skill_name: "S2".to_string(),
         tool: "cursor".to_string(),
-        mode: "symlink".to_string(),
-        status: "error".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Error,
         last_error: Some("symlink failed".to_string()),
         synced_at: None,
         content_hash: None,
@@ -834,7 +838,10 @@ fn aggregate_sync_status_mixed() {
     store.add_project_skill_assignment(&a1).unwrap();
     store.add_project_skill_assignment(&a2).unwrap();
 
-    assert_eq!(store.aggregate_project_sync_status("p1").unwrap(), "error");
+    assert_eq!(
+        store.aggregate_project_sync_status("p1").unwrap(),
+        ProjectSyncStatus::Error
+    );
 }
 
 #[test]
@@ -849,7 +856,10 @@ fn aggregate_sync_status_no_assignments() {
     };
     store.register_project(&p).unwrap();
 
-    assert_eq!(store.aggregate_project_sync_status("p1").unwrap(), "none");
+    assert_eq!(
+        store.aggregate_project_sync_status("p1").unwrap(),
+        ProjectSyncStatus::Empty
+    );
 }
 
 #[test]
@@ -884,8 +894,8 @@ fn count_project_assignments_and_tools() {
         skill_id: "s1".to_string(),
         skill_name: "S1".to_string(),
         tool: "cursor".to_string(),
-        mode: "symlink".to_string(),
-        status: "pending".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Pending,
         last_error: None,
         synced_at: None,
         content_hash: None,
@@ -918,8 +928,8 @@ fn list_project_skill_assignments_for_project_tool_filters() {
         skill_id: "s1".to_string(),
         skill_name: "S1".to_string(),
         tool: "cursor".to_string(),
-        mode: "symlink".to_string(),
-        status: "synced".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: Some(100),
         content_hash: None,
@@ -931,8 +941,8 @@ fn list_project_skill_assignments_for_project_tool_filters() {
         skill_id: "s2".to_string(),
         skill_name: "S2".to_string(),
         tool: "claude_code".to_string(),
-        mode: "symlink".to_string(),
-        status: "synced".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: Some(200),
         content_hash: None,
@@ -997,8 +1007,8 @@ fn v5_migration_adds_content_hash() {
         skill_id: "s1".to_string(),
         skill_name: "S1".to_string(),
         tool: "cursor".to_string(),
-        mode: "symlink".to_string(),
-        status: "pending".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Pending,
         last_error: None,
         synced_at: None,
         content_hash: None,
@@ -1008,13 +1018,13 @@ fn v5_migration_adds_content_hash() {
 
     // Update with content_hash
     store
-        .update_assignment_status(
+        .transition_assignment(
             "a1",
-            "synced",
-            None,
-            Some(1000),
-            Some("copy"),
-            Some("abc123"),
+            AssignmentTransition::SyncCompleted {
+                mode: SyncMode::Copy,
+                synced_at: 1000,
+                content_hash: Some("abc123"),
+            },
         )
         .unwrap();
 
@@ -1024,9 +1034,9 @@ fn v5_migration_adds_content_hash() {
         .unwrap()
         .unwrap();
     assert_eq!(got.content_hash.as_deref(), Some("abc123"));
-    assert_eq!(got.status, "synced");
+    assert_eq!(got.status, SyncStatus::Synced);
     assert_eq!(got.synced_at, Some(1000));
-    assert_eq!(got.mode, "copy");
+    assert_eq!(got.mode, SyncMode::Copy);
 }
 
 #[test]
@@ -1050,8 +1060,8 @@ fn update_assignment_status_coalesce() {
         skill_id: "s1".to_string(),
         skill_name: "S1".to_string(),
         tool: "cursor".to_string(),
-        mode: "symlink".to_string(),
-        status: "pending".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Pending,
         last_error: None,
         synced_at: None,
         content_hash: None,
@@ -1061,34 +1071,41 @@ fn update_assignment_status_coalesce() {
 
     // First update: set synced with synced_at=1000 and mode="symlink"
     store
-        .update_assignment_status("a1", "synced", None, Some(1000), Some("symlink"), None)
+        .transition_assignment(
+            "a1",
+            AssignmentTransition::SyncCompleted {
+                mode: SyncMode::Symlink,
+                synced_at: 1000,
+                content_hash: None,
+            },
+        )
         .unwrap();
 
     let got = store
         .get_project_skill_assignment("p1", "s1", "cursor")
         .unwrap()
         .unwrap();
-    assert_eq!(got.status, "synced");
+    assert_eq!(got.status, SyncStatus::Synced);
     assert_eq!(got.synced_at, Some(1000));
-    assert_eq!(got.mode, "symlink");
+    assert_eq!(got.mode, SyncMode::Symlink);
 
     // Second update: set error with last_error but synced_at=None (should preserve synced_at=1000)
     store
-        .update_assignment_status("a1", "error", Some("fail"), None, None, None)
+        .transition_assignment("a1", AssignmentTransition::SyncFailed { error: "fail" })
         .unwrap();
 
     let got = store
         .get_project_skill_assignment("p1", "s1", "cursor")
         .unwrap()
         .unwrap();
-    assert_eq!(got.status, "error");
+    assert_eq!(got.status, SyncStatus::Error);
     assert_eq!(got.last_error.as_deref(), Some("fail"));
     assert_eq!(
         got.synced_at,
         Some(1000),
         "COALESCE should preserve synced_at"
     );
-    assert_eq!(got.mode, "symlink", "COALESCE should preserve mode");
+    assert_eq!(got.mode, SyncMode::Symlink, "COALESCE should preserve mode");
 }
 
 #[test]
@@ -1112,8 +1129,8 @@ fn delete_all_skill_targets_clears_table() {
             skill_id: "s1".to_string(),
             tool: "claude_code".to_string(),
             target_path: "/tmp/target".to_string(),
-            mode: "symlink".to_string(),
-            status: "ok".to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(10),
         })
@@ -1136,8 +1153,8 @@ fn delete_skill_targets_removes_only_specified_skill() {
             skill_id: "s1".to_string(),
             tool: "claude_code".to_string(),
             target_path: "/tmp/t1".to_string(),
-            mode: "symlink".to_string(),
-            status: "ok".to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(10),
         })
@@ -1148,8 +1165,8 @@ fn delete_skill_targets_removes_only_specified_skill() {
             skill_id: "s2".to_string(),
             tool: "claude_code".to_string(),
             target_path: "/tmp/t2".to_string(),
-            mode: "symlink".to_string(),
-            status: "ok".to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(10),
         })
@@ -1177,8 +1194,8 @@ fn aggregate_project_sync_status_treats_missing_as_error() {
         skill_id: "s1".to_string(),
         skill_name: "S1".to_string(),
         tool: "claude_code".to_string(),
-        mode: "symlink".to_string(),
-        status: "missing".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Missing,
         last_error: None,
         synced_at: None,
         content_hash: None,
@@ -1186,7 +1203,7 @@ fn aggregate_project_sync_status_treats_missing_as_error() {
     };
     store.add_project_skill_assignment(&assignment).unwrap();
     let status = store.aggregate_project_sync_status("p1").unwrap();
-    assert_eq!(status, "error");
+    assert_eq!(status, ProjectSyncStatus::Error);
 }
 
 #[test]
@@ -1233,8 +1250,8 @@ fn list_project_skill_assignments_by_skill_returns_correct_rows() {
             skill_id: "s1".to_string(),
             skill_name: "A".to_string(),
             tool: "claude_code".to_string(),
-            mode: "symlink".to_string(),
-            status: "synced".to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(10),
             content_hash: None,
@@ -1248,8 +1265,8 @@ fn list_project_skill_assignments_by_skill_returns_correct_rows() {
             skill_id: "s2".to_string(),
             skill_name: "B".to_string(),
             tool: "claude_code".to_string(),
-            mode: "symlink".to_string(),
-            status: "synced".to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(10),
             content_hash: None,
@@ -1259,4 +1276,201 @@ fn list_project_skill_assignments_by_skill_returns_correct_rows() {
     let results = store.list_project_skill_assignments_by_skill("s1").unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].skill_id, "s1");
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle store seam: stored strings round-trip; legacy/unknown values are
+// surfaced, never panicked on or read as healthy.
+// ---------------------------------------------------------------------------
+
+fn raw_conn(store: &SkillStore) -> rusqlite::Connection {
+    rusqlite::Connection::open(store.db_path()).expect("open raw connection")
+}
+
+fn seed_project_and_skill(store: &SkillStore) {
+    store
+        .register_project(&ProjectRecord {
+            id: "p1".to_string(),
+            path: "/tmp/proj".to_string(),
+            created_at: 1,
+            updated_at: 1,
+        })
+        .unwrap();
+    store
+        .upsert_skill(&make_skill("s1", "S1", "/central/s1", 1))
+        .unwrap();
+}
+
+#[test]
+fn lifecycle_round_trips_every_status_and_mode_through_stored_strings() {
+    let (_dir, store) = make_store();
+    seed_project_and_skill(&store);
+    let mut n = 0;
+    for status in SyncStatus::ALL {
+        for mode in SyncMode::ALL {
+            n += 1;
+            let tool = format!("tool{n}");
+            store
+                .add_project_skill_assignment(&ProjectSkillAssignmentRecord {
+                    id: format!("a{n}"),
+                    project_id: "p1".to_string(),
+                    skill_id: "s1".to_string(),
+                    skill_name: "S1".to_string(),
+                    tool: tool.clone(),
+                    mode,
+                    status,
+                    last_error: None,
+                    synced_at: None,
+                    content_hash: None,
+                    created_at: 1,
+                })
+                .unwrap();
+            let got = store
+                .get_project_skill_assignment("p1", "s1", &tool)
+                .unwrap()
+                .unwrap();
+            assert_eq!((got.mode, got.status), (mode, status));
+            assert_eq!(got.last_error, None);
+            // The column holds exactly the historical spelling (no schema change).
+            let raw: (String, String) = raw_conn(&store)
+                .query_row(
+                    "SELECT mode, status FROM project_skill_assignments WHERE id = ?1",
+                    rusqlite::params![format!("a{n}")],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(
+                raw,
+                (mode.as_str().to_string(), status.as_str().to_string())
+            );
+        }
+    }
+}
+
+#[test]
+fn legacy_ok_skill_target_reads_as_synced() {
+    let (_dir, store) = make_store();
+    store
+        .upsert_skill(&make_skill("s1", "S1", "/central/s1", 1))
+        .unwrap();
+    raw_conn(&store)
+        .execute(
+            "INSERT INTO skill_targets (id, skill_id, tool, target_path, mode, status, last_error, synced_at)
+             VALUES ('t1', 's1', 'claude_code', '/x', 'symlink', 'ok', NULL, 5)",
+            [],
+        )
+        .unwrap();
+    let got = store
+        .get_skill_target("s1", "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.status, SyncStatus::Synced);
+    assert_eq!(got.mode, SyncMode::Symlink);
+    assert_eq!(got.last_error, None);
+}
+
+#[test]
+fn unknown_stored_status_surfaces_as_error_with_diagnostic() {
+    let (_dir, store) = make_store();
+    seed_project_and_skill(&store);
+    raw_conn(&store)
+        .execute(
+            "INSERT INTO project_skill_assignments
+             (id, project_id, skill_id, skill_name, tool, mode, status, last_error, synced_at, content_hash, created_at)
+             VALUES ('a1', 'p1', 's1', 'S1', 'claude_code', 'symlink', 'weird', NULL, NULL, NULL, 1)",
+            [],
+        )
+        .unwrap();
+    let got = store
+        .get_project_skill_assignment("p1", "s1", "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.status, SyncStatus::Error);
+    assert_eq!(got.mode, SyncMode::Symlink, "a valid mode is kept");
+    let diagnostic = got.last_error.expect("diagnostic recorded");
+    assert!(diagnostic.contains("weird"), "got: {diagnostic}");
+    // The listing path and the aggregate agree, and the row is untouched on disk.
+    assert_eq!(
+        store.list_project_skill_assignments("p1").unwrap()[0].status,
+        SyncStatus::Error
+    );
+    assert_eq!(
+        store.aggregate_project_sync_status("p1").unwrap(),
+        ProjectSyncStatus::Error
+    );
+    let raw: String = raw_conn(&store)
+        .query_row(
+            "SELECT status FROM project_skill_assignments WHERE id = 'a1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(raw, "weird", "reading must not rewrite the row");
+}
+
+#[test]
+fn unknown_stored_mode_reads_as_copy_and_error() {
+    let (_dir, store) = make_store();
+    seed_project_and_skill(&store);
+    raw_conn(&store)
+        .execute(
+            "INSERT INTO project_skill_assignments
+             (id, project_id, skill_id, skill_name, tool, mode, status, last_error, synced_at, content_hash, created_at)
+             VALUES ('a1', 'p1', 's1', 'S1', 'claude_code', 'auto', 'synced', NULL, NULL, NULL, 1)",
+            [],
+        )
+        .unwrap();
+    let got = store
+        .get_project_skill_assignment("p1", "s1", "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.mode, SyncMode::Copy);
+    assert_eq!(got.status, SyncStatus::Error);
+    assert!(got.last_error.unwrap().contains("auto"));
+}
+
+#[test]
+fn reconciled_transition_writes_status_and_hash_only() {
+    let (_dir, store) = make_store();
+    seed_project_and_skill(&store);
+    store
+        .add_project_skill_assignment(&ProjectSkillAssignmentRecord {
+            id: "a1".to_string(),
+            project_id: "p1".to_string(),
+            skill_id: "s1".to_string(),
+            skill_name: "S1".to_string(),
+            tool: "cursor".to_string(),
+            mode: SyncMode::Copy,
+            status: SyncStatus::Error,
+            last_error: Some("boom".to_string()),
+            synced_at: Some(7),
+            content_hash: None,
+            created_at: 1,
+        })
+        .unwrap();
+    store
+        .transition_assignment(
+            "a1",
+            AssignmentTransition::Reconciled {
+                status: SyncStatus::Synced,
+                content_hash: Some("h1"),
+            },
+        )
+        .unwrap();
+    let got = store
+        .get_project_skill_assignment("p1", "s1", "cursor")
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.status, SyncStatus::Synced);
+    assert_eq!(
+        got.last_error, None,
+        "a reconcile clears the stale diagnostic"
+    );
+    assert_eq!(got.content_hash.as_deref(), Some("h1"));
+    assert_eq!(
+        got.synced_at,
+        Some(7),
+        "nothing was written, so synced_at is kept"
+    );
+    assert_eq!(got.mode, SyncMode::Copy);
 }

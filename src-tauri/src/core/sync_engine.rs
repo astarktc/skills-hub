@@ -22,25 +22,10 @@ impl fmt::Display for TargetExistsError {
 
 impl std::error::Error for TargetExistsError {}
 
-#[allow(dead_code)]
-#[derive(Clone, Debug)]
-pub enum SyncMode {
-    Auto,
-    Symlink,
-    Junction,
-    Copy,
-}
-
-impl SyncMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            SyncMode::Auto => "auto",
-            SyncMode::Symlink => "symlink",
-            SyncMode::Junction => "junction",
-            SyncMode::Copy => "copy",
-        }
-    }
-}
+/// The mode actually used for a target — defined with the rest of the
+/// lifecycle vocabulary in `sync_status`, re-exported here for the engine's
+/// callers.
+pub use super::sync_status::SyncMode;
 
 #[derive(Clone, Debug)]
 pub struct SyncOutcome {

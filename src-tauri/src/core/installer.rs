@@ -21,9 +21,10 @@ use super::skill_discovery::{
     DiscoveredSkill,
 };
 use super::skill_lock::try_enrich_from_skill_lock_with_home;
-use super::skill_store::SkillStore;
+use super::skill_store::{AssignmentTransition, SkillStore};
 use super::sync_engine::copy_dir_recursive;
 use super::sync_engine::sync_dir_copy_with_overwrite;
+use super::sync_status::{SyncMode, SyncStatus};
 use super::tool_adapters::adapter_by_key;
 use super::tool_adapters::is_installed_in;
 
@@ -453,7 +454,7 @@ pub fn update_managed_skill_from_source(
     let updated = finalize_update(store, &record, staged, new_revision.clone())?;
     let content_hash = updated.content_hash.clone();
 
-    // If any targets are "copy", re-sync them so changes propagate. Symlinks update automatically.
+    // If any targets are copies, re-sync them so changes propagate. Links update automatically.
     // Tools without symlink support (see `ToolAdapter::supports_symlink`) are always copies, so regardless of the historical mode, we must force a copy re-sync.
     let targets = store.list_skill_targets(skill_id)?;
     let mut updated_targets: Vec<String> = Vec::new();
@@ -465,7 +466,7 @@ pub fn update_managed_skill_from_source(
             }
         }
         let force_copy =
-            t.mode == "copy" || adapter_by_key(&t.tool).is_some_and(|a| !a.supports_symlink);
+            t.mode.can_drift() || adapter_by_key(&t.tool).is_some_and(|a| !a.supports_symlink);
         if force_copy {
             let target_path = PathBuf::from(&t.target_path);
             let sync_res = sync_dir_copy_with_overwrite(&central_path, &target_path, true)?;
@@ -474,8 +475,8 @@ pub fn update_managed_skill_from_source(
                 skill_id: t.skill_id.clone(),
                 tool: t.tool.clone(),
                 target_path: sync_res.target_path.to_string_lossy().to_string(),
-                mode: "copy".to_string(),
-                status: "ok".to_string(),
+                mode: SyncMode::Copy,
+                status: SyncStatus::Synced,
                 last_error: None,
                 synced_at: Some(now),
             };
@@ -489,7 +490,7 @@ pub fn update_managed_skill_from_source(
     let project_assignments = store.list_project_skill_assignments_by_skill(skill_id)?;
     for pa in project_assignments {
         let force_copy =
-            pa.mode == "copy" || adapter_by_key(&pa.tool).is_some_and(|a| !a.supports_symlink);
+            pa.mode.can_drift() || adapter_by_key(&pa.tool).is_some_and(|a| !a.supports_symlink);
         if !force_copy {
             continue;
         }
@@ -508,25 +509,23 @@ pub fn update_managed_skill_from_source(
         let target = resolve_project_sync_target(&project_path, &adapter, &record.name);
         match sync_dir_copy_with_overwrite(&central_path, &target, true) {
             Ok(_outcome) => {
-                let _ = store.update_assignment_status(
+                let _ = store.transition_assignment(
                     &pa.id,
-                    "synced",
-                    None,
-                    Some(now),
-                    Some("copy"),
-                    content_hash.as_deref(),
+                    AssignmentTransition::SyncCompleted {
+                        mode: SyncMode::Copy,
+                        synced_at: now,
+                        content_hash: content_hash.as_deref(),
+                    },
                 );
                 updated_targets.push(format!("project:{}:{}", pa.project_id, pa.tool));
             }
             Err(e) => {
                 log::warn!("failed to re-sync project assignment {}: {:#}", pa.id, e);
-                let _ = store.update_assignment_status(
+                let _ = store.transition_assignment(
                     &pa.id,
-                    "error",
-                    Some(&format!("{:#}", e)),
-                    None,
-                    None,
-                    None,
+                    AssignmentTransition::SyncFailed {
+                        error: &format!("{:#}", e),
+                    },
                 );
             }
         }

@@ -2,6 +2,7 @@ use super::*;
 use crate::core::errors::SignalError;
 use crate::core::global_sync::GlobalSyncError;
 use crate::core::skill_store::{SkillRecord, SkillTargetRecord};
+use crate::core::sync_status::{SyncMode, SyncStatus};
 use error::GitCloneFailureKind;
 
 fn make_store() -> (tempfile::TempDir, SkillStore) {
@@ -194,8 +195,8 @@ fn get_managed_skills_impl_maps_targets() {
         skill_id: "s1".to_string(),
         tool: "cursor".to_string(),
         target_path: "/tmp/target".to_string(),
-        mode: "copy".to_string(),
-        status: "ok".to_string(),
+        mode: SyncMode::Copy,
+        status: SyncStatus::Synced,
         last_error: None,
         synced_at: None,
     };

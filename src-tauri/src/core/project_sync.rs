@@ -6,8 +6,11 @@ use anyhow::Result;
 use crate::core::{
     content_hash,
     errors::SignalError,
-    skill_store::{ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore},
-    sync_engine::{self, SyncMode},
+    skill_store::{
+        AssignmentTransition, ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore,
+    },
+    sync_engine,
+    sync_status::{next_status, Observation, SyncMode, SyncStatus},
     tool_adapters::{self, ToolAdapter},
 };
 
@@ -43,8 +46,8 @@ pub fn assign_and_sync(
         skill_id: skill.id.clone(),
         skill_name: skill.name.clone(),
         tool: tool_key.to_string(),
-        mode: "symlink".to_string(),
-        status: "pending".to_string(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Pending,
         last_error: None,
         synced_at: None,
         content_hash: None,
@@ -57,25 +60,14 @@ pub fn assign_and_sync(
 
     match sync_engine::sync_dir_for_tool_with_overwrite(&adapter, source, &target, false) {
         Ok(outcome) => {
-            let mode_str = outcome.mode_used.as_str();
-            let hash = if matches!(outcome.mode_used, SyncMode::Copy) {
-                match content_hash::hash_dir(source) {
-                    Ok(h) => Some(h),
-                    Err(e) => {
-                        log::warn!("failed to compute content hash after sync: {:#}", e);
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-            store.update_assignment_status(
+            let hash = hash_after_sync(outcome.mode_used, source);
+            store.transition_assignment(
                 &record.id,
-                "synced",
-                None,
-                Some(now),
-                Some(mode_str),
-                hash.as_deref(),
+                AssignmentTransition::SyncCompleted {
+                    mode: outcome.mode_used,
+                    synced_at: now,
+                    content_hash: hash.as_deref(),
+                },
             )?;
             let updated = store
                 .get_project_skill_assignment(&project.id, &skill.id, tool_key)?
@@ -84,18 +76,30 @@ pub fn assign_and_sync(
         }
         Err(e) => {
             let err_msg = format!("{:#}", e);
-            store.update_assignment_status(
+            store.transition_assignment(
                 &record.id,
-                "error",
-                Some(&err_msg),
-                None,
-                None,
-                None,
+                AssignmentTransition::SyncFailed { error: &err_msg },
             )?;
             let updated = store
                 .get_project_skill_assignment(&project.id, &skill.id, tool_key)?
                 .unwrap_or(record);
             Ok(updated)
+        }
+    }
+}
+
+/// The source content hash to record after a successful sync: only copies
+/// can drift, so links record nothing. A hashing failure is logged and
+/// leaves the hash unknown (the next reconcile pass then reports `Stale`).
+fn hash_after_sync(mode_used: SyncMode, source: &Path) -> Option<String> {
+    if !mode_used.can_drift() {
+        return None;
+    }
+    match content_hash::hash_dir(source) {
+        Ok(h) => Some(h),
+        Err(e) => {
+            log::warn!("failed to compute content hash after sync: {:#}", e);
+            None
         }
     }
 }
@@ -108,7 +112,7 @@ pub fn assign_and_sync(
 // ---------------------------------------------------------------------------
 
 /// Per-tool result of a fan-out. A *sync* failure is not a fan-out failure:
-/// `assign_and_sync` records it on the assignment row (`status = "error"`),
+/// `assign_and_sync` records it on the assignment row (`SyncStatus::Error`),
 /// so it arrives as `Assigned` with that record. `Failed` is reserved for
 /// the assignment itself not happening (unknown tool, store error).
 #[derive(Debug)]
@@ -253,26 +257,14 @@ pub(crate) fn sync_single_assignment(
     let outcome =
         sync_engine::sync_dir_for_tool_with_overwrite(&adapter, source, &target, overwrite)?;
 
-    let mode_str = outcome.mode_used.as_str();
-    let hash = if matches!(outcome.mode_used, SyncMode::Copy) {
-        match content_hash::hash_dir(source) {
-            Ok(h) => Some(h),
-            Err(e) => {
-                log::warn!("failed to compute content hash after sync: {:#}", e);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    store.update_assignment_status(
+    let hash = hash_after_sync(outcome.mode_used, source);
+    store.transition_assignment(
         &assignment.id,
-        "synced",
-        None,
-        Some(now),
-        Some(mode_str),
-        hash.as_deref(),
+        AssignmentTransition::SyncCompleted {
+            mode: outcome.mode_used,
+            synced_at: now,
+            content_hash: hash.as_deref(),
+        },
     )?;
 
     Ok(())
@@ -295,13 +287,11 @@ pub fn resync_project(store: &SkillStore, project_id: &str, now: i64) -> Result<
             Ok(()) => summary.synced += 1,
             Err(e) => {
                 let err_msg = format!("{}: {:#}", assignment.id, e);
-                let _ = store.update_assignment_status(
+                let _ = store.transition_assignment(
                     &assignment.id,
-                    "error",
-                    Some(&format!("{:#}", e)),
-                    None,
-                    None,
-                    None,
+                    AssignmentTransition::SyncFailed {
+                        error: &format!("{:#}", e),
+                    },
                 );
                 summary.failed += 1;
                 summary.errors.push(err_msg);
@@ -338,12 +328,106 @@ pub fn resync_all_projects(store: &SkillStore, now: i64) -> Result<Vec<ResyncSum
     Ok(summaries)
 }
 
+/// One assignment's on-disk facts, resolved by `observe_assignment`. Owns the
+/// source hash so the borrowed `Observation` can point into it.
+struct Observed {
+    source_present: bool,
+    target_present: bool,
+    source_hash: Option<String>,
+}
+
+/// Plan step: read the environment for one assignment. Backfills the skill's
+/// cached content hash when a copy-mode row needs it (legacy skill rows have
+/// `content_hash = NULL`).
+fn observe_assignment(
+    store: &SkillStore,
+    project: Option<&ProjectRecord>,
+    skill: Option<&SkillRecord>,
+    assignment: &ProjectSkillAssignmentRecord,
+) -> Observed {
+    let Some(skill) = skill else {
+        return Observed {
+            source_present: false,
+            target_present: false,
+            source_hash: None,
+        };
+    };
+    let source = Path::new(&skill.central_path);
+    let source_present = source.exists();
+
+    let target_present = match (project, tool_adapters::adapter_by_key(&assignment.tool)) {
+        (Some(project), Some(adapter)) => {
+            let target =
+                resolve_project_sync_target(Path::new(&project.path), &adapter, &skill.name);
+            target.exists() || target.symlink_metadata().is_ok()
+        }
+        _ => false,
+    };
+
+    // Only copies can drift, and hashing is only worth it when both sides exist.
+    let source_hash = if assignment.mode.can_drift() && source_present && target_present {
+        skill.content_hash.clone().or_else(|| {
+            let h = content_hash::hash_dir(source).ok();
+            if let Some(ref hash_val) = h {
+                let _ = store.update_skill_content_hash(&skill.id, hash_val);
+            }
+            h
+        })
+    } else {
+        None
+    };
+
+    Observed {
+        source_present,
+        target_present,
+        source_hash,
+    }
+}
+
+/// Execute step: apply `next_status` to one assignment, writing only when the
+/// status changes. Returns the record as it now stands.
+fn reconcile_assignment(
+    store: &SkillStore,
+    mut assignment: ProjectSkillAssignmentRecord,
+    observed: &Observed,
+) -> ProjectSkillAssignmentRecord {
+    let decided = next_status(&Observation {
+        source_present: observed.source_present,
+        target_present: observed.target_present,
+        mode: assignment.mode,
+        current: assignment.status,
+        source_hash: observed.source_hash.as_deref(),
+        recorded_hash: assignment.content_hash.as_deref(),
+    });
+    if decided == assignment.status {
+        return assignment;
+    }
+    let confirmed_hash = if decided == SyncStatus::Synced && assignment.mode.can_drift() {
+        observed.source_hash.as_deref()
+    } else {
+        None
+    };
+    let _ = store.transition_assignment(
+        &assignment.id,
+        AssignmentTransition::Reconciled {
+            status: decided,
+            content_hash: confirmed_hash,
+        },
+    );
+    assignment.status = decided;
+    assignment.last_error = None;
+    assignment.content_hash = confirmed_hash.map(str::to_string);
+    assignment
+}
+
+/// List a project's assignments with their status reconciled against the
+/// filesystem (source/target presence, copy drift). Rows whose observed
+/// status differs from the stored one are updated in place.
 pub fn list_assignments_with_staleness(
     store: &SkillStore,
     project_id: &str,
 ) -> Result<Vec<ProjectSkillAssignmentRecord>> {
     let assignments = store.list_project_skill_assignments(project_id)?;
-    let mut result = Vec::with_capacity(assignments.len());
 
     // Pre-fetch skill records with deduplication (one DB query per unique skill_id)
     let mut skill_cache: HashMap<String, Option<SkillRecord>> = HashMap::new();
@@ -356,122 +440,16 @@ pub fn list_assignments_with_staleness(
     // Pre-fetch project record once (not per iteration)
     let project_record = store.get_project_by_id(project_id).ok().flatten();
 
-    for mut assignment in assignments {
-        // --- Resolve source and target existence ---
-        let skill_opt = skill_cache
-            .get(&assignment.skill_id)
-            .and_then(|s| s.as_ref());
-        let source_exists = skill_opt
-            .map(|s| Path::new(&s.central_path).exists())
-            .unwrap_or(false);
-
-        let target_exists = if let Some(skill) = skill_opt {
-            if let Some(adapter) = tool_adapters::adapter_by_key(&assignment.tool) {
-                project_record
-                    .as_ref()
-                    .map(|p| {
-                        let target =
-                            resolve_project_sync_target(Path::new(&p.path), &adapter, &skill.name);
-                        target.exists() || target.symlink_metadata().is_ok()
-                    })
-                    .unwrap_or(false)
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        // --- D-04: Source absent -> missing ---
-        if !source_exists {
-            if assignment.status != "missing" {
-                let _ = store.update_assignment_status(
-                    &assignment.id,
-                    "missing",
-                    None,
-                    None,
-                    None,
-                    None,
-                );
-            }
-            assignment.status = "missing".to_string();
-            result.push(assignment);
-            continue;
-        }
-
-        // --- D-05: Target absent for a previously-deployed assignment -> missing ---
-        if !target_exists
-            && (assignment.status == "synced"
-                || assignment.status == "stale"
-                || assignment.status == "missing")
-        {
-            if assignment.status != "missing" {
-                let _ = store.update_assignment_status(
-                    &assignment.id,
-                    "missing",
-                    None,
-                    None,
-                    None,
-                    None,
-                );
-            }
-            assignment.status = "missing".to_string();
-            result.push(assignment);
-            continue;
-        }
-
-        // --- D-07: Both source and target exist -> recalculate staleness ---
-        // Runs for ANY current DB status (including "missing") to enable recovery.
-        if source_exists && target_exists {
-            if assignment.mode == "copy" {
-                // Copy mode: compare content hashes to detect staleness
-                if let Some(skill_ref) = skill_opt {
-                    let source = Path::new(&skill_ref.central_path);
-                    // Use cached hash from skill record; backfill if NULL (legacy records)
-                    let current_hash = skill_ref.content_hash.clone().or_else(|| {
-                        let h = content_hash::hash_dir(source).ok();
-                        if let Some(ref hash_val) = h {
-                            let _ = store.update_skill_content_hash(&skill_ref.id, hash_val);
-                        }
-                        h
-                    });
-                    if let Some(ref current_hash) = current_hash {
-                        let is_stale = assignment.content_hash.as_deref() != Some(current_hash);
-                        let new_status = if is_stale { "stale" } else { "synced" };
-                        if assignment.status != new_status {
-                            let _ = store.update_assignment_status(
-                                &assignment.id,
-                                new_status,
-                                None,
-                                None,
-                                None,
-                                if !is_stale { Some(current_hash) } else { None },
-                            );
-                        }
-                        assignment.status = new_status.to_string();
-                    }
-                    // If hash unavailable, leave status unchanged
-                }
-            } else {
-                // Symlink mode: if both exist, it is synced
-                if assignment.status == "missing" {
-                    let _ = store.update_assignment_status(
-                        &assignment.id,
-                        "synced",
-                        None,
-                        None,
-                        None,
-                        None,
-                    );
-                    assignment.status = "synced".to_string();
-                }
-            }
-        }
-
-        result.push(assignment);
-    }
-
-    Ok(result)
+    Ok(assignments
+        .into_iter()
+        .map(|assignment| {
+            let skill = skill_cache
+                .get(&assignment.skill_id)
+                .and_then(|s| s.as_ref());
+            let observed = observe_assignment(store, project_record.as_ref(), skill, &assignment);
+            reconcile_assignment(store, assignment, &observed)
+        })
+        .collect())
 }
 
 pub fn unassign_and_cleanup(
@@ -496,13 +474,11 @@ pub fn unassign_and_cleanup(
                 if let Some(assignment) =
                     store.get_project_skill_assignment(&project.id, &skill.id, tool_key)?
                 {
-                    let _ = store.update_assignment_status(
+                    let _ = store.transition_assignment(
                         &assignment.id,
-                        "error",
-                        Some(&format!("{:#}", e)),
-                        None,
-                        None,
-                        None,
+                        AssignmentTransition::SyncFailed {
+                            error: &format!("{:#}", e),
+                        },
                     );
                 }
                 Err(e)

@@ -131,12 +131,6 @@ impl fmt::Display for RemovalReport {
     }
 }
 
-/// Assignment statuses that imply an artifact was written to the project.
-/// (String literals stay until the status enum lands — see ticket 27.)
-fn assignment_has_artifact(status: &str) -> bool {
-    matches!(status, "synced" | "stale" | "error")
-}
-
 /// Read-only: resolve every path deletion will touch.
 pub fn plan_skill_removal(store: &SkillStore, skill_id: &str) -> Result<RemovalPlan> {
     let skill = store.get_skill_by_id(skill_id)?;
@@ -152,7 +146,7 @@ pub fn plan_skill_removal(store: &SkillStore, skill_id: &str) -> Result<RemovalP
 
     if let Some(skill) = &skill {
         for assignment in store.list_project_skill_assignments_by_skill(skill_id)? {
-            if !assignment_has_artifact(&assignment.status) {
+            if !assignment.status.has_deployed_artifact() {
                 continue;
             }
             let Some(project) = store.get_project_by_id(&assignment.project_id)? else {

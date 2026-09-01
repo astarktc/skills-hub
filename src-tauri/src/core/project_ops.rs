@@ -10,6 +10,7 @@ use super::gitignore::{self, IgnoreUpdateOptions};
 use super::project_sync;
 use super::skill_store::{ProjectRecord, ProjectToolRecord, SkillStore};
 use super::sync_engine;
+use super::sync_status::{ProjectSyncStatus, SyncMode, SyncStatus};
 use super::tool_adapters;
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -23,7 +24,7 @@ pub struct ProjectDto {
     pub tool_count: usize,
     pub skill_count: usize,
     pub assignment_count: usize,
-    pub sync_status: String,
+    pub sync_status: ProjectSyncStatus,
     pub path_exists: bool,
 }
 
@@ -43,8 +44,8 @@ pub struct ProjectSkillAssignmentDto {
     pub skill_id: String,
     pub skill_name: String,
     pub tool: String,
-    pub mode: String,
-    pub status: String,
+    pub mode: SyncMode,
+    pub status: SyncStatus,
     pub last_error: Option<String>,
     pub synced_at: Option<i64>,
     pub content_hash: Option<String>,
@@ -241,7 +242,7 @@ pub fn remove_project_with_cleanup(store: &SkillStore, project_id: &str) -> Resu
     let assignments = store.list_project_skill_assignments(project_id)?;
 
     for assignment in &assignments {
-        if assignment.status == "synced" || assignment.status == "stale" {
+        if assignment.status.has_deployed_artifact() {
             match store.get_skill_by_id(&assignment.skill_id) {
                 Ok(Some(skill)) => {
                     if let Some(adapter) = tool_adapters::adapter_by_key(&assignment.tool) {
