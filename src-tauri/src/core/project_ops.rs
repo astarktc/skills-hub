@@ -135,7 +135,7 @@ pub fn remove_tool_with_cleanup(store: &SkillStore, project_id: &str, tool: &str
                 if let Some(adapter) = tool_adapters::adapter_by_key(tool) {
                     let target = project_sync::resolve_project_sync_target(
                         Path::new(&project.path),
-                        adapter.relative_skills_dir,
+                        &adapter,
                         &assignment.skill_name, // Use stored skill name, not UUID
                     );
                     if target.exists() || target.symlink_metadata().is_ok() {
@@ -186,10 +186,11 @@ pub fn remove_project_with_cleanup(store: &SkillStore, project_id: &str) -> Resu
             match store.get_skill_by_id(&assignment.skill_id) {
                 Ok(Some(skill)) => {
                     if let Some(adapter) = tool_adapters::adapter_by_key(&assignment.tool) {
-                        let project_path = Path::new(&project.path);
-                        let target = project_path
-                            .join(adapter.relative_skills_dir)
-                            .join(&skill.name);
+                        let target = project_sync::resolve_project_sync_target(
+                            Path::new(&project.path),
+                            &adapter,
+                            &skill.name,
+                        );
                         if let Err(e) = sync_engine::remove_path_any(&target) {
                             log::warn!("failed to remove {:?}: {}", target, e);
                         }
@@ -198,10 +199,11 @@ pub fn remove_project_with_cleanup(store: &SkillStore, project_id: &str) -> Resu
                 Ok(None) => {
                     // Use stored skill_name for filesystem cleanup when skill record is gone
                     if let Some(adapter) = tool_adapters::adapter_by_key(&assignment.tool) {
-                        let project_path = Path::new(&project.path);
-                        let target = project_path
-                            .join(adapter.relative_skills_dir)
-                            .join(&assignment.skill_name);
+                        let target = project_sync::resolve_project_sync_target(
+                            Path::new(&project.path),
+                            &adapter,
+                            &assignment.skill_name,
+                        );
                         if !assignment.skill_name.is_empty()
                             && (target.exists() || target.symlink_metadata().is_ok())
                         {

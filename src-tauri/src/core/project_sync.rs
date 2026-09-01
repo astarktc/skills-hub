@@ -7,15 +7,23 @@ use crate::core::{
     content_hash,
     skill_store::{ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore},
     sync_engine::{self, SyncMode},
-    tool_adapters::{self, project_relative_skills_dir},
+    tool_adapters::{self, project_relative_skills_dir, ToolAdapter},
 };
 
+/// The single place that joins a project root with a tool's skills dir.
+///
+/// Takes the adapter (not a bare dir string) so the project-scope mapping
+/// (`project_relative_skills_dir`) is chosen here and callers cannot reach for
+/// the global `relative_skills_dir` by mistake — that mix-up has shipped more
+/// than once (see `gitignore.rs` and the cleanup paths in `project_ops.rs`).
 pub fn resolve_project_sync_target(
     project_path: &Path,
-    relative_skills_dir: &str,
+    adapter: &ToolAdapter,
     skill_name: &str,
 ) -> PathBuf {
-    project_path.join(relative_skills_dir).join(skill_name)
+    project_path
+        .join(project_relative_skills_dir(adapter))
+        .join(skill_name)
 }
 
 pub fn assign_and_sync(
@@ -44,11 +52,7 @@ pub fn assign_and_sync(
     store.add_project_skill_assignment(&record)?;
 
     let source = Path::new(&skill.central_path);
-    let target = resolve_project_sync_target(
-        Path::new(&project.path),
-        project_relative_skills_dir(&adapter),
-        &skill.name,
-    );
+    let target = resolve_project_sync_target(Path::new(&project.path), &adapter, &skill.name);
 
     match sync_engine::sync_dir_for_tool_with_overwrite(tool_key, source, &target, false) {
         Ok(outcome) => {
@@ -116,11 +120,7 @@ pub(crate) fn sync_single_assignment(
         .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", assignment.tool))?;
 
     let source = Path::new(&skill.central_path);
-    let target = resolve_project_sync_target(
-        Path::new(&project.path),
-        project_relative_skills_dir(&adapter),
-        &skill.name,
-    );
+    let target = resolve_project_sync_target(Path::new(&project.path), &adapter, &skill.name);
 
     let outcome = sync_engine::sync_dir_for_tool_with_overwrite(
         &assignment.tool,
@@ -246,11 +246,8 @@ pub fn list_assignments_with_staleness(
                 project_record
                     .as_ref()
                     .map(|p| {
-                        let target = resolve_project_sync_target(
-                            Path::new(&p.path),
-                            project_relative_skills_dir(&adapter),
-                            &skill.name,
-                        );
+                        let target =
+                            resolve_project_sync_target(Path::new(&p.path), &adapter, &skill.name);
                         target.exists() || target.symlink_metadata().is_ok()
                     })
                     .unwrap_or(false)
@@ -362,11 +359,7 @@ pub fn unassign_and_cleanup(
     let adapter = tool_adapters::adapter_by_key(tool_key)
         .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", tool_key))?;
 
-    let target = resolve_project_sync_target(
-        Path::new(&project.path),
-        project_relative_skills_dir(&adapter),
-        &skill.name,
-    );
+    let target = resolve_project_sync_target(Path::new(&project.path), &adapter, &skill.name);
 
     if target.exists() || target.symlink_metadata().is_ok() {
         match sync_engine::remove_path_any(&target) {

@@ -476,3 +476,150 @@ fn remove_tool_with_cleanup_handles_missing_skill_gracefully() {
         "assignment should be cleaned up even with missing skill"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Regression: cleanup must use the project-scope path family, not the global
+// one. Pi's mappings diverge (`.pi/agent/skills` globally vs `.pi/skills` in a
+// project), so a cleanup that joins the global dir onto the project path
+// silently leaves the synced skill dir on disk.
+// ---------------------------------------------------------------------------
+
+fn pi_adapter() -> crate::core::tool_adapters::ToolAdapter {
+    let adapter = crate::core::tool_adapters::adapter_by_key("pi").expect("pi adapter");
+    assert_ne!(
+        adapter.relative_skills_dir,
+        crate::core::tool_adapters::project_relative_skills_dir(&adapter),
+        "test precondition: pi's global and project mappings must diverge"
+    );
+    adapter
+}
+
+/// Delete the skill row WITHOUT the FK cascade, leaving the assignment row
+/// behind exactly like a legacy database would.
+fn orphan_skill_row(store: &SkillStore, skill_id: &str) {
+    let conn = rusqlite::Connection::open(store.db_path()).expect("open db");
+    conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+    conn.execute(
+        "DELETE FROM skills WHERE id = ?1",
+        rusqlite::params![skill_id],
+    )
+    .unwrap();
+}
+
+fn setup_pi_assignment(
+    tmpdir: &std::path::Path,
+    store: &SkillStore,
+    name: &str,
+) -> (ProjectRecord, SkillRecord, std::path::PathBuf) {
+    let skill_dir = make_skill_dir(tmpdir, name);
+    let project_dir = tmpdir.join(format!("{name}-project"));
+    fs::create_dir_all(&project_dir).expect("create project dir");
+    let (project, skill) = register_project_and_skill_at(
+        store,
+        &project_dir.to_string_lossy(),
+        name,
+        &skill_dir.to_string_lossy(),
+    );
+    store
+        .add_project_tool(&ProjectToolRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id: project.id.clone(),
+            tool: "pi".to_string(),
+        })
+        .unwrap();
+    project_sync::assign_and_sync(store, &project, &skill, "pi", now_ms()).expect("assign");
+
+    let target = project_sync::resolve_project_sync_target(&project_dir, &pi_adapter(), name);
+    assert!(
+        target.symlink_metadata().is_ok(),
+        "precondition: project-scope target should exist at {:?}",
+        target
+    );
+    (project, skill, target)
+}
+
+#[test]
+fn remove_project_with_cleanup_removes_project_scope_target_for_divergent_tool() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+    let (project, _skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rpc-pi-skill");
+
+    project_ops::remove_project_with_cleanup(&store, &project.id).expect("remove project");
+
+    assert!(
+        target.symlink_metadata().is_err(),
+        "project-scope target should be removed: {:?}",
+        target
+    );
+    assert!(store.get_project_by_id(&project.id).unwrap().is_none());
+}
+
+#[test]
+fn remove_project_with_cleanup_orphan_branch_removes_project_scope_target() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+    let (project, skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rpc-pi-orphan");
+
+    orphan_skill_row(&store, &skill.id);
+    assert!(store.get_skill_by_id(&skill.id).unwrap().is_none());
+    assert_eq!(
+        store
+            .list_project_skill_assignments(&project.id)
+            .unwrap()
+            .len(),
+        1,
+        "precondition: orphaned assignment row must survive"
+    );
+
+    project_ops::remove_project_with_cleanup(&store, &project.id).expect("remove project");
+
+    assert!(
+        target.symlink_metadata().is_err(),
+        "orphan branch should remove project-scope target: {:?}",
+        target
+    );
+}
+
+#[test]
+fn remove_tool_with_cleanup_removes_project_scope_target_for_divergent_tool() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+    let (project, _skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rtc-pi-skill");
+
+    project_ops::remove_tool_with_cleanup(&store, &project.id, "pi").expect("remove tool");
+
+    assert!(
+        target.symlink_metadata().is_err(),
+        "project-scope target should be removed: {:?}",
+        target
+    );
+}
+
+#[test]
+fn remove_tool_with_cleanup_orphan_branch_removes_project_scope_target() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+    let (project, skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rtc-pi-orphan");
+
+    orphan_skill_row(&store, &skill.id);
+    assert_eq!(
+        store
+            .list_project_skill_assignments_for_project_tool(&project.id, "pi")
+            .unwrap()
+            .len(),
+        1,
+        "precondition: orphaned assignment row must survive"
+    );
+
+    project_ops::remove_tool_with_cleanup(&store, &project.id, "pi").expect("remove tool");
+
+    assert!(
+        target.symlink_metadata().is_err(),
+        "orphan branch should remove project-scope target: {:?}",
+        target
+    );
+    assert!(store
+        .list_project_skill_assignments_for_project_tool(&project.id, "pi")
+        .unwrap()
+        .is_empty());
+}
