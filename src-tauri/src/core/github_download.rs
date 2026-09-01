@@ -1,6 +1,7 @@
 //! Download a GitHub directory via the Contents API, bypassing git clone entirely.
 //! This is much faster than cloning large repos when only a subdirectory is needed.
 
+use std::fmt;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -9,6 +10,36 @@ use serde::Deserialize;
 
 use super::cancel_token::CancelToken;
 use super::errors::SignalError;
+
+/// A non-success HTTP status from the GitHub API, classified at the origin.
+///
+/// Raised through `anyhow` chains by every GitHub request this module makes;
+/// callers discriminate by downcast (`err.downcast_ref::<GithubApiError>()`)
+/// and map `status` to the typed condition they own (404 → skill not found,
+/// 403 → rate limited, anything else → fall back to a git clone). The status
+/// never travels as prose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GithubApiError {
+    /// HTTP status code of the failed response.
+    pub status: u16,
+    /// Rounded-up minutes until the rate limit resets, when the response
+    /// carried a parseable `x-ratelimit-reset` header.
+    pub reset_minutes: Option<i64>,
+    /// Request URL or repo-relative path (diagnostic context, not user copy).
+    pub url: String,
+}
+
+impl fmt::Display for GithubApiError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "GitHub API error {} for: {}", self.status, self.url)?;
+        if let Some(minutes) = self.reset_minutes {
+            write!(f, " (rate limit resets in ~{minutes} min)")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for GithubApiError {}
 
 #[derive(Debug, Deserialize)]
 struct GithubContent {
@@ -132,7 +163,8 @@ fn download_dir_recursive(
     Ok(())
 }
 
-/// Check a GitHub API response for rate-limit errors and surface a helpful message.
+/// Pass a successful GitHub response through; classify any other status as a
+/// typed [`GithubApiError`] carrying the code and the rate-limit reset ETA.
 fn check_github_response(
     resp: reqwest::blocking::Response,
     context: &str,
@@ -141,9 +173,8 @@ fn check_github_response(
     if status.is_success() {
         return Ok(resp);
     }
-    if status.as_u16() == 403 {
-        let reset_minutes = resp
-            .headers()
+    let reset_minutes = if status.as_u16() == 403 {
+        resp.headers()
             .get("x-ratelimit-reset")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<i64>().ok())
@@ -153,18 +184,15 @@ fn check_github_response(
                     .unwrap_or_default()
                     .as_secs() as i64;
                 ((ts - now).max(0) + 59) / 60 // round up
-            });
-        match reset_minutes {
-            Some(reset_minutes) => anyhow::bail!(SignalError::RateLimited { reset_minutes }),
-            None => anyhow::bail!("403 Forbidden"),
-        }
-    }
-    // For other errors, use the standard error_for_status logic.
-    Err(anyhow::anyhow!(
-        "GitHub API error {} for: {}",
-        status,
-        context
-    ))
+            })
+    } else {
+        None
+    };
+    Err(anyhow::Error::new(GithubApiError {
+        status: status.as_u16(),
+        reset_minutes,
+        url: context.to_string(),
+    }))
 }
 
 /// Check if a GitHub URL with subpath can use the fast API download path.
@@ -326,13 +354,16 @@ mod tests {
             .send()
             .unwrap();
         let err = check_github_response(resp, "test").unwrap_err();
-        // The rate limit is raised as a typed signal, recoverable by downcast.
-        let Some(SignalError::RateLimited { reset_minutes }) = err.downcast_ref::<SignalError>()
-        else {
-            panic!("expected SignalError::RateLimited, got: {:#}", err);
+        // The status is classified at the origin as a typed error carrying
+        // both the code and the parsed reset ETA, recoverable by downcast.
+        let Some(api) = err.downcast_ref::<GithubApiError>() else {
+            panic!("expected GithubApiError, got: {:#}", err);
         };
+        assert_eq!(api.status, 403);
+        assert_eq!(api.url, "test");
+        let reset_minutes = api.reset_minutes.expect("reset ETA parsed from header");
         assert!(
-            (9..=11).contains(reset_minutes),
+            (9..=11).contains(&reset_minutes),
             "expected ~10 mins, got {}",
             reset_minutes
         );
@@ -352,12 +383,15 @@ mod tests {
             .send()
             .unwrap();
         let err = check_github_response(resp, "test").unwrap_err();
-        let msg = format!("{:#}", err);
-        assert!(msg.contains("403"), "got: {}", msg);
+        let api = err
+            .downcast_ref::<GithubApiError>()
+            .unwrap_or_else(|| panic!("expected GithubApiError, got: {:#}", err));
+        assert_eq!(api.status, 403);
+        assert_eq!(api.reset_minutes, None, "no header means no ETA");
     }
 
     #[test]
-    fn check_github_response_handles_other_errors() {
+    fn check_github_response_classifies_404_as_typed_status() {
         let mut server = mockito::Server::new();
         let _m = server
             .mock("GET", "/notfound")
@@ -370,8 +404,38 @@ mod tests {
             .send()
             .unwrap();
         let err = check_github_response(resp, "test").unwrap_err();
-        let msg = format!("{:#}", err);
-        assert!(msg.contains("404"), "got: {}", msg);
+        let api = err
+            .downcast_ref::<GithubApiError>()
+            .unwrap_or_else(|| panic!("expected GithubApiError, got: {:#}", err));
+        assert_eq!(
+            *api,
+            GithubApiError {
+                status: 404,
+                reset_minutes: None,
+                url: "test".to_string(),
+            }
+        );
+        // The typed value survives `.context(...)` layering (anyhow chains).
+        let wrapped = err.context("download skill");
+        assert!(wrapped.downcast_ref::<GithubApiError>().is_some());
+    }
+
+    #[test]
+    fn check_github_response_classifies_server_errors_as_typed_status() {
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/boom")
+            .with_status(502)
+            .with_body("bad gateway")
+            .create();
+        let client = Client::new();
+        let resp = client.get(format!("{}/boom", server.url())).send().unwrap();
+        let err = check_github_response(resp, "test").unwrap_err();
+        let api = err
+            .downcast_ref::<GithubApiError>()
+            .unwrap_or_else(|| panic!("expected GithubApiError, got: {:#}", err));
+        assert_eq!(api.status, 502);
+        assert_eq!(api.reset_minutes, None);
     }
 
     #[test]
@@ -419,7 +483,10 @@ mod tests {
             .header("User-Agent", "skills-hub")
             .send()
             .unwrap();
-        let err = check_github_response(resp, "test");
-        assert!(err.is_err(), "should return error for 404");
+        let err = check_github_response(resp, "test").unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<GithubApiError>().map(|e| e.status),
+            Some(404)
+        );
     }
 }

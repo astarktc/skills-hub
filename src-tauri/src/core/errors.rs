@@ -23,6 +23,8 @@ pub enum SignalError {
     SkillInvalid { reason: String },
     /// A repository contains multiple skills and no selection was provided.
     MultiSkills,
+    /// A skill directory with this name already exists in the central repo.
+    SkillExists { name: String },
     /// A project with this path is already registered.
     DuplicateProject { path: String },
     /// The project/skill/tool assignment already exists.
@@ -63,6 +65,9 @@ impl fmt::Display for SignalError {
                     f,
                     "repository contains multiple skills; a selection is required"
                 )
+            }
+            SignalError::SkillExists { name } => {
+                write!(f, "skill already installed in central repo: {name}")
             }
             SignalError::DuplicateProject { path } => {
                 write!(f, "project already registered: {path}")

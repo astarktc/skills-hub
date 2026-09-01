@@ -35,3 +35,11 @@ _Avoid_: installed skill (ambiguous with a tool being installed)
 **Sync target**:
 One (skill, tool) pair a sync batch attempts; each target resolves to synced, skipped, or failed as report data, never as a command error.
 _Avoid_: sync pair, destination
+
+**Staging dir**:
+A scratch directory inside the central repo that an install or update flow fills with a skill's bytes before the finalize step moves it into place; discarded automatically if the flow fails first.
+_Avoid_: temp dir, download dir
+
+**Finalize (install)**:
+The single last mile that turns a staging dir into a managed skill: final-name choice (SKILL.md `name` beats a derived name; an operator-provided name always wins), typed collision check, move, description + content hash, record upsert. Flows acquire bytes; only finalize records them.
+_Avoid_: register, materialise

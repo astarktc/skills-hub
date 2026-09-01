@@ -17,6 +17,7 @@ const COMMAND_ERROR_CODE_MAP = {
   TOOL_NOT_WRITABLE: true,
   SKILL_INVALID: true,
   MULTI_SKILLS: true,
+  SKILL_EXISTS: true,
   DUPLICATE_PROJECT: true,
   ASSIGNMENT_EXISTS: true,
   NOT_FOUND: true,
@@ -60,22 +61,6 @@ const GIT_CLONE_HINT_KEYS: Record<string, string> = {
   unknown: "errors.gitCloneUnknown",
 };
 
-function describeOther(message: string, t: TranslateFn): string {
-  // Prose fallbacks for core errors that are not (yet) typed signals.
-  if (message.includes("skill already exists in central repo")) {
-    // e.g. `skill already exists in central repo: "/path/to/react-best-practices"`
-    const pathMatch = message.match(/central repo:\s*"?([^"]+)"?/);
-    if (pathMatch) {
-      const skillName = pathMatch[1].split("/").pop() ?? "";
-      if (skillName) {
-        return t("errors.skillExistsInHubNamed", { name: skillName });
-      }
-    }
-    return t("errors.skillExistsInHub");
-  }
-  return message;
-}
-
 /**
  * Localized user-facing message for a command failure, or `null` when the
  * failure should be silently ignored (user-initiated cancellation).
@@ -98,6 +83,8 @@ export function describeCommandError(
         : t("errors.skillInvalid", { reason: e.reason });
     case "MULTI_SKILLS":
       return t("errors.multiSkillsRepo");
+    case "SKILL_EXISTS":
+      return t("errors.skillExistsInHubNamed", { name: e.name });
     case "DUPLICATE_PROJECT":
       return t("projects.duplicateError") + (e.path ? `: ${e.path}` : "");
     case "ASSIGNMENT_EXISTS":
@@ -121,6 +108,6 @@ export function describeCommandError(
         t("errors.deleteCleanupFailed") + "\n- " + e.failures.join("\n- ")
       );
     case "OTHER":
-      return describeOther(e.message, t);
+      return e.message;
   }
 }

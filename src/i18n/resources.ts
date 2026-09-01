@@ -204,8 +204,6 @@ export const resources = {
       errors: {
         notTauri:
           "Current environment is not Tauri. Please run `npm run tauri dev`.",
-        skillExistsInHub:
-          "This skill already exists in Hub. No need to install again.",
         skillExistsInHubNamed:
           '"{{name}}" already exists in Hub. Go to My Skills to update it.',
         targetExists:
@@ -650,7 +648,6 @@ export const resources = {
       foundIn: "发现于",
       errors: {
         notTauri: "当前环境不是 Tauri，请用 `npm run tauri dev` 启动应用。",
-        skillExistsInHub: "该 Skill 已存在于 Hub，无需重复安装。",
         skillExistsInHubNamed:
           '「{{name}}」已存在于 Hub，可前往"我的 Skills"中更新。',
         targetExists: "目标目录已存在，请先清理后重试。",

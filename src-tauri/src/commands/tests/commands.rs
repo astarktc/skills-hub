@@ -108,6 +108,17 @@ fn command_error_wire_shape_is_internally_tagged() {
     let json = serde_json::to_value(CommandError::Cancelled).unwrap();
     assert_eq!(json, serde_json::json!({ "code": "CANCELLED" }));
 
+    let json = serde_json::to_value(CommandError::from_anyhow(anyhow::anyhow!(
+        SignalError::SkillExists {
+            name: "react-best-practices".to_string()
+        }
+    )))
+    .unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "code": "SKILL_EXISTS", "name": "react-best-practices" })
+    );
+
     let json = serde_json::to_value(CommandError::RateLimited { reset_minutes: 5 }).unwrap();
     assert_eq!(
         json,

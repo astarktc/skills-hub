@@ -212,7 +212,19 @@ fn installs_local_skill_and_updates_from_source() {
             Ok(_) => panic!("expected error"),
             Err(e) => e,
         };
-    assert!(format!("{:#}", err).contains("skill already exists"));
+    // The collision crosses core as a typed signal, never as prose.
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::SkillExists {
+            name: "local1".to_string()
+        })
+    );
+    // A rejected install leaves no staging residue in the central repo.
+    let entries: Vec<String> = fs::read_dir(&paths.central_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(entries, vec!["local1".to_string()]);
 }
 
 #[test]

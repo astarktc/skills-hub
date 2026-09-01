@@ -131,12 +131,10 @@ describe("describeCommandError", () => {
     ).toBe("errors.deleteCleanupFailed\n- /a: denied\n- /b: busy");
   });
 
-  it("recovers the skill name from the legacy central-repo prose", () => {
+  it("names the colliding skill for SKILL_EXISTS", () => {
     expect(
       describeCommandError(
-        new Error(
-          'skill already exists in central repo: "/home/x/.skillshub/react-best-practices"',
-        ),
+        { code: "SKILL_EXISTS", name: "react-best-practices" },
         t,
       ),
     ).toBe('errors.skillExistsInHubNamed {"name":"react-best-practices"}');

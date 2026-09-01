@@ -4,7 +4,11 @@ import type { GitCloneFailureKind } from "./GitCloneFailureKind";
 /**
  * Structured command failure crossing the IPC seam.
  */
-export type CommandError = { "code": "TOOL_NOT_INSTALLED", tool: string, } | { "code": "TARGET_EXISTS", path: string, } | { "code": "TOOL_NOT_WRITABLE", tool: string, path: string, } | { "code": "SKILL_INVALID", reason: string, } | { "code": "MULTI_SKILLS" } | { "code": "DUPLICATE_PROJECT", path: string, } | { "code": "ASSIGNMENT_EXISTS", project: string, skill: string, tool: string, } | { "code": "NOT_FOUND", kind: string, id: string, } | { "code": "CANCELLED" } | { "code": "RATE_LIMITED", 
+export type CommandError = { "code": "TOOL_NOT_INSTALLED", tool: string, } | { "code": "TARGET_EXISTS", path: string, } | { "code": "TOOL_NOT_WRITABLE", tool: string, path: string, } | { "code": "SKILL_INVALID", reason: string, } | { "code": "MULTI_SKILLS" } | { "code": "SKILL_EXISTS", 
+/**
+ * Name of the skill directory already present in the central repo.
+ */
+name: string, } | { "code": "DUPLICATE_PROJECT", path: string, } | { "code": "ASSIGNMENT_EXISTS", project: string, skill: string, tool: string, } | { "code": "NOT_FOUND", kind: string, id: string, } | { "code": "CANCELLED" } | { "code": "RATE_LIMITED", 
 /**
  * Rounded-up minutes until the limit resets; 0 = unknown.
  */

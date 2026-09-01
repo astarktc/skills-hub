@@ -58,6 +58,10 @@ pub enum CommandError {
         reason: String,
     },
     MultiSkills,
+    SkillExists {
+        /// Name of the skill directory already present in the central repo.
+        name: String,
+    },
     DuplicateProject {
         path: String,
     },
@@ -178,6 +182,7 @@ impl From<SignalError> for CommandError {
             }
             SignalError::SkillInvalid { reason } => CommandError::SkillInvalid { reason },
             SignalError::MultiSkills => CommandError::MultiSkills,
+            SignalError::SkillExists { name } => CommandError::SkillExists { name },
             SignalError::DuplicateProject { path } => CommandError::DuplicateProject { path },
             SignalError::AssignmentExists {
                 project,
