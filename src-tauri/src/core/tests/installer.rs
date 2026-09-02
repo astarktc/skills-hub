@@ -1056,6 +1056,7 @@ fn update_acquisition_surfaces_a_typed_not_found() {
         &installed.skill_id,
         None,
         &StubApi::failing(404),
+        0,
     )
     .err()
     .expect("a removed skill fails its update");
@@ -1092,6 +1093,7 @@ fn update_acquisition_uses_the_fast_path() {
         &installed.skill_id,
         None,
         &StubApi::serving("2222222222222222222222222222222222222222"),
+        0,
     )
     .expect("update acquires");
 

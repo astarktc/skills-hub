@@ -162,36 +162,25 @@ pub(crate) struct UpdateOutcome {
 /// Acquisition (git clone / local copy) runs **outside** the mutation guard:
 /// it touches no Sync target and can be slow. Only finalize + Propagation,
 /// which do, run inside it (see [`finalize_and_propagate_unlocked`]).
-/// Sequential today, one self-contained result per skill so a bounded
-/// parallel pool is a drop-in later.
+/// One self-contained result per skill, which is what lets the Refresh batch
+/// run this over a bounded parallel pool (`core::refresh`).
 ///
 /// The git side is one call into `core::git_acquisition`: the fast path, the
 /// clone fallback, sparse fetching, cancellation and the legacy subpath
 /// backfill all live there. This adapter only picks the destination and
 /// records what came back.
-pub(crate) fn acquire_managed_skill_update(
-    paths: &InstallerPaths,
-    store: &SkillStore,
-    skill_id: &str,
-    cancel: Option<&CancelToken>,
-) -> Result<AcquiredUpdate> {
-    acquire_managed_skill_update_with(
-        paths,
-        store,
-        skill_id,
-        cancel,
-        &HttpGithubApi::new(super::settings::github_token(store)?),
-    )
-}
-
-/// [`acquire_managed_skill_update`] with the GitHub adapter injected, so the
-/// update path's fast-path wiring is testable without HTTP.
+///
+/// The GitHub adapter and the git-cache freshness window are **parameters**,
+/// not per-skill settings reads: the Refresh batch resolves both once and
+/// hands every pool worker its own adapter (`GithubApi` carries no `Send`
+/// bound).
 pub(crate) fn acquire_managed_skill_update_with(
     paths: &InstallerPaths,
     store: &SkillStore,
     skill_id: &str,
     cancel: Option<&CancelToken>,
     api: &dyn GithubApi,
+    ttl_ms: i64,
 ) -> Result<AcquiredUpdate> {
     let mut record = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
         anyhow::anyhow!(SignalError::NotFound {
@@ -242,7 +231,7 @@ pub(crate) fn acquire_managed_skill_update_with(
                 intent,
                 dest: &staging_dir,
                 cache_dir: &paths.cache_dir,
-                ttl_ms: super::settings::git_cache_ttl_ms(store),
+                ttl_ms,
                 cancel,
                 allow_fast_path: true,
             },

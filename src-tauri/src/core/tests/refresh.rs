@@ -5,11 +5,15 @@
 //! faked by creating a Tool's detect dir under the temp home.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
+use crate::core::cancel_token::CancelToken;
+use crate::core::errors::SignalError;
 use crate::core::installer::{install_local_skill, InstallerPaths};
 use crate::core::refresh::{
-    refresh_managed_skills, RefreshPhase, RefreshPolicy, RefreshSelection, SkillRefreshStatus,
+    refresh_managed_skills, refresh_managed_skills_with, RefreshPhase, RefreshPolicy,
+    RefreshSelection, SkillRefreshStatus,
 };
 use crate::core::skill_store::SkillStore;
 use crate::core::tool_adapters::adapter_by_key;
@@ -210,5 +214,322 @@ fn a_skill_that_fails_acquisition_is_excluded_from_the_reassert() {
             .expect("query")
             .is_none(),
         "a skill whose bytes could not be acquired must not be synced anywhere"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase one — the bounded acquisition pool
+// ---------------------------------------------------------------------------
+
+/// N local-source Managed skills named `s0..s{n-1}` in one temp fixture.
+struct PoolFixture {
+    _dir: tempfile::TempDir,
+    paths: InstallerPaths,
+    store: SkillStore,
+    _sources: Vec<tempfile::TempDir>,
+    names: Vec<String>,
+}
+
+fn pool_fixture(n: usize) -> PoolFixture {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let paths = InstallerPaths {
+        home: dir.path().join("home"),
+        central_dir: dir.path().join("central"),
+        cache_dir: dir.path().join("cache"),
+    };
+    fs::create_dir_all(&paths.home).expect("create home");
+    let store = SkillStore::new(dir.path().join("test.db"));
+    store.ensure_schema().expect("ensure_schema");
+
+    let mut sources = Vec::new();
+    let mut names = Vec::new();
+    for i in 0..n {
+        let name = format!("s{i}");
+        let source = tempfile::tempdir().expect("source tempdir");
+        fs::write(
+            source.path().join("SKILL.md"),
+            format!("---\nname: {name}\n---\n"),
+        )
+        .expect("write SKILL.md");
+        install_local_skill(&paths, &store, source.path(), Some(name.clone())).expect("install");
+        sources.push(source);
+        names.push(name);
+    }
+    PoolFixture {
+        _dir: dir,
+        paths,
+        store,
+        _sources: sources,
+        names,
+    }
+}
+
+/// The real (fast, local-source) acquisition with an artificial latency, so a
+/// pooled batch is distinguishable from a sequential one by wall clock alone.
+fn slow_acquire<'a>(
+    f: &'a PoolFixture,
+    delay: impl Fn(&str) -> std::time::Duration + Sync + 'a,
+) -> impl Fn(&str, Option<&CancelToken>) -> anyhow::Result<crate::core::installer::AcquiredUpdate>
+       + Sync
+       + 'a {
+    move |skill_id, cancel| {
+        let name = f
+            .store
+            .get_skill_by_id(skill_id)
+            .expect("query")
+            .expect("skill")
+            .name;
+        std::thread::sleep(delay(&name));
+        crate::core::installer::acquire_managed_skill_update_with(
+            &f.paths,
+            &f.store,
+            skill_id,
+            cancel,
+            &crate::core::git_acquisition::HttpGithubApi::new(None),
+            0,
+        )
+    }
+}
+
+const LATENCY_MS: u64 = 150;
+
+/// Eight skills, each acquisition ~150ms: sequential would be ~1.2s, a pool of
+/// four is ~0.3s. Overlap is the only way to come in under 60% of sequential.
+#[test]
+fn acquisitions_overlap_instead_of_running_one_at_a_time() {
+    let f = pool_fixture(8);
+    let acquire = slow_acquire(&f, |_| std::time::Duration::from_millis(LATENCY_MS));
+
+    let started = std::time::Instant::now();
+    let report = refresh_managed_skills_with(
+        &f.paths,
+        &f.store,
+        RefreshSelection::All,
+        RefreshPolicy::default(),
+        None,
+        3000,
+        |_| {},
+        &acquire,
+    )
+    .expect("refresh");
+    let elapsed = started.elapsed();
+
+    assert_eq!(report.skills.len(), 8);
+    assert!(
+        report
+            .skills
+            .iter()
+            .all(|o| matches!(o.status, SkillRefreshStatus::Refreshed { .. })),
+        "every skill is refreshed: {report:?}"
+    );
+    let sequential = std::time::Duration::from_millis(LATENCY_MS * 8);
+    assert!(
+        elapsed < sequential.mul_f32(0.6),
+        "pooled acquisition took {elapsed:?}, sequential would be {sequential:?}"
+    );
+}
+
+/// Progress reads as completion order, not dispatch order: the slowest skill
+/// is dispatched first and still ticks last, and the indices count completions
+/// 1..n.
+#[test]
+fn acquire_progress_counts_completions_in_completion_order() {
+    let f = pool_fixture(4);
+    // s0 is dispatched first and is by far the slowest.
+    let acquire = slow_acquire(&f, |name| {
+        std::time::Duration::from_millis(if name == "s0" { 400 } else { 20 })
+    });
+
+    let mut ticks: Vec<(usize, String)> = Vec::new();
+    refresh_managed_skills_with(
+        &f.paths,
+        &f.store,
+        RefreshSelection::All,
+        RefreshPolicy::default(),
+        None,
+        3000,
+        |p| {
+            if p.phase == RefreshPhase::Acquiring {
+                ticks.push((p.index, p.skill_name.to_string()));
+            }
+        },
+        &acquire,
+    )
+    .expect("refresh");
+
+    assert_eq!(
+        ticks.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
+        vec![1, 2, 3, 4],
+        "acquire ticks count completions"
+    );
+    assert_eq!(
+        ticks.last().map(|(_, name)| name.as_str()),
+        Some("s0"),
+        "the slowest skill ticks last even though it was dispatched first: {ticks:?}"
+    );
+    assert_eq!(f.names.len(), 4);
+}
+
+/// Cancellation observed mid-batch: nothing is finalized (no `Applying` tick,
+/// no central copy rewritten) and every skill is reported as cancelled.
+#[test]
+fn cancelling_mid_batch_finalizes_nothing() {
+    let f = pool_fixture(6);
+    let token = CancelToken::new();
+    let completed = Mutex::new(0usize);
+    let inner = slow_acquire(&f, |_| std::time::Duration::from_millis(30));
+    let acquire = |skill_id: &str, cancel: Option<&CancelToken>| {
+        let result = inner(skill_id, cancel);
+        let mut done = completed.lock().expect("lock");
+        *done += 1;
+        if *done == 2 {
+            token.cancel();
+        }
+        result
+    };
+    let before: Vec<(String, i64)> = f
+        .store
+        .list_skills()
+        .expect("list")
+        .into_iter()
+        .map(|s| (s.id, s.updated_at))
+        .collect();
+
+    let mut phases: Vec<RefreshPhase> = Vec::new();
+    let report = refresh_managed_skills_with(
+        &f.paths,
+        &f.store,
+        RefreshSelection::All,
+        RefreshPolicy::default(),
+        Some(&token),
+        3000,
+        |p| phases.push(p.phase),
+        &acquire,
+    )
+    .expect("a cancelled batch still reports");
+
+    assert_eq!(report.skills.len(), 6, "every selected skill is reported");
+    assert!(
+        !phases.contains(&RefreshPhase::Applying),
+        "a cancelled batch never enters the apply phase: {phases:?}"
+    );
+    assert!(
+        report.skills.iter().all(|o| matches!(
+            &o.status,
+            SkillRefreshStatus::Failed { error }
+                if error.downcast_ref::<SignalError>() == Some(&SignalError::Cancelled)
+        )),
+        "cancelled skills are reported as cancelled: {report:?}"
+    );
+    let after: Vec<(String, i64)> = f
+        .store
+        .list_skills()
+        .expect("list")
+        .into_iter()
+        .map(|s| (s.id, s.updated_at))
+        .collect();
+    assert_eq!(before, after, "no skill was finalized");
+}
+
+// ---------------------------------------------------------------------------
+// Same-repository skills under the pool
+// ---------------------------------------------------------------------------
+
+fn git(args: &[&str], cwd: &Path) {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@example.com")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@example.com")
+        .output()
+        .expect("run git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// A local repository holding one skill under `skills/a`, cloned by path.
+fn fixture_repo() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    git(&["init", "-q", "-b", "main", "."], dir.path());
+    fs::create_dir_all(dir.path().join("skills/a")).expect("mkdir");
+    fs::write(
+        dir.path().join("skills/a/SKILL.md"),
+        "---\nname: shared\n---\n",
+    )
+    .expect("write");
+    git(&["add", "-A"], dir.path());
+    git(&["commit", "-q", "-m", "init"], dir.path());
+    dir
+}
+
+/// Two Managed skills from the same repository are acquired concurrently by
+/// the pool. `git_cache`'s per-key lock is what keeps that safe: both land the
+/// same revision and the cache entry's metadata is intact.
+#[test]
+fn two_skills_from_one_repository_share_the_cache_without_corrupting_it() {
+    let f = pool_fixture(0);
+    let repo = fixture_repo();
+    let url = repo.path().to_string_lossy().to_string();
+    for name in ["one", "two"] {
+        crate::core::installer::install_git_skill_from_selection(
+            &f.paths,
+            &f.store,
+            &url,
+            "skills/a",
+            Some(name.to_string()),
+            None,
+        )
+        .expect("install from the fixture repo");
+    }
+
+    let report = refresh_managed_skills(
+        &f.paths,
+        &f.store,
+        RefreshSelection::All,
+        RefreshPolicy::default(),
+        None,
+        3000,
+        |_| {},
+    )
+    .expect("refresh");
+
+    let revisions: Vec<String> = report
+        .skills
+        .iter()
+        .map(|o| match &o.status {
+            SkillRefreshStatus::Refreshed {
+                source_revision, ..
+            } => source_revision
+                .clone()
+                .expect("a git skill records its revision"),
+            other => panic!("expected a refreshed skill, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(revisions.len(), 2);
+    assert_eq!(
+        revisions[0], revisions[1],
+        "both skills come from the same commit"
+    );
+
+    let cache_root = f.paths.cache_dir.join("skills-hub-git-cache");
+    let entries: Vec<PathBuf> = fs::read_dir(&cache_root)
+        .expect("read cache root")
+        .map(|e| e.expect("entry").path())
+        .collect();
+    assert_eq!(
+        entries.len(),
+        1,
+        "one clone URL + subpath is one cache entry"
+    );
+    let meta = fs::read_to_string(entries[0].join(".skills-hub-cache.json"))
+        .expect("the cache metadata survives concurrent fetches");
+    assert!(
+        meta.contains(&revisions[0]),
+        "cache metadata records the fetched head: {meta}"
     );
 }

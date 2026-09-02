@@ -4,9 +4,16 @@
 //! Two phases, deliberately separate:
 //!
 //! 1. **Acquire** every selected skill's bytes into its Staging dir, outside
-//!    the mutation guard. Sequential today, but structured as one
-//!    self-contained result per skill, so a bounded parallel pool drops in
-//!    without touching phase two.
+//!    the mutation guard, over a bounded pool of [`ACQUIRE_POOL_SIZE`] worker
+//!    threads. One self-contained result per skill, so phase two is untouched
+//!    by the concurrency: it still sees a plain list. Same-repository fetches
+//!    stay safe because `core::git_cache` locks per cache key.
+//!
+//!    Cancellation stops *dispatching* new acquisitions and lets in-flight
+//!    ones finish; once it has been observed, phase two runs for **no** skill
+//!    (there is no partial finalize) and every selected skill is reported as
+//!    [`SignalError::Cancelled`]. Staging dirs already acquired are dropped,
+//!    which deletes them.
 //! 2. **Apply** each acquired skill under the mutation guard: finalize, then
 //!    Propagation. The guard is taken *per skill*, not once for the batch, so
 //!    listings and other mutations are not blocked for the whole run.
@@ -20,14 +27,20 @@
 //! is reported by Propagation. Only reading the skill list can fail the
 //! operation.
 
+use std::sync::mpsc;
+use std::sync::Mutex;
+
 use anyhow::Result;
 
 use super::cancel_token::CancelToken;
+use super::errors::SignalError;
+use super::git_acquisition::HttpGithubApi;
 use super::global_sync::{
     sync_skills_to_tools_unlocked, BatchPolicy, BatchSkill, BatchTargetStatus,
 };
 use super::installer::{
-    acquire_managed_skill_update, finalize_and_propagate_unlocked, AcquiredUpdate, InstallerPaths,
+    acquire_managed_skill_update_with, finalize_and_propagate_unlocked, AcquiredUpdate,
+    InstallerPaths,
 };
 use super::mutation_guard;
 use super::propagation::{
@@ -57,7 +70,20 @@ pub enum RefreshPhase {
     Applying,
 }
 
-/// Progress tick emitted before each per-skill step of each phase.
+/// How many acquisitions may be in flight at once. A constant, not a setting:
+/// core reads no environment for it (see the module doc of
+/// `core::environment`).
+const ACQUIRE_POOL_SIZE: usize = 4;
+
+/// One skill's acquisition, as the pool sees it. `Sync` because every worker
+/// calls the same `&dyn Fn`.
+type AcquireFn<'a> = dyn Fn(&str, Option<&CancelToken>) -> Result<AcquiredUpdate> + Sync + 'a;
+
+/// Progress tick emitted per per-skill step of each phase.
+///
+/// In the acquire phase the tick is emitted when a skill's acquisition
+/// **completes**, so `index` counts completions (1..=total) and reads as
+/// completion order — with a pool there is no meaningful dispatch index.
 pub struct RefreshProgress<'a> {
     /// 1-based index within the phase.
     pub index: usize,
@@ -102,23 +128,96 @@ pub fn refresh_managed_skills(
     policy: RefreshPolicy,
     cancel: Option<&CancelToken>,
     now: i64,
+    on_progress: impl FnMut(RefreshProgress),
+) -> Result<RefreshReport> {
+    // Both DB-backed acquisition inputs are read once for the batch rather
+    // than per skill: the pool must not funnel through the store. A settings
+    // read that fails is not worth failing the batch for — no token is the
+    // shipped default.
+    let token = super::settings::github_token(store).unwrap_or_default();
+    let ttl_ms = super::settings::git_cache_ttl_ms(store);
+    refresh_managed_skills_with(
+        paths,
+        store,
+        selection,
+        policy,
+        cancel,
+        now,
+        on_progress,
+        &|skill_id, cancel| {
+            // One adapter per acquisition: `GithubApi` carries no `Send`
+            // bound, so nothing is shared between workers.
+            acquire_managed_skill_update_with(
+                paths,
+                store,
+                skill_id,
+                cancel,
+                &HttpGithubApi::new(token.clone()),
+                ttl_ms,
+            )
+        },
+    )
+}
+
+/// [`refresh_managed_skills`] with acquisition injected, so the pool's
+/// concurrency, ordering and cancellation behaviour are testable without the
+/// network (and without real latency being the only signal).
+// One argument more than the public entry point it mirrors: the injected
+// acquisition. Grouping the batch's parameters into a struct would change the
+// public signature for the seam's benefit alone.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn refresh_managed_skills_with(
+    paths: &InstallerPaths,
+    store: &SkillStore,
+    selection: RefreshSelection,
+    policy: RefreshPolicy,
+    cancel: Option<&CancelToken>,
+    now: i64,
     mut on_progress: impl FnMut(RefreshProgress),
+    acquire: &AcquireFn,
 ) -> Result<RefreshReport> {
     let selected = select_skills(store, &selection)?;
     let total = selected.len();
 
-    // Phase 1 — acquire (unlocked, slow I/O).
-    let mut acquired: Vec<(String, String, Result<AcquiredUpdate>)> = Vec::with_capacity(total);
-    for (index, (skill_id, skill_name)) in selected.into_iter().enumerate() {
+    // Phase 1 — acquire (unlocked, slow I/O) over the bounded pool.
+    let (results, cancelled) = acquire_all(&selected, cancel, acquire, |done, name| {
         on_progress(RefreshProgress {
-            index: index + 1,
+            index: done,
             total,
-            skill_name: &skill_name,
+            skill_name: name,
             phase: RefreshPhase::Acquiring,
+        })
+    });
+
+    if cancelled {
+        // No partial finalize: dropping `results` drops every Staging dir,
+        // which removes it.
+        drop(results);
+        return Ok(RefreshReport {
+            skills: selected
+                .into_iter()
+                .map(|(skill_id, skill_name)| SkillRefreshOutcome {
+                    skill_id,
+                    skill_name,
+                    status: SkillRefreshStatus::Failed {
+                        error: anyhow::anyhow!(SignalError::Cancelled),
+                    },
+                })
+                .collect(),
         });
-        let result = acquire_managed_skill_update(paths, store, &skill_id, cancel);
-        acquired.push((skill_id, skill_name, result));
     }
+
+    let acquired: Vec<(String, String, Result<AcquiredUpdate>)> = selected
+        .into_iter()
+        .zip(results)
+        .map(|((skill_id, skill_name), result)| {
+            (
+                skill_id,
+                skill_name,
+                result.unwrap_or_else(|| Err(anyhow::anyhow!(SignalError::Cancelled))),
+            )
+        })
+        .collect();
 
     // Phase 2 — apply (finalize + propagate) one skill at a time under the guard.
     let mut report = RefreshReport::default();
@@ -150,6 +249,67 @@ pub fn refresh_managed_skills(
         });
     }
     Ok(report)
+}
+
+/// Run every selected skill's acquisition over a pool of at most
+/// [`ACQUIRE_POOL_SIZE`] threads, in dispatch-order slots.
+///
+/// `on_done` is called on the **coordinating thread** as each acquisition
+/// lands (so the progress callback needs no `Send`), with the running
+/// completion count. Returns the per-skill slots (a `None` slot is a skill
+/// that was never dispatched) and whether cancellation was observed.
+fn acquire_all(
+    selected: &[(String, String)],
+    cancel: Option<&CancelToken>,
+    acquire: &AcquireFn,
+    mut on_done: impl FnMut(usize, &str),
+) -> (Vec<Option<Result<AcquiredUpdate>>>, bool) {
+    let total = selected.len();
+    let mut slots: Vec<Option<Result<AcquiredUpdate>>> = (0..total).map(|_| None).collect();
+    if total == 0 {
+        return (slots, is_cancelled(cancel));
+    }
+
+    let next: Mutex<usize> = Mutex::new(0);
+    let (tx, rx) = mpsc::channel::<(usize, Result<AcquiredUpdate>)>();
+    let mut done = 0usize;
+
+    std::thread::scope(|scope| {
+        for _ in 0..total.min(ACQUIRE_POOL_SIZE) {
+            let tx = tx.clone();
+            let next = &next;
+            scope.spawn(move || loop {
+                let index = {
+                    let mut cursor = next.lock().unwrap_or_else(|err| err.into_inner());
+                    // Cancellation stops dispatch, never an in-flight job.
+                    if is_cancelled(cancel) || *cursor >= total {
+                        break;
+                    }
+                    let index = *cursor;
+                    *cursor += 1;
+                    index
+                };
+                let result = acquire(&selected[index].0, cancel);
+                if tx.send((index, result)).is_err() {
+                    break;
+                }
+            });
+        }
+        // The coordinator holds no sender of its own, so `recv` ends when the
+        // last worker is done.
+        drop(tx);
+        while let Ok((index, result)) = rx.recv() {
+            done += 1;
+            on_done(done, &selected[index].1);
+            slots[index] = Some(result);
+        }
+    });
+
+    (slots, is_cancelled(cancel) || done < total)
+}
+
+fn is_cancelled(cancel: Option<&CancelToken>) -> bool {
+    cancel.is_some_and(|token| token.is_cancelled())
 }
 
 /// `(id, name)` for every selected skill. An id with no row is dropped rather
