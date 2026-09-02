@@ -449,3 +449,97 @@ fn parse_skill_md_with_reason_reports_each_failure() {
         "missing_name"
     );
 }
+
+// ── Invocation mode ──
+
+#[test]
+fn invocation_mode_maps_every_frontmatter_shape() {
+    use super::{parse_invocation_mode, InvocationMode as M};
+
+    let cases: Vec<(&str, M)> = vec![
+        // No frontmatter at all, and unterminated frontmatter: default.
+        ("just a body\n", M::UserAndModel),
+        ("---\nname: x\n", M::UserAndModel),
+        ("", M::UserAndModel),
+        // Keys absent.
+        ("---\nname: x\ndescription: d\n---\nbody\n", M::UserAndModel),
+        // Explicit permissive values.
+        (
+            "---\nname: x\ndisable-model-invocation: false\nuser-invocable: true\n---\n",
+            M::UserAndModel,
+        ),
+        // User only.
+        (
+            "---\nname: x\ndisable-model-invocation: true\n---\n",
+            M::UserOnly,
+        ),
+        (
+            "---\nname: x\ndisable-model-invocation: yes\n---\n",
+            M::UserOnly,
+        ),
+        (
+            "---\nname: x\ndisable-model-invocation: ON\n---\n",
+            M::UserOnly,
+        ),
+        (
+            "---\nname: x\ndisable-model-invocation: 1\n---\n",
+            M::UserOnly,
+        ),
+        (
+            "---\nname: x\ndisable-model-invocation: \"true\"\n---\n",
+            M::UserOnly,
+        ),
+        // Model only.
+        ("---\nname: x\nuser-invocable: false\n---\n", M::ModelOnly),
+        ("---\nname: x\nuser-invocable: no\n---\n", M::ModelOnly),
+        ("---\nname: x\nuser-invocable: 0\n---\n", M::ModelOnly),
+        // Both restrictions: nobody can invoke it.
+        (
+            "---\nname: x\ndisable-model-invocation: true\nuser-invocable: false\n---\n",
+            M::Neither,
+        ),
+        // Malformed values fall back to each key's default.
+        (
+            "---\nname: x\ndisable-model-invocation: maybe\nuser-invocable: sometimes\n---\n",
+            M::UserAndModel,
+        ),
+        (
+            "---\nname: x\ndisable-model-invocation:\n---\n",
+            M::UserAndModel,
+        ),
+        // Nested mappings never contribute top-level keys.
+        (
+            "---\nname: x\nmetadata:\n  disable-model-invocation: true\n---\n",
+            M::UserAndModel,
+        ),
+        // A restriction after the closing marker is body text, not frontmatter.
+        (
+            "---\nname: x\n---\ndisable-model-invocation: true\n",
+            M::UserAndModel,
+        ),
+    ];
+
+    for (raw, expected) in cases {
+        assert_eq!(parse_invocation_mode(raw), expected, "input: {raw:?}");
+    }
+}
+
+#[test]
+fn invocation_mode_for_dir_defaults_without_readable_skill_md() {
+    let dir = tempfile::tempdir().unwrap();
+    // No SKILL.md at all.
+    assert_eq!(
+        super::invocation_mode_for_dir(dir.path()),
+        super::InvocationMode::UserAndModel
+    );
+    // Case-insensitive lookup, restriction honoured.
+    fs::write(
+        dir.path().join("Skill.md"),
+        "---\nname: x\nuser-invocable: false\n---\n",
+    )
+    .unwrap();
+    assert_eq!(
+        super::invocation_mode_for_dir(dir.path()),
+        super::InvocationMode::ModelOnly
+    );
+}

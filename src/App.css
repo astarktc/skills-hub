@@ -417,6 +417,37 @@
   gap: 10px;
 }
 
+/* Invocation-mode badge: only rendered for skills whose SKILL.md frontmatter
+   restricts who may invoke them (the default mode renders no badge). */
+.invocation-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: help;
+  background: var(--bg-element);
+  color: var(--text-tertiary);
+  border: 1px solid var(--border-subtle);
+}
+
+.invocation-badge.user-only {
+  background: var(--accent-soft-bg);
+  border-color: var(--accent-soft-border);
+  color: var(--text-secondary);
+}
+
+.invocation-badge.model-only {
+  background: var(--warning-soft-bg);
+  border-color: var(--warning-soft-border);
+  color: var(--text-secondary);
+}
+
 .skill-name {
   font-weight: 600;
   color: var(--text-primary);

@@ -22,7 +22,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::skill_matching::MatchableSkill;
 
@@ -333,6 +333,97 @@ pub(crate) fn parse_skill_md_with_reason(
     }
     let name = name.ok_or("missing_name")?;
     Ok((name, desc))
+}
+
+// ── Invocation mode ──
+
+/// Who may invoke a skill, derived from its `SKILL.md` frontmatter.
+///
+/// Two Claude Code frontmatter keys govern this (the agentskills.io
+/// specification does not define them yet):
+/// `disable-model-invocation: true` blocks automatic model invocation, and
+/// `user-invocable: false` hides the skill from the `/` menu. Both default to
+/// the permissive value, so a skill with no frontmatter — or with malformed
+/// frontmatter — is [`InvocationMode::UserAndModel`]. Setting both keys is the
+/// documented recipe for hiding a skill from everyone: [`InvocationMode::Neither`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum InvocationMode {
+    /// Default: the user can type `/name` and the model can load it on its own.
+    #[default]
+    UserAndModel,
+    /// `disable-model-invocation: true` — only the user can invoke it.
+    UserOnly,
+    /// `user-invocable: false` — only the model can invoke it.
+    ModelOnly,
+    /// Both keys restrict invocation — neither the user nor the model can invoke it.
+    Neither,
+}
+
+/// Invocation mode of the skill installed at `dir` (its `SKILL.md` is read
+/// fresh). An unreadable or absent `SKILL.md` yields the default mode.
+pub fn invocation_mode_for_dir(dir: &Path) -> InvocationMode {
+    let Some(path) = find_skill_md(dir) else {
+        return InvocationMode::default();
+    };
+    match std::fs::read_to_string(path) {
+        Ok(text) => parse_invocation_mode(&text),
+        Err(_) => InvocationMode::default(),
+    }
+}
+
+/// Map a `SKILL.md`'s raw text to its [`InvocationMode`]. Never fails: any
+/// shape that is not a recognised restriction means the default mode.
+pub fn parse_invocation_mode(text: &str) -> InvocationMode {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.first().map(|v| v.trim()) != Some("---") {
+        return InvocationMode::default();
+    }
+    let mut model_disabled = false;
+    let mut user_invocable = true;
+    let mut found_end = false;
+    for raw in lines.iter().skip(1) {
+        let l = raw.trim();
+        if l == "---" {
+            found_end = true;
+            break;
+        }
+        // Indented lines belong to a nested mapping (e.g. `metadata:`), not to
+        // the top-level keys this reads.
+        if raw.starts_with(char::is_whitespace) {
+            continue;
+        }
+        if let Some(v) = l.strip_prefix("disable-model-invocation:") {
+            if let Some(flag) = parse_frontmatter_bool(v) {
+                model_disabled = flag;
+            }
+        } else if let Some(v) = l.strip_prefix("user-invocable:") {
+            if let Some(flag) = parse_frontmatter_bool(v) {
+                user_invocable = flag;
+            }
+        }
+    }
+    if !found_end {
+        return InvocationMode::default();
+    }
+    match (user_invocable, model_disabled) {
+        (true, false) => InvocationMode::UserAndModel,
+        (true, true) => InvocationMode::UserOnly,
+        (false, false) => InvocationMode::ModelOnly,
+        (false, true) => InvocationMode::Neither,
+    }
+}
+
+/// A frontmatter boolean, accepting the spellings Claude Code accepts
+/// (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`). `None` for anything else,
+/// so a malformed value falls back to the key's default.
+fn parse_frontmatter_bool(value: &str) -> Option<bool> {
+    let value = clean_frontmatter_value(value).to_ascii_lowercase();
+    match value.as_str() {
+        "true" | "yes" | "on" | "1" => Some(true),
+        "false" | "no" | "off" | "0" => Some(false),
+        _ => None,
+    }
 }
 
 fn clean_frontmatter_value(value: &str) -> String {

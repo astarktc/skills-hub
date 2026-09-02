@@ -154,6 +154,7 @@ export function useExploreState({
           updated_at: Date.now(),
           last_sync_at: null,
           status: "",
+          invocation_mode: "user-and-model",
           targets: [],
         };
         onOpenExploreDetail(exploreManagedSkill);

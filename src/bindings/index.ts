@@ -225,6 +225,27 @@ export type IntRange = {
 	max: number,
 };
 
+/**
+ *  Who may invoke a skill, derived from its `SKILL.md` frontmatter.
+ * 
+ *  Two Claude Code frontmatter keys govern this (the agentskills.io
+ *  specification does not define them yet):
+ *  `disable-model-invocation: true` blocks automatic model invocation, and
+ *  `user-invocable: false` hides the skill from the `/` menu. Both default to
+ *  the permissive value, so a skill with no frontmatter — or with malformed
+ *  frontmatter — is [`InvocationMode::UserAndModel`]. Setting both keys is the
+ *  documented recipe for hiding a skill from everyone: [`InvocationMode::Neither`].
+ */
+export type InvocationMode = 
+/**  Default: the user can type `/name` and the model can load it on its own. */
+"user-and-model" | 
+/**  `disable-model-invocation: true` — only the user can invoke it. */
+"user-only" | 
+/**  `user-invocable: false` — only the model can invoke it. */
+"model-only" | 
+/**  Both keys restrict invocation — neither the user nor the model can invoke it. */
+"neither";
+
 export type LocalSkillCandidate = {
 	name: string,
 	description: string | null,
@@ -244,6 +265,11 @@ export type ManagedSkillDto = {
 	updated_at: number,
 	last_sync_at: number | null,
 	status: string,
+	/**
+	 *  Who may invoke the skill, read from the central copy's `SKILL.md`
+	 *  frontmatter at list time (not persisted).
+	 */
+	invocation_mode: InvocationMode,
 	targets: SkillTargetDto[],
 };
 

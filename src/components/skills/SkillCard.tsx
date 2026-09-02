@@ -11,6 +11,7 @@ import {
 import { SiGithub } from "@icons-pack/react-simple-icons";
 import { toast } from "sonner";
 import type { TFunction } from "i18next";
+import InvocationModeBadge from "./InvocationModeBadge";
 import type { ManagedSkill, ToolOption } from "./types";
 
 type GithubInfo = {
@@ -104,6 +105,7 @@ const SkillCard = ({
           >
             {skill.name}
           </button>
+          <InvocationModeBadge mode={skill.invocation_mode} t={t} />
         </div>
         {skill.description ? (
           <div className="skill-desc">{skill.description}</div>

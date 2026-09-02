@@ -52,6 +52,7 @@ function skill(id: string, name: string, targets: string[] = []): ManagedSkill {
     updated_at: 0,
     last_sync_at: null,
     status: "active",
+    invocation_mode: "user-and-model",
     targets: targets.map((tool) => ({
       tool,
       mode: "symlink",

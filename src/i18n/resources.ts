@@ -20,6 +20,17 @@ export const resources = {
       manualAddHint:
         "Have a Git URL or local path? Click <b>Manual</b> to add directly",
       moreTools: "+{{count}} more",
+      invocationMode: {
+        userOnly: "User only",
+        modelOnly: "Model only",
+        neither: "Not invocable",
+        userOnlyTooltip:
+          "Only you can invoke this skill, by typing /skill-name. The AI agent will not load it on its own (disable-model-invocation: true).",
+        modelOnlyTooltip:
+          "Only the AI agent can invoke this skill. It is hidden from the / menu (user-invocable: false).",
+        neitherTooltip:
+          "Neither you nor the AI agent can invoke this skill: both disable-model-invocation: true and user-invocable: false are set.",
+      },
       installSuccess: '"{{name}}" installed and synced to {{count}} tools',
       settings: "Settings",
       language: "Language",
@@ -475,6 +486,17 @@ export const resources = {
       manualAdd: "手动添加",
       manualAddHint: "有 Git URL 或本地路径？点击<b>手动添加</b>直接导入",
       moreTools: "+{{count}} 个",
+      invocationMode: {
+        userOnly: "仅用户",
+        modelOnly: "仅模型",
+        neither: "无法调用",
+        userOnlyTooltip:
+          "只有你可以通过输入 /skill-name 调用该 Skill，AI 智能体不会自动加载它（disable-model-invocation: true）。",
+        modelOnlyTooltip:
+          "只有 AI 智能体可以调用该 Skill，它不会出现在 / 菜单中（user-invocable: false）。",
+        neitherTooltip:
+          "你和 AI 智能体都无法调用该 Skill：frontmatter 同时设置了 disable-model-invocation: true 与 user-invocable: false。",
+      },
       installSuccess: '"{{name}}" 已安装并同步到 {{count}} 个工具',
       settings: "设置",
       language: "语言",

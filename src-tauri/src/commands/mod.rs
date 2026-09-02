@@ -28,6 +28,7 @@ use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
 use crate::core::settings::{
     apply_setting, load_settings, record_installed_tools, AppSettings, SettingUpdate,
 };
+use crate::core::skill_discovery::{invocation_mode_for_dir, InvocationMode};
 use crate::core::skill_store::SkillStore;
 use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
@@ -632,6 +633,9 @@ pub struct ManagedSkillDto {
     pub updated_at: i64,
     pub last_sync_at: Option<i64>,
     pub status: String,
+    /// Who may invoke the skill, read from the central copy's `SKILL.md`
+    /// frontmatter at list time (not persisted).
+    pub invocation_mode: InvocationMode,
     pub targets: Vec<SkillTargetDto>,
 }
 
@@ -697,6 +701,9 @@ fn get_managed_skills_impl(store: &SkillStore) -> Result<Vec<ManagedSkillDto>, C
                 })
                 .collect();
 
+            let invocation_mode =
+                invocation_mode_for_dir(std::path::Path::new(&skill.central_path));
+
             ManagedSkillDto {
                 id: skill.id,
                 name: skill.name,
@@ -708,6 +715,7 @@ fn get_managed_skills_impl(store: &SkillStore) -> Result<Vec<ManagedSkillDto>, C
                 updated_at: skill.updated_at,
                 last_sync_at: skill.last_sync_at,
                 status: skill.status,
+                invocation_mode,
                 targets,
             }
         })

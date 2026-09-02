@@ -11,6 +11,7 @@ export type { OnboardingPlan } from "../../bindings";
 // struct (and generated binding) is ManagedSkillDto.
 export type { ManagedSkillDto as ManagedSkill } from "../../bindings";
 export type { SkillTargetDto } from "../../bindings";
+export type { InvocationMode } from "../../bindings";
 export type { SyncStatus } from "../../bindings";
 export type { SyncMode } from "../../bindings";
 export type { GitSkillCandidate } from "../../bindings";
