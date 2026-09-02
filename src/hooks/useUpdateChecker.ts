@@ -4,6 +4,7 @@ import type { Update } from "@tauri-apps/plugin-updater";
 import { toast } from "sonner";
 import { describeCommandError } from "../commandError";
 import { isTauri } from "../lib/tauri";
+import { ignoredUpdateVersionPreference } from "../lib/preferences";
 import type { TranslateFn } from "./useStatusReporter";
 
 /**
@@ -26,9 +27,7 @@ export function useUpdateChecker(t: TranslateFn) {
 
   useEffect(() => {
     if (!isTauri) return;
-    const ignoredVersion = localStorage.getItem(
-      "skills-ignored-update-version",
-    );
+    const ignoredVersion = ignoredUpdateVersionPreference.read();
     import("@tauri-apps/plugin-updater")
       .then(({ check }) => check())
       .then(async (update) => {
@@ -61,10 +60,7 @@ export function useUpdateChecker(t: TranslateFn) {
 
   const dismissUpdateForever = useCallback(() => {
     if (updateAvailableVersion) {
-      localStorage.setItem(
-        "skills-ignored-update-version",
-        updateAvailableVersion,
-      );
+      ignoredUpdateVersionPreference.write(updateAvailableVersion);
     }
     setUpdateAvailableVersion(null);
     setUpdateBody(null);

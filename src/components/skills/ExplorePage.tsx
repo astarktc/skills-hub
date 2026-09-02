@@ -2,6 +2,7 @@ import { memo, useMemo } from "react";
 import { Download, Eye, EyeOff, Plus, Search, Star } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { FeaturedSkillDto, ManagedSkill, OnlineSkillDto } from "./types";
+import { repoInfo } from "../../lib/skillPresentation";
 
 type ExplorePageProps = {
   featuredSkills: FeaturedSkillDto[];
@@ -182,11 +183,8 @@ const ExplorePage = ({
                         <div className="explore-card-info">
                           <div className="explore-card-name">{skill.name}</div>
                           <div className="explore-card-author">
-                            {
-                              skill.source_url
-                                .replace("https://github.com/", "")
-                                .split("/tree/")[0]
-                            }
+                            {repoInfo(skill.source_url)?.label ??
+                              skill.source_url}
                           </div>
                         </div>
                         {installed ? (
@@ -292,7 +290,8 @@ const ExplorePage = ({
                                 {skill.name}
                               </div>
                               <div className="explore-card-author">
-                                {skill.source}
+                                {repoInfo(skill.source_url)?.label ??
+                                  skill.source}
                               </div>
                             </div>
                             {installed ? (

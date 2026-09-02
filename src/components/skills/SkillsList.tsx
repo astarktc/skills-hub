@@ -3,11 +3,7 @@ import { GitBranch, MessageCircle } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { ManagedSkill, OnboardingPlan, ToolOption } from "./types";
 import SkillCard from "./SkillCard";
-
-type GithubInfo = {
-  label: string;
-  href: string;
-};
+import { groupSkillsByRepo } from "../../lib/skillPresentation";
 
 type SkillsListProps = {
   plan: OnboardingPlan | null;
@@ -16,9 +12,6 @@ type SkillsListProps = {
   viewMode: "list" | "auto-grid" | "dense-grid";
   installedTools: ToolOption[];
   loading: boolean;
-  getGithubInfo: (url: string | null | undefined) => GithubInfo | null;
-  getSkillSourceLabel: (skill: ManagedSkill) => string;
-  formatRelative: (ms: number | null | undefined) => string;
   onReviewImport: () => void;
   onUpdateSkill: (skill: ManagedSkill) => void;
   onDeleteSkill: (skillId: string) => void;
@@ -36,9 +29,6 @@ const SkillsList = ({
   viewMode,
   installedTools,
   loading,
-  getGithubInfo,
-  getSkillSourceLabel,
-  formatRelative,
   onReviewImport,
   onUpdateSkill,
   onDeleteSkill,
@@ -50,39 +40,11 @@ const SkillsList = ({
 }: SkillsListProps) => {
   const groups = useMemo(() => {
     if (!groupByRepo) return null;
-    const map = new Map<string, ManagedSkill[]>();
-    for (const skill of visibleSkills) {
-      const ref = skill.source_ref ?? "";
-      const isGitUrl =
-        ref.startsWith("git+") ||
-        ref.startsWith("https://") ||
-        ref.startsWith("http://") ||
-        ref.includes("github.com");
-      const ghInfo = isGitUrl && ref ? getGithubInfo(ref) : null;
-      const key = isGitUrl ? (ghInfo?.label ?? ref) : "__local__";
-      const list = map.get(key);
-      if (list) {
-        list.push(skill);
-      } else {
-        map.set(key, [skill]);
-      }
-    }
-    const entries = [...map.keys()].map((key) => {
-      const isRepo = key !== "__local__" && key.includes("/");
-      return {
-        key,
-        label: key === "__local__" ? t("localGroup") : key || t("ungrouped"),
-        href: isRepo ? `https://github.com/${key}` : null,
-        skills: map.get(key)!,
-      };
+    return groupSkillsByRepo(visibleSkills, {
+      local: t("localGroup"),
+      ungrouped: t("ungrouped"),
     });
-    entries.sort((a, b) => {
-      if (a.key === "__local__" && b.key !== "__local__") return 1;
-      if (b.key === "__local__" && a.key !== "__local__") return -1;
-      return a.label.toLowerCase().localeCompare(b.label.toLowerCase());
-    });
-    return entries;
-  }, [groupByRepo, visibleSkills, t, getGithubInfo]);
+  }, [groupByRepo, visibleSkills, t]);
 
   const renderSkill = (skill: ManagedSkill) => (
     <SkillCard
@@ -90,9 +52,6 @@ const SkillsList = ({
       skill={skill}
       installedTools={installedTools}
       loading={loading}
-      getGithubInfo={getGithubInfo}
-      getSkillSourceLabel={getSkillSourceLabel}
-      formatRelative={formatRelative}
       onUpdate={onUpdateSkill}
       onDelete={onDeleteSkill}
       onToggleTool={onToggleTool}

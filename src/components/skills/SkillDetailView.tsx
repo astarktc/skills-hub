@@ -22,13 +22,17 @@ import type { TFunction } from "i18next";
 import type { InvokeTauri } from "../../lib/tauri";
 import type { ManagedSkill, SkillFileEntry } from "./types";
 import { describeCommandError } from "../../commandError";
+import {
+  formatRelativeTime,
+  repoInfo,
+  sourceKind,
+} from "../../lib/skillPresentation";
 
 // ─── Types ───────────────────────────────────────────
 type SkillDetailViewProps = {
   skill: ManagedSkill;
   onBack: () => void;
   invokeTauri: InvokeTauri;
-  formatRelative: (ms: number | null | undefined) => string;
   t: TFunction;
   isExplorePreview?: boolean;
   onInstall?: () => void;
@@ -409,7 +413,6 @@ const SkillDetailView = ({
   skill,
   onBack,
   invokeTauri,
-  formatRelative,
   t,
   isExplorePreview = false,
   onInstall,
@@ -494,13 +497,12 @@ const SkillDetailView = ({
     });
   }, []);
 
-  const sourceLabel = skill.source_type.toLowerCase().includes("git")
-    ? (skill.source_ref?.replace(/^https?:\/\/(www\.)?github\.com\//, "") ?? "")
+  const isGitSource = sourceKind(skill) === "git";
+  const sourceLabel = isGitSource
+    ? (repoInfo(skill.source_ref)?.label ?? skill.source_ref ?? "")
     : (skill.source_ref ?? "");
 
-  const SourceIcon = skill.source_type.toLowerCase().includes("git")
-    ? GitBranch
-    : Folder;
+  const SourceIcon = isGitSource ? GitBranch : Folder;
 
   return (
     <div className="detail-view">
@@ -536,7 +538,7 @@ const SkillDetailView = ({
           ) : null}
           <span className="detail-meta-item">
             <Clock size={13} />
-            {formatRelative(skill.updated_at)}
+            {formatRelativeTime(skill.updated_at, t)}
           </span>
           <span className="detail-meta-dot">&middot;</span>
           <span className="detail-meta-item">

@@ -13,19 +13,16 @@ import { toast } from "sonner";
 import type { TFunction } from "i18next";
 import InvocationModeBadge from "./InvocationModeBadge";
 import type { ManagedSkill, ToolOption } from "./types";
-
-type GithubInfo = {
-  label: string;
-  href: string;
-};
+import {
+  formatRelativeTime,
+  repoInfo,
+  skillSourceLabel,
+} from "../../lib/skillPresentation";
 
 type SkillCardProps = {
   skill: ManagedSkill;
   installedTools: ToolOption[];
   loading: boolean;
-  getGithubInfo: (url: string | null | undefined) => GithubInfo | null;
-  getSkillSourceLabel: (skill: ManagedSkill) => string;
-  formatRelative: (ms: number | null | undefined) => string;
   onUpdate: (skill: ManagedSkill) => void;
   onDelete: (skillId: string) => void;
   onToggleTool: (skill: ManagedSkill, toolId: string) => void;
@@ -41,9 +38,6 @@ const SkillCard = ({
   skill,
   installedTools,
   loading,
-  getGithubInfo,
-  getSkillSourceLabel,
-  formatRelative,
   onUpdate,
   onDelete,
   onToggleTool,
@@ -60,7 +54,7 @@ const SkillCard = ({
   ) : (
     <Box size={20} />
   );
-  const github = getGithubInfo(skill.source_ref);
+  const github = repoInfo(skill.source_ref);
   const copyValue = (github?.href ?? skill.source_ref ?? "").trim();
 
   const handleCopy = async () => {
@@ -137,7 +131,7 @@ const SkillCard = ({
                 onClick={() => void handleCopy()}
                 disabled={!copyValue}
               >
-                <span className="mono">{getSkillSourceLabel(skill)}</span>
+                <span className="mono">{skillSourceLabel(skill)}</span>
                 <span className="copy-icon" aria-hidden="true">
                   <Copy size={12} />
                 </span>
@@ -146,7 +140,7 @@ const SkillCard = ({
           )}
           <div className="skill-source time">
             <span className="dot">•</span>
-            {formatRelative(skill.updated_at)}
+            {formatRelativeTime(skill.updated_at, t)}
           </div>
         </div>
         <div

@@ -6,8 +6,8 @@ import type {
 } from "../components/skills/types";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import type { StatusReporter, TranslateFn } from "./useStatusReporter";
+import { themePreference as storedThemePreference } from "../lib/preferences";
 
-const themeStorageKey = "skills-theme";
 const ZOOM_PRESETS = [0.75, 1, 1.1, 1.25, 1.5, 1.75, 2];
 
 /**
@@ -62,13 +62,7 @@ export function useSettingsState({
   const { setError, setSuccessToastMessage, formatError } = reporter;
   const [themePreference, setThemePreference] = useState<
     "system" | "light" | "dark"
-  >(() => {
-    if (typeof window === "undefined") return "system";
-    const stored = window.localStorage.getItem(themeStorageKey);
-    if (stored === "light" || stored === "dark" || stored === "system")
-      return stored;
-    return "system";
-  });
+  >(() => storedThemePreference.read());
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
   const [zoomLevel, setZoomLevel] = useState(PRE_LOAD_PLACEHOLDERS.zoomLevel);
   const [storagePath, setStoragePath] = useState<string>(t("notAvailable"));
@@ -158,11 +152,7 @@ export function useSettingsState({
       themePreference === "system" ? systemTheme : themePreference;
     document.documentElement.dataset.theme = resolvedTheme;
     document.documentElement.style.colorScheme = resolvedTheme;
-    try {
-      window.localStorage.setItem(themeStorageKey, themePreference);
-    } catch {
-      // ignore storage failures
-    }
+    storedThemePreference.write(themePreference);
   }, [systemTheme, themePreference]);
 
   useEffect(() => {

@@ -28,6 +28,13 @@ import { useSkillLibrary } from "./hooks/useSkillLibrary";
 import { useStatusReporter } from "./hooks/useStatusReporter";
 import { useSyncOrchestration } from "./hooks/useSyncOrchestration";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
+import { usePersistedPreference } from "./hooks/usePersistedPreference";
+import { filterAndSortSkills } from "./lib/skillPresentation";
+import {
+  groupByRepoPreference,
+  languagePreference,
+  viewModePreference,
+} from "./lib/preferences";
 import { invokeTauri, isTauri } from "./lib/tauri";
 import type { ManagedSkill } from "./components/skills/types";
 
@@ -37,9 +44,6 @@ import type { ManagedSkill } from "./components/skills/types";
 function App() {
   const { t, i18n } = useTranslation();
   const language = i18n.resolvedLanguage ?? i18n.language ?? "en";
-  const languageStorageKey = "skills-language";
-  const groupByRepoStorageKey = "skills-groupByRepo";
-  const viewModeStorageKey = "skills-viewMode";
   const toggleLanguage = useCallback(() => {
     void i18n.changeLanguage(language === "en" ? "zh" : "en");
   }, [i18n, language]);
@@ -56,57 +60,14 @@ function App() {
   const [detailSkill, setDetailSkill] = useState<ManagedSkill | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "updated" | "added">("name");
-  const [groupByRepo, setGroupByRepo] = useState(() => {
-    try {
-      return window.localStorage.getItem(groupByRepoStorageKey) === "true";
-    } catch {
-      return false;
-    }
-  });
-  const [viewMode, setViewMode] = useState<"list" | "auto-grid" | "dense-grid">(
-    () => {
-      try {
-        const stored = window.localStorage.getItem(viewModeStorageKey);
-        if (
-          stored === "list" ||
-          stored === "auto-grid" ||
-          stored === "dense-grid"
-        )
-          return stored;
-      } catch {
-        // ignore storage failures
-      }
-      return "list";
-    },
-  );
+  const [groupByRepo, setGroupByRepo] =
+    usePersistedPreference(groupByRepoPreference);
+  const [viewMode, setViewMode] = usePersistedPreference(viewModePreference);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
     if (language !== "en" && language !== "zh") return;
-    try {
-      window.localStorage.setItem(languageStorageKey, language);
-    } catch {
-      // ignore storage failures
-    }
-  }, [language, languageStorageKey]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(groupByRepoStorageKey, String(groupByRepo));
-    } catch {
-      // ignore storage failures
-    }
-  }, [groupByRepo, groupByRepoStorageKey]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(viewModeStorageKey, viewMode);
-    } catch {
-      // ignore storage failures
-    }
-  }, [viewMode, viewModeStorageKey]);
+    languagePreference.write(language);
+  }, [language]);
 
   // World hooks, wired in dependency order: reporter → sync → library →
   // settings/explore/addFlow. Hooks never import each other; every
@@ -144,89 +105,14 @@ function App() {
     updateNow,
   } = updates;
 
-  const formatRelative = (ms: number | null | undefined) => {
-    if (!ms) return t("relative.empty");
-    const diff = Date.now() - ms;
-    if (diff < 0) return t("relative.empty");
-    const minutes = Math.floor(diff / 60000);
-    if (minutes < 1) return t("relative.justNow");
-    if (minutes < 60) {
-      return t("relative.minutesAgo", { minutes });
-    }
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) {
-      return t("relative.hoursAgo", { hours });
-    }
-    const days = Math.floor(hours / 24);
-    return t("relative.daysAgo", { days });
-  };
-
-  const getSkillSourceLabel = (skill: ManagedSkill) => {
-    const key = skill.source_type.toLowerCase();
-    if (key.includes("git") && skill.source_ref) {
-      return skill.source_ref;
-    }
-    return skill.central_path;
-  };
-
-  const getGithubInfo = (url: string | null | undefined) => {
-    if (!url) return null;
-    const normalized = url.replace(/^git\+/, "");
-    try {
-      const parsed = new URL(normalized);
-      if (!parsed.hostname.includes("github.com")) return null;
-      const parts = parsed.pathname.split("/").filter(Boolean);
-      const owner = parts[0];
-      const repo = parts[1]?.replace(/\.git$/, "");
-      if (!owner || !repo) return null;
-      return {
-        label: `${owner}/${repo}`,
-        href: `https://github.com/${owner}/${repo}`,
-      };
-    } catch {
-      const match = normalized.match(/github\.com\/([^/]+)\/([^/#?]+)/i);
-      if (!match) return null;
-      const owner = match[1];
-      const repo = match[2].replace(/\.git$/, "");
-      return {
-        label: `${owner}/${repo}`,
-        href: `https://github.com/${owner}/${repo}`,
-      };
-    }
-  };
-
-  const visibleSkills = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    const wildcardPattern = query.includes("*")
-      ? new RegExp(
-          query
-            .split("*")
-            .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-            .join(".*"),
-        )
-      : null;
-    const matchesQuery = (value: string) =>
-      wildcardPattern ? wildcardPattern.test(value) : value.includes(query);
-    const filtered = library.managedSkills.filter((skill) => {
-      if (!query) return true;
-      return (
-        matchesQuery(skill.name.toLowerCase()) ||
-        matchesQuery(skill.source_ref?.toLowerCase() ?? "") ||
-        matchesQuery(skill.central_path.toLowerCase()) ||
-        matchesQuery(skill.source_type.toLowerCase())
-      );
-    });
-    const sorted = [...filtered].sort((a, b) => {
-      if (sortBy === "name") {
-        return a.name.localeCompare(b.name);
-      }
-      if (sortBy === "added") {
-        return (b.created_at ?? 0) - (a.created_at ?? 0);
-      }
-      return (b.updated_at ?? 0) - (a.updated_at ?? 0);
-    });
-    return sorted;
-  }, [library.managedSkills, searchQuery, sortBy]);
+  const visibleSkills = useMemo(
+    () =>
+      filterAndSortSkills(library.managedSkills, {
+        query: searchQuery,
+        sort: sortBy,
+      }),
+    [library.managedSkills, searchQuery, sortBy],
+  );
 
   const handleOpenSettings = useCallback(() => {
     setActiveView("settings");
@@ -339,7 +225,6 @@ function App() {
                 : handleBackToList
             }
             invokeTauri={invokeTauri}
-            formatRelative={formatRelative}
             t={t}
             isExplorePreview={activeView === "explore-detail"}
             onInstall={
@@ -374,9 +259,6 @@ function App() {
               viewMode={viewMode}
               installedTools={sync.installedTools}
               loading={loading}
-              getGithubInfo={getGithubInfo}
-              getSkillSourceLabel={getSkillSourceLabel}
-              formatRelative={formatRelative}
               onReviewImport={addFlow.handleReviewImport}
               onUpdateSkill={library.handleUpdateSkill}
               onDeleteSkill={library.handleDeletePrompt}

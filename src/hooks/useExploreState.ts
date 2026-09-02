@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type {
   FeaturedSkillDto,
   ManagedSkill,
@@ -6,8 +6,8 @@ import type {
 } from "../components/skills/types";
 import { invokeTauri } from "../lib/tauri";
 import type { StatusReporter, TranslateFn } from "./useStatusReporter";
-
-const showHiddenStorageKey = "explore-showHidden";
+import { showHiddenPreference } from "../lib/preferences";
+import { usePersistedPreference } from "./usePersistedPreference";
 
 export type ExploreStateDeps = {
   t: TranslateFn;
@@ -36,22 +36,8 @@ export function useExploreState({
   const [searchLoading, setSearchLoading] = useState(false);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [hiddenSkills, setHiddenSkills] = useState<Set<string>>(new Set());
-  const [showHidden, setShowHidden] = useState(() => {
-    try {
-      return window.localStorage.getItem(showHiddenStorageKey) === "true";
-    } catch {
-      return false;
-    }
-  });
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(showHiddenStorageKey, String(showHidden));
-    } catch {
-      // ignore
-    }
-  }, [showHidden]);
+  const [showHidden, setShowHidden] =
+    usePersistedPreference(showHiddenPreference);
 
   const loadFeaturedSkills = useCallback(async () => {
     if (featuredSkills.length > 0) return;

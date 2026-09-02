@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import React, { memo, useCallback, useMemo, useState } from "react";
 import {
   TriangleAlert,
   ArrowUpDown,
@@ -18,6 +18,13 @@ import type {
 import type { ManagedSkill } from "../skills/types";
 import { describeCommandError } from "../../commandError";
 import { SYNC_STATUS_CLASS } from "../../syncStatus";
+import {
+  filterAndSortSkills,
+  formatRelativeTime,
+  groupSkillsByRepo,
+} from "../../lib/skillPresentation";
+import { projectsGroupByRepoPreference } from "../../lib/preferences";
+import { usePersistedPreference } from "../../hooks/usePersistedPreference";
 
 export type AssignmentMatrixProps = {
   project: ProjectDto | null;
@@ -39,35 +46,6 @@ export type AssignmentMatrixProps = {
   onConfigureTools: () => void;
   t: TFunction;
 };
-
-function formatRelativeTime(timestampMs: number, t: TFunction): string {
-  const diffMs = Date.now() - timestampMs;
-  const diffSec = Math.floor(diffMs / 1000);
-  if (diffSec < 60) return t("projects.justNow");
-  const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return t("projects.minutesAgo", { count: diffMin });
-  const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return t("projects.hoursAgo", { count: diffHr });
-  const diffDay = Math.floor(diffHr / 24);
-  return t("projects.daysAgo", { count: diffDay });
-}
-
-function shortRepoLabel(url: string): string | null {
-  try {
-    const normalized = url.replace(/^git\+/, "");
-    const parsed = new URL(normalized);
-    if (!parsed.hostname.includes("github.com")) return null;
-    const parts = parsed.pathname.split("/").filter(Boolean);
-    const owner = parts[0];
-    const repo = parts[1]?.replace(/\.git$/, "");
-    if (!owner || !repo) return null;
-    return `${owner}/${repo}`;
-  } catch {
-    const match = url.match(/github\.com\/([^/]+)\/([^/#?]+)/i);
-    if (!match) return null;
-    return `${match[1]}/${match[2].replace(/\.git$/, "")}`;
-  }
-}
 
 const AssignmentMatrix = ({
   project,
@@ -92,63 +70,22 @@ const AssignmentMatrix = ({
     return max > 0 ? max : null;
   }, [assignments]);
 
-  const projectsGroupByRepoKey = "skills-projects-groupByRepo";
   const [sortBy, setSortBy] = useState<"name" | "updated" | "added">("name");
-  const [groupByRepo, setGroupByRepo] = useState(() => {
-    try {
-      return window.localStorage.getItem(projectsGroupByRepoKey) === "true";
-    } catch {
-      return false;
-    }
-  });
+  const [groupByRepo, setGroupByRepo] = usePersistedPreference(
+    projectsGroupByRepoPreference,
+  );
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(projectsGroupByRepoKey, String(groupByRepo));
-    } catch {
-      // ignore storage failures
-    }
-  }, [groupByRepo]);
-
-  const sortedSkills = useMemo(() => {
-    return [...skills].sort((a, b) => {
-      if (sortBy === "name") return a.name.localeCompare(b.name);
-      if (sortBy === "added") return (b.created_at ?? 0) - (a.created_at ?? 0);
-      return (b.updated_at ?? 0) - (a.updated_at ?? 0);
-    });
-  }, [skills, sortBy]);
+  const sortedSkills = useMemo(
+    () => filterAndSortSkills(skills, { query: "", sort: sortBy }),
+    [skills, sortBy],
+  );
 
   const skillGroups = useMemo(() => {
     if (!groupByRepo) return null;
-    const map = new Map<string, ManagedSkill[]>();
-    for (const skill of sortedSkills) {
-      const ref = skill.source_ref ?? "";
-      const isGitUrl =
-        ref.startsWith("git+") ||
-        ref.startsWith("https://") ||
-        ref.startsWith("http://") ||
-        ref.includes("github.com");
-      const key = isGitUrl ? (shortRepoLabel(ref) ?? ref) : "__local__";
-      const list = map.get(key);
-      if (list) {
-        list.push(skill);
-      } else {
-        map.set(key, [skill]);
-      }
-    }
-    const entries = [...map.keys()].map((key) => {
-      return {
-        key,
-        label: key === "__local__" ? t("localGroup") : key || t("ungrouped"),
-        skills: map.get(key)!,
-      };
+    return groupSkillsByRepo(sortedSkills, {
+      local: t("localGroup"),
+      ungrouped: t("ungrouped"),
     });
-    entries.sort((a, b) => {
-      if (a.key === "__local__" && b.key !== "__local__") return 1;
-      if (b.key === "__local__" && a.key !== "__local__") return -1;
-      return a.label.toLowerCase().localeCompare(b.label.toLowerCase());
-    });
-    return entries;
   }, [groupByRepo, sortedSkills, t]);
 
   const assignmentMap = useMemo(() => {
@@ -208,7 +145,9 @@ const AssignmentMatrix = ({
   }
 
   const lastSyncDisplay = lastSyncAt
-    ? t("projects.lastSyncTime", { time: formatRelativeTime(lastSyncAt, t) })
+    ? t("projects.lastSyncTime", {
+        time: formatRelativeTime(lastSyncAt, t),
+      })
     : t("projects.lastSyncNever");
 
   return (
