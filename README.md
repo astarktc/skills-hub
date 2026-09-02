@@ -12,9 +12,9 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 - **Explore page**: Browse featured skills (ClawHub, updated daily) and search online (skills.sh) — one-click install & sync to all detected tools
 - **Skill detail view**: Click a skill name to browse its files with Markdown rendering and syntax highlighting (40+ languages)
 - **Unified view**: Managed skills and per-tool activation status
-- **Onboarding migration**: Scan existing skills in installed tools, import into the Central Repo, and sync
-- **Import sources**: Local folder / Git URL (including multi-skill repo selection, `.claude/skills/` directory support)
-- **Update**: Refresh from source; propagate updates to copy-mode targets
+- **Onboarding migration**: Scan existing skills in installed tools, import into the Central Repo, and sync — an original is removed only when it is byte-identical to the imported copy; a same-named but different sibling is kept and reported
+- **Import sources**: Local folder / Git URL (including multi-skill repo selection, `.claude/skills/` directory support); GitHub sources download through the GitHub API where possible (recording the real commit) and fall back to cloning
+- **Update / Refresh**: Re-fetch from source and bring every synced copy back into line; refreshing many skills fetches them in parallel and reports the outcome of each skill and each tool it touched
 - **New tool detection**: Detect newly installed tools and prompt to sync managed skills
 
 ### My Skills
@@ -129,6 +129,8 @@ cargo test
 - Where are skills stored? The Central Repo defaults to `~/.skillshub` (configurable in Settings).
 - Does Cursor get symlinks too? Yes, since Skills Hub 1.2.1 — Cursor 2.5+ (IDE) and the current Cursor CLI discover symlinked skill directories. Skills synced to Cursor by an earlier Skills Hub version stay as copies until you re-sync them with overwrite. If you run an older Cursor, keep it updated or re-sync after upgrading.
 - Why does sync sometimes fall back to copy? Skills Hub prefers symlink/junction, but on some systems (especially Windows) symlinks may be restricted; in that case it falls back to directory copy.
+- Why does a skill still show up in a tool after I unsync or delete it? If Skills Hub could not remove the folder (permissions, a locked file), it keeps the entry and marks it `error` instead of forgetting it, so the path stays visible and the same action can be retried. The same holds for unassigning a skill from a project and for removing a project or one of its tools.
+- Why does the project assignment matrix sometimes say statuses were not re-checked? Sync operations run one at a time. If one is running while the matrix loads, the stored statuses are shown without re-checking them against disk; they refresh once the operation finishes.
 - What does `TARGET_EXISTS|...` mean? The target folder already exists and the operation did not overwrite it (default is non-destructive). Remove the existing folder or retry with the appropriate overwrite flow.
 - macOS Gatekeeper note (unsigned/notarized builds, may vary by macOS version): if you see “damaged” or “unverified developer”, run `xattr -cr "/Applications/Skills Hub.app"` (https://v2.tauri.app/distribute/#macos).
 

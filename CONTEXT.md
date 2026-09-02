@@ -61,20 +61,32 @@ How an artifact was materialised — `symlink`, `junction` (Windows fallback) or
 _Avoid_: link type, strategy
 
 **Propagation**:
-Re-materialising every Sync target of one Managed skill after its central copy changed, in both scopes (global target rows and project assignment rows), honouring each Tool's capability and each row's Sync mode (links need nothing; copies are re-copied). Every target resolves to synced / skipped / failed as report data — one target's failure never fails the operation. Update and Refresh acquire bytes and finalize; only propagation touches targets.
+Re-materialising every Sync target of one Managed skill after its central copy changed, in both scopes (global target rows and project assignment rows), honouring each Tool's capability and each row's Sync mode (`core/propagation.rs`). A link already follows the central copy, so it is left untouched and reported `Skipped { LinkFollowsSource }`; only a target that can drift gets new bytes, through the capability-aware sync entry point — which may re-materialise a drifting copy as a link on a symlink-capable Tool. The row records the Sync mode actually used, so it stays truthful. Every target resolves to synced / skipped / failed as report data — one target's failure never fails the operation. Update and Refresh acquire bytes and finalize; only propagation touches targets.
 _Avoid_: re-sync (that's a project operation), refresh (that's the operator action that triggers it), fan-out (that's the initial sync batch)
 
 **Refresh (all)**:
-The operator action that re-acquires every Managed skill from its source, finalizes, and propagates. With auto-sync on it also re-asserts the auto-sync invariant — every Managed skill is synced to every installed Tool — so targets that never existed are created, not just existing ones refreshed. Per-skill and per-target outcomes are report data.
+The operator action that re-acquires every Managed skill from its source, finalizes, and propagates (`core/refresh.rs`), as one backend batch; a single skill's Update is a batch of one. Two phases: acquisition runs outside the Mutation guard over a bounded pool (4 workers, progress ticking in completion order), then each skill is finalized and propagated under the guard, taken per skill. With auto-sync on it also re-asserts the auto-sync invariant — every Managed skill is synced to every installed Tool — so targets that never existed are created, not just existing ones refreshed. Per-skill and per-target outcomes are report data. Cancellation stops dispatching new acquisitions and finalizes nothing: once observed, no skill reaches phase two.
 _Avoid_: update all, re-deploy
 
 **Artifact removal**:
-Taking a Sync target off disk and settling its row, planned by scope — one Managed skill, one skill×Tool pair, one Project, one Project×Tool pair, or everything — and executed once with one presence rule and one failure rule: a row whose artifact could not be removed is kept with Sync status `error` (never deleted blind) so the failure stays observable; rows are deleted only on successful removal (`docs/adr/0002-keep-row-with-error-on-failed-artifact-removal.md`). Callers apply their own final policy by reading the report.
+Taking a Sync target off disk and settling its row, planned by scope and executed once with one presence rule and one failure rule: a row whose artifact could not be removed is kept with Sync status `error` (never deleted blind) so the failure stays observable; rows are deleted only on successful removal (`docs/adr/0002-keep-row-with-error-on-failed-artifact-removal.md`). The scopes are `Skill` (everything about one Managed skill, including its central copy and record), `SkillGlobal`, `SkillTool`, `Project`, `ProjectTool`, `ProjectSkillTool` and `EveryGlobalTarget`; a scope carries the roots its own planning needs (only `SkillTool` needs the operator's home — every other scope resolves paths from stored rows). Callers apply their own final policy by reading the report.
 _Avoid_: cleanup, unsync, unassign (those are the operator actions that plan a removal)
 
 **Onboarding import**:
-Adopting a skill that already exists in a Tool's skills directory as a Managed skill: the operator picks one variant per name-group; the chosen variant is finalized and propagated (auto-sync on) or its originals are removed (auto-sync off). Only originals byte-identical to the chosen variant are removed — a divergent sibling is left in place and reported, because sharing a name never proved it was the same skill.
+Adopting a skill that already exists in a Tool's skills directory as a Managed skill (`core/onboarding_import.rs`): the operator picks one variant per name-group; the chosen variant is finalized and synced to the requested Tools (auto-sync on — its own Tool's copy, which is the import source, is overwritten in place) or its originals are removed (auto-sync off). Which paths a group owns is re-read from a fresh onboarding plan, never taken from the selection. Only originals byte-identical to the finalized central copy are removed — a divergent sibling is left in place and reported, because sharing a name never proved it was the same skill. One group's failure never stops the batch; per-group and per-target outcomes are report data.
 _Avoid_: migration, adopt, absorb
+
+**Project view**:
+The fresh state of one Project that every project mutation returns — its row (with counts and aggregate status), its configured Tools, and its reconciled assignments, plus whether the reconcile pass actually ran (`ProjectViewDto { project, tools, assignments, reconciled }`). The project world applies it instead of re-reading after a mutation.
+_Avoid_: project state, project snapshot, refresh
+
+**Mutation guard**:
+The process-wide rule that Sync-target mutations run one at a time (`core/mutation_guard.rs`): each operation entry point wraps its own body in `serialized`, the mutex is private to that module, and internals are unlocked `pub(crate)` seams — so an entry point never calls another entry point. A reader that must not queue behind a mutation uses `try_serialized`; the project listing's reconcile pass does, and reports `reconciled: false` when it skipped.
+_Avoid_: sync mutex, lock, transaction
+
+**Git acquisition**:
+Landing a skill's bytes from a git source in a directory, once, for every flow that needs it (`core/git_acquisition.rs`): given a parsed source and an intent it answers with the bytes, the revision and the strategy used. Two adapters meet at one seam — the GitHub Contents API fast path (fetches the branch SHA first, so the recorded revision is the real commit) and the clone through the git cache (sparse when a subpath is known). A GitHub 404 or 403 is an answer for the operator, raised typed and never retried as a clone; other API failures fall back.
+_Avoid_: download, fetch (that's the cache's job), clone (that's one of the two adapters)
 
 **Project sync status**:
 The precedence fold of a project's assignment statuses shown on the project list: error/missing > stale > pending > synced, `none` when the project has no assignments (`ProjectSyncStatus`, `aggregate`).

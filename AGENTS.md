@@ -78,6 +78,14 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   table test (`core/tests/tool_adapters.rs`). The Rust side is compiler-enforced; the README table is not —
   check it matches the `ToolId` variant count whenever adapters change. Tool lists shown to the UI come
   from `tool_adapters::global_tool_entries` / `project_tool_entries` — commands only map them to DTOs.
+- **Sync-target mutation**: every operation that materialises or removes a Sync target (global sync
+  batch, unsync, delete, assign/unassign/toggle, resync, configure project tools, remove project,
+  gitignore update, Refresh's apply phase, Onboarding import's apply phase) wraps its **own** body in
+  `core/mutation_guard::serialized` at its entry point — commands carry no lock state and make no
+  per-call-site decision. The mutex is private to that module; per-target internals are unlocked
+  `pub(crate)` `*_unlocked` seams. The guard is non-reentrant, so **an entry point never calls another
+  entry point** — composites call the unlocked seam. Readers that must not queue use `try_serialized`:
+  the project listing's reconcile pass takes that door and reports `reconciled: false`.
 - **UI strings**: add keys to **both** `en` and `zh` in `src/i18n/resources.ts`. No hardcoded UI text.
 - **New `core/` module**: declare it in `src-tauri/src/core/mod.rs`.
 - **DB schema change**: consider `migrate_legacy_db_if_needed` in `core/skill_store.rs` — a migration path exists.
@@ -91,8 +99,11 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   sync seam) — **world** hooks never import each other at runtime (type-only imports of another hook's
   types, narrowed with `Pick<>`, are the established pattern for declaring deps). A world may be built
   from smaller building-block hooks it owns (e.g. `useAddSkillFlow` instantiates `useCandidatePick`
-  twice); those are internal to that world, not a cross-world seam. Refresh data by re-invoking the relevant command
-  (e.g. `invokeTauri("getManagedSkills")`) after a mutation.
+  twice); those are internal to that world, not a cross-world seam. After a mutation, the **project**
+  world applies what the mutation returned (every project mutation answers with a `ProjectViewDto`;
+  `useProjectState::applyView` — no success-path refetch tail, only a failure-path `refreshView`),
+  while the **skills** world re-invokes `getManagedSkills` (`loadManagedSkills`) after refresh, import
+  and delete.
 - **Frontend tests are hook-level only** (vitest + `renderHook`, jsdom; colocated `src/**/*.test.ts`,
   type-checked by `npm run build`): mock at module seams — `src/lib/tauri.ts` for backend calls,
   `sonner` for toasts, `@tauri-apps/api/core` for `Channel`. Every hook **and component** calls the
@@ -114,8 +125,10 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   **English-primary policy**: the backend composes no user-facing prose in any language — all locales
   live in the frontend catalog; new backend messages and comments are written in English. Structured
   `detail`-style fields carry diagnostics (stderr, env-var hints, paths), never localized copy.
-  Adding a variant: Rust variant + regenerated binding + a `describeCommandError` branch + i18n keys.
-  See `docs/adr/0001-tagged-command-error-contract.md`.
+  Adding a variant: Rust variant + regenerated binding + a `describeCommandError` branch + i18n keys
+  (worked example: `PATH_OUTSIDE_TOOL_DIRS` / `SignalError::PathOutsideToolDirs`, the refusal to delete
+  a path outside every Tool skills dir — owned by the registry's
+  `tool_adapters::ensure_path_within_tool_dirs`). See `docs/adr/0001-tagged-command-error-contract.md`.
 - **`src/Layout.tsx` and `src/Dashboard.tsx` are dormant by design** — not imported by `main.tsx` or `App.tsx`.
   Leave them alone unless explicitly wiring them up.
 - Styles live in `src/App.css` / `src/index.css`. There are no CSS Modules — don't add the pattern.
@@ -129,12 +142,41 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   `SKILLS_HUB_*` **feature-flag env vars** (`git_fetcher.rs`, `sync_engine.rs`, `install_finalize.rs`) are read
   where they apply — they tune behaviour, never locate data.
 - Sync uses a triple fallback: symlink → junction (Windows) → copy.
-- **Global sync fan-out is backend-owned.** `sync_skills_to_tools` (one batch command; core engine in
-  `core/global_sync.rs`) handles installedness filtering, shared-dir dedupe, overwrite policy (batch
-  default + per-(skill,tool) overrides), DB record fan-out, and per-target results; progress streams
-  over a Tauri `Channel`. There is no per-pair sync command — never loop one in the frontend. Per-target
-  failures/skips are report data (`SyncTargetStatusDto`), not command errors. The shared-skills-dir
-  grouping reaches the UI only as `ToolInfoDto.shared_with`; do not re-derive it from `skills_dir`.
+- **Target fan-out is backend-owned — one batch command per operator action, never a frontend loop.**
+  Each streams progress over a Tauri `Channel` and answers with a report whose per-target
+  failures/skips are **report data**, not command errors:
+  - sync → `sync_skills_to_tools` (`core/global_sync.rs`): installedness filtering, shared-dir dedupe,
+    overwrite policy (batch default + per-(skill,tool) overrides), DB record fan-out.
+  - Update / Refresh (all) → `refresh_managed_skills` (`core/refresh.rs`): acquire every skill (bounded
+    pool of 4, std threads), then finalize + propagate each under the guard, plus the
+    `reassert_auto_sync` policy. A single Update is a batch of one.
+  - Onboarding import → `import_onboarding_selection` (`core/onboarding_import.rs`): admit, finalize,
+    then propagate (auto-sync on) or remove byte-identical originals (auto-sync off), per group.
+  - unsync / delete / project removal → `core/artifact_removal.rs` (below).
+  Bringing every target of one changed skill into line is **Propagation** (`core/propagation.rs`) — the
+  only writer of target rows on an update path, spanning global target rows and project assignment
+  rows, honouring each Tool's capability through `sync_engine::sync_dir_for_tool_with_overwrite`.
+  The shared-skills-dir grouping reaches the UI only as `ToolInfoDto.shared_with`; do not re-derive it
+  from `skills_dir`.
+- **Artifact removal is one module.** `core/artifact_removal.rs` plans by scope (`Skill`, `SkillGlobal`,
+  `SkillTool`, `Project`, `ProjectTool`, `ProjectSkillTool`, `EveryGlobalTarget`; a scope carries the
+  roots its planning needs), executes with one presence rule (`symlink_metadata`) and one settlement
+  rule — a row whose artifact could not be removed is **kept** with sync status `error`, rows are
+  deleted only on success (`docs/adr/0002-keep-row-with-error-on-failed-artifact-removal.md`) — and
+  reports per target. Callers (`project_ops`, `project_sync`, the unsync/delete commands) build a scope
+  and read the report; they never probe or delete a path themselves.
+- **Git bytes have two single entry points.** `git_cache::fetch_through_cache` is the only way into the
+  clone cache (per-key locks, TTL as an `i64` value from `settings::git_cache_ttl_ms`, no DB handle in
+  its interface); `git_acquisition::acquire` is the only way bytes land from a git source (GitHub
+  Contents API fast path when the source has GitHub coordinates and the intent names a subpath — real
+  commit SHA recorded; clone fallback otherwise; GitHub 404/403 raised as typed `SignalError`s, never
+  retried as a clone). Install, the Refresh acquire phase and Explore preview are adapters that only
+  choose a destination.
+- **Frontend presentation logic is pure and lives once.** `src/lib/skillPresentation.ts` owns source
+  kind, repo label/href, repo grouping, the My Skills search/sort fold and the relative-time formatter
+  (`relative.*` is the only i18n family for it); `src/lib/persistedPreference.ts` +
+  `src/lib/preferences.ts` own persisted view preferences (the literal storage keys are a compat
+  contract with existing users). Components import them; no prop carries a formatting function.
 
 ## Do not
 
@@ -145,6 +187,14 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   ticket 38; the flag is the revert lever if a tool regresses). A capability describes **one entry**: a virtual
   group's capability is its own registry fact, not the AND of its constituents (decision: v-next ticket 36).
 - Never commit `.claude/`, `.agents/`, `.gsd/`, `.mcp.json`, or `docs/conversation-logs/` (all gitignored).
+- Removal goes through `artifact_removal`: `sync_engine::remove_path_any` is called only from that
+  module (and from `onboarding_import`'s original-removal step, which pairs it with
+  `ensure_path_within_tool_dirs`) — never from `project_ops`, `project_sync` or a command.
+- Confirmations go through the Modal shell — `useSharedDirConfirmation` owns the shared-skills-dir one;
+  the app uses no native browser dialog.
+- One implementation each of relative time, repo grouping and storage access: extend
+  `skillPresentation.ts` / `preferences.ts` instead of adding a second formatter or touching
+  `localStorage` by hand.
 - Don't refactor, reformat, or "improve" code unrelated to the requested change.
 - Git uses vendored-openssl and HTTP uses rustls-tls on purpose — don't switch to system SSL.
 
@@ -156,7 +206,8 @@ This cost 18 features in v1.1.4 (`5e1f42e` "restore 18 features lost during para
 - Before merging a worktree branch: `git rebase main`, then review `git diff main...HEAD` for unexpected
   deletions in files the worktree never meant to touch.
 - Highest-risk shared files: `core/tool_adapters/mod.rs`, `core/installer.rs`, `core/project_sync.rs`,
-  `commands/mod.rs`, `src/App.tsx`.
+  `core/artifact_removal.rs`, `core/refresh.rs`, `commands/mod.rs`, `commands/projects.rs`,
+  `src/App.tsx`.
 - After merging: `git diff <pre-merge-sha>..HEAD -- src-tauri/src src/` and confirm no unintended reverts,
   then run the full gate. A green build proves structural integrity, **not** feature completeness — spot-check
   functions other worktrees recently added.

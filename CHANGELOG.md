@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-02
+
+A second architecture round (11 tickets): the operations that put skills into tools and take them out again each became one backend operation with one report. See "Internal/architecture" below.
+
+### Added
+
+- **Refresh and Update report what happened**: refreshing skills now reports the outcome of every skill and of every tool it synced to, instead of a bare success/failure. A failed fetch is named per skill and leaves that skill's synced copies untouched.
+- **Assignment matrix tells you when statuses are stale**: sync operations run one at a time, so a matrix loaded while one is running shows a notice that the statuses were not re-checked against disk, rather than presenting them as verified.
+- **Unsync reports every path it could not remove**, per tool, instead of a count.
+
+### Changed
+
+- **Refreshing many skills is faster**: sources are fetched in parallel (four at a time) and applied one at a time; progress counts completions, not positions. Cancelling stops fetching and applies nothing.
+- **Failed removals stay visible and retryable**: when a skill's folder cannot be removed from a tool (permissions, a locked file), the entry is kept and marked `error` instead of being dropped. This now holds everywhere — unsync, delete, unassign, removing a project's tool, removing a project — and deleting a skill whose removal partly failed keeps the skill so the retry can find every artifact.
+- **Onboarding import is one operation**: choosing variants and applying them is a single run with progress and a per-group report. With auto-sync off, an original is removed only when it is byte-identical to the imported copy; a same-named but divergent sibling is kept and reported.
+- **Installing from GitHub uses the API fast path** (already used by Explore preview) for install and update, recording the real commit; a clone is the fallback. A skill that does not exist in the repository, or a hit rate limit, is now reported as such on install and update instead of a generic git failure.
+- **Refusal to delete outside a tool directory** is now a dedicated, localized message (`PATH_OUTSIDE_TOOL_DIRS`).
+- **Shared skills directory confirmation** is now an in-app dialog (previously a native browser confirm) and reads the same in both places it appears.
+
+### Fixed
+
+- **Refreshing a skill can no longer leave a drifting copy**: a copy on a tool that supports symlinks is re-materialised as a link, and the recorded sync mode matches what is on disk.
+- **Repository links in the My Skills grouping**: a non-GitHub git source no longer produces a bogus `github.com` link, and the same skill now shows the same repository label on My Skills, the assignment matrix and Explore.
+
+### Internal/architecture
+
+- One process-wide **mutation guard** (`core/mutation_guard.rs`): every operation that materialises or removes a sync target serialises itself at its entry point; the command tier carries no lock state.
+- **Propagation** (`core/propagation.rs`) is the one way a changed skill reaches its targets in both scopes; **Refresh** (`core/refresh.rs`) is one batch command (`refresh_managed_skills`) with streamed progress, replacing the deleted per-skill `update_managed_skill`.
+- **Artifact removal** (`core/artifact_removal.rs`) is one module with seven scopes, one presence rule and one settlement rule (`docs/adr/0002-keep-row-with-error-on-failed-artifact-removal.md`); every project- and skill-scope removal caller plans over it.
+- **Onboarding import** (`core/onboarding_import.rs`) replaces the deleted `import_existing_skill` / `remove_skill_source` commands; the Managed-skill catalog is assembled in core (`core/skill_catalog.rs`).
+- **Project mutations return the affected project's view** (`ProjectViewDto`), so the project world applies one result instead of re-reading; per-project counts come from one aggregate query.
+- **Git**: one cache entry point with per-key locking and its first tests (`core/git_cache.rs`), and one acquisition module over the API and clone adapters (`core/git_acquisition.rs`).
+- **Frontend**: pure `src/lib/skillPresentation.ts` (source labels, repo grouping, search/sort, relative time) and `src/lib/persistedPreference.ts`; formatting props are gone from components.
+
 ## [1.2.1] - 2026-09-02
 
 ### Added
