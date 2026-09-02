@@ -47,6 +47,14 @@ export type { RemovalReportDto } from "../../bindings";
 export type { RemovalTargetDto } from "../../bindings";
 export type { RemovalScopeDto } from "../../bindings";
 export type { RemovalTargetStatusDto } from "../../bindings";
+export type { OnboardingSelectionDto } from "../../bindings";
+export type { ImportPolicyDto } from "../../bindings";
+export type { ImportProgressDto } from "../../bindings";
+export type { ImportReportDto } from "../../bindings";
+export type { ImportGroupOutcomeDto } from "../../bindings";
+export type { ImportGroupStatusDto } from "../../bindings";
+export type { ImportOriginalDto } from "../../bindings";
+export type { ImportOriginalStatusDto } from "../../bindings";
 
 // Frontend-only type (no Rust counterpart).
 export type ToolOption = {

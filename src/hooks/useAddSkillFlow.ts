@@ -1,15 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   GitSkillCandidate,
+  ImportProgressDto,
+  ImportReportDto,
   InstallResultDto,
   LocalSkillCandidate,
   OnboardingPlan,
+  OnboardingSelectionDto,
 } from "../components/skills/types";
+
 import { invokeTauri, isTauri } from "../lib/tauri";
 import { useCandidatePick } from "./useCandidatePick";
 import type { SkillLibrary } from "./useSkillLibrary";
 import type { SyncOrchestration } from "./useSyncOrchestration";
-import type { StatusReporter, TranslateFn } from "./useStatusReporter";
+import type {
+  ActionErrorEntry,
+  StatusReporter,
+  TranslateFn,
+} from "./useStatusReporter";
 
 /** The `{skill_id, name, source_path}` batch item for a freshly installed skill. */
 const toSyncItem = (created: InstallResultDto) => ({
@@ -310,93 +318,109 @@ export function useAddSkillFlow({
     [plan],
   );
 
+  /**
+   * The import report, rendered: a group that failed, a Sync target that
+   * failed, and an original the backend kept or could not remove each become
+   * one error entry. Successful groups and deliberate `removed` originals
+   * stay silent.
+   */
+  const importReportEntries = useCallback(
+    (report: ImportReportDto) => {
+      const entries: ActionErrorEntry[] = [];
+      for (const group of report.groups) {
+        const name = group.group_name;
+        if (group.status.status === "failed") {
+          entries.push({
+            title: t("errors.importFailedTitle", { name }),
+            message: formatError(group.status.error) ?? "",
+          });
+          continue;
+        }
+        for (const target of group.status.targets) {
+          if (target.status.status === "synced") continue;
+          const tool = toolLabelById[target.tool] ?? target.tool;
+          entries.push({
+            title: t("errors.syncFailedTitle", { name, tool }),
+            message:
+              target.status.error.code === "TARGET_EXISTS"
+                ? t("errors.syncTargetExistsMessage", {
+                    path: target.status.error.path,
+                  })
+                : (formatError(target.status.error) ?? ""),
+          });
+        }
+        for (const original of group.status.originals) {
+          const tool = toolLabelById[original.tool] ?? original.tool;
+          if (original.status.status === "kept_divergent") {
+            // Not a failure: the copy differs, so it was deliberately left
+            // alone — the operator decides what to do with it.
+            entries.push({
+              title: t("errors.importKeptDivergentTitle", { name, tool }),
+              message: t("errors.importKeptDivergentMessage", {
+                path: original.path,
+              }),
+            });
+          } else if (original.status.status === "failed") {
+            entries.push({
+              title: t("errors.importCleanupFailedTitle", { name, tool }),
+              message: formatError(original.status.error) ?? "",
+            });
+          }
+        }
+      }
+      return entries;
+    },
+    [formatError, t, toolLabelById],
+  );
+
+  /**
+   * Import is one backend call: the selections plus the auto-sync policy.
+   * The backend admits each chosen variant, finalizes it, and either syncs
+   * it (auto-sync on — the chosen variant's own Tool is overwritten in
+   * place) or removes the byte-identical originals; this side only states
+   * the selection and renders the report.
+   */
   const handleImport = async () => {
     if (!plan) return;
     await runAction({ successToast: t("status.importCompleted") }, async () => {
-      const collectedErrors: { title: string; message: string }[] = [];
+      const selections: OnboardingSelectionDto[] = [];
       for (const group of plan.groups) {
         if (!selected[group.name]) continue;
         const chosenPath = variantChoice[group.name] ?? group.variants[0]?.path;
         if (!chosenPath) continue;
-        const chosenVariantTool =
-          group.variants.find((v) => v.path === chosenPath)?.tool ?? null;
-
-        setActionMessage(t("actions.importExisting", { name: group.name }));
-        const installResult = await invokeTauri(
-          "importExistingSkill",
-          chosenPath,
-          group.name,
-        );
-
-        if (autoSyncEnabled) {
-          const selectedInstalledIds = getSelectedInstalledIds();
-          // The chosen variant's own tool (and its shared-dir group, expanded
-          // backend-side) may be overwritten — that copy is the import source.
-          const report = await syncSkillsToTools(
-            [
-              {
-                skill_id: installResult.skill_id,
-                name: group.name,
-                source_path: installResult.central_path,
-              },
-            ],
-            selectedInstalledIds,
-            {
-              overwriteIfSameContent: true,
-              overrides: chosenVariantTool
-                ? [
-                    {
-                      skill_id: installResult.skill_id,
-                      tool: chosenVariantTool,
-                      overwrite: true,
-                    },
-                  ]
-                : [],
-            },
-          );
-          for (const result of report.results) {
-            const status = result.status;
-            if (status.status === "synced") continue;
-            const toolLabel = toolLabelById[result.tool] ?? result.tool;
-            if (status.error.code === "TARGET_EXISTS") {
-              collectedErrors.push({
-                title: t("errors.syncFailedTitle", {
-                  name: group.name,
-                  tool: toolLabel,
-                }),
-                message: t("errors.syncTargetExistsMessage", {
-                  path: status.error.path,
-                }),
-              });
-            } else {
-              collectedErrors.push({
-                title: t("errors.syncFailedTitle", {
-                  name: group.name,
-                  tool: toolLabel,
-                }),
-                message: formatError(status.error) ?? "",
-              });
-            }
-          }
-        } else {
-          // Auto-sync OFF: clean migration -- remove originals from all tool directories
-          for (const variant of group.variants) {
-            try {
-              await invokeTauri("removeSkillSource", variant.path);
-            } catch (err) {
-              // Non-fatal: skill is already imported, cleanup failure is secondary
-              const raw = formatError(err) ?? "";
-              collectedErrors.push({
-                title: t("errors.syncFailedTitle", {
-                  name: group.name,
-                  tool: variant.tool,
-                }),
-                message: raw,
-              });
-            }
-          }
-        }
+        selections.push({
+          group_name: group.name,
+          chosen_path: chosenPath,
+          name: null,
+        });
       }
+
+      const { Channel } = await import("@tauri-apps/api/core");
+      const onProgress = new Channel<ImportProgressDto>();
+      onProgress.onmessage = (progress) => {
+        setActionMessage(
+          t(
+            progress.phase === "admitting"
+              ? "actions.importStep"
+              : "actions.importApplyStep",
+            {
+              index: progress.index,
+              total: progress.total,
+              name: progress.group_name,
+            },
+          ),
+        );
+      };
+      const report = await invokeTauri(
+        "importOnboardingSelection",
+        selections,
+        {
+          auto_sync: autoSyncEnabled,
+          tools: autoSyncEnabled ? getSelectedInstalledIds() : null,
+        },
+        onProgress,
+      );
+      const collectedErrors = importReportEntries(report);
 
       await refreshWithoutFailingAction(async () => {
         await loadManagedSkills();
@@ -473,8 +497,11 @@ export function useAddSkillFlow({
         // matching rule) -- this side only decides between install / pick.
         const target = autoSelectSkillName;
         setAutoSelectSkillName(null);
-        const { candidates, target_match } =
-          await invokeTauri("listGitSkillsCmd", url, target);
+        const { candidates, target_match } = await invokeTauri(
+          "listGitSkillsCmd",
+          url,
+          target,
+        );
         if (candidates.length === 0) {
           return action.fail(t("errors.noSkillsFoundWithHint"));
         }

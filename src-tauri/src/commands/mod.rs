@@ -16,13 +16,19 @@ use crate::core::cancel_token::CancelToken;
 use crate::core::clock::now_ms;
 use crate::core::environment::{expand_home_path, home_dir};
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
-use crate::core::global_sync::{BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus};
+use crate::core::global_sync::{
+    BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome, BatchTargetStatus,
+};
 use crate::core::installer::{
-    clone_for_explore_preview, install_git_skill_from_selection, install_local_skill,
+    clone_for_explore_preview, install_git_skill_from_selection,
     install_local_skill_from_selection, list_git_skills, list_local_skills, GitSkillListing,
     InstallResult, InstallerPaths, LocalSkillCandidate,
 };
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
+use crate::core::onboarding_import::{
+    import_onboarding_selection as import_onboarding_selection_core, ImportGroupStatus,
+    ImportPhase, ImportPolicy, ImportSelection, OriginalStatus,
+};
 use crate::core::propagation::{PropagationScope, PropagationSkip, PropagationStatus};
 use crate::core::refresh::{
     refresh_managed_skills as refresh_managed_skills_core, RefreshPhase, RefreshPolicy,
@@ -37,11 +43,9 @@ use crate::core::skill_store::SkillStore;
 use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
 };
-use crate::core::sync_engine::remove_path_any;
 use crate::core::sync_status::{SyncMode, SyncStatus};
 use crate::core::tool_adapters::{
-    ensure_path_within_tool_dirs, global_tool_entries, installed_keys, project_tool_entries,
-    ToolCatalogEntry,
+    global_tool_entries, installed_keys, project_tool_entries, ToolCatalogEntry,
 };
 
 pub use error::CommandError;
@@ -447,38 +451,41 @@ pub async fn sync_skills_to_tools(
             failed: 0,
         };
         for outcome in outcomes {
-            let status = match outcome.status {
-                BatchTargetStatus::Synced { outcome } => {
-                    report.synced += 1;
-                    SyncTargetStatusDto::Synced {
-                        mode_used: outcome.mode_used,
-                    }
-                }
-                BatchTargetStatus::Skipped { error } => {
-                    report.skipped += 1;
-                    SyncTargetStatusDto::Skipped {
-                        error: CommandError::from(error),
-                    }
-                }
-                BatchTargetStatus::Failed { error } => {
-                    report.failed += 1;
-                    SyncTargetStatusDto::Failed {
-                        error: CommandError::from(error),
-                    }
-                }
-            };
-            report.results.push(SyncTargetResultDto {
-                skill_id: outcome.skill_id,
-                skill_name: outcome.skill_name,
-                tool: outcome.tool_key,
-                status,
-            });
+            let result = to_sync_target_result_dto(outcome);
+            match result.status {
+                SyncTargetStatusDto::Synced { .. } => report.synced += 1,
+                SyncTargetStatusDto::Skipped { .. } => report.skipped += 1,
+                SyncTargetStatusDto::Failed { .. } => report.failed += 1,
+            }
+            report.results.push(result);
         }
         Ok::<_, anyhow::Error>(report)
     })
     .await
     .map_err(CommandError::internal)?
     .map_err(CommandError::from_anyhow)
+}
+
+/// The one wire shape for a (skill, tool) sync outcome — shared by the sync
+/// batch and the Onboarding import report.
+fn to_sync_target_result_dto(outcome: BatchTargetOutcome) -> SyncTargetResultDto {
+    let status = match outcome.status {
+        BatchTargetStatus::Synced { outcome } => SyncTargetStatusDto::Synced {
+            mode_used: outcome.mode_used,
+        },
+        BatchTargetStatus::Skipped { error } => SyncTargetStatusDto::Skipped {
+            error: CommandError::from(error),
+        },
+        BatchTargetStatus::Failed { error } => SyncTargetStatusDto::Failed {
+            error: CommandError::from(error),
+        },
+    };
+    SyncTargetResultDto {
+        skill_id: outcome.skill_id,
+        skill_name: outcome.skill_name,
+        tool: outcome.tool_key,
+        status,
+    }
 }
 
 /// Which Sync target a removal outcome is about.
@@ -827,40 +834,193 @@ pub async fn unsync_skill(
     .map_err(CommandError::from_anyhow)
 }
 
+/// One name-group the operator chose to import. The backend re-reads the
+/// onboarding plan to learn which paths the group owns, so this carries only
+/// the choice itself.
+#[derive(Debug, Clone, Deserialize, Type)]
+pub struct OnboardingSelectionDto {
+    pub group_name: String,
+    pub chosen_path: String,
+    pub name: Option<String>,
+}
+
+/// What happens to the originals: sync the imported skill to `tools`
+/// (`None` = every installed Tool), or remove the originals.
+#[derive(Debug, Clone, Deserialize, Type)]
+pub struct ImportPolicyDto {
+    #[serde(default)]
+    pub auto_sync: bool,
+    #[serde(default)]
+    pub tools: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportPhaseDto {
+    Admitting,
+    Applying,
+}
+
+/// Progress tick streamed before each phase of each imported group.
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct ImportProgressDto {
+    pub index: u32,
+    pub total: u32,
+    pub group_name: String,
+    pub phase: ImportPhaseDto,
+}
+
+/// What happened to one original directory (auto-sync off). `kept_divergent`
+/// means the directory's content differs from the imported skill, so it was
+/// deliberately left in place — report data, not a command error.
+#[derive(Debug, Serialize, Type)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ImportOriginalStatusDto {
+    Removed,
+    KeptDivergent,
+    Failed { error: CommandError },
+}
+
+#[derive(Debug, Serialize, Type)]
+pub struct ImportOriginalDto {
+    pub path: String,
+    pub tool: String,
+    pub status: ImportOriginalStatusDto,
+}
+
+/// Per-group result. `targets` carries the sync outcomes (auto-sync on) and
+/// `originals` the settled originals (auto-sync off); the other is empty.
+#[derive(Debug, Serialize, Type)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ImportGroupStatusDto {
+    Imported {
+        skill_id: String,
+        skill_name: String,
+        targets: Vec<SyncTargetResultDto>,
+        originals: Vec<ImportOriginalDto>,
+    },
+    Failed {
+        error: CommandError,
+    },
+}
+
+#[derive(Debug, Serialize, Type)]
+pub struct ImportGroupOutcomeDto {
+    pub group_name: String,
+    pub status: ImportGroupStatusDto,
+}
+
+#[derive(Debug, Serialize, Type)]
+pub struct ImportReportDto {
+    pub groups: Vec<ImportGroupOutcomeDto>,
+    pub imported: u32,
+    pub failed: u32,
+}
+
+/// Import pre-existing Tool skills the operator selected, in one call: admit
+/// each chosen variant, finalize it as a Managed skill, then sync it
+/// (auto-sync on) or remove the byte-identical originals (auto-sync off).
+/// Per-group, per-target and per-original failures are report data.
 #[tauri::command]
 #[specta::specta]
-#[allow(non_snake_case)]
-pub async fn import_existing_skill(
+pub async fn import_onboarding_selection(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
-    sourcePath: String,
-    name: Option<String>,
-) -> Result<InstallResultDto, CommandError> {
+    selections: Vec<OnboardingSelectionDto>,
+    policy: ImportPolicyDto,
+    on_progress: Channel<ImportProgressDto>,
+) -> Result<ImportReportDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let source = std::path::Path::new(&sourcePath);
         let paths = installer_paths(&app, &store)?;
-        let result = install_local_skill(&paths, &store, source, name)?;
-        Ok::<_, anyhow::Error>(to_install_dto(result))
+        let selections: Vec<ImportSelection> = selections
+            .into_iter()
+            .map(|s| ImportSelection {
+                group_name: s.group_name,
+                chosen_path: PathBuf::from(s.chosen_path),
+                name: s.name,
+            })
+            .collect();
+        let report = import_onboarding_selection_core(
+            &paths,
+            &store,
+            &selections,
+            &ImportPolicy {
+                auto_sync: policy.auto_sync,
+                tools: policy.tools,
+            },
+            now_ms(),
+            |p| {
+                let _ = on_progress.send(ImportProgressDto {
+                    index: p.index as u32,
+                    total: p.total as u32,
+                    group_name: p.group_name.to_string(),
+                    phase: match p.phase {
+                        ImportPhase::Admitting => ImportPhaseDto::Admitting,
+                        ImportPhase::Applying => ImportPhaseDto::Applying,
+                    },
+                });
+            },
+        )?;
+        Ok::<_, anyhow::Error>(to_import_report_dto(report))
     })
     .await
     .map_err(CommandError::internal)?
     .map_err(CommandError::from_anyhow)
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn remove_skill_source(path: String) -> Result<(), CommandError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let target = std::path::PathBuf::from(&path);
-        // Safety: the Tool registry owns which paths Skills Hub may delete.
-        ensure_path_within_tool_dirs(&home_dir()?, &target)?;
-        remove_path_any(&target)?;
-        Ok::<_, anyhow::Error>(())
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
+fn to_import_report_dto(report: crate::core::onboarding_import::ImportReport) -> ImportReportDto {
+    let mut dto = ImportReportDto {
+        groups: Vec::with_capacity(report.groups.len()),
+        imported: 0,
+        failed: 0,
+    };
+    for group in report.groups {
+        let status = match group.status {
+            ImportGroupStatus::Imported {
+                skill_id,
+                skill_name,
+                targets,
+                originals,
+            } => {
+                dto.imported += 1;
+                ImportGroupStatusDto::Imported {
+                    skill_id,
+                    skill_name,
+                    targets: targets.into_iter().map(to_sync_target_result_dto).collect(),
+                    originals: originals
+                        .into_iter()
+                        .map(|original| ImportOriginalDto {
+                            path: original.path.to_string_lossy().to_string(),
+                            tool: original.tool,
+                            status: match original.status {
+                                OriginalStatus::Removed => ImportOriginalStatusDto::Removed,
+                                OriginalStatus::KeptDivergent => {
+                                    ImportOriginalStatusDto::KeptDivergent
+                                }
+                                OriginalStatus::Failed { error } => {
+                                    ImportOriginalStatusDto::Failed {
+                                        error: CommandError::from_anyhow(error),
+                                    }
+                                }
+                            },
+                        })
+                        .collect(),
+                }
+            }
+            ImportGroupStatus::Failed { error } => {
+                dto.failed += 1;
+                ImportGroupStatusDto::Failed {
+                    error: CommandError::from_anyhow(error),
+                }
+            }
+        };
+        dto.groups.push(ImportGroupOutcomeDto {
+            group_name: group.group_name,
+            status,
+        });
+    }
+    dto
 }
 
 #[derive(Debug, Serialize, Type)]

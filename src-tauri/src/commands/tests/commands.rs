@@ -1,6 +1,7 @@
 use super::*;
 use crate::core::errors::SignalError;
 use crate::core::global_sync::GlobalSyncError;
+use crate::core::sync_engine::remove_path_any;
 use error::GitCloneFailureKind;
 
 #[test]

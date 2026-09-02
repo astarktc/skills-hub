@@ -17,6 +17,7 @@ pub mod install_finalize;
 pub mod installer;
 pub mod mutation_guard;
 pub mod onboarding;
+pub mod onboarding_import;
 pub mod project_ops;
 pub mod project_sync;
 pub mod propagation;

@@ -288,9 +288,15 @@ export const resources = {
         invalidPathMissing: "Path not found: {{path}}",
         invalidPathNotADirectory: "Path is not a directory: {{path}}",
         invalidPath: "Path cannot be used ({{reason}}): {{path}}",
+        importKeptDivergentTitle: "Kept a different copy: {{name}} -> {{tool}}",
+        importKeptDivergentMessage:
+          "The copy at {{path}} differs from the skill that was imported, so it was left in place.\n" +
+          "Review it and remove it yourself if you no longer need it.",
+        importCleanupFailedTitle:
+          "Could not remove the original: {{name}} -> {{tool}}",
       },
       actions: {
-        importExisting: "Import {{name}} ...",
+        importApplyStep: "Importing ({{index}}/{{total}}) {{name}} ...",
         syncing: "Sync {{name}} -> {{tool}} ...",
         syncStep: "Sync ({{index}}/{{total}}) {{name}} -> {{tool}} ...",
         importStep: "Import ({{index}}/{{total}}) {{name}} ...",
@@ -748,9 +754,13 @@ export const resources = {
         invalidPathMissing: "路径不存在：{{path}}",
         invalidPathNotADirectory: "路径不是目录：{{path}}",
         invalidPath: "该路径不可用（{{reason}}）：{{path}}",
+        importKeptDivergentTitle: "已保留不同的副本：{{name}} -> {{tool}}",
+        importKeptDivergentMessage:
+          "{{path}} 中的副本与导入的 Skill 内容不同，已保留在原处。\n请自行确认，若不再需要可手动删除。",
+        importCleanupFailedTitle: "无法删除原始副本：{{name}} -> {{tool}}",
       },
       actions: {
-        importExisting: "导入 {{name}} ...",
+        importApplyStep: "导入中 ({{index}}/{{total}}) {{name}} ...",
         syncing: "同步 {{name}} -> {{tool}} ...",
         syncStep: "同步 ({{index}}/{{total}}) {{name}} -> {{tool}} ...",
         importStep: "导入 ({{index}}/{{total}}) {{name}} ...",

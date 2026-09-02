@@ -35,8 +35,13 @@ export const commands = {
 	 *  command errors.
 	 */
 	refreshManagedSkills: (skillIds: string[] | null, policy: RefreshPolicyDto, onProgress: Channel<RefreshProgressDto>) => __TAURI_INVOKE<RefreshReportDto>("refresh_managed_skills", { skillIds, policy, onProgress }),
-	importExistingSkill: (sourcePath: string, name: string | null) => __TAURI_INVOKE<InstallResultDto>("import_existing_skill", { sourcePath, name }),
-	removeSkillSource: (path: string) => __TAURI_INVOKE<null>("remove_skill_source", { path }),
+	/**
+	 *  Import pre-existing Tool skills the operator selected, in one call: admit
+	 *  each chosen variant, finalize it as a Managed skill, then sync it
+	 *  (auto-sync on) or remove the byte-identical originals (auto-sync off).
+	 *  Per-group, per-target and per-original failures are report data.
+	 */
+	importOnboardingSelection: (selections: OnboardingSelectionDto[], policy: ImportPolicyDto, onProgress: Channel<ImportProgressDto>) => __TAURI_INVOKE<ImportReportDto>("import_onboarding_selection", { selections, policy, onProgress }),
 	getManagedSkills: () => __TAURI_INVOKE<ManagedSkillDto[]>("get_managed_skills"),
 	deleteManagedSkill: (skillId: string) => __TAURI_INVOKE<null>("delete_managed_skill", { skillId }),
 	unsyncAllSkills: () => __TAURI_INVOKE<RemovalReportDto>("unsync_all_skills"),
@@ -221,6 +226,55 @@ export type IgnoreUpdateOptions = {
 	add_to_exclude: boolean,
 };
 
+export type ImportGroupOutcomeDto = {
+	group_name: string,
+	status: ImportGroupStatusDto,
+};
+
+/**
+ *  Per-group result. `targets` carries the sync outcomes (auto-sync on) and
+ *  `originals` the settled originals (auto-sync off); the other is empty.
+ */
+export type ImportGroupStatusDto = { status: "imported"; skill_id: string; skill_name: string; targets: SyncTargetResultDto[]; originals: ImportOriginalDto[] } | { status: "failed"; error: CommandError };
+
+export type ImportOriginalDto = {
+	path: string,
+	tool: string,
+	status: ImportOriginalStatusDto,
+};
+
+/**
+ *  What happened to one original directory (auto-sync off). `kept_divergent`
+ *  means the directory's content differs from the imported skill, so it was
+ *  deliberately left in place — report data, not a command error.
+ */
+export type ImportOriginalStatusDto = { status: "removed" } | { status: "kept_divergent" } | { status: "failed"; error: CommandError };
+
+export type ImportPhaseDto = "admitting" | "applying";
+
+/**
+ *  What happens to the originals: sync the imported skill to `tools`
+ *  (`None` = every installed Tool), or remove the originals.
+ */
+export type ImportPolicyDto = {
+	auto_sync?: boolean,
+	tools?: string[] | null,
+};
+
+/**  Progress tick streamed before each phase of each imported group. */
+export type ImportProgressDto = {
+	index: number,
+	total: number,
+	group_name: string,
+	phase: ImportPhaseDto,
+};
+
+export type ImportReportDto = {
+	groups: ImportGroupOutcomeDto[],
+	imported: number,
+	failed: number,
+};
+
 export type InstallResultDto = {
 	skill_id: string,
 	name: string,
@@ -292,6 +346,17 @@ export type OnboardingPlan = {
 	total_tools_scanned: number,
 	total_skills_found: number,
 	groups: OnboardingGroup[],
+};
+
+/**
+ *  One name-group the operator chose to import. The backend re-reads the
+ *  onboarding plan to learn which paths the group owns, so this carries only
+ *  the choice itself.
+ */
+export type OnboardingSelectionDto = {
+	group_name: string,
+	chosen_path: string,
+	name: string | null,
 };
 
 export type OnboardingVariant = {

@@ -11,6 +11,8 @@ import type {
   CandidateMatch,
   GitSkillCandidate,
   GitSkillListing,
+  ImportGroupStatusDto,
+  ImportReportDto,
   LocalSkillCandidate,
   OnboardingPlan,
 } from "../components/skills/types";
@@ -23,12 +25,15 @@ vi.mock("../lib/tauri", () => ({
   isTauri: true,
   invokeTauri: vi.fn(),
 }));
+// The import batch streams progress over a Tauri Channel; the hook imports
+// it lazily, so the module seam is stubbed with a plain message sink.
+vi.mock("@tauri-apps/api/core", () => ({
+  Channel: class {
+    onmessage: ((message: unknown) => void) | null = null;
+  },
+}));
 
-import {
-  invokeTauri,
-  type CommandName,
-  type Commands,
-} from "../lib/tauri";
+import { invokeTauri, type CommandName, type Commands } from "../lib/tauri";
 import { useAddSkillFlow } from "./useAddSkillFlow";
 import {
   ActionExit,
@@ -49,7 +54,11 @@ const mockInvoke = vi.mocked(
 const t = (key: string, opts?: Record<string, unknown>) =>
   opts ? `${key} ${JSON.stringify(opts)}` : key;
 
-const EMPTY_PLAN = { total_tools_scanned: 0, total_skills_found: 0, groups: [] };
+const EMPTY_PLAN = {
+  total_tools_scanned: 0,
+  total_skills_found: 0,
+  groups: [],
+};
 
 function gitCandidate(name: string, subpath: string): GitSkillCandidate {
   return { name, description: null, subpath };
@@ -104,7 +113,7 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
   // one-shot setters the real reporter uses, so assertions read naturally.
   // The lifecycle itself (loading surface) is the reporter's own test.
   const runAction = vi.fn(
-    async <T,>(
+    async <T>(
       opts: RunActionOptions<T>,
       fn: (action: ActionHandle) => Promise<T | ActionExit>,
     ): Promise<T | undefined> => {
@@ -173,9 +182,7 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
 }
 
 function installGitCalls() {
-  return mockInvoke.mock.calls.filter(
-    ([cmd]) => cmd === "installGitSelection",
-  );
+  return mockInvoke.mock.calls.filter(([cmd]) => cmd === "installGitSelection");
 }
 
 beforeEach(() => {
@@ -490,8 +497,32 @@ describe("useAddSkillFlow import flow", () => {
     ],
   };
 
-  /** Plan loads once (mount), then the post-import reload rejects. */
-  function stubImportBackend(planCalls: (() => Promise<unknown>)[]) {
+  /** An `imported` group with nothing to report. */
+  const importedGroup = (
+    overrides?: Partial<Extract<ImportGroupStatusDto, { status: "imported" }>>,
+  ): ImportGroupStatusDto => ({
+    status: "imported",
+    skill_id: "imported-id",
+    skill_name: "alpha",
+    targets: [],
+    originals: [],
+    ...overrides,
+  });
+
+  const report = (status: ImportGroupStatusDto): ImportReportDto => ({
+    groups: [{ group_name: "alpha", status }],
+    imported: status.status === "imported" ? 1 : 0,
+    failed: status.status === "failed" ? 1 : 0,
+  });
+
+  /**
+   * Plan loads once (mount) and the import is one command returning one
+   * report — the hook states the selection and renders what comes back.
+   */
+  function stubImportBackend(
+    planCalls: (() => Promise<unknown>)[],
+    importReport: ImportReportDto = report(importedGroup()),
+  ) {
     let call = 0;
     mockInvoke.mockImplementation((command) => {
       switch (command) {
@@ -500,18 +531,71 @@ describe("useAddSkillFlow import flow", () => {
           call += 1;
           return next() as Promise<unknown>;
         }
-        case "importExistingSkill":
-          return Promise.resolve({
-            skill_id: "imported-id",
-            name: "alpha",
-            central_path: "/hub/alpha",
-            content_hash: null,
-          });
+        case "importOnboardingSelection":
+          return Promise.resolve(importReport);
         default:
           return Promise.resolve(undefined);
       }
     });
   }
+
+  async function runImport(setup: ReturnType<typeof makeDeps>) {
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await waitFor(() => expect(result.current.plan).not.toBeNull());
+    await act(async () => {
+      await result.current.handleReviewImport();
+    });
+    await act(async () => {
+      await result.current.handleImport();
+    });
+    return result;
+  }
+
+  function importCall() {
+    return mockInvoke.mock.calls.find(
+      ([cmd]) => cmd === "importOnboardingSelection",
+    );
+  }
+
+  it("imports every selected group in one call carrying the auto-sync policy", async () => {
+    stubImportBackend([() => Promise.resolve(PLAN)]);
+    const setup = makeDeps();
+
+    const result = await runImport(setup);
+
+    // One command per batch — not an install/sync/remove sequence per group.
+    expect(
+      mockInvoke.mock.calls.filter(
+        ([cmd]) => cmd === "importOnboardingSelection",
+      ),
+    ).toHaveLength(1);
+    const [, selections, policy] = importCall()!;
+    expect(selections).toEqual([
+      {
+        group_name: "alpha",
+        chosen_path: "/home/.claude/skills/alpha",
+        name: null,
+      },
+    ]);
+    // goose is selected but not installed; cursor installed but deselected.
+    expect(policy).toEqual({ auto_sync: true, tools: ["claude"] });
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
+      "status.importCompleted",
+    );
+    expect(setup.reporter.showActionErrors).not.toHaveBeenCalled();
+    expect(result.current.showImportModal).toBe(false);
+  });
+
+  it("asks for original removal instead of tools when auto-sync is off", async () => {
+    stubImportBackend([() => Promise.resolve(PLAN)]);
+    const setup = makeDeps();
+    setup.sync.autoSyncEnabled = false;
+
+    await runImport(setup);
+
+    const [, , policy] = importCall()!;
+    expect(policy).toEqual({ auto_sync: false, tools: null });
+  });
 
   it("completes the import even when the post-import plan reload fails", async () => {
     stubImportBackend([
@@ -519,55 +603,43 @@ describe("useAddSkillFlow import flow", () => {
       () => Promise.reject(new Error("plan reload boom")),
     ]);
     const setup = makeDeps();
-    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
 
-    await waitFor(() => expect(result.current.plan).not.toBeNull());
-    await act(async () => {
-      await result.current.handleReviewImport();
-    });
-    expect(result.current.showImportModal).toBe(true);
+    const result = await runImport(setup);
 
-    await act(async () => {
-      await result.current.handleImport();
-    });
-
-    // Every selected skill imported, so the action completed: success toast
+    // Every selected group imported, so the action completed: success toast
     // fires and the modal closes...
     expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
       "status.importCompleted",
     );
     expect(result.current.showImportModal).toBe(false);
-    // ...while the reload failure is surfaced on its own, not as sync failures.
+    // ...while the reload failure is surfaced on its own, not as an import
+    // failure.
     expect(setup.reporter.setError).toHaveBeenCalledWith("plan reload boom");
     expect(setup.reporter.showActionErrors).not.toHaveBeenCalled();
   });
 
-  it("keeps the modal open and reports sync failures as collected errors", async () => {
-    stubImportBackend([() => Promise.resolve(PLAN)]);
+  it("renders a failed sync target from the report as a collected error", async () => {
+    stubImportBackend(
+      [() => Promise.resolve(PLAN)],
+      report(
+        importedGroup({
+          targets: [
+            {
+              skill_id: "imported-id",
+              skill_name: "alpha",
+              tool: "claude",
+              status: {
+                status: "failed",
+                error: { code: "TARGET_EXISTS", path: "/target/alpha" },
+              },
+            },
+          ],
+        }),
+      ),
+    );
     const setup = makeDeps();
-    setup.sync.syncSkillsToTools.mockResolvedValue({
-      results: [
-        {
-          tool: "claude",
-          status: {
-            status: "failed",
-            error: { code: "TARGET_EXISTS", path: "/target/alpha" },
-          },
-        },
-      ],
-      synced: 0,
-      skipped: 0,
-      failed: 1,
-    });
-    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
 
-    await waitFor(() => expect(result.current.plan).not.toBeNull());
-    await act(async () => {
-      await result.current.handleReviewImport();
-    });
-    await act(async () => {
-      await result.current.handleImport();
-    });
+    const result = await runImport(setup);
 
     expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
       {
@@ -577,5 +649,76 @@ describe("useAddSkillFlow import flow", () => {
     ]);
     expect(result.current.showImportModal).toBe(true);
     expect(setup.reporter.setError).not.toHaveBeenCalled();
+  });
+
+  it("renders a kept divergent original and a failed removal from the report", async () => {
+    stubImportBackend(
+      [() => Promise.resolve(PLAN)],
+      report(
+        importedGroup({
+          originals: [
+            {
+              path: "/home/.claude/skills/alpha",
+              tool: "claude",
+              status: { status: "removed" },
+            },
+            {
+              path: "/home/.cursor/skills/alpha",
+              tool: "cursor",
+              status: { status: "kept_divergent" },
+            },
+            {
+              path: "/home/.goose/skills/alpha",
+              tool: "goose",
+              status: {
+                status: "failed",
+                error: { code: "PATH_OUTSIDE_TOOL_DIRS", path: "/elsewhere" },
+              },
+            },
+          ],
+        }),
+      ),
+    );
+    const setup = makeDeps();
+    setup.sync.autoSyncEnabled = false;
+
+    const result = await runImport(setup);
+
+    // A removed original is silent; the kept copy and the failure are not.
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
+      {
+        title:
+          'errors.importKeptDivergentTitle {"name":"alpha","tool":"CURSOR"}',
+        message:
+          'errors.importKeptDivergentMessage {"path":"/home/.cursor/skills/alpha"}',
+      },
+      {
+        title:
+          'errors.importCleanupFailedTitle {"name":"alpha","tool":"goose"}',
+        message: "formatted:[object Object]",
+      },
+    ]);
+    expect(result.current.showImportModal).toBe(true);
+  });
+
+  it("renders a group the backend refused as an import failure", async () => {
+    stubImportBackend(
+      [() => Promise.resolve(PLAN)],
+      report({
+        status: "failed",
+        error: { code: "SKILL_INVALID", reason: "missing_skill_md" },
+      }),
+    );
+    const setup = makeDeps();
+
+    const result = await runImport(setup);
+
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
+      {
+        title: 'errors.importFailedTitle {"name":"alpha"}',
+        message: "formatted:[object Object]",
+      },
+    ]);
+    expect(result.current.showImportModal).toBe(true);
   });
 });
