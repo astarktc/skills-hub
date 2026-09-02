@@ -4,9 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-02
+
+A hardening release: the internal architecture was reworked over 36 review tickets (commands/core seam, typed errors, generated IPC bindings, per-world frontend hooks) with the user-visible fixes below. Test coverage grew to 324 Rust + 98 frontend tests.
+
+### Added
+
+- **Chinese coverage for every error and status message**: 61 previously English-only strings now have `zh` translations, and a parity test keeps the `en`/`zh` catalogs in sync.
+- **Keyboard-accessible modals**: every dialog is now labelled for screen readers, takes focus on open, and closes on `Escape`.
+- **Precise error messages**: failures such as an unknown tool, a missing/invalid project path, a skill that already exists, GitHub rate limits, or a git timeout are reported with dedicated, localized messages instead of raw backend text.
+
+### Fixed
+
+- **Project tool configuration retry**: if configuring a project's tools failed, pressing Confirm again silently dropped the `.gitignore` choice; the intent is now kept until the save succeeds.
+- **Import completion**: a failed skill-list refresh right after a successful import no longer hides the success toast or leaves the import dialog open.
+- **Stale `.gitignore` blocks**: removing a project's last tool now strips the Skills Hub block from `.gitignore` / `.git/info/exclude` instead of leaving it behind.
+- **`.gitignore` ordering** is now applied consistently by the backend regardless of how tools were toggled.
+- **Settings write race**: rapid changes to settings no longer overwrite each other.
+- **Sync-engine errors** (target already exists, permission denied) are recognised by type rather than by matching message text, so they survive localisation and platform differences.
+
 ### Changed
 
 - **Typed IPC end to end**: `tauri-specta` (`=2.0.0-rc.25`) replaces `ts-rs` as the single generator of `src/bindings/index.ts`, which now carries every DTO plus one typed function per command; the frontend seam `invokeTauri(name, ...args)` is generic over that table, so a wrong command name or argument fails the build.
+- **Structured error contract**: commands return a tagged `CommandError` enum instead of prefixed strings; all user-facing copy lives in the frontend catalog (see `docs/adr/0001-tagged-command-error-contract.md`).
+- **Backend-owned sync fan-out**: syncing skills to tools is one batch command with streamed progress and per-target results, replacing the previous per-pair loops.
+- **Settings** are served by a typed policy module (defaults, bounds and clamping live in one place); fourteen get/set commands collapsed to two.
+- **Tool catalog**: each supported tool is one registry record carrying its directories, group membership and symlink capability; Cursor's copy-only mode is now a registry fact rather than a special case.
+- **Global Tool selection** persisted under the settings module; legacy values migrate transparently.
+- Backend comments and diagnostics are English-only; all locales live in the frontend.
 
 ## [1.1.9] - 2026-07-12
 
