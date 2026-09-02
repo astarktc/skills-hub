@@ -2,13 +2,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
 
 use super::cancel_token::CancelToken;
 use super::central_repo::ensure_central_repo;
 use super::clock::now_ms;
 use super::errors::SignalError;
-use super::git_fetcher::{clone_or_pull, clone_or_pull_sparse};
+use super::git_cache::{clone_to_cache, clone_to_cache_subpath, repo_cache_key};
 use super::github_download::{download_github_directory, parse_github_api_params, GithubApiError};
 pub use super::install_finalize::InstallResult;
 use super::install_finalize::{
@@ -16,7 +15,6 @@ use super::install_finalize::{
     StagingDir,
 };
 use super::project_sync::resolve_project_sync_target;
-use super::settings;
 use super::skill_discovery::{
     discover_skills, find_skill_md, is_skill_dir, parse_skill_md, parse_skill_md_with_reason,
     DiscoveredSkill,
@@ -698,188 +696,6 @@ pub fn install_local_skill_from_selection(
     install_local_skill(paths, store, &selected_dir, Some(display_name))
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct RepoCacheMeta {
-    last_fetched_ms: i64,
-    head: Option<String>,
-}
-
-static GIT_CACHE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-/// Clone (or refresh) `clone_url` into the git cache under `cache_dir`.
-fn clone_to_cache(
-    cache_dir: &Path,
-    store: &SkillStore,
-    clone_url: &str,
-    branch: Option<&str>,
-    cancel: Option<&CancelToken>,
-) -> Result<(PathBuf, String)> {
-    let started = std::time::Instant::now();
-    let cache_root = cache_dir.join("skills-hub-git-cache");
-    std::fs::create_dir_all(&cache_root)
-        .with_context(|| format!("failed to create cache dir {:?}", cache_root))?;
-
-    let repo_dir = cache_root.join(repo_cache_key(clone_url, branch, None));
-    let meta_path = repo_dir.join(".skills-hub-cache.json");
-
-    let lock = GIT_CACHE_LOCK.get_or_init(|| Mutex::new(()));
-    let _guard = lock.lock().unwrap_or_else(|err| err.into_inner());
-
-    if repo_dir.join(".git").exists() {
-        if let Ok(meta) = std::fs::read_to_string(&meta_path) {
-            if let Ok(meta) = serde_json::from_str::<RepoCacheMeta>(&meta) {
-                if let Some(head) = meta.head {
-                    let ttl_ms = settings::git_cache_ttl_secs(store).saturating_mul(1000);
-                    if ttl_ms > 0 && now_ms().saturating_sub(meta.last_fetched_ms) < ttl_ms {
-                        log::info!(
-                            "[installer] git cache hit (fresh) {}s url={} branch={:?} repo_dir={:?}",
-                            started.elapsed().as_secs_f32(),
-                            clone_url,
-                            branch,
-                            repo_dir
-                        );
-                        return Ok((repo_dir, head));
-                    }
-                }
-            }
-        }
-    }
-
-    log::info!(
-        "[installer] git cache miss/stale; fetching {} url={} branch={:?} repo_dir={:?}",
-        started.elapsed().as_secs_f32(),
-        clone_url,
-        branch,
-        repo_dir
-    );
-
-    let rev = match clone_or_pull(clone_url, &repo_dir, branch, cancel) {
-        Ok(rev) => rev,
-        Err(err) => {
-            // If cache got corrupted, retry once from a clean state.
-            if repo_dir.exists() {
-                let _ = std::fs::remove_dir_all(&repo_dir);
-            }
-            clone_or_pull(clone_url, &repo_dir, branch, cancel)
-                .with_context(|| format!("{:#}", err))?
-        }
-    };
-
-    let _ = std::fs::write(
-        &meta_path,
-        serde_json::to_string(&RepoCacheMeta {
-            last_fetched_ms: now_ms(),
-            head: Some(rev.clone()),
-        })
-        .unwrap_or_else(|_| "{}".to_string()),
-    );
-
-    log::info!(
-        "[installer] git cache ready {}s url={} branch={:?} head={}",
-        started.elapsed().as_secs_f32(),
-        clone_url,
-        branch,
-        rev
-    );
-    Ok((repo_dir, rev))
-}
-
-/// Sparse variant of [`clone_to_cache`] fetching only `subpath`.
-fn clone_to_cache_subpath(
-    cache_dir: &Path,
-    store: &SkillStore,
-    clone_url: &str,
-    branch: Option<&str>,
-    subpath: &str,
-    cancel: Option<&CancelToken>,
-) -> Result<(PathBuf, String)> {
-    let started = std::time::Instant::now();
-    let cache_root = cache_dir.join("skills-hub-git-cache");
-    std::fs::create_dir_all(&cache_root)
-        .with_context(|| format!("failed to create cache dir {:?}", cache_root))?;
-
-    let repo_dir = cache_root.join(repo_cache_key(clone_url, branch, Some(subpath)));
-    let meta_path = repo_dir.join(".skills-hub-cache.json");
-
-    let lock = GIT_CACHE_LOCK.get_or_init(|| Mutex::new(()));
-    let _guard = lock.lock().unwrap_or_else(|err| err.into_inner());
-
-    if repo_dir.join(".git").exists() {
-        if let Ok(meta) = std::fs::read_to_string(&meta_path) {
-            if let Ok(meta) = serde_json::from_str::<RepoCacheMeta>(&meta) {
-                if let Some(head) = meta.head {
-                    let ttl_ms = settings::git_cache_ttl_secs(store).saturating_mul(1000);
-                    if ttl_ms > 0 && now_ms().saturating_sub(meta.last_fetched_ms) < ttl_ms {
-                        log::info!(
-                            "[installer] sparse git cache hit (fresh) {}s url={} branch={:?} subpath={} repo_dir={:?}",
-                            started.elapsed().as_secs_f32(),
-                            clone_url,
-                            branch,
-                            subpath,
-                            repo_dir
-                        );
-                        return Ok((repo_dir, head));
-                    }
-                }
-            }
-        }
-    }
-
-    log::info!(
-        "[installer] sparse git cache miss/stale; fetching {} url={} branch={:?} subpath={} repo_dir={:?}",
-        started.elapsed().as_secs_f32(),
-        clone_url,
-        branch,
-        subpath,
-        repo_dir
-    );
-
-    let rev = match clone_or_pull_sparse(clone_url, &repo_dir, branch, subpath, cancel) {
-        Ok(rev) => rev,
-        Err(err) => {
-            if repo_dir.exists() {
-                let _ = std::fs::remove_dir_all(&repo_dir);
-            }
-            clone_or_pull_sparse(clone_url, &repo_dir, branch, subpath, cancel)
-                .with_context(|| format!("{:#}", err))?
-        }
-    };
-
-    let _ = std::fs::write(
-        &meta_path,
-        serde_json::to_string(&RepoCacheMeta {
-            last_fetched_ms: now_ms(),
-            head: Some(rev.clone()),
-        })
-        .unwrap_or_else(|_| "{}".to_string()),
-    );
-
-    log::info!(
-        "[installer] sparse git cache ready {}s url={} branch={:?} subpath={} head={}",
-        started.elapsed().as_secs_f32(),
-        clone_url,
-        branch,
-        subpath,
-        rev
-    );
-    Ok((repo_dir, rev))
-}
-
-fn repo_cache_key(clone_url: &str, branch: Option<&str>, subpath: Option<&str>) -> String {
-    use sha2::Digest;
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(clone_url.as_bytes());
-    hasher.update(b"\n");
-    if let Some(b) = branch {
-        hasher.update(b.as_bytes());
-    }
-    hasher.update(b"\n");
-    if let Some(s) = subpath {
-        hasher.update(s.as_bytes());
-    }
-    hex::encode(hasher.finalize())
-}
-
 /// Fetch a single skill's files into `dest_dir`.
 ///
 /// Shared download engine used by both the update and explore-preview paths.
@@ -1032,6 +848,11 @@ fn find_skill_by_name<'a>(
     }
 }
 
+/// Guards the explore cache (`<central_dir>/.explore-cache`) while a preview
+/// probes it and prepares a destination directory. Its own resource, its own
+/// lock: the git cache is serialised separately inside `core::git_cache`.
+static EXPLORE_CACHE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
 /// Clone a skill into the explore-cache for preview (no DB registration).
 /// Delegates to `fetch_skill_files` for the actual download — the only
 /// preview-specific logic is the explore-cache hit check.
@@ -1055,12 +876,11 @@ pub fn clone_for_explore_preview(
     let cache_key = repo_cache_key(source_url, skill_name, None);
     let explore_skill_dir = explore_cache_root.join(&cache_key);
 
-    // Cache hit check — hold GIT_CACHE_LOCK only for the quick filesystem probe
-    // and initial directory setup, then drop it before any download/clone path.
-    // clone_to_cache() acquires the same lock internally, so holding it here would
-    // cause a self-deadlock (std::sync::Mutex is not reentrant).
+    // Serialise the explore-cache probe/prepare section against itself so two
+    // previews of the same skill cannot race on the same directory. This is the
+    // explore cache's own lock; the git cache has a separate, private one.
     {
-        let lock = GIT_CACHE_LOCK.get_or_init(|| Mutex::new(()));
+        let lock = EXPLORE_CACHE_LOCK.get_or_init(|| Mutex::new(()));
         let _guard = lock.lock().unwrap_or_else(|err| err.into_inner());
 
         if explore_skill_dir.exists() {

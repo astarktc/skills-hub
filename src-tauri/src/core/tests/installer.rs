@@ -1015,3 +1015,68 @@ fn update_resyncs_project_copy_assignments() {
         "synced_at should be updated"
     );
 }
+
+/// The explore-cache hit path must answer from `<central_dir>/.explore-cache`
+/// alone: no git-cache directory is created, so nothing touches the git cache
+/// (and its lock).
+#[test]
+fn explore_preview_cache_hit_never_touches_git_cache() {
+    let (_dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+
+    // A URL that could never be cloned: only a cache hit can succeed here.
+    let source_url = "https://example.invalid/owner/repo";
+    let cached =
+        paths
+            .central_dir
+            .join(".explore-cache")
+            .join(crate::core::git_cache::repo_cache_key(
+                source_url,
+                Some("preview-skill"),
+                None,
+            ));
+    fs::create_dir_all(&cached).unwrap();
+    fs::write(cached.join("SKILL.md"), "---\nname: preview-skill\n---\n").unwrap();
+
+    let out =
+        super::clone_for_explore_preview(&paths, &store, source_url, Some("preview-skill"), None)
+            .unwrap();
+
+    assert_eq!(out, cached);
+    assert!(
+        !paths.cache_dir.join("skills-hub-git-cache").exists(),
+        "cache hit must not create the git cache root"
+    );
+}
+
+/// Regression for the self-deadlock fixed in 82c36d5: on a cache miss the
+/// explore-preview probe is followed by a git-cache fetch. Run it on a worker
+/// thread with a join timeout so a re-entrant lock fails instead of hanging.
+#[test]
+fn explore_preview_cache_miss_does_not_deadlock() {
+    let (dir, store) = make_store();
+    let (roots, paths) = make_paths();
+
+    let repo_dir = tempfile::tempdir().unwrap();
+    fs::write(repo_dir.path().join("SKILL.md"), "---\nname: Solo\n---\n").unwrap();
+    let repo = init_git_repo(repo_dir.path());
+    commit_all(&repo, "solo skill");
+    let source_url = format!("file://{}", repo_dir.path().to_string_lossy());
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        // Keep the temp roots alive for the duration of the call.
+        let _keep = (dir, roots, repo_dir);
+        let res = super::clone_for_explore_preview(&paths, &store, &source_url, None, None);
+        let _ = tx.send(res.map(|p| p.join("SKILL.md").exists()));
+    });
+
+    let outcome = rx
+        .recv_timeout(std::time::Duration::from_secs(30))
+        .expect("clone_for_explore_preview deadlocked or timed out on a cache miss");
+    handle.join().unwrap();
+    assert!(
+        outcome.expect("explore preview should succeed for a local repo"),
+        "previewed dir should contain SKILL.md"
+    );
+}
