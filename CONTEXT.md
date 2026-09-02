@@ -60,6 +60,22 @@ _Avoid_: state, health, "ok"
 How an artifact was materialised — `symlink`, `junction` (Windows fallback) or `copy` — recorded on the row because only copies can drift from their source (`SyncMode`, same module).
 _Avoid_: link type, strategy
 
+**Propagation**:
+Re-materialising every Sync target of one Managed skill after its central copy changed, in both scopes (global target rows and project assignment rows), honouring each Tool's capability and each row's Sync mode (links need nothing; copies are re-copied). Every target resolves to synced / skipped / failed as report data — one target's failure never fails the operation. Update and Refresh acquire bytes and finalize; only propagation touches targets.
+_Avoid_: re-sync (that's a project operation), refresh (that's the operator action that triggers it), fan-out (that's the initial sync batch)
+
+**Refresh (all)**:
+The operator action that re-acquires every Managed skill from its source, finalizes, and propagates. With auto-sync on it also re-asserts the auto-sync invariant — every Managed skill is synced to every installed Tool — so targets that never existed are created, not just existing ones refreshed. Per-skill and per-target outcomes are report data.
+_Avoid_: update all, re-deploy
+
+**Artifact removal**:
+Taking a Sync target off disk and settling its row, planned by scope — one Managed skill, one skill×Tool pair, one Project, one Project×Tool pair, or everything — and executed once with one presence rule and one failure rule: a row whose artifact could not be removed is kept with Sync status `error` (never deleted blind) so the failure stays observable; rows are deleted only on successful removal. Callers apply their own final policy by reading the report.
+_Avoid_: cleanup, unsync, unassign (those are the operator actions that plan a removal)
+
+**Onboarding import**:
+Adopting a skill that already exists in a Tool's skills directory as a Managed skill: the operator picks one variant per name-group; the chosen variant is finalized and propagated (auto-sync on) or its originals are removed (auto-sync off). Only originals byte-identical to the chosen variant are removed — a divergent sibling is left in place and reported, because sharing a name never proved it was the same skill.
+_Avoid_: migration, adopt, absorb
+
 **Project sync status**:
 The precedence fold of a project's assignment statuses shown on the project list: error/missing > stale > pending > synced, `none` when the project has no assignments (`ProjectSyncStatus`, `aggregate`).
 _Avoid_: project health, overall status
