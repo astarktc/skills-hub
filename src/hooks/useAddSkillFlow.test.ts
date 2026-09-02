@@ -12,6 +12,7 @@ import type {
   GitSkillCandidate,
   GitSkillListing,
   LocalSkillCandidate,
+  OnboardingPlan,
 } from "../components/skills/types";
 import type { AddSkillFlowDeps } from "./useAddSkillFlow";
 
@@ -464,5 +465,117 @@ describe("useAddSkillFlow local flow", () => {
     expect(
       mockInvoke.mock.calls.some(([cmd]) => cmd === "installLocalSelection"),
     ).toBe(false);
+  });
+});
+
+describe("useAddSkillFlow import flow", () => {
+  const PLAN: OnboardingPlan = {
+    total_tools_scanned: 1,
+    total_skills_found: 1,
+    groups: [
+      {
+        name: "alpha",
+        has_conflict: false,
+        variants: [
+          {
+            tool: "claude",
+            name: "alpha",
+            path: "/home/.claude/skills/alpha",
+            fingerprint: null,
+            is_link: false,
+            link_target: null,
+          },
+        ],
+      },
+    ],
+  };
+
+  /** Plan loads once (mount), then the post-import reload rejects. */
+  function stubImportBackend(planCalls: (() => Promise<unknown>)[]) {
+    let call = 0;
+    mockInvoke.mockImplementation((command) => {
+      switch (command) {
+        case "getOnboardingPlan": {
+          const next = planCalls[Math.min(call, planCalls.length - 1)];
+          call += 1;
+          return next() as Promise<unknown>;
+        }
+        case "importExistingSkill":
+          return Promise.resolve({
+            skill_id: "imported-id",
+            name: "alpha",
+            central_path: "/hub/alpha",
+            content_hash: null,
+          });
+        default:
+          return Promise.resolve(undefined);
+      }
+    });
+  }
+
+  it("completes the import even when the post-import plan reload fails", async () => {
+    stubImportBackend([
+      () => Promise.resolve(PLAN),
+      () => Promise.reject(new Error("plan reload boom")),
+    ]);
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+
+    await waitFor(() => expect(result.current.plan).not.toBeNull());
+    await act(async () => {
+      await result.current.handleReviewImport();
+    });
+    expect(result.current.showImportModal).toBe(true);
+
+    await act(async () => {
+      await result.current.handleImport();
+    });
+
+    // Every selected skill imported, so the action completed: success toast
+    // fires and the modal closes...
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
+      "status.importCompleted",
+    );
+    expect(result.current.showImportModal).toBe(false);
+    // ...while the reload failure is surfaced on its own, not as sync failures.
+    expect(setup.reporter.setError).toHaveBeenCalledWith("plan reload boom");
+    expect(setup.reporter.showActionErrors).not.toHaveBeenCalled();
+  });
+
+  it("keeps the modal open and reports sync failures as collected errors", async () => {
+    stubImportBackend([() => Promise.resolve(PLAN)]);
+    const setup = makeDeps();
+    setup.sync.syncSkillsToTools.mockResolvedValue({
+      results: [
+        {
+          tool: "claude",
+          status: {
+            status: "failed",
+            error: { code: "TARGET_EXISTS", path: "/target/alpha" },
+          },
+        },
+      ],
+      synced: 0,
+      skipped: 0,
+      failed: 1,
+    });
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+
+    await waitFor(() => expect(result.current.plan).not.toBeNull());
+    await act(async () => {
+      await result.current.handleReviewImport();
+    });
+    await act(async () => {
+      await result.current.handleImport();
+    });
+
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
+      {
+        title: 'errors.syncFailedTitle {"name":"alpha","tool":"CLAUDE"}',
+        message: 'errors.syncTargetExistsMessage {"path":"/target/alpha"}',
+      },
+    ]);
+    expect(result.current.showImportModal).toBe(true);
+    expect(setup.reporter.setError).not.toHaveBeenCalled();
   });
 });

@@ -135,11 +135,28 @@ export function useAddSkillFlow({
     ],
   );
 
+  /**
+   * Post-mutation refresh that can never fail the action that already
+   * succeeded: the bytes are installed, so a reload failure is a non-fatal
+   * warning on the reporter's one-shot error channel, not a thrown failure
+   * that would suppress the success toast and leave the modal open.
+   */
+  const refreshWithoutFailingAction = useCallback(
+    async (refresh: () => Promise<unknown>) => {
+      try {
+        await refresh();
+      } catch (err) {
+        setError(formatError(err));
+      }
+    },
+    [formatError, setError],
+  );
+
   /** After any install (single or batch): the add modal is done, the library has changed. */
   const finishInstall = useCallback(async () => {
     setShowAddModal(false);
-    await loadManagedSkills();
-  }, [loadManagedSkills]);
+    await refreshWithoutFailingAction(loadManagedSkills);
+  }, [loadManagedSkills, refreshWithoutFailingAction]);
 
   const pickDeps = {
     t,
@@ -381,8 +398,10 @@ export function useAddSkillFlow({
         }
       }
 
-      await loadManagedSkills();
-      await fetchPlan();
+      await refreshWithoutFailingAction(async () => {
+        await loadManagedSkills();
+        await fetchPlan();
+      });
       if (collectedErrors.length > 0) {
         showActionErrors(collectedErrors);
       } else {
