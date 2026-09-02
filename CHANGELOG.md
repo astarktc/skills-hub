@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-09-02
+
 ### Added
 
 - **Invocation-mode badge in My Skills**: skills whose `SKILL.md` frontmatter restricts who may invoke them (`disable-model-invocation: true` / `user-invocable: false`) now show a badge with an explanatory tooltip — *User only*, *Model only*, or *Not invocable*. Skills invocable by both (the default) show no badge.
