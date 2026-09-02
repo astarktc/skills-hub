@@ -56,9 +56,9 @@ pub fn assign_and_sync(
     store.add_project_skill_assignment(&record)?;
 
     let source = Path::new(&skill.central_path);
-    let target = resolve_project_sync_target(Path::new(&project.path), &adapter, &skill.name);
+    let target = resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name);
 
-    match sync_engine::sync_dir_for_tool_with_overwrite(&adapter, source, &target, false) {
+    match sync_engine::sync_dir_for_tool_with_overwrite(adapter, source, &target, false) {
         Ok(outcome) => {
             let hash = hash_after_sync(outcome.mode_used, source);
             store.transition_assignment(
@@ -252,10 +252,10 @@ pub(crate) fn sync_single_assignment(
         .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", assignment.tool))?;
 
     let source = Path::new(&skill.central_path);
-    let target = resolve_project_sync_target(Path::new(&project.path), &adapter, &skill.name);
+    let target = resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name);
 
     let outcome =
-        sync_engine::sync_dir_for_tool_with_overwrite(&adapter, source, &target, overwrite)?;
+        sync_engine::sync_dir_for_tool_with_overwrite(adapter, source, &target, overwrite)?;
 
     let hash = hash_after_sync(outcome.mode_used, source);
     store.transition_assignment(
@@ -358,7 +358,7 @@ fn observe_assignment(
     let target_present = match (project, tool_adapters::adapter_by_key(&assignment.tool)) {
         (Some(project), Some(adapter)) => {
             let target =
-                resolve_project_sync_target(Path::new(&project.path), &adapter, &skill.name);
+                resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name);
             target.exists() || target.symlink_metadata().is_ok()
         }
         _ => false,
@@ -461,7 +461,7 @@ pub fn unassign_and_cleanup(
     let adapter = tool_adapters::adapter_by_key(tool_key)
         .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", tool_key))?;
 
-    let target = resolve_project_sync_target(Path::new(&project.path), &adapter, &skill.name);
+    let target = resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name);
 
     if target.exists() || target.symlink_metadata().is_ok() {
         match sync_engine::remove_path_any(&target) {

@@ -1158,18 +1158,20 @@ pub fn default_db_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<P
     Ok(app_dir.join(DB_FILE_NAME))
 }
 
-pub fn migrate_legacy_db_if_needed(target_db_path: &Path) -> Result<()> {
-    let Some(data_dir) = dirs::data_dir() else {
-        return Ok(());
-    };
-
+/// Adopt a pre-rename installation's database when this one has no skills yet.
+///
+/// `data_root` is the platform data directory that holds one subdirectory per
+/// app identifier (the parent of this app's own data dir); the legacy
+/// identifiers are probed under it. It is passed in rather than resolved here
+/// so core reads no environment and a test can substitute a temp dir.
+pub fn migrate_legacy_db_if_needed(data_root: &Path, target_db_path: &Path) -> Result<()> {
     if let Ok(true) = db_has_any_skills(target_db_path) {
         return Ok(());
     }
 
     let legacy_db_path = LEGACY_APP_IDENTIFIERS
         .iter()
-        .map(|id| data_dir.join(id).join(DB_FILE_NAME))
+        .map(|id| data_root.join(id).join(DB_FILE_NAME))
         .find(|path| path.exists());
 
     let Some(legacy_db_path) = legacy_db_path else {

@@ -78,7 +78,7 @@ fn sync_creates_target_and_records_for_all_group_tools() {
 
     let outcome = sync_skill_into_root(
         &store,
-        &adapter,
+        adapter,
         &tool_root,
         &source,
         "skill-1",
@@ -118,7 +118,7 @@ fn sync_without_overwrite_fails_with_target_exists() {
     let adapter = claude();
     let err = sync_skill_into_root(
         &store,
-        &adapter,
+        adapter,
         &tool_root,
         &source,
         "skill-1",
@@ -155,7 +155,7 @@ fn sync_with_overwrite_replaces_existing_target() {
     let adapter = claude();
     let outcome = sync_skill_into_root(
         &store,
-        &adapter,
+        adapter,
         &tool_root,
         &source,
         "skill-1",
@@ -193,7 +193,7 @@ fn overwrite_if_same_content_only_replaces_identical_targets() {
     ));
     sync_skill_into_root(
         &store,
-        &adapter,
+        adapter,
         &tool_root,
         &source,
         "skill-1",
@@ -208,7 +208,7 @@ fn overwrite_if_same_content_only_replaces_identical_targets() {
     make_skill_dir(&tool_root, "other-skill", "# Different");
     let err = sync_skill_into_root(
         &store,
-        &adapter,
+        adapter,
         &tool_root,
         &source,
         "skill-2",
@@ -232,7 +232,7 @@ fn cursor_gets_copy_mode() {
     let cursor = adapter_by_key("cursor").expect("cursor adapter");
     let outcome = sync_skill_into_root(
         &store,
-        &cursor,
+        cursor,
         &tool_root,
         &source,
         "skill-1",
@@ -262,7 +262,7 @@ fn unsync_removes_filesystem_target_once_and_all_group_records() {
     let amp = adapter_by_key("amp").expect("amp adapter");
     let outcome = sync_skill_into_root(
         &store,
-        &adapter,
+        adapter,
         &tool_root,
         &source,
         "skill-1",
@@ -336,8 +336,8 @@ fn batch_syncs_each_skill_to_each_installed_tool() {
     let cursor_root = dir.path().join("cursor-root");
     let cursor = adapter_by_key("cursor").expect("cursor adapter");
     let targets = vec![
-        planned(&claude(), &claude_root, true),
-        planned(&cursor, &cursor_root, true),
+        planned(claude(), &claude_root, true),
+        planned(cursor, &cursor_root, true),
     ];
 
     let skills = vec![
@@ -428,8 +428,8 @@ fn batch_skips_not_installed_tools_with_typed_reason() {
     let installed_root = dir.path().join("installed-root");
     let cursor = adapter_by_key("cursor").expect("cursor adapter");
     let targets = vec![
-        planned(&claude(), &installed_root, true),
-        planned(&cursor, &dir.path().join("absent-root"), false),
+        planned(claude(), &installed_root, true),
+        planned(cursor, &dir.path().join("absent-root"), false),
     ];
 
     let skills = vec![batch_skill("skill-1", "my-skill", &source)];
@@ -474,8 +474,8 @@ fn batch_isolates_per_target_failures() {
     let clean_root = dir.path().join("clean-root");
     let cursor = adapter_by_key("cursor").expect("cursor adapter");
     let targets = vec![
-        planned(&claude(), &blocked_root, true),
-        planned(&cursor, &clean_root, true),
+        planned(claude(), &blocked_root, true),
+        planned(cursor, &clean_root, true),
     ];
 
     let skills = vec![batch_skill("skill-1", "my-skill", &source)];
@@ -526,7 +526,7 @@ fn batch_override_applies_to_named_tool_and_its_shared_dir_group() {
     let outcomes = sync_skills_to_planned_tools(
         &store,
         &skills,
-        &[planned(&claude(), &root_a, true)],
+        &[planned(claude(), &root_a, true)],
         &policy_neq,
         1000,
         |_| {},
@@ -561,7 +561,7 @@ fn batch_override_applies_to_named_tool_and_its_shared_dir_group() {
         let outcomes = sync_skills_to_planned_tools(
             &store,
             &skills,
-            &[planned(&kimi, &root_b, true)],
+            &[planned(kimi, &root_b, true)],
             &policy_shared,
             1000,
             |_| {},
@@ -603,7 +603,7 @@ fn batch_direct_override_forces_overwrite_for_that_skill_only() {
     let outcomes = sync_skills_to_planned_tools(
         &store,
         &skills,
-        &[planned(&claude(), &root, true)],
+        &[planned(claude(), &root, true)],
         &policy,
         1000,
         |_| {},
@@ -640,7 +640,7 @@ fn classification_recovers_target_exists_by_downcast_despite_reworded_message() 
     })
     .context("some totally reworded wrapper text");
 
-    let classified = super::classify_sync_error(err, &adapter, tool_root, target);
+    let classified = super::classify_sync_error(err, adapter, tool_root, target);
     match classified {
         GlobalSyncError::TargetExists { target_path } => assert_eq!(target_path, target),
         other => panic!("expected TargetExists, got {:?}", other),
@@ -656,7 +656,7 @@ fn classification_recovers_permission_denied_by_io_error_kind() {
     let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "nope");
     let err = anyhow::Error::new(io_err).context("copy file somewhere");
 
-    let classified = super::classify_sync_error(err, &adapter, tool_root, target);
+    let classified = super::classify_sync_error(err, adapter, tool_root, target);
     match classified {
         GlobalSyncError::ToolNotWritable { skills_dir, .. } => assert_eq!(skills_dir, tool_root),
         other => panic!("expected ToolNotWritable, got {:?}", other),
@@ -674,7 +674,7 @@ fn classification_leaves_unrelated_errors_as_other_even_with_suspicious_prose() 
         "upstream said: target already exists (but this is not our typed condition)"
     );
 
-    let classified = super::classify_sync_error(err, &adapter, tool_root, target);
+    let classified = super::classify_sync_error(err, adapter, tool_root, target);
     assert!(matches!(classified, GlobalSyncError::Other(_)));
 }
 

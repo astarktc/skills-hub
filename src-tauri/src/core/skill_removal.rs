@@ -160,7 +160,7 @@ pub fn plan_skill_removal(store: &SkillStore, skill_id: &str) -> Result<RemovalP
                     project_id: assignment.project_id,
                 },
                 tool_key: assignment.tool,
-                path: resolve_project_sync_target(Path::new(&project.path), &adapter, &skill.name),
+                path: resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name),
             });
         }
     }

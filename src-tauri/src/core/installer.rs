@@ -395,7 +395,7 @@ pub fn update_managed_skill_from_source(
     for t in targets {
         // Skip if tool not installed anymore.
         if let Some(adapter) = adapter_by_key(&t.tool) {
-            if !is_installed_in(&paths.home, &adapter) {
+            if !is_installed_in(&paths.home, adapter) {
                 continue;
             }
         }
@@ -440,7 +440,7 @@ pub fn update_managed_skill_from_source(
             Some(a) => a,
             None => continue,
         };
-        let target = resolve_project_sync_target(&project_path, &adapter, &record.name);
+        let target = resolve_project_sync_target(&project_path, adapter, &record.name);
         match sync_dir_copy_with_overwrite(&central_path, &target, true) {
             Ok(_outcome) => {
                 let _ = store.transition_assignment(

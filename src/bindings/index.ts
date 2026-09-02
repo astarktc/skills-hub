@@ -63,7 +63,7 @@ export const commands = {
 	resyncProject: (projectId: string) => __TAURI_INVOKE<ResyncSummaryDto>("resync_project", { projectId }),
 	resyncAllProjects: () => __TAURI_INVOKE<ResyncSummaryDto[]>("resync_all_projects"),
 	bulkAssignSkill: (projectId: string, skillId: string) => __TAURI_INVOKE<BulkAssignResultDto>("bulk_assign_skill", { projectId, skillId }),
-	updateProjectGitignore: (projectId: string, addToGitignore: boolean, addToExclude: boolean) => __TAURI_INVOKE<null>("update_project_gitignore", { projectId, addToGitignore, addToExclude }),
+	updateProjectGitignore: (projectId: string, gitignore: IgnoreUpdateOptions) => __TAURI_INVOKE<null>("update_project_gitignore", { projectId, gitignore }),
 	getProjectGitignoreStatus: (projectId: string) => __TAURI_INVOKE<GitignoreStatusDto>("get_project_gitignore_status", { projectId }),
 };
 
@@ -412,12 +412,12 @@ export type ToolInfoDto = {
 	key: string,
 	label: string,
 	installed: boolean,
-	skills_dir: string,
 	/**
 	 *  Keys of every listed tool sharing this tool's skills dir (global dir
 	 *  for the global list, project dir for the project list), in adapter
 	 *  order, including this tool itself (len >= 1). The backend owns the
-	 *  shared-dir invariant; the frontend only presents it.
+	 *  shared-dir invariant; the frontend only presents it. The dir itself is
+	 *  not on the wire — see `ToolCatalogEntry`.
 	 */
 	shared_with: string[],
 	/**

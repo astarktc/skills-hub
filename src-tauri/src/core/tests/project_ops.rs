@@ -521,7 +521,7 @@ fn setup_pi_assignment(
         .unwrap();
     project_sync::assign_and_sync(store, &project, &skill, "pi", now_ms()).expect("assign");
 
-    let target = project_sync::resolve_project_sync_target(&project_dir, &pi_adapter(), name);
+    let target = project_sync::resolve_project_sync_target(&project_dir, pi_adapter(), name);
     assert!(
         target.symlink_metadata().is_ok(),
         "precondition: project-scope target should exist at {:?}",

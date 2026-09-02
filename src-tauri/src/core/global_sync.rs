@@ -200,7 +200,7 @@ pub fn unsync_skill_from_tool_with_records(
 ) -> Result<()> {
     let group_tool_keys: Vec<String> =
         if let Some(adapter) = crate::core::tool_adapters::adapter_by_key(tool_key) {
-            let group = adapters_sharing_skills_dir(&adapter);
+            let group = adapters_sharing_skills_dir(adapter);
             // If none of the group tools are installed, do nothing (treat as already not effective).
             if !group.iter().any(|a| is_installed_in(home, a)) {
                 return Ok(());

@@ -68,13 +68,42 @@ impl SyncStatus {
         }
     }
 
-    /// Statuses that imply something was written to the target location
-    /// (so removal must attempt to delete it). `Error` is included because a
-    /// failed cleanup leaves the artifact behind.
+    /// Two near-identical predicates, deliberately distinct — they answer
+    /// different questions and differ on exactly two statuses:
+    ///
+    /// | status    | `has_deployed_artifact` | `has_deployed_target` |
+    /// |-----------|-------------------------|-----------------------|
+    /// | `Pending` | no                      | no                    |
+    /// | `Synced`  | yes                     | yes                   |
+    /// | `Stale`   | yes                     | yes                   |
+    /// | `Missing` | **no**                  | **yes**               |
+    /// | `Error`   | **yes**                 | **no**                |
+    ///
+    /// `has_deployed_artifact` asks "might bytes still be at the target *now*",
+    /// so removal knows whether to try deleting: `Error` is in because a failed
+    /// cleanup leaves the artifact behind, `Missing` is out because its absence
+    /// is already recorded.
+    ///
+    /// `has_deployed_target` asks "was a target *ever* deployed", so reconcile
+    /// can tell "it vanished" (news) from "it was never there": `Missing` is in
+    /// because the row was deployed before it vanished, `Error` is out because
+    /// a row that failed on its first sync never had a target to lose.
+    ///
+    /// A third gate needs neither: the orphaned-assignment branch in
+    /// `project_ops::remove_tool_with_cleanup` has no trustworthy status (its
+    /// skill record is gone), so it probes the filesystem unconditionally.
     pub fn has_deployed_artifact(self) -> bool {
         matches!(
             self,
             SyncStatus::Synced | SyncStatus::Stale | SyncStatus::Error
+        )
+    }
+
+    /// See [`SyncStatus::has_deployed_artifact`] for how this differs.
+    fn has_deployed_target(self) -> bool {
+        matches!(
+            self,
+            SyncStatus::Synced | SyncStatus::Stale | SyncStatus::Missing
         )
     }
 }
@@ -173,16 +202,6 @@ pub fn next_status(obs: &Observation<'_>) -> SyncStatus {
         SyncStatus::Synced
     } else {
         obs.current
-    }
-}
-
-impl SyncStatus {
-    /// Statuses whose target existed at some point (so its absence is news).
-    fn has_deployed_target(self) -> bool {
-        matches!(
-            self,
-            SyncStatus::Synced | SyncStatus::Stale | SyncStatus::Missing
-        )
     }
 }
 

@@ -5,11 +5,10 @@
 //! tools, how shared skills dirs group, and what "installed" means lives here
 //! so it is testable against a temp home.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::{
-    adapters_sharing_skills_dir, constituents_of, is_installed_in, skills_dir_in, ToolAdapter,
-    TOOL_ADAPTERS,
+    adapters_sharing_skills_dir, constituents_of, is_installed_in, ToolAdapter, TOOL_ADAPTERS,
 };
 
 /// One row of a tool list, with every backend-owned fact already resolved.
@@ -18,10 +17,14 @@ pub struct ToolCatalogEntry {
     pub key: &'static str,
     pub label: &'static str,
     pub installed: bool,
-    /// The tool's global skills dir under the probed home.
-    pub skills_dir: PathBuf,
-    /// Keys of every entry in this list sharing this entry's skills dir, in
-    /// registry order, including the entry itself (len >= 1).
+    /// Keys of every entry in this list sharing this entry's skills dir — the
+    /// global dir for the global catalog, the project dir for the project
+    /// catalog — in registry order, including the entry itself (len >= 1).
+    ///
+    /// The dir itself is deliberately absent: it is absolute under the
+    /// operator's home at global scope but project-relative at project scope,
+    /// so one field could not carry both honestly, and no consumer needs the
+    /// path — only the grouping it induces.
     pub shared_with: Vec<&'static str>,
     /// Display names of the constituent tools absorbed into this entry when
     /// it is a virtual group; empty for real tools.
@@ -38,7 +41,6 @@ pub fn global_tool_entries(home: &Path) -> Vec<ToolCatalogEntry> {
             key: adapter.key(),
             label: adapter.display_name,
             installed: is_installed_in(home, adapter),
-            skills_dir: skills_dir_in(home, adapter),
             shared_with: adapters_sharing_skills_dir(adapter)
                 .into_iter()
                 .filter(|a| !a.is_virtual_group())
@@ -75,7 +77,6 @@ pub fn project_tool_entries(home: &Path) -> Vec<ToolCatalogEntry> {
                 key: adapter.key(),
                 label: adapter.display_name,
                 installed,
-                skills_dir: skills_dir_in(home, adapter),
                 shared_with: listed
                     .iter()
                     .filter(|a| {

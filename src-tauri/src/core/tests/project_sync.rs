@@ -1176,7 +1176,7 @@ fn project_fanout_uses_persisted_project_tools() {
     // pi's project-scope dir, not its global one
     let pi = crate::core::tool_adapters::adapter_by_key("pi").unwrap();
     assert!(
-        project_sync::resolve_project_sync_target(&project_dir, &pi, "pt-skill")
+        project_sync::resolve_project_sync_target(&project_dir, pi, "pt-skill")
             .symlink_metadata()
             .is_ok()
     );

@@ -17,9 +17,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use uuid::Uuid;
 
+use super::clock::now_ms;
 use super::content_hash::hash_dir;
 use super::errors::SignalError;
-use super::clock::now_ms;
 use super::skill_discovery::{find_skill_md, parse_skill_md};
 use super::skill_store::{SkillRecord, SkillStore};
 use super::sync_engine::copy_dir_recursive;
@@ -37,6 +37,16 @@ pub struct InstallResult {
 /// URL, subpath, or folder) yields to SKILL.md's `name` when that is free; a
 /// user-provided name is always honored (fixes #28: a subpath of `skills`
 /// otherwise collides with tool directory names).
+///
+/// The variants name the *policy*, not the provenance: `UserProvided` means
+/// "honor this name as-is", `Derived` means "prefer SKILL.md's name over it".
+/// That is why the local-install flows pass a folder-derived name as
+/// `UserProvided` — for a directory on the operator's disk the folder name *is*
+/// the skill's identity (it is what every tool already shows), so renaming it
+/// behind the operator's back would be the surprise. The local *selection*
+/// flow does apply the SKILL.md preference, but earlier: it parses the manifest
+/// itself and passes the resulting name here (`installer.rs`), because it must
+/// reject an unparseable `SKILL.md` before staging anything.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NameIntent {
     UserProvided(String),
@@ -108,10 +118,26 @@ impl StagingDir {
 
     /// Move the staged content to `dest` (copy + delete on cross-device rename
     /// failure). The guard is consumed; nothing is left at the staging path.
+    ///
+    /// A failed fallback copy removes the partial `dest` before propagating:
+    /// `Drop` only cleans the staging path, so without this a half-written
+    /// skill directory would be left inside the central repo under the skill's
+    /// final name — where the next install reads it as a name collision.
     fn move_into(self, dest: &Path) -> Result<()> {
         if let Err(err) = std::fs::rename(&self.path, dest) {
-            copy_dir_recursive(&self.path, dest)
-                .with_context(|| format!("fallback copy {:?} -> {:?}", self.path, dest))?;
+            if let Err(copy_err) = copy_dir_recursive(&self.path, dest) {
+                if let Err(cleanup_err) = std::fs::remove_dir_all(dest) {
+                    if cleanup_err.kind() != std::io::ErrorKind::NotFound {
+                        log::warn!(
+                            "[install] failed to remove partial {:?} after copy failure: {}",
+                            dest,
+                            cleanup_err
+                        );
+                    }
+                }
+                return Err(copy_err)
+                    .with_context(|| format!("fallback copy {:?} -> {:?}", self.path, dest));
+            }
             log::warn!(
                 "[install] rename {:?} -> {:?} failed, copied instead: {}",
                 self.path,

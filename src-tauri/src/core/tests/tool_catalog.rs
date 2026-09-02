@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::core::tool_adapters::{
     adapter_by_key, constituents_of, global_tool_entries, installed_keys, project_tool_entries,
-    ToolCatalogEntry, ToolId, VirtualGroup,
+    skills_dir_in, ToolCatalogEntry, ToolId, VirtualGroup,
 };
 
 fn install(home: &Path, key: &str) {
@@ -43,12 +43,25 @@ fn global_catalog_groups_shared_skills_dirs_and_resolves_paths_under_home() {
     let kimi = entry(&entries, "kimi_cli");
     assert_eq!(amp.shared_with, vec!["amp", "kimi_cli"]);
     assert_eq!(kimi.shared_with, amp.shared_with);
-    assert_eq!(amp.skills_dir, home.path().join(".config/agents/skills"));
 
     let claude = entry(&entries, "claude_code");
     assert_eq!(claude.shared_with, vec!["claude_code"]);
-    assert_eq!(claude.skills_dir, home.path().join(".claude/skills"));
     assert!(entries.iter().all(|e| e.shared_with.contains(&e.key)));
+
+    // The catalog carries no dir (see `ToolCatalogEntry`); the grouping it
+    // reports must still match what the registry resolves under this home.
+    assert_eq!(
+        skills_dir_in(home.path(), adapter_by_key("amp").unwrap()),
+        home.path().join(".config/agents/skills")
+    );
+    assert_eq!(
+        skills_dir_in(home.path(), adapter_by_key("kimi_cli").unwrap()),
+        skills_dir_in(home.path(), adapter_by_key("amp").unwrap())
+    );
+    assert_eq!(
+        skills_dir_in(home.path(), adapter_by_key("claude_code").unwrap()),
+        home.path().join(".claude/skills")
+    );
 }
 
 #[test]
@@ -86,7 +99,6 @@ fn project_catalog_absorbs_constituents_into_the_virtual_group() {
         assert!(agents.constituents.contains(&a.display_name));
     }
     assert_eq!(agents.constituents.len(), 9);
-    assert_eq!(agents.skills_dir, home.path().join(".agents/skills"));
     // Real tools keep no constituents.
     assert!(entry(&entries, "claude_code").constituents.is_empty());
 }

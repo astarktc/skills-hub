@@ -91,7 +91,14 @@ pub fn run() {
             )?;
 
             let db_path = default_db_path(app.handle()).map_err(tauri::Error::from)?;
-            migrate_legacy_db_if_needed(&db_path).map_err(tauri::Error::from)?;
+            // The legacy-identifier probe root: the platform data dir that holds
+            // one subdirectory per app identifier. Resolved here, at the wiring
+            // tier, so `core` reads no environment.
+            let legacy_data_root = app
+                .path()
+                .data_dir()
+                .map_err(|err| tauri::Error::from(anyhow::anyhow!(err)))?;
+            migrate_legacy_db_if_needed(&legacy_data_root, &db_path).map_err(tauri::Error::from)?;
             let store = SkillStore::new(db_path);
             store.ensure_schema().map_err(tauri::Error::from)?;
 

@@ -71,6 +71,32 @@ fn match_skill_candidate_table() {
     );
     // A blank target never matches (it would "contain" into everything).
     assert_eq!(match_skill_candidate("  ", &react_vue), SkillMatch::None);
+    // Symmetrically, a blank *candidate* name matches nothing: `target`
+    // contains "" for every target, so without the guard a nameless candidate
+    // would be a containment hit everywhere and make every real match
+    // ambiguous. Its dir name still matches normally.
+    let blank_named = [
+        cand("react", "skills/react"),
+        cand("", "skills/nameless"),
+        cand("   ", "skills/whitespace"),
+    ];
+    assert_eq!(
+        resolved_subpath("react", &blank_named),
+        Some("skills/react")
+    );
+    assert_eq!(
+        resolved_subpath("json-render-react", &blank_named),
+        Some("skills/react")
+    );
+    assert_eq!(
+        match_skill_candidate("gamma", &[cand("", "skills/nameless")]),
+        SkillMatch::None
+    );
+    // The dir name is still matchable on a nameless candidate.
+    assert_eq!(
+        resolved_subpath("nameless", &blank_named),
+        Some("skills/nameless")
+    );
 }
 
 #[test]

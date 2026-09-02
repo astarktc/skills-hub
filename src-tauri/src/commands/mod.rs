@@ -19,8 +19,8 @@ use crate::core::errors::SignalError;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::global_sync::{BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus};
 use crate::core::installer::{
-    clone_for_explore_preview, install_git_skill_from_selection,
-    install_local_skill, install_local_skill_from_selection, list_git_skills, list_local_skills,
+    clone_for_explore_preview, install_git_skill_from_selection, install_local_skill,
+    install_local_skill_from_selection, list_git_skills, list_local_skills,
     update_managed_skill_from_source, GitSkillListing, InstallResult, InstallerPaths,
     LocalSkillCandidate,
 };
@@ -83,11 +83,11 @@ pub struct ToolInfoDto {
     pub key: String,
     pub label: String,
     pub installed: bool,
-    pub skills_dir: String,
     /// Keys of every listed tool sharing this tool's skills dir (global dir
     /// for the global list, project dir for the project list), in adapter
     /// order, including this tool itself (len >= 1). The backend owns the
-    /// shared-dir invariant; the frontend only presents it.
+    /// shared-dir invariant; the frontend only presents it. The dir itself is
+    /// not on the wire — see `ToolCatalogEntry`.
     pub shared_with: Vec<String>,
     /// Display labels of the constituent tools absorbed into this entry when
     /// it is a virtual group (project-scope AgentsStandard); empty for real
@@ -108,7 +108,6 @@ impl From<ToolCatalogEntry> for ToolInfoDto {
             key: entry.key.to_string(),
             label: entry.label.to_string(),
             installed: entry.installed,
-            skills_dir: entry.skills_dir.to_string_lossy().to_string(),
             shared_with: entry.shared_with.iter().map(|k| k.to_string()).collect(),
             constituents: entry.constituents.iter().map(|k| k.to_string()).collect(),
         }

@@ -215,3 +215,44 @@ fn finalize_update_swaps_content_and_preserves_identity() {
         updated.source_revision
     );
 }
+
+/// A failed fallback copy must not leave a partial directory at the skill's
+/// final name inside the central repo: `Drop` only cleans the staging path, so
+/// `move_into` removes `dest` itself before propagating. A leftover would read
+/// as a name collision on the operator's next install attempt.
+#[cfg(unix)]
+#[test]
+fn move_into_removes_partial_dest_when_the_fallback_copy_fails() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let central = tempfile::tempdir().unwrap();
+    let staged = StagingDir::new_in(central.path());
+    let staged_path = staged.path().to_path_buf();
+    fs::create_dir_all(&staged_path).unwrap();
+    fs::write(staged_path.join("SKILL.md"), "---\nname: s\n---\n").unwrap();
+    // An unreadable subdirectory makes the recursive copy fail part-way, after
+    // it has already created `dest` and copied at least one entry.
+    let blocked = staged_path.join("blocked");
+    fs::create_dir_all(blocked.join("inner")).unwrap();
+    fs::set_permissions(&blocked, fs::Permissions::from_mode(0o000)).unwrap();
+
+    // Force the rename to fail so the copy fallback runs: renaming onto a
+    // non-empty directory is ENOTEMPTY.
+    let dest = central.path().join("s");
+    fs::create_dir_all(dest.join("occupied")).unwrap();
+
+    let err = staged.move_into(&dest).expect_err("copy must fail");
+    assert!(
+        format!("{:#}", err).contains("fallback copy"),
+        "unexpected error: {:#}",
+        err
+    );
+    assert!(
+        !dest.exists(),
+        "partial dest must be removed, found {:?}",
+        fs::read_dir(&dest).map(|rd| rd.count())
+    );
+
+    // Restore permissions so the tempdir can be cleaned up.
+    fs::set_permissions(&blocked, fs::Permissions::from_mode(0o755)).unwrap();
+}

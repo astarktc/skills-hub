@@ -338,19 +338,11 @@ pub async fn bulk_assign_skill(
 pub async fn update_project_gitignore(
     store: State<'_, SkillStore>,
     projectId: String,
-    addToGitignore: bool,
-    addToExclude: bool,
+    gitignore: IgnoreUpdateOptions,
 ) -> Result<(), CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        gitignore::update_for_project(
-            &store,
-            &projectId,
-            IgnoreUpdateOptions {
-                add_to_gitignore: addToGitignore,
-                add_to_exclude: addToExclude,
-            },
-        )
+        gitignore::update_for_project(&store, &projectId, gitignore)
     })
     .await
     .map_err(CommandError::internal)?

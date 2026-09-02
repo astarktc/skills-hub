@@ -75,7 +75,13 @@ pub fn match_skill_candidate<'a, T: MatchableSkill>(
         return SkillMatch::None;
     }
     let exact = |value: &str| value.to_lowercase() == target;
+    // An empty candidate name matches nothing: `target.contains("")` is true for
+    // every target, which would make a nameless candidate a tier-2 hit
+    // everywhere (and so make every real match ambiguous).
     let contains = |value: &str| {
+        if value.trim().is_empty() {
+            return false;
+        }
         let value = value.to_lowercase();
         value.contains(&target) || target.contains(&value)
     };

@@ -110,7 +110,7 @@ fn seed_assignment(
         .expect("add assignment");
     let adapter = adapter_by_key(tool).expect("adapter");
     let target =
-        project_sync::resolve_project_sync_target(Path::new(&project.path), &adapter, &skill.name);
+        project_sync::resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name);
     fs::create_dir_all(&target).expect("create project target");
     fs::write(target.join("SKILL.md"), "# synced\n").unwrap();
     target

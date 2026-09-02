@@ -20,12 +20,12 @@ fn path_resolution_joins_adapter_dirs_onto_home() {
     for (key, skills, detect) in cases {
         let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {key}"));
         assert_eq!(
-            skills_dir_in(home.path(), &adapter),
+            skills_dir_in(home.path(), adapter),
             home.path().join(skills),
             "skills dir for {key}"
         );
         assert_eq!(
-            detect_dir_in(home.path(), &adapter),
+            detect_dir_in(home.path(), adapter),
             home.path().join(detect),
             "detect dir for {key}"
         );
@@ -52,23 +52,23 @@ fn installedness_is_decided_by_detect_dir_not_skills_dir() {
     let codex = adapter_by_key("codex").unwrap();
     let claude = adapter_by_key("claude_code").unwrap();
 
-    assert!(!is_installed_in(home.path(), &codex));
+    assert!(!is_installed_in(home.path(), codex));
 
     // Detect dir present (even without a skills dir) => installed.
     fs::create_dir_all(home.path().join(".codex")).unwrap();
-    assert!(is_installed_in(home.path(), &codex));
-    assert!(!is_installed_in(home.path(), &claude));
+    assert!(is_installed_in(home.path(), codex));
+    assert!(!is_installed_in(home.path(), claude));
 
     // Only the adapter's own detect dir counts — a sibling under the same
     // parent does not.
     let amp = adapter_by_key("amp").unwrap();
     fs::create_dir_all(home.path().join(".config/other")).unwrap();
-    assert!(!is_installed_in(home.path(), &amp));
+    assert!(!is_installed_in(home.path(), amp));
     fs::create_dir_all(home.path().join(".config/agents")).unwrap();
-    assert!(is_installed_in(home.path(), &amp));
+    assert!(is_installed_in(home.path(), amp));
     // Shared-dir tools are detected independently by the same dir.
     let kimi = adapter_by_key("kimi_cli").unwrap();
-    assert!(is_installed_in(home.path(), &kimi));
+    assert!(is_installed_in(home.path(), kimi));
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn adapter_by_key_finds_new_tools() {
 #[test]
 fn adapters_sharing_skills_dir_groups_amp_and_kimi() {
     let amp = adapter_by_key("amp").unwrap();
-    let group = adapters_sharing_skills_dir(&amp);
+    let group = adapters_sharing_skills_dir(amp);
     let keys: std::collections::HashSet<&'static str> =
         group.into_iter().map(|a| a.id.as_key()).collect();
     assert!(keys.contains("amp"));

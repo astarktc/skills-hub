@@ -78,7 +78,7 @@ fn cursor_sync_forces_copy() {
         !cursor.supports_symlink,
         "test premise: Cursor cannot symlink"
     );
-    let out = sync_dir_for_tool_with_overwrite(&cursor, src_dir.path(), &target, false).unwrap();
+    let out = sync_dir_for_tool_with_overwrite(cursor, src_dir.path(), &target, false).unwrap();
     assert!(matches!(out.mode_used, SyncMode::Copy));
     assert!(target.join("s/a.txt").exists());
     assert_eq!(fs::read(target.join("s/a.txt")).unwrap(), b"ok");
@@ -102,7 +102,7 @@ fn symlink_capable_tool_gets_a_link() {
 
     let claude = adapter_by_key("claude_code").expect("claude adapter");
     assert!(claude.supports_symlink);
-    let out = sync_dir_for_tool_with_overwrite(&claude, src_dir.path(), &target, false).unwrap();
+    let out = sync_dir_for_tool_with_overwrite(claude, src_dir.path(), &target, false).unwrap();
     assert!(matches!(out.mode_used, SyncMode::Symlink));
     assert!(fs::symlink_metadata(&target)
         .unwrap()
@@ -122,7 +122,9 @@ fn any_adapter_without_symlink_support_is_copied() {
 
     // Clone the registry record so the capability can be flipped locally: the
     // registry itself is `static` and immutable by design.
-    let mut claude = adapter_by_key("claude_code").expect("claude adapter").clone();
+    let mut claude = adapter_by_key("claude_code")
+        .expect("claude adapter")
+        .clone();
     claude.supports_symlink = false;
     let out = sync_dir_for_tool_with_overwrite(&claude, src_dir.path(), &target, false).unwrap();
     assert!(matches!(out.mode_used, SyncMode::Copy));

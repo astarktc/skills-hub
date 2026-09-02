@@ -1457,3 +1457,84 @@ fn reconciled_transition_writes_status_and_hash_only() {
     );
     assert_eq!(got.mode, SyncMode::Copy);
 }
+
+// ---------------------------------------------------------------------------
+// migrate_legacy_db_if_needed — the legacy-identifier probe root is passed in,
+// so the whole adoption rule is testable against a temp data root.
+// ---------------------------------------------------------------------------
+
+fn seeded_db(path: &std::path::Path, skill_name: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let store = SkillStore::new(path.to_path_buf());
+    store.ensure_schema().unwrap();
+    store
+        .upsert_skill(&super::SkillRecord {
+            id: format!("id-{skill_name}"),
+            name: skill_name.to_string(),
+            description: None,
+            source_type: "local".to_string(),
+            source_ref: None,
+            source_subpath: None,
+            source_revision: None,
+            central_path: "/tmp/x".to_string(),
+            content_hash: None,
+            created_at: 1,
+            updated_at: 1,
+            last_sync_at: None,
+            last_seen_at: 1,
+            status: "active".to_string(),
+        })
+        .unwrap();
+}
+
+fn skill_names(path: &std::path::Path) -> Vec<String> {
+    SkillStore::new(path.to_path_buf())
+        .list_skills()
+        .unwrap()
+        .into_iter()
+        .map(|s| s.name)
+        .collect()
+}
+
+#[test]
+fn legacy_db_is_adopted_when_the_target_has_no_skills() {
+    let root = tempfile::tempdir().unwrap();
+    let data_root = root.path().join("data");
+    let legacy = data_root
+        .join("com.qufei1993.skillshub")
+        .join("skills_hub.db");
+    seeded_db(&legacy, "from-legacy");
+
+    let target = root.path().join("current").join("skills_hub.db");
+    super::migrate_legacy_db_if_needed(&data_root, &target).unwrap();
+
+    assert!(target.exists(), "legacy db must be adopted");
+    assert_eq!(skill_names(&target), vec!["from-legacy".to_string()]);
+}
+
+#[test]
+fn a_target_that_already_has_skills_is_left_alone() {
+    let root = tempfile::tempdir().unwrap();
+    let data_root = root.path().join("data");
+    seeded_db(
+        &data_root.join("com.tauri.dev").join("skills_hub.db"),
+        "from-legacy",
+    );
+
+    let target = root.path().join("current").join("skills_hub.db");
+    seeded_db(&target, "already-here");
+    super::migrate_legacy_db_if_needed(&data_root, &target).unwrap();
+
+    assert_eq!(skill_names(&target), vec!["already-here".to_string()]);
+}
+
+#[test]
+fn no_legacy_db_under_the_data_root_is_a_no_op() {
+    let root = tempfile::tempdir().unwrap();
+    let data_root = root.path().join("data");
+    std::fs::create_dir_all(&data_root).unwrap();
+
+    let target = root.path().join("current").join("skills_hub.db");
+    super::migrate_legacy_db_if_needed(&data_root, &target).unwrap();
+    assert!(!target.exists(), "nothing to adopt, nothing created");
+}
