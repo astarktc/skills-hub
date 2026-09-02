@@ -98,6 +98,10 @@ pub enum CommandError {
         /// `"<path>: <io error>"` diagnostics per failed cleanup target.
         failures: Vec<String>,
     },
+    PathOutsideToolDirs {
+        /// The refused path (not inside any Tool's skills directory).
+        path: String,
+    },
     Other {
         message: String,
     },
@@ -215,6 +219,7 @@ impl From<SignalError> for CommandError {
             SignalError::DeleteCleanupFailed { failures } => {
                 CommandError::DeleteCleanupFailed { failures }
             }
+            SignalError::PathOutsideToolDirs { path } => CommandError::PathOutsideToolDirs { path },
         }
     }
 }

@@ -543,3 +543,41 @@ fn invocation_mode_for_dir_defaults_without_readable_skill_md() {
         super::InvocationMode::ModelOnly
     );
 }
+
+// ── The admission rule (`require_skill_md`) ──
+
+#[test]
+fn require_skill_md_admits_a_dir_with_a_manifest_and_returns_its_path() {
+    let dir = tempfile::tempdir().unwrap();
+    write_skill(dir.path(), "ok", "ok-skill");
+
+    let manifest = super::require_skill_md(&dir.path().join("ok")).expect("admitted");
+    assert_eq!(manifest, dir.path().join("ok").join("SKILL.md"));
+
+    // Case-insensitive, like the rest of discovery.
+    fs::create_dir_all(dir.path().join("cased")).unwrap();
+    fs::write(
+        dir.path().join("cased").join("Skill.md"),
+        "---\nname: c\n---\n",
+    )
+    .unwrap();
+    super::require_skill_md(&dir.path().join("cased")).expect("admitted");
+}
+
+#[test]
+fn require_skill_md_refuses_a_dir_without_one_using_the_typed_condition() {
+    let dir = tempfile::tempdir().unwrap();
+    // The shape issue #8 was about: a directory under a tool's skills dir
+    // that was discovered but carries no manifest.
+    let bare = dir.path().join(".claude/skills/bare");
+    fs::create_dir_all(&bare).unwrap();
+    fs::write(bare.join("notes.md"), "not a manifest").unwrap();
+
+    let err = super::require_skill_md(&bare).expect_err("must refuse");
+    match err.downcast_ref::<crate::core::errors::SignalError>() {
+        Some(crate::core::errors::SignalError::SkillInvalid { reason }) => {
+            assert_eq!(reason, "missing_skill_md");
+        }
+        other => panic!("expected SkillInvalid, got {other:?}"),
+    }
+}

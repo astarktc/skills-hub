@@ -1,3 +1,4 @@
+pub mod artifact_removal;
 pub mod cache_cleanup;
 pub mod cancel_token;
 pub mod central_repo;
@@ -21,11 +22,11 @@ pub mod project_sync;
 pub mod propagation;
 pub mod refresh;
 pub mod settings;
+pub mod skill_catalog;
 pub mod skill_discovery;
 pub mod skill_files;
 pub mod skill_lock;
 pub mod skill_matching;
-pub mod skill_removal;
 pub mod skill_store;
 pub mod skills_search;
 pub mod sync_engine;

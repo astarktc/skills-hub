@@ -10,7 +10,7 @@ use crate::core::gitignore::IgnoreUpdateOptions;
 use crate::core::installer::InstallerPaths;
 use crate::core::skill_store::{ProjectRecord, SkillRecord, SkillStore};
 use crate::core::sync_status::SyncStatus;
-use crate::core::{global_sync, installer, project_ops, project_sync, refresh, skill_removal};
+use crate::core::{artifact_removal, global_sync, installer, project_ops, project_sync, refresh};
 
 /// How long a mutation-in-flight window is held open while asserting that a
 /// second mutation has not started. The guard is process-global, so every
@@ -204,8 +204,10 @@ fn deleting_a_managed_skill_is_serialized() {
     let f = fixture("delete-guard");
     let store = f.store.clone();
     let skill_id = f.skill.id.clone();
+    let home = f._work_dir.path().join("empty-home");
+    fs::create_dir_all(&home).expect("create home");
     assert_serialized("remove_skill", move || {
-        skill_removal::remove_skill(&store, &skill_id).expect("remove skill");
+        artifact_removal::remove_skill(&store, &home, &skill_id).expect("remove skill");
     });
 }
 

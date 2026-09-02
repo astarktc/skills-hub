@@ -131,6 +131,15 @@ describe("describeCommandError", () => {
     ).toBe("errors.deleteCleanupFailed\n- /a: denied\n- /b: busy");
   });
 
+  it("names the refused path for PATH_OUTSIDE_TOOL_DIRS", () => {
+    expect(
+      describeCommandError(
+        { code: "PATH_OUTSIDE_TOOL_DIRS", path: "/home/u/Documents" },
+        t,
+      ),
+    ).toBe('errors.pathOutsideToolDirs {"path":"/home/u/Documents"}');
+  });
+
   it("names the unknown tool key for UNKNOWN_TOOL", () => {
     expect(
       describeCommandError({ code: "UNKNOWN_TOOL", tool: "not-a-tool" }, t),

@@ -1,9 +1,10 @@
 use std::fs;
 
+use crate::core::errors::SignalError;
 use crate::core::tool_adapters::{
     adapter_by_key, adapters_sharing_skills_dir, constituents_of, default_tool_adapters,
-    detect_dir_in, is_installed_in, scan_tool_dir, skills_dir_in, ToolAdapter, ToolId,
-    VirtualGroup,
+    detect_dir_in, ensure_path_within_tool_dirs, is_installed_in, scan_tool_dir, skills_dir_in,
+    ToolAdapter, ToolId, VirtualGroup,
 };
 
 #[test]
@@ -275,4 +276,38 @@ fn registry_keys_are_unique() {
     keys.sort_unstable();
     keys.dedup();
     assert_eq!(keys.len(), n);
+}
+
+// ---------------------------------------------------------------------------
+// The deletion safety rule (`ensure_path_within_tool_dirs`)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_path_inside_any_tool_skills_dir_is_allowed() {
+    let home = tempfile::tempdir().unwrap();
+    for key in ["claude_code", "pi", "amp"] {
+        let adapter = adapter_by_key(key).unwrap();
+        let path = skills_dir_in(home.path(), adapter).join("some-skill");
+        ensure_path_within_tool_dirs(home.path(), &path)
+            .unwrap_or_else(|err| panic!("{key} should be allowed: {err:#}"));
+    }
+}
+
+#[test]
+fn a_path_outside_every_tool_skills_dir_is_refused_with_the_typed_condition() {
+    let home = tempfile::tempdir().unwrap();
+    for outside in [
+        home.path().join("Documents/notes"),
+        home.path().join(".claude"), // the tool root, not its skills dir
+        std::path::PathBuf::from("/"),
+    ] {
+        let err = ensure_path_within_tool_dirs(home.path(), &outside)
+            .expect_err("must refuse a path outside every tool skills dir");
+        match err.downcast_ref::<SignalError>() {
+            Some(SignalError::PathOutsideToolDirs { path }) => {
+                assert_eq!(path, &outside.to_string_lossy().to_string());
+            }
+            other => panic!("expected PathOutsideToolDirs, got {other:?}"),
+        }
+    }
 }

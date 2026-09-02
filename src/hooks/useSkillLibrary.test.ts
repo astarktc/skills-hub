@@ -9,6 +9,7 @@ import type {
   BatchSyncReportDto,
   ManagedSkill,
   RefreshReportDto,
+  RemovalReportDto,
 } from "../components/skills/types";
 import type { SkillLibraryDeps } from "./useSkillLibrary";
 
@@ -97,6 +98,20 @@ function refreshedReport(names: string[]): RefreshReportDto {
   };
 }
 
+/** A removal report in which every named tool's artifact was removed. */
+function removedReport(tools: string[]): RemovalReportDto {
+  return {
+    targets: tools.map((tool) => ({
+      scope: { scope: "global" },
+      tool,
+      path: `/tools/${tool}/alpha`,
+      status: { status: "removed" },
+    })),
+    removed: tools.length,
+    failed: 0,
+  };
+}
+
 function makeDeps(overrides?: {
   skills?: ManagedSkill[];
   autoSyncEnabled?: boolean;
@@ -104,6 +119,7 @@ function makeDeps(overrides?: {
   sharedDirConfirmation?: boolean | Promise<boolean>;
   syncReport?: BatchSyncReportDto;
   refreshReport?: RefreshReportDto;
+  removalReport?: RemovalReportDto;
 }) {
   const skills = overrides?.skills ?? [skill("s1", "alpha")];
   const refreshReport =
@@ -114,6 +130,12 @@ function makeDeps(overrides?: {
         return Promise.resolve(skills);
       case "refreshManagedSkills":
         return Promise.resolve(refreshReport);
+      case "unsyncSkill":
+      case "unsyncAllSkills":
+      case "unsyncSkillFromTool":
+        return Promise.resolve(
+          overrides?.removalReport ?? removedReport(["claude"]),
+        );
       default:
         return Promise.resolve(undefined);
     }
@@ -129,7 +151,7 @@ function makeDeps(overrides?: {
   // one-shot setters the real reporter uses, so assertions read naturally.
   // The lifecycle itself (loading surface) is the reporter's own test.
   const runAction = vi.fn(
-    async <T,>(
+    async <T>(
       opts: RunActionOptions<T>,
       fn: (action: ActionHandle) => Promise<T | ActionExit>,
     ): Promise<T | undefined> => {
@@ -212,7 +234,9 @@ beforeEach(() => {
 
 describe("useSkillLibrary refresh", () => {
   it("issues one backend batch for every skill and never fans out a sync itself", async () => {
-    const setup = makeDeps({ skills: [skill("s1", "alpha"), skill("s2", "beta")] });
+    const setup = makeDeps({
+      skills: [skill("s1", "alpha"), skill("s2", "beta")],
+    });
     const { result } = await renderLibrary(setup);
 
     await act(async () => {
@@ -270,7 +294,10 @@ describe("useSkillLibrary refresh", () => {
                 },
                 {
                   scope: { scope: "global", tool: "claude" },
-                  status: { status: "skipped", reason: { reason: "link_follows_source" } },
+                  status: {
+                    status: "skipped",
+                    reason: { reason: "link_follows_source" },
+                  },
                 },
               ],
             },
@@ -280,7 +307,11 @@ describe("useSkillLibrary refresh", () => {
             skill_name: "beta",
             status: {
               status: "failed",
-              error: { code: "GIT_CLONE_FAILED", kind: "unknown", detail: "boom" },
+              error: {
+                code: "GIT_CLONE_FAILED",
+                kind: "unknown",
+                detail: "boom",
+              },
             },
           },
         ],
@@ -303,8 +334,7 @@ describe("useSkillLibrary refresh", () => {
         message: "formatted:GIT_CLONE_FAILED",
       },
       {
-        title:
-          'errors.propagationFailedTitle {"name":"alpha","tool":"CURSOR"}',
+        title: 'errors.propagationFailedTitle {"name":"alpha","tool":"CURSOR"}',
         message: "formatted:OTHER",
       },
     ]);
@@ -343,7 +373,14 @@ describe("useSkillLibrary single update", () => {
           {
             skill_id: "s1",
             skill_name: "alpha",
-            status: { status: "failed", error: { code: "GIT_CLONE_FAILED", kind: "unknown", detail: "boom" } },
+            status: {
+              status: "failed",
+              error: {
+                code: "GIT_CLONE_FAILED",
+                kind: "unknown",
+                detail: "boom",
+              },
+            },
           },
         ],
         refreshed: 0,
@@ -363,6 +400,99 @@ describe("useSkillLibrary single update", () => {
       ),
     );
     expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("useSkillLibrary unsync", () => {
+  it("reports how many deployments were removed", async () => {
+    const setup = makeDeps({
+      removalReport: removedReport(["claude", "cursor"]),
+    });
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleUnsyncAll();
+    });
+
+    expect(mockInvoke).toHaveBeenCalledWith("unsyncAllSkills");
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
+      'unsyncAllComplete {"count":2}',
+    );
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([]);
+  });
+
+  it("surfaces every path it could not remove instead of a silent count", async () => {
+    const setup = makeDeps({
+      removalReport: {
+        targets: [
+          {
+            scope: { scope: "global" },
+            tool: "claude",
+            path: "/tools/claude/alpha",
+            status: { status: "removed" },
+          },
+          {
+            scope: { scope: "global" },
+            tool: "cursor",
+            path: "/tools/cursor/alpha",
+            status: {
+              status: "failed",
+              error: { code: "OTHER", message: "permission denied" },
+            },
+          },
+        ],
+        removed: 1,
+        failed: 1,
+      },
+    });
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleUnsyncAll();
+    });
+
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
+      'unsyncPartial {"count":1,"failed":1}',
+    );
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
+      {
+        title: 'errors.unsyncFailedTitle {"tool":"CURSOR"}',
+        message: "formatted:OTHER",
+      },
+    ]);
+  });
+
+  it("unsyncing one skill reports its failed targets too", async () => {
+    const setup = makeDeps({
+      removalReport: {
+        targets: [
+          {
+            scope: { scope: "global" },
+            tool: "claude",
+            path: "/tools/claude/alpha",
+            status: {
+              status: "failed",
+              error: { code: "OTHER", message: "busy" },
+            },
+          },
+        ],
+        removed: 0,
+        failed: 1,
+      },
+    });
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleUnsyncSkill("s1");
+    });
+
+    expect(mockInvoke).toHaveBeenCalledWith("unsyncSkill", "s1");
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
+      {
+        title: 'errors.unsyncFailedTitle {"tool":"CLAUDE"}',
+        message: "formatted:OTHER",
+      },
+    ]);
   });
 });
 
@@ -420,6 +550,37 @@ describe("useSkillLibrary per-tool toggle", () => {
     expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
       "status.syncDisabled",
     );
+  });
+
+  it("a failed unsync toggle fails the action instead of reporting success", async () => {
+    const setup = makeDeps({
+      skills: [skill("s1", "alpha", ["claude"])],
+      removalReport: {
+        targets: [
+          {
+            scope: { scope: "global" },
+            tool: "claude",
+            path: "/tools/claude/alpha",
+            status: {
+              status: "failed",
+              error: { code: "OTHER", message: "permission denied" },
+            },
+          },
+        ],
+        removed: 0,
+        failed: 1,
+      },
+    });
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      result.current.handleToggleToolForSkill(setup.skills[0], "claude");
+    });
+
+    await waitFor(() =>
+      expect(setup.reporter.setError).toHaveBeenCalledWith("formatted:OTHER"),
+    );
+    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
   });
 
   it("a single toggle surfaces TARGET_EXISTS with the conflicting path", async () => {

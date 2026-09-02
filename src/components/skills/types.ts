@@ -43,6 +43,10 @@ export type { BatchSyncReportDto } from "../../bindings";
 export type { SyncTargetResultDto } from "../../bindings";
 export type { SyncTargetStatusDto } from "../../bindings";
 export type { SyncProgressDto } from "../../bindings";
+export type { RemovalReportDto } from "../../bindings";
+export type { RemovalTargetDto } from "../../bindings";
+export type { RemovalScopeDto } from "../../bindings";
+export type { RemovalTargetStatusDto } from "../../bindings";
 
 // Frontend-only type (no Rust counterpart).
 export type ToolOption = {

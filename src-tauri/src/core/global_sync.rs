@@ -189,67 +189,6 @@ fn classify_sync_error(
     GlobalSyncError::Other(err)
 }
 
-/// Remove a skill's sync target for a tool, updating every tool that shares
-/// the same global skills directory. Environment probing (installedness
-/// under `home`) lives here; the deterministic removal is in
-/// [`remove_targets_for_tools`].
-///
-/// Mutation entry point: serialised against every other Sync-target mutation.
-pub fn unsync_skill_from_tool_with_records(
-    home: &Path,
-    store: &SkillStore,
-    tool_key: &str,
-    skill_id: &str,
-) -> Result<()> {
-    mutation_guard::serialized(|| {
-        unsync_skill_from_tool_with_records_unlocked(home, store, tool_key, skill_id)
-    })
-}
-
-pub(crate) fn unsync_skill_from_tool_with_records_unlocked(
-    home: &Path,
-    store: &SkillStore,
-    tool_key: &str,
-    skill_id: &str,
-) -> Result<()> {
-    let group_tool_keys: Vec<String> =
-        if let Some(adapter) = crate::core::tool_adapters::adapter_by_key(tool_key) {
-            let group = adapters_sharing_skills_dir(adapter);
-            // If none of the group tools are installed, do nothing (treat as already not effective).
-            if !group.iter().any(|a| is_installed_in(home, a)) {
-                return Ok(());
-            }
-            group
-                .into_iter()
-                .map(|a| a.id.as_key().to_string())
-                .collect()
-        } else {
-            vec![tool_key.to_string()]
-        };
-
-    remove_targets_for_tools(store, skill_id, &group_tool_keys)
-}
-
-/// Remove the filesystem target once (shared dir ⇒ shared target path) and
-/// delete the DB record for each tool in `tool_keys`. Unlocked internal seam.
-pub(crate) fn remove_targets_for_tools(
-    store: &SkillStore,
-    skill_id: &str,
-    tool_keys: &[String],
-) -> Result<()> {
-    let mut removed = false;
-    for k in tool_keys {
-        if let Some(target) = store.get_skill_target(skill_id, k)? {
-            if !removed {
-                sync_engine::remove_path_any(Path::new(&target.target_path))?;
-                removed = true;
-            }
-            store.delete_skill_target(skill_id, k)?;
-        }
-    }
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // Batch sync: the single fan-out engine behind the `sync_skills_to_tools`
 // command. Skills × tools in one call; shared-dir dedupe, installedness
@@ -520,48 +459,6 @@ pub(crate) fn sync_skills_to_tools_unlocked(
         on_progress,
     ));
     outcomes
-}
-
-/// Artifact removal for one Managed skill's global Sync targets: take each
-/// target off disk (best effort) and drop its rows. Returns the number of
-/// target rows that were dropped.
-///
-/// Mutation entry point: serialised against every other Sync-target mutation.
-///
-/// Moved verbatim from the `unsync_skill` command tier: filesystem failures
-/// are swallowed and the rows go regardless. Ticket 03 replaces this with the
-/// Artifact-removal module's presence/failure rules.
-pub fn unsync_skill_targets(store: &SkillStore, skill_id: &str) -> Result<usize> {
-    mutation_guard::serialized(|| {
-        let targets = store.list_skill_targets(skill_id)?;
-        for target in &targets {
-            let _ = sync_engine::remove_path_any(Path::new(&target.target_path));
-        }
-        let count = targets.len();
-        store.delete_skill_targets(skill_id)?;
-        Ok(count)
-    })
-}
-
-/// Artifact removal for every Managed skill's global Sync targets. Returns
-/// the number of target rows that were dropped.
-///
-/// Mutation entry point: serialised against every other Sync-target mutation.
-/// Same verbatim-move caveat as [`unsync_skill_targets`].
-pub fn unsync_all_skill_targets(store: &SkillStore) -> Result<usize> {
-    mutation_guard::serialized(|| {
-        let skills = store.list_skills()?;
-        let mut removed_count: usize = 0;
-        for skill in &skills {
-            let targets = store.list_skill_targets(&skill.id)?;
-            for target in &targets {
-                let _ = sync_engine::remove_path_any(Path::new(&target.target_path));
-            }
-            removed_count += targets.len();
-        }
-        store.delete_all_skill_targets()?;
-        Ok(removed_count)
-    })
 }
 
 #[cfg(test)]

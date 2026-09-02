@@ -1,16 +1,7 @@
 use super::*;
 use crate::core::errors::SignalError;
 use crate::core::global_sync::GlobalSyncError;
-use crate::core::skill_store::{SkillRecord, SkillTargetRecord};
-use crate::core::sync_status::{SyncMode, SyncStatus};
 use error::GitCloneFailureKind;
-
-fn make_store() -> (tempfile::TempDir, SkillStore) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let store = SkillStore::new(dir.path().join("test.db"));
-    store.ensure_schema().expect("ensure_schema");
-    (dir, store)
-}
 
 #[test]
 fn from_anyhow_recovers_signal_errors_through_context() {
@@ -145,6 +136,15 @@ fn command_error_wire_shape_is_internally_tagged() {
         serde_json::json!({ "code": "SKILL_EXISTS", "name": "react-best-practices" })
     );
 
+    let json = serde_json::to_value(CommandError::from(SignalError::PathOutsideToolDirs {
+        path: "/home/user/Documents".to_string(),
+    }))
+    .unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "code": "PATH_OUTSIDE_TOOL_DIRS", "path": "/home/user/Documents" })
+    );
+
     let json = serde_json::to_value(CommandError::RateLimited { reset_minutes: 5 }).unwrap();
     assert_eq!(
         json,
@@ -192,45 +192,6 @@ fn remove_path_any_removes_symlink_only() {
     remove_path_any(&link).unwrap();
     assert!(!link.exists());
     assert!(target.exists());
-}
-
-#[test]
-fn get_managed_skills_impl_maps_targets() {
-    let (_dir, store) = make_store();
-    let skill = SkillRecord {
-        id: "s1".to_string(),
-        name: "S1".to_string(),
-        description: None,
-        source_type: "local".to_string(),
-        source_ref: Some("/tmp/src".to_string()),
-        source_subpath: None,
-        source_revision: None,
-        central_path: "/tmp/central".to_string(),
-        content_hash: None,
-        created_at: 1,
-        updated_at: 2,
-        last_sync_at: None,
-        last_seen_at: 1,
-        status: "ok".to_string(),
-    };
-    store.upsert_skill(&skill).unwrap();
-
-    let target = SkillTargetRecord {
-        id: "t1".to_string(),
-        skill_id: "s1".to_string(),
-        tool: "cursor".to_string(),
-        target_path: "/tmp/target".to_string(),
-        mode: SyncMode::Copy,
-        status: SyncStatus::Synced,
-        last_error: None,
-        synced_at: None,
-    };
-    store.upsert_skill_target(&target).unwrap();
-
-    let out = get_managed_skills_impl(&store).unwrap();
-    assert_eq!(out.len(), 1);
-    assert_eq!(out[0].targets.len(), 1);
-    assert_eq!(out[0].targets[0].tool, "cursor");
 }
 
 #[test]

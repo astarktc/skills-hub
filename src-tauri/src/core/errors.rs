@@ -49,9 +49,14 @@ pub enum SignalError {
     /// A GitHub-hosted skill path could not be found (404). `url` is the
     /// human-checkable tree URL the frontend can surface.
     GithubSkillNotFound { url: String },
-    /// The managed record was deleted but some tool directories could not be
-    /// cleaned up. Each entry is `"<path>: <io error>"` diagnostics.
+    /// Some Sync-target artifacts could not be removed, so the skill and the
+    /// rows describing them were kept for a retry (ADR-0002). Each entry is
+    /// `"<path>: <io error>"` diagnostics.
     DeleteCleanupFailed { failures: Vec<String> },
+    /// A path a caller asked to delete is not inside any Tool's skills
+    /// directory, so Skills Hub refuses to touch it. Owned by the Tool
+    /// registry (`tool_adapters::ensure_path_within_tool_dirs`).
+    PathOutsideToolDirs { path: String },
 }
 
 impl fmt::Display for SignalError {
@@ -94,11 +99,12 @@ impl fmt::Display for SignalError {
             SignalError::GithubSkillNotFound { url } => {
                 write!(f, "skill not found on GitHub: {url}")
             }
-            SignalError::DeleteCleanupFailed { failures } => write!(
-                f,
-                "managed record deleted, but cleanup failed for: {}",
-                failures.join(", ")
-            ),
+            SignalError::DeleteCleanupFailed { failures } => {
+                write!(f, "artifact removal failed for: {}", failures.join(", "))
+            }
+            SignalError::PathOutsideToolDirs { path } => {
+                write!(f, "path is not under a known tool skills directory: {path}")
+            }
         }
     }
 }

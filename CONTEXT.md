@@ -69,7 +69,7 @@ The operator action that re-acquires every Managed skill from its source, finali
 _Avoid_: update all, re-deploy
 
 **Artifact removal**:
-Taking a Sync target off disk and settling its row, planned by scope — one Managed skill, one skill×Tool pair, one Project, one Project×Tool pair, or everything — and executed once with one presence rule and one failure rule: a row whose artifact could not be removed is kept with Sync status `error` (never deleted blind) so the failure stays observable; rows are deleted only on successful removal. Callers apply their own final policy by reading the report.
+Taking a Sync target off disk and settling its row, planned by scope — one Managed skill, one skill×Tool pair, one Project, one Project×Tool pair, or everything — and executed once with one presence rule and one failure rule: a row whose artifact could not be removed is kept with Sync status `error` (never deleted blind) so the failure stays observable; rows are deleted only on successful removal (`docs/adr/0002-keep-row-with-error-on-failed-artifact-removal.md`). Callers apply their own final policy by reading the report.
 _Avoid_: cleanup, unsync, unassign (those are the operator actions that plan a removal)
 
 **Onboarding import**:

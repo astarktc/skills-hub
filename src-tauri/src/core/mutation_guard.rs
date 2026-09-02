@@ -16,7 +16,7 @@
 //! > **An entry point never calls another entry point.** Composite
 //! > operations call the unlocked `pub(crate)` internal seam of the
 //! > operation they compose (`*_unlocked`, `remove_tool_with_cleanup`,
-//! > `plan_skill_removal`, …). Calling the locked twin from inside the
+//! > `artifact_removal::plan`, …). Calling the locked twin from inside the
 //! > critical section deadlocks.
 //!
 //! Readers that must not queue behind a mutation use [`try_serialized`]: the

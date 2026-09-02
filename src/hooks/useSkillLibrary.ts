@@ -3,6 +3,7 @@ import type {
   ManagedSkill,
   RefreshProgressDto,
   RefreshReportDto,
+  RemovalReportDto,
 } from "../components/skills/types";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import type { SyncOrchestration } from "./useSyncOrchestration";
@@ -206,29 +207,70 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     targetFailureEntries,
   ]);
 
+  /**
+   * Artifacts the backend could not remove. Their rows were kept with sync
+   * status `error` (ADR-0002), so the failure stays visible in the list too.
+   */
+  const removalFailureEntries = useCallback(
+    (report: RemovalReportDto) => {
+      const entries: ActionErrorEntry[] = [];
+      for (const target of report.targets) {
+        if (target.status.status !== "failed") continue;
+        entries.push({
+          title: t("errors.unsyncFailedTitle", {
+            tool: toolLabelById[target.tool] ?? target.tool,
+          }),
+          message: formatError(target.status.error) ?? "",
+        });
+      }
+      return entries;
+    },
+    [formatError, t, toolLabelById],
+  );
+
+  const removalToast = useCallback(
+    (report: RemovalReportDto) =>
+      report.failed === 0
+        ? t("unsyncAllComplete", { count: report.removed })
+        : t("unsyncPartial", {
+            count: report.removed,
+            failed: report.failed,
+          }),
+    [t],
+  );
+
   const handleUnsyncAll = useCallback(async () => {
-    await runAction(
-      {
-        successToast: (count: number) => t("unsyncAllComplete", { count }),
-      },
-      async () => {
-        const count = await invokeTauri("unsyncAllSkills");
-        await loadManagedSkills();
-        return count;
-      },
-    );
-  }, [loadManagedSkills, runAction, t]);
+    await runAction({ successToast: removalToast }, async () => {
+      const report = await invokeTauri("unsyncAllSkills");
+      await loadManagedSkills();
+      showActionErrors(removalFailureEntries(report));
+      return report;
+    });
+  }, [
+    loadManagedSkills,
+    removalFailureEntries,
+    removalToast,
+    runAction,
+    showActionErrors,
+  ]);
 
   const handleUnsyncSkill = useCallback(
     async (skillId: string) => {
       try {
-        await invokeTauri("unsyncSkill", skillId);
+        const report = await invokeTauri("unsyncSkill", skillId);
         await loadManagedSkills();
+        showActionErrors(removalFailureEntries(report));
       } catch (err) {
         setError(formatError(err));
       }
     },
-    [formatError, loadManagedSkills, setError],
+    [
+      formatError,
+      loadManagedSkills,
+      removalFailureEntries,
+      setError,
+      showActionErrors,
+    ],
   );
 
   const handleSyncSkillToAllTools = useCallback(
@@ -327,7 +369,19 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
         },
         async (action) => {
           if (synced) {
-            await invokeTauri("unsyncSkillFromTool", skill.id, toolId);
+            const report = await invokeTauri(
+              "unsyncSkillFromTool",
+              skill.id,
+              toolId,
+            );
+            const failed = report.targets.find(
+              (target) => target.status.status === "failed",
+            );
+            if (failed && failed.status.status === "failed") {
+              // An explicit single toggle surfaces the failure instead of
+              // reporting success over an artifact that is still on disk.
+              return action.fail(formatError(failed.status.error));
+            }
           } else {
             const report = await syncSkillsToTools(
               [toSyncItem(skill)],

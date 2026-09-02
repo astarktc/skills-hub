@@ -632,6 +632,9 @@ impl SkillStore {
         })
     }
 
+    /// Read one global target row. Store-level read used by tests and by
+    /// future callers; the removal module plans from `list_skill_targets`.
+    #[allow(dead_code)]
     pub fn get_skill_target(
         &self,
         skill_id: &str,
@@ -674,6 +677,9 @@ impl SkillStore {
         })
     }
 
+    /// Bulk delete, kept as a store capability; Artifact removal settles
+    /// rows one at a time so a failed artifact keeps its row.
+    #[allow(dead_code)]
     pub fn delete_all_skill_targets(&self) -> Result<()> {
         self.with_conn(|conn| {
             conn.execute("DELETE FROM skill_targets", [])?;
@@ -681,6 +687,8 @@ impl SkillStore {
         })
     }
 
+    /// Bulk delete of one skill's rows; see [`Self::delete_all_skill_targets`].
+    #[allow(dead_code)]
     pub fn delete_skill_targets(&self, skill_id: &str) -> Result<()> {
         self.with_conn(|conn| {
             conn.execute(

@@ -15,15 +15,19 @@
 //! 4. Plugins declared in `.claude-plugin/marketplace.json`.
 //! 5. A bounded recursive walk (depth 5) for layouts nobody anticipated.
 //!
-//! Validity is reported, never enforced: callers decide what to show or
-//! install (see [`Validity::is_installable`] vs [`Validity::is_valid`]).
+//! Validity is reported, never enforced during discovery: callers decide
+//! what to show ([`Validity::is_installable`] vs [`Validity::is_valid`]).
+//! The one place validity *is* enforced is [`require_skill_md`], the
+//! admission rule every install path applies to a source directory.
 //! No message here is user copy — reasons are stable machine tokens.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use super::errors::SignalError;
 use super::skill_matching::MatchableSkill;
 
 /// Directories relative to a root that are declared skill homes.
@@ -249,6 +253,20 @@ pub(crate) fn find_skill_md(dir: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// The admission rule for turning a directory into a Managed skill: a source
+/// without a `SKILL.md` is not an installable skill (fixes #8 — directories
+/// that were "discovered" under a tool's skills dir but carry no manifest).
+/// Returns the manifest path so callers that parse it do not look twice, and
+/// raises the typed `SignalError::SkillInvalid { reason: "missing_skill_md" }`
+/// the frontend localizes.
+pub(crate) fn require_skill_md(dir: &Path) -> Result<PathBuf> {
+    find_skill_md(dir).ok_or_else(|| {
+        anyhow::anyhow!(SignalError::SkillInvalid {
+            reason: "missing_skill_md".to_string(),
+        })
+    })
 }
 
 /// Check if a directory is a skill dir: has SKILL.md or is a `.claude/skills/` child.

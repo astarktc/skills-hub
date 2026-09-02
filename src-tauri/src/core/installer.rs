@@ -19,7 +19,7 @@ use super::install_finalize::{
 use super::propagation::{propagate_unlocked, PropagationReport};
 use super::skill_discovery::{
     discover_skills, find_skill_md, is_skill_dir, parse_skill_md, parse_skill_md_with_reason,
-    DiscoveredSkill,
+    require_skill_md, DiscoveredSkill,
 };
 use super::skill_lock::try_enrich_from_skill_lock_with_home;
 use super::skill_matching::{match_skill_candidate, CandidateMatch, MatchableSkill};
@@ -48,6 +48,8 @@ pub fn install_local_skill(
     if !source_path.exists() {
         anyhow::bail!("source path not found: {:?}", source_path);
     }
+    // Skill discovery owns the admission rule: no `SKILL.md`, no skill.
+    require_skill_md(source_path)?;
 
     let name = name.unwrap_or_else(|| {
         source_path
@@ -525,18 +527,12 @@ pub fn install_local_skill_from_selection(
         anyhow::bail!("source path not found: {:?}", selected_dir);
     }
 
-    let skill_md = find_skill_md(&selected_dir);
-    if skill_md.is_none() {
-        anyhow::bail!(SignalError::SkillInvalid {
-            reason: "missing_skill_md".to_string(),
-        });
-    }
-    let (parsed_name, _desc) =
-        parse_skill_md_with_reason(&skill_md.unwrap()).map_err(|reason| {
-            anyhow::anyhow!(SignalError::SkillInvalid {
-                reason: reason.to_string(),
-            })
-        })?;
+    let skill_md = require_skill_md(&selected_dir)?;
+    let (parsed_name, _desc) = parse_skill_md_with_reason(&skill_md).map_err(|reason| {
+        anyhow::anyhow!(SignalError::SkillInvalid {
+            reason: reason.to_string(),
+        })
+    })?;
 
     let display_name = name.unwrap_or(parsed_name);
 

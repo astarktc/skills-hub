@@ -1,7 +1,8 @@
 //! Tests for `core::global_sync` — the deterministic half of global-tool
-//! sync: overwrite policy, error classification, record fan-out, and unsync.
+//! sync: overwrite policy, error classification, and record fan-out.
+//! (Removal moved to `artifact_removal.rs` in ticket 03.)
 //!
-//! `sync_skill_into_root` / `remove_targets_for_tools` are driven directly;
+//! `sync_skill_into_root` is driven directly;
 //! the environment-probing entry points take an explicit `home`, so no test
 //! touches the operator's real home directory or installed tools.
 
@@ -10,12 +11,11 @@ use std::fs;
 use std::path::Path;
 
 use crate::core::global_sync::{
-    plan_batch_tool_targets, remove_targets_for_tools, sync_skill_into_root,
-    sync_skills_to_planned_tools, sync_skills_to_tools, target_has_same_content,
-    unsync_skill_from_tool_with_records, BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus,
-    GlobalSyncError, OverwritePolicy, PlannedToolTarget,
+    plan_batch_tool_targets, sync_skill_into_root, sync_skills_to_planned_tools,
+    sync_skills_to_tools, target_has_same_content, BatchOverride, BatchPolicy, BatchSkill,
+    BatchTargetStatus, GlobalSyncError, OverwritePolicy, PlannedToolTarget,
 };
-use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
+use crate::core::skill_store::{SkillRecord, SkillStore};
 use crate::core::tool_adapters::{adapter_by_key, ToolAdapter};
 
 fn make_store(base: &Path) -> SkillStore {
@@ -252,57 +252,6 @@ fn copy_only_capability_gets_copy_mode() {
         .expect("query")
         .expect("record");
     assert_eq!(record.mode, SyncMode::Copy);
-}
-
-#[test]
-fn unsync_removes_filesystem_target_once_and_all_group_records() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let store = make_store(dir.path());
-    seed_skill(&store, "skill-1");
-    let source = make_skill_dir(dir.path(), "central-skill", "# Skill");
-    let tool_root = dir.path().join("skills-root");
-
-    let adapter = claude();
-    let amp = adapter_by_key("amp").expect("amp adapter");
-    let outcome = sync_skill_into_root(
-        &store,
-        adapter,
-        &tool_root,
-        &source,
-        "skill-1",
-        "my-skill",
-        &no_overwrite(),
-        &[adapter, amp],
-        1000,
-    )
-    .expect("sync");
-    assert!(outcome.target_path.exists());
-
-    remove_targets_for_tools(
-        &store,
-        "skill-1",
-        &["claude_code".to_string(), "amp".to_string()],
-    )
-    .expect("unsync");
-
-    assert!(
-        std::fs::symlink_metadata(&outcome.target_path).is_err(),
-        "target must be removed"
-    );
-    for key in ["claude_code", "amp"] {
-        assert!(store
-            .get_skill_target("skill-1", key)
-            .expect("query")
-            .is_none());
-    }
-}
-
-#[test]
-fn unsync_with_no_records_is_a_no_op() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let store = make_store(dir.path());
-    remove_targets_for_tools(&store, "missing-skill", &["claude_code".to_string()])
-        .expect("no-op unsync");
 }
 
 // ---------------------------------------------------------------------------
@@ -683,8 +632,8 @@ fn classification_leaves_unrelated_errors_as_other_even_with_suspicious_prose() 
 }
 
 // ---------------------------------------------------------------------------
-// Environment probing (`plan_batch_tool_targets` / `sync_skills_to_tools` /
-// `unsync_skill_from_tool_with_records`) — driven against a temp home so
+// Environment probing (`plan_batch_tool_targets` / `sync_skills_to_tools`)
+// — driven against a temp home so
 // installedness and skills roots are fully controlled.
 // ---------------------------------------------------------------------------
 
@@ -796,42 +745,4 @@ fn sync_skills_to_tools_writes_under_temp_home_and_reports_unknown_tools() {
         record.target_path,
         home.join(".claude/skills/skill-1").to_string_lossy()
     );
-
-    // Unsync through the environment-probing wrapper removes the target.
-    unsync_skill_from_tool_with_records(&home, &store, "claude_code", "skill-1").expect("unsync");
-    assert!(!home.join(".claude/skills/skill-1").exists());
-    assert!(store
-        .get_skill_target("skill-1", "claude_code")
-        .expect("query")
-        .is_none());
-}
-
-#[test]
-fn unsync_is_a_no_op_when_no_group_tool_is_installed() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let home = dir.path().join("home");
-    fs::create_dir_all(&home).expect("home");
-    let store = make_store(dir.path());
-    seed_skill(&store, "skill-1");
-    let target = dir.path().join("stale-target");
-    fs::create_dir_all(&target).expect("target");
-    store
-        .upsert_skill_target(&SkillTargetRecord {
-            id: "t1".to_string(),
-            skill_id: "skill-1".to_string(),
-            tool: "claude_code".to_string(),
-            target_path: target.to_string_lossy().to_string(),
-            mode: SyncMode::Symlink,
-            status: SyncStatus::Synced,
-            last_error: None,
-            synced_at: None,
-        })
-        .expect("seed target");
-
-    unsync_skill_from_tool_with_records(&home, &store, "claude_code", "skill-1").expect("unsync");
-    assert!(target.exists(), "nothing installed => nothing touched");
-    assert!(store
-        .get_skill_target("skill-1", "claude_code")
-        .expect("query")
-        .is_some());
 }

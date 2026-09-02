@@ -251,7 +251,10 @@ export const resources = {
         githubSkillNotFound:
           "Skill not found on GitHub (it may have been deleted or the path changed). Please check: {{url}}",
         deleteCleanupFailed:
-          "The managed record was deleted, but cleaning up some tool directories failed:",
+          "Some tool directories could not be cleaned up, so the skill was kept — you can retry:",
+        pathOutsideToolDirs:
+          "Refused to delete {{path}}: it is not inside a known tool skills directory.",
+        unsyncFailedTitle: "Could not remove from {{tool}}",
         gitCloneUnknown:
           "Could not fetch the repository from GitHub. Please check your network/proxy and try again.",
         requireLocalPath: "Please enter a local path.",
@@ -398,6 +401,8 @@ export const resources = {
       autoSyncToggle: "Auto-sync to tool directories",
       unsyncAll: "Uninstall from tool directories",
       unsyncAllComplete: "Removed {{count}} tool directory deployments",
+      unsyncPartial:
+        "Removed {{count}} tool directory deployments; {{failed}} could not be removed",
       unsyncSkill: "Uninstall from tool directories",
       unsyncSkillTooltip: "Remove this skill from all tool directories",
       syncSkillTooltip: "Deploy this skill to all installed tools",
@@ -703,13 +708,19 @@ export const resources = {
         gitCloneNotFound: "仓库不存在或无权限访问（GitHub 返回 not found）。",
         gitCloneDns: "无法解析 GitHub 域名（DNS）。请检查网络/代理。",
         gitCloneTimeout: "连接 GitHub 超时。请检查网络/代理。",
-        gitCloneRefused: "连接 GitHub 失败（连接被拒绝/重置）。请检查网络/代理。",
+        gitCloneRefused:
+          "连接 GitHub 失败（连接被拒绝/重置）。请检查网络/代理。",
         gitCloneExecFailed:
           "git 命令执行失败（为避免卡死，已停止并不再回退到内置 git）。请检查系统 git/网络/代理。",
         githubSkillNotFound:
           "在 GitHub 上未找到该 Skill（可能已被删除或路径已变更）。请检查：{{url}}",
-        deleteCleanupFailed: "已删除托管记录，但清理部分工具目录失败：",
-        gitCloneUnknown: "无法从 GitHub 拉取仓库。请检查网络/代理，或稍后重试。",
+        deleteCleanupFailed:
+          "部分工具目录清理失败，已保留该 Skill，你可以重试：",
+        pathOutsideToolDirs:
+          "已拒绝删除 {{path}}：该路径不在已知的工具 Skills 目录内。",
+        unsyncFailedTitle: "无法从 {{tool}} 中移除",
+        gitCloneUnknown:
+          "无法从 GitHub 拉取仓库。请检查网络/代理，或稍后重试。",
         requireLocalPath: "请输入本地路径",
         requireGitUrl: "请输入 Git 仓库地址",
         noSyncTargets:
@@ -850,6 +861,7 @@ export const resources = {
       autoSyncToggle: "自动同步到工具目录",
       unsyncAll: "从工具目录中卸载",
       unsyncAllComplete: "已移除 {{count}} 个工具目录部署",
+      unsyncPartial: "已移除 {{count}} 个工具目录部署；{{failed}} 个无法移除",
       unsyncSkill: "从工具目录中卸载",
       unsyncSkillTooltip: "从所有工具目录中移除该 Skill",
       syncSkillTooltip: "将该 Skill 部署到所有已安装的工具",
@@ -878,8 +890,7 @@ export const resources = {
         duplicateError: "该目录已作为项目注册",
         gitignoreLabel: "Git 忽略设置",
         gitignoreShared: "添加到项目 .gitignore（共享，会提交到仓库）",
-        gitignorePrivate:
-          "添加到 .git/info/exclude（私有，仅本地生效）",
+        gitignorePrivate: "添加到 .git/info/exclude（私有，仅本地生效）",
         toolConfigTitle: "配置工具",
         toolConfigDesc:
           "选择要为该项目管理的 AI 工具。已安装的工具已预先勾选。",

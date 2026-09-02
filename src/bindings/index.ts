@@ -26,7 +26,7 @@ export const commands = {
 	 *  failures are data, not command errors.
 	 */
 	syncSkillsToTools: (skills: BatchSyncSkillDto[], tools: string[], policy: BatchSyncPolicyDto, onProgress: Channel<SyncProgressDto>) => __TAURI_INVOKE<BatchSyncReportDto>("sync_skills_to_tools", { skills, tools, policy, onProgress }),
-	unsyncSkillFromTool: (skillId: string, tool: string) => __TAURI_INVOKE<null>("unsync_skill_from_tool", { skillId, tool }),
+	unsyncSkillFromTool: (skillId: string, tool: string) => __TAURI_INVOKE<RemovalReportDto>("unsync_skill_from_tool", { skillId, tool }),
 	/**
 	 *  Re-acquire Managed skills from their sources, finalize them, and
 	 *  propagate to every Sync target — one batch, one report. `skillIds` of
@@ -39,8 +39,8 @@ export const commands = {
 	removeSkillSource: (path: string) => __TAURI_INVOKE<null>("remove_skill_source", { path }),
 	getManagedSkills: () => __TAURI_INVOKE<ManagedSkillDto[]>("get_managed_skills"),
 	deleteManagedSkill: (skillId: string) => __TAURI_INVOKE<null>("delete_managed_skill", { skillId }),
-	unsyncAllSkills: () => __TAURI_INVOKE<number>("unsync_all_skills"),
-	unsyncSkill: (skillId: string) => __TAURI_INVOKE<number>("unsync_skill", { skillId }),
+	unsyncAllSkills: () => __TAURI_INVOKE<RemovalReportDto>("unsync_all_skills"),
+	unsyncSkill: (skillId: string) => __TAURI_INVOKE<RemovalReportDto>("unsync_skill", { skillId }),
 	getFeaturedSkills: () => __TAURI_INVOKE<FeaturedSkillDto[]>("get_featured_skills"),
 	searchSkillsOnline: (query: string, limit: number | null) => __TAURI_INVOKE<OnlineSkillDto[]>("search_skills_online", { query, limit }),
 	listSkillFiles: (centralPath: string) => __TAURI_INVOKE<SkillFileEntry[]>("list_skill_files", { centralPath }),
@@ -157,7 +157,9 @@ resetMinutes: number } | { code: "GIT_CLONE_FAILED"; kind: GitCloneFailureKind; 
 /**  Human-checkable GitHub tree URL for the missing skill path. */
 url: string } | { code: "DELETE_CLEANUP_FAILED"; 
 /**  `"<path>: <io error>"` diagnostics per failed cleanup target. */
-failures: string[] } | { code: "OTHER"; message: string };
+failures: string[] } | { code: "PATH_OUTSIDE_TOOL_DIRS"; 
+/**  The refused path (not inside any Tool's skills directory). */
+path: string } | { code: "OTHER"; message: string };
 
 export type FeaturedSkillDto = {
 	slug: string,
@@ -403,6 +405,31 @@ export type RefreshReportDto = {
 	/**  Sync targets that failed across every refreshed skill. */
 	target_failures: number,
 };
+
+export type RemovalReportDto = {
+	targets: RemovalTargetDto[],
+	/**  Rows whose artifact was removed (and whose row was deleted). */
+	removed: number,
+	/**  Rows kept with Sync status `error` because their artifact stayed. */
+	failed: number,
+};
+
+/**  Which Sync target a removal outcome is about. */
+export type RemovalScopeDto = { scope: "global" } | { scope: "project"; project_id: string };
+
+export type RemovalTargetDto = {
+	scope: RemovalScopeDto,
+	tool: string,
+	path: string,
+	status: RemovalTargetStatusDto,
+};
+
+/**
+ *  Per-row removal result. `failed` means the artifact is still on disk and
+ *  the row was kept with Sync status `error` (ADR-0002) — report data, not a
+ *  command error.
+ */
+export type RemovalTargetStatusDto = { status: "removed" } | { status: "failed"; error: CommandError };
 
 export type ResyncSummaryDto = {
 	project_id: string,

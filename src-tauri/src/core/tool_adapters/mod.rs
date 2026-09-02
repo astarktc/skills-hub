@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use crate::core::errors::SignalError;
+
 pub mod catalog;
 
 pub use catalog::{global_tool_entries, installed_keys, project_tool_entries, ToolCatalogEntry};
@@ -690,6 +692,23 @@ pub mod test_overrides {
 /// The tool's global skills directory under `home`.
 pub fn skills_dir_in(home: &Path, adapter: &ToolAdapter) -> PathBuf {
     home.join(adapter.relative_skills_dir)
+}
+
+/// The registry's deletion safety rule: Skills Hub only removes paths inside
+/// a Tool's global skills directory. Which directories those are is a
+/// registry fact, so the refusal lives here rather than in a command body,
+/// and it is raised as the typed `SignalError::PathOutsideToolDirs` (never
+/// as prose the frontend would have to parse).
+pub fn ensure_path_within_tool_dirs(home: &Path, path: &Path) -> Result<()> {
+    let inside = TOOL_ADAPTERS
+        .iter()
+        .any(|adapter| path.starts_with(skills_dir_in(home, adapter)));
+    if inside {
+        return Ok(());
+    }
+    anyhow::bail!(SignalError::PathOutsideToolDirs {
+        path: path.to_string_lossy().into_owned(),
+    })
 }
 
 /// The directory whose presence under `home` marks the tool as installed.

@@ -15,7 +15,6 @@ use crate::core::cache_cleanup::cleanup_git_cache_dirs;
 use crate::core::cancel_token::CancelToken;
 use crate::core::clock::now_ms;
 use crate::core::environment::{expand_home_path, home_dir};
-use crate::core::errors::SignalError;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::global_sync::{BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus};
 use crate::core::installer::{
@@ -32,7 +31,8 @@ use crate::core::refresh::{
 use crate::core::settings::{
     apply_setting, load_settings, record_installed_tools, AppSettings, SettingUpdate,
 };
-use crate::core::skill_discovery::{invocation_mode_for_dir, InvocationMode};
+use crate::core::skill_catalog::{managed_skill_catalog, ManagedSkillEntry};
+use crate::core::skill_discovery::InvocationMode;
 use crate::core::skill_store::SkillStore;
 use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
@@ -40,8 +40,8 @@ use crate::core::skills_search::{
 use crate::core::sync_engine::remove_path_any;
 use crate::core::sync_status::{SyncMode, SyncStatus};
 use crate::core::tool_adapters::{
-    default_tool_adapters, global_tool_entries, installed_keys, project_tool_entries,
-    skills_dir_in, ToolCatalogEntry,
+    ensure_path_within_tool_dirs, global_tool_entries, installed_keys, project_tool_entries,
+    ToolCatalogEntry,
 };
 
 pub use error::CommandError;
@@ -481,6 +481,77 @@ pub async fn sync_skills_to_tools(
     .map_err(CommandError::from_anyhow)
 }
 
+/// Which Sync target a removal outcome is about.
+#[derive(Debug, Serialize, Type)]
+#[serde(tag = "scope", rename_all = "snake_case")]
+pub enum RemovalScopeDto {
+    Global,
+    Project { project_id: String },
+}
+
+/// Per-row removal result. `failed` means the artifact is still on disk and
+/// the row was kept with Sync status `error` (ADR-0002) — report data, not a
+/// command error.
+#[derive(Debug, Serialize, Type)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum RemovalTargetStatusDto {
+    Removed,
+    Failed { error: CommandError },
+}
+
+#[derive(Debug, Serialize, Type)]
+pub struct RemovalTargetDto {
+    pub scope: RemovalScopeDto,
+    pub tool: String,
+    pub path: String,
+    pub status: RemovalTargetStatusDto,
+}
+
+#[derive(Debug, Serialize, Type)]
+pub struct RemovalReportDto {
+    pub targets: Vec<RemovalTargetDto>,
+    /// Rows whose artifact was removed (and whose row was deleted).
+    pub removed: u32,
+    /// Rows kept with Sync status `error` because their artifact stayed.
+    pub failed: u32,
+}
+
+/// One DTO row per settled row: a shared skills dir removes one artifact but
+/// settles every member row, and the frontend reports per tool.
+fn to_removal_report_dto(report: crate::core::artifact_removal::RemovalReport) -> RemovalReportDto {
+    use crate::core::artifact_removal::RemovalTargetStatus;
+
+    let mut dto = RemovalReportDto {
+        targets: Vec::new(),
+        removed: report.removed_rows() as u32,
+        failed: report.failed_rows() as u32,
+    };
+    for target in report.targets {
+        let path = target.path.to_string_lossy().to_string();
+        for row in target.rows {
+            let status = match &target.status {
+                RemovalTargetStatus::Removed => RemovalTargetStatusDto::Removed,
+                RemovalTargetStatus::Failed { error } => RemovalTargetStatusDto::Failed {
+                    error: CommandError::from_anyhow(anyhow::anyhow!("{}", error)),
+                },
+            };
+            let scope = match row.project_id() {
+                None => RemovalScopeDto::Global,
+                Some(project_id) => RemovalScopeDto::Project {
+                    project_id: project_id.to_string(),
+                },
+            };
+            dto.targets.push(RemovalTargetDto {
+                scope,
+                tool: row.tool().to_string(),
+                path: path.clone(),
+                status,
+            });
+        }
+    }
+    dto
+}
+
 #[tauri::command]
 #[specta::specta]
 #[allow(non_snake_case)]
@@ -488,13 +559,13 @@ pub async fn unsync_skill_from_tool(
     store: State<'_, SkillStore>,
     skillId: String,
     tool: String,
-) -> Result<(), CommandError> {
+) -> Result<RemovalReportDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let home = home_dir()?;
-        crate::core::global_sync::unsync_skill_from_tool_with_records(
-            &home, &store, &tool, &skillId,
-        )
+        let report =
+            crate::core::artifact_removal::unsync_skill_from_tool(&store, &home, &skillId, &tool)?;
+        Ok::<_, anyhow::Error>(to_removal_report_dto(report))
     })
     .await
     .map_err(CommandError::internal)?
@@ -724,10 +795,14 @@ fn to_refresh_report_dto(report: crate::core::refresh::RefreshReport) -> Refresh
 
 #[tauri::command]
 #[specta::specta]
-pub async fn unsync_all_skills(store: State<'_, SkillStore>) -> Result<usize, CommandError> {
+pub async fn unsync_all_skills(
+    store: State<'_, SkillStore>,
+) -> Result<RemovalReportDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::core::global_sync::unsync_all_skill_targets(&store)
+        let home = home_dir()?;
+        let report = crate::core::artifact_removal::unsync_all_skill_targets(&store, &home)?;
+        Ok::<_, anyhow::Error>(to_removal_report_dto(report))
     })
     .await
     .map_err(CommandError::internal)?
@@ -740,10 +815,12 @@ pub async fn unsync_all_skills(store: State<'_, SkillStore>) -> Result<usize, Co
 pub async fn unsync_skill(
     store: State<'_, SkillStore>,
     skillId: String,
-) -> Result<usize, CommandError> {
+) -> Result<RemovalReportDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::core::global_sync::unsync_skill_targets(&store, &skillId)
+        let home = home_dir()?;
+        let report = crate::core::artifact_removal::unsync_skill_targets(&store, &home, &skillId)?;
+        Ok::<_, anyhow::Error>(to_removal_report_dto(report))
     })
     .await
     .map_err(CommandError::internal)?
@@ -762,13 +839,6 @@ pub async fn import_existing_skill(
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let source = std::path::Path::new(&sourcePath);
-        // Validate SKILL.md exists before importing (fixes #8: prevents importing
-        // directories that were "discovered" but lack a valid SKILL.md).
-        if !source.join("SKILL.md").exists() {
-            anyhow::bail!(SignalError::SkillInvalid {
-                reason: "missing_skill_md".to_string(),
-            });
-        }
         let paths = installer_paths(&app, &store)?;
         let result = install_local_skill(&paths, &store, source, name)?;
         Ok::<_, anyhow::Error>(to_install_dto(result))
@@ -783,17 +853,8 @@ pub async fn import_existing_skill(
 pub async fn remove_skill_source(path: String) -> Result<(), CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let target = std::path::PathBuf::from(&path);
-
-        // Safety: only allow deletion of paths under known tool skill directories.
-        let home = home_dir()?;
-        let adapters = default_tool_adapters();
-        let is_safe = adapters
-            .iter()
-            .any(|adapter| target.starts_with(skills_dir_in(&home, adapter)));
-        if !is_safe {
-            anyhow::bail!("path is not under a known tool skills directory: {}", path);
-        }
-
+        // Safety: the Tool registry owns which paths Skills Hub may delete.
+        ensure_path_within_tool_dirs(&home_dir()?, &target)?;
         remove_path_any(&target)?;
         Ok::<_, anyhow::Error>(())
     })
@@ -834,7 +895,8 @@ pub struct SkillTargetDto {
 pub fn get_managed_skills(
     store: State<'_, SkillStore>,
 ) -> Result<Vec<ManagedSkillDto>, CommandError> {
-    get_managed_skills_impl(store.inner())
+    let catalog = managed_skill_catalog(store.inner()).map_err(CommandError::from_anyhow)?;
+    Ok(catalog.into_iter().map(ManagedSkillDto::from).collect())
 }
 
 #[tauri::command]
@@ -846,7 +908,8 @@ pub async fn delete_managed_skill(
 ) -> Result<(), CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let report = crate::core::skill_removal::remove_skill(&store, &skillId)?;
+        let home = home_dir()?;
+        let report = crate::core::artifact_removal::remove_skill(&store, &home, &skillId)?;
         log::debug!("[delete_managed_skill] {}", report);
         Ok::<_, anyhow::Error>(())
     })
@@ -864,14 +927,26 @@ fn to_install_dto(result: InstallResult) -> InstallResultDto {
     }
 }
 
-fn get_managed_skills_impl(store: &SkillStore) -> Result<Vec<ManagedSkillDto>, CommandError> {
-    let skills = store.list_skills().map_err(CommandError::internal)?;
-    Ok(skills
-        .into_iter()
-        .map(|skill| {
-            let targets = store
-                .list_skill_targets(&skill.id)
-                .unwrap_or_default()
+impl From<ManagedSkillEntry> for ManagedSkillDto {
+    fn from(entry: ManagedSkillEntry) -> Self {
+        let ManagedSkillEntry {
+            skill,
+            invocation_mode,
+            targets,
+        } = entry;
+        ManagedSkillDto {
+            id: skill.id,
+            name: skill.name,
+            description: skill.description,
+            source_type: skill.source_type,
+            source_ref: skill.source_ref,
+            central_path: skill.central_path,
+            created_at: skill.created_at,
+            updated_at: skill.updated_at,
+            last_sync_at: skill.last_sync_at,
+            status: skill.status,
+            invocation_mode,
+            targets: targets
                 .into_iter()
                 .map(|target| SkillTargetDto {
                     tool: target.tool,
@@ -880,27 +955,9 @@ fn get_managed_skills_impl(store: &SkillStore) -> Result<Vec<ManagedSkillDto>, C
                     target_path: target.target_path,
                     synced_at: target.synced_at,
                 })
-                .collect();
-
-            let invocation_mode =
-                invocation_mode_for_dir(std::path::Path::new(&skill.central_path));
-
-            ManagedSkillDto {
-                id: skill.id,
-                name: skill.name,
-                description: skill.description,
-                source_type: skill.source_type,
-                source_ref: skill.source_ref,
-                central_path: skill.central_path,
-                created_at: skill.created_at,
-                updated_at: skill.updated_at,
-                last_sync_at: skill.last_sync_at,
-                status: skill.status,
-                invocation_mode,
-                targets,
-            }
-        })
-        .collect())
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Type)]

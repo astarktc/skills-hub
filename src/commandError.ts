@@ -28,6 +28,7 @@ const COMMAND_ERROR_CODE_MAP = {
   GIT_CLONE_FAILED: true,
   GITHUB_SKILL_NOT_FOUND: true,
   DELETE_CLEANUP_FAILED: true,
+  PATH_OUTSIDE_TOOL_DIRS: true,
   OTHER: true,
 } as const satisfies Record<CommandError["code"], true>;
 
@@ -119,9 +120,9 @@ export function describeCommandError(
     case "GITHUB_SKILL_NOT_FOUND":
       return t("errors.githubSkillNotFound", { url: e.url });
     case "DELETE_CLEANUP_FAILED":
-      return (
-        t("errors.deleteCleanupFailed") + "\n- " + e.failures.join("\n- ")
-      );
+      return t("errors.deleteCleanupFailed") + "\n- " + e.failures.join("\n- ");
+    case "PATH_OUTSIDE_TOOL_DIRS":
+      return t("errors.pathOutsideToolDirs", { path: e.path });
     case "OTHER":
       return e.message;
   }
