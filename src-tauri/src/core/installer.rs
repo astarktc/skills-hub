@@ -7,7 +7,7 @@ use super::cancel_token::CancelToken;
 use super::central_repo::ensure_central_repo;
 use super::clock::now_ms;
 use super::errors::SignalError;
-use super::git_cache::{clone_to_cache, clone_to_cache_subpath, repo_cache_key};
+use super::git_cache::{explore_preview_key, fetch_through_cache, FetchRequest};
 use super::github_download::{download_github_directory, parse_github_api_params, GithubApiError};
 pub use super::install_finalize::InstallResult;
 use super::install_finalize::{
@@ -322,24 +322,16 @@ pub fn update_managed_skill_from_source(
             .ok_or_else(|| anyhow::anyhow!("missing source_ref for git skill"))?;
         let parsed = parse_github_url(repo_url);
 
-        let (repo_dir, rev) = if let Some(subpath) = record.source_subpath.as_deref() {
-            clone_to_cache_subpath(
-                &paths.cache_dir,
-                store,
-                &parsed.clone_url,
-                parsed.branch.as_deref(),
-                subpath,
-                None,
-            )?
-        } else {
-            clone_to_cache(
-                &paths.cache_dir,
-                store,
-                &parsed.clone_url,
-                parsed.branch.as_deref(),
-                None,
-            )?
-        };
+        let (repo_dir, rev) = fetch_through_cache(
+            &paths.cache_dir,
+            &FetchRequest {
+                clone_url: &parsed.clone_url,
+                branch: parsed.branch.as_deref(),
+                subpath: record.source_subpath.as_deref(),
+                ttl_ms: super::settings::git_cache_ttl_ms(store),
+                cancel: None,
+            },
+        )?;
         new_revision = Some(rev);
 
         // Prefer stored source_subpath (from install time) over URL-parsed subpath.
@@ -563,12 +555,15 @@ pub fn list_git_skills(
     target_name: Option<&str>,
 ) -> Result<GitSkillListing> {
     let parsed = parse_github_url(repo_url);
-    let (repo_dir, _rev) = clone_to_cache(
+    let (repo_dir, _rev) = fetch_through_cache(
         &paths.cache_dir,
-        store,
-        &parsed.clone_url,
-        parsed.branch.as_deref(),
-        None,
+        &FetchRequest {
+            clone_url: &parsed.clone_url,
+            branch: parsed.branch.as_deref(),
+            subpath: None,
+            ttl_ms: super::settings::git_cache_ttl_ms(store),
+            cancel: None,
+        },
     )?;
 
     let candidates = git_candidates_in(&repo_dir, parsed.subpath.as_deref());
@@ -646,12 +641,15 @@ pub fn install_git_skill_from_selection(
     ensure_central_repo(central_dir)?;
     ensure_name_available(central_dir, name.requested())?;
 
-    let (repo_dir, revision) = clone_to_cache(
+    let (repo_dir, revision) = fetch_through_cache(
         &paths.cache_dir,
-        store,
-        &parsed.clone_url,
-        parsed.branch.as_deref(),
-        None,
+        &FetchRequest {
+            clone_url: &parsed.clone_url,
+            branch: parsed.branch.as_deref(),
+            subpath: None,
+            ttl_ms: super::settings::git_cache_ttl_ms(store),
+            cancel: None,
+        },
     )?;
 
     let copy_src = if subpath == "." {
@@ -808,12 +806,15 @@ fn fetch_skill_files(
                     err
                 );
                 std::fs::create_dir_all(dest_dir)?;
-                let (repo_dir, rev) = clone_to_cache(
+                let (repo_dir, rev) = fetch_through_cache(
                     cache_dir,
-                    store,
-                    &parsed.clone_url,
-                    parsed.branch.as_deref(),
-                    cancel,
+                    &FetchRequest {
+                        clone_url: &parsed.clone_url,
+                        branch: parsed.branch.as_deref(),
+                        subpath: None,
+                        ttl_ms: super::settings::git_cache_ttl_ms(store),
+                        cancel,
+                    },
                 )?;
                 let sub_src = repo_dir.join(&subpath);
                 if !sub_src.exists() {
@@ -827,12 +828,15 @@ fn fetch_skill_files(
     }
 
     // Path B: No subpath or non-GitHub URL — full clone, then resolve copy source.
-    let (repo_dir, rev) = clone_to_cache(
+    let (repo_dir, rev) = fetch_through_cache(
         cache_dir,
-        store,
-        &parsed.clone_url,
-        parsed.branch.as_deref(),
-        cancel,
+        &FetchRequest {
+            clone_url: &parsed.clone_url,
+            branch: parsed.branch.as_deref(),
+            subpath: None,
+            ttl_ms: super::settings::git_cache_ttl_ms(store),
+            cancel,
+        },
     )?;
 
     let copy_src = if let Some(subpath) = &parsed.subpath {
@@ -897,7 +901,7 @@ pub fn clone_for_explore_preview(
         )
     })?;
 
-    let cache_key = repo_cache_key(source_url, skill_name, None);
+    let cache_key = explore_preview_key(source_url, skill_name);
     let explore_skill_dir = explore_cache_root.join(&cache_key);
 
     // Serialise the explore-cache probe/prepare section against itself so two

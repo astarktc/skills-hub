@@ -1030,10 +1030,9 @@ fn explore_preview_cache_hit_never_touches_git_cache() {
         paths
             .central_dir
             .join(".explore-cache")
-            .join(crate::core::git_cache::repo_cache_key(
+            .join(crate::core::git_cache::explore_preview_key(
                 source_url,
                 Some("preview-skill"),
-                None,
             ));
     fs::create_dir_all(&cached).unwrap();
     fs::write(cached.join("SKILL.md"), "---\nname: preview-skill\n---\n").unwrap();

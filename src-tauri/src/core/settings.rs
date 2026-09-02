@@ -200,6 +200,12 @@ pub fn git_cache_ttl_secs(store: &SkillStore) -> i64 {
     )
 }
 
+/// The same freshness window in milliseconds, the unit `core::git_cache`
+/// takes. `0` keeps its meaning: never serve a cached clone.
+pub fn git_cache_ttl_ms(store: &SkillStore) -> i64 {
+    git_cache_ttl_secs(store).saturating_mul(1000)
+}
+
 /// GitHub token, trimmed; `None` when unset or blank.
 pub fn github_token(store: &SkillStore) -> Result<Option<String>> {
     Ok(store
