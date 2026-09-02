@@ -275,6 +275,8 @@ export const resources = {
           "You can uncheck this tool or clean the folder first, then retry.",
         importFailedTitle: "Import failed: {{name}}",
         updateFailedTitle: "Update failed: {{name}}",
+        propagationFailedTitle:
+          "Could not update the synced copy: {{name}} -> {{tool}}",
         unsyncedTitle: "Not synced: {{name}}",
         moreCount: " (+{{count}} more)",
         skillNotFoundInRepo:
@@ -293,7 +295,8 @@ export const resources = {
         creatingGitSkill: "Creating Git skill...",
         removing: "Removing {{name}} ...",
         updating: "Updating {{name}} ...",
-        refreshStep: "Updating ({{index}}/{{total}}) {{name}} ...",
+        refreshFetchStep: "Fetching ({{index}}/{{total}}) {{name}} ...",
+        refreshApplyStep: "Updating ({{index}}/{{total}}) {{name}} ...",
         unsyncing: "Unsync {{name}} -> {{tool}} ...",
       },
       status: {
@@ -304,6 +307,7 @@ export const resources = {
         skillRemoved: "Skill removed.",
         syncCompleted: "Sync completed.",
         refreshCompleted: "All skills refreshed.",
+        refreshSummary: "{{refreshed}} skills refreshed, {{failed}} failed.",
         toolConfigSaved: "Tool configuration saved.",
         syncDisabled: "Sync disabled.",
         syncEnabled: "Sync enabled.",
@@ -721,6 +725,7 @@ export const resources = {
           "目标目录已存在同名 Skill：{{path}}。为安全起见未覆盖。\n你可以：取消勾选该工具，或先手动清理该目录后重试。",
         importFailedTitle: "导入失败：{{name}}",
         updateFailedTitle: "更新失败：{{name}}",
+        propagationFailedTitle: "已同步副本更新失败：{{name}} -> {{tool}}",
         unsyncedTitle: "未同步：{{name}}",
         moreCount: "（另有{{count}}个）",
         skillNotFoundInRepo: "未在该仓库中找到 Skill「{{name}}」",
@@ -738,7 +743,8 @@ export const resources = {
         creatingGitSkill: "创建 Git 技能...",
         removing: "移除 {{name}} ...",
         updating: "更新 {{name}} ...",
-        refreshStep: "更新 ({{index}}/{{total}}) {{name}} ...",
+        refreshFetchStep: "获取 ({{index}}/{{total}}) {{name}} ...",
+        refreshApplyStep: "更新 ({{index}}/{{total}}) {{name}} ...",
         unsyncing: "取消生效：{{name}} -> {{tool}} ...",
       },
       status: {
@@ -749,6 +755,7 @@ export const resources = {
         skillRemoved: "已删除该技能。",
         syncCompleted: "同步完成。",
         refreshCompleted: "所有 Skills 已刷新。",
+        refreshSummary: "已刷新 {{refreshed}} 个 Skills，{{failed}} 个失败。",
         toolConfigSaved: "工具配置已保存。",
         syncDisabled: "已取消同步。",
         syncEnabled: "已同步到工具。",

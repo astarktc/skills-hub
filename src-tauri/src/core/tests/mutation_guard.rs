@@ -10,7 +10,7 @@ use crate::core::gitignore::IgnoreUpdateOptions;
 use crate::core::installer::InstallerPaths;
 use crate::core::skill_store::{ProjectRecord, SkillRecord, SkillStore};
 use crate::core::sync_status::SyncStatus;
-use crate::core::{global_sync, installer, project_ops, project_sync, skill_removal};
+use crate::core::{global_sync, installer, project_ops, project_sync, refresh, skill_removal};
 
 /// How long a mutation-in-flight window is held open while asserting that a
 /// second mutation has not started. The guard is process-global, so every
@@ -267,11 +267,11 @@ fn global_sync_batch_is_serialized() {
     });
 }
 
-/// The managed-skill update path: acquisition happens outside the guard, but
-/// finalize + Propagation are inside it, so the whole call still cannot
-/// complete while another mutation is in flight.
+/// The Refresh batch: acquisition (phase one) happens outside the guard, but
+/// finalize + Propagation (phase two) are inside it, so the whole call still
+/// cannot complete while another mutation is in flight.
 #[test]
-fn managed_skill_update_propagation_is_serialized() {
+fn refresh_finalize_and_propagation_is_serialized() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = SkillStore::new(dir.path().join("test.db"));
     store.ensure_schema().expect("ensure_schema");
@@ -295,8 +295,16 @@ fn managed_skill_update_propagation_is_serialized() {
     fs::write(source.path().join("a.txt"), b"v2").expect("write a.txt");
 
     let skill_id = installed.skill_id.clone();
-    assert_serialized("update_managed_skill_from_source", move || {
-        installer::update_managed_skill_from_source(&paths, &store, &skill_id).expect("update");
+    assert_serialized("refresh_managed_skills", move || {
+        refresh::refresh_managed_skills(
+            &paths,
+            &store,
+            refresh::RefreshSelection::Ids(vec![skill_id]),
+            refresh::RefreshPolicy::default(),
+            5000,
+            |_| {},
+        )
+        .expect("refresh");
         // Keep the temp roots alive for the whole operation.
         drop((roots, source, dir));
     });

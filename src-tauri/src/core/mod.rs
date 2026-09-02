@@ -17,6 +17,8 @@ pub mod mutation_guard;
 pub mod onboarding;
 pub mod project_ops;
 pub mod project_sync;
+pub mod propagation;
+pub mod refresh;
 pub mod settings;
 pub mod skill_discovery;
 pub mod skill_files;

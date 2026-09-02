@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ManagedSkill } from "../components/skills/types";
+import type {
+  ManagedSkill,
+  RefreshProgressDto,
+  RefreshReportDto,
+} from "../components/skills/types";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import type { SyncOrchestration } from "./useSyncOrchestration";
-import type { StatusReporter, TranslateFn } from "./useStatusReporter";
+import type {
+  ActionErrorEntry,
+  StatusReporter,
+  TranslateFn,
+} from "./useStatusReporter";
 
 /** The `{skill_id, name, source_path}` batch item for a managed skill. */
 const toSyncItem = (skill: ManagedSkill) => ({
@@ -31,6 +39,12 @@ export type SkillLibraryDeps = {
  * action on it (refresh/update, delete, per-tool sync toggles including the
  * shared-dir confirmation, unsync). Sync fan-out goes through the sync
  * world's seam, received as a dependency.
+ *
+ * Update and Refresh (all) are one backend batch each
+ * (`refreshManagedSkills`): the backend acquires, finalizes, propagates and
+ * — with `reassert_auto_sync` — re-asserts the auto-sync invariant, then
+ * hands back one report. This hook renders that report; it never loops a
+ * per-skill command and never fans out a sync of its own for a refresh.
  */
 export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   const {
@@ -91,63 +105,109 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     [managedSkills, pendingDeleteId],
   );
 
-  const handleRefresh = useCallback(async () => {
-    if (managedSkills.length === 0) return;
-
-    await runAction({ successToast: t("status.refreshCompleted") }, async () => {
-      const collectedErrors: { title: string; message: string }[] = [];
-
-      for (let i = 0; i < managedSkills.length; i++) {
-        const skill = managedSkills[i];
+  /**
+   * The one Refresh invoke: `skillIds === null` refreshes every Managed
+   * skill. Progress ticks come from the backend, one per phase step.
+   */
+  const refreshSkills = useCallback(
+    async (skillIds: string[] | null): Promise<RefreshReportDto> => {
+      const { Channel } = await import("@tauri-apps/api/core");
+      const onProgress = new Channel<RefreshProgressDto>();
+      onProgress.onmessage = (progress) => {
         setActionMessage(
-          t("actions.refreshStep", {
-            index: i + 1,
-            total: managedSkills.length,
-            name: skill.name,
-          }),
+          t(
+            progress.phase === "acquiring"
+              ? "actions.refreshFetchStep"
+              : "actions.refreshApplyStep",
+            {
+              index: progress.index,
+              total: progress.total,
+              name: progress.skill_name,
+            },
+          ),
         );
-        try {
-          await invokeTauri("updateManagedSkill", skill.id);
-        } catch (err) {
-          const raw = formatError(err) ?? "";
-          collectedErrors.push({
-            title: t("errors.updateFailedTitle", { name: skill.name }),
-            message: raw,
+      };
+      return invokeTauri(
+        "refreshManagedSkills",
+        skillIds,
+        { reassert_auto_sync: autoSyncEnabled },
+        onProgress,
+      );
+    },
+    [autoSyncEnabled, setActionMessage, t],
+  );
+
+  /** Skills whose bytes could not be acquired (their targets were untouched). */
+  const skillFailureEntries = useCallback(
+    (report: RefreshReportDto) => {
+      const entries: ActionErrorEntry[] = [];
+      for (const skill of report.skills) {
+        if (skill.status.status !== "failed") continue;
+        entries.push({
+          title: t("errors.updateFailedTitle", { name: skill.skill_name }),
+          message: formatError(skill.status.error) ?? "",
+        });
+      }
+      return entries;
+    },
+    [formatError, t],
+  );
+
+  /** Sync targets Propagation could not bring into line. Skips stay silent. */
+  const targetFailureEntries = useCallback(
+    (report: RefreshReportDto) => {
+      const entries: ActionErrorEntry[] = [];
+      for (const skill of report.skills) {
+        if (skill.status.status !== "refreshed") continue;
+        for (const target of skill.status.targets) {
+          if (target.status.status !== "failed") continue;
+          const tool = target.scope.tool;
+          entries.push({
+            title: t("errors.propagationFailedTitle", {
+              name: skill.skill_name,
+              tool: toolLabelById[tool] ?? tool,
+            }),
+            message: formatError(target.status.error) ?? "",
           });
         }
       }
+      return entries;
+    },
+    [formatError, t, toolLabelById],
+  );
 
-      if (autoSyncEnabled) {
-        const freshSkills =
-          await invokeTauri("getManagedSkills");
-        if (installedToolIds.length > 0 && freshSkills.length > 0) {
-          // Refresh means "push the updated content": without overwrite,
-          // every target whose skill actually changed would fail with
-          // TARGET_EXISTS — the one outcome refresh exists to avoid.
-          const report = await syncSkillsToTools(
-            freshSkills.map(toSyncItem),
-            installedToolIds,
-            { overwrite: true },
-          );
-          collectedErrors.push(...syncFailureEntries(report));
-        }
-      }
+  const handleRefresh = useCallback(async () => {
+    if (managedSkills.length === 0) return;
 
-      await loadManagedSkills();
-      if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-    });
+    await runAction<RefreshReportDto>(
+      {
+        successToast: (report) =>
+          report.failed === 0
+            ? t("status.refreshCompleted")
+            : t("status.refreshSummary", {
+                refreshed: report.refreshed,
+                failed: report.failed,
+              }),
+      },
+      async () => {
+        const report = await refreshSkills(null);
+        await loadManagedSkills();
+        showActionErrors([
+          ...skillFailureEntries(report),
+          ...targetFailureEntries(report),
+        ]);
+        return report;
+      },
+    );
   }, [
-    autoSyncEnabled,
-    formatError,
-    installedToolIds,
     loadManagedSkills,
     managedSkills,
+    refreshSkills,
     runAction,
-    setActionMessage,
     showActionErrors,
-    syncFailureEntries,
-    syncSkillsToTools,
+    skillFailureEntries,
     t,
+    targetFailureEntries,
   ]);
 
   const handleUnsyncAll = useCallback(async () => {
@@ -324,13 +384,29 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           message: t("actions.updating", { name: skill.name }),
           successToast: t("status.updated", { name: skill.name }),
         },
-        async () => {
-          await invokeTauri("updateManagedSkill", skill.id);
+        async (action) => {
+          // A single Update is the same batch, of one.
+          const report = await refreshSkills([skill.id]);
           await loadManagedSkills();
+          const failed = report.skills.find(
+            (entry) => entry.status.status === "failed",
+          );
+          if (failed && failed.status.status === "failed") {
+            return action.fail(formatError(failed.status.error));
+          }
+          showActionErrors(targetFailureEntries(report));
         },
       );
     },
-    [loadManagedSkills, runAction, t],
+    [
+      formatError,
+      loadManagedSkills,
+      refreshSkills,
+      runAction,
+      showActionErrors,
+      t,
+      targetFailureEntries,
+    ],
   );
 
   const handleUpdateSkill = useCallback(

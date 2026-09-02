@@ -20,11 +20,15 @@ use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::global_sync::{BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus};
 use crate::core::installer::{
     clone_for_explore_preview, install_git_skill_from_selection, install_local_skill,
-    install_local_skill_from_selection, list_git_skills, list_local_skills,
-    update_managed_skill_from_source, GitSkillListing, InstallResult, InstallerPaths,
-    LocalSkillCandidate,
+    install_local_skill_from_selection, list_git_skills, list_local_skills, GitSkillListing,
+    InstallResult, InstallerPaths, LocalSkillCandidate,
 };
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
+use crate::core::propagation::{PropagationScope, PropagationSkip, PropagationStatus};
+use crate::core::refresh::{
+    refresh_managed_skills as refresh_managed_skills_core, RefreshPhase, RefreshPolicy,
+    RefreshSelection, SkillRefreshStatus,
+};
 use crate::core::settings::{
     apply_setting, load_settings, record_installed_tools, AppSettings, SettingUpdate,
 };
@@ -487,38 +491,221 @@ pub async fn unsync_skill_from_tool(
     .map_err(CommandError::from_anyhow)
 }
 
+/// Which Sync target a Propagation outcome is about.
 #[derive(Debug, Serialize, Type)]
-pub struct UpdateResultDto {
-    pub skill_id: String,
-    pub name: String,
-    pub content_hash: Option<String>,
-    pub source_revision: Option<String>,
-    pub updated_targets: Vec<String>,
+#[serde(tag = "scope", rename_all = "snake_case")]
+pub enum PropagationScopeDto {
+    Global { tool: String },
+    Project { project_id: String, tool: String },
 }
 
+/// Why a Sync target needed no work. Not a failure — skipping is the correct
+/// outcome for a link, an uninstalled Tool, or an absent Project.
+#[derive(Debug, Serialize, Type)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum PropagationSkipDto {
+    LinkFollowsSource,
+    ToolNotInstalled { tool: String },
+    UnknownTool { tool: String },
+    ProjectUnavailable { project_id: String },
+}
+
+#[derive(Debug, Serialize, Type)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum PropagationStatusDto {
+    Synced { mode_used: SyncMode },
+    Skipped { reason: PropagationSkipDto },
+    Failed { error: CommandError },
+}
+
+#[derive(Debug, Serialize, Type)]
+pub struct PropagationTargetDto {
+    pub scope: PropagationScopeDto,
+    pub status: PropagationStatusDto,
+}
+
+/// Per-skill result of a Refresh batch. A skill whose bytes could not be
+/// acquired is `failed` — its Sync targets were left alone.
+#[derive(Debug, Serialize, Type)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum SkillRefreshStatusDto {
+    Refreshed {
+        content_hash: Option<String>,
+        source_revision: Option<String>,
+        targets: Vec<PropagationTargetDto>,
+    },
+    Failed {
+        error: CommandError,
+    },
+}
+
+#[derive(Debug, Serialize, Type)]
+pub struct SkillRefreshResultDto {
+    pub skill_id: String,
+    pub skill_name: String,
+    pub status: SkillRefreshStatusDto,
+}
+
+#[derive(Debug, Serialize, Type)]
+pub struct RefreshReportDto {
+    pub skills: Vec<SkillRefreshResultDto>,
+    pub refreshed: u32,
+    pub failed: u32,
+    /// Sync targets that failed across every refreshed skill.
+    pub target_failures: u32,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Type)]
+pub struct RefreshPolicyDto {
+    /// Also sync each refreshed skill to installed Tools it is not on yet
+    /// (the auto-sync invariant, re-asserted). The caller decides — the
+    /// backend never reads the auto-sync setting behind its back.
+    #[serde(default)]
+    pub reassert_auto_sync: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum RefreshPhaseDto {
+    Acquiring,
+    Applying,
+}
+
+/// Progress tick streamed before each per-skill step of each Refresh phase.
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct RefreshProgressDto {
+    pub index: u32,
+    pub total: u32,
+    pub skill_name: String,
+    pub phase: RefreshPhaseDto,
+}
+
+/// Re-acquire Managed skills from their sources, finalize them, and
+/// propagate to every Sync target — one batch, one report. `skillIds` of
+/// `None` means every Managed skill (Refresh all); a single-skill Update is
+/// a batch of one. Per-skill and per-target failures are report data, not
+/// command errors.
 #[tauri::command]
 #[specta::specta]
 #[allow(non_snake_case)]
-pub async fn update_managed_skill(
+pub async fn refresh_managed_skills(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
-    skillId: String,
-) -> Result<UpdateResultDto, CommandError> {
+    skillIds: Option<Vec<String>>,
+    policy: RefreshPolicyDto,
+    on_progress: Channel<RefreshProgressDto>,
+) -> Result<RefreshReportDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let paths = installer_paths(&app, &store)?;
-        let res = update_managed_skill_from_source(&paths, &store, &skillId)?;
-        Ok::<_, anyhow::Error>(UpdateResultDto {
-            skill_id: res.skill_id,
-            name: res.name,
-            content_hash: res.content_hash,
-            source_revision: res.source_revision,
-            updated_targets: res.updated_targets,
-        })
+        let selection = match skillIds {
+            Some(ids) => RefreshSelection::Ids(ids),
+            None => RefreshSelection::All,
+        };
+        let report = refresh_managed_skills_core(
+            &paths,
+            &store,
+            selection,
+            RefreshPolicy {
+                reassert_auto_sync: policy.reassert_auto_sync,
+            },
+            now_ms(),
+            |p| {
+                let _ = on_progress.send(RefreshProgressDto {
+                    index: p.index as u32,
+                    total: p.total as u32,
+                    skill_name: p.skill_name.to_string(),
+                    phase: match p.phase {
+                        RefreshPhase::Acquiring => RefreshPhaseDto::Acquiring,
+                        RefreshPhase::Applying => RefreshPhaseDto::Applying,
+                    },
+                });
+            },
+        )?;
+        Ok::<_, anyhow::Error>(to_refresh_report_dto(report))
     })
     .await
     .map_err(CommandError::internal)?
     .map_err(CommandError::from_anyhow)
+}
+
+fn to_refresh_report_dto(report: crate::core::refresh::RefreshReport) -> RefreshReportDto {
+    let mut dto = RefreshReportDto {
+        skills: Vec::with_capacity(report.skills.len()),
+        refreshed: 0,
+        failed: 0,
+        target_failures: 0,
+    };
+    for skill in report.skills {
+        let status = match skill.status {
+            SkillRefreshStatus::Refreshed {
+                content_hash,
+                source_revision,
+                targets,
+            } => {
+                dto.refreshed += 1;
+                let targets: Vec<PropagationTargetDto> = targets
+                    .into_iter()
+                    .map(|target| PropagationTargetDto {
+                        scope: match target.scope {
+                            PropagationScope::Global { tool } => {
+                                PropagationScopeDto::Global { tool }
+                            }
+                            PropagationScope::Project { project_id, tool } => {
+                                PropagationScopeDto::Project { project_id, tool }
+                            }
+                        },
+                        status: match target.status {
+                            PropagationStatus::Synced { mode_used } => {
+                                PropagationStatusDto::Synced { mode_used }
+                            }
+                            PropagationStatus::Skipped { reason } => {
+                                PropagationStatusDto::Skipped {
+                                    reason: match reason {
+                                        PropagationSkip::LinkFollowsSource => {
+                                            PropagationSkipDto::LinkFollowsSource
+                                        }
+                                        PropagationSkip::ToolNotInstalled { tool } => {
+                                            PropagationSkipDto::ToolNotInstalled { tool }
+                                        }
+                                        PropagationSkip::UnknownTool { tool } => {
+                                            PropagationSkipDto::UnknownTool { tool }
+                                        }
+                                        PropagationSkip::ProjectUnavailable { project_id } => {
+                                            PropagationSkipDto::ProjectUnavailable { project_id }
+                                        }
+                                    },
+                                }
+                            }
+                            PropagationStatus::Failed { error } => {
+                                dto.target_failures += 1;
+                                PropagationStatusDto::Failed {
+                                    error: CommandError::from_anyhow(error),
+                                }
+                            }
+                        },
+                    })
+                    .collect();
+                SkillRefreshStatusDto::Refreshed {
+                    content_hash,
+                    source_revision,
+                    targets,
+                }
+            }
+            SkillRefreshStatus::Failed { error } => {
+                dto.failed += 1;
+                SkillRefreshStatusDto::Failed {
+                    error: CommandError::from_anyhow(error),
+                }
+            }
+        };
+        dto.skills.push(SkillRefreshResultDto {
+            skill_id: skill.skill_id,
+            skill_name: skill.skill_name,
+            status,
+        });
+    }
+    dto
 }
 
 #[tauri::command]

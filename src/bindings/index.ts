@@ -27,7 +27,14 @@ export const commands = {
 	 */
 	syncSkillsToTools: (skills: BatchSyncSkillDto[], tools: string[], policy: BatchSyncPolicyDto, onProgress: Channel<SyncProgressDto>) => __TAURI_INVOKE<BatchSyncReportDto>("sync_skills_to_tools", { skills, tools, policy, onProgress }),
 	unsyncSkillFromTool: (skillId: string, tool: string) => __TAURI_INVOKE<null>("unsync_skill_from_tool", { skillId, tool }),
-	updateManagedSkill: (skillId: string) => __TAURI_INVOKE<UpdateResultDto>("update_managed_skill", { skillId }),
+	/**
+	 *  Re-acquire Managed skills from their sources, finalize them, and
+	 *  propagate to every Sync target — one batch, one report. `skillIds` of
+	 *  `None` means every Managed skill (Refresh all); a single-skill Update is
+	 *  a batch of one. Per-skill and per-target failures are report data, not
+	 *  command errors.
+	 */
+	refreshManagedSkills: (skillIds: string[] | null, policy: RefreshPolicyDto, onProgress: Channel<RefreshProgressDto>) => __TAURI_INVOKE<RefreshReportDto>("refresh_managed_skills", { skillIds, policy, onProgress }),
 	importExistingSkill: (sourcePath: string, name: string | null) => __TAURI_INVOKE<InstallResultDto>("import_existing_skill", { sourcePath, name }),
 	removeSkillSource: (path: string) => __TAURI_INVOKE<null>("remove_skill_source", { path }),
 	getManagedSkills: () => __TAURI_INVOKE<ManagedSkillDto[]>("get_managed_skills"),
@@ -354,6 +361,49 @@ export type ProjectToolDto = {
 	tool: string,
 };
 
+/**  Which Sync target a Propagation outcome is about. */
+export type PropagationScopeDto = { scope: "global"; tool: string } | { scope: "project"; project_id: string; tool: string };
+
+/**
+ *  Why a Sync target needed no work. Not a failure — skipping is the correct
+ *  outcome for a link, an uninstalled Tool, or an absent Project.
+ */
+export type PropagationSkipDto = { reason: "link_follows_source" } | { reason: "tool_not_installed"; tool: string } | { reason: "unknown_tool"; tool: string } | { reason: "project_unavailable"; project_id: string };
+
+export type PropagationStatusDto = { status: "synced"; mode_used: SyncMode } | { status: "skipped"; reason: PropagationSkipDto } | { status: "failed"; error: CommandError };
+
+export type PropagationTargetDto = {
+	scope: PropagationScopeDto,
+	status: PropagationStatusDto,
+};
+
+export type RefreshPhaseDto = "acquiring" | "applying";
+
+export type RefreshPolicyDto = {
+	/**
+	 *  Also sync each refreshed skill to installed Tools it is not on yet
+	 *  (the auto-sync invariant, re-asserted). The caller decides — the
+	 *  backend never reads the auto-sync setting behind its back.
+	 */
+	reassert_auto_sync?: boolean,
+};
+
+/**  Progress tick streamed before each per-skill step of each Refresh phase. */
+export type RefreshProgressDto = {
+	index: number,
+	total: number,
+	skill_name: string,
+	phase: RefreshPhaseDto,
+};
+
+export type RefreshReportDto = {
+	skills: SkillRefreshResultDto[],
+	refreshed: number,
+	failed: number,
+	/**  Sync targets that failed across every refreshed skill. */
+	target_failures: number,
+};
+
 export type ResyncSummaryDto = {
 	project_id: string,
 	synced: number,
@@ -395,6 +445,18 @@ export type SkillFileEntry = {
 	path: string,
 	size: number,
 };
+
+export type SkillRefreshResultDto = {
+	skill_id: string,
+	skill_name: string,
+	status: SkillRefreshStatusDto,
+};
+
+/**
+ *  Per-skill result of a Refresh batch. A skill whose bytes could not be
+ *  acquired is `failed` — its Sync targets were left alone.
+ */
+export type SkillRefreshStatusDto = { status: "refreshed"; content_hash: string | null; source_revision: string | null; targets: PropagationTargetDto[] } | { status: "failed"; error: CommandError };
 
 export type SkillTargetDto = {
 	tool: string,
@@ -474,13 +536,5 @@ export type ToolStatusDto = {
 	tools: ToolInfoDto[],
 	installed: string[],
 	newly_installed: string[],
-};
-
-export type UpdateResultDto = {
-	skill_id: string,
-	name: string,
-	content_hash: string | null,
-	source_revision: string | null,
-	updated_targets: string[],
 };
 

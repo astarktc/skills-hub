@@ -14,20 +14,15 @@ use super::install_finalize::{
     ensure_name_available, finalize_install, finalize_update, NameIntent, SkillProvenance,
     StagingDir,
 };
-use super::mutation_guard;
-use super::project_sync::resolve_project_sync_target;
+use super::propagation::{propagate_unlocked, PropagationReport};
 use super::skill_discovery::{
     discover_skills, find_skill_md, is_skill_dir, parse_skill_md, parse_skill_md_with_reason,
     DiscoveredSkill,
 };
 use super::skill_lock::try_enrich_from_skill_lock_with_home;
 use super::skill_matching::{match_skill_candidate, CandidateMatch, MatchableSkill, SkillMatch};
-use super::skill_store::{AssignmentTransition, SkillStore};
+use super::skill_store::SkillStore;
 use super::sync_engine::copy_dir_recursive;
-use super::sync_engine::sync_dir_copy_with_overwrite;
-use super::sync_status::{SyncMode, SyncStatus};
-use super::tool_adapters::adapter_by_key;
-use super::tool_adapters::is_installed_in;
 
 /// Filesystem roots the installer reads. Resolved once per command at the
 /// wiring seam (home, central repo setting, app cache dir) so core never
@@ -272,27 +267,38 @@ fn ensure_installable_skill_dir(p: &Path) -> Result<()> {
     }
 }
 
-pub struct UpdateResult {
-    pub skill_id: String,
-    pub name: String,
-    #[allow(dead_code)]
-    pub central_path: PathBuf,
-    pub content_hash: Option<String>,
-    pub source_revision: Option<String>,
-    pub updated_targets: Vec<String>,
+/// One Managed skill's freshly acquired bytes, waiting to be finalized.
+///
+/// Produced by [`acquire_managed_skill_update`] outside the mutation guard
+/// and consumed by [`finalize_and_propagate_unlocked`] inside it: the two
+/// phases of an update (and of the Refresh (all) batch) meet here.
+pub(crate) struct AcquiredUpdate {
+    pub record: super::skill_store::SkillRecord,
+    pub staged: StagingDir,
+    pub new_revision: Option<String>,
 }
 
-/// Re-acquire a Managed skill from its source, finalize it, and propagate the
-/// new bytes to its Sync targets.
+/// What one finalized-and-propagated skill update produced.
+pub(crate) struct UpdateOutcome {
+    pub skill_id: String,
+    pub name: String,
+    pub content_hash: Option<String>,
+    pub source_revision: Option<String>,
+    pub propagation: PropagationReport,
+}
+
+/// Re-acquire a Managed skill's bytes from its source into a Staging dir.
 ///
-/// Acquisition (git clone / local copy into the Staging dir) runs **outside**
-/// the mutation guard — it touches no Sync target and can be slow. Only
-/// finalize + Propagation, which do, run inside it.
-pub fn update_managed_skill_from_source(
+/// Acquisition (git clone / local copy) runs **outside** the mutation guard:
+/// it touches no Sync target and can be slow. Only finalize + Propagation,
+/// which do, run inside it (see [`finalize_and_propagate_unlocked`]).
+/// Sequential today, one self-contained result per skill so a bounded
+/// parallel pool is a drop-in later.
+pub(crate) fn acquire_managed_skill_update(
     paths: &InstallerPaths,
     store: &SkillStore,
     skill_id: &str,
-) -> Result<UpdateResult> {
+) -> Result<AcquiredUpdate> {
     let mut record = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
         anyhow::anyhow!(SignalError::NotFound {
             kind: "skill".to_string(),
@@ -383,112 +389,40 @@ pub fn update_managed_skill_from_source(
         anyhow::bail!("unsupported source_type for update: {}", record.source_type);
     }
 
-    mutation_guard::serialized(|| {
-        finalize_and_propagate_unlocked(paths, store, record, staged, new_revision)
+    Ok(AcquiredUpdate {
+        record,
+        staged,
+        new_revision,
     })
 }
 
 /// Unlocked internal seam: finalize the Staging dir into the central copy,
-/// then propagate to every copy-mode Sync target (global rows first, then
-/// project assignment rows). The caller holds the mutation guard.
-fn finalize_and_propagate_unlocked(
+/// then hand every Sync target to Propagation. The caller holds the mutation
+/// guard. There is no target loop here — bringing targets into line is one
+/// rule and it lives in `core::propagation`.
+pub(crate) fn finalize_and_propagate_unlocked(
     paths: &InstallerPaths,
     store: &SkillStore,
-    record: super::skill_store::SkillRecord,
-    staged: StagingDir,
-    new_revision: Option<String>,
-) -> Result<UpdateResult> {
-    let skill_id = record.id.clone();
-    let central_path = PathBuf::from(record.central_path.clone());
+    acquired: AcquiredUpdate,
+) -> Result<UpdateOutcome> {
+    let AcquiredUpdate {
+        record,
+        staged,
+        new_revision,
+    } = acquired;
     let now = now_ms();
 
     let updated = finalize_update(store, &record, staged, new_revision.clone())?;
     let content_hash = updated.content_hash.clone();
 
-    // If any targets are copies, re-sync them so changes propagate. Links update automatically.
-    // Tools without symlink support (see `ToolAdapter::supports_symlink`) are always copies, so regardless of the historical mode, we must force a copy re-sync.
-    let targets = store.list_skill_targets(&skill_id)?;
-    let mut updated_targets: Vec<String> = Vec::new();
-    for t in targets {
-        // Skip if tool not installed anymore.
-        if let Some(adapter) = adapter_by_key(&t.tool) {
-            if !is_installed_in(&paths.home, adapter) {
-                continue;
-            }
-        }
-        let force_copy =
-            t.mode.can_drift() || adapter_by_key(&t.tool).is_some_and(|a| !a.supports_symlink);
-        if force_copy {
-            let target_path = PathBuf::from(&t.target_path);
-            let sync_res = sync_dir_copy_with_overwrite(&central_path, &target_path, true)?;
-            let record = super::skill_store::SkillTargetRecord {
-                id: t.id.clone(),
-                skill_id: t.skill_id.clone(),
-                tool: t.tool.clone(),
-                target_path: sync_res.target_path.to_string_lossy().to_string(),
-                mode: SyncMode::Copy,
-                status: SyncStatus::Synced,
-                last_error: None,
-                synced_at: Some(now),
-            };
-            store.upsert_skill_target(&record)?;
-            updated_targets.push(t.tool.clone());
-        }
-    }
+    let propagation = propagate_unlocked(store, paths, &record.id, content_hash.as_deref(), now)?;
 
-    // Re-sync copy-mode project skill assignments so project copies stay current.
-    // Symlinks auto-update since they point to the central path that was just refreshed.
-    let project_assignments = store.list_project_skill_assignments_by_skill(&skill_id)?;
-    for pa in project_assignments {
-        let force_copy =
-            pa.mode.can_drift() || adapter_by_key(&pa.tool).is_some_and(|a| !a.supports_symlink);
-        if !force_copy {
-            continue;
-        }
-        let project = match store.get_project_by_id(&pa.project_id)? {
-            Some(p) => p,
-            None => continue,
-        };
-        let project_path = PathBuf::from(&project.path);
-        if !project_path.exists() {
-            continue;
-        }
-        let adapter = match adapter_by_key(&pa.tool) {
-            Some(a) => a,
-            None => continue,
-        };
-        let target = resolve_project_sync_target(&project_path, adapter, &record.name);
-        match sync_dir_copy_with_overwrite(&central_path, &target, true) {
-            Ok(_outcome) => {
-                let _ = store.transition_assignment(
-                    &pa.id,
-                    AssignmentTransition::SyncCompleted {
-                        mode: SyncMode::Copy,
-                        synced_at: now,
-                        content_hash: content_hash.as_deref(),
-                    },
-                );
-                updated_targets.push(format!("project:{}:{}", pa.project_id, pa.tool));
-            }
-            Err(e) => {
-                log::warn!("failed to re-sync project assignment {}: {:#}", pa.id, e);
-                let _ = store.transition_assignment(
-                    &pa.id,
-                    AssignmentTransition::SyncFailed {
-                        error: &format!("{:#}", e),
-                    },
-                );
-            }
-        }
-    }
-
-    Ok(UpdateResult {
+    Ok(UpdateOutcome {
         skill_id: record.id,
         name: record.name,
-        central_path,
         content_hash,
         source_revision: new_revision,
-        updated_targets,
+        propagation,
     })
 }
 

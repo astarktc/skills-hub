@@ -205,6 +205,24 @@ fn read_lifecycle(
     }
 }
 
+/// A typed write to a global target row's lifecycle columns — the global
+/// counterpart of [`AssignmentTransition`], so Propagation settles a row by
+/// naming what happened instead of rebuilding a whole record literal.
+#[derive(Clone, Copy, Debug)]
+pub enum TargetTransition<'a> {
+    /// A sync just succeeded: records the mode actually used and where the
+    /// artifact landed (a shared skills dir group settles every member row
+    /// with the one path that was written).
+    SyncCompleted {
+        mode: SyncMode,
+        target_path: &'a str,
+        synced_at: i64,
+    },
+    /// A sync failed; `error` is the diagnostic chain, and the row keeps its
+    /// recorded mode and path so the failure stays observable.
+    SyncFailed { error: &'a str },
+}
+
 /// A typed write to an assignment's lifecycle columns — the only way the
 /// `status`/`mode`/`last_error`/`synced_at`/`content_hash` group changes
 /// after insertion, so the legal combinations are spelled out here rather
@@ -925,6 +943,49 @@ impl SkillStore {
                 "DELETE FROM project_skill_assignments
                  WHERE project_id = ?1 AND skill_id = ?2 AND tool = ?3",
                 params![project_id, skill_id, tool],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Apply a typed lifecycle transition to one global target row.
+    pub fn transition_skill_target(
+        &self,
+        target_id: &str,
+        transition: TargetTransition<'_>,
+    ) -> Result<()> {
+        let (status, last_error, mode, target_path, synced_at) = match transition {
+            TargetTransition::SyncCompleted {
+                mode,
+                target_path,
+                synced_at,
+            } => (
+                SyncStatus::Synced,
+                None,
+                Some(mode),
+                Some(target_path),
+                Some(synced_at),
+            ),
+            TargetTransition::SyncFailed { error } => {
+                (SyncStatus::Error, Some(error), None, None, None)
+            }
+        };
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE skill_targets
+                 SET status = ?1, last_error = ?2,
+                     mode = COALESCE(?3, mode),
+                     target_path = COALESCE(?4, target_path),
+                     synced_at = COALESCE(?5, synced_at)
+                 WHERE id = ?6",
+                params![
+                    status.as_str(),
+                    last_error,
+                    mode.map(SyncMode::as_str),
+                    target_path,
+                    synced_at,
+                    target_id
+                ],
             )?;
             Ok(())
         })

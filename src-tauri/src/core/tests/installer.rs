@@ -1,13 +1,10 @@
-use crate::core::sync_status::{SyncMode, SyncStatus};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::core::errors::SignalError;
 use crate::core::installer::InstallerPaths;
 use crate::core::skill_matching::CandidateMatch;
-use crate::core::skill_store::{
-    ProjectRecord, ProjectSkillAssignmentRecord, SkillStore, SkillTargetRecord,
-};
+use crate::core::skill_store::SkillStore;
 
 fn make_store() -> (tempfile::TempDir, SkillStore) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -127,38 +124,31 @@ fn installs_local_skill_and_updates_from_source() {
     let skill = store.get_skill_by_id(&res.skill_id).unwrap().unwrap();
     assert_eq!(skill.name, "local1");
 
-    // add a copy target so update will resync it
-    let target_root = tempfile::tempdir().unwrap();
-    let target = target_root.path().join("target");
-    let t = SkillTargetRecord {
-        id: "t1".to_string(),
-        skill_id: res.skill_id.clone(),
-        tool: "unknown_tool".to_string(),
-        target_path: target.to_string_lossy().to_string(),
-        mode: SyncMode::Copy,
-        status: SyncStatus::Synced,
-        last_error: None,
-        synced_at: None,
-    };
-    store.upsert_skill_target(&t).unwrap();
-
+    // Re-acquiring from the source refreshes the central copy. Bringing Sync
+    // targets into line is Propagation's job and is tested there.
     fs::write(source.path().join("a.txt"), b"v2").unwrap();
-    let up = super::update_managed_skill_from_source(&paths, &store, &res.skill_id).unwrap();
-    assert_eq!(up.skill_id, res.skill_id);
-    assert!(up.updated_targets.contains(&"unknown_tool".to_string()));
-    assert!(PathBuf::from(
+    let report = crate::core::refresh::refresh_managed_skills(
+        &paths,
+        &store,
+        crate::core::refresh::RefreshSelection::Ids(vec![res.skill_id.clone()]),
+        crate::core::refresh::RefreshPolicy::default(),
+        2000,
+        |_| {},
+    )
+    .unwrap();
+    assert!(matches!(
+        report.skills.as_slice(),
+        [outcome] if outcome.skill_id == res.skill_id
+            && matches!(outcome.status, crate::core::refresh::SkillRefreshStatus::Refreshed { .. })
+    ));
+    let central = PathBuf::from(
         store
             .get_skill_by_id(&res.skill_id)
             .unwrap()
             .unwrap()
-            .central_path
-    )
-    .exists());
-    assert!(
-        target.join("a.txt").exists(),
-        "target path should exist and contain the synced file"
+            .central_path,
     );
-    assert_eq!(fs::read(target.join("a.txt")).unwrap(), b"v2");
+    assert_eq!(fs::read(central.join("a.txt")).unwrap(), b"v2");
 
     let err =
         match super::install_local_skill(&paths, &store, source.path(), Some("local1".to_string()))
@@ -881,139 +871,6 @@ fn list_git_skills_finds_root_skill_container_layout() {
         .expect("technical-writer should be discovered");
     assert_eq!(candidate.subpath, "custom-agent-skills/technical-writer");
     assert_eq!(candidate.description.as_deref(), Some("docs"));
-}
-
-/// After `update_managed_skill_from_source`, copy-mode project assignments
-/// (including Cursor) must receive updated content. Symlink-mode assignments
-/// should be skipped (they auto-update via the central path).
-#[test]
-fn update_resyncs_project_copy_assignments() {
-    let (_dir, store) = make_store();
-    let (_roots, paths) = make_paths();
-
-    // 1. Create a local skill source with a.txt = "v1"
-    let source = tempfile::tempdir().unwrap();
-    fs::write(
-        source.path().join("SKILL.md"),
-        b"---\nname: proj-test\n---\n",
-    )
-    .unwrap();
-    fs::write(source.path().join("a.txt"), b"v1").unwrap();
-
-    let res =
-        super::install_local_skill(&paths, &store, source.path(), Some("proj-test".to_string()))
-            .unwrap();
-
-    // 2. Register a project (using a tempdir as the project root)
-    let project_root = tempfile::tempdir().unwrap();
-    let now = 1000i64;
-    let project = ProjectRecord {
-        id: "p1".to_string(),
-        path: project_root.path().to_string_lossy().to_string(),
-        created_at: now,
-        updated_at: now,
-    };
-    store.register_project(&project).unwrap();
-
-    // 3. Create the tool skills directory structure under the project,
-    // at the same paths project sync writes to (project_relative_skills_dir).
-    // Cursor: .agents/skills/proj-test/
-    let cursor_target = project_root
-        .path()
-        .join(".agents")
-        .join("skills")
-        .join("proj-test");
-    fs::create_dir_all(&cursor_target).unwrap();
-    fs::write(cursor_target.join("a.txt"), b"v1").unwrap();
-
-    // Claude Code: .claude/skills/proj-test/
-    let claude_target = project_root
-        .path()
-        .join(".claude")
-        .join("skills")
-        .join("proj-test");
-    fs::create_dir_all(&claude_target).unwrap();
-    fs::write(claude_target.join("a.txt"), b"v1").unwrap();
-
-    // 4. Insert a copy-mode assignment for cursor
-    let copy_assignment = ProjectSkillAssignmentRecord {
-        id: "pa-copy".to_string(),
-        project_id: "p1".to_string(),
-        skill_id: res.skill_id.clone(),
-        skill_name: "proj-test".to_string(),
-        tool: "cursor".to_string(),
-        mode: SyncMode::Copy,
-        status: SyncStatus::Synced,
-        last_error: None,
-        synced_at: Some(now),
-        content_hash: None,
-        created_at: now,
-    };
-    store
-        .add_project_skill_assignment(&copy_assignment)
-        .unwrap();
-
-    // 5. Insert a symlink-mode assignment for claude_code
-    let symlink_assignment = ProjectSkillAssignmentRecord {
-        id: "pa-sym".to_string(),
-        project_id: "p1".to_string(),
-        skill_id: res.skill_id.clone(),
-        skill_name: "proj-test".to_string(),
-        tool: "claude_code".to_string(),
-        mode: SyncMode::Symlink,
-        status: SyncStatus::Synced,
-        last_error: None,
-        synced_at: Some(now),
-        content_hash: None,
-        created_at: now,
-    };
-    store
-        .add_project_skill_assignment(&symlink_assignment)
-        .unwrap();
-
-    // 6. Modify source to "v2" and update the skill
-    fs::write(source.path().join("a.txt"), b"v2").unwrap();
-    let up = super::update_managed_skill_from_source(&paths, &store, &res.skill_id).unwrap();
-
-    // 7. Assert: copy-mode (cursor) project target has updated content
-    assert_eq!(
-        fs::read(cursor_target.join("a.txt")).unwrap(),
-        b"v2",
-        "copy-mode project target should have updated content"
-    );
-
-    // 8. Assert: updated_targets includes a project: prefixed entry for cursor
-    assert!(
-        up.updated_targets
-            .iter()
-            .any(|t| t.starts_with("project:") && t.contains("cursor")),
-        "updated_targets should include project:p1:cursor, got: {:?}",
-        up.updated_targets
-    );
-
-    // 9. Assert: symlink assignment is NOT in updated_targets
-    assert!(
-        !up.updated_targets
-            .iter()
-            .any(|t| t.starts_with("project:") && t.contains("claude_code")),
-        "symlink assignment should not be in updated_targets, got: {:?}",
-        up.updated_targets
-    );
-
-    // 10. Assert: DB assignment record has updated content_hash and status "synced"
-    let assignments = store
-        .list_project_skill_assignments_by_skill(&res.skill_id)
-        .unwrap();
-    let copy_rec = assignments.iter().find(|a| a.id == "pa-copy").unwrap();
-    assert_eq!(copy_rec.status, SyncStatus::Synced);
-    assert!(
-        copy_rec.content_hash.is_some(),
-        "content_hash should be set after re-sync"
-    );
-    assert!(
-        copy_rec.synced_at.unwrap() > now,
-        "synced_at should be updated"
-    );
 }
 
 /// The explore-cache hit path must answer from `<central_dir>/.explore-cache`

@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BatchSyncReportDto,
   ManagedSkill,
+  RefreshReportDto,
 } from "../components/skills/types";
 import type { SkillLibraryDeps } from "./useSkillLibrary";
 
@@ -17,6 +18,13 @@ vi.mock("sonner", () => ({
 vi.mock("../lib/tauri", () => ({
   isTauri: true,
   invokeTauri: vi.fn(),
+}));
+// The refresh batch streams progress over a Tauri Channel; the hook imports
+// it lazily, so the module seam is stubbed with a plain message sink.
+vi.mock("@tauri-apps/api/core", () => ({
+  Channel: class {
+    onmessage: ((message: unknown) => void) | null = null;
+  },
 }));
 
 import { invokeTauri, type CommandName } from "../lib/tauri";
@@ -70,18 +78,42 @@ const EMPTY_REPORT: BatchSyncReportDto = {
   failed: 0,
 };
 
+/** A refresh report in which every named skill refreshed with no targets. */
+function refreshedReport(names: string[]): RefreshReportDto {
+  return {
+    skills: names.map((name, i) => ({
+      skill_id: `s${i + 1}`,
+      skill_name: name,
+      status: {
+        status: "refreshed",
+        content_hash: null,
+        source_revision: null,
+        targets: [],
+      },
+    })),
+    refreshed: names.length,
+    failed: 0,
+    target_failures: 0,
+  };
+}
+
 function makeDeps(overrides?: {
   skills?: ManagedSkill[];
   autoSyncEnabled?: boolean;
   installedToolIds?: string[];
   sharedToolIdsByToolId?: Record<string, string[]>;
   syncReport?: BatchSyncReportDto;
+  refreshReport?: RefreshReportDto;
 }) {
   const skills = overrides?.skills ?? [skill("s1", "alpha")];
+  const refreshReport =
+    overrides?.refreshReport ?? refreshedReport(skills.map((s) => s.name));
   mockInvoke.mockImplementation((command) => {
     switch (command) {
       case "getManagedSkills":
         return Promise.resolve(skills);
+      case "refreshManagedSkills":
+        return Promise.resolve(refreshReport);
       default:
         return Promise.resolve(undefined);
     }
@@ -174,32 +206,22 @@ beforeEach(() => {
 });
 
 describe("useSkillLibrary refresh", () => {
-  it("collects per-skill update failures and shows them once at the end", async () => {
-    const setup = makeDeps({
-      skills: [skill("s1", "alpha"), skill("s2", "beta")],
-      autoSyncEnabled: false,
-    });
+  it("issues one backend batch for every skill and never fans out a sync itself", async () => {
+    const setup = makeDeps({ skills: [skill("s1", "alpha"), skill("s2", "beta")] });
     const { result } = await renderLibrary(setup);
-    // beta's update fails; alpha's succeeds.
-    mockInvoke.mockImplementation((command, skillId) => {
-      if (command === "getManagedSkills") return Promise.resolve(setup.skills);
-      if (command === "updateManagedSkill" && skillId === "s2") {
-        return Promise.reject({ code: "GIT_CLONE_FAILED" });
-      }
-      return Promise.resolve(undefined);
-    });
 
     await act(async () => {
       await result.current.handleRefresh();
     });
 
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledTimes(1);
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
-      {
-        title: 'errors.updateFailedTitle {"name":"beta"}',
-        message: "formatted:GIT_CLONE_FAILED",
-      },
-    ]);
+    const refreshCalls = mockInvoke.mock.calls.filter(
+      ([command]) => command === "refreshManagedSkills",
+    );
+    expect(refreshCalls).toHaveLength(1);
+    const [, skillIds, policy] = refreshCalls[0];
+    expect(skillIds).toBeNull(); // null = every Managed skill
+    expect(policy).toEqual({ reassert_auto_sync: true });
+    expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
     // The whole pass ran as one action (the loading surface wraps it).
     expect(setup.reporter.runAction).toHaveBeenCalledTimes(1);
     expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
@@ -207,22 +229,7 @@ describe("useSkillLibrary refresh", () => {
     );
   });
 
-  it("with auto-sync on, pushes updated content with overwrite (the refresh contract)", async () => {
-    const setup = makeDeps();
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      await result.current.handleRefresh();
-    });
-
-    expect(setup.sync.syncSkillsToTools).toHaveBeenCalledWith(
-      [{ skill_id: "s1", name: "alpha", source_path: "/hub/alpha" }],
-      ["claude", "cursor"],
-      { overwrite: true },
-    );
-  });
-
-  it("with auto-sync off, refresh never fans out a sync", async () => {
+  it("passes the auto-sync setting as the re-assert policy", async () => {
     const setup = makeDeps({ autoSyncEnabled: false });
     const { result } = await renderLibrary(setup);
 
@@ -230,26 +237,51 @@ describe("useSkillLibrary refresh", () => {
       await result.current.handleRefresh();
     });
 
-    expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
+    const [, , policy] = mockInvoke.mock.calls.find(
+      ([command]) => command === "refreshManagedSkills",
+    )!;
+    expect(policy).toEqual({ reassert_auto_sync: false });
   });
 
-  it("appends sync failures to the collected refresh errors", async () => {
+  it("renders per-skill failures and per-target failures from the one report", async () => {
     const setup = makeDeps({
-      syncReport: {
-        results: [
+      skills: [skill("s1", "alpha"), skill("s2", "beta")],
+      refreshReport: {
+        skills: [
           {
             skill_id: "s1",
             skill_name: "alpha",
-            tool: "cursor",
+            status: {
+              status: "refreshed",
+              content_hash: null,
+              source_revision: null,
+              targets: [
+                {
+                  scope: { scope: "global", tool: "cursor" },
+                  status: {
+                    status: "failed",
+                    error: { code: "OTHER", message: "boom" },
+                  },
+                },
+                {
+                  scope: { scope: "global", tool: "claude" },
+                  status: { status: "skipped", reason: { reason: "link_follows_source" } },
+                },
+              ],
+            },
+          },
+          {
+            skill_id: "s2",
+            skill_name: "beta",
             status: {
               status: "failed",
-              error: { code: "OTHER", message: "boom" },
+              error: { code: "GIT_CLONE_FAILED", kind: "unknown", detail: "boom" },
             },
           },
         ],
-        synced: 0,
-        skipped: 0,
+        refreshed: 1,
         failed: 1,
+        target_failures: 1,
       },
     });
     const { result } = await renderLibrary(setup);
@@ -258,9 +290,74 @@ describe("useSkillLibrary refresh", () => {
       await result.current.handleRefresh();
     });
 
+    // Skips are not failures and stay silent.
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledTimes(1);
     expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
-      { title: "alpha", message: "sync failed" },
+      {
+        title: 'errors.updateFailedTitle {"name":"beta"}',
+        message: "formatted:GIT_CLONE_FAILED",
+      },
+      {
+        title:
+          'errors.propagationFailedTitle {"name":"alpha","tool":"CURSOR"}',
+        message: "formatted:OTHER",
+      },
     ]);
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
+      'status.refreshSummary {"refreshed":1,"failed":1}',
+    );
+  });
+});
+
+describe("useSkillLibrary single update", () => {
+  it("is the same batch, of one", async () => {
+    const setup = makeDeps();
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      result.current.handleUpdateSkill(setup.skills[0]);
+    });
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith(
+        "refreshManagedSkills",
+        ["s1"],
+        { reassert_auto_sync: true },
+        expect.anything(),
+      ),
+    );
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
+      'status.updated {"name":"alpha"}',
+    );
+  });
+
+  it("surfaces the skill's own failure from the report", async () => {
+    const setup = makeDeps({
+      refreshReport: {
+        skills: [
+          {
+            skill_id: "s1",
+            skill_name: "alpha",
+            status: { status: "failed", error: { code: "GIT_CLONE_FAILED", kind: "unknown", detail: "boom" } },
+          },
+        ],
+        refreshed: 0,
+        failed: 1,
+        target_failures: 0,
+      },
+    });
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      result.current.handleUpdateSkill(setup.skills[0]);
+    });
+
+    await waitFor(() =>
+      expect(setup.reporter.setError).toHaveBeenCalledWith(
+        "formatted:GIT_CLONE_FAILED",
+      ),
+    );
+    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
   });
 });
 
