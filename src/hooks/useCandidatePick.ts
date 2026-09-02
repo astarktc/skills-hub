@@ -178,7 +178,7 @@ export function useCandidatePick<C extends PickCandidate, Ctx>(
     [candidates],
   );
 
-  const install = async () => {
+  const install = useCallback(async () => {
     if (!listing) return;
     const picked = candidates.filter(
       (c) => selectable(c) && selected[c.subpath],
@@ -222,7 +222,24 @@ export function useCandidatePick<C extends PickCandidate, Ctx>(
         if (collectedErrors.length > 0) showActionErrors(collectedErrors);
       },
     );
-  };
+    // `selectable` is an adapter constant, not render state (see `open`).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    afterBatch,
+    candidates,
+    deploy,
+    formatError,
+    isSkillNameTaken,
+    listing,
+    reset,
+    runAction,
+    selected,
+    setActionMessage,
+    setError,
+    showActionErrors,
+    source,
+    t,
+  ]);
 
   return {
     candidates,

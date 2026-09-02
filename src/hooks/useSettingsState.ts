@@ -10,6 +10,24 @@ import type { StatusReporter, TranslateFn } from "./useStatusReporter";
 const themeStorageKey = "skills-theme";
 const ZOOM_PRESETS = [0.75, 1, 1.1, 1.25, 1.5, 1.75, 2];
 
+/**
+ * What the settings panel shows for the one render before `get_settings`
+ * resolves. Deliberately a restatement of the backend defaults
+ * (`core/settings.rs`) and not a second source of truth: the snapshot is
+ * adopted wholesale on mount, so any drift here is visible for a single frame
+ * and never reaches a write. Shipping the backend's defaults over the wire
+ * instead would add a field the frontend must still have a placeholder for.
+ */
+const PRE_LOAD_PLACEHOLDERS: {
+  zoomLevel: number;
+  gitCacheCleanupDays: number;
+  gitCacheTtlSecs: number;
+} = {
+  zoomLevel: 1.0,
+  gitCacheCleanupDays: 30,
+  gitCacheTtlSecs: 60,
+};
+
 export type SettingsStateDeps = {
   t: TranslateFn;
   reporter: Pick<
@@ -52,14 +70,19 @@ export function useSettingsState({
     return "system";
   });
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
-  const [zoomLevel, setZoomLevel] = useState(1.0);
+  const [zoomLevel, setZoomLevel] = useState(PRE_LOAD_PLACEHOLDERS.zoomLevel);
   const [storagePath, setStoragePath] = useState<string>(t("notAvailable"));
-  const [gitCacheCleanupDays, setGitCacheCleanupDays] = useState<number>(30);
-  const [gitCacheTtlSecs, setGitCacheTtlSecs] = useState<number>(60);
+  const [gitCacheCleanupDays, setGitCacheCleanupDays] = useState<number>(
+    PRE_LOAD_PLACEHOLDERS.gitCacheCleanupDays,
+  );
+  const [gitCacheTtlSecs, setGitCacheTtlSecs] = useState<number>(
+    PRE_LOAD_PLACEHOLDERS.gitCacheTtlSecs,
+  );
   const [githubToken, setGithubToken] = useState<string>("");
   // Clamp bounds come from the backend snapshot; null until loaded.
   const [bounds, setBounds] = useState<SettingsBounds | null>(null);
 
+  /** Adopt a whole snapshot. Only the mount load may do this — see `writeSetting`. */
   const adoptSettings = useCallback((next: AppSettings) => {
     setStoragePath(next.central_repo_path);
     setGitCacheCleanupDays(next.git_cache_cleanup_days);
@@ -69,9 +92,42 @@ export function useSettingsState({
     setBounds(next.bounds);
   }, []);
 
-  const updateSetting = useCallback(
-    (update: SettingUpdate) =>
-      invokeTauri("updateSetting", update),
+  /**
+   * Write one setting and adopt the backend's echo of *that field only* (plus
+   * the bounds, which are constants).
+   *
+   * Writes are independent and can overlap — the token field writes on every
+   * keystroke while a slider is being dragged, and the zoom hotkey fires
+   * unprompted. Adopting the whole snapshot here would replay this response's
+   * now-stale values for the other fields over newer local edits. The echo is
+   * still adopted rather than the requested value, because the backend clamps.
+   */
+  const writeSetting = useCallback(
+    async (update: SettingUpdate) => {
+      const next = await invokeTauri("updateSetting", update);
+      setBounds(next.bounds);
+      switch (update.key) {
+        case "central_repo_path":
+          setStoragePath(next.central_repo_path);
+          break;
+        case "git_cache_cleanup_days":
+          setGitCacheCleanupDays(next.git_cache_cleanup_days);
+          break;
+        case "git_cache_ttl_secs":
+          setGitCacheTtlSecs(next.git_cache_ttl_secs);
+          break;
+        case "github_token":
+          setGithubToken(next.github_token);
+          break;
+        case "ui_zoom_level":
+          setZoomLevel(next.ui_zoom_level);
+          break;
+        default:
+          // auto_sync_enabled / global_tool_config are owned by other worlds.
+          break;
+      }
+      return next;
+    },
     [],
   );
 
@@ -139,13 +195,13 @@ export function useSettingsState({
             .setZoom(next)
             .catch(() => {});
         });
-        updateSetting({ key: "ui_zoom_level", value: next }).catch(() => {});
+        writeSetting({ key: "ui_zoom_level", value: next }).catch(() => {});
         return next;
       });
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [updateSetting]);
+  }, [writeSetting]);
 
   const handlePickStoragePath = useCallback(async () => {
     try {
@@ -159,20 +215,17 @@ export function useSettingsState({
         title: t("selectStoragePath"),
       });
       if (!selected || Array.isArray(selected)) return;
-      adoptSettings(
-        await updateSetting({ key: "central_repo_path", value: selected }),
-      );
+      await writeSetting({ key: "central_repo_path", value: selected });
       await onManagedSkillsChanged();
     } catch (err) {
       setError(formatError(err));
     }
   }, [
-    adoptSettings,
     formatError,
     onManagedSkillsChanged,
     setError,
     t,
-    updateSetting,
+    writeSetting,
   ]);
 
   const handleGitCacheCleanupDaysChange = useCallback(
@@ -181,17 +234,15 @@ export function useSettingsState({
       setGitCacheCleanupDays(normalized);
       if (!isTauri) return;
       try {
-        adoptSettings(
-          await updateSetting({
-            key: "git_cache_cleanup_days",
-            value: normalized,
-          }),
-        );
+        await writeSetting({
+          key: "git_cache_cleanup_days",
+          value: normalized,
+        });
       } catch (err) {
         setError(formatError(err));
       }
     },
-    [adoptSettings, bounds, formatError, setError, updateSetting],
+    [bounds, formatError, setError, writeSetting],
   );
 
   const handleGitCacheTtlSecsChange = useCallback(
@@ -200,14 +251,12 @@ export function useSettingsState({
       setGitCacheTtlSecs(normalized);
       if (!isTauri) return;
       try {
-        adoptSettings(
-          await updateSetting({ key: "git_cache_ttl_secs", value: normalized }),
-        );
+        await writeSetting({ key: "git_cache_ttl_secs", value: normalized });
       } catch (err) {
         setError(formatError(err));
       }
     },
-    [adoptSettings, bounds, formatError, setError, updateSetting],
+    [bounds, formatError, setError, writeSetting],
   );
 
   const handleGithubTokenChange = useCallback(
@@ -215,14 +264,12 @@ export function useSettingsState({
       setGithubToken(nextToken);
       if (!isTauri) return;
       try {
-        adoptSettings(
-          await updateSetting({ key: "github_token", value: nextToken }),
-        );
+        await writeSetting({ key: "github_token", value: nextToken });
       } catch (err) {
         setError(formatError(err));
       }
     },
-    [adoptSettings, formatError, setError, updateSetting],
+    [formatError, setError, writeSetting],
   );
 
   const handleClearGitCacheNow = useCallback(async () => {
@@ -253,12 +300,12 @@ export function useSettingsState({
       try {
         const { getCurrentWebview } = await import("@tauri-apps/api/webview");
         await getCurrentWebview().setZoom(normalized);
-        await updateSetting({ key: "ui_zoom_level", value: normalized });
+        await writeSetting({ key: "ui_zoom_level", value: normalized });
       } catch {
         /* ignore -- zoom is best-effort */
       }
     },
-    [bounds, updateSetting],
+    [bounds, writeSetting],
   );
 
   return {

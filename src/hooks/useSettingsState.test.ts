@@ -219,3 +219,57 @@ describe("useSettingsState writes", () => {
     expect(result.current.storagePath).toBe("/home/op/.skillshub");
   });
 });
+
+describe("useSettingsState single-field adoption", () => {
+  it("does not let a slow write's snapshot clobber a newer field edit", async () => {
+    // Two overlapping writes: the TTL write resolves *after* a later token
+    // edit. Its response snapshot still carries the old token, so adopting the
+    // whole snapshot would roll the token back.
+    let releaseTtlWrite: ((value: AppSettings) => void) | undefined;
+    const initial = appSettings({ github_token: "old-token" });
+    mockInvoke.mockImplementation((command, ...args) => {
+      switch (command) {
+        case "getSettings":
+          return Promise.resolve(initial);
+        case "updateSetting": {
+          const [update] = args as [SettingUpdate];
+          if (update.key === "git_cache_ttl_secs") {
+            return new Promise<AppSettings>((resolve) => {
+              releaseTtlWrite = resolve;
+            });
+          }
+          if (update.key === "github_token") {
+            return Promise.resolve(
+              appSettings({ github_token: update.value, git_cache_ttl_secs: 5 }),
+            );
+          }
+          return Promise.resolve(initial);
+        }
+        default:
+          return Promise.resolve(undefined);
+      }
+    });
+
+    const { result } = renderSettings();
+    await waitFor(() => expect(result.current.githubToken).toBe("old-token"));
+
+    // Start the slow TTL write, then complete a token write behind its back.
+    let ttlWrite: Promise<void> | undefined;
+    await act(async () => {
+      ttlWrite = result.current.handleGitCacheTtlSecsChange(5);
+    });
+    await act(async () => {
+      await result.current.handleGithubTokenChange("new-token");
+    });
+    expect(result.current.githubToken).toBe("new-token");
+
+    // The TTL response (which still says github_token: "old-token") lands last.
+    await act(async () => {
+      releaseTtlWrite?.(appSettings({ github_token: "old-token", git_cache_ttl_secs: 5 }));
+      await ttlWrite;
+    });
+
+    expect(result.current.gitCacheTtlSecs).toBe(5);
+    expect(result.current.githubToken).toBe("new-token");
+  });
+});

@@ -1,7 +1,7 @@
 import { memo, useState } from "react";
 import type { TFunction } from "i18next";
 import Modal from "../shared/Modal";
-import type { ProjectDto } from "./types";
+import type { IgnoreUpdateOptions, ProjectDto } from "./types";
 
 type AddProjectModalProps = {
   open: boolean;
@@ -9,7 +9,7 @@ type AddProjectModalProps = {
   projects: ProjectDto[];
   onRegister: (
     path: string,
-    gitignoreOptions: { addToGitignore: boolean; addToExclude: boolean },
+    gitignore: IgnoreUpdateOptions,
   ) => Promise<void>;
   onRequestClose: () => void;
   t: TFunction;
@@ -44,7 +44,10 @@ const AddProjectModal = ({
 
   const handleSubmit = async () => {
     try {
-      await onRegister(path, { addToGitignore, addToExclude });
+      await onRegister(path, {
+        add_to_gitignore: addToGitignore,
+        add_to_exclude: addToExclude,
+      });
       setPath("");
       setAddToGitignore(false);
       setAddToExclude(false);

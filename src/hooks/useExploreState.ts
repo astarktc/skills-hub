@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 import type {
   FeaturedSkillDto,
   ManagedSkill,
@@ -12,7 +11,10 @@ const showHiddenStorageKey = "explore-showHidden";
 
 export type ExploreStateDeps = {
   t: TranslateFn;
-  reporter: Pick<StatusReporter, "runAction" | "formatError">;
+  reporter: Pick<
+    StatusReporter,
+    "runAction" | "setError" | "formatError"
+  >;
   /** Navigate to the explore-detail view with the cloned preview skill. */
   onOpenExploreDetail: (skill: ManagedSkill) => void;
 };
@@ -26,7 +28,7 @@ export function useExploreState({
   reporter,
   onOpenExploreDetail,
 }: ExploreStateDeps) {
-  const { runAction, formatError } = reporter;
+  const { runAction, setError, formatError } = reporter;
   const [featuredSkills, setFeaturedSkills] = useState<FeaturedSkillDto[]>([]);
   const [featuredLoading, setFeaturedLoading] = useState(false);
   const [exploreFilter, setExploreFilter] = useState("");
@@ -79,11 +81,10 @@ export function useExploreState({
         await invokeTauri("hideExploreSkill", sourceUrl);
         setHiddenSkills((prev) => new Set([...prev, sourceUrl]));
       } catch (err) {
-        const msg = formatError(err);
-        if (msg) toast.error(msg);
+        setError(formatError(err));
       }
     },
-    [formatError],
+    [formatError, setError],
   );
 
   const handleUnhideSkill = useCallback(
@@ -96,11 +97,10 @@ export function useExploreState({
           return next;
         });
       } catch (err) {
-        const msg = formatError(err);
-        if (msg) toast.error(msg);
+        setError(formatError(err));
       }
     },
-    [formatError],
+    [formatError, setError],
   );
 
   const handleExploreFilterChange = useCallback(
@@ -125,14 +125,14 @@ export function useExploreState({
           );
           setSearchResults(results);
         } catch {
-          toast.error(t("searchError"));
+          setError(t("searchError"));
           setSearchResults([]);
         } finally {
           setSearchLoading(false);
         }
       }, 500);
     },
-    [t],
+    [setError, t],
   );
 
   const handleOpenExploreDetail = useCallback(

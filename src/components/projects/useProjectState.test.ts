@@ -361,6 +361,11 @@ describe("useProjectState edit-project gitignore", () => {
         add_to_exclude: true,
       });
     });
-    expect(callsTo("updateProjectGitignore")).toEqual([["p9", false, true]]);
+    // The DTO travels whole: `update_project_gitignore` takes the same
+    // `IgnoreUpdateOptions` shape `configure_project_tools` does, so nothing
+    // unpacks it into positional bools on the way to the backend.
+    expect(callsTo("updateProjectGitignore")).toEqual([
+      ["p9", { add_to_gitignore: false, add_to_exclude: true }],
+    ]);
   });
 });

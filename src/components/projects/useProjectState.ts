@@ -410,12 +410,7 @@ export function useProjectState(): ProjectState {
 
   const updateGitignore = useCallback(
     async (projectId: string, options: IgnoreUpdateOptions) => {
-      await invokeTauri(
-        "updateProjectGitignore",
-        projectId,
-        options.add_to_gitignore,
-        options.add_to_exclude,
-      );
+      await invokeTauri("updateProjectGitignore", projectId, options);
     },
     [],
   );

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
 import type { ManagedSkill } from "../components/skills/types";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import type { SyncOrchestration } from "./useSyncOrchestration";
@@ -170,11 +169,10 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
         await invokeTauri("unsyncSkill", skillId);
         await loadManagedSkills();
       } catch (err) {
-        const msg = formatError(err);
-        if (msg) toast.error(msg);
+        setError(formatError(err));
       }
     },
-    [formatError, loadManagedSkills],
+    [formatError, loadManagedSkills, setError],
   );
 
   const handleSyncSkillToAllTools = useCallback(

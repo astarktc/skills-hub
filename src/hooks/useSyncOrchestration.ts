@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
 import type {
   BatchSyncOverrideDto,
   BatchSyncReportDto,
@@ -40,7 +39,11 @@ export type SyncOrchestrationDeps = {
   t: TranslateFn;
   reporter: Pick<
     StatusReporter,
-    "loading" | "setActionMessage" | "setError" | "formatError"
+    | "loading"
+    | "setActionMessage"
+    | "setError"
+    | "setSuccessToastMessage"
+    | "formatError"
   >;
 };
 
@@ -53,7 +56,13 @@ export type SyncOrchestrationDeps = {
  * sync_skill_to_tool no longer exists.
  */
 export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
-  const { loading, setActionMessage, setError, formatError } = reporter;
+  const {
+    loading,
+    setActionMessage,
+    setError,
+    setSuccessToastMessage,
+    formatError,
+  } = reporter;
   const [toolStatus, setToolStatus] = useState<ToolStatusDto | null>(null);
   const [showNewToolsModal, setShowNewToolsModal] = useState(false);
   const [showToolConfigModal, setShowToolConfigModal] = useState(false);
@@ -243,11 +252,10 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
         });
         setAutoSyncEnabled(enabled);
       } catch (err) {
-        const msg = formatError(err);
-        if (msg) toast.error(msg);
+        setError(formatError(err));
       }
     },
-    [formatError],
+    [formatError, setError],
   );
 
   const handleOpenToolConfig = useCallback(() => {
@@ -280,12 +288,12 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
           return next;
         });
         setShowToolConfigModal(false);
-        toast.success(t("status.toolConfigSaved"));
+        setSuccessToastMessage(t("status.toolConfigSaved"));
       } catch (err) {
         setError(formatError(err));
       }
     },
-    [formatError, setError, t, toolInfos],
+    [formatError, setError, setSuccessToastMessage, t, toolInfos],
   );
 
   const handleSyncTargetChange = useCallback(

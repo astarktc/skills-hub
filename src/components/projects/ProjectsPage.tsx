@@ -11,23 +11,18 @@ import AddProjectModal from "./AddProjectModal";
 import EditProjectModal from "./EditProjectModal";
 import ToolConfigModal from "../shared/ToolConfigModal";
 import RemoveProjectModal from "./RemoveProjectModal";
+import type { IgnoreUpdateOptions } from "./types";
 
 const ProjectsPage = () => {
   const { t } = useTranslation();
   const state = useProjectState();
 
   const handleAddProject = useCallback(
-    async (
-      path: string,
-      gitignoreOptions: { addToGitignore: boolean; addToExclude: boolean },
-    ) => {
+    async (path: string, gitignore: IgnoreUpdateOptions) => {
       try {
         // The ignore intent rides along with registration; the hook hands
         // it to the backend once the tool set is confirmed.
-        const project = await state.registerProject(path, {
-          add_to_gitignore: gitignoreOptions.addToGitignore,
-          add_to_exclude: gitignoreOptions.addToExclude,
-        });
+        const project = await state.registerProject(path, gitignore);
         state.setShowAddModal(false);
         await state.selectProject(project.id);
         state.setShowToolConfigModal(true);
@@ -83,15 +78,9 @@ const ProjectsPage = () => {
   );
 
   const handleEditSave = useCallback(
-    async (
-      projectId: string,
-      gitignoreOptions: { addToGitignore: boolean; addToExclude: boolean },
-    ) => {
+    async (projectId: string, gitignore: IgnoreUpdateOptions) => {
       try {
-        await state.updateGitignore(projectId, {
-          add_to_gitignore: gitignoreOptions.addToGitignore,
-          add_to_exclude: gitignoreOptions.addToExclude,
-        });
+        await state.updateGitignore(projectId, gitignore);
         state.setShowEditModal(false);
         state.setEditTargetId(null);
         toast.success(t("projects.configureProject"));

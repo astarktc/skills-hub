@@ -1,14 +1,18 @@
 import { memo, useEffect, useState } from "react";
 import type { TFunction } from "i18next";
 import Modal from "../shared/Modal";
-import type { GitignoreStatusDto, ProjectDto } from "./types";
+import type {
+  GitignoreStatusDto,
+  IgnoreUpdateOptions,
+  ProjectDto,
+} from "./types";
 
 type EditProjectModalProps = {
   open: boolean;
   project: ProjectDto | null;
   onSave: (
     projectId: string,
-    gitignoreOptions: { addToGitignore: boolean; addToExclude: boolean },
+    gitignore: IgnoreUpdateOptions,
   ) => Promise<void>;
   /** Backend access goes through the hook (useProjectState.getGitignoreStatus). */
   loadStatus: (projectId: string) => Promise<GitignoreStatusDto>;
@@ -51,7 +55,10 @@ const EditProjectModalInner = ({
   const handleSave = async () => {
     setSaving(true);
     try {
-      await onSave(project.id, { addToGitignore, addToExclude });
+      await onSave(project.id, {
+        add_to_gitignore: addToGitignore,
+        add_to_exclude: addToExclude,
+      });
     } finally {
       setSaving(false);
     }

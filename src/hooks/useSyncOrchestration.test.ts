@@ -55,7 +55,6 @@ function toolInfo(key: string, shared_with: string[] = [key]): ToolInfoDto {
     key,
     label: key.toUpperCase(),
     installed: true,
-    skills_dir: `~/.${key}/skills`,
     shared_with,
     constituents: [],
   };
@@ -124,12 +123,17 @@ function stubBackend(overrides?: {
 
 function makeReporter(): Pick<
   StatusReporter,
-  "loading" | "setActionMessage" | "setError" | "formatError"
+  | "loading"
+  | "setActionMessage"
+  | "setError"
+  | "setSuccessToastMessage"
+  | "formatError"
 > {
   return {
     loading: false,
     setActionMessage: vi.fn(),
     setError: vi.fn(),
+    setSuccessToastMessage: vi.fn(),
     // Same shape as the real formatError contract: null silences an entry.
     formatError: vi.fn((err: unknown) => {
       const code = (err as { code?: string })?.code;
