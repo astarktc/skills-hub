@@ -13,13 +13,13 @@ use std::sync::Arc;
 
 use crate::core::cache_cleanup::cleanup_git_cache_dirs;
 use crate::core::cancel_token::CancelToken;
-use crate::core::central_repo::ensure_central_repo;
+use crate::core::clock::now_ms;
 use crate::core::environment::{expand_home_path, home_dir};
 use crate::core::errors::SignalError;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::global_sync::{BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus};
 use crate::core::installer::{
-    clone_for_explore_preview, install_git_skill, install_git_skill_from_selection,
+    clone_for_explore_preview, install_git_skill_from_selection,
     install_local_skill, install_local_skill_from_selection, list_git_skills, list_local_skills,
     update_managed_skill_from_source, GitSkillListing, InstallResult, InstallerPaths,
     LocalSkillCandidate,
@@ -197,9 +197,7 @@ pub async fn get_settings(
 ) -> Result<AppSettings, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let settings = load_settings(&store, &settings_fallback_root(&app)?)?;
-        ensure_central_repo(std::path::Path::new(&settings.central_repo_path))?;
-        Ok::<_, anyhow::Error>(settings)
+        load_settings(&store, &settings_fallback_root(&app)?)
     })
     .await
     .map_err(CommandError::internal)?
@@ -225,26 +223,6 @@ pub async fn update_setting(
             other => other,
         };
         apply_setting(&store, &settings_fallback_root(&app)?, update)
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-#[specta::specta]
-#[allow(non_snake_case)]
-pub async fn install_local(
-    app: tauri::AppHandle,
-    store: State<'_, SkillStore>,
-    sourcePath: String,
-    name: Option<String>,
-) -> Result<InstallResultDto, CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let paths = installer_paths(&app, &store)?;
-        let result = install_local_skill(&paths, &store, sourcePath.as_ref(), name)?;
-        Ok::<_, anyhow::Error>(to_install_dto(result))
     })
     .await
     .map_err(CommandError::internal)?
@@ -282,29 +260,6 @@ pub async fn install_local_selection(
         let paths = installer_paths(&app, &store)?;
         let result =
             install_local_skill_from_selection(&paths, &store, base.as_ref(), &subpath, name)?;
-        Ok::<_, anyhow::Error>(to_install_dto(result))
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-#[specta::specta]
-#[allow(non_snake_case)]
-pub async fn install_git(
-    app: tauri::AppHandle,
-    store: State<'_, SkillStore>,
-    cancel: State<'_, Arc<CancelToken>>,
-    repoUrl: String,
-    name: Option<String>,
-) -> Result<InstallResultDto, CommandError> {
-    let store = store.inner().clone();
-    cancel.reset();
-    let cancel_token = Arc::clone(cancel.inner());
-    tauri::async_runtime::spawn_blocking(move || {
-        let paths = installer_paths(&app, &store)?;
-        let result = install_git_skill(&paths, &store, &repoUrl, name, Some(&cancel_token))?;
         Ok::<_, anyhow::Error>(to_install_dto(result))
     })
     .await
@@ -723,13 +678,6 @@ fn to_install_dto(result: InstallResult) -> InstallResultDto {
         central_path: result.central_path.to_string_lossy().to_string(),
         content_hash: result.content_hash,
     }
-}
-
-pub(crate) fn now_ms() -> i64 {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
-    now.as_millis() as i64
 }
 
 fn get_managed_skills_impl(store: &SkillStore) -> Result<Vec<ManagedSkillDto>, CommandError> {

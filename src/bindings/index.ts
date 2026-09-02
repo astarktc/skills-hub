@@ -15,10 +15,8 @@ export const commands = {
 	getProjectToolStatus: () => __TAURI_INVOKE<ToolStatusDto>("get_project_tool_status"),
 	clearGitCacheNow: () => __TAURI_INVOKE<number>("clear_git_cache_now"),
 	getOnboardingPlan: () => __TAURI_INVOKE<OnboardingPlan>("get_onboarding_plan"),
-	installLocal: (sourcePath: string, name: string | null) => __TAURI_INVOKE<InstallResultDto>("install_local", { sourcePath, name }),
 	listLocalSkillsCmd: (basePath: string) => __TAURI_INVOKE<LocalSkillCandidate[]>("list_local_skills_cmd", { basePath }),
 	installLocalSelection: (basePath: string, subpath: string, name: string | null) => __TAURI_INVOKE<InstallResultDto>("install_local_selection", { basePath, subpath, name }),
-	installGit: (repoUrl: string, name: string | null) => __TAURI_INVOKE<InstallResultDto>("install_git", { repoUrl, name }),
 	listGitSkillsCmd: (repoUrl: string, targetName: string | null) => __TAURI_INVOKE<GitSkillListing>("list_git_skills_cmd", { repoUrl, targetName }),
 	installGitSelection: (repoUrl: string, subpath: string, name: string | null) => __TAURI_INVOKE<InstallResultDto>("install_git_selection", { repoUrl, subpath, name }),
 	/**

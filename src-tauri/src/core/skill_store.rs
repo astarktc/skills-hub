@@ -331,7 +331,11 @@ impl SkillStore {
         })
     }
 
-    pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
+    /// Raw settings-table adapter. `core::settings` is the only intended
+    /// caller — it owns key names, defaults and validation — so visibility is
+    /// limited to `core` and the invariant is compiler-enforced rather than
+    /// documented.
+    pub(super) fn get_setting(&self, key: &str) -> Result<Option<String>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
             let mut rows = stmt.query(params![key])?;
@@ -342,7 +346,8 @@ impl SkillStore {
         })
     }
 
-    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+    /// Raw settings-table adapter; see [`SkillStore::get_setting`].
+    pub(super) fn set_setting(&self, key: &str, value: &str) -> Result<()> {
         self.with_conn(|conn| {
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES (?1, ?2)
@@ -351,14 +356,6 @@ impl SkillStore {
             )?;
             Ok(())
         })
-    }
-
-    #[allow(dead_code)]
-    pub fn set_onboarding_completed(&self, completed: bool) -> Result<()> {
-        self.set_setting(
-            "onboarding_completed",
-            if completed { "true" } else { "false" },
-        )
     }
 
     pub fn upsert_skill(&self, record: &SkillRecord) -> Result<()> {

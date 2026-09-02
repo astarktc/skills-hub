@@ -33,10 +33,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::get_project_tool_status,
             commands::clear_git_cache_now,
             commands::get_onboarding_plan,
-            commands::install_local,
             commands::list_local_skills_cmd,
             commands::install_local_selection,
-            commands::install_git,
             commands::list_git_skills_cmd,
             commands::install_git_selection,
             commands::sync_skills_to_tools,
@@ -96,6 +94,18 @@ pub fn run() {
             migrate_legacy_db_if_needed(&db_path).map_err(tauri::Error::from)?;
             let store = SkillStore::new(db_path);
             store.ensure_schema().map_err(tauri::Error::from)?;
+
+            // The central repo must exist before any install/sync flow runs.
+            // This is app setup, not a getter side effect: `get_settings`
+            // only reads.
+            match commands::resolve_central_repo_path_for_app(app.handle(), &store) {
+                Ok(central) => {
+                    if let Err(err) = core::central_repo::ensure_central_repo(&central) {
+                        log::warn!("failed to create central repo {:?}: {}", central, err);
+                    }
+                }
+                Err(err) => log::warn!("failed to resolve central repo path: {}", err),
+            }
             app.manage(store.clone());
             app.manage(Arc::new(CancelToken::new()));
             app.manage(SyncMutex(Arc::new(std::sync::Mutex::new(()))));

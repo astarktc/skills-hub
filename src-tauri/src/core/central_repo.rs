@@ -2,6 +2,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
+use super::clock::now_ms;
 use super::skill_store::SkillStore;
 use super::sync_engine::copy_dir_recursive;
 
@@ -48,13 +49,6 @@ pub fn move_central_repo(store: &SkillStore, new_base: &Path) -> Result<()> {
         store.upsert_skill(&updated)?;
     }
     Ok(())
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64
 }
 
 #[cfg(test)]

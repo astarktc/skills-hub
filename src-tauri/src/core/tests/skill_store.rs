@@ -48,23 +48,6 @@ fn settings_roundtrip_and_update() {
     assert_eq!(store.get_setting("k").unwrap().as_deref(), Some("v1"));
     store.set_setting("k", "v2").unwrap();
     assert_eq!(store.get_setting("k").unwrap().as_deref(), Some("v2"));
-
-    store.set_onboarding_completed(true).unwrap();
-    assert_eq!(
-        store
-            .get_setting("onboarding_completed")
-            .unwrap()
-            .as_deref(),
-        Some("true")
-    );
-    store.set_onboarding_completed(false).unwrap();
-    assert_eq!(
-        store
-            .get_setting("onboarding_completed")
-            .unwrap()
-            .as_deref(),
-        Some("false")
-    );
 }
 
 #[test]

@@ -221,7 +221,7 @@ fn lists_and_installs_git_skills_without_network() {
 }
 
 #[test]
-fn install_git_skill_errors_on_multi_skills_repo_root() {
+fn git_fetch_errors_on_multi_skills_repo_root() {
     let (_dir, store) = make_store();
     let (_roots, paths) = make_paths();
 
@@ -241,7 +241,7 @@ fn install_git_skill_errors_on_multi_skills_repo_root() {
     let repo = init_git_repo(repo_dir.path());
     commit_all(&repo, "multi skills");
 
-    let err = match super::install_git_skill(
+    let err = match super::clone_for_explore_preview(
         &paths,
         &store,
         repo_dir.path().to_string_lossy().as_ref(),
@@ -468,40 +468,10 @@ fn install_git_skill_respects_user_provided_name() {
     assert_eq!(res.name, "user-custom-name");
 }
 
-/// Issue #28: install_git_skill (non-selection variant) also uses SKILL.md name.
-#[test]
-fn install_git_skill_derives_name_from_skill_md() {
-    let (_dir, store) = make_store();
-    let (_roots, paths) = make_paths();
-
-    let repo_dir = tempfile::tempdir().unwrap();
-    fs::write(
-        repo_dir.path().join("SKILL.md"),
-        "---\nname: proper-name\ndescription: desc\n---\n",
-    )
-    .unwrap();
-    let repo = init_git_repo(repo_dir.path());
-    commit_all(&repo, "init");
-
-    // The repo name (derived from path) will be something like a temp dir name.
-    // After install, the name should be "proper-name" from SKILL.md.
-    let res = super::install_git_skill(
-        &paths,
-        &store,
-        repo_dir.path().to_string_lossy().as_ref(),
-        None,
-        None,
-    )
-    .unwrap();
-
-    assert_eq!(res.name, "proper-name");
-    assert!(res.central_path.ends_with("proper-name"));
-}
-
 /// Issue #18: repos with skills in root-level subdirectories (no `skills/` parent)
 /// should be detected as multi-skill repos.
 #[test]
-fn install_git_skill_detects_root_level_multi_skills() {
+fn git_fetch_detects_root_level_multi_skills() {
     let (_dir, store) = make_store();
     let (_roots, paths) = make_paths();
 
@@ -522,8 +492,8 @@ fn install_git_skill_detects_root_level_multi_skills() {
     let repo = init_git_repo(repo_dir.path());
     commit_all(&repo, "add root-level skills");
 
-    // install_git_skill should detect multiple skills and bail with MULTI_SKILLS
-    let err = match super::install_git_skill(
+    // The shared fetch engine should detect multiple skills and bail with MULTI_SKILLS
+    let err = match super::clone_for_explore_preview(
         &paths,
         &store,
         repo_dir.path().to_string_lossy().as_ref(),

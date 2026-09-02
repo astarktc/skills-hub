@@ -9,7 +9,8 @@ use crate::core::project_sync::{self, AssignTargetStatus};
 use crate::core::skill_store::{ProjectSkillAssignmentRecord, SkillStore};
 use crate::SyncMutex;
 
-use super::{now_ms, CommandError};
+use super::CommandError;
+use crate::core::clock::now_ms;
 
 #[tauri::command]
 #[specta::specta]

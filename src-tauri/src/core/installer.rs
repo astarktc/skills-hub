@@ -4,9 +4,9 @@ use std::sync::{Mutex, OnceLock};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use super::cache_cleanup::get_git_cache_ttl_secs;
 use super::cancel_token::CancelToken;
 use super::central_repo::ensure_central_repo;
+use super::clock::now_ms;
 use super::errors::SignalError;
 use super::git_fetcher::{clone_or_pull, clone_or_pull_sparse};
 use super::github_download::{download_github_directory, parse_github_api_params, GithubApiError};
@@ -16,6 +16,7 @@ use super::install_finalize::{
     StagingDir,
 };
 use super::project_sync::resolve_project_sync_target;
+use super::settings;
 use super::skill_discovery::{
     discover_skills, find_skill_md, is_skill_dir, parse_skill_md, parse_skill_md_with_reason,
     DiscoveredSkill,
@@ -40,13 +41,6 @@ pub struct InstallerPaths {
     pub central_dir: PathBuf,
     /// App cache root; the git clone cache lives at `cache_dir/skills-hub-git-cache`.
     pub cache_dir: PathBuf,
-}
-
-/// Result from fetching a skill's files into a local directory.
-pub struct SkillFetchResult {
-    /// Git revision if available (from clone_to_cache). `None` when files came
-    /// via the GitHub API download path.
-    pub revision: Option<String>,
 }
 
 pub fn install_local_skill(
@@ -94,42 +88,6 @@ pub fn install_local_skill(
         staged,
         NameIntent::UserProvided(name),
         provenance,
-    )
-}
-
-pub fn install_git_skill(
-    paths: &InstallerPaths,
-    store: &SkillStore,
-    repo_url: &str,
-    name: Option<String>,
-    cancel: Option<&CancelToken>,
-) -> Result<InstallResult> {
-    let parsed = parse_github_url(repo_url);
-    let name = name_intent(name, || {
-        derive_name_from_subpath(&parsed.clone_url, parsed.subpath.as_deref())
-    });
-
-    let central_dir = &paths.central_dir;
-    ensure_central_repo(central_dir)?;
-    ensure_name_available(central_dir, name.requested())?;
-
-    let staged = StagingDir::new_in(central_dir);
-    let fetched = fetch_skill_files(
-        &paths.cache_dir,
-        store,
-        &parsed,
-        None,
-        staged.path(),
-        cancel,
-    )?;
-    ensure_installable_skill_dir(staged.path())?;
-
-    finalize_install(
-        store,
-        central_dir,
-        staged,
-        name,
-        SkillProvenance::git(repo_url, parsed.subpath.clone(), fetched.revision),
     )
 }
 
@@ -287,13 +245,6 @@ fn looks_like_github_shorthand(input: &str) -> bool {
     } else {
         true
     }
-}
-
-pub(super) fn now_ms() -> i64 {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
-    now.as_millis() as i64
 }
 
 fn derive_name_from_repo_url(repo_url: &str) -> String {
@@ -775,7 +726,7 @@ fn clone_to_cache(
         if let Ok(meta) = std::fs::read_to_string(&meta_path) {
             if let Ok(meta) = serde_json::from_str::<RepoCacheMeta>(&meta) {
                 if let Some(head) = meta.head {
-                    let ttl_ms = get_git_cache_ttl_secs(store).saturating_mul(1000);
+                    let ttl_ms = settings::git_cache_ttl_secs(store).saturating_mul(1000);
                     if ttl_ms > 0 && now_ms().saturating_sub(meta.last_fetched_ms) < ttl_ms {
                         log::info!(
                             "[installer] git cache hit (fresh) {}s url={} branch={:?} repo_dir={:?}",
@@ -854,7 +805,7 @@ fn clone_to_cache_subpath(
         if let Ok(meta) = std::fs::read_to_string(&meta_path) {
             if let Ok(meta) = serde_json::from_str::<RepoCacheMeta>(&meta) {
                 if let Some(head) = meta.head {
-                    let ttl_ms = get_git_cache_ttl_secs(store).saturating_mul(1000);
+                    let ttl_ms = settings::git_cache_ttl_secs(store).saturating_mul(1000);
                     if ttl_ms > 0 && now_ms().saturating_sub(meta.last_fetched_ms) < ttl_ms {
                         log::info!(
                             "[installer] sparse git cache hit (fresh) {}s url={} branch={:?} subpath={} repo_dir={:?}",
@@ -928,7 +879,10 @@ fn repo_cache_key(clone_url: &str, branch: Option<&str>, subpath: Option<&str>) 
 
 /// Fetch a single skill's files into `dest_dir`.
 ///
-/// Shared download engine used by both the install and explore-preview paths.
+/// Shared download engine used by both the update and explore-preview paths.
+/// Returns the git revision when the bytes came from a clone, `None` when the
+/// GitHub API download path served them.
+///
 /// Handles GitHub API download, git clone fallback, subpath extraction, and
 /// multi-skill repo resolution.
 ///
@@ -943,7 +897,7 @@ fn fetch_skill_files(
     skill_name: Option<&str>,
     dest_dir: &Path,
     cancel: Option<&CancelToken>,
-) -> Result<SkillFetchResult> {
+) -> Result<Option<String>> {
     let github_token = super::settings::github_token(store)?;
     let github_token_opt = github_token.as_deref();
 
@@ -969,7 +923,7 @@ fn fetch_skill_files(
             github_token_opt,
         ) {
             Ok(()) => {
-                return Ok(SkillFetchResult { revision: None });
+                return Ok(None);
             }
             Err(err) => {
                 let _ = std::fs::remove_dir_all(dest_dir);
@@ -1024,9 +978,7 @@ fn fetch_skill_files(
                 }
                 copy_dir_recursive(&sub_src, dest_dir)
                     .with_context(|| format!("copy {:?} -> {:?}", sub_src, dest_dir))?;
-                return Ok(SkillFetchResult {
-                    revision: Some(rev),
-                });
+                return Ok(Some(rev));
             }
         }
     }
@@ -1058,9 +1010,7 @@ fn fetch_skill_files(
 
     copy_dir_recursive(&copy_src, dest_dir)
         .with_context(|| format!("copy {:?} -> {:?}", copy_src, dest_dir))?;
-    Ok(SkillFetchResult {
-        revision: Some(rev),
-    })
+    Ok(Some(rev))
 }
 
 /// Find a skill's subpath by name within a multi-skill repo. Anything short

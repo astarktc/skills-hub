@@ -2,16 +2,13 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result};
+
+use super::clock::now_ms;
 use serde::Deserialize;
 use tauri::Manager;
 
 const CACHE_DIR_NAME: &str = "skills-hub-git-cache";
 const CACHE_META_FILE: &str = ".skills-hub-cache.json";
-
-/// Cache-policy settings live in `core::settings`; re-exported under the
-/// historical name because `installer.rs` (owned by a parallel change)
-/// still imports it from here.
-pub use super::settings::git_cache_ttl_secs as get_git_cache_ttl_secs;
 
 #[derive(Debug, Deserialize)]
 struct RepoCacheMeta {
@@ -90,11 +87,4 @@ fn cleanup_git_cache_dirs_in(cache_dir: &Path, max_age: Duration) -> Result<usiz
     }
 
     Ok(removed)
-}
-
-fn now_ms() -> i64 {
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
-    now.as_millis() as i64
 }
