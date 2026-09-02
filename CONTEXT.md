@@ -9,11 +9,11 @@ An AI coding tool that Skills Hub syncs skills into (Claude Code, Cursor, …), 
 _Avoid_: adapter (that's the code object serving a tool), client, IDE
 
 **Tool capability**:
-A per-tool fact that changes how sync behaves for that tool, recorded on its registry record rather than tested by name in sync code (today: `supports_symlink` — Cursor cannot read a symlinked skills dir, so it is always copied).
+A per-tool fact that changes how sync behaves for that tool, recorded on its registry record rather than tested by name in sync code (today: `supports_symlink` — Cursor's own `~/.cursor/skills` dir did not follow symlinks, so syncs to that entry are always copied). A capability describes one registry entry: a virtual group carries its own capability and does not inherit its constituents'.
 _Avoid_: special case, tool quirk, Cursor mode
 
 **Virtual group**:
-A tool entry that stands in for several tools sharing one project-scope skills convention (today: the AGENTS standard's `.agents/skills`). It appears in tool lists in place of its constituent tools.
+A tool entry that stands in for several tools sharing one project-scope skills convention (today: the AGENTS standard's `.agents/skills`). It appears in tool lists in place of its constituent tools and syncs by its own capability (symlink-capable), whatever its constituents' individual capabilities are.
 _Avoid_: meta-tool, umbrella tool
 
 **Constituent tools**:
