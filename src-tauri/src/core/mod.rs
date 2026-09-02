@@ -6,6 +6,7 @@ pub mod content_hash;
 pub mod environment;
 pub mod errors;
 pub mod featured_skills;
+pub mod git_acquisition;
 pub mod git_cache;
 pub mod git_fetcher;
 pub mod github_download;

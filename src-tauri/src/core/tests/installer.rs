@@ -132,6 +132,7 @@ fn installs_local_skill_and_updates_from_source() {
         &store,
         crate::core::refresh::RefreshSelection::Ids(vec![res.skill_id.clone()]),
         crate::core::refresh::RefreshPolicy::default(),
+        None,
         2000,
         |_| {},
     )
@@ -204,6 +205,7 @@ fn lists_and_installs_git_skills_without_network() {
         &store,
         repo_dir.path().to_string_lossy().as_ref(),
         "skills/a",
+        None,
         None,
     )
     .unwrap();
@@ -346,6 +348,7 @@ fn install_git_skill_uses_skill_md_name_over_subpath_skills() {
         repo_dir.path().to_string_lossy().as_ref(),
         "skills",
         None,
+        None,
     )
     .unwrap();
 
@@ -387,6 +390,7 @@ fn install_git_skill_rejects_container_subpath_without_skill_md() {
         repo_dir.path().to_string_lossy().as_ref(),
         "awesome_agent_skills",
         None,
+        None,
     ) {
         Ok(_) => panic!("expected invalid skill path"),
         Err(e) => e,
@@ -425,6 +429,7 @@ fn install_git_skill_selection_accepts_specific_child_under_container() {
         repo_dir.path().to_string_lossy().as_ref(),
         "awesome_agent_skills/technical-writer",
         None,
+        None,
     )
     .unwrap();
 
@@ -451,6 +456,7 @@ fn install_git_skill_respects_user_provided_name() {
         repo_dir.path().to_string_lossy().as_ref(),
         "skills",
         Some("user-custom-name".to_string()),
+        None,
     )
     .unwrap();
 
@@ -718,7 +724,7 @@ fn existing_shallow_repos_still_work() {
     assert!(names.contains(&"Skill B".to_string()));
 
     // The multi-skill detection used by install/update sees the same two.
-    let count = super::installable_skills_in_repo(repo_dir.path()).len();
+    let count = crate::core::git_acquisition::installable_skills_in_repo(repo_dir.path()).len();
     assert_eq!(count, 2);
 }
 
@@ -809,34 +815,6 @@ fn list_local_skills_reports_root_validity() {
     assert_eq!(list[0].name, "root-skill");
     assert!(!list[0].valid);
     assert_eq!(list[0].reason.as_deref(), Some("missing_name"));
-}
-
-/// The update flow's name backfill and the fetch path's multi-skill check both
-/// rely on this view: deep hits count, the repo root and non-skill dirs under
-/// a scan base do not.
-#[test]
-fn installable_skills_in_repo_excludes_root_and_missing_skill_md() {
-    let dir = tempfile::tempdir().unwrap();
-    let base = dir.path();
-    fs::write(base.join("SKILL.md"), "---\nname: Root\n---\n").unwrap();
-    fs::create_dir_all(base.join("skills/empty")).unwrap();
-    let skills = [
-        ("plugins/a/skills/api-design", "API Design"),
-        ("plugins/b/skills/tailwind", "Tailwind"),
-    ];
-    for (path, name) in &skills {
-        fs::create_dir_all(base.join(path)).unwrap();
-        fs::write(
-            base.join(path).join("SKILL.md"),
-            format!("---\nname: {}\n---\n", name),
-        )
-        .unwrap();
-    }
-
-    let candidates = super::installable_skills_in_repo(base);
-    let names: Vec<&str> = candidates.iter().map(|c| c.name.as_str()).collect();
-    assert_eq!(names, vec!["API Design", "Tailwind"]);
-    assert_eq!(candidates[0].subpath, "plugins/a/skills/api-design");
 }
 
 #[test]
@@ -935,4 +913,235 @@ fn explore_preview_cache_miss_does_not_deadlock() {
         outcome.expect("explore preview should succeed for a local repo"),
         "previewed dir should contain SKILL.md"
     );
+}
+
+// ── Install and update over the GitHub fast path ──
+//
+// The adapter is injected, so these exercise the real install/update wiring
+// (staging, finalize, the record) without a single HTTP request.
+
+/// A scripted GitHub API adapter: it serves a SHA and a one-file skill, or
+/// fails with a classified status.
+struct StubApi {
+    sha: String,
+    error: Option<crate::core::github_download::GithubApiError>,
+}
+
+impl StubApi {
+    fn serving(sha: &str) -> Self {
+        StubApi {
+            sha: sha.to_string(),
+            error: None,
+        }
+    }
+
+    fn failing(status: u16) -> Self {
+        StubApi {
+            sha: "0".repeat(40),
+            error: Some(crate::core::github_download::GithubApiError {
+                status,
+                reset_minutes: None,
+                url: "stub".to_string(),
+            }),
+        }
+    }
+}
+
+impl crate::core::git_acquisition::GithubApi for StubApi {
+    fn branch_sha(
+        &self,
+        _coords: &crate::core::git_acquisition::GithubCoords,
+    ) -> anyhow::Result<String> {
+        Ok(self.sha.clone())
+    }
+
+    fn download_directory(
+        &self,
+        _coords: &crate::core::git_acquisition::GithubCoords,
+        dest: &Path,
+        _cancel: Option<&crate::core::cancel_token::CancelToken>,
+    ) -> anyhow::Result<()> {
+        if let Some(err) = &self.error {
+            return Err(anyhow::Error::new(err.clone()));
+        }
+        fs::create_dir_all(dest)?;
+        fs::write(
+            dest.join("SKILL.md"),
+            "---\nname: fast-path-skill\ndescription: served by the API\n---\n",
+        )?;
+        Ok(())
+    }
+}
+
+/// Install-from-selection takes the fast path for a GitHub subpath and
+/// records the real commit SHA — no clone happens at all.
+#[test]
+fn install_from_selection_uses_the_fast_path_and_records_the_commit_sha() {
+    let (_dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+    let sha = "abc123def4567890123456789012345678901234";
+
+    let res = super::install_git_skill_from_selection_with(
+        &paths,
+        &store,
+        "https://github.com/owner/repo/tree/main/skills/a",
+        "skills/a",
+        None,
+        None,
+        &StubApi::serving(sha),
+    )
+    .expect("the fast path installs");
+
+    assert_eq!(res.name, "fast-path-skill");
+    let skill = store.get_skill_by_id(&res.skill_id).unwrap().unwrap();
+    assert_eq!(skill.source_revision.as_deref(), Some(sha));
+    assert_eq!(skill.source_subpath.as_deref(), Some("skills/a"));
+    assert!(
+        !paths.cache_dir.join("skills-hub-git-cache").exists(),
+        "a served fast path must not clone"
+    );
+}
+
+/// The two GitHub conditions reach the operator from install, not only from
+/// preview: a rate limit is a typed signal, never a silent clone.
+#[test]
+fn install_from_selection_surfaces_a_typed_rate_limit() {
+    let (_dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+
+    let err = super::install_git_skill_from_selection_with(
+        &paths,
+        &store,
+        "https://github.com/owner/repo/tree/main/skills/a",
+        "skills/a",
+        None,
+        None,
+        &StubApi::failing(403),
+    )
+    .expect_err("a rate-limited install fails");
+
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::RateLimited { reset_minutes: 0 })
+    );
+    // The rejected install leaves no staging residue behind.
+    let entries: Vec<String> = fs::read_dir(&paths.central_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    assert!(entries.is_empty(), "unexpected residue: {entries:?}");
+}
+
+/// … and from update: the acquire phase raises the same typed condition, which
+/// Refresh reports per skill.
+#[test]
+fn update_acquisition_surfaces_a_typed_not_found() {
+    let (_dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+
+    let installed = super::install_git_skill_from_selection_with(
+        &paths,
+        &store,
+        "https://github.com/owner/repo/tree/main/skills/a",
+        "skills/a",
+        None,
+        None,
+        &StubApi::serving("abc123def4567890123456789012345678901234"),
+    )
+    .expect("the fast path installs");
+
+    let err = super::acquire_managed_skill_update_with(
+        &paths,
+        &store,
+        &installed.skill_id,
+        None,
+        &StubApi::failing(404),
+    )
+    .err()
+    .expect("a removed skill fails its update");
+
+    assert!(
+        matches!(
+            err.downcast_ref::<SignalError>(),
+            Some(SignalError::GithubSkillNotFound { url }) if url.contains("skills/a")
+        ),
+        "expected GithubSkillNotFound, got: {err:#}"
+    );
+}
+
+/// The update path takes the fast path too, and records the new commit SHA.
+#[test]
+fn update_acquisition_uses_the_fast_path() {
+    let (_dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+
+    let installed = super::install_git_skill_from_selection_with(
+        &paths,
+        &store,
+        "https://github.com/owner/repo/tree/main/skills/a",
+        "skills/a",
+        None,
+        None,
+        &StubApi::serving("1111111111111111111111111111111111111111"),
+    )
+    .expect("install");
+
+    let acquired = super::acquire_managed_skill_update_with(
+        &paths,
+        &store,
+        &installed.skill_id,
+        None,
+        &StubApi::serving("2222222222222222222222222222222222222222"),
+    )
+    .expect("update acquires");
+
+    assert_eq!(
+        acquired.new_revision.as_deref(),
+        Some("2222222222222222222222222222222222222222")
+    );
+    assert!(acquired.staged.path().join("SKILL.md").exists());
+    assert!(
+        !paths.cache_dir.join("skills-hub-git-cache").exists(),
+        "the update fast path must not clone either"
+    );
+}
+
+/// Cancelling mid-acquisition aborts the install cleanly: the typed signal
+/// reaches the caller and nothing is left in the central repo.
+#[test]
+fn a_cancelled_install_aborts_cleanly() {
+    let (_dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+
+    let repo_dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(repo_dir.path().join("skills/a")).unwrap();
+    fs::write(
+        repo_dir.path().join("skills/a/SKILL.md"),
+        "---\nname: A\n---\n",
+    )
+    .unwrap();
+    let repo = init_git_repo(repo_dir.path());
+    commit_all(&repo, "add skill");
+
+    let cancel = crate::core::cancel_token::CancelToken::new();
+    cancel.cancel();
+    let err = super::install_git_skill_from_selection(
+        &paths,
+        &store,
+        repo_dir.path().to_string_lossy().as_ref(),
+        "skills/a",
+        None,
+        Some(&cancel),
+    )
+    .expect_err("a cancelled install fails");
+
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::Cancelled)
+    );
+    let entries: Vec<String> = fs::read_dir(&paths.central_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    assert!(entries.is_empty(), "unexpected residue: {entries:?}");
 }

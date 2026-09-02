@@ -296,14 +296,24 @@ pub async fn list_git_skills_cmd(
 pub async fn install_git_selection(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
+    cancel: State<'_, Arc<CancelToken>>,
     repoUrl: String,
     subpath: String,
     name: Option<String>,
 ) -> Result<InstallResultDto, CommandError> {
     let store = store.inner().clone();
+    let cancel = cancel.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        cancel.reset();
         let paths = installer_paths(&app, &store)?;
-        let result = install_git_skill_from_selection(&paths, &store, &repoUrl, &subpath, name)?;
+        let result = install_git_skill_from_selection(
+            &paths,
+            &store,
+            &repoUrl,
+            &subpath,
+            name,
+            Some(&cancel),
+        )?;
         Ok::<_, anyhow::Error>(to_install_dto(result))
     })
     .await
@@ -591,12 +601,15 @@ pub struct RefreshProgressDto {
 pub async fn refresh_managed_skills(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
+    cancel: State<'_, Arc<CancelToken>>,
     skillIds: Option<Vec<String>>,
     policy: RefreshPolicyDto,
     on_progress: Channel<RefreshProgressDto>,
 ) -> Result<RefreshReportDto, CommandError> {
     let store = store.inner().clone();
+    let cancel = cancel.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        cancel.reset();
         let paths = installer_paths(&app, &store)?;
         let selection = match skillIds {
             Some(ids) => RefreshSelection::Ids(ids),
@@ -609,6 +622,7 @@ pub async fn refresh_managed_skills(
             RefreshPolicy {
                 reassert_auto_sync: policy.reassert_auto_sync,
             },
+            Some(&cancel),
             now_ms(),
             |p| {
                 let _ = on_progress.send(RefreshProgressDto {

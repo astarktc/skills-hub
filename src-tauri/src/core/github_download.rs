@@ -195,19 +195,10 @@ fn check_github_response(
     }))
 }
 
-/// Check if a GitHub URL with subpath can use the fast API download path.
-/// Returns Some((owner, repo, branch, subpath)) if applicable.
-pub fn parse_github_api_params(
-    clone_url: &str,
-    branch: Option<&str>,
-    subpath: Option<&str>,
-) -> Option<(String, String, String, String)> {
-    // Only for GitHub URLs with a subpath
-    let subpath = subpath?;
-    if subpath.is_empty() || subpath == "." {
-        return None;
-    }
-
+/// The `(owner, repo)` a GitHub clone URL points at, or `None` when the URL
+/// is not a github.com repository — the fast path's precondition, decided in
+/// one place (`core::git_acquisition` owns the rest of the policy).
+pub fn parse_github_repo(clone_url: &str) -> Option<(String, String)> {
     // Extract owner/repo from clone_url like https://github.com/owner/repo.git
     let url = clone_url.trim_end_matches('/').trim_end_matches(".git");
     let prefix = "https://github.com/";
@@ -220,18 +211,12 @@ pub fn parse_github_api_params(
         return None;
     }
 
-    Some((
-        parts[0].to_string(),
-        parts[1].to_string(),
-        branch.unwrap_or("main").to_string(),
-        subpath.to_string(),
-    ))
+    Some((parts[0].to_string(), parts[1].to_string()))
 }
 
 /// Fetch the HEAD commit SHA for a branch without cloning.
 /// Uses GitHub API: GET /repos/{owner}/{repo}/commits/{branch}
 /// Returns the 40-char hex SHA string.
-#[allow(dead_code)]
 pub fn fetch_branch_sha(
     owner: &str,
     repo: &str,
@@ -277,48 +262,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_github_api_params_extracts_correctly() {
-        let result = parse_github_api_params(
-            "https://github.com/openclaw/skills.git",
-            Some("main"),
-            Some("skills/user/foo"),
-        );
+    fn parse_github_repo_extracts_owner_and_repo() {
+        let result = parse_github_repo("https://github.com/openclaw/skills.git");
+        assert_eq!(result, Some(("openclaw".to_string(), "skills".to_string())));
         assert_eq!(
-            result,
-            Some((
-                "openclaw".to_string(),
-                "skills".to_string(),
-                "main".to_string(),
-                "skills/user/foo".to_string(),
-            ))
+            parse_github_repo("https://github.com/openclaw/skills"),
+            Some(("openclaw".to_string(), "skills".to_string()))
         );
     }
 
     #[test]
-    fn parse_github_api_params_returns_none_without_subpath() {
-        let result =
-            parse_github_api_params("https://github.com/openclaw/skills.git", Some("main"), None);
-        assert_eq!(result, None);
+    fn parse_github_repo_returns_none_for_non_github() {
+        assert_eq!(parse_github_repo("https://gitlab.com/user/repo.git"), None);
+        assert_eq!(parse_github_repo("/local/path/to/repo"), None);
     }
 
     #[test]
-    fn parse_github_api_params_returns_none_for_root_subpath() {
-        let result = parse_github_api_params(
-            "https://github.com/openclaw/skills.git",
-            Some("main"),
-            Some("."),
-        );
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn parse_github_api_params_returns_none_for_non_github() {
-        let result = parse_github_api_params(
-            "https://gitlab.com/user/repo.git",
-            Some("main"),
-            Some("path"),
-        );
-        assert_eq!(result, None);
+    fn parse_github_repo_returns_none_without_a_repo_segment() {
+        assert_eq!(parse_github_repo("https://github.com/openclaw"), None);
     }
 
     #[test]

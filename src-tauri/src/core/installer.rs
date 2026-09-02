@@ -7,8 +7,10 @@ use super::cancel_token::CancelToken;
 use super::central_repo::ensure_central_repo;
 use super::clock::now_ms;
 use super::errors::SignalError;
+use super::git_acquisition::{
+    acquire, parse_github_url, AcquireRequest, GithubApi, HttpGithubApi, SkillIntent,
+};
 use super::git_cache::{explore_preview_key, fetch_through_cache, FetchRequest};
-use super::github_download::{download_github_directory, parse_github_api_params, GithubApiError};
 pub use super::install_finalize::InstallResult;
 use super::install_finalize::{
     ensure_name_available, finalize_install, finalize_update, NameIntent, SkillProvenance,
@@ -20,7 +22,7 @@ use super::skill_discovery::{
     DiscoveredSkill,
 };
 use super::skill_lock::try_enrich_from_skill_lock_with_home;
-use super::skill_matching::{match_skill_candidate, CandidateMatch, MatchableSkill, SkillMatch};
+use super::skill_matching::{match_skill_candidate, CandidateMatch, MatchableSkill};
 use super::skill_store::SkillStore;
 use super::sync_engine::copy_dir_recursive;
 
@@ -107,140 +109,6 @@ fn derive_name_from_subpath(clone_url: &str, subpath: Option<&str>) -> String {
     }
 }
 
-#[derive(Clone, Debug)]
-struct ParsedGitSource {
-    clone_url: String,
-    branch: Option<String>,
-    subpath: Option<String>,
-}
-
-fn parse_github_url(input: &str) -> ParsedGitSource {
-    // Supports:
-    // - https://github.com/owner/repo
-    // - https://github.com/owner/repo.git
-    // - https://github.com/owner/repo/tree/<branch>/<path>
-    // - https://github.com/owner/repo/blob/<branch>/<path>
-    let trimmed = input.trim().trim_end_matches('/');
-
-    // Convenience: allow GitHub shorthand inputs like `owner/repo` (and `owner/repo/tree/<branch>/...`).
-    // This keeps the UI friendly while still allowing local paths or other git remotes.
-    let normalized = if trimmed.starts_with("https://github.com/") {
-        trimmed.to_string()
-    } else if trimmed.starts_with("http://github.com/") {
-        trimmed.replacen("http://github.com/", "https://github.com/", 1)
-    } else if trimmed.starts_with("github.com/") {
-        format!("https://{}", trimmed)
-    } else if looks_like_github_shorthand(trimmed) {
-        format!("https://github.com/{}", trimmed)
-    } else {
-        trimmed.to_string()
-    };
-
-    let trimmed = normalized.trim_end_matches('/');
-    let gh_prefix = "https://github.com/";
-    if !trimmed.starts_with(gh_prefix) {
-        return ParsedGitSource {
-            clone_url: trimmed.to_string(),
-            branch: None,
-            subpath: None,
-        };
-    }
-
-    let rest = &trimmed[gh_prefix.len()..];
-    let parts: Vec<&str> = rest.split('/').collect();
-    if parts.len() < 2 {
-        return ParsedGitSource {
-            clone_url: trimmed.to_string(),
-            branch: None,
-            subpath: None,
-        };
-    }
-
-    let owner = parts[0];
-    let mut repo = parts[1].to_string();
-    if let Some(stripped) = repo.strip_suffix(".git") {
-        repo = stripped.to_string();
-    }
-    let clone_url = format!("https://github.com/{}/{}.git", owner, repo);
-
-    if parts.len() >= 4 && (parts[2] == "tree" || parts[2] == "blob") {
-        let branch = Some(parts[3].to_string());
-        let subpath = if parts.len() > 4 {
-            Some(normalize_github_skill_subpath(&parts[4..].join("/")))
-        } else {
-            None
-        };
-        return ParsedGitSource {
-            clone_url,
-            branch,
-            subpath,
-        };
-    }
-
-    ParsedGitSource {
-        clone_url,
-        branch: None,
-        subpath: None,
-    }
-}
-
-fn normalize_github_skill_subpath(subpath: &str) -> String {
-    let trimmed = subpath.trim_matches('/');
-    if trimmed.eq_ignore_ascii_case("SKILL.md") {
-        return ".".to_string();
-    }
-    trimmed
-        .strip_suffix("/SKILL.md")
-        .or_else(|| trimmed.strip_suffix("/skill.md"))
-        .unwrap_or(trimmed)
-        .to_string()
-}
-
-fn looks_like_github_shorthand(input: &str) -> bool {
-    if input.is_empty() {
-        return false;
-    }
-    if input.starts_with('/') || input.starts_with('~') || input.starts_with('.') {
-        return false;
-    }
-    // Avoid scp-like ssh URLs (git@github.com:owner/repo) and any explicit schemes.
-    if input.contains("://") || input.contains('@') || input.contains(':') {
-        return false;
-    }
-
-    let parts: Vec<&str> = input.split('/').collect();
-    if parts.len() < 2 {
-        return false;
-    }
-
-    let owner = parts[0];
-    let repo = parts[1];
-    if owner.is_empty()
-        || repo.is_empty()
-        || owner == "."
-        || owner == ".."
-        || repo == "."
-        || repo == ".."
-    {
-        return false;
-    }
-
-    let is_safe_segment = |s: &str| {
-        s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
-    };
-    if !is_safe_segment(owner) || !is_safe_segment(repo.trim_end_matches(".git")) {
-        return false;
-    }
-
-    // If there are more path parts, only accept the GitHub UI patterns we can parse.
-    if parts.len() > 2 {
-        matches!(parts[2], "tree" | "blob")
-    } else {
-        true
-    }
-}
-
 fn derive_name_from_repo_url(repo_url: &str) -> String {
     let mut name = repo_url
         .split('/')
@@ -294,10 +162,34 @@ pub(crate) struct UpdateOutcome {
 /// which do, run inside it (see [`finalize_and_propagate_unlocked`]).
 /// Sequential today, one self-contained result per skill so a bounded
 /// parallel pool is a drop-in later.
+///
+/// The git side is one call into `core::git_acquisition`: the fast path, the
+/// clone fallback, sparse fetching, cancellation and the legacy subpath
+/// backfill all live there. This adapter only picks the destination and
+/// records what came back.
 pub(crate) fn acquire_managed_skill_update(
     paths: &InstallerPaths,
     store: &SkillStore,
     skill_id: &str,
+    cancel: Option<&CancelToken>,
+) -> Result<AcquiredUpdate> {
+    acquire_managed_skill_update_with(
+        paths,
+        store,
+        skill_id,
+        cancel,
+        &HttpGithubApi::new(super::settings::github_token(store)?),
+    )
+}
+
+/// [`acquire_managed_skill_update`] with the GitHub adapter injected, so the
+/// update path's fast-path wiring is testable without HTTP.
+pub(crate) fn acquire_managed_skill_update_with(
+    paths: &InstallerPaths,
+    store: &SkillStore,
+    skill_id: &str,
+    cancel: Option<&CancelToken>,
+    api: &dyn GithubApi,
 ) -> Result<AcquiredUpdate> {
     let mut record = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
         anyhow::anyhow!(SignalError::NotFound {
@@ -326,54 +218,44 @@ pub(crate) fn acquire_managed_skill_update(
             .source_ref
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("missing source_ref for git skill"))?;
-        let parsed = parse_github_url(repo_url);
+        let source = parse_github_url(repo_url);
 
-        let (repo_dir, rev) = fetch_through_cache(
-            &paths.cache_dir,
-            &FetchRequest {
-                clone_url: &parsed.clone_url,
-                branch: parsed.branch.as_deref(),
-                subpath: record.source_subpath.as_deref(),
-                ttl_ms: super::settings::git_cache_ttl_ms(store),
-                cancel: None,
-            },
-        )?;
-        new_revision = Some(rev);
-
-        // Prefer stored source_subpath (from install time) over URL-parsed subpath.
-        // For legacy records where source_subpath is NULL and URL has no subpath,
-        // try to auto-match by skill name in the repo (backfill).
-        let mut resolved_subpath = record
+        // Prefer the stored source_subpath (from install time) over the one
+        // the URL names. A legacy record has neither: the acquisition module
+        // matches the skill's name against the repo and reports what it took,
+        // which is the subpath backfilled below.
+        let known_subpath = record
             .source_subpath
-            .as_deref()
-            .or(parsed.subpath.as_deref())
-            .map(|s| s.to_string());
-        if resolved_subpath.is_none() {
-            // Multi-skill repo with no stored subpath: match by name
-            let candidates = installable_skills_in_repo(&repo_dir);
-            if candidates.len() >= 2 {
-                if let SkillMatch::Resolved(matched) =
-                    match_skill_candidate(&record.name, &candidates)
-                {
-                    resolved_subpath = Some(matched.subpath.clone());
-                    // Backfill source_subpath for future updates (carried into the
-                    // refreshed record by finalize_update as well).
-                    record.source_subpath = Some(matched.subpath.clone());
-                    let _ = store.upsert_skill(&record);
-                }
+            .clone()
+            .or_else(|| source.subpath.clone());
+        let skill_name = record.name.clone();
+        let intent = match &known_subpath {
+            Some(subpath) => SkillIntent::Subpath(subpath),
+            None => SkillIntent::NamedSkillOrWholeRepo(&skill_name),
+        };
+
+        let acquired = acquire(
+            &AcquireRequest {
+                source: &source,
+                intent,
+                dest: &staging_dir,
+                cache_dir: &paths.cache_dir,
+                ttl_ms: super::settings::git_cache_ttl_ms(store),
+                cancel,
+                allow_fast_path: true,
+            },
+            api,
+        )?;
+        new_revision = Some(acquired.revision);
+
+        if known_subpath.is_none() {
+            if let Some(resolved) = acquired.resolved_subpath {
+                // Backfill source_subpath for future updates (carried into the
+                // refreshed record by finalize_update as well).
+                record.source_subpath = Some(resolved);
+                let _ = store.upsert_skill(&record);
             }
         }
-        let copy_src = if let Some(subpath) = &resolved_subpath {
-            repo_dir.join(subpath)
-        } else {
-            repo_dir.clone()
-        };
-        if !copy_src.exists() {
-            anyhow::bail!("path not found in repo: {:?}", copy_src);
-        }
-
-        copy_dir_recursive(&copy_src, &staging_dir)
-            .with_context(|| format!("copy {:?} -> {:?}", copy_src, staging_dir))?;
     } else if record.source_type == "local" {
         let source = record
             .source_ref
@@ -440,17 +322,6 @@ pub struct LocalSkillCandidate {
     pub subpath: String,
     pub valid: bool,
     pub reason: Option<String>,
-}
-
-/// Skill candidates a git flow may install from a cloned repo: everything
-/// discovery found that has skill bytes (a `SKILL.md`, even a broken one, or
-/// a `.claude/skills/` child), excluding the repo root itself. The root is
-/// never one of the "skills in a multi-skill repo".
-fn installable_skills_in_repo(repo_dir: &Path) -> Vec<DiscoveredSkill> {
-    discover_skills(repo_dir)
-        .into_iter()
-        .filter(|c| c.validity.is_installable() && c.subpath != ".")
-        .collect()
 }
 
 /// Git listing adapter: the git side admits any installable candidate;
@@ -559,46 +430,66 @@ pub fn list_local_skills(base_path: &Path) -> Result<Vec<LocalSkillCandidate>> {
         .collect())
 }
 
+/// Install one selected skill from a git source.
+///
+/// An adapter over `core::git_acquisition`: it chooses the Staging dir as the
+/// destination and hands the acquired revision to finalize. The GitHub API
+/// fast path (with the real commit SHA), the clone fallback, sparse fetching
+/// and cancellation come with the acquisition module.
 pub fn install_git_skill_from_selection(
     paths: &InstallerPaths,
     store: &SkillStore,
     repo_url: &str,
     subpath: &str,
     name: Option<String>,
+    cancel: Option<&CancelToken>,
 ) -> Result<InstallResult> {
-    let parsed = parse_github_url(repo_url);
+    install_git_skill_from_selection_with(
+        paths,
+        store,
+        repo_url,
+        subpath,
+        name,
+        cancel,
+        &HttpGithubApi::new(super::settings::github_token(store)?),
+    )
+}
+
+/// [`install_git_skill_from_selection`] with the GitHub adapter injected, so
+/// the install path's fast-path wiring is testable without HTTP.
+pub(crate) fn install_git_skill_from_selection_with(
+    paths: &InstallerPaths,
+    store: &SkillStore,
+    repo_url: &str,
+    subpath: &str,
+    name: Option<String>,
+    cancel: Option<&CancelToken>,
+    api: &dyn GithubApi,
+) -> Result<InstallResult> {
+    let source = parse_github_url(repo_url);
     let name = name_intent(name, || {
-        derive_name_from_subpath(&parsed.clone_url, Some(subpath))
+        derive_name_from_subpath(&source.clone_url, Some(subpath))
     });
 
     let central_dir = &paths.central_dir;
     ensure_central_repo(central_dir)?;
     ensure_name_available(central_dir, name.requested())?;
 
-    let (repo_dir, revision) = fetch_through_cache(
-        &paths.cache_dir,
-        &FetchRequest {
-            clone_url: &parsed.clone_url,
-            branch: parsed.branch.as_deref(),
-            subpath: None,
-            ttl_ms: super::settings::git_cache_ttl_ms(store),
-            cancel: None,
-        },
-    )?;
-
-    let copy_src = if subpath == "." {
-        repo_dir.clone()
-    } else {
-        repo_dir.join(subpath)
-    };
-    if !copy_src.exists() {
-        anyhow::bail!("path not found in repo: {:?}", copy_src);
-    }
-    ensure_installable_skill_dir(&copy_src)?;
-
     let staged = StagingDir::new_in(central_dir);
-    copy_dir_recursive(&copy_src, staged.path())
-        .with_context(|| format!("copy {:?} -> {:?}", copy_src, staged.path()))?;
+    let acquired = acquire(
+        &AcquireRequest {
+            source: &source,
+            intent: SkillIntent::Subpath(subpath),
+            dest: staged.path(),
+            cache_dir: &paths.cache_dir,
+            ttl_ms: super::settings::git_cache_ttl_ms(store),
+            cancel,
+            allow_fast_path: true,
+        },
+        api,
+    )?;
+    // The selection has to be a skill, whichever adapter delivered it.
+    ensure_installable_skill_dir(staged.path())?;
 
     let source_subpath = if subpath == "." {
         None
@@ -610,7 +501,7 @@ pub fn install_git_skill_from_selection(
         central_dir,
         staged,
         name,
-        SkillProvenance::git(repo_url, source_subpath, Some(revision)),
+        SkillProvenance::git(repo_url, source_subpath, Some(acquired.revision)),
     )
 }
 
@@ -652,172 +543,15 @@ pub fn install_local_skill_from_selection(
     install_local_skill(paths, store, &selected_dir, Some(display_name))
 }
 
-/// Fetch a single skill's files into `dest_dir`.
-///
-/// Shared download engine used by both the update and explore-preview paths.
-/// Returns the git revision when the bytes came from a clone, `None` when the
-/// GitHub API download path served them.
-///
-/// Handles GitHub API download, git clone fallback, subpath extraction, and
-/// multi-skill repo resolution.
-///
-/// The caller is responsible for:
-/// - Choosing and preparing `dest_dir`
-/// - Any caching around the destination (explore-cache hit check, etc.)
-/// - Post-download processing (DB registration, name renaming, content hash)
-fn fetch_skill_files(
-    cache_dir: &Path,
-    store: &SkillStore,
-    parsed: &ParsedGitSource,
-    skill_name: Option<&str>,
-    dest_dir: &Path,
-    cancel: Option<&CancelToken>,
-) -> Result<Option<String>> {
-    let github_token = super::settings::github_token(store)?;
-    let github_token_opt = github_token.as_deref();
-
-    // Path A: GitHub URL with subpath — try API download, fall back to git clone.
-    if let Some((owner, repo, branch, subpath)) = parse_github_api_params(
-        &parsed.clone_url,
-        parsed.branch.as_deref(),
-        parsed.subpath.as_deref(),
-    ) {
-        log::info!(
-            "[fetch] GitHub API download: {}/{} path={}",
-            owner,
-            repo,
-            subpath
-        );
-        match download_github_directory(
-            &owner,
-            &repo,
-            &branch,
-            &subpath,
-            dest_dir,
-            cancel,
-            github_token_opt,
-        ) {
-            Ok(()) => {
-                return Ok(None);
-            }
-            Err(err) => {
-                let _ = std::fs::remove_dir_all(dest_dir);
-                // Cancellation propagates untouched to the command seam.
-                if matches!(
-                    err.downcast_ref::<SignalError>(),
-                    Some(SignalError::Cancelled)
-                ) {
-                    return Err(err);
-                }
-                // The HTTP layer classifies the status at the origin; map the
-                // codes this flow owns to typed conditions, no string sniffing.
-                match err.downcast_ref::<GithubApiError>() {
-                    Some(GithubApiError { status: 404, .. }) => {
-                        anyhow::bail!(SignalError::GithubSkillNotFound {
-                            url: format!(
-                                "{}/tree/{}/{}",
-                                parsed.clone_url.trim_end_matches(".git"),
-                                branch,
-                                subpath
-                            ),
-                        });
-                    }
-                    Some(GithubApiError {
-                        status: 403,
-                        reset_minutes,
-                        ..
-                    }) => {
-                        // 0 = "no ETA" on the wire.
-                        anyhow::bail!(SignalError::RateLimited {
-                            reset_minutes: reset_minutes.unwrap_or(0),
-                        });
-                    }
-                    _ => {}
-                }
-                // Fall back to git clone.
-                log::warn!(
-                    "[fetch] GitHub API download failed, falling back to git clone: {:#}",
-                    err
-                );
-                std::fs::create_dir_all(dest_dir)?;
-                let (repo_dir, rev) = fetch_through_cache(
-                    cache_dir,
-                    &FetchRequest {
-                        clone_url: &parsed.clone_url,
-                        branch: parsed.branch.as_deref(),
-                        subpath: None,
-                        ttl_ms: super::settings::git_cache_ttl_ms(store),
-                        cancel,
-                    },
-                )?;
-                let sub_src = repo_dir.join(&subpath);
-                if !sub_src.exists() {
-                    anyhow::bail!("subpath not found in repo: {:?}", sub_src);
-                }
-                copy_dir_recursive(&sub_src, dest_dir)
-                    .with_context(|| format!("copy {:?} -> {:?}", sub_src, dest_dir))?;
-                return Ok(Some(rev));
-            }
-        }
-    }
-
-    // Path B: No subpath or non-GitHub URL — full clone, then resolve copy source.
-    let (repo_dir, rev) = fetch_through_cache(
-        cache_dir,
-        &FetchRequest {
-            clone_url: &parsed.clone_url,
-            branch: parsed.branch.as_deref(),
-            subpath: None,
-            ttl_ms: super::settings::git_cache_ttl_ms(store),
-            cancel,
-        },
-    )?;
-
-    let copy_src = if let Some(subpath) = &parsed.subpath {
-        let sub_src = repo_dir.join(subpath);
-        if !sub_src.exists() {
-            anyhow::bail!("subpath not found in repo: {:?}", sub_src);
-        }
-        sub_src
-    } else {
-        // Multi-skill repo: find the matching skill by name.
-        let candidates = installable_skills_in_repo(&repo_dir);
-        if candidates.len() >= 2 {
-            repo_dir.join(find_skill_by_name(&candidates, skill_name)?)
-        } else {
-            repo_dir.clone()
-        }
-    };
-
-    copy_dir_recursive(&copy_src, dest_dir)
-        .with_context(|| format!("copy {:?} -> {:?}", copy_src, dest_dir))?;
-    Ok(Some(rev))
-}
-
-/// Find a skill's subpath by name within a multi-skill repo. Anything short
-/// of one unambiguous match (no name, no hit, several hits) is the
-/// `MultiSkills` condition: the caller must name the skill precisely.
-fn find_skill_by_name<'a>(
-    candidates: &'a [DiscoveredSkill],
-    skill_name: Option<&str>,
-) -> Result<&'a str> {
-    let target_name = skill_name.ok_or_else(|| anyhow::anyhow!(SignalError::MultiSkills))?;
-    match match_skill_candidate(target_name, candidates) {
-        SkillMatch::Resolved(c) => Ok(c.subpath.as_str()),
-        SkillMatch::Ambiguous(_) | SkillMatch::None => {
-            Err(anyhow::anyhow!(SignalError::MultiSkills))
-        }
-    }
-}
-
 /// Guards the explore cache (`<central_dir>/.explore-cache`) while a preview
 /// probes it and prepares a destination directory. Its own resource, its own
 /// lock: the git cache is serialised separately inside `core::git_cache`.
 static EXPLORE_CACHE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
-/// Clone a skill into the explore-cache for preview (no DB registration).
-/// Delegates to `fetch_skill_files` for the actual download — the only
-/// preview-specific logic is the explore-cache hit check.
+/// Acquire a skill into the explore-cache for preview (no DB registration).
+///
+/// An adapter over `core::git_acquisition`: the only preview-specific logic
+/// is the explore-cache hit check and the destination it prepares.
 pub fn clone_for_explore_preview(
     paths: &InstallerPaths,
     store: &SkillStore,
@@ -825,7 +559,7 @@ pub fn clone_for_explore_preview(
     skill_name: Option<&str>,
     cancel: Option<&CancelToken>,
 ) -> Result<PathBuf> {
-    let parsed = parse_github_url(source_url);
+    let source = parse_github_url(source_url);
 
     let explore_cache_root = paths.central_dir.join(".explore-cache");
     std::fs::create_dir_all(&explore_cache_root).with_context(|| {
@@ -865,15 +599,19 @@ pub fn clone_for_explore_preview(
         std::fs::create_dir_all(&explore_skill_dir).with_context(|| {
             format!("failed to create explore skill dir {:?}", explore_skill_dir)
         })?;
-    } // _guard dropped — lock released before download paths
+    } // _guard dropped — lock released before acquisition
 
-    fetch_skill_files(
-        &paths.cache_dir,
-        store,
-        &parsed,
-        skill_name,
-        &explore_skill_dir,
-        cancel,
+    acquire(
+        &AcquireRequest {
+            source: &source,
+            intent: SkillIntent::NamedSkill(skill_name),
+            dest: &explore_skill_dir,
+            cache_dir: &paths.cache_dir,
+            ttl_ms: super::settings::git_cache_ttl_ms(store),
+            cancel,
+            allow_fast_path: true,
+        },
+        &HttpGithubApi::new(super::settings::github_token(store)?),
     )?;
     Ok(explore_skill_dir)
 }

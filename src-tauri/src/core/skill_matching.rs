@@ -1,9 +1,10 @@
 //! The one definition of "does skill candidate X match target name Y".
 //!
 //! Used by every backend site that resolves a skill name against a list of
-//! discovered candidates (Explore install, legacy-record update backfill,
-//! `fetch_skill_files`) and exposed to the frontend through the git listing
-//! command, so no matching policy lives in TypeScript.
+//! discovered candidates (the acquisition module's named intents — Explore
+//! preview and the legacy-record update backfill) and exposed to the frontend
+//! through the git listing command, so no matching policy lives in
+//! TypeScript.
 //!
 //! Rule: case-insensitive, tiered. Exact SKILL.md name, then bidirectional
 //! containment on the name, then the same two tests on the candidate's

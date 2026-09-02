@@ -301,6 +301,7 @@ fn refresh_finalize_and_propagation_is_serialized() {
             &store,
             refresh::RefreshSelection::Ids(vec![skill_id]),
             refresh::RefreshPolicy::default(),
+            None,
             5000,
             |_| {},
         )

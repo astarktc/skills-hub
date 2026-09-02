@@ -22,6 +22,7 @@
 
 use anyhow::Result;
 
+use super::cancel_token::CancelToken;
 use super::global_sync::{
     sync_skills_to_tools_unlocked, BatchPolicy, BatchSkill, BatchTargetStatus,
 };
@@ -99,6 +100,7 @@ pub fn refresh_managed_skills(
     store: &SkillStore,
     selection: RefreshSelection,
     policy: RefreshPolicy,
+    cancel: Option<&CancelToken>,
     now: i64,
     mut on_progress: impl FnMut(RefreshProgress),
 ) -> Result<RefreshReport> {
@@ -114,7 +116,7 @@ pub fn refresh_managed_skills(
             skill_name: &skill_name,
             phase: RefreshPhase::Acquiring,
         });
-        let result = acquire_managed_skill_update(paths, store, &skill_id);
+        let result = acquire_managed_skill_update(paths, store, &skill_id, cancel);
         acquired.push((skill_id, skill_name, result));
     }
 

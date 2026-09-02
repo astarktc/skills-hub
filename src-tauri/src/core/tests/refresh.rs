@@ -55,6 +55,7 @@ fn refresh(f: &Fixture, policy: RefreshPolicy) -> crate::core::refresh::RefreshR
         &f.store,
         RefreshSelection::All,
         policy,
+        None,
         3000,
         |_| {},
     )
@@ -74,6 +75,7 @@ fn a_refreshed_skill_gets_its_new_bytes_and_reports_its_targets() {
         &f.store,
         RefreshSelection::Ids(vec![f.skill_id.clone()]),
         RefreshPolicy::default(),
+        None,
         3000,
         |p| phases.push((p.phase, p.skill_name.to_string())),
     )
