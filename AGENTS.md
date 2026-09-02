@@ -125,7 +125,7 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   central_dir, cache_dir }`) so tests substitute a temp dir. Commands resolve roots once at the seam
   (`installer_paths`, `resolve_central_repo_path_for_app` in `commands/mod.rs`) — never thread
   `tauri::AppHandle` into `core/`. Sanctioned exceptions: `cache_cleanup.rs`/`temp_cleanup.rs`/
-  `skill_store::default_db_path`/`skill_store::migrate_legacy_db_if_needed` keep thin `dirs::*` adapters; and
+  `skill_store::default_db_path` keep thin `dirs::*` adapters; and
   `SKILLS_HUB_*` **feature-flag env vars** (`git_fetcher.rs`, `sync_engine.rs`, `install_finalize.rs`) are read
   where they apply — they tune behaviour, never locate data.
 - Sync uses a triple fallback: symlink → junction (Windows) → copy.
