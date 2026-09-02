@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Cursor now syncs by symlink** like every other tool. Cursor IDE 2.5+ and the current Cursor CLI discover symlinked skill directories, so the copy-only mode is gone. Skills already synced to Cursor as copies are left in place; re-sync with overwrite to replace them with symlinks.
+
+### Fixed
+
+- **Missing skill source**: syncing a skill whose central directory no longer exists now fails with a clear error in symlink mode as well, instead of creating a dangling link and reporting success.
+
 ## [1.2.0] - 2026-09-02
 
 A hardening release: the internal architecture was reworked over 36 review tickets (commands/core seam, typed errors, generated IPC bindings, per-world frontend hooks) with the user-visible fixes below. Test coverage grew to 324 Rust + 98 frontend tests.

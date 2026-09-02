@@ -255,14 +255,17 @@ fn agents_standard_group_has_nine_constituents_and_one_entry() {
     );
 }
 
+/// Every registry entry can take a symlinked skills dir (Cursor was the last
+/// copy-only entry; flipped in v-next ticket 38). Pinned so a regression to
+/// copy mode is a deliberate registry edit, not drift.
 #[test]
-fn only_cursor_lacks_symlink_support() {
+fn every_adapter_supports_symlink() {
     let no_symlink: Vec<&str> = default_tool_adapters()
         .iter()
         .filter(|a| !a.supports_symlink)
         .map(|a| a.key())
         .collect();
-    assert_eq!(no_symlink, vec!["cursor"]);
+    assert!(no_symlink.is_empty(), "copy-only entries: {no_symlink:?}");
 }
 
 #[test]

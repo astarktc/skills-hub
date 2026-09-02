@@ -221,15 +221,19 @@ fn overwrite_if_same_content_only_replaces_identical_targets() {
     assert!(matches!(err, GlobalSyncError::TargetExists { .. }));
 }
 
+/// A copy-only capability (no shipped entry carries it any more) is honoured
+/// by the global path and recorded as copy mode.
 #[test]
-fn cursor_gets_copy_mode() {
+fn copy_only_capability_gets_copy_mode() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = make_store(dir.path());
     seed_skill(&store, "skill-1");
     let source = make_skill_dir(dir.path(), "central-skill", "# Skill");
     let tool_root = dir.path().join("skills-root");
 
-    let cursor = adapter_by_key("cursor").expect("cursor adapter");
+    let mut copy_only = adapter_by_key("cursor").expect("cursor adapter").clone();
+    copy_only.supports_symlink = false;
+    let cursor = crate::core::tool_adapters::test_overrides::shadow(copy_only);
     let outcome = sync_skill_into_root(
         &store,
         cursor,

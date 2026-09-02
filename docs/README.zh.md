@@ -118,7 +118,7 @@ cargo test
 ## FAQ / 备注
 
 - Skill 存在哪里？中心仓库（Central Repo）默认是 `~/.skillshub`，可在设置里修改。
-- Cursor 为什么强制 Copy？Cursor 当前不支持软链（symlink/junction）形式的技能目录，因此同步到 Cursor 时会固定使用目录复制（copy）。
+- Cursor 也会用软链吗？会，自 Skills Hub 1.2.1 起 —— Cursor 2.5+（IDE）和当前的 Cursor CLI 都能识别软链形式的技能目录。旧版本 Skills Hub 以复制方式同步到 Cursor 的技能会保持原样，需要以覆盖方式重新同步才会替换为软链。若使用较旧的 Cursor，请先升级再重新同步。
 - 为什么有时会变成 Copy？默认优先 symlink/junction，但在某些系统（尤其 Windows）可能因为权限/策略导致无法创建链接，会自动回退到目录复制。
 - `TARGET_EXISTS|...` 是什么意思？目标目录已存在且默认不覆盖（为了安全）。你需要先清理目标目录，或在“接管/覆盖”的明确流程里重试。
 - macOS Gatekeeper 备注（未签名/未公证构建，不同 macOS 版本表现可能不同）：如提示“已损坏/无法验证开发者”，可执行 `xattr -cr "/Applications/Skills Hub.app"`（https://v2.tauri.app/distribute/#macos）。

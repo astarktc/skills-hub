@@ -19,6 +19,17 @@ fn make_skill_dir(base: &Path, name: &str) -> std::path::PathBuf {
     dir
 }
 
+/// A copy-only tool key for the calling thread: no shipped registry entry
+/// lacks `supports_symlink` any more, so tests that need copy-mode
+/// bookkeeping shadow the Cursor record with the capability flipped.
+fn copy_only_tool() -> &'static str {
+    let mut adapter = crate::core::tool_adapters::adapter_by_key("cursor")
+        .expect("cursor adapter")
+        .clone();
+    adapter.supports_symlink = false;
+    crate::core::tool_adapters::test_overrides::shadow(adapter).key()
+}
+
 fn register_project_and_skill(
     store: &SkillStore,
     project_path: &str,
@@ -107,8 +118,8 @@ fn assign_stores_hash_for_copy() {
         &skill_dir.to_string_lossy(),
     );
 
-    // cursor tool forces copy mode
-    let result = project_sync::assign_and_sync(&store, &project, &skill, "cursor", 2000);
+    let tool = copy_only_tool();
+    let result = project_sync::assign_and_sync(&store, &project, &skill, tool, 2000);
     let record = result.expect("assign_and_sync should succeed");
 
     assert_eq!(record.status, SyncStatus::Synced);
@@ -125,7 +136,7 @@ fn assign_stores_hash_for_copy() {
     assert!(target.exists(), "target should exist");
     assert!(
         !target.symlink_metadata().unwrap().file_type().is_symlink(),
-        "target should NOT be a symlink for cursor"
+        "target should NOT be a symlink for a copy-only tool"
     );
 }
 
@@ -137,8 +148,7 @@ fn assign_records_error_on_sync_failure() {
     let project_dir = tmpdir.path().join("err-project");
     fs::create_dir_all(&project_dir).expect("create project dir");
 
-    // Use a non-existent source path for the skill.
-    // Use "cursor" tool which forces copy mode -- copy will fail on non-existent source.
+    // Use a non-existent source path for the skill: sync fails in every mode.
     let (project, skill) = register_project_and_skill(
         &store,
         &project_dir.to_string_lossy(),
@@ -325,7 +335,7 @@ fn resync_continues_on_error() {
     };
     store.upsert_skill(&bad_skill).unwrap();
 
-    // Assign both -- use cursor (copy mode) so missing source fails
+    // Assign both; a missing source fails in every sync mode
     project_sync::assign_and_sync(&store, &project, &skill1, "cursor", 2000)
         .expect("assign ok-skill");
     project_sync::assign_and_sync(&store, &project, &bad_skill, "cursor", 2000)
@@ -415,8 +425,9 @@ fn staleness_detected_for_copy() {
         &skill_dir.to_string_lossy(),
     );
 
-    // cursor forces copy mode, which stores content_hash
-    project_sync::assign_and_sync(&store, &project, &skill, "cursor", 2000)
+    // copy mode stores content_hash
+    let tool = copy_only_tool();
+    project_sync::assign_and_sync(&store, &project, &skill, tool, 2000)
         .expect("assign should succeed");
 
     // Verify initial status is synced
@@ -494,8 +505,8 @@ fn missing_status_when_source_absent() {
         &skill_dir.to_string_lossy(),
     );
 
-    // cursor forces copy mode
-    project_sync::assign_and_sync(&store, &project, &skill, "cursor", 2000)
+    let tool = copy_only_tool();
+    project_sync::assign_and_sync(&store, &project, &skill, tool, 2000)
         .expect("assign should succeed");
 
     // Delete source directory entirely
@@ -780,7 +791,7 @@ fn bulk_assign_continues_on_error() {
         &skill_dir.to_string_lossy(),
     );
 
-    // Configure two tools: claude_code (symlink, will work) and cursor (copy, will work)
+    // Configure two tools: claude_code and cursor (both symlink)
     use crate::core::skill_store::ProjectToolRecord;
     store
         .add_project_tool(&ProjectToolRecord {
@@ -802,10 +813,10 @@ fn bulk_assign_continues_on_error() {
         .expect("claude_code assign");
     assert_eq!(r1.status, SyncStatus::Synced);
 
-    // Delete source to cause cursor (copy mode) to fail on resync
+    // Delete source so the second assignment fails
     fs::remove_dir_all(&skill_dir).expect("remove source");
 
-    // Now try to assign cursor -- it will fail because source is gone and cursor uses copy mode
+    // Now try to assign cursor -- it fails because the source is gone
     let r2 = project_sync::assign_and_sync(&store, &project, &skill, "cursor", 3000);
     let record = r2.expect("assign_and_sync returns Ok even on sync failure");
     assert_eq!(
@@ -889,8 +900,8 @@ fn missing_status_recovers_when_source_restored() {
         &skill_dir.to_string_lossy(),
     );
 
-    // cursor forces copy mode
-    let record = project_sync::assign_and_sync(&store, &project, &skill, "cursor", 2000)
+    let tool = copy_only_tool();
+    let record = project_sync::assign_and_sync(&store, &project, &skill, tool, 2000)
         .expect("assign should succeed");
     assert_eq!(record.status, SyncStatus::Synced);
 
@@ -952,8 +963,8 @@ fn missing_status_source_and_target_both_absent() {
         &skill_dir.to_string_lossy(),
     );
 
-    // cursor forces copy mode
-    project_sync::assign_and_sync(&store, &project, &skill, "cursor", 2000)
+    let tool = copy_only_tool();
+    project_sync::assign_and_sync(&store, &project, &skill, tool, 2000)
         .expect("assign should succeed");
 
     // Delete both source and target

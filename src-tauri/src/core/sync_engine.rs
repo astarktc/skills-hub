@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use super::errors::SignalError;
 use super::tool_adapters::ToolAdapter;
 
 /// Typed condition: the sync target already exists and overwrite was not
@@ -80,6 +81,14 @@ pub fn sync_dir_hybrid_with_overwrite(
     target: &Path,
     overwrite: bool,
 ) -> Result<SyncOutcome> {
+    // A missing source must fail like it does in copy mode; without this a
+    // dangling symlink would be created and recorded as a successful sync.
+    if !source.is_dir() {
+        anyhow::bail!(SignalError::InvalidPath {
+            path: source.to_string_lossy().into_owned(),
+            reason: "missing".to_string(),
+        });
+    }
     let mut did_replace = false;
     if std::fs::symlink_metadata(target).is_ok() {
         if is_same_link(target, source) {

@@ -9,7 +9,7 @@ An AI coding tool that Skills Hub syncs skills into (Claude Code, Cursor, …), 
 _Avoid_: adapter (that's the code object serving a tool), client, IDE
 
 **Tool capability**:
-A per-tool fact that changes how sync behaves for that tool, recorded on its registry record rather than tested by name in sync code (today: `supports_symlink` — Cursor's own `~/.cursor/skills` dir did not follow symlinks, so syncs to that entry are always copied). A capability describes one registry entry: a virtual group carries its own capability and does not inherit its constituents'.
+A per-tool fact that changes how sync behaves for that tool, recorded on its registry record rather than tested by name in sync code (today: `supports_symlink` — `false` forces copy mode for that entry; Cursor carried it until Cursor 2.5 fixed symlink discovery, and no current entry is copy-only). A capability describes one registry entry: a virtual group carries its own capability and does not inherit its constituents'.
 _Avoid_: special case, tool quirk, Cursor mode
 
 **Virtual group**:

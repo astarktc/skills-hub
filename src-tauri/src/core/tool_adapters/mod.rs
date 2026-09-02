@@ -146,7 +146,9 @@ pub struct ToolAdapter {
     /// `None` for standalone tools and for group entries themselves.
     pub group: Option<VirtualGroup>,
     /// Whether the tool can consume a symlinked/junctioned skills dir.
-    /// `false` forces copy mode in every sync path (Cursor).
+    /// `false` forces copy mode in every sync path. Every current entry is
+    /// `true`; the capability stays as the lever for a tool that regresses
+    /// (Cursor was `false` until IDE 2.5 / CLI 2026-06 fixed discovery).
     pub supports_symlink: bool,
 }
 
@@ -194,8 +196,9 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_detect_dir: ".cursor",
         project_relative_skills_dir: ".agents/skills",
         group: Some(VirtualGroup::AgentsStandard),
-        // Cursor cannot read a symlinked/junctioned skills dir: every sync path copies.
-        supports_symlink: false,
+        // Copy-only until Cursor IDE 2.5 (Feb 2026) fixed symlink discovery
+        // under ~/.cursor/skills; flipped in v-next ticket 38.
+        supports_symlink: true,
     },
     ToolAdapter {
         id: ToolId::ClaudeCode,
@@ -649,9 +652,39 @@ pub fn constituents_of(group: VirtualGroup) -> impl Iterator<Item = &'static Too
 /// The registry record for `key`, borrowed from the `static` registry: every
 /// fact about a tool has exactly one instance, so callers cannot mutate a copy.
 pub fn adapter_by_key(key: &str) -> Option<&'static ToolAdapter> {
+    #[cfg(test)]
+    if let Some(adapter) = test_overrides::lookup(key) {
+        return Some(adapter);
+    }
     TOOL_ADAPTERS
         .iter()
         .find(|adapter| adapter.id.as_key() == key)
+}
+
+/// Test-only registry shadowing, so core tests can exercise a capability no
+/// shipped entry carries (e.g. copy-only sync) without a fake registry entry.
+/// Overrides are thread-local — each `cargo test` case runs on its own thread
+/// — and leaked to `'static` to match the registry's borrow contract.
+#[cfg(test)]
+pub mod test_overrides {
+    use super::ToolAdapter;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static OVERRIDES: RefCell<Vec<&'static ToolAdapter>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Shadow the registry entry with `adapter.key()` for the calling thread
+    /// and return the `'static` record `adapter_by_key` will now hand out.
+    pub fn shadow(adapter: ToolAdapter) -> &'static ToolAdapter {
+        let leaked: &'static ToolAdapter = Box::leak(Box::new(adapter));
+        OVERRIDES.with(|o| o.borrow_mut().push(leaked));
+        leaked
+    }
+
+    pub(super) fn lookup(key: &str) -> Option<&'static ToolAdapter> {
+        OVERRIDES.with(|o| o.borrow().iter().rev().copied().find(|a| a.key() == key))
+    }
 }
 
 /// The tool's global skills directory under `home`.

@@ -139,11 +139,10 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
 ## Do not
 
 - Never hand-edit version numbers (use `version:set`).
-- Never "fix" the Cursor adapter to use symlinks — Cursor's own skills dir (`~/.cursor/skills`) did not follow
-  symlinks, so its registry entry sets `supports_symlink: false` and `sync_dir_for_tool_with_overwrite` forces
-  copy mode from that capability deliberately (`core/sync_engine.rs`). Never re-encode this as a `"cursor"`
-  string check. The capability belongs to the **Cursor entry only**: at project scope Cursor is a constituent
-  of the `agents_skills` virtual group, whose `.agents/skills` dir is symlinked like any other tool's — a
+- Never special-case a tool by name in sync code. Copy-vs-symlink is decided only by the registry capability
+  `supports_symlink` (`sync_dir_for_tool_with_overwrite`, `core/sync_engine.rs`); every current entry is
+  `true` (Cursor was copy-only until Cursor 2.5 fixed `~/.cursor/skills` symlink discovery — flipped in v-next
+  ticket 38; the flag is the revert lever if a tool regresses). A capability describes **one entry**: a virtual
   group's capability is its own registry fact, not the AND of its constituents (decision: v-next ticket 36).
 - Never commit `.claude/`, `.agents/`, `.gsd/`, `.mcp.json`, or `docs/conversation-logs/` (all gitignored).
 - Don't refactor, reformat, or "improve" code unrelated to the requested change.

@@ -43,6 +43,28 @@ fn hybrid_sync_creates_link_and_is_idempotent_when_same_link() {
     }
 }
 
+/// A missing source is a typed failure in symlink mode too — never a
+/// dangling link recorded as a successful sync.
+#[test]
+fn hybrid_sync_refuses_missing_source() {
+    let dst_dir = tempfile::tempdir().unwrap();
+    let target = dst_dir.path().join("t");
+    let source = dst_dir.path().join("no-such-source");
+
+    let err = sync_dir_hybrid_with_overwrite(&source, &target, true).unwrap_err();
+    match err.downcast_ref::<crate::core::errors::SignalError>() {
+        Some(crate::core::errors::SignalError::InvalidPath { path, reason }) => {
+            assert_eq!(path, &source.to_string_lossy());
+            assert_eq!(reason, "missing");
+        }
+        other => panic!("expected InvalidPath, got {other:?}"),
+    }
+    assert!(
+        fs::symlink_metadata(&target).is_err(),
+        "no dangling link may be created"
+    );
+}
+
 #[test]
 fn hybrid_sync_with_overwrite_replaces_existing() {
     let src_dir = tempfile::tempdir().unwrap();
@@ -64,33 +86,6 @@ fn hybrid_sync_with_overwrite_replaces_existing() {
     assert!(out.replaced);
 }
 
-#[test]
-fn cursor_sync_forces_copy() {
-    let src_dir = tempfile::tempdir().unwrap();
-    fs::create_dir_all(src_dir.path().join("s")).unwrap();
-    fs::write(src_dir.path().join("s/a.txt"), b"ok").unwrap();
-
-    let dst_dir = tempfile::tempdir().unwrap();
-    let target = dst_dir.path().join("t");
-
-    let cursor = adapter_by_key("cursor").expect("cursor adapter");
-    assert!(
-        !cursor.supports_symlink,
-        "test premise: Cursor cannot symlink"
-    );
-    let out = sync_dir_for_tool_with_overwrite(cursor, src_dir.path(), &target, false).unwrap();
-    assert!(matches!(out.mode_used, SyncMode::Copy));
-    assert!(target.join("s/a.txt").exists());
-    assert_eq!(fs::read(target.join("s/a.txt")).unwrap(), b"ok");
-    assert!(
-        !fs::symlink_metadata(&target)
-            .unwrap()
-            .file_type()
-            .is_symlink(),
-        "target must be a real directory"
-    );
-}
-
 #[cfg(unix)]
 #[test]
 fn symlink_capable_tool_gets_a_link() {
@@ -110,8 +105,9 @@ fn symlink_capable_tool_gets_a_link() {
         .is_symlink());
 }
 
-/// The capability, not the tool's identity, decides the mode: a hypothetical
-/// non-Cursor adapter with `supports_symlink: false` is copied too.
+/// The capability, not the tool's identity, decides the mode: any adapter
+/// with `supports_symlink: false` is copied (no current registry entry is,
+/// so the record is cloned and flipped locally).
 #[test]
 fn any_adapter_without_symlink_support_is_copied() {
     let src_dir = tempfile::tempdir().unwrap();
