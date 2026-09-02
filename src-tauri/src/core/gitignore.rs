@@ -227,11 +227,11 @@ pub fn update_for_project(
     }
 
     let tools = store.list_project_tools(project_id)?;
-    let adapters: Vec<ToolAdapter> = tools
+    let adapters: Vec<&'static ToolAdapter> = tools
         .iter()
         .filter_map(|t| adapter_by_key(&t.tool))
         .collect();
-    let patterns = patterns_for_tools(adapters.iter());
+    let patterns = patterns_for_tools(adapters.iter().copied());
 
     update_project_ignore_files(
         project_path,

@@ -59,7 +59,7 @@ fn no_overwrite() -> OverwritePolicy {
     }
 }
 
-fn claude() -> ToolAdapter {
+fn claude() -> &'static ToolAdapter {
     adapter_by_key("claude_code").expect("claude_code adapter")
 }
 
@@ -74,7 +74,7 @@ fn sync_creates_target_and_records_for_all_group_tools() {
     let adapter = claude();
     // Simulate a shared-dir group of two installed tools.
     let amp = adapter_by_key("amp").expect("amp adapter");
-    let record_tools = vec![adapter.clone(), amp];
+    let record_tools = vec![adapter, amp];
 
     let outcome = sync_skill_into_root(
         &store,
@@ -268,7 +268,7 @@ fn unsync_removes_filesystem_target_once_and_all_group_records() {
         "skill-1",
         "my-skill",
         &no_overwrite(),
-        &[adapter.clone(), amp],
+        &[adapter, amp],
         1000,
     )
     .expect("sync");
@@ -314,12 +314,12 @@ fn batch_skill(id: &str, name: &str, source: &Path) -> BatchSkill {
     }
 }
 
-fn planned(adapter: &ToolAdapter, root: &Path, installed: bool) -> PlannedToolTarget {
+fn planned(adapter: &'static ToolAdapter, root: &Path, installed: bool) -> PlannedToolTarget {
     PlannedToolTarget {
-        adapter: adapter.clone(),
+        adapter,
         root: root.to_path_buf(),
         installed,
-        record_tools: vec![adapter.clone()],
+        record_tools: vec![adapter],
     }
 }
 
@@ -389,9 +389,9 @@ fn batch_dedupes_installed_tools_sharing_a_root_and_fans_out_records() {
     let amp = adapter_by_key("amp").expect("amp adapter");
     // Both targets resolve to the same root; the second must be deduped, but
     // the first target's record_tools covers both keys.
-    let mut first = planned(&claude(), &shared_root, true);
-    first.record_tools = vec![claude(), amp.clone()];
-    let second = planned(&amp, &shared_root, true);
+    let mut first = planned(claude(), &shared_root, true);
+    first.record_tools = vec![claude(), amp];
+    let second = planned(amp, &shared_root, true);
 
     let skills = vec![batch_skill("skill-1", "my-skill", &source)];
     let outcomes = sync_skills_to_planned_tools(

@@ -49,6 +49,38 @@ pub struct ProjectSkillAssignmentDto {
     pub created_at: i64,
 }
 
+/// Best-effort removal of one project-scope synced artifact.
+///
+/// The single shape every cleanup path shares: resolve the tool's project
+/// skills dir, then remove the entry named `skill_name`. Presence is decided
+/// by `symlink_metadata`, not `exists`, because the usual orphan is a broken
+/// symlink. An unknown tool key or an empty skill name resolves to nothing to
+/// remove.
+///
+/// Returns whether an artifact was found and removed. Failures are logged and
+/// reported as `false` rather than propagated — cleanup is best-effort by
+/// design, so one stuck path must not block a tool or project removal.
+fn remove_project_artifact(project_path: &str, tool: &str, skill_name: &str) -> bool {
+    if skill_name.is_empty() {
+        return false;
+    }
+    let Some(adapter) = tool_adapters::adapter_by_key(tool) else {
+        return false;
+    };
+    let target =
+        project_sync::resolve_project_sync_target(Path::new(project_path), adapter, skill_name);
+    if target.symlink_metadata().is_err() {
+        return false;
+    }
+    match sync_engine::remove_path_any(&target) {
+        Ok(()) => true,
+        Err(err) => {
+            log::warn!("failed to remove project artifact {:?}: {:#}", target, err);
+            false
+        }
+    }
+}
+
 pub fn project_name_from_path(path: &str) -> String {
     Path::new(path)
         .file_name()
@@ -133,18 +165,8 @@ pub fn remove_tool_with_cleanup(store: &SkillStore, project_id: &str, tool: &str
                     assignment.skill_id,
                     tool
                 );
-                if let Some(adapter) = tool_adapters::adapter_by_key(tool) {
-                    let target = project_sync::resolve_project_sync_target(
-                        Path::new(&project.path),
-                        &adapter,
-                        &assignment.skill_name, // Use stored skill name, not UUID
-                    );
-                    if target.exists() || target.symlink_metadata().is_ok() {
-                        if let Err(e) = sync_engine::remove_path_any(&target) {
-                            log::warn!("failed to remove orphaned target {:?}: {}", target, e);
-                        }
-                    }
-                }
+                // Use the stored skill name (not the UUID) for filesystem cleanup.
+                remove_project_artifact(&project.path, tool, &assignment.skill_name);
                 // Clean up the DB record directly
                 if let Err(e) =
                     store.remove_project_skill_assignment(&project.id, &assignment.skill_id, tool)
@@ -242,40 +264,22 @@ pub fn remove_project_with_cleanup(store: &SkillStore, project_id: &str) -> Resu
         if assignment.status.has_deployed_artifact() {
             match store.get_skill_by_id(&assignment.skill_id) {
                 Ok(Some(skill)) => {
-                    if let Some(adapter) = tool_adapters::adapter_by_key(&assignment.tool) {
-                        let target = project_sync::resolve_project_sync_target(
-                            Path::new(&project.path),
-                            &adapter,
-                            &skill.name,
-                        );
-                        if let Err(e) = sync_engine::remove_path_any(&target) {
-                            log::warn!("failed to remove {:?}: {}", target, e);
-                        }
-                    }
+                    remove_project_artifact(&project.path, &assignment.tool, &skill.name);
                 }
                 Ok(None) => {
-                    // Use stored skill_name for filesystem cleanup when skill record is gone
-                    if let Some(adapter) = tool_adapters::adapter_by_key(&assignment.tool) {
-                        let target = project_sync::resolve_project_sync_target(
-                            Path::new(&project.path),
-                            &adapter,
-                            &assignment.skill_name,
+                    // Skill record gone: fall back to the stored skill name.
+                    if !remove_project_artifact(
+                        &project.path,
+                        &assignment.tool,
+                        &assignment.skill_name,
+                    ) {
+                        log::warn!(
+                            "skill {} not found during project cleanup; \
+                             orphaned symlink may remain in project {:?} for tool {}",
+                            assignment.skill_id,
+                            project.path,
+                            assignment.tool
                         );
-                        if !assignment.skill_name.is_empty()
-                            && (target.exists() || target.symlink_metadata().is_ok())
-                        {
-                            if let Err(e) = sync_engine::remove_path_any(&target) {
-                                log::warn!("failed to remove orphaned target {:?}: {}", target, e);
-                            }
-                        } else {
-                            log::warn!(
-                                "skill {} not found during project cleanup; \
-                                 orphaned symlink may remain in project {:?} for tool {}",
-                                assignment.skill_id,
-                                project.path,
-                                assignment.tool
-                            );
-                        }
                     }
                 }
                 Err(e) => {

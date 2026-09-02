@@ -634,11 +634,10 @@ pub fn default_tool_adapters() -> &'static [ToolAdapter] {
 
 /// Tools can share the same global skills directory (e.g. Amp and Kimi Code CLI).
 /// Use this to coordinate UI warnings and avoid duplicate filesystem operations.
-pub fn adapters_sharing_skills_dir(adapter: &ToolAdapter) -> Vec<ToolAdapter> {
+pub fn adapters_sharing_skills_dir(adapter: &ToolAdapter) -> Vec<&'static ToolAdapter> {
     TOOL_ADAPTERS
         .iter()
         .filter(|a| a.relative_skills_dir == adapter.relative_skills_dir)
-        .cloned()
         .collect()
 }
 
@@ -647,11 +646,12 @@ pub fn constituents_of(group: VirtualGroup) -> impl Iterator<Item = &'static Too
     TOOL_ADAPTERS.iter().filter(move |a| a.group == Some(group))
 }
 
-pub fn adapter_by_key(key: &str) -> Option<ToolAdapter> {
+/// The registry record for `key`, borrowed from the `static` registry: every
+/// fact about a tool has exactly one instance, so callers cannot mutate a copy.
+pub fn adapter_by_key(key: &str) -> Option<&'static ToolAdapter> {
     TOOL_ADAPTERS
         .iter()
         .find(|adapter| adapter.id.as_key() == key)
-        .cloned()
 }
 
 /// The tool's global skills directory under `home`.

@@ -104,7 +104,7 @@ pub fn sync_skill_into_root(
     skill_id: &str,
     skill_name: &str,
     policy: &OverwritePolicy,
-    record_tools: &[ToolAdapter],
+    record_tools: &[&'static ToolAdapter],
     now: i64,
 ) -> Result<SyncOutcome, GlobalSyncError> {
     // Pre-check: ensure the skills directory is writable (fixes #20 — Windows OS error 5).
@@ -276,10 +276,10 @@ pub struct BatchPolicy {
 /// fabricated roots.
 #[derive(Debug)]
 pub struct PlannedToolTarget {
-    pub adapter: ToolAdapter,
+    pub adapter: &'static ToolAdapter,
     pub root: PathBuf,
     pub installed: bool,
-    pub record_tools: Vec<ToolAdapter>,
+    pub record_tools: Vec<&'static ToolAdapter>,
 }
 
 /// Per-(skill, tool) result. `Skipped` is the expected-and-ignorable class
@@ -327,9 +327,9 @@ pub fn plan_batch_tool_targets(
                     GlobalSyncError::Other(anyhow::anyhow!("unknown tool: {}", key)),
                 )
             })?;
-            let installed = is_installed_in(home, &adapter);
-            let root = skills_dir_in(home, &adapter);
-            let record_tools: Vec<ToolAdapter> = adapters_sharing_skills_dir(&adapter)
+            let installed = is_installed_in(home, adapter);
+            let root = skills_dir_in(home, adapter);
+            let record_tools: Vec<&'static ToolAdapter> = adapters_sharing_skills_dir(adapter)
                 .into_iter()
                 .filter(|a| is_installed_in(home, a))
                 .collect();
@@ -418,7 +418,7 @@ pub fn sync_skills_to_planned_tools(
 
             let status = match sync_skill_into_root(
                 store,
-                &target.adapter,
+                target.adapter,
                 &target.root,
                 &skill.source_path,
                 &skill.skill_id,

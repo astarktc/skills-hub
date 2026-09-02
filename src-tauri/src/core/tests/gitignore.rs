@@ -29,7 +29,7 @@ fn patterns_use_project_scope_mapping_not_global() {
         windsurf.relative_skills_dir, windsurf.project_relative_skills_dir,
         "test premise: windsurf global and project dirs differ"
     );
-    let patterns = patterns_for_tools([&windsurf]);
+    let patterns = patterns_for_tools([windsurf]);
     assert_eq!(patterns, vec!["/.windsurf/skills/".to_string()]);
 }
 
@@ -37,7 +37,7 @@ fn patterns_use_project_scope_mapping_not_global() {
 fn patterns_for_divergent_tools_all_use_project_dirs() {
     for key in ["pi", "goose", "augment"] {
         let adapter = adapter_by_key(key).expect(key);
-        let patterns = patterns_for_tools([&adapter]);
+        let patterns = patterns_for_tools([adapter]);
         assert_eq!(
             patterns,
             vec![format!("/{}/", adapter.project_relative_skills_dir)],
@@ -54,7 +54,7 @@ fn patterns_dedupe_tools_sharing_a_project_dir() {
         .iter()
         .map(|k| adapter_by_key(k).expect(k))
         .collect();
-    let patterns = patterns_for_tools(adapters.iter());
+    let patterns = patterns_for_tools(adapters.iter().copied());
     assert_eq!(
         patterns,
         vec![

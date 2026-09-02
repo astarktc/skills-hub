@@ -40,7 +40,7 @@ pub fn global_tool_entries(home: &Path) -> Vec<ToolCatalogEntry> {
             installed: is_installed_in(home, adapter),
             skills_dir: skills_dir_in(home, adapter),
             shared_with: adapters_sharing_skills_dir(adapter)
-                .iter()
+                .into_iter()
                 .filter(|a| !a.is_virtual_group())
                 .map(ToolAdapter::key)
                 .collect(),

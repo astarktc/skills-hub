@@ -477,7 +477,7 @@ fn remove_tool_with_cleanup_handles_missing_skill_gracefully() {
 // silently leaves the synced skill dir on disk.
 // ---------------------------------------------------------------------------
 
-fn pi_adapter() -> crate::core::tool_adapters::ToolAdapter {
+fn pi_adapter() -> &'static crate::core::tool_adapters::ToolAdapter {
     let adapter = crate::core::tool_adapters::adapter_by_key("pi").expect("pi adapter");
     assert_ne!(
         adapter.relative_skills_dir, adapter.project_relative_skills_dir,

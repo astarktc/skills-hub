@@ -120,7 +120,9 @@ fn any_adapter_without_symlink_support_is_copied() {
     let dst_dir = tempfile::tempdir().unwrap();
     let target = dst_dir.path().join("t");
 
-    let mut claude = adapter_by_key("claude_code").expect("claude adapter");
+    // Clone the registry record so the capability can be flipped locally: the
+    // registry itself is `static` and immutable by design.
+    let mut claude = adapter_by_key("claude_code").expect("claude adapter").clone();
     claude.supports_symlink = false;
     let out = sync_dir_for_tool_with_overwrite(&claude, src_dir.path(), &target, false).unwrap();
     assert!(matches!(out.mode_used, SyncMode::Copy));
