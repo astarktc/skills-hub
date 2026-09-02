@@ -165,6 +165,22 @@ This cost 18 features in v1.1.4 (`5e1f42e` "restore 18 features lost during para
 2. Implement full-stack changes in one pass — command + registration + DTO + i18n (EN & ZH) + UI.
 3. Run the definition-of-done gate and fix failures before presenting results.
 
+## Delegation (T3 Code `delegate_task`)
+
+Run child agents on the **Pi harness** by default (`providerInstanceId: "pi"`) — it carries every model
+provider we use. Model routing within Pi:
+
+- **Fable** models → the Anthropic provider (`anthropic/claude-fable-*`).
+- **Opus** models → the Cortex provider (`cortex/claude-opus-*`), unless the operator explicitly asks
+  for Anthropic.
+- **GPT-5.6** models → `cortex-responses/openai-gpt-5.6-*`.
+
+Do not reach for the `claudeAgent` (Claude Code) or `codex` provider instances for these models.
+
+Launch children with `runtimeMode: "full-access"` (or `inherit`) so they run unattended. Never use
+`approval-required` for delegated work — it gates every child tool call on an operator prompt. Express
+read-only/no-run constraints in the task brief instead.
+
 ## Deeper context (pointers)
 
 - `README.md` — user-facing overview, supported-tools table, FAQ.
