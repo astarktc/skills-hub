@@ -19,6 +19,7 @@ use serde::Deserialize;
 use specta::Type;
 
 use crate::core::errors::SignalError;
+use crate::core::mutation_guard;
 use crate::core::skill_store::SkillStore;
 use crate::core::tool_adapters::{adapter_by_key, ToolAdapter};
 
@@ -209,7 +210,21 @@ pub struct IgnoreUpdateOptions {
 /// list: look the project up (typed `NotFound`), require its directory to
 /// exist, derive patterns from the tools' adapters (unknown keys are
 /// ignored), and apply [`update_project_ignore_files`].
+///
+/// Mutation entry point: serialised against every other Sync-target mutation,
+/// because the ignore block is derived from the project's persisted tools and
+/// must not be written from a tool list another mutation is mid-change.
 pub fn update_for_project(
+    store: &SkillStore,
+    project_id: &str,
+    options: IgnoreUpdateOptions,
+) -> Result<()> {
+    mutation_guard::serialized(|| update_for_project_unlocked(store, project_id, options))
+}
+
+/// Unlocked internal seam: callers reach it through an entry point that has
+/// already taken the mutation guard.
+pub(crate) fn update_for_project_unlocked(
     store: &SkillStore,
     project_id: &str,
     options: IgnoreUpdateOptions,

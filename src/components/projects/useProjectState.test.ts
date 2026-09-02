@@ -56,7 +56,8 @@ function toolRecords(projectId: string, tools: string[]): ProjectToolDto[] {
 }
 
 /** Minimal echo backend: registration appends a project; tool config persists the set. */
-function stubBackend() {
+function stubBackend(options: { reconciled?: boolean } = {}) {
+  const reconciled = options.reconciled ?? true;
   const projects: ProjectDto[] = [];
   const toolsByProject = new Map<string, string[]>();
   let nextId = 1;
@@ -78,7 +79,7 @@ function stubBackend() {
         );
       }
       case "listProjectSkillAssignments":
-        return Promise.resolve([]);
+        return Promise.resolve({ assignments: [], reconciled });
       case "configureProjectTools": {
         const [projectId, tools] = args as Parameters<
           Commands["configureProjectTools"]
@@ -350,6 +351,42 @@ describe("useProjectState add-project → configure-tools → gitignore", () => 
     expect(order).toContain("listProjectSkillAssignments");
     expect(order).toContain("listProjects");
     expect(result.current.tools.map((t) => t.tool)).toEqual(["pi"]);
+  });
+});
+
+describe("useProjectState assignment reconciliation flag", () => {
+  it("defaults to reconciled and carries a reconciled listing through", async () => {
+    const { result } = await renderReady();
+    expect(result.current.assignmentsReconciled).toBe(true);
+
+    await act(async () => {
+      await result.current.registerProject("/work/p1", {
+        add_to_gitignore: false,
+        add_to_exclude: false,
+      });
+    });
+    await act(async () => {
+      await result.current.selectProject("p1");
+    });
+
+    expect(result.current.assignmentsReconciled).toBe(true);
+  });
+
+  it("reports a skipped reconcile so the UI cannot treat it as healthy", async () => {
+    stubBackend({ reconciled: false });
+    const { result } = await renderReady();
+
+    await act(async () => {
+      await result.current.registerProject("/work/p1", {
+        add_to_gitignore: false,
+        add_to_exclude: false,
+      });
+    });
+    await act(async () => {
+      await result.current.selectProject("p1");
+    });
+
+    expect(result.current.assignmentsReconciled).toBe(false);
   });
 });
 

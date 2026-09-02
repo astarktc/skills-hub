@@ -30,6 +30,27 @@ fn copy_only_tool() -> &'static str {
     crate::core::tool_adapters::test_overrides::shadow(adapter).key()
 }
 
+/// A listing whose reconcile pass actually ran.
+///
+/// The mutation guard is process-global and `cargo test` runs tests in
+/// parallel, so an unlucky call can legitimately return `reconciled: false`
+/// (another test's mutation was in flight). Tests asserting on *reconciled*
+/// status retry through this helper; the skip path has its own test.
+fn list_reconciled(
+    store: &SkillStore,
+    project_id: &str,
+) -> Vec<crate::core::skill_store::ProjectSkillAssignmentRecord> {
+    for _ in 0..100 {
+        let listing = project_sync::list_assignments_with_staleness(store, project_id)
+            .expect("list should succeed");
+        if listing.reconciled {
+            return listing.assignments;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    panic!("reconcile pass never got the guard");
+}
+
 fn register_project_and_skill(
     store: &SkillStore,
     project_path: &str,
@@ -442,8 +463,7 @@ fn staleness_detected_for_copy() {
     fs::write(skill_dir.join("new-file.txt"), "changed content").expect("write new file");
 
     // list_assignments_with_staleness should detect the change
-    let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
-        .expect("list should succeed");
+    let assignments = list_reconciled(&store, &project.id);
     assert_eq!(assignments.len(), 1);
     assert_eq!(assignments[0].status, SyncStatus::Stale);
 
@@ -479,8 +499,7 @@ fn staleness_skipped_for_symlink() {
     fs::write(skill_dir.join("new-file.txt"), "changed content").expect("write new file");
 
     // Staleness check should skip symlink-mode -- status stays synced
-    let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
-        .expect("list should succeed");
+    let assignments = list_reconciled(&store, &project.id);
     assert_eq!(assignments.len(), 1);
     assert_eq!(
         assignments[0].status,
@@ -513,8 +532,7 @@ fn missing_status_when_source_absent() {
     fs::remove_dir_all(&skill_dir).expect("remove source");
 
     // Should detect missing source and mark status as "missing"
-    let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
-        .expect("list should not crash");
+    let assignments = list_reconciled(&store, &project.id);
     assert_eq!(assignments.len(), 1);
     assert_eq!(
         assignments[0].status,
@@ -588,70 +606,6 @@ fn global_and_project_sync_independent() {
 
     let project_after = store.list_project_skill_assignments(&project.id).unwrap();
     assert_eq!(project_after.len(), 0, "project assignment removed");
-}
-
-#[test]
-fn sync_serialization() {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    use std::sync::Arc;
-
-    let (_db_dir, store) = make_store();
-    let tmpdir = tempfile::tempdir().expect("tmpdir");
-
-    // Set up project and skill for both threads
-    let skill_dir = make_skill_dir(tmpdir.path(), "serial-skill");
-    let project_dir = tmpdir.path().join("serial-project");
-    fs::create_dir_all(&project_dir).expect("create project dir");
-
-    let (project, skill) = register_project_and_skill(
-        &store,
-        &project_dir.to_string_lossy(),
-        "serial-skill",
-        &skill_dir.to_string_lossy(),
-    );
-
-    // Assign first so resync has something to work with
-    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000)
-        .expect("assign should succeed");
-
-    // Shared mutex (same type as SyncMutex.0)
-    let mutex = Arc::new(std::sync::Mutex::new(()));
-    // Counter tracking concurrent executions -- must never exceed 1
-    let concurrent = Arc::new(AtomicU32::new(0));
-
-    let store1 = store.clone();
-    let pid1 = project.id.clone();
-    let mutex1 = mutex.clone();
-    let concurrent1 = concurrent.clone();
-
-    let store2 = store.clone();
-    let pid2 = project.id.clone();
-    let mutex2 = mutex.clone();
-    let concurrent2 = concurrent.clone();
-
-    let t1 = std::thread::spawn(move || {
-        let _lock = mutex1.lock().unwrap_or_else(|e| e.into_inner());
-        let prev = concurrent1.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(prev, 0, "thread 1: no concurrent access allowed");
-        // Do sync work
-        let _ = project_sync::resync_project(&store1, &pid1, 4000);
-        concurrent1.fetch_sub(1, Ordering::SeqCst);
-    });
-
-    let t2 = std::thread::spawn(move || {
-        let _lock = mutex2.lock().unwrap_or_else(|e| e.into_inner());
-        let prev = concurrent2.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(prev, 0, "thread 2: no concurrent access allowed");
-        // Do sync work
-        let _ = project_sync::resync_project(&store2, &pid2, 5000);
-        concurrent2.fetch_sub(1, Ordering::SeqCst);
-    });
-
-    t1.join().expect("thread 1 should complete");
-    t2.join().expect("thread 2 should complete");
-
-    // Final counter should be 0
-    assert_eq!(concurrent.load(Ordering::SeqCst), 0, "all done");
 }
 
 #[test]
@@ -863,8 +817,7 @@ fn missing_status_when_target_absent() {
     );
 
     // Should detect missing target and mark status as "missing"
-    let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
-        .expect("list should succeed");
+    let assignments = list_reconciled(&store, &project.id);
     assert_eq!(assignments.len(), 1);
     assert_eq!(
         assignments[0].status,
@@ -908,8 +861,7 @@ fn missing_status_recovers_when_source_restored() {
     // Delete source directory -> should become missing
     fs::remove_dir_all(&skill_dir).expect("remove source");
 
-    let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
-        .expect("list should succeed");
+    let assignments = list_reconciled(&store, &project.id);
     assert_eq!(
         assignments[0].status,
         SyncStatus::Missing,
@@ -931,8 +883,7 @@ fn missing_status_recovers_when_source_restored() {
 
     // D-07 litmus test: assignment had DB status "missing", source+target reappeared,
     // function should recalculate to "synced" or "stale" -- NOT "missing"
-    let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
-        .expect("list should succeed after recovery");
+    let assignments = list_reconciled(&store, &project.id);
     assert_eq!(assignments.len(), 1);
     assert_ne!(
         assignments[0].status,
@@ -975,8 +926,7 @@ fn missing_status_source_and_target_both_absent() {
     assert!(!target.exists(), "target should be gone");
 
     // Should detect missing
-    let assignments = project_sync::list_assignments_with_staleness(&store, &project.id)
-        .expect("list should succeed");
+    let assignments = list_reconciled(&store, &project.id);
     assert_eq!(assignments.len(), 1);
     assert_eq!(
         assignments[0].status,

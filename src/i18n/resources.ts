@@ -461,6 +461,8 @@ export const resources = {
         bulkAssignFailed: "Some tools failed to assign: {{details}}",
         syncDisabledMissing:
           "Sync is disabled because the project directory was not found.",
+        reconcileSkipped:
+          "Another sync operation is running, so these statuses were not re-checked against disk. They may be out of date.",
         globalSynced:
           "This skill is already deployed globally for this tool. Assign it here only to manage it per-project.",
       },
@@ -903,6 +905,8 @@ export const resources = {
         bulkAssignPartial: "已分配 {{assigned}} 个，{{failed}} 个失败",
         bulkAssignFailed: "部分工具分配失败：{{details}}",
         syncDisabledMissing: "因未找到项目目录，同步已禁用。",
+        reconcileSkipped:
+          "正在进行另一项同步操作，因此未重新核对这些状态与磁盘的一致性，它们可能已过时。",
         globalSynced:
           "该 Skill 已为该工具全局部署。仅当需要按项目管理时才需在此分配。",
       },

@@ -14,6 +14,7 @@ use super::install_finalize::{
     ensure_name_available, finalize_install, finalize_update, NameIntent, SkillProvenance,
     StagingDir,
 };
+use super::mutation_guard;
 use super::project_sync::resolve_project_sync_target;
 use super::skill_discovery::{
     discover_skills, find_skill_md, is_skill_dir, parse_skill_md, parse_skill_md_with_reason,
@@ -281,6 +282,12 @@ pub struct UpdateResult {
     pub updated_targets: Vec<String>,
 }
 
+/// Re-acquire a Managed skill from its source, finalize it, and propagate the
+/// new bytes to its Sync targets.
+///
+/// Acquisition (git clone / local copy into the Staging dir) runs **outside**
+/// the mutation guard — it touches no Sync target and can be slow. Only
+/// finalize + Propagation, which do, run inside it.
 pub fn update_managed_skill_from_source(
     paths: &InstallerPaths,
     store: &SkillStore,
@@ -301,8 +308,6 @@ pub fn update_managed_skill_from_source(
         .parent()
         .ok_or_else(|| anyhow::anyhow!("invalid central path"))?
         .to_path_buf();
-
-    let now = now_ms();
 
     // Build new content in a sibling staging dir; finalize swaps it in.
     let staged = StagingDir::new_in(&central_parent);
@@ -386,12 +391,31 @@ pub fn update_managed_skill_from_source(
         anyhow::bail!("unsupported source_type for update: {}", record.source_type);
     }
 
+    mutation_guard::serialized(|| {
+        finalize_and_propagate_unlocked(paths, store, record, staged, new_revision)
+    })
+}
+
+/// Unlocked internal seam: finalize the Staging dir into the central copy,
+/// then propagate to every copy-mode Sync target (global rows first, then
+/// project assignment rows). The caller holds the mutation guard.
+fn finalize_and_propagate_unlocked(
+    paths: &InstallerPaths,
+    store: &SkillStore,
+    record: super::skill_store::SkillRecord,
+    staged: StagingDir,
+    new_revision: Option<String>,
+) -> Result<UpdateResult> {
+    let skill_id = record.id.clone();
+    let central_path = PathBuf::from(record.central_path.clone());
+    let now = now_ms();
+
     let updated = finalize_update(store, &record, staged, new_revision.clone())?;
     let content_hash = updated.content_hash.clone();
 
     // If any targets are copies, re-sync them so changes propagate. Links update automatically.
     // Tools without symlink support (see `ToolAdapter::supports_symlink`) are always copies, so regardless of the historical mode, we must force a copy re-sync.
-    let targets = store.list_skill_targets(skill_id)?;
+    let targets = store.list_skill_targets(&skill_id)?;
     let mut updated_targets: Vec<String> = Vec::new();
     for t in targets {
         // Skip if tool not installed anymore.
@@ -422,7 +446,7 @@ pub fn update_managed_skill_from_source(
 
     // Re-sync copy-mode project skill assignments so project copies stay current.
     // Symlinks auto-update since they point to the central path that was just refreshed.
-    let project_assignments = store.list_project_skill_assignments_by_skill(skill_id)?;
+    let project_assignments = store.list_project_skill_assignments_by_skill(&skill_id)?;
     for pa in project_assignments {
         let force_copy =
             pa.mode.can_drift() || adapter_by_key(&pa.tool).is_some_and(|a| !a.supports_symlink);

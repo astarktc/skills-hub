@@ -59,7 +59,7 @@ export const commands = {
 	listProjectTools: (projectId: string) => __TAURI_INVOKE<ProjectToolDto[]>("list_project_tools", { projectId }),
 	addProjectSkillAssignment: (projectId: string, skillId: string, tool: string) => __TAURI_INVOKE<ProjectSkillAssignmentDto>("add_project_skill_assignment", { projectId, skillId, tool }),
 	removeProjectSkillAssignment: (projectId: string, skillId: string, tool: string) => __TAURI_INVOKE<null>("remove_project_skill_assignment", { projectId, skillId, tool }),
-	listProjectSkillAssignments: (projectId: string) => __TAURI_INVOKE<ProjectSkillAssignmentDto[]>("list_project_skill_assignments", { projectId }),
+	listProjectSkillAssignments: (projectId: string) => __TAURI_INVOKE<ProjectAssignmentListingDto>("list_project_skill_assignments", { projectId }),
 	resyncProject: (projectId: string) => __TAURI_INVOKE<ResyncSummaryDto>("resync_project", { projectId }),
 	resyncAllProjects: () => __TAURI_INVOKE<ResyncSummaryDto[]>("resync_all_projects"),
 	bulkAssignSkill: (projectId: string, skillId: string) => __TAURI_INVOKE<BulkAssignResultDto>("bulk_assign_skill", { projectId, skillId }),
@@ -299,6 +299,18 @@ export type OnlineSkillDto = {
 	installs: number,
 	source: string,
 	source_url: string,
+};
+
+/**
+ *  A project's assignment rows plus whether the reconcile pass ran.
+ * 
+ *  `reconciled == false` means a Sync-target mutation was in flight and the
+ *  listing skipped reconciliation rather than queue behind it: the rows are
+ *  the stored ones. Consumers must not read that as healthy.
+ */
+export type ProjectAssignmentListingDto = {
+	assignments: ProjectSkillAssignmentDto[],
+	reconciled: boolean,
 };
 
 export type ProjectDto = {

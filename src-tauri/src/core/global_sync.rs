@@ -9,7 +9,7 @@ use anyhow::Result;
 use uuid::Uuid;
 
 use crate::core::{
-    content_hash,
+    content_hash, mutation_guard,
     skill_store::{SkillStore, SkillTargetRecord},
     sync_engine::{self, SyncOutcome},
     sync_status::SyncStatus,
@@ -94,9 +94,10 @@ pub fn target_has_same_content(source: &Path, target: &Path) -> bool {
 /// the overwrite policy, sync, and upsert a `SkillTargetRecord` for each
 /// tool in `record_tools`. The batch engine
 /// ([`sync_skills_to_planned_tools`]) drives this per attempted pair; tests
-/// drive it directly.
+/// drive it directly. Unlocked internal seam — callers reach it through an
+/// entry point that has already taken the mutation guard.
 #[allow(clippy::too_many_arguments)]
-pub fn sync_skill_into_root(
+pub(crate) fn sync_skill_into_root(
     store: &SkillStore,
     adapter: &ToolAdapter,
     tool_root: &Path,
@@ -192,7 +193,20 @@ fn classify_sync_error(
 /// the same global skills directory. Environment probing (installedness
 /// under `home`) lives here; the deterministic removal is in
 /// [`remove_targets_for_tools`].
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
 pub fn unsync_skill_from_tool_with_records(
+    home: &Path,
+    store: &SkillStore,
+    tool_key: &str,
+    skill_id: &str,
+) -> Result<()> {
+    mutation_guard::serialized(|| {
+        unsync_skill_from_tool_with_records_unlocked(home, store, tool_key, skill_id)
+    })
+}
+
+pub(crate) fn unsync_skill_from_tool_with_records_unlocked(
     home: &Path,
     store: &SkillStore,
     tool_key: &str,
@@ -217,8 +231,8 @@ pub fn unsync_skill_from_tool_with_records(
 }
 
 /// Remove the filesystem target once (shared dir ⇒ shared target path) and
-/// delete the DB record for each tool in `tool_keys`.
-pub fn remove_targets_for_tools(
+/// delete the DB record for each tool in `tool_keys`. Unlocked internal seam.
+pub(crate) fn remove_targets_for_tools(
     store: &SkillStore,
     skill_id: &str,
     tool_keys: &[String],
@@ -347,8 +361,9 @@ pub fn plan_batch_tool_targets(
 /// (first in caller order wins; shared-dir tools are covered via each
 /// target's `record_tools`), emit `Skipped` for not-installed tools, apply
 /// the per-pair overwrite policy, and isolate failures per target — one bad
-/// pair never aborts the batch.
-pub fn sync_skills_to_planned_tools(
+/// pair never aborts the batch. Unlocked internal seam — callers reach it
+/// through an entry point that has already taken the mutation guard.
+pub(crate) fn sync_skills_to_planned_tools(
     store: &SkillStore,
     skills: &[BatchSkill],
     targets: &[PlannedToolTarget],
@@ -449,7 +464,24 @@ pub fn sync_skills_to_planned_tools(
 /// ([`plan_batch_tool_targets`]) composed with the deterministic engine
 /// ([`sync_skills_to_planned_tools`]). Planning failures surface as `Failed`
 /// outcomes per skill; the function itself never errors.
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
 pub fn sync_skills_to_tools(
+    home: &Path,
+    store: &SkillStore,
+    skills: &[BatchSkill],
+    tool_keys: &[String],
+    policy: &BatchPolicy,
+    now: i64,
+    on_progress: impl FnMut(BatchProgress),
+) -> Vec<BatchTargetOutcome> {
+    mutation_guard::serialized(|| {
+        sync_skills_to_tools_unlocked(home, store, skills, tool_keys, policy, now, on_progress)
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn sync_skills_to_tools_unlocked(
     home: &Path,
     store: &SkillStore,
     skills: &[BatchSkill],
@@ -488,6 +520,48 @@ pub fn sync_skills_to_tools(
         on_progress,
     ));
     outcomes
+}
+
+/// Artifact removal for one Managed skill's global Sync targets: take each
+/// target off disk (best effort) and drop its rows. Returns the number of
+/// target rows that were dropped.
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
+///
+/// Moved verbatim from the `unsync_skill` command tier: filesystem failures
+/// are swallowed and the rows go regardless. Ticket 03 replaces this with the
+/// Artifact-removal module's presence/failure rules.
+pub fn unsync_skill_targets(store: &SkillStore, skill_id: &str) -> Result<usize> {
+    mutation_guard::serialized(|| {
+        let targets = store.list_skill_targets(skill_id)?;
+        for target in &targets {
+            let _ = sync_engine::remove_path_any(Path::new(&target.target_path));
+        }
+        let count = targets.len();
+        store.delete_skill_targets(skill_id)?;
+        Ok(count)
+    })
+}
+
+/// Artifact removal for every Managed skill's global Sync targets. Returns
+/// the number of target rows that were dropped.
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
+/// Same verbatim-move caveat as [`unsync_skill_targets`].
+pub fn unsync_all_skill_targets(store: &SkillStore) -> Result<usize> {
+    mutation_guard::serialized(|| {
+        let skills = store.list_skills()?;
+        let mut removed_count: usize = 0;
+        for skill in &skills {
+            let targets = store.list_skill_targets(&skill.id)?;
+            for target in &targets {
+                let _ = sync_engine::remove_path_any(Path::new(&target.target_path));
+            }
+            removed_count += targets.len();
+        }
+        store.delete_all_skill_targets()?;
+        Ok(removed_count)
+    })
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ use anyhow::Result;
 use crate::core::{
     content_hash,
     errors::SignalError,
+    mutation_guard,
     skill_store::{
         AssignmentTransition, ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore,
     },
@@ -30,7 +31,9 @@ pub fn resolve_project_sync_target(
         .join(skill_name)
 }
 
-pub fn assign_and_sync(
+/// Unlocked internal seam: callers reach it through an entry point that has
+/// already taken the mutation guard (`mutation_guard`).
+pub(crate) fn assign_and_sync(
     store: &SkillStore,
     project: &ProjectRecord,
     skill: &SkillRecord,
@@ -138,7 +141,7 @@ pub struct AssignTargetOutcome {
 /// Deterministic engine: for each tool key in caller order, skip tools the
 /// skill is already assigned to, otherwise assign and sync. Failures are
 /// isolated per tool — one bad tool never aborts the batch.
-pub fn assign_skill_to_tools(
+pub(crate) fn assign_skill_to_tools(
     store: &SkillStore,
     project: &ProjectRecord,
     skill: &SkillRecord,
@@ -190,7 +193,20 @@ fn lookup_project_and_skill(
 /// Assign one skill to every tool persisted for the project (the
 /// `bulk_assign_skill` command). Only the lookups can error; per-tool
 /// results are data.
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
 pub fn assign_skill_to_project_tools(
+    store: &SkillStore,
+    project_id: &str,
+    skill_id: &str,
+    now: i64,
+) -> Result<Vec<AssignTargetOutcome>> {
+    mutation_guard::serialized(|| {
+        assign_skill_to_project_tools_unlocked(store, project_id, skill_id, now)
+    })
+}
+
+pub(crate) fn assign_skill_to_project_tools_unlocked(
     store: &SkillStore,
     project_id: &str,
     skill_id: &str,
@@ -210,7 +226,21 @@ pub fn assign_skill_to_project_tools(
 /// Assign one skill to one tool (the `add_project_skill_assignment`
 /// command): the single-target view of the same engine, where
 /// `AlreadyAssigned` is the typed `AssignmentExists` condition.
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
 pub fn assign_skill_to_project_tool(
+    store: &SkillStore,
+    project_id: &str,
+    skill_id: &str,
+    tool_key: &str,
+    now: i64,
+) -> Result<ProjectSkillAssignmentRecord> {
+    mutation_guard::serialized(|| {
+        assign_skill_to_project_tool_unlocked(store, project_id, skill_id, tool_key, now)
+    })
+}
+
+pub(crate) fn assign_skill_to_project_tool_unlocked(
     store: &SkillStore,
     project_id: &str,
     skill_id: &str,
@@ -281,7 +311,18 @@ pub(crate) fn sync_single_assignment(
     Ok(())
 }
 
+/// Re-materialise every Sync target of one project.
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
 pub fn resync_project(store: &SkillStore, project_id: &str, now: i64) -> Result<ResyncSummary> {
+    mutation_guard::serialized(|| resync_project_unlocked(store, project_id, now))
+}
+
+pub(crate) fn resync_project_unlocked(
+    store: &SkillStore,
+    project_id: &str,
+    now: i64,
+) -> Result<ResyncSummary> {
     let project = store.get_project_by_id(project_id)?.ok_or_else(|| {
         anyhow::anyhow!(SignalError::NotFound {
             kind: "project".to_string(),
@@ -316,12 +357,23 @@ pub fn resync_project(store: &SkillStore, project_id: &str, now: i64) -> Result<
     Ok(summary)
 }
 
+/// Re-materialise every Sync target of every project.
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
+/// The per-project step is the unlocked seam — the guard is not reentrant.
 pub fn resync_all_projects(store: &SkillStore, now: i64) -> Result<Vec<ResyncSummary>> {
+    mutation_guard::serialized(|| resync_all_projects_unlocked(store, now))
+}
+
+pub(crate) fn resync_all_projects_unlocked(
+    store: &SkillStore,
+    now: i64,
+) -> Result<Vec<ResyncSummary>> {
     let projects = store.list_projects()?;
     let mut summaries = Vec::with_capacity(projects.len());
 
     for project in &projects {
-        match resync_project(store, &project.id, now) {
+        match resync_project_unlocked(store, &project.id, now) {
             Ok(summary) => summaries.push(summary),
             Err(e) => {
                 log::warn!(
@@ -434,18 +486,49 @@ fn reconcile_assignment(
     assignment
 }
 
+/// A project's assignment rows plus whether the reconcile pass ran.
+///
+/// `reconciled == false` means a Sync-target mutation was in flight, so the
+/// rows are the stored ones, un-reconciled. It is *not* a health signal: a
+/// consumer must not read it as "everything is fine".
+pub struct AssignmentListing {
+    pub assignments: Vec<ProjectSkillAssignmentRecord>,
+    pub reconciled: bool,
+}
+
 /// List a project's assignments with their status reconciled against the
 /// filesystem (source/target presence, copy drift). Rows whose observed
 /// status differs from the stored one are updated in place.
+///
+/// The reconcile pass writes rows, so it runs under the mutation guard — but
+/// it *try*-locks: a listing must stay responsive while a mutation runs, so
+/// when the guard is busy the stored rows are returned untouched with
+/// `reconciled: false`.
 pub fn list_assignments_with_staleness(
     store: &SkillStore,
     project_id: &str,
-) -> Result<Vec<ProjectSkillAssignmentRecord>> {
-    let assignments = store.list_project_skill_assignments(project_id)?;
+) -> Result<AssignmentListing> {
+    let mut assignments = store.list_project_skill_assignments(project_id)?;
+    // Rows are reconciled in place, so the skipped path needs no fallback copy.
+    let reconciled =
+        mutation_guard::try_serialized(|| reconcile_listing(store, project_id, &mut assignments))
+            .is_some();
+    Ok(AssignmentListing {
+        assignments,
+        reconciled,
+    })
+}
 
+/// The reconcile pass itself: observe every row and write the ones whose
+/// status changed. Unlocked internal seam — the caller holds the guard.
+fn reconcile_listing(
+    store: &SkillStore,
+    project_id: &str,
+    assignments: &mut Vec<ProjectSkillAssignmentRecord>,
+) {
     // Pre-fetch skill records with deduplication (one DB query per unique skill_id)
     let mut skill_cache: HashMap<String, Option<SkillRecord>> = HashMap::new();
-    for a in &assignments {
+    for a in assignments.iter() {
         skill_cache
             .entry(a.skill_id.clone())
             .or_insert_with(|| store.get_skill_by_id(&a.skill_id).ok().flatten());
@@ -454,7 +537,7 @@ pub fn list_assignments_with_staleness(
     // Pre-fetch project record once (not per iteration)
     let project_record = store.get_project_by_id(project_id).ok().flatten();
 
-    Ok(assignments
+    *assignments = std::mem::take(assignments)
         .into_iter()
         .map(|assignment| {
             let skill = skill_cache
@@ -463,10 +546,29 @@ pub fn list_assignments_with_staleness(
             let observed = observe_assignment(store, project_record.as_ref(), skill, &assignment);
             reconcile_assignment(store, assignment, &observed)
         })
-        .collect())
+        .collect();
 }
 
-pub fn unassign_and_cleanup(
+/// Artifact removal for one project×skill×tool triple, lookups included.
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
+/// The lookups run *inside* the critical section so the project and skill a
+/// removal acts on cannot be deleted between reading them and acting.
+pub fn unassign_skill_from_project_tool(
+    store: &SkillStore,
+    project_id: &str,
+    skill_id: &str,
+    tool_key: &str,
+) -> Result<()> {
+    mutation_guard::serialized(|| {
+        let (project, skill) = lookup_project_and_skill(store, project_id, skill_id)?;
+        unassign_and_cleanup(store, &project, &skill, tool_key)
+    })
+}
+
+/// Unlocked internal seam: callers reach it through an entry point that has
+/// already taken the mutation guard.
+pub(crate) fn unassign_and_cleanup(
     store: &SkillStore,
     project: &ProjectRecord,
     skill: &SkillRecord,

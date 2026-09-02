@@ -8,6 +8,7 @@ export type { CommandError } from "../../bindings";
 export type { ProjectDto } from "../../bindings";
 export type { ProjectToolDto } from "../../bindings";
 export type { ProjectSkillAssignmentDto } from "../../bindings";
+export type { ProjectAssignmentListingDto } from "../../bindings";
 export type { ProjectSyncStatus } from "../../bindings";
 export type { SyncStatus } from "../../bindings";
 export type { SyncMode } from "../../bindings";

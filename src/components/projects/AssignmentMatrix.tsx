@@ -23,6 +23,12 @@ export type AssignmentMatrixProps = {
   project: ProjectDto | null;
   tools: ProjectToolDto[];
   assignments: ProjectSkillAssignmentDto[];
+  /**
+   * False when the backend skipped the reconcile pass because a Sync-target
+   * mutation was in flight: the statuses below are the stored ones, not
+   * re-derived from disk. Surfaced as a notice — never rendered as healthy.
+   */
+  assignmentsReconciled: boolean;
   skills: ManagedSkill[];
   pendingCells: Set<string>;
   matrixLoading: boolean;
@@ -67,6 +73,7 @@ const AssignmentMatrix = ({
   project,
   tools,
   assignments,
+  assignmentsReconciled,
   skills,
   pendingCells,
   matrixLoading,
@@ -286,6 +293,13 @@ const AssignmentMatrix = ({
         </div>
       )}
 
+      {!assignmentsReconciled && (
+        <div className="matrix-path-missing-banner">
+          <TriangleAlert size={14} />
+          <span>{t("projects.reconcileSkipped")}</span>
+        </div>
+      )}
+
       {skills.length === 0 ? (
         <div className="matrix-no-skills">{t("projects.noSkills")}</div>
       ) : tools.length === 0 ? (
@@ -500,6 +514,7 @@ export default memo(AssignmentMatrix, (prev, next) => {
   if (prev.project !== next.project) return false;
   if (prev.tools !== next.tools) return false;
   if (prev.assignments !== next.assignments) return false;
+  if (prev.assignmentsReconciled !== next.assignmentsReconciled) return false;
   if (prev.skills !== next.skills) return false;
   if (prev.matrixLoading !== next.matrixLoading) return false;
   if (prev.onToggleAssignment !== next.onToggleAssignment) return false;

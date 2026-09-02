@@ -7,7 +7,6 @@ use crate::core::gitignore::{self, IgnoreUpdateOptions};
 use crate::core::project_ops::{self, ProjectDto, ProjectSkillAssignmentDto, ProjectToolDto};
 use crate::core::project_sync::{self, AssignTargetStatus};
 use crate::core::skill_store::{ProjectSkillAssignmentRecord, SkillStore};
-use crate::SyncMutex;
 
 use super::CommandError;
 use crate::core::clock::now_ms;
@@ -33,13 +32,10 @@ pub async fn register_project(
 #[allow(non_snake_case)]
 pub async fn remove_project(
     store: State<'_, SkillStore>,
-    sync_mutex: State<'_, SyncMutex>,
     projectId: String,
 ) -> Result<(), CommandError> {
     let store = store.inner().clone();
-    let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
         project_ops::remove_project_with_cleanup(&store, &projectId)
     })
     .await
@@ -83,15 +79,12 @@ pub async fn update_project_path(
 #[allow(non_snake_case)]
 pub async fn configure_project_tools(
     store: State<'_, SkillStore>,
-    sync_mutex: State<'_, SyncMutex>,
     projectId: String,
     tools: Vec<String>,
     gitignore: Option<IgnoreUpdateOptions>,
 ) -> Result<Vec<ProjectToolDto>, CommandError> {
     let store = store.inner().clone();
-    let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
         project_ops::configure_project_tools(&store, &projectId, &tools, gitignore)
     })
     .await
@@ -130,15 +123,12 @@ pub async fn list_project_tools(
 #[allow(non_snake_case)]
 pub async fn add_project_skill_assignment(
     store: State<'_, SkillStore>,
-    sync_mutex: State<'_, SyncMutex>,
     projectId: String,
     skillId: String,
     tool: String,
 ) -> Result<ProjectSkillAssignmentDto, CommandError> {
     let store = store.inner().clone();
-    let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
         let record = project_sync::assign_skill_to_project_tool(
             &store,
             &projectId,
@@ -158,29 +148,13 @@ pub async fn add_project_skill_assignment(
 #[allow(non_snake_case)]
 pub async fn remove_project_skill_assignment(
     store: State<'_, SkillStore>,
-    sync_mutex: State<'_, SyncMutex>,
     projectId: String,
     skillId: String,
     tool: String,
 ) -> Result<(), CommandError> {
     let store = store.inner().clone();
-    let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let project = store.get_project_by_id(&projectId)?.ok_or_else(|| {
-            anyhow::anyhow!(SignalError::NotFound {
-                kind: "project".to_string(),
-                id: projectId.clone(),
-            })
-        })?;
-        let skill = store.get_skill_by_id(&skillId)?.ok_or_else(|| {
-            anyhow::anyhow!(SignalError::NotFound {
-                kind: "skill".to_string(),
-                id: skillId.clone(),
-            })
-        })?;
-
-        let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
-        project_sync::unassign_and_cleanup(&store, &project, &skill, &tool)
+        project_sync::unassign_skill_from_project_tool(&store, &projectId, &skillId, &tool)
     })
     .await
     .map_err(CommandError::internal)?
@@ -209,15 +183,33 @@ fn to_assignment_dto(record: ProjectSkillAssignmentRecord) -> ProjectSkillAssign
 pub async fn list_project_skill_assignments(
     store: State<'_, SkillStore>,
     projectId: String,
-) -> Result<Vec<ProjectSkillAssignmentDto>, CommandError> {
+) -> Result<ProjectAssignmentListingDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let records = project_sync::list_assignments_with_staleness(&store, &projectId)?;
-        Ok::<_, anyhow::Error>(records.into_iter().map(to_assignment_dto).collect())
+        let listing = project_sync::list_assignments_with_staleness(&store, &projectId)?;
+        Ok::<_, anyhow::Error>(ProjectAssignmentListingDto {
+            assignments: listing
+                .assignments
+                .into_iter()
+                .map(to_assignment_dto)
+                .collect(),
+            reconciled: listing.reconciled,
+        })
     })
     .await
     .map_err(CommandError::internal)?
     .map_err(CommandError::from_anyhow)
+}
+
+/// A project's assignment rows plus whether the reconcile pass ran.
+///
+/// `reconciled == false` means a Sync-target mutation was in flight and the
+/// listing skipped reconciliation rather than queue behind it: the rows are
+/// the stored ones. Consumers must not read that as healthy.
+#[derive(serde::Serialize, Clone, Type)]
+pub struct ProjectAssignmentListingDto {
+    pub assignments: Vec<ProjectSkillAssignmentDto>,
+    pub reconciled: bool,
 }
 
 #[derive(serde::Serialize, Clone, Type)]
@@ -233,13 +225,10 @@ pub struct ResyncSummaryDto {
 #[allow(non_snake_case)]
 pub async fn resync_project(
     store: State<'_, SkillStore>,
-    sync_mutex: State<'_, SyncMutex>,
     projectId: String,
 ) -> Result<ResyncSummaryDto, CommandError> {
     let store = store.inner().clone();
-    let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
         let now = now_ms();
         let summary = project_sync::resync_project(&store, &projectId, now)?;
         Ok::<_, anyhow::Error>(ResyncSummaryDto {
@@ -258,12 +247,9 @@ pub async fn resync_project(
 #[specta::specta]
 pub async fn resync_all_projects(
     store: State<'_, SkillStore>,
-    sync_mutex: State<'_, SyncMutex>,
 ) -> Result<Vec<ResyncSummaryDto>, CommandError> {
     let store = store.inner().clone();
-    let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
         let now = now_ms();
         let summaries = project_sync::resync_all_projects(&store, now)?;
         Ok::<_, anyhow::Error>(
@@ -300,14 +286,11 @@ pub struct BulkAssignErrorDto {
 #[allow(non_snake_case)]
 pub async fn bulk_assign_skill(
     store: State<'_, SkillStore>,
-    sync_mutex: State<'_, SyncMutex>,
     projectId: String,
     skillId: String,
 ) -> Result<BulkAssignResultDto, CommandError> {
     let store = store.inner().clone();
-    let mutex = sync_mutex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
         let outcomes =
             project_sync::assign_skill_to_project_tools(&store, &projectId, &skillId, now_ms())?;
 

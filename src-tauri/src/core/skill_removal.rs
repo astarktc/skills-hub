@@ -24,6 +24,7 @@ use anyhow::{Context, Result};
 
 use crate::core::{
     errors::SignalError,
+    mutation_guard,
     project_sync::resolve_project_sync_target,
     skill_store::{SkillRecord, SkillStore},
     sync_engine::remove_path_any,
@@ -131,8 +132,9 @@ impl fmt::Display for RemovalReport {
     }
 }
 
-/// Read-only: resolve every path deletion will touch.
-pub fn plan_skill_removal(store: &SkillStore, skill_id: &str) -> Result<RemovalPlan> {
+/// Read-only: resolve every path deletion will touch. Unlocked internal seam
+/// — callers reach it through [`remove_skill`] or hold the guard themselves.
+pub(crate) fn plan_skill_removal(store: &SkillStore, skill_id: &str) -> Result<RemovalPlan> {
     let skill = store.get_skill_by_id(skill_id)?;
     let mut targets: Vec<RemovalTarget> = Vec::new();
 
@@ -171,7 +173,8 @@ pub fn plan_skill_removal(store: &SkillStore, skill_id: &str) -> Result<RemovalP
 /// Execute a plan: remove each target (failures isolated per target), then
 /// the central copy, then the DB record. A central-copy failure is a hard
 /// error that leaves the record in place so the operation can be retried.
-pub fn execute_skill_removal(
+/// Unlocked internal seam.
+pub(crate) fn execute_skill_removal(
     store: &SkillStore,
     skill_id: &str,
     plan: RemovalPlan,
@@ -216,14 +219,20 @@ pub fn execute_skill_removal(
 /// Delete a managed skill everywhere. The record is deleted even when some
 /// targets could not be removed; those surface as the typed
 /// `SignalError::DeleteCleanupFailed` so the frontend can show what is left.
+///
+/// Mutation entry point: serialised against every other Sync-target mutation,
+/// so a deletion cannot interleave with a resync that would re-materialise
+/// the targets it just planned.
 pub fn remove_skill(store: &SkillStore, skill_id: &str) -> Result<RemovalReport> {
-    let plan = plan_skill_removal(store, skill_id)?;
-    let report = execute_skill_removal(store, skill_id, plan)?;
-    let failures = report.failures();
-    if !failures.is_empty() {
-        anyhow::bail!(SignalError::DeleteCleanupFailed { failures });
-    }
-    Ok(report)
+    mutation_guard::serialized(|| {
+        let plan = plan_skill_removal(store, skill_id)?;
+        let report = execute_skill_removal(store, skill_id, plan)?;
+        let failures = report.failures();
+        if !failures.is_empty() {
+            anyhow::bail!(SignalError::DeleteCleanupFailed { failures });
+        }
+        Ok(report)
+    })
 }
 
 #[cfg(test)]

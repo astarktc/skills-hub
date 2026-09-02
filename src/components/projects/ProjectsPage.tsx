@@ -204,6 +204,7 @@ const ProjectsPage = () => {
                   }
                   tools={state.tools}
                   assignments={state.assignments}
+                  assignmentsReconciled={state.assignmentsReconciled}
                   skills={state.skills}
                   pendingCells={state.pendingCells}
                   matrixLoading={state.matrixLoading}

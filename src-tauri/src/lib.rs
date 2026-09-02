@@ -8,11 +8,6 @@ use core::skill_store::{default_db_path, migrate_legacy_db_if_needed, SkillStore
 use tauri::Manager;
 use tauri_plugin_log::{Target, TargetKind};
 
-/// Global mutex to serialize concurrent sync operations (assign/unassign).
-/// Prevents filesystem corruption when multiple assignments run in parallel.
-#[derive(Clone)]
-pub struct SyncMutex(pub Arc<std::sync::Mutex<()>>);
-
 /// The single command registry: every `#[tauri::command]` is listed here
 /// once, and this builder feeds both Tauri's invoke handler and the
 /// TypeScript export (`export_bindings` test), so registration and the
@@ -115,7 +110,6 @@ pub fn run() {
             }
             app.manage(store.clone());
             app.manage(Arc::new(CancelToken::new()));
-            app.manage(SyncMutex(Arc::new(std::sync::Mutex::new(()))));
 
             // Apply persisted zoom level before first paint.
             {

@@ -526,19 +526,7 @@ pub async fn update_managed_skill(
 pub async fn unsync_all_skills(store: State<'_, SkillStore>) -> Result<usize, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let skills = store.list_skills()?;
-        let mut removed_count: usize = 0;
-        for skill in &skills {
-            let targets = store.list_skill_targets(&skill.id)?;
-            for target in &targets {
-                let _ = crate::core::sync_engine::remove_path_any(std::path::Path::new(
-                    &target.target_path,
-                ));
-            }
-            removed_count += targets.len();
-        }
-        store.delete_all_skill_targets()?;
-        Ok::<_, anyhow::Error>(removed_count)
+        crate::core::global_sync::unsync_all_skill_targets(&store)
     })
     .await
     .map_err(CommandError::internal)?
@@ -554,15 +542,7 @@ pub async fn unsync_skill(
 ) -> Result<usize, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let targets = store.list_skill_targets(&skillId)?;
-        for target in &targets {
-            let _ = crate::core::sync_engine::remove_path_any(std::path::Path::new(
-                &target.target_path,
-            ));
-        }
-        let count = targets.len();
-        store.delete_skill_targets(&skillId)?;
-        Ok::<_, anyhow::Error>(count)
+        crate::core::global_sync::unsync_skill_targets(&store, &skillId)
     })
     .await
     .map_err(CommandError::internal)?

@@ -7,6 +7,7 @@ use uuid::Uuid;
 use super::environment::expand_home_path_in;
 use super::errors::SignalError;
 use super::gitignore::{self, IgnoreUpdateOptions};
+use super::mutation_guard;
 use super::project_sync;
 use super::skill_store::{ProjectRecord, ProjectToolRecord, SkillStore};
 use super::sync_engine;
@@ -141,7 +142,13 @@ pub fn register_project_path(
     to_project_dto(&record, store)
 }
 
-pub fn remove_tool_with_cleanup(store: &SkillStore, project_id: &str, tool: &str) -> Result<()> {
+/// Unlocked internal seam: callers reach it through an entry point that has
+/// already taken the mutation guard (`mutation_guard`).
+pub(crate) fn remove_tool_with_cleanup(
+    store: &SkillStore,
+    project_id: &str,
+    tool: &str,
+) -> Result<()> {
     let project = store.get_project_by_id(project_id)?.ok_or_else(|| {
         anyhow::anyhow!(SignalError::NotFound {
             kind: "project".to_string(),
@@ -210,7 +217,21 @@ pub fn remove_tool_with_cleanup(store: &SkillStore, project_id: &str, tool: &str
 /// wrong. Tools already configured keep their records; removed tools go
 /// through [`remove_tool_with_cleanup`]. Unknown tool keys fail before any
 /// write. Returns the resulting tool list.
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
+/// Both composed steps use their unlocked seams — the guard is not reentrant.
 pub fn configure_project_tools(
+    store: &SkillStore,
+    project_id: &str,
+    tools: &[String],
+    ignore: Option<IgnoreUpdateOptions>,
+) -> Result<Vec<ProjectToolDto>> {
+    mutation_guard::serialized(|| {
+        configure_project_tools_unlocked(store, project_id, tools, ignore)
+    })
+}
+
+pub(crate) fn configure_project_tools_unlocked(
     store: &SkillStore,
     project_id: &str,
     tools: &[String],
@@ -245,7 +266,7 @@ pub fn configure_project_tools(
     }
 
     if let Some(options) = ignore {
-        gitignore::update_for_project(store, project_id, options)?;
+        gitignore::update_for_project_unlocked(store, project_id, options)?;
     }
 
     Ok(store
@@ -259,7 +280,17 @@ pub fn configure_project_tools(
         .collect())
 }
 
+/// Artifact removal for a whole project, then the project record.
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
 pub fn remove_project_with_cleanup(store: &SkillStore, project_id: &str) -> Result<()> {
+    mutation_guard::serialized(|| remove_project_with_cleanup_unlocked(store, project_id))
+}
+
+pub(crate) fn remove_project_with_cleanup_unlocked(
+    store: &SkillStore,
+    project_id: &str,
+) -> Result<()> {
     let project = store.get_project_by_id(project_id)?.ok_or_else(|| {
         anyhow::anyhow!(SignalError::NotFound {
             kind: "project".to_string(),

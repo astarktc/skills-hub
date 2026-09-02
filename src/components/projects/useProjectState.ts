@@ -6,6 +6,7 @@ import type {
   ProjectDto,
   ProjectToolDto,
   ProjectSkillAssignmentDto,
+  ProjectAssignmentListingDto,
   ResyncSummaryDto,
   BulkAssignResultDto,
   GitignoreStatusDto,
@@ -19,6 +20,13 @@ export type ProjectState = {
   selectedProjectId: string | null;
   tools: ProjectToolDto[];
   assignments: ProjectSkillAssignmentDto[];
+  /**
+   * Whether the last assignment listing's reconcile pass actually ran. The
+   * backend skips it (rather than queue) while a Sync-target mutation is in
+   * flight, so `false` means the rows shown are stored, not re-derived from
+   * disk — never treat it as "healthy".
+   */
+  assignmentsReconciled: boolean;
   skills: ManagedSkill[];
   toolStatus: ToolStatusDto | null;
   // Loading
@@ -86,6 +94,17 @@ export function useProjectState(): ProjectState {
   );
   const [tools, setTools] = useState<ProjectToolDto[]>([]);
   const [assignments, setAssignments] = useState<ProjectSkillAssignmentDto[]>(
+    [],
+  );
+  const [assignmentsReconciled, setAssignmentsReconciled] = useState(true);
+
+  // Every listing result lands through here, so the reconcile flag can never
+  // drift from the rows it describes.
+  const applyAssignmentListing = useCallback(
+    (listing: ProjectAssignmentListingDto) => {
+      setAssignments(listing.assignments);
+      setAssignmentsReconciled(listing.reconciled);
+    },
     [],
   );
   const [skills, setSkills] = useState<ManagedSkill[]>([]);
@@ -172,7 +191,7 @@ export function useProjectState(): ProjectState {
       // Discard stale results if another selection happened
       if (selectVersionRef.current !== version) return;
       setTools(fetchedTools);
-      setAssignments(fetchedAssignments);
+      applyAssignmentListing(fetchedAssignments);
     } catch (err) {
       if (selectVersionRef.current !== version) return;
       setTools([]);
@@ -183,7 +202,7 @@ export function useProjectState(): ProjectState {
         setMatrixLoading(false);
       }
     }
-  }, []);
+  }, [applyAssignmentListing]);
 
   // Silently re-fetch assignments for a project, keeping stale state when
   // even the re-fetch fails. Shared by mutation error paths and the resync
@@ -196,11 +215,11 @@ export function useProjectState(): ProjectState {
         "listProjectSkillAssignments",
         projectId,
       );
-      setAssignments(updated);
+      applyAssignmentListing(updated);
     } catch {
       // Silent fallback — state may be stale
     }
-  }, []);
+  }, [applyAssignmentListing]);
 
   const registerProject = useCallback(
     async (
@@ -269,7 +288,7 @@ export function useProjectState(): ProjectState {
           "listProjectSkillAssignments",
           selectedProjectId,
         );
-        setAssignments(updated);
+        applyAssignmentListing(updated);
         await loadProjects();
       } catch (err) {
         // Re-fetch to get consistent state even on error
@@ -283,7 +302,13 @@ export function useProjectState(): ProjectState {
         });
       }
     },
-    [selectedProjectId, loadProjects, pendingCells, refreshAssignments],
+    [
+      selectedProjectId,
+      loadProjects,
+      pendingCells,
+      refreshAssignments,
+      applyAssignmentListing,
+    ],
   );
 
   const bulkAssign = useCallback(
@@ -306,7 +331,7 @@ export function useProjectState(): ProjectState {
           "listProjectSkillAssignments",
           selectedProjectId,
         );
-        setAssignments(updated);
+        applyAssignmentListing(updated);
         await loadProjects();
         return result;
       } catch (err) {
@@ -320,7 +345,13 @@ export function useProjectState(): ProjectState {
         });
       }
     },
-    [selectedProjectId, tools, loadProjects, refreshAssignments],
+    [
+      selectedProjectId,
+      tools,
+      loadProjects,
+      refreshAssignments,
+      applyAssignmentListing,
+    ],
   );
 
   const updateProjectPath = useCallback(
@@ -420,6 +451,7 @@ export function useProjectState(): ProjectState {
     selectedProjectId,
     tools,
     assignments,
+    assignmentsReconciled,
     skills,
     toolStatus,
     projectsLoading,

@@ -13,6 +13,7 @@ pub mod gitignore;
 pub mod global_sync;
 pub mod install_finalize;
 pub mod installer;
+pub mod mutation_guard;
 pub mod onboarding;
 pub mod project_ops;
 pub mod project_sync;
