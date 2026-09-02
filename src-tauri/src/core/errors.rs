@@ -35,6 +35,11 @@ pub enum SignalError {
     },
     /// An entity referenced by id does not exist. `kind` is e.g. `project`/`skill`.
     NotFound { kind: String, id: String },
+    /// A tool key does not match any entry in the tool adapter registry.
+    UnknownTool { tool: String },
+    /// A filesystem path cannot serve its intended role. `reason` is a machine
+    /// token (`missing` / `not_a_directory`) the frontend localizes.
+    InvalidPath { path: String, reason: String },
     /// Running the system `git` CLI failed (and the libgit2 fallback is disabled).
     /// `detail` is diagnostic text (error chain + env-var hint), not user copy.
     GitExecFailed { detail: String },
@@ -78,6 +83,10 @@ impl fmt::Display for SignalError {
                 tool,
             } => write!(f, "assignment already exists: {project}:{skill}:{tool}"),
             SignalError::NotFound { kind, id } => write!(f, "{kind} not found: {id}"),
+            SignalError::UnknownTool { tool } => write!(f, "unknown tool: {tool}"),
+            SignalError::InvalidPath { path, reason } => {
+                write!(f, "invalid path ({reason}): {path}")
+            }
             SignalError::GitExecFailed { detail } => {
                 write!(f, "git command execution failed: {detail}")
             }

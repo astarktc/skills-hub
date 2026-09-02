@@ -8,6 +8,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  CommandError,
   GitignoreStatusDto,
   IgnoreUpdateOptions,
   ProjectDto,
@@ -241,12 +242,20 @@ describe("useProjectState add-project → configure-tools → gitignore", () => 
       await result.current.selectProject("p1");
     });
     // Tools persisted, ignore write failed: the command errors but the
-    // backend now lists the new tool set.
+    // backend now lists the new tool set. The rejection carries a real wire
+    // code (typed as `CommandError`, so a fabricated code fails the build) —
+    // this is what the backend raises when the project dir went missing
+    // between registration and the ignore write.
+    const ignoreWriteFailure: CommandError = {
+      code: "INVALID_PATH",
+      path: "/work/p1",
+      reason: "missing",
+    };
     const base = mockInvoke.getMockImplementation()!;
     mockInvoke.mockImplementation((command, ...args) => {
       if (command === "configureProjectTools") {
         return base("configureProjectTools", ...args).then(() =>
-          Promise.reject({ code: "INTERNAL", message: "disk full" }),
+          Promise.reject(ignoreWriteFailure),
         );
       }
       return base(command, ...args);
@@ -255,7 +264,7 @@ describe("useProjectState add-project → configure-tools → gitignore", () => 
     await act(async () => {
       await expect(
         result.current.configureTools(["claude_code"]),
-      ).rejects.toMatchObject({ code: "INTERNAL" });
+      ).rejects.toMatchObject({ code: "INVALID_PATH", reason: "missing" });
     });
 
     expect(result.current.tools.map((t) => t.tool)).toEqual(["claude_code"]);

@@ -72,6 +72,15 @@ pub enum CommandError {
         kind: String,
         id: String,
     },
+    UnknownTool {
+        /// Registry key that matched no tool adapter.
+        tool: String,
+    },
+    InvalidPath {
+        path: String,
+        /// Machine token (`missing` / `not_a_directory`) the frontend localizes.
+        reason: String,
+    },
     Cancelled,
     RateLimited {
         /// Rounded-up minutes until the limit resets; 0 = unknown.
@@ -192,6 +201,8 @@ impl From<SignalError> for CommandError {
                 tool,
             },
             SignalError::NotFound { kind, id } => CommandError::NotFound { kind, id },
+            SignalError::UnknownTool { tool } => CommandError::UnknownTool { tool },
+            SignalError::InvalidPath { path, reason } => CommandError::InvalidPath { path, reason },
             SignalError::GitExecFailed { detail } => CommandError::GitCloneFailed {
                 kind: GitCloneFailureKind::ExecFailed,
                 detail,

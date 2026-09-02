@@ -223,7 +223,10 @@ pub fn update_for_project(
 
     let project_path = Path::new(&project.path);
     if !project_path.is_dir() {
-        bail!("project directory does not exist: {}", project.path);
+        bail!(SignalError::InvalidPath {
+            path: project.path.clone(),
+            reason: "missing".to_string(),
+        });
     }
 
     let tools = store.list_project_tools(project_id)?;

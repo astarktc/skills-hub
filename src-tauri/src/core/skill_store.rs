@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 use tauri::Manager;
 
+use super::errors::SignalError;
 use super::sync_status::{aggregate, ProjectSyncStatus, SyncMode, SyncStatus};
 
 const DB_FILE_NAME: &str = "skills_hub.db";
@@ -715,7 +716,10 @@ impl SkillStore {
                 params![new_path, now_ms, project_id],
             )?;
             if rows == 0 {
-                anyhow::bail!("project not found: {}", project_id);
+                anyhow::bail!(SignalError::NotFound {
+                    kind: "project".to_string(),
+                    id: project_id.to_string(),
+                });
             }
             Ok(())
         })

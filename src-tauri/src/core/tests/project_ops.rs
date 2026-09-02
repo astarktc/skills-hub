@@ -50,11 +50,13 @@ fn register_rejects_non_dir() {
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     let path = tmp.path().to_string_lossy().to_string();
     let result = project_ops::register_project_path(&store, _dir.path(), &path, now_ms());
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
+    let err = result.expect_err("must fail");
     assert!(
-        err.contains("not a directory"),
-        "expected 'not a directory', got: {}",
+        matches!(
+            err.downcast_ref::<crate::core::errors::SignalError>(),
+            Some(crate::core::errors::SignalError::InvalidPath { reason, .. }) if reason == "not_a_directory"
+        ),
+        "expected SignalError::InvalidPath{{not_a_directory}}, got: {:#}",
         err
     );
 }
@@ -772,7 +774,12 @@ fn configure_tools_rejects_unknown_tool_before_writing_anything() {
         }),
     )
     .expect_err("unknown tool must fail");
-    assert!(format!("{:#}", err).contains("unknown tool"));
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::UnknownTool {
+            tool: "not-a-tool".to_string(),
+        })
+    );
     assert!(store.list_project_tools(&project.id).unwrap().is_empty());
     assert!(!project_dir.join(".gitignore").exists());
 }
@@ -783,6 +790,28 @@ fn configure_tools_raises_typed_not_found_for_unknown_project() {
     let err =
         project_ops::configure_project_tools(&store, "missing", &strs(&["claude_code"]), None)
             .expect_err("must fail");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::NotFound {
+            kind: "project".to_string(),
+            id: "missing".to_string(),
+        })
+    );
+}
+
+#[test]
+fn update_project_path_raises_typed_not_found_for_unknown_project() {
+    let (dir, store) = make_store();
+    let target = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&target).expect("create dir");
+    let err = project_ops::update_project_path(
+        &store,
+        dir.path(),
+        "missing",
+        &target.to_string_lossy(),
+        now_ms(),
+    )
+    .expect_err("unknown project must fail");
     assert_eq!(
         err.downcast_ref::<SignalError>(),
         Some(&SignalError::NotFound {

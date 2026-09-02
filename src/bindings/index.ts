@@ -140,7 +140,11 @@ export type CandidateMatch = { kind: "resolved"; subpath: string } | { kind: "am
 /**  Structured command failure crossing the IPC seam. */
 export type CommandError = { code: "TOOL_NOT_INSTALLED"; tool: string } | { code: "TARGET_EXISTS"; path: string } | { code: "TOOL_NOT_WRITABLE"; tool: string; path: string } | { code: "SKILL_INVALID"; reason: string } | { code: "MULTI_SKILLS" } | { code: "SKILL_EXISTS"; 
 /**  Name of the skill directory already present in the central repo. */
-name: string } | { code: "DUPLICATE_PROJECT"; path: string } | { code: "ASSIGNMENT_EXISTS"; project: string; skill: string; tool: string } | { code: "NOT_FOUND"; kind: string; id: string } | { code: "CANCELLED" } | { code: "RATE_LIMITED"; 
+name: string } | { code: "DUPLICATE_PROJECT"; path: string } | { code: "ASSIGNMENT_EXISTS"; project: string; skill: string; tool: string } | { code: "NOT_FOUND"; kind: string; id: string } | { code: "UNKNOWN_TOOL"; 
+/**  Registry key that matched no tool adapter. */
+tool: string } | { code: "INVALID_PATH"; path: string; 
+/**  Machine token (`missing` / `not_a_directory`) the frontend localizes. */
+reason: string } | { code: "CANCELLED" } | { code: "RATE_LIMITED"; 
 /**  Rounded-up minutes until the limit resets; 0 = unknown. */
 resetMinutes: number } | { code: "GIT_CLONE_FAILED"; kind: GitCloneFailureKind; detail: string } | { code: "GITHUB_SKILL_NOT_FOUND"; 
 /**  Human-checkable GitHub tree URL for the missing skill path. */

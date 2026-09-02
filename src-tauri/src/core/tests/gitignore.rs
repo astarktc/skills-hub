@@ -474,7 +474,14 @@ fn project_update_rejects_a_project_whose_directory_is_gone() {
         },
     )
     .expect_err("must fail");
-    assert!(format!("{:#}", err).contains("project directory does not exist"));
+    assert!(
+        matches!(
+            err.downcast_ref::<SignalError>(),
+            Some(SignalError::InvalidPath { reason, .. }) if reason == "missing"
+        ),
+        "expected SignalError::InvalidPath{{missing}}, got: {:#}",
+        err
+    );
     assert!(
         !project_dir.exists(),
         "nothing is created for a missing project dir"

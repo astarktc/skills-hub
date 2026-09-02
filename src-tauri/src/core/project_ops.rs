@@ -119,7 +119,10 @@ pub fn register_project_path(
         .with_context(|| format!("failed to resolve path: {:?}", expanded))?;
 
     if !canonical.is_dir() {
-        bail!("path is not a directory: {:?}", canonical);
+        bail!(SignalError::InvalidPath {
+            path: canonical.to_string_lossy().to_string(),
+            reason: "not_a_directory".to_string(),
+        });
     }
 
     let path_str = canonical.to_string_lossy().to_string();
@@ -139,9 +142,12 @@ pub fn register_project_path(
 }
 
 pub fn remove_tool_with_cleanup(store: &SkillStore, project_id: &str, tool: &str) -> Result<()> {
-    let project = store
-        .get_project_by_id(project_id)?
-        .ok_or_else(|| anyhow::anyhow!("project not found: {}", project_id))?;
+    let project = store.get_project_by_id(project_id)?.ok_or_else(|| {
+        anyhow::anyhow!(SignalError::NotFound {
+            kind: "project".to_string(),
+            id: project_id.to_string(),
+        })
+    })?;
 
     let assignments = store.list_project_skill_assignments_for_project_tool(project_id, tool)?;
 
@@ -218,7 +224,7 @@ pub fn configure_project_tools(
     })?;
     for tool in tools {
         if tool_adapters::adapter_by_key(tool).is_none() {
-            bail!("unknown tool: {}", tool);
+            bail!(SignalError::UnknownTool { tool: tool.clone() });
         }
     }
 
@@ -254,9 +260,12 @@ pub fn configure_project_tools(
 }
 
 pub fn remove_project_with_cleanup(store: &SkillStore, project_id: &str) -> Result<()> {
-    let project = store
-        .get_project_by_id(project_id)?
-        .ok_or_else(|| anyhow::anyhow!("project not found: {}", project_id))?;
+    let project = store.get_project_by_id(project_id)?.ok_or_else(|| {
+        anyhow::anyhow!(SignalError::NotFound {
+            kind: "project".to_string(),
+            id: project_id.to_string(),
+        })
+    })?;
 
     let assignments = store.list_project_skill_assignments(project_id)?;
 
@@ -319,7 +328,10 @@ pub fn update_project_path(
         .with_context(|| format!("failed to resolve path: {:?}", expanded))?;
 
     if !canonical.is_dir() {
-        bail!("path is not a directory: {:?}", canonical);
+        bail!(SignalError::InvalidPath {
+            path: canonical.to_string_lossy().to_string(),
+            reason: "not_a_directory".to_string(),
+        });
     }
 
     let path_str = canonical.to_string_lossy().to_string();
@@ -332,9 +344,12 @@ pub fn update_project_path(
     }
 
     store.update_project_path(project_id, &path_str, now_ms)?;
-    let record = store
-        .get_project_by_id(project_id)?
-        .ok_or_else(|| anyhow::anyhow!("project not found: {}", project_id))?;
+    let record = store.get_project_by_id(project_id)?.ok_or_else(|| {
+        anyhow::anyhow!(SignalError::NotFound {
+            kind: "project".to_string(),
+            id: project_id.to_string(),
+        })
+    })?;
     to_project_dto(&record, store)
 }
 

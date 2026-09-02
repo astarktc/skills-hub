@@ -131,6 +131,33 @@ describe("describeCommandError", () => {
     ).toBe("errors.deleteCleanupFailed\n- /a: denied\n- /b: busy");
   });
 
+  it("names the unknown tool key for UNKNOWN_TOOL", () => {
+    expect(
+      describeCommandError({ code: "UNKNOWN_TOOL", tool: "not-a-tool" }, t),
+    ).toBe('errors.unknownTool {"tool":"not-a-tool"}');
+  });
+
+  it("localizes each INVALID_PATH reason token and falls back for unknown ones", () => {
+    expect(
+      describeCommandError(
+        { code: "INVALID_PATH", path: "/gone", reason: "missing" },
+        t,
+      ),
+    ).toBe('errors.invalidPathMissing {"path":"/gone"}');
+    expect(
+      describeCommandError(
+        { code: "INVALID_PATH", path: "/f.txt", reason: "not_a_directory" },
+        t,
+      ),
+    ).toBe('errors.invalidPathNotADirectory {"path":"/f.txt"}');
+    expect(
+      describeCommandError(
+        { code: "INVALID_PATH", path: "/x", reason: "martian" },
+        t,
+      ),
+    ).toBe('errors.invalidPath {"path":"/x","reason":"martian"}');
+  });
+
   it("names the colliding skill for SKILL_EXISTS", () => {
     expect(
       describeCommandError(

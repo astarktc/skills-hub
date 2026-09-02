@@ -172,9 +172,12 @@ pub async fn remove_project_skill_assignment(
                 id: projectId.clone(),
             })
         })?;
-        let skill = store
-            .get_skill_by_id(&skillId)?
-            .ok_or_else(|| anyhow::anyhow!("skill not found: {}", skillId))?;
+        let skill = store.get_skill_by_id(&skillId)?.ok_or_else(|| {
+            anyhow::anyhow!(SignalError::NotFound {
+                kind: "skill".to_string(),
+                id: skillId.clone(),
+            })
+        })?;
 
         let _lock = mutex.0.lock().unwrap_or_else(|e| e.into_inner());
         project_sync::unassign_and_cleanup(&store, &project, &skill, &tool)

@@ -40,6 +40,31 @@ fn from_anyhow_recovers_signal_errors_through_context() {
 }
 
 #[test]
+fn from_anyhow_recovers_unknown_tool_and_invalid_path_through_context() {
+    let err = anyhow::Error::new(SignalError::UnknownTool {
+        tool: "not-a-tool".to_string(),
+    })
+    .context("configure project tools");
+    match CommandError::from_anyhow(err) {
+        CommandError::UnknownTool { tool } => assert_eq!(tool, "not-a-tool"),
+        other => panic!("expected UnknownTool, got {other}"),
+    }
+
+    let err = anyhow::Error::new(SignalError::InvalidPath {
+        path: "/tmp/gone".to_string(),
+        reason: "missing".to_string(),
+    })
+    .context("update gitignore");
+    match CommandError::from_anyhow(err) {
+        CommandError::InvalidPath { path, reason } => {
+            assert_eq!(path, "/tmp/gone");
+            assert_eq!(reason, "missing");
+        }
+        other => panic!("expected InvalidPath, got {other}"),
+    }
+}
+
+#[test]
 fn from_anyhow_recovers_global_sync_errors() {
     let err = anyhow::Error::new(GlobalSyncError::ToolNotWritable {
         tool_display_name: "Cursor".to_string(),

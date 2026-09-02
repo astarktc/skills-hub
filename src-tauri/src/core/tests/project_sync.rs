@@ -1249,5 +1249,50 @@ fn single_tool_assign_returns_record_and_raises_assignment_exists_on_repeat() {
 
     let err = assign_skill_to_project_tool(&store, &project.id, &skill.id, "no-such-tool", 3002)
         .expect_err("unknown tool must fail");
-    assert!(format!("{:#}", err).contains("unknown tool"));
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::UnknownTool {
+            tool: "no-such-tool".to_string(),
+        })
+    );
+}
+
+#[test]
+fn assign_and_sync_raises_typed_unknown_tool() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+    let skill_dir = make_skill_dir(tmpdir.path(), "test-skill");
+    let project_dir = tmpdir.path().join("my-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "test-skill",
+        &skill_dir.to_string_lossy(),
+    );
+
+    let err = project_sync::assign_and_sync(&store, &project, &skill, "not-a-tool", 2000)
+        .expect_err("unknown tool must fail");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::UnknownTool {
+            tool: "not-a-tool".to_string(),
+        })
+    );
+}
+
+#[test]
+fn resync_project_raises_typed_not_found_for_unknown_project() {
+    let (_db_dir, store) = make_store();
+    let err = match project_sync::resync_project(&store, "missing", 4000) {
+        Ok(_) => panic!("unknown project must fail"),
+        Err(err) => err,
+    };
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::NotFound {
+            kind: "project".to_string(),
+            id: "missing".to_string(),
+        })
+    );
 }

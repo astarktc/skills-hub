@@ -21,6 +21,8 @@ const COMMAND_ERROR_CODE_MAP = {
   DUPLICATE_PROJECT: true,
   ASSIGNMENT_EXISTS: true,
   NOT_FOUND: true,
+  UNKNOWN_TOOL: true,
+  INVALID_PATH: true,
   CANCELLED: true,
   RATE_LIMITED: true,
   GIT_CLONE_FAILED: true,
@@ -61,6 +63,11 @@ const GIT_CLONE_HINT_KEYS: Record<string, string> = {
   unknown: "errors.gitCloneUnknown",
 };
 
+const INVALID_PATH_KEYS: Record<string, string> = {
+  missing: "errors.invalidPathMissing",
+  not_a_directory: "errors.invalidPathNotADirectory",
+};
+
 /**
  * Localized user-facing message for a command failure, or `null` when the
  * failure should be silently ignored (user-initiated cancellation).
@@ -91,6 +98,14 @@ export function describeCommandError(
       return t("projects.assignmentExistsError");
     case "NOT_FOUND":
       return t("projects.notFoundError") + `: ${e.kind}:${e.id}`;
+    case "UNKNOWN_TOOL":
+      return t("errors.unknownTool", { tool: e.tool });
+    case "INVALID_PATH": {
+      const key = INVALID_PATH_KEYS[e.reason];
+      return key
+        ? t(key, { path: e.path })
+        : t("errors.invalidPath", { path: e.path, reason: e.reason });
+    }
     case "CANCELLED":
       return null;
     case "RATE_LIMITED":

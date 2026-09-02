@@ -37,8 +37,11 @@ pub fn assign_and_sync(
     tool_key: &str,
     now: i64,
 ) -> Result<ProjectSkillAssignmentRecord> {
-    let adapter = tool_adapters::adapter_by_key(tool_key)
-        .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", tool_key))?;
+    let adapter = tool_adapters::adapter_by_key(tool_key).ok_or_else(|| {
+        anyhow::anyhow!(SignalError::UnknownTool {
+            tool: tool_key.to_string(),
+        })
+    })?;
 
     let record = ProjectSkillAssignmentRecord {
         id: uuid::Uuid::new_v4().to_string(),
@@ -247,9 +250,17 @@ pub(crate) fn sync_single_assignment(
 ) -> Result<()> {
     let skill = store
         .get_skill_by_id(&assignment.skill_id)?
-        .ok_or_else(|| anyhow::anyhow!("skill not found: {}", assignment.skill_id))?;
-    let adapter = tool_adapters::adapter_by_key(&assignment.tool)
-        .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", assignment.tool))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(SignalError::NotFound {
+                kind: "skill".to_string(),
+                id: assignment.skill_id.clone(),
+            })
+        })?;
+    let adapter = tool_adapters::adapter_by_key(&assignment.tool).ok_or_else(|| {
+        anyhow::anyhow!(SignalError::UnknownTool {
+            tool: assignment.tool.clone(),
+        })
+    })?;
 
     let source = Path::new(&skill.central_path);
     let target = resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name);
@@ -271,9 +282,12 @@ pub(crate) fn sync_single_assignment(
 }
 
 pub fn resync_project(store: &SkillStore, project_id: &str, now: i64) -> Result<ResyncSummary> {
-    let project = store
-        .get_project_by_id(project_id)?
-        .ok_or_else(|| anyhow::anyhow!("project not found: {}", project_id))?;
+    let project = store.get_project_by_id(project_id)?.ok_or_else(|| {
+        anyhow::anyhow!(SignalError::NotFound {
+            kind: "project".to_string(),
+            id: project_id.to_string(),
+        })
+    })?;
     let assignments = store.list_project_skill_assignments(project_id)?;
     let mut summary = ResyncSummary {
         project_id: project_id.to_string(),
@@ -458,8 +472,11 @@ pub fn unassign_and_cleanup(
     skill: &SkillRecord,
     tool_key: &str,
 ) -> Result<()> {
-    let adapter = tool_adapters::adapter_by_key(tool_key)
-        .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", tool_key))?;
+    let adapter = tool_adapters::adapter_by_key(tool_key).ok_or_else(|| {
+        anyhow::anyhow!(SignalError::UnknownTool {
+            tool: tool_key.to_string(),
+        })
+    })?;
 
     let target = resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name);
 

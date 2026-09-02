@@ -288,9 +288,12 @@ pub fn update_managed_skill_from_source(
     store: &SkillStore,
     skill_id: &str,
 ) -> Result<UpdateResult> {
-    let mut record = store
-        .get_skill_by_id(skill_id)?
-        .ok_or_else(|| anyhow::anyhow!("skill not found"))?;
+    let mut record = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
+        anyhow::anyhow!(SignalError::NotFound {
+            kind: "skill".to_string(),
+            id: skill_id.to_string(),
+        })
+    })?;
 
     let central_path = PathBuf::from(record.central_path.clone());
     if !central_path.exists() {

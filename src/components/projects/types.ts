@@ -4,6 +4,7 @@
 // This shim is the single import home for the projects world: components
 // import from here, never from src/bindings/ directly.
 
+export type { CommandError } from "../../bindings";
 export type { ProjectDto } from "../../bindings";
 export type { ProjectToolDto } from "../../bindings";
 export type { ProjectSkillAssignmentDto } from "../../bindings";
