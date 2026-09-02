@@ -261,6 +261,65 @@ describe("useProjectState add-project → configure-tools → gitignore", () => 
     expect(result.current.tools.map((t) => t.tool)).toEqual(["claude_code"]);
   });
 
+  it("retains the intent when the command fails so a retry replays it", async () => {
+    const { result } = await renderReady();
+    const intent: IgnoreUpdateOptions = {
+      add_to_gitignore: true,
+      add_to_exclude: true,
+    };
+    await act(async () => {
+      await result.current.registerProject("/work/p1", intent);
+    });
+    await act(async () => {
+      await result.current.selectProject("p1");
+    });
+
+    const base = mockInvoke.getMockImplementation()!;
+    let failNext = true;
+    mockInvoke.mockImplementation((command, ...args) => {
+      if (command === "configureProjectTools" && failNext) {
+        failNext = false;
+        return Promise.reject({ code: "INTERNAL", message: "disk full" });
+      }
+      return base(command, ...args);
+    });
+
+    await act(async () => {
+      await expect(
+        result.current.configureTools(["claude_code"]),
+      ).rejects.toMatchObject({ code: "INTERNAL" });
+    });
+    // The modal stays open on failure; Confirm again must carry the intent.
+    await act(async () => {
+      await result.current.configureTools(["claude_code"]);
+    });
+
+    expect(
+      callsTo("configureProjectTools").map(([, , gitignore]) => gitignore),
+    ).toEqual([intent, intent]);
+  });
+
+  it("discards the intent when the tool-config modal is dismissed", async () => {
+    const { result } = await renderReady();
+    await act(async () => {
+      await result.current.registerProject("/work/p1", {
+        add_to_gitignore: true,
+        add_to_exclude: false,
+      });
+    });
+    await act(async () => {
+      await result.current.selectProject("p1");
+    });
+    act(() => {
+      result.current.discardPendingIgnore();
+    });
+    await act(async () => {
+      await result.current.configureTools(["claude_code"]);
+    });
+
+    expect(callsTo("configureProjectTools")[0]?.[2]).toBeNull();
+  });
+
   it("refreshes tools, assignments and the project list after configuring", async () => {
     const { result } = await renderReady();
     await act(async () => {

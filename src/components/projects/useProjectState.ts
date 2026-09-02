@@ -57,8 +57,14 @@ export type ProjectState = {
   ) => Promise<ProjectDto>;
   resyncAll: () => Promise<ResyncSummaryDto[]>;
   loadToolStatus: () => Promise<void>;
-  /** Make `tools` the selected project's tool set (one backend command). */
+  /**
+   * Make `tools` the selected project's tool set (one backend command).
+   * A pending ignore intent rides along and is consumed only on success, so
+   * a retry after a failure replays it.
+   */
   configureTools: (tools: string[]) => Promise<void>;
+  /** Abandon a pending ignore intent (tool-config modal dismissed). */
+  discardPendingIgnore: () => void;
   getGitignoreStatus: (projectId: string) => Promise<GitignoreStatusDto>;
   updateGitignore: (
     projectId: string,
@@ -357,7 +363,6 @@ export function useProjectState(): ProjectState {
         pendingIgnore?.projectId === selectedProjectId
           ? pendingIgnore.options
           : null;
-      setPendingIgnore(null);
       try {
         const updatedTools = await invokeTauri(
           "configureProjectTools",
@@ -366,6 +371,10 @@ export function useProjectState(): ProjectState {
           gitignore,
         );
         setTools(updatedTools);
+        // Consume the intent only once the backend has written it. On
+        // rejection the modal stays open, so keeping the intent lets a
+        // retry replay it instead of silently persisting tools alone.
+        setPendingIgnore(null);
       } catch (err) {
         // The tools may have been persisted before the ignore write failed;
         // converge on the backend's view (silently, like refreshAssignments).
@@ -385,6 +394,13 @@ export function useProjectState(): ProjectState {
     },
     [selectedProjectId, pendingIgnore, refreshAssignments, loadProjects],
   );
+
+  // Dismissing the tool-config modal abandons the registration flow that
+  // captured the intent, so drop it: otherwise it would leak into a later
+  // tool-config for the same project the operator never opted into.
+  const discardPendingIgnore = useCallback(() => {
+    setPendingIgnore(null);
+  }, []);
 
   const getGitignoreStatus = useCallback(
     (projectId: string) =>
@@ -432,6 +448,7 @@ export function useProjectState(): ProjectState {
     resyncAll,
     loadToolStatus,
     configureTools,
+    discardPendingIgnore,
     getGitignoreStatus,
     updateGitignore,
     setShowAddModal,

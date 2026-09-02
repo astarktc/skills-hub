@@ -267,7 +267,10 @@ const ProjectsPage = () => {
           confirmLabel: t("projects.toolConfigConfirm"),
         }}
         onConfirm={handleToolConfigConfirm}
-        onRequestClose={() => state.setShowToolConfigModal(false)}
+        onRequestClose={() => {
+          state.discardPendingIgnore();
+          state.setShowToolConfigModal(false);
+        }}
         t={t}
       />
 
