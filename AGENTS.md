@@ -92,7 +92,7 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   types, narrowed with `Pick<>`, are the established pattern for declaring deps). A world may be built
   from smaller building-block hooks it owns (e.g. `useAddSkillFlow` instantiates `useCandidatePick`
   twice); those are internal to that world, not a cross-world seam. Refresh data by re-invoking the relevant command
-  (e.g. `invoke('get_managed_skills')`) after a mutation.
+  (e.g. `invokeTauri("getManagedSkills")`) after a mutation.
 - **Frontend tests are hook-level only** (vitest + `renderHook`, jsdom; colocated `src/**/*.test.ts`,
   type-checked by `npm run build`): mock at module seams — `src/lib/tauri.ts` for backend calls,
   `sonner` for toasts, `@tauri-apps/api/core` for `Channel`. Every hook **and component** calls the
@@ -120,11 +120,14 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   Leave them alone unless explicitly wiring them up.
 - Styles live in `src/App.css` / `src/index.css`. There are no CSS Modules — don't add the pattern.
 - Path handling must support `~` expansion (`core/environment.rs::expand_home_path_in(home, input)`).
-- **Core never reads the environment.** `core/environment.rs` is the only core caller of `dirs::home_dir()`;
-  every other core function takes explicit roots (`home: &Path`, `InstallerPaths { home, central_dir,
-  cache_dir }`) so tests substitute a temp dir. Commands resolve roots once at the seam (`installer_paths`,
-  `resolve_central_repo_path_for_app` in `commands/mod.rs`) — never thread `tauri::AppHandle` into `core/`
-  (`cache_cleanup.rs`/`temp_cleanup.rs`/`skill_store::default_db_path` keep thin adapters by exception).
+- **Core never resolves filesystem roots from the environment.** `core/environment.rs` is the only core caller
+  of `dirs::home_dir()`; every other core function takes explicit roots (`home: &Path`, `InstallerPaths { home,
+  central_dir, cache_dir }`) so tests substitute a temp dir. Commands resolve roots once at the seam
+  (`installer_paths`, `resolve_central_repo_path_for_app` in `commands/mod.rs`) — never thread
+  `tauri::AppHandle` into `core/`. Sanctioned exceptions: `cache_cleanup.rs`/`temp_cleanup.rs`/
+  `skill_store::default_db_path`/`skill_store::migrate_legacy_db_if_needed` keep thin `dirs::*` adapters; and
+  `SKILLS_HUB_*` **feature-flag env vars** (`git_fetcher.rs`, `sync_engine.rs`, `install_finalize.rs`) are read
+  where they apply — they tune behaviour, never locate data.
 - Sync uses a triple fallback: symlink → junction (Windows) → copy.
 - **Global sync fan-out is backend-owned.** `sync_skills_to_tools` (one batch command; core engine in
   `core/global_sync.rs`) handles installedness filtering, shared-dir dedupe, overwrite policy (batch

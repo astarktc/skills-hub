@@ -53,7 +53,7 @@ One discovered directory with its subpath, name, description and validity. "Inst
 _Avoid_: skill entry, hit
 
 **Sync status**:
-The lifecycle of one synced artifact (a project assignment row or a global skill target row): `pending` → `synced` / `stale` / `missing` / `error`. A typed enum (`SyncStatus`, `core/sync_status.rs`) whose stored and wire spelling are those strings; the store parses it at its seam (legacy `ok` reads as `synced`; an unrecognised value surfaces as `error` with the raw value as diagnostic, never as healthy). Status changes are typed transitions (`AssignmentTransition`), and the "what should it be" decision (`next_status`) is pure so a reconcile pass can plan before it writes.
+The lifecycle of one synced artifact (a project assignment row or a global skill target row): `pending` → `synced` / `stale` / `missing` / `error`. A typed enum (`SyncStatus`, `core/sync_status.rs`) whose stored and wire spelling are those strings; the store parses it at its seam (legacy `ok` reads as `synced`; an unrecognised value surfaces as `error` with the raw value as diagnostic — the store never coerces it to healthy). Status changes are typed transitions (`AssignmentTransition`), and the "what should it be" decision (`next_status`) is pure so a reconcile pass can plan before it writes. The reconcile pass (run by the project listing) may re-derive any row's status from what it observes on disk — source/target presence and, for copies, the content hash — and write the canonical string; that is how a legacy or `error` row recovers, and it is grounded in observation, not in the stored value.
 _Avoid_: state, health, "ok"
 
 **Sync mode**:
