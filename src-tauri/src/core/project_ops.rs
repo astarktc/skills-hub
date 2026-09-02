@@ -4,13 +4,12 @@ use specta::Type;
 use std::path::Path;
 use uuid::Uuid;
 
+use super::artifact_removal::{self, RemovalReport, RemovalScope};
 use super::environment::expand_home_path_in;
 use super::errors::SignalError;
 use super::gitignore::{self, IgnoreUpdateOptions};
 use super::mutation_guard;
-use super::project_sync;
 use super::skill_store::{ProjectRecord, ProjectToolRecord, SkillStore};
-use super::sync_engine;
 use super::sync_status::{ProjectSyncStatus, SyncMode, SyncStatus};
 use super::tool_adapters;
 
@@ -48,38 +47,6 @@ pub struct ProjectSkillAssignmentDto {
     pub synced_at: Option<i64>,
     pub content_hash: Option<String>,
     pub created_at: i64,
-}
-
-/// Best-effort removal of one project-scope synced artifact.
-///
-/// The single shape every cleanup path shares: resolve the tool's project
-/// skills dir, then remove the entry named `skill_name`. Presence is decided
-/// by `symlink_metadata`, not `exists`, because the usual orphan is a broken
-/// symlink. An unknown tool key or an empty skill name resolves to nothing to
-/// remove.
-///
-/// Returns whether an artifact was found and removed. Failures are logged and
-/// reported as `false` rather than propagated — cleanup is best-effort by
-/// design, so one stuck path must not block a tool or project removal.
-fn remove_project_artifact(project_path: &str, tool: &str, skill_name: &str) -> bool {
-    if skill_name.is_empty() {
-        return false;
-    }
-    let Some(adapter) = tool_adapters::adapter_by_key(tool) else {
-        return false;
-    };
-    let target =
-        project_sync::resolve_project_sync_target(Path::new(project_path), adapter, skill_name);
-    if target.symlink_metadata().is_err() {
-        return false;
-    }
-    match sync_engine::remove_path_any(&target) {
-        Ok(()) => true,
-        Err(err) => {
-            log::warn!("failed to remove project artifact {:?}: {:#}", target, err);
-            false
-        }
-    }
 }
 
 pub fn project_name_from_path(path: &str) -> String {
@@ -142,72 +109,49 @@ pub fn register_project_path(
     to_project_dto(&record, store)
 }
 
+/// Remove one configured Tool from a project: the
+/// [`RemovalScope::ProjectTool`] plan, executed once, then this caller's
+/// final policy — the project-tool row is removed **only** when every
+/// artifact went. A tool whose artifact stayed keeps its row (and its `error`
+/// assignment rows) so the operator can retry the same removal; the failures
+/// are returned in the report for the caller to raise.
+///
+/// Rows the plan could not locate an artifact for (unknown tool key, missing
+/// skill name) are left alone by the module; an unknown tool key cannot reach
+/// here because [`configure_project_tools_unlocked`] rejects it first.
+///
 /// Unlocked internal seam: callers reach it through an entry point that has
 /// already taken the mutation guard (`mutation_guard`).
 pub(crate) fn remove_tool_with_cleanup(
     store: &SkillStore,
     project_id: &str,
     tool: &str,
-) -> Result<()> {
-    let project = store.get_project_by_id(project_id)?.ok_or_else(|| {
+) -> Result<RemovalReport> {
+    store.get_project_by_id(project_id)?.ok_or_else(|| {
         anyhow::anyhow!(SignalError::NotFound {
             kind: "project".to_string(),
             id: project_id.to_string(),
         })
     })?;
 
-    let assignments = store.list_project_skill_assignments_for_project_tool(project_id, tool)?;
+    let scope = RemovalScope::ProjectTool {
+        project_id: project_id.to_string(),
+        tool_key: tool.to_string(),
+    };
+    let plan = artifact_removal::plan(store, Path::new(""), &scope)?;
+    let report = artifact_removal::execute_unlocked(store, plan)?;
 
-    for assignment in &assignments {
-        match store.get_skill_by_id(&assignment.skill_id) {
-            Ok(Some(skill)) => {
-                if let Err(e) = project_sync::unassign_and_cleanup(store, &project, &skill, tool) {
-                    log::warn!(
-                        "remove_tool_with_cleanup: failed to unassign skill {} for tool {}: {:#}",
-                        assignment.skill_id,
-                        tool,
-                        e
-                    );
-                }
-            }
-            Ok(None) => {
-                // Skill record missing from DB -- orphaned assignment.
-                // Do best-effort filesystem cleanup via adapter path resolution.
-                log::warn!(
-                    "remove_tool_with_cleanup: skill {} not found; cleaning up orphaned assignment for tool {}",
-                    assignment.skill_id,
-                    tool
-                );
-                // Use the stored skill name (not the UUID) for filesystem cleanup.
-                remove_project_artifact(&project.path, tool, &assignment.skill_name);
-                // Clean up the DB record directly
-                if let Err(e) =
-                    store.remove_project_skill_assignment(&project.id, &assignment.skill_id, tool)
-                {
-                    log::warn!("failed to remove orphaned assignment record: {:#}", e);
-                }
-            }
-            Err(e) => {
-                log::warn!(
-                    "remove_tool_with_cleanup: error looking up skill {}: {:#}",
-                    assignment.skill_id,
-                    e
-                );
-                // Best-effort: clean up the assignment record to avoid orphaned rows
-                if let Err(e2) =
-                    store.remove_project_skill_assignment(&project.id, &assignment.skill_id, tool)
-                {
-                    log::warn!(
-                        "failed to remove assignment record after lookup error: {:#}",
-                        e2
-                    );
-                }
-            }
-        }
+    if report.failures().is_empty() {
+        store.remove_project_tool(project_id, tool)?;
+    } else {
+        log::warn!(
+            "remove_tool_with_cleanup: keeping project tool row {}/{} for retry: {}",
+            project_id,
+            tool,
+            report
+        );
     }
-
-    store.remove_project_tool(project_id, tool)?;
-    Ok(())
+    Ok(report)
 }
 
 /// Make `tools` the project's configured tool set, then (optionally) update
@@ -259,14 +203,22 @@ pub(crate) fn configure_project_tools_unlocked(
             })?;
         }
     }
+    // Continue semantics: one tool whose artifacts could not be removed must
+    // not stop the others (or the ignore update). Its failures are collected
+    // and raised once, after the configuration is otherwise applied.
+    let mut failures: Vec<String> = Vec::new();
     for record in &persisted {
         if !tools.contains(&record.tool) {
-            remove_tool_with_cleanup(store, project_id, &record.tool)?;
+            failures.extend(remove_tool_with_cleanup(store, project_id, &record.tool)?.failures());
         }
     }
 
     if let Some(options) = ignore {
         gitignore::update_for_project_unlocked(store, project_id, options)?;
+    }
+
+    if !failures.is_empty() {
+        bail!(SignalError::DeleteCleanupFailed { failures });
     }
 
     Ok(store
@@ -287,50 +239,36 @@ pub fn remove_project_with_cleanup(store: &SkillStore, project_id: &str) -> Resu
     mutation_guard::serialized(|| remove_project_with_cleanup_unlocked(store, project_id))
 }
 
+/// The [`RemovalScope::Project`] plan, executed once, then this caller's
+/// final policy — mirroring the whole-skill rule of ADR-0002: the project row
+/// goes only when every artifact went. If any removal failed, the project and
+/// its `error` assignment rows are kept and the typed `DeleteCleanupFailed`
+/// names what is still on disk, so a retry can re-plan exactly those paths.
+///
+/// Assignment rows the plan skipped (no locatable artifact: unknown tool key,
+/// no skill name) are deleted with the project — `delete_project` cascades
+/// `project_skill_assignments` — because there is nothing left to retry for
+/// them.
 pub(crate) fn remove_project_with_cleanup_unlocked(
     store: &SkillStore,
     project_id: &str,
 ) -> Result<()> {
-    let project = store.get_project_by_id(project_id)?.ok_or_else(|| {
+    store.get_project_by_id(project_id)?.ok_or_else(|| {
         anyhow::anyhow!(SignalError::NotFound {
             kind: "project".to_string(),
             id: project_id.to_string(),
         })
     })?;
 
-    let assignments = store.list_project_skill_assignments(project_id)?;
+    let scope = RemovalScope::Project {
+        project_id: project_id.to_string(),
+    };
+    let plan = artifact_removal::plan(store, Path::new(""), &scope)?;
+    let report = artifact_removal::execute_unlocked(store, plan)?;
 
-    for assignment in &assignments {
-        if assignment.status.has_deployed_artifact() {
-            match store.get_skill_by_id(&assignment.skill_id) {
-                Ok(Some(skill)) => {
-                    remove_project_artifact(&project.path, &assignment.tool, &skill.name);
-                }
-                Ok(None) => {
-                    // Skill record gone: fall back to the stored skill name.
-                    if !remove_project_artifact(
-                        &project.path,
-                        &assignment.tool,
-                        &assignment.skill_name,
-                    ) {
-                        log::warn!(
-                            "skill {} not found during project cleanup; \
-                             orphaned symlink may remain in project {:?} for tool {}",
-                            assignment.skill_id,
-                            project.path,
-                            assignment.tool
-                        );
-                    }
-                }
-                Err(e) => {
-                    log::warn!(
-                        "error looking up skill {} during project cleanup: {}",
-                        assignment.skill_id,
-                        e
-                    );
-                }
-            }
-        }
+    let failures = report.failures();
+    if !failures.is_empty() {
+        bail!(SignalError::DeleteCleanupFailed { failures });
     }
 
     store.delete_project(project_id)?;

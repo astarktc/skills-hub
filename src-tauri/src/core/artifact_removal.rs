@@ -68,14 +68,20 @@ pub enum RemovalScope {
     /// One skill × Tool pair at global scope, expanded across the tool's
     /// shared skills dir group.
     SkillTool { skill_id: String, tool_key: String },
-    /// Every Sync target of one Project. Implemented and tested here; the
-    /// project-side callers are rewired onto it by ticket 05.
-    #[allow(dead_code)]
+    /// Every Sync target of one Project. Planned by
+    /// `project_ops::remove_project_with_cleanup`.
     Project { project_id: String },
-    /// One Project × Tool pair. Same ticket-05 note as [`Self::Project`].
-    #[allow(dead_code)]
+    /// One Project × Tool pair. Planned by
+    /// `project_ops::remove_tool_with_cleanup`.
     ProjectTool {
         project_id: String,
+        tool_key: String,
+    },
+    /// One Project × skill × Tool triple — a single assignment row. Planned
+    /// by `project_sync::unassign_and_cleanup`.
+    ProjectSkillTool {
+        project_id: String,
+        skill_id: String,
         tool_key: String,
     },
     /// Every global Sync target of every Managed skill. "Uninstall
@@ -227,7 +233,9 @@ impl fmt::Display for RemovalReport {
 
 /// Read-only: resolve every path `scope` touches, deduped by path with the
 /// rows describing each path attached. `home` decides Tool installedness for
-/// the [`RemovalScope::SkillTool`] scope and is unused by the others.
+/// the [`RemovalScope::SkillTool`] scope and is unused by the others (the
+/// project scopes resolve their paths from the stored project path, so their
+/// callers pass an empty path).
 /// Unlocked internal seam.
 pub(crate) fn plan(store: &SkillStore, home: &Path, scope: &RemovalScope) -> Result<RemovalPlan> {
     let mut builder = TargetBuilder::default();
@@ -268,6 +276,14 @@ pub(crate) fn plan(store: &SkillStore, home: &Path, scope: &RemovalScope) -> Res
             let assignments =
                 store.list_project_skill_assignments_for_project_tool(project_id, tool_key)?;
             push_assignments(store, &mut builder, assignments)?;
+        }
+        RemovalScope::ProjectSkillTool {
+            project_id,
+            skill_id,
+            tool_key,
+        } => {
+            let assignment = store.get_project_skill_assignment(project_id, skill_id, tool_key)?;
+            push_assignments(store, &mut builder, assignment.into_iter().collect())?;
         }
         RemovalScope::EveryGlobalTarget => {
             for skill in store.list_skills()? {

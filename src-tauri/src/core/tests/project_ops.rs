@@ -618,6 +618,185 @@ fn remove_tool_with_cleanup_orphan_branch_removes_project_scope_target() {
         .is_empty());
 }
 
+/// The orphan case as a plan/report assertion: the assignment row names a
+/// skill that no longer exists, so the plan locates the artifact from the
+/// row's own `skill_name`, removes it, and settles the row.
+#[test]
+fn remove_tool_with_cleanup_plans_orphan_rows_from_their_stored_skill_name() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+    let (project, skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rtc-pi-report");
+
+    orphan_skill_row(&store, &skill.id);
+
+    let planned = crate::core::artifact_removal::plan(
+        &store,
+        std::path::Path::new(""),
+        &crate::core::artifact_removal::RemovalScope::ProjectTool {
+            project_id: project.id.clone(),
+            tool_key: "pi".to_string(),
+        },
+    )
+    .expect("plan");
+    assert_eq!(planned.targets.len(), 1, "one orphan row, one artifact");
+    assert_eq!(
+        planned.targets[0].path, target,
+        "planned from the row's stored skill name"
+    );
+
+    let report =
+        project_ops::remove_tool_with_cleanup(&store, &project.id, "pi").expect("remove tool");
+
+    assert!(report.failures().is_empty());
+    assert_eq!(report.removed_rows(), 1);
+    assert!(target.symlink_metadata().is_err(), "artifact removed");
+    assert!(store
+        .list_project_skill_assignments_for_project_tool(&project.id, "pi")
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .list_project_tools(&project.id)
+        .unwrap()
+        .iter()
+        .all(|t| t.tool != "pi"));
+}
+
+/// Make the *parent* of `target` read-only so a symlink at `target` cannot be
+/// unlinked. `false` means permissions are not enforced (root) — skip.
+#[cfg(unix)]
+fn lock_parent(target: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let parent = target.parent().expect("target has a parent");
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o555)).unwrap();
+    if fs::remove_file(target).is_ok() {
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o755)).unwrap();
+        return false;
+    }
+    true
+}
+
+#[cfg(unix)]
+fn unlock_parent(target: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let parent = target.parent().expect("target has a parent");
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A tool whose artifact could not be removed keeps its project-tool row, so
+/// the operator can retry the same removal against the same plan.
+#[cfg(unix)]
+#[test]
+fn remove_tool_with_cleanup_keeps_the_tool_row_when_an_artifact_stays() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+    let (project, skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rtc-pi-stuck");
+    if !lock_parent(&target) {
+        return;
+    }
+
+    let report = project_ops::remove_tool_with_cleanup(&store, &project.id, "pi")
+        .expect("report, not error");
+    unlock_parent(&target);
+
+    assert_eq!(report.failures().len(), 1);
+    assert_eq!(report.failed_rows(), 1);
+    let assignment = store
+        .get_project_skill_assignment(&project.id, &skill.id, "pi")
+        .unwrap()
+        .expect("row kept");
+    assert_eq!(assignment.status, SyncStatus::Error);
+    assert!(
+        store
+            .list_project_tools(&project.id)
+            .unwrap()
+            .iter()
+            .any(|t| t.tool == "pi"),
+        "the project tool row is kept for a retry"
+    );
+}
+
+/// Continue semantics: a stuck tool does not stop the rest of the batch — the
+/// added tool is persisted and the failures are raised once, at the end.
+#[cfg(unix)]
+#[test]
+fn configure_tools_applies_the_rest_then_raises_the_removal_failures() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+    let (project, _skill, target) = setup_pi_assignment(tmpdir.path(), &store, "cfg-pi-stuck");
+    if !lock_parent(&target) {
+        return;
+    }
+
+    let err = project_ops::configure_project_tools(
+        &store,
+        &project.id,
+        &["claude_code".to_string()],
+        None,
+    )
+    .expect_err("the stuck artifact is reported");
+    unlock_parent(&target);
+
+    match err.downcast_ref::<SignalError>() {
+        Some(SignalError::DeleteCleanupFailed { failures }) => {
+            assert_eq!(failures.len(), 1);
+            assert!(failures[0].starts_with(&format!("{}: ", target.display())));
+        }
+        other => panic!("expected DeleteCleanupFailed, got {:?}", other),
+    }
+
+    let tools: Vec<String> = store
+        .list_project_tools(&project.id)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.tool)
+        .collect();
+    assert!(
+        tools.contains(&"claude_code".to_string()),
+        "the requested tool was still added: {:?}",
+        tools
+    );
+    assert!(
+        tools.contains(&"pi".to_string()),
+        "the stuck tool is kept for a retry: {:?}",
+        tools
+    );
+}
+
+/// The whole-skill rule of ADR-0002 at project scope: a failed artifact keeps
+/// the project and its `error` rows, so a retry can still find every path.
+#[cfg(unix)]
+#[test]
+fn remove_project_with_cleanup_keeps_the_project_when_an_artifact_stays() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+    let (project, skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rpc-pi-stuck");
+    if !lock_parent(&target) {
+        return;
+    }
+
+    let err = project_ops::remove_project_with_cleanup(&store, &project.id)
+        .expect_err("a stuck artifact keeps the project");
+    unlock_parent(&target);
+
+    match err.downcast_ref::<SignalError>() {
+        Some(SignalError::DeleteCleanupFailed { failures }) => {
+            assert_eq!(failures.len(), 1);
+            assert!(failures[0].starts_with(&format!("{}: ", target.display())));
+        }
+        other => panic!("expected DeleteCleanupFailed, got {:?}", other),
+    }
+
+    assert!(
+        store.get_project_by_id(&project.id).unwrap().is_some(),
+        "the project is kept so the failure stays retryable"
+    );
+    let assignment = store
+        .get_project_skill_assignment(&project.id, &skill.id, "pi")
+        .unwrap()
+        .expect("row kept");
+    assert_eq!(assignment.status, SyncStatus::Error);
+}
+
 #[test]
 fn register_expands_tilde_against_home() {
     let home = tempfile::tempdir().expect("home");

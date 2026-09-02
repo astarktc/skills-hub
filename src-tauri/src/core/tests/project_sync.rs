@@ -261,6 +261,87 @@ fn unassign_target_not_found_cleans_db() {
     assert!(assignment.is_none(), "DB record should be deleted");
 }
 
+/// Make the *parent* of `target` read-only so a symlink at `target` cannot
+/// be unlinked. Returns `false` when permissions are not enforced (root), so
+/// the caller can skip.
+#[cfg(unix)]
+fn lock_parent(target: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let parent = target.parent().expect("target has a parent");
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o555)).unwrap();
+    if fs::remove_file(target).is_ok() {
+        // Root ignores the mode bits; nothing to test.
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o755)).unwrap();
+        return false;
+    }
+    true
+}
+
+#[cfg(unix)]
+fn unlock_parent(target: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let parent = target.parent().expect("target has a parent");
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// ADR-0002 at project scope: the row that locates a stuck artifact is kept
+/// with Sync status `error`, and the caller's final policy turns the report's
+/// failures into the typed `DeleteCleanupFailed` naming the path.
+#[cfg(unix)]
+#[test]
+fn unassign_failure_keeps_the_row_as_error_and_reports_the_path() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    let skill_dir = make_skill_dir(tmpdir.path(), "stuck-skill");
+    let project_dir = tmpdir.path().join("stuck-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "stuck-skill",
+        &skill_dir.to_string_lossy(),
+    );
+    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000)
+        .expect("assign should succeed");
+
+    let target = project_dir.join(".claude/skills/stuck-skill");
+    if !lock_parent(&target) {
+        return; // running as root
+    }
+
+    let err = project_sync::unassign_and_cleanup(&store, &project, &skill, "claude_code")
+        .expect_err("a stuck artifact must fail the unassign");
+    unlock_parent(&target);
+
+    match err.downcast_ref::<crate::core::errors::SignalError>() {
+        Some(crate::core::errors::SignalError::DeleteCleanupFailed { failures }) => {
+            assert_eq!(failures.len(), 1);
+            assert!(
+                failures[0].starts_with(&format!("{}: ", target.display())),
+                "the report names the path it could not remove: {:?}",
+                failures
+            );
+        }
+        other => panic!("expected DeleteCleanupFailed, got {:?}", other),
+    }
+
+    let assignment = store
+        .get_project_skill_assignment(&project.id, &skill.id, "claude_code")
+        .unwrap()
+        .expect("row is kept, never deleted blind");
+    assert_eq!(assignment.status, SyncStatus::Error);
+    assert!(
+        assignment.last_error.is_some(),
+        "the diagnostic is recorded on the row"
+    );
+    assert!(
+        target.symlink_metadata().is_ok(),
+        "the artifact is still there"
+    );
+}
+
 #[test]
 fn resync_updates_all() {
     let (_db_dir, store) = make_store();

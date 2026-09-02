@@ -251,7 +251,7 @@ export const resources = {
         githubSkillNotFound:
           "Skill not found on GitHub (it may have been deleted or the path changed). Please check: {{url}}",
         deleteCleanupFailed:
-          "Some tool directories could not be cleaned up, so the skill was kept — you can retry:",
+          "Some artifacts could not be removed, so what describes them was kept — you can retry:",
         pathOutsideToolDirs:
           "Refused to delete {{path}}: it is not inside a known tool skills directory.",
         unsyncFailedTitle: "Could not remove from {{tool}}",
@@ -715,7 +715,7 @@ export const resources = {
         githubSkillNotFound:
           "在 GitHub 上未找到该 Skill（可能已被删除或路径已变更）。请检查：{{url}}",
         deleteCleanupFailed:
-          "部分工具目录清理失败，已保留该 Skill，你可以重试：",
+          "部分产物无法移除，相关记录已保留，你可以重试：",
         pathOutsideToolDirs:
           "已拒绝删除 {{path}}：该路径不在已知的工具 Skills 目录内。",
         unsyncFailedTitle: "无法从 {{tool}} 中移除",

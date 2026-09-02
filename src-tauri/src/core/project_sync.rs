@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::core::{
-    content_hash,
+    artifact_removal, content_hash,
     errors::SignalError,
     mutation_guard,
     skill_store::{
@@ -566,6 +566,16 @@ pub fn unassign_skill_from_project_tool(
     })
 }
 
+/// Artifact removal for one assignment row: plan the
+/// [`RemovalScope::ProjectSkillTool`] scope, execute it once, then apply this
+/// caller's final policy — a failure is an error, because unassigning one
+/// skill from one tool has nothing else to report.
+///
+/// The row is settled by the module (deleted on success, kept with Sync
+/// status `error` on failure, ADR-0002) *before* the typed
+/// `DeleteCleanupFailed` is raised, so the operator sees the `error` row and
+/// the path that stayed.
+///
 /// Unlocked internal seam: callers reach it through an entry point that has
 /// already taken the mutation guard.
 pub(crate) fn unassign_and_cleanup(
@@ -574,40 +584,25 @@ pub(crate) fn unassign_and_cleanup(
     skill: &SkillRecord,
     tool_key: &str,
 ) -> Result<()> {
-    let adapter = tool_adapters::adapter_by_key(tool_key).ok_or_else(|| {
-        anyhow::anyhow!(SignalError::UnknownTool {
+    if tool_adapters::adapter_by_key(tool_key).is_none() {
+        anyhow::bail!(SignalError::UnknownTool {
             tool: tool_key.to_string(),
-        })
-    })?;
-
-    let target = resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name);
-
-    if target.exists() || target.symlink_metadata().is_ok() {
-        match sync_engine::remove_path_any(&target) {
-            Ok(()) => {
-                store.remove_project_skill_assignment(&project.id, &skill.id, tool_key)?;
-                Ok(())
-            }
-            Err(e) => {
-                // Filesystem removal failed -- keep record with error status
-                if let Some(assignment) =
-                    store.get_project_skill_assignment(&project.id, &skill.id, tool_key)?
-                {
-                    let _ = store.transition_assignment(
-                        &assignment.id,
-                        AssignmentTransition::SyncFailed {
-                            error: &format!("{:#}", e),
-                        },
-                    );
-                }
-                Err(e)
-            }
-        }
-    } else {
-        // Target doesn't exist -- just clean up the DB record
-        store.remove_project_skill_assignment(&project.id, &skill.id, tool_key)?;
-        Ok(())
+        });
     }
+
+    let scope = artifact_removal::RemovalScope::ProjectSkillTool {
+        project_id: project.id.clone(),
+        skill_id: skill.id.clone(),
+        tool_key: tool_key.to_string(),
+    };
+    let plan = artifact_removal::plan(store, Path::new(""), &scope)?;
+    let report = artifact_removal::execute_unlocked(store, plan)?;
+
+    let failures = report.failures();
+    if !failures.is_empty() {
+        anyhow::bail!(SignalError::DeleteCleanupFailed { failures });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
