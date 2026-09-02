@@ -101,7 +101,7 @@ function makeDeps(overrides?: {
   skills?: ManagedSkill[];
   autoSyncEnabled?: boolean;
   installedToolIds?: string[];
-  sharedToolIdsByToolId?: Record<string, string[]>;
+  sharedDirConfirmation?: boolean | Promise<boolean>;
   syncReport?: BatchSyncReportDto;
   refreshReport?: RefreshReportDto;
 }) {
@@ -172,7 +172,12 @@ function makeDeps(overrides?: {
   const sync = {
     autoSyncEnabled: overrides?.autoSyncEnabled ?? true,
     installedToolIds: overrides?.installedToolIds ?? ["claude", "cursor"],
-    sharedToolIdsByToolId: overrides?.sharedToolIdsByToolId ?? {},
+    // The shared-dir confirmation seam: its own decision/label arithmetic
+    // is tested in useSharedDirConfirmation.test.ts; here it is a stub that
+    // answers with the given verdict.
+    requestSharedDirConfirmation: vi.fn(
+      () => Promise.resolve(overrides?.sharedDirConfirmation ?? true) as Promise<boolean>,
+    ),
     syncFailureEntries: vi.fn((report: BatchSyncReportDto) =>
       report.results
         .filter((r) => r.status.status === "failed")
@@ -450,31 +455,17 @@ describe("useSkillLibrary per-tool toggle", () => {
     expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
   });
 
-  it("a shared-dir tool defers to the confirmation modal, then runs on confirm", async () => {
-    const setup = makeDeps({
-      sharedToolIdsByToolId: { claude: ["claude", "pi"], pi: ["claude", "pi"] },
-    });
+  it("asks the shared-dir confirmation, then syncs when it is granted", async () => {
+    const setup = makeDeps();
     const { result } = await renderLibrary(setup);
 
-    act(() => {
-      result.current.handleToggleToolForSkill(setup.skills[0], "claude");
-    });
-
-    // No sync yet — the modal owns the decision.
-    expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
-    expect(result.current.pendingSharedToggle).toEqual({
-      skill: setup.skills[0],
-      toolId: "claude",
-    });
-    expect(result.current.pendingSharedLabels).toEqual({
-      toolLabel: "CLAUDE",
-      otherLabels: "PI",
-    });
-
     await act(async () => {
-      result.current.handleSharedConfirm();
+      await result.current.handleToggleToolForSkill(setup.skills[0], "claude");
     });
 
+    expect(setup.sync.requestSharedDirConfirmation).toHaveBeenCalledWith(
+      "claude",
+    );
     await waitFor(() =>
       expect(setup.sync.syncSkillsToTools).toHaveBeenCalledWith(
         [{ skill_id: "s1", name: "alpha", source_path: "/hub/alpha" }],
@@ -482,7 +473,20 @@ describe("useSkillLibrary per-tool toggle", () => {
         { overwriteIfSameContent: true },
       ),
     );
-    expect(result.current.pendingSharedToggle).toBeNull();
+  });
+
+  it("does not touch the tool when the shared-dir confirmation is declined", async () => {
+    const setup = makeDeps({ sharedDirConfirmation: false });
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleToggleToolForSkill(setup.skills[0], "claude");
+    });
+
+    expect(setup.sync.requestSharedDirConfirmation).toHaveBeenCalledWith(
+      "claude",
+    );
+    expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
   });
 });
 

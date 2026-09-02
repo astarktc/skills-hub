@@ -26,7 +26,7 @@ export type SkillLibraryDeps = {
     SyncOrchestration,
     | "autoSyncEnabled"
     | "installedToolIds"
-    | "sharedToolIdsByToolId"
+    | "requestSharedDirConfirmation"
     | "syncFailureEntries"
     | "syncSkillsToTools"
     | "toolLabelById"
@@ -58,7 +58,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   const {
     autoSyncEnabled,
     installedToolIds,
-    sharedToolIdsByToolId,
+    requestSharedDirConfirmation,
     syncFailureEntries,
     syncSkillsToTools,
     toolLabelById,
@@ -67,10 +67,6 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
 
   const [managedSkills, setManagedSkills] = useState<ManagedSkill[]>([]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [pendingSharedToggle, setPendingSharedToggle] = useState<{
-    skill: ManagedSkill;
-    toolId: string;
-  } | null>(null);
 
   const loadManagedSkills = useCallback(async () => {
     try {
@@ -365,16 +361,15 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   );
 
   const handleToggleToolForSkill = useCallback(
-    (skill: ManagedSkill, toolId: string) => {
+    async (skill: ManagedSkill, toolId: string) => {
       if (loading) return;
-      const shared = sharedToolIdsByToolId[toolId] ?? null;
-      if (shared && shared.length > 1) {
-        setPendingSharedToggle({ skill, toolId });
-        return;
-      }
-      void runToggleToolForSkill(skill, toolId);
+      // A tool sharing its skills dir affects the whole group: the same
+      // confirmation both flows use decides before anything is written.
+      const confirmed = await requestSharedDirConfirmation(toolId);
+      if (!confirmed) return;
+      await runToggleToolForSkill(skill, toolId);
     },
-    [loading, runToggleToolForSkill, sharedToolIdsByToolId],
+    [loading, requestSharedDirConfirmation, runToggleToolForSkill],
   );
 
   const handleUpdateManaged = useCallback(
@@ -416,35 +411,10 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     [handleUpdateManaged],
   );
 
-  const handleSharedCancel = useCallback(() => {
-    if (loading) return;
-    setPendingSharedToggle(null);
-  }, [loading]);
-
-  const handleSharedConfirm = useCallback(() => {
-    if (!pendingSharedToggle) return;
-    const payload = pendingSharedToggle;
-    setPendingSharedToggle(null);
-    void runToggleToolForSkill(payload.skill, payload.toolId);
-  }, [pendingSharedToggle, runToggleToolForSkill]);
-
-  const pendingSharedLabels = useMemo(() => {
-    if (!pendingSharedToggle) return null;
-    const toolId = pendingSharedToggle.toolId;
-    const shared = sharedToolIdsByToolId[toolId] ?? [];
-    const others = shared.filter((id) => id !== toolId);
-    return {
-      toolLabel: toolLabelById[toolId] ?? toolId,
-      otherLabels: others.map((id) => toolLabelById[id] ?? id).join(", "),
-    };
-  }, [pendingSharedToggle, sharedToolIdsByToolId, toolLabelById]);
-
   return {
     managedSkills,
     pendingDeleteId,
     pendingDeleteSkill,
-    pendingSharedToggle,
-    pendingSharedLabels,
     loadManagedSkills,
     isSkillNameTaken,
     handleRefresh,
@@ -457,8 +427,6 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     handleCloseDelete,
     handleToggleToolForSkill,
     handleUpdateSkill,
-    handleSharedCancel,
-    handleSharedConfirm,
   };
 }
 

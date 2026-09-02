@@ -8,6 +8,10 @@ import type {
   ToolStatusDto,
 } from "../components/skills/types";
 import { invokeTauri, isTauri } from "../lib/tauri";
+import {
+  useSharedDirConfirmation,
+  type SharedDirTool,
+} from "./useSharedDirConfirmation";
 import type {
   ActionErrorEntry,
   StatusReporter,
@@ -91,14 +95,29 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
 
   const sharedToolIdsByToolId = useMemo(() => {
     // toolId -> all toolIds sharing the same skills dir. The backend owns
-    // the grouping (ToolInfoDto.shared_with); this map only feeds the
-    // shared-dir confirmation UX.
+    // the grouping (ToolInfoDto.shared_with); this map stays internal to
+    // this hook — it only expands target toggles to the whole group.
     const out: Record<string, string[]> = {};
     for (const info of toolInfos) {
       if (info.shared_with.length > 1) out[info.key] = info.shared_with;
     }
     return out;
   }, [toolInfos]);
+
+  // The shared-dir confirmation building-block hook, fed the localized tool
+  // labels. Both flows that can affect a whole group (this hook's sync
+  // target change and the skill library's per-tool toggle) await it.
+  const sharedDirTools: SharedDirTool[] = useMemo(
+    () =>
+      toolInfos.map((info) => ({
+        id: info.key,
+        label: toolLabelById[info.key] ?? info.label,
+        sharedWith: info.shared_with,
+      })),
+    [toolInfos, toolLabelById],
+  );
+  const sharedDirConfirmation = useSharedDirConfirmation(sharedDirTools);
+  const { request: requestSharedDirConfirmation } = sharedDirConfirmation;
 
   const installedToolIds = useMemo(
     () => toolStatus?.installed ?? [],
@@ -297,28 +316,17 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
   );
 
   const handleSyncTargetChange = useCallback(
-    (toolId: string, checked: boolean) => {
+    async (toolId: string, checked: boolean) => {
       const shared = sharedToolIdsByToolId[toolId] ?? [toolId];
-      if (shared.length > 1) {
-        const others = shared.filter((id) => id !== toolId);
-        const otherLabels = others
-          .map((id) => toolLabelById[id] ?? id)
-          .join(", ");
-        const ok = window.confirm(
-          t("sharedDirConfirm", {
-            tool: toolLabelById[toolId] ?? toolId,
-            others: otherLabels,
-          }),
-        );
-        if (!ok) return;
-      }
+      const confirmed = await requestSharedDirConfirmation(toolId);
+      if (!confirmed) return;
       setSyncTargets((prev) => {
         const next = { ...prev };
         for (const id of shared) next[id] = checked;
         return next;
       });
     },
-    [sharedToolIdsByToolId, t, toolLabelById],
+    [requestSharedDirConfirmation, sharedToolIdsByToolId],
   );
 
   /** Enable deploy targets for the given tools, expanded to shared-dir groups. */
@@ -350,7 +358,9 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
     toolStatus,
     tools,
     toolLabelById,
-    sharedToolIdsByToolId,
+    sharedDirPending: sharedDirConfirmation.pending,
+    cancelSharedDirConfirmation: sharedDirConfirmation.cancel,
+    requestSharedDirConfirmation,
     installedToolIds,
     isInstalled,
     installedTools,

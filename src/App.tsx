@@ -357,12 +357,9 @@ function App() {
       ) : null}
 
       <SharedDirModal
-        open={Boolean(library.pendingSharedToggle)}
+        pending={sync.sharedDirPending}
         loading={loading}
-        toolLabel={library.pendingSharedLabels?.toolLabel ?? ""}
-        otherLabels={library.pendingSharedLabels?.otherLabels ?? ""}
-        onRequestClose={library.handleSharedCancel}
-        onConfirm={library.handleSharedConfirm}
+        onCancel={sync.cancelSharedDirConfirmation}
         t={t}
       />
 

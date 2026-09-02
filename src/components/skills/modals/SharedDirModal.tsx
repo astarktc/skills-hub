@@ -1,51 +1,44 @@
 import { memo } from 'react'
 import type { TFunction } from 'i18next'
 import Modal from '../../shared/Modal'
+import type { SharedDirPending } from '../../../hooks/useSharedDirConfirmation'
 
 type SharedDirModalProps = {
-  open: boolean
+  /** The one pending shared-dir confirmation, from useSharedDirConfirmation. */
+  pending: SharedDirPending | null
   loading: boolean
-  toolLabel: string
-  otherLabels: string
-  onRequestClose: () => void
-  onConfirm: () => void
+  onCancel: () => void
   t: TFunction
 }
 
-const SharedDirModal = ({
-  open,
-  loading,
-  toolLabel,
-  otherLabels,
-  onRequestClose,
-  onConfirm,
-  t,
-}: SharedDirModalProps) => {
+const SharedDirModal = ({ pending, loading, onCancel, t }: SharedDirModalProps) => {
   return (
     <Modal
-      open={open}
-      title={t('appName')}
-      onRequestClose={onRequestClose}
+      open={Boolean(pending)}
+      title={t('sharedDir.title')}
+      onRequestClose={onCancel}
       showCloseButton={false}
       footer={
         <>
-          <button
-            className="btn btn-secondary"
-            onClick={onRequestClose}
-            disabled={loading}
-          >
-            {t('cancel')}
+          <button className="btn btn-secondary" onClick={onCancel} disabled={loading}>
+            {t('sharedDir.cancel')}
           </button>
-          <button className="btn btn-primary" onClick={onConfirm} disabled={loading}>
-            {t('confirm')}
+          <button
+            className="btn btn-primary"
+            onClick={() => pending?.resolve(true)}
+            disabled={loading || !pending}
+          >
+            {t('sharedDir.confirm')}
           </button>
         </>
       }
     >
-      {t('sharedDirConfirm', {
-        tool: toolLabel,
-        others: otherLabels,
-      })}
+      {pending
+        ? t('sharedDir.body', {
+            tool: pending.toolLabel,
+            others: pending.labels.join(t('common.listSeparator')),
+          })
+        : null}
     </Modal>
   )
 }

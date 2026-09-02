@@ -212,17 +212,23 @@ describe("useSyncOrchestration target defaulting", () => {
 describe("useSyncOrchestration shared-dir groups", () => {
   it("toggling a shared-dir tool toggles its whole group after confirm", async () => {
     stubBackend();
-    const confirmSpy = vi
-      .spyOn(window, "confirm")
-      .mockImplementation(() => true);
     const { result } = renderSync();
     await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
 
     act(() => {
-      result.current.handleSyncTargetChange("claude", false);
+      void result.current.handleSyncTargetChange("claude", false);
     });
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    // The modal owns the decision; nothing changes until it is answered.
+    expect(result.current.sharedDirPending?.toolKey).toBe("claude");
+    expect(result.current.sharedDirPending?.labels).toEqual(["PI"]);
+    expect(result.current.syncTargets.claude).toBe(true);
+
+    await act(async () => {
+      result.current.sharedDirPending!.resolve(true);
+    });
+
+    expect(result.current.sharedDirPending).toBeNull();
     expect(result.current.syncTargets.claude).toBe(false);
     expect(result.current.syncTargets.pi).toBe(false);
     expect(result.current.syncTargets.cursor).toBe(true);
@@ -230,12 +236,14 @@ describe("useSyncOrchestration shared-dir groups", () => {
 
   it("a declined confirm leaves the targets untouched", async () => {
     stubBackend();
-    vi.spyOn(window, "confirm").mockImplementation(() => false);
     const { result } = renderSync();
     await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
 
     act(() => {
-      result.current.handleSyncTargetChange("pi", false);
+      void result.current.handleSyncTargetChange("pi", false);
+    });
+    await act(async () => {
+      result.current.cancelSharedDirConfirmation();
     });
 
     expect(result.current.syncTargets.claude).toBe(true);
@@ -244,15 +252,14 @@ describe("useSyncOrchestration shared-dir groups", () => {
 
   it("a standalone tool toggles without confirmation", async () => {
     stubBackend();
-    const confirmSpy = vi.spyOn(window, "confirm");
     const { result } = renderSync();
     await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
 
-    act(() => {
-      result.current.handleSyncTargetChange("cursor", false);
+    await act(async () => {
+      await result.current.handleSyncTargetChange("cursor", false);
     });
 
-    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(result.current.sharedDirPending).toBeNull();
     expect(result.current.syncTargets.cursor).toBe(false);
   });
 

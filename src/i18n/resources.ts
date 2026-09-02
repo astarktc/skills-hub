@@ -351,8 +351,6 @@ export const resources = {
         readError: "Failed to read file",
         fileCount: "{{count}} files",
       },
-      sharedDirConfirm:
-        "Note: {{tool}} shares the same global skills directory with {{others}}. This change will affect both. Continue?",
       tools: {
         opencode: "OpenCode",
         claude_code: "Claude Code",
@@ -465,6 +463,12 @@ export const resources = {
           "Another sync operation is running, so these statuses were not re-checked against disk. They may be out of date.",
         globalSynced:
           "This skill is already deployed globally for this tool. Assign it here only to manage it per-project.",
+      },
+      sharedDir: {
+        title: "Shared skills directory",
+        body: "Note: {{tool}} shares the same global skills directory with {{others}}. This change will affect all of them. Continue?",
+        confirm: "Continue",
+        cancel: "Cancel",
       },
     },
   },
@@ -799,8 +803,6 @@ export const resources = {
         readError: "读取文件失败",
         fileCount: "{{count}} 个文件",
       },
-      sharedDirConfirm:
-        "提示：{{tool}} 与 {{others}} 共用同一个全局 skills 目录，本次修改会同时影响它们。是否继续？",
       tools: {
         opencode: "OpenCode",
         claude_code: "Claude Code",
@@ -908,6 +910,12 @@ export const resources = {
           "正在进行另一项同步操作，因此未重新核对这些状态与磁盘的一致性，它们可能已过时。",
         globalSynced:
           "该 Skill 已为该工具全局部署。仅当需要按项目管理时才需在此分配。",
+      },
+      sharedDir: {
+        title: "共用 skills 目录",
+        body: "提示：{{tool}} 与 {{others}} 共用同一个全局 skills 目录，本次修改会同时影响它们。是否继续？",
+        confirm: "继续",
+        cancel: "取消",
       },
     },
   },
