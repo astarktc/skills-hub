@@ -1018,12 +1018,12 @@ fn missing_status_source_and_target_both_absent() {
 
 // ---------------------------------------------------------------------------
 // assign_skill_to_tools / assign_skill_to_project_tools — the project-scope
-// fan-out engine behind `bulk_assign_skill` and `add_project_skill_assignment`.
+// fan-out engine behind `bulk_assign_skill` and the toggle command.
 // ---------------------------------------------------------------------------
 
 use crate::core::errors::SignalError;
 use crate::core::project_sync::{
-    assign_skill_to_project_tool, assign_skill_to_project_tools, assign_skill_to_tools,
+    assign_skill_to_project_tool_unlocked, assign_skill_to_project_tools, assign_skill_to_tools,
     AssignTargetStatus,
 };
 use crate::core::skill_store::ProjectToolRecord;
@@ -1273,13 +1273,15 @@ fn single_tool_assign_returns_record_and_raises_assignment_exists_on_repeat() {
         &skill_dir.to_string_lossy(),
     );
 
-    let record = assign_skill_to_project_tool(&store, &project.id, &skill.id, "claude_code", 3000)
-        .expect("first assign");
+    let record =
+        assign_skill_to_project_tool_unlocked(&store, &project.id, &skill.id, "claude_code", 3000)
+            .expect("first assign");
     assert_eq!(record.status, SyncStatus::Synced);
     assert_eq!(record.tool, "claude_code");
 
-    let err = assign_skill_to_project_tool(&store, &project.id, &skill.id, "claude_code", 3001)
-        .expect_err("second assign must fail");
+    let err =
+        assign_skill_to_project_tool_unlocked(&store, &project.id, &skill.id, "claude_code", 3001)
+            .expect_err("second assign must fail");
     assert_eq!(
         err.downcast_ref::<SignalError>(),
         Some(&SignalError::AssignmentExists {
@@ -1289,8 +1291,9 @@ fn single_tool_assign_returns_record_and_raises_assignment_exists_on_repeat() {
         })
     );
 
-    let err = assign_skill_to_project_tool(&store, &project.id, &skill.id, "no-such-tool", 3002)
-        .expect_err("unknown tool must fail");
+    let err =
+        assign_skill_to_project_tool_unlocked(&store, &project.id, &skill.id, "no-such-tool", 3002)
+            .expect_err("unknown tool must fail");
     assert_eq!(
         err.downcast_ref::<SignalError>(),
         Some(&SignalError::UnknownTool {
@@ -1333,6 +1336,72 @@ fn resync_project_raises_typed_not_found_for_unknown_project() {
     assert_eq!(
         err.downcast_ref::<SignalError>(),
         Some(&SignalError::NotFound {
+            kind: "project".to_string(),
+            id: "missing".to_string(),
+        })
+    );
+}
+
+// ---------------------------------------------------------------------------
+// toggle_skill_assignment — the backend decides add-vs-remove from its rows
+// ---------------------------------------------------------------------------
+
+#[test]
+fn toggle_assigns_then_unassigns_from_the_stored_state() {
+    use crate::core::project_sync::{
+        resolve_project_sync_target, toggle_skill_assignment, ToggleOutcome,
+    };
+
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let skill_dir = make_skill_dir(tmpdir.path(), "toggle-skill");
+    let project_dir = tmpdir.path().join("toggle-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "toggle-skill",
+        &skill_dir.to_string_lossy(),
+    );
+    let adapter = crate::core::tool_adapters::adapter_by_key("claude_code").expect("adapter");
+    let target = resolve_project_sync_target(&project_dir, adapter, "toggle-skill");
+
+    let first = toggle_skill_assignment(&store, &project.id, &skill.id, "claude_code", 4000)
+        .expect("first toggle");
+    assert_eq!(first, ToggleOutcome::Assigned);
+    assert!(target.symlink_metadata().is_ok(), "artifact materialised");
+    assert_eq!(
+        store
+            .list_project_skill_assignments(&project.id)
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let second = toggle_skill_assignment(&store, &project.id, &skill.id, "claude_code", 4001)
+        .expect("second toggle");
+    assert_eq!(second, ToggleOutcome::Unassigned);
+    assert!(
+        target.symlink_metadata().is_err(),
+        "artifact removed: {:?}",
+        target
+    );
+    assert!(store
+        .list_project_skill_assignments(&project.id)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn toggle_raises_typed_not_found_for_unknown_project() {
+    use crate::core::project_sync::toggle_skill_assignment;
+
+    let (_db_dir, store) = make_store();
+    let err = toggle_skill_assignment(&store, "missing", "skill", "claude_code", 1)
+        .expect_err("must fail");
+    assert_eq!(
+        err.downcast_ref::<crate::core::errors::SignalError>(),
+        Some(&crate::core::errors::SignalError::NotFound {
             kind: "project".to_string(),
             id: "missing".to_string(),
         })

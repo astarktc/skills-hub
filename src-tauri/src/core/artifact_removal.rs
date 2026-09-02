@@ -66,8 +66,14 @@ pub enum RemovalScope {
     /// are untouched. "Uninstall this skill from tool directories".
     SkillGlobal { skill_id: String },
     /// One skill × Tool pair at global scope, expanded across the tool's
-    /// shared skills dir group.
-    SkillTool { skill_id: String, tool_key: String },
+    /// shared skills dir group. Carries the operator's home because it is
+    /// the only scope whose planning depends on Tool installedness; every
+    /// other scope resolves its paths from stored rows.
+    SkillTool {
+        skill_id: String,
+        tool_key: String,
+        home: PathBuf,
+    },
     /// Every Sync target of one Project. Planned by
     /// `project_ops::remove_project_with_cleanup`.
     Project { project_id: String },
@@ -232,12 +238,11 @@ impl fmt::Display for RemovalReport {
 // ---------------------------------------------------------------------------
 
 /// Read-only: resolve every path `scope` touches, deduped by path with the
-/// rows describing each path attached. `home` decides Tool installedness for
-/// the [`RemovalScope::SkillTool`] scope and is unused by the others (the
-/// project scopes resolve their paths from the stored project path, so their
-/// callers pass an empty path).
+/// rows describing each path attached. Every root a scope needs travels
+/// inside the scope itself ([`RemovalScope::SkillTool`] carries the home
+/// that decides Tool installedness), so planning takes no ambient roots.
 /// Unlocked internal seam.
-pub(crate) fn plan(store: &SkillStore, home: &Path, scope: &RemovalScope) -> Result<RemovalPlan> {
+pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPlan> {
     let mut builder = TargetBuilder::default();
     let mut skill: Option<SkillRecord> = None;
 
@@ -255,7 +260,11 @@ pub(crate) fn plan(store: &SkillStore, home: &Path, scope: &RemovalScope) -> Res
                 builder.push_global(&row);
             }
         }
-        RemovalScope::SkillTool { skill_id, tool_key } => {
+        RemovalScope::SkillTool {
+            skill_id,
+            tool_key,
+            home,
+        } => {
             let group_keys = global_group_keys(home, tool_key);
             if let Some(group_keys) = group_keys {
                 for row in store.list_skill_targets(skill_id)? {
@@ -515,8 +524,8 @@ fn settle_row_as_error(store: &SkillStore, row: &RowRef, error: &str) -> Result<
 // Entry points (each takes the mutation guard)
 // ---------------------------------------------------------------------------
 
-fn planned(store: &SkillStore, home: &Path, scope: RemovalScope) -> Result<RemovalReport> {
-    let plan = plan(store, home, &scope)?;
+fn planned(store: &SkillStore, scope: RemovalScope) -> Result<RemovalReport> {
+    let plan = plan(store, &scope)?;
     execute_unlocked(store, plan)
 }
 
@@ -528,11 +537,10 @@ fn planned(store: &SkillStore, home: &Path, scope: RemovalScope) -> Result<Remov
 /// typed `SignalError::DeleteCleanupFailed` carries what is left behind.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
-pub fn remove_skill(store: &SkillStore, home: &Path, skill_id: &str) -> Result<RemovalReport> {
+pub fn remove_skill(store: &SkillStore, skill_id: &str) -> Result<RemovalReport> {
     mutation_guard::serialized(|| {
         let report = planned(
             store,
-            home,
             RemovalScope::Skill {
                 skill_id: skill_id.to_string(),
             },
@@ -548,15 +556,10 @@ pub fn remove_skill(store: &SkillStore, home: &Path, skill_id: &str) -> Result<R
 /// Remove every global Sync target of one Managed skill.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
-pub fn unsync_skill_targets(
-    store: &SkillStore,
-    home: &Path,
-    skill_id: &str,
-) -> Result<RemovalReport> {
+pub fn unsync_skill_targets(store: &SkillStore, skill_id: &str) -> Result<RemovalReport> {
     mutation_guard::serialized(|| {
         planned(
             store,
-            home,
             RemovalScope::SkillGlobal {
                 skill_id: skill_id.to_string(),
             },
@@ -567,8 +570,8 @@ pub fn unsync_skill_targets(
 /// Remove every global Sync target of every Managed skill.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
-pub fn unsync_all_skill_targets(store: &SkillStore, home: &Path) -> Result<RemovalReport> {
-    mutation_guard::serialized(|| planned(store, home, RemovalScope::EveryGlobalTarget))
+pub fn unsync_all_skill_targets(store: &SkillStore) -> Result<RemovalReport> {
+    mutation_guard::serialized(|| planned(store, RemovalScope::EveryGlobalTarget))
 }
 
 /// Remove one skill's global Sync target for one Tool, across the tools
@@ -584,10 +587,10 @@ pub fn unsync_skill_from_tool(
     mutation_guard::serialized(|| {
         planned(
             store,
-            home,
             RemovalScope::SkillTool {
                 skill_id: skill_id.to_string(),
                 tool_key: tool_key.to_string(),
+                home: home.to_path_buf(),
             },
         )
     })

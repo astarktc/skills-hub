@@ -9,7 +9,8 @@ use super::environment::expand_home_path_in;
 use super::errors::SignalError;
 use super::gitignore::{self, IgnoreUpdateOptions};
 use super::mutation_guard;
-use super::skill_store::{ProjectRecord, ProjectToolRecord, SkillStore};
+use super::project_sync::{self, AssignmentListing};
+use super::skill_store::{ProjectAggregate, ProjectRecord, ProjectToolRecord, SkillStore};
 use super::sync_status::{ProjectSyncStatus, SyncMode, SyncStatus};
 use super::tool_adapters;
 
@@ -56,22 +57,76 @@ pub fn project_name_from_path(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
+/// The one "this project must exist" lookup. Every project operation and
+/// every project command reaches for the record through here, so the typed
+/// `NotFound` condition is raised in exactly one place.
+pub fn require_project(store: &SkillStore, project_id: &str) -> Result<ProjectRecord> {
+    store.get_project_by_id(project_id)?.ok_or_else(|| {
+        anyhow::anyhow!(SignalError::NotFound {
+            kind: "project".to_string(),
+            id: project_id.to_string(),
+        })
+    })
+}
+
 pub fn to_project_dto(record: &ProjectRecord, store: &SkillStore) -> Result<ProjectDto> {
-    let tool_count = store.count_project_tools(&record.id)?;
-    let skill_count = store.count_project_unique_skills(&record.id)?;
-    let assignment_count = store.count_project_assignments(&record.id)?;
-    let sync_status = store.aggregate_project_sync_status(&record.id)?;
-    Ok(ProjectDto {
+    Ok(project_dto_from_parts(
+        record,
+        store.project_aggregate(&record.id)?,
+    ))
+}
+
+/// Compose the wire row from a record and its already-read aggregate, so the
+/// listing can build N rows from one grouped read.
+fn project_dto_from_parts(record: &ProjectRecord, aggregate: ProjectAggregate) -> ProjectDto {
+    ProjectDto {
         id: record.id.clone(),
         path: record.path.clone(),
         name: project_name_from_path(&record.path),
         created_at: record.created_at,
         updated_at: record.updated_at,
-        tool_count,
-        skill_count,
-        assignment_count,
-        sync_status,
+        tool_count: aggregate.tool_count,
+        skill_count: aggregate.skill_count,
+        assignment_count: aggregate.assignment_count,
+        sync_status: aggregate.sync_status,
         path_exists: std::path::Path::new(&record.path).is_dir(),
+    }
+}
+
+/// A project's configured Tools as wire rows.
+pub fn project_tool_dtos(store: &SkillStore, project_id: &str) -> Result<Vec<ProjectToolDto>> {
+    Ok(store
+        .list_project_tools(project_id)?
+        .into_iter()
+        .map(|r| ProjectToolDto {
+            id: r.id,
+            project_id: r.project_id,
+            tool: r.tool,
+        })
+        .collect())
+}
+
+/// Everything the project world shows for one project: its row (counts and
+/// aggregate status included), its configured Tools, and its reconciled
+/// assignments.
+///
+/// Read-only, and deliberately **not** a mutation entry point: it must run
+/// *after* a mutation released the guard, because the reconcile pass inside
+/// [`project_sync::list_assignments_with_staleness`] try-locks. Building it
+/// inside a critical section would always report `reconciled: false`.
+#[derive(Debug)]
+pub struct ProjectView {
+    pub project: ProjectDto,
+    pub tools: Vec<ProjectToolDto>,
+    pub assignments: AssignmentListing,
+}
+
+pub fn project_view(store: &SkillStore, project_id: &str) -> Result<ProjectView> {
+    let record = require_project(store, project_id)?;
+    Ok(ProjectView {
+        project: to_project_dto(&record, store)?,
+        tools: project_tool_dtos(store, project_id)?,
+        assignments: project_sync::list_assignments_with_staleness(store, project_id)?,
     })
 }
 
@@ -127,18 +182,13 @@ pub(crate) fn remove_tool_with_cleanup(
     project_id: &str,
     tool: &str,
 ) -> Result<RemovalReport> {
-    store.get_project_by_id(project_id)?.ok_or_else(|| {
-        anyhow::anyhow!(SignalError::NotFound {
-            kind: "project".to_string(),
-            id: project_id.to_string(),
-        })
-    })?;
+    require_project(store, project_id)?;
 
     let scope = RemovalScope::ProjectTool {
         project_id: project_id.to_string(),
         tool_key: tool.to_string(),
     };
-    let plan = artifact_removal::plan(store, Path::new(""), &scope)?;
+    let plan = artifact_removal::plan(store, &scope)?;
     let report = artifact_removal::execute_unlocked(store, plan)?;
 
     if report.failures().is_empty() {
@@ -181,12 +231,7 @@ pub(crate) fn configure_project_tools_unlocked(
     tools: &[String],
     ignore: Option<IgnoreUpdateOptions>,
 ) -> Result<Vec<ProjectToolDto>> {
-    store.get_project_by_id(project_id)?.ok_or_else(|| {
-        anyhow::anyhow!(SignalError::NotFound {
-            kind: "project".to_string(),
-            id: project_id.to_string(),
-        })
-    })?;
+    require_project(store, project_id)?;
     for tool in tools {
         if tool_adapters::adapter_by_key(tool).is_none() {
             bail!(SignalError::UnknownTool { tool: tool.clone() });
@@ -221,15 +266,7 @@ pub(crate) fn configure_project_tools_unlocked(
         bail!(SignalError::DeleteCleanupFailed { failures });
     }
 
-    Ok(store
-        .list_project_tools(project_id)?
-        .into_iter()
-        .map(|r| ProjectToolDto {
-            id: r.id,
-            project_id: r.project_id,
-            tool: r.tool,
-        })
-        .collect())
+    project_tool_dtos(store, project_id)
 }
 
 /// Artifact removal for a whole project, then the project record.
@@ -253,17 +290,12 @@ pub(crate) fn remove_project_with_cleanup_unlocked(
     store: &SkillStore,
     project_id: &str,
 ) -> Result<()> {
-    store.get_project_by_id(project_id)?.ok_or_else(|| {
-        anyhow::anyhow!(SignalError::NotFound {
-            kind: "project".to_string(),
-            id: project_id.to_string(),
-        })
-    })?;
+    require_project(store, project_id)?;
 
     let scope = RemovalScope::Project {
         project_id: project_id.to_string(),
     };
-    let plan = artifact_removal::plan(store, Path::new(""), &scope)?;
+    let plan = artifact_removal::plan(store, &scope)?;
     let report = artifact_removal::execute_unlocked(store, plan)?;
 
     let failures = report.failures();
@@ -275,13 +307,19 @@ pub(crate) fn remove_project_with_cleanup_unlocked(
     Ok(())
 }
 
+/// Every project as a wire row. Two grouped queries plus the project read,
+/// whatever N is — the counts and status folds arrive from
+/// [`SkillStore::project_aggregates`], never per project.
 pub fn list_project_dtos(store: &SkillStore) -> Result<Vec<ProjectDto>> {
     let records = store.list_projects()?;
-    let mut dtos = Vec::with_capacity(records.len());
-    for record in &records {
-        dtos.push(to_project_dto(record, store)?);
-    }
-    Ok(dtos)
+    let mut aggregates = store.project_aggregates()?;
+    Ok(records
+        .iter()
+        .map(|record| {
+            let aggregate = aggregates.remove(&record.id).unwrap_or_default();
+            project_dto_from_parts(record, aggregate)
+        })
+        .collect())
 }
 
 /// Re-point a project at `new_path` (may start with `~`, expanded against `home`).
@@ -313,12 +351,7 @@ pub fn update_project_path(
     }
 
     store.update_project_path(project_id, &path_str, now_ms)?;
-    let record = store.get_project_by_id(project_id)?.ok_or_else(|| {
-        anyhow::anyhow!(SignalError::NotFound {
-            kind: "project".to_string(),
-            id: project_id.to_string(),
-        })
-    })?;
+    let record = require_project(store, project_id)?;
     to_project_dto(&record, store)
 }
 

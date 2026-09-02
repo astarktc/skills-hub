@@ -631,7 +631,6 @@ fn remove_tool_with_cleanup_plans_orphan_rows_from_their_stored_skill_name() {
 
     let planned = crate::core::artifact_removal::plan(
         &store,
-        std::path::Path::new(""),
         &crate::core::artifact_removal::RemovalScope::ProjectTool {
             project_id: project.id.clone(),
             tool_key: "pi".to_string(),
@@ -991,6 +990,85 @@ fn update_project_path_raises_typed_not_found_for_unknown_project() {
         now_ms(),
     )
     .expect_err("unknown project must fail");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::NotFound {
+            kind: "project".to_string(),
+            id: "missing".to_string(),
+        })
+    );
+}
+
+// ---------------------------------------------------------------------------
+// project_view — the one value every project mutation returns
+// ---------------------------------------------------------------------------
+
+#[test]
+fn project_view_reports_the_projects_row_tools_and_reconciled_assignments() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+    let (project, _skill, _target) = setup_pi_assignment(tmpdir.path(), &store, "pv-basic");
+
+    let view = project_ops::project_view(&store, &project.id).expect("view");
+
+    assert_eq!(view.project.id, project.id);
+    assert_eq!(view.project.tool_count, 1);
+    assert_eq!(view.project.skill_count, 1);
+    assert_eq!(view.project.assignment_count, 1);
+    assert_eq!(view.project.sync_status, ProjectSyncStatus::Synced);
+    assert_eq!(
+        view.tools
+            .iter()
+            .map(|t| t.tool.as_str())
+            .collect::<Vec<_>>(),
+        vec!["pi"]
+    );
+    assert_eq!(view.assignments.assignments.len(), 1);
+    // `reconciled` is not asserted: the flag reports whether the try-lock
+    // succeeded, and any other test mutating concurrently can legitimately
+    // make it false. Its contract is covered in `project_sync`'s listing
+    // tests.
+}
+
+/// The cascade case: dropping a tool removes its assignments, and the view
+/// the mutation's caller reads already reflects that — no follow-up read can
+/// disagree with it.
+#[test]
+fn view_after_configure_tools_reflects_the_assignment_cascade() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+    let (project, _skill, target) = setup_pi_assignment(tmpdir.path(), &store, "pv-cascade");
+
+    project_ops::configure_project_tools(&store, &project.id, &strs(&["claude_code"]), None)
+        .expect("configure tools");
+    let view = project_ops::project_view(&store, &project.id).expect("view");
+
+    assert!(
+        target.symlink_metadata().is_err(),
+        "the dropped tool's artifact is gone: {:?}",
+        target
+    );
+    assert_eq!(
+        view.tools
+            .iter()
+            .map(|t| t.tool.as_str())
+            .collect::<Vec<_>>(),
+        vec!["claude_code"]
+    );
+    assert!(
+        view.assignments.assignments.iter().all(|a| a.tool != "pi"),
+        "no assignment for the removed tool survives in the view"
+    );
+    assert_eq!(view.project.tool_count, 1);
+    assert_eq!(view.project.assignment_count, 0);
+    assert_eq!(view.project.skill_count, 0);
+    assert_eq!(view.project.sync_status, ProjectSyncStatus::Empty);
+}
+
+#[test]
+fn project_view_raises_typed_not_found_for_unknown_project() {
+    let (_dir, store) = make_store();
+    let err = project_ops::project_view(&store, "missing").expect_err("must fail");
     assert_eq!(
         err.downcast_ref::<SignalError>(),
         Some(&SignalError::NotFound {

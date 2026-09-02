@@ -6,7 +6,7 @@ use anyhow::Result;
 use crate::core::{
     artifact_removal, content_hash,
     errors::SignalError,
-    mutation_guard,
+    mutation_guard, project_ops,
     skill_store::{
         AssignmentTransition, ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore,
     },
@@ -170,17 +170,15 @@ pub(crate) fn assign_skill_to_tools(
         .collect()
 }
 
-fn lookup_project_and_skill(
+/// The one "this project and this skill must both exist" lookup, raising the
+/// typed `NotFound` for whichever is missing. Public so no command body has
+/// to re-derive the idiom.
+pub fn lookup_project_and_skill(
     store: &SkillStore,
     project_id: &str,
     skill_id: &str,
 ) -> Result<(ProjectRecord, SkillRecord)> {
-    let project = store.get_project_by_id(project_id)?.ok_or_else(|| {
-        anyhow::anyhow!(SignalError::NotFound {
-            kind: "project".to_string(),
-            id: project_id.to_string(),
-        })
-    })?;
+    let project = project_ops::require_project(store, project_id)?;
     let skill = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
         anyhow::anyhow!(SignalError::NotFound {
             kind: "skill".to_string(),
@@ -223,23 +221,11 @@ pub(crate) fn assign_skill_to_project_tools_unlocked(
     ))
 }
 
-/// Assign one skill to one tool (the `add_project_skill_assignment`
-/// command): the single-target view of the same engine, where
-/// `AlreadyAssigned` is the typed `AssignmentExists` condition.
+/// Assign one skill to one tool: the single-target view of the same engine,
+/// where `AlreadyAssigned` is the typed `AssignmentExists` condition.
 ///
-/// Mutation entry point: serialised against every other Sync-target mutation.
-pub fn assign_skill_to_project_tool(
-    store: &SkillStore,
-    project_id: &str,
-    skill_id: &str,
-    tool_key: &str,
-    now: i64,
-) -> Result<ProjectSkillAssignmentRecord> {
-    mutation_guard::serialized(|| {
-        assign_skill_to_project_tool_unlocked(store, project_id, skill_id, tool_key, now)
-    })
-}
-
+/// Unlocked internal seam — [`toggle_skill_assignment`] is the entry point
+/// that takes the guard around it.
 pub(crate) fn assign_skill_to_project_tool_unlocked(
     store: &SkillStore,
     project_id: &str,
@@ -323,12 +309,7 @@ pub(crate) fn resync_project_unlocked(
     project_id: &str,
     now: i64,
 ) -> Result<ResyncSummary> {
-    let project = store.get_project_by_id(project_id)?.ok_or_else(|| {
-        anyhow::anyhow!(SignalError::NotFound {
-            kind: "project".to_string(),
-            id: project_id.to_string(),
-        })
-    })?;
+    let project = project_ops::require_project(store, project_id)?;
     let assignments = store.list_project_skill_assignments(project_id)?;
     let mut summary = ResyncSummary {
         project_id: project_id.to_string(),
@@ -491,6 +472,7 @@ fn reconcile_assignment(
 /// `reconciled == false` means a Sync-target mutation was in flight, so the
 /// rows are the stored ones, un-reconciled. It is *not* a health signal: a
 /// consumer must not read it as "everything is fine".
+#[derive(Debug)]
 pub struct AssignmentListing {
     pub assignments: Vec<ProjectSkillAssignmentRecord>,
     pub reconciled: bool,
@@ -549,20 +531,40 @@ fn reconcile_listing(
         .collect();
 }
 
-/// Artifact removal for one project×skill×tool triple, lookups included.
+/// Which way a toggle went. The decision is the backend's: it reads its own
+/// assignment rows under the guard, so no caller has to mirror assignment
+/// existence to choose between assigning and unassigning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToggleOutcome {
+    Assigned,
+    Unassigned,
+}
+
+/// Assign one skill to one project Tool, or unassign it when the row is
+/// already there — whichever the stored state calls for.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
-/// The lookups run *inside* the critical section so the project and skill a
-/// removal acts on cannot be deleted between reading them and acting.
-pub fn unassign_skill_from_project_tool(
+/// Reading the row and acting on it happen in the same critical section, so
+/// the decision cannot be raced by a concurrent mutation.
+pub fn toggle_skill_assignment(
     store: &SkillStore,
     project_id: &str,
     skill_id: &str,
     tool_key: &str,
-) -> Result<()> {
+    now: i64,
+) -> Result<ToggleOutcome> {
     mutation_guard::serialized(|| {
-        let (project, skill) = lookup_project_and_skill(store, project_id, skill_id)?;
-        unassign_and_cleanup(store, &project, &skill, tool_key)
+        // Both branches use the unlocked seams — the guard is not reentrant.
+        if store
+            .get_project_skill_assignment(project_id, skill_id, tool_key)?
+            .is_some()
+        {
+            let (project, skill) = lookup_project_and_skill(store, project_id, skill_id)?;
+            unassign_and_cleanup(store, &project, &skill, tool_key)?;
+            return Ok(ToggleOutcome::Unassigned);
+        }
+        assign_skill_to_project_tool_unlocked(store, project_id, skill_id, tool_key, now)?;
+        Ok(ToggleOutcome::Assigned)
     })
 }
 
@@ -595,7 +597,7 @@ pub(crate) fn unassign_and_cleanup(
         skill_id: skill.id.clone(),
         tool_key: tool_key.to_string(),
     };
-    let plan = artifact_removal::plan(store, Path::new(""), &scope)?;
+    let plan = artifact_removal::plan(store, &scope)?;
     let report = artifact_removal::execute_unlocked(store, plan)?;
 
     let failures = report.failures();

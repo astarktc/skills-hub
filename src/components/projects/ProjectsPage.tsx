@@ -23,9 +23,8 @@ const ProjectsPage = () => {
         // The ignore intent rides along with registration; the hook hands
         // it to the backend once the tool set is confirmed.
         const project = await state.registerProject(path, gitignore);
-        state.setShowAddModal(false);
         await state.selectProject(project.id);
-        state.setShowToolConfigModal(true);
+        state.openDialog({ kind: "toolConfig" });
         await state.loadToolStatus();
       } catch (err) {
         const msg = describeCommandError(err, t);
@@ -39,7 +38,7 @@ const ProjectsPage = () => {
     async (selectedTools: string[]) => {
       try {
         await state.configureTools(selectedTools);
-        state.setShowToolConfigModal(false);
+        state.closeDialog();
       } catch (err) {
         const msg = describeCommandError(err, t);
         if (msg) toast.error(msg);
@@ -48,31 +47,34 @@ const ProjectsPage = () => {
     [state, t],
   );
 
+  const dialog = state.dialog;
+  const dialogProjectId =
+    dialog?.kind === "edit" || dialog?.kind === "remove"
+      ? dialog.projectId
+      : null;
+
   const handleRemoveProject = useCallback(async () => {
-    if (!state.removeTargetId) return;
+    if (dialog?.kind !== "remove") return;
     try {
-      await state.removeProject(state.removeTargetId);
-      state.setShowRemoveModal(false);
-      state.setRemoveTargetId(null);
+      await state.removeProject(dialog.projectId);
+      state.closeDialog();
       toast.success(t("projects.removeConfirm"));
     } catch (err) {
       const msg = describeCommandError(err, t);
       if (msg) toast.error(msg);
     }
-  }, [state, t]);
+  }, [dialog, state, t]);
 
   const handlePromptRemove = useCallback(
     (id: string) => {
-      state.setRemoveTargetId(id);
-      state.setShowRemoveModal(true);
+      state.openDialog({ kind: "remove", projectId: id });
     },
     [state],
   );
 
   const handlePromptEdit = useCallback(
     (id: string) => {
-      state.setEditTargetId(id);
-      state.setShowEditModal(true);
+      state.openDialog({ kind: "edit", projectId: id });
     },
     [state],
   );
@@ -81,8 +83,7 @@ const ProjectsPage = () => {
     async (projectId: string, gitignore: IgnoreUpdateOptions) => {
       try {
         await state.updateGitignore(projectId, gitignore);
-        state.setShowEditModal(false);
-        state.setEditTargetId(null);
+        state.closeDialog();
         toast.success(t("projects.configureProject"));
       } catch (err) {
         const msg = describeCommandError(err, t);
@@ -139,7 +140,7 @@ const ProjectsPage = () => {
 
   const handleConfigureToolsFromToolbar = useCallback(async () => {
     await state.loadToolStatus();
-    state.setShowToolConfigModal(true);
+    state.openDialog({ kind: "toolConfig" });
   }, [state]);
 
   const handleUpdatePath = useCallback(
@@ -170,7 +171,7 @@ const ProjectsPage = () => {
           <p className="projects-empty-body">{t("projects.emptyBody")}</p>
           <button
             className="btn btn-primary"
-            onClick={() => state.setShowAddModal(true)}
+            onClick={() => state.openDialog({ kind: "add" })}
           >
             {t("projects.emptyAction")}
           </button>
@@ -183,7 +184,7 @@ const ProjectsPage = () => {
             loading={state.projectsLoading}
             loadFailed={state.loadFailed}
             onSelectProject={state.selectProject}
-            onAddProject={() => state.setShowAddModal(true)}
+            onAddProject={() => state.openDialog({ kind: "add" })}
             onEditProject={handlePromptEdit}
             onRemoveProject={handlePromptRemove}
             onUpdatePath={handleUpdatePath}
@@ -222,30 +223,25 @@ const ProjectsPage = () => {
       )}
 
       <AddProjectModal
-        open={state.showAddModal}
+        open={dialog?.kind === "add"}
         loading={false}
         projects={state.projects}
         onRegister={handleAddProject}
-        onRequestClose={() => state.setShowAddModal(false)}
+        onRequestClose={state.closeDialog}
         t={t}
       />
 
       <EditProjectModal
-        open={state.showEditModal}
-        project={
-          state.projects.find((p) => p.id === state.editTargetId) ?? null
-        }
+        open={dialog?.kind === "edit"}
+        project={state.projects.find((p) => p.id === dialogProjectId) ?? null}
         onSave={handleEditSave}
         loadStatus={state.getGitignoreStatus}
-        onRequestClose={() => {
-          state.setShowEditModal(false);
-          state.setEditTargetId(null);
-        }}
+        onRequestClose={state.closeDialog}
         t={t}
       />
 
       <ToolConfigModal
-        open={state.showToolConfigModal}
+        open={dialog?.kind === "toolConfig"}
         loading={false}
         toolStatus={state.toolStatus}
         savedSelection={
@@ -259,23 +255,19 @@ const ProjectsPage = () => {
         onConfirm={handleToolConfigConfirm}
         onRequestClose={() => {
           state.discardPendingIgnore();
-          state.setShowToolConfigModal(false);
+          state.closeDialog();
         }}
         t={t}
       />
 
       <RemoveProjectModal
-        open={state.showRemoveModal}
+        open={dialog?.kind === "remove"}
         loading={false}
         projectName={
-          state.projects.find((p) => p.id === state.removeTargetId)?.name ??
-          null
+          state.projects.find((p) => p.id === dialogProjectId)?.name ?? null
         }
         onConfirm={handleRemoveProject}
-        onRequestClose={() => {
-          state.setShowRemoveModal(false);
-          state.setRemoveTargetId(null);
-        }}
+        onRequestClose={state.closeDialog}
         t={t}
       />
     </div>

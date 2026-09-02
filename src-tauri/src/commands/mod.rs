@@ -807,8 +807,7 @@ pub async fn unsync_all_skills(
 ) -> Result<RemovalReportDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let home = home_dir()?;
-        let report = crate::core::artifact_removal::unsync_all_skill_targets(&store, &home)?;
+        let report = crate::core::artifact_removal::unsync_all_skill_targets(&store)?;
         Ok::<_, anyhow::Error>(to_removal_report_dto(report))
     })
     .await
@@ -825,8 +824,7 @@ pub async fn unsync_skill(
 ) -> Result<RemovalReportDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let home = home_dir()?;
-        let report = crate::core::artifact_removal::unsync_skill_targets(&store, &home, &skillId)?;
+        let report = crate::core::artifact_removal::unsync_skill_targets(&store, &skillId)?;
         Ok::<_, anyhow::Error>(to_removal_report_dto(report))
     })
     .await
@@ -1068,8 +1066,7 @@ pub async fn delete_managed_skill(
 ) -> Result<(), CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let home = home_dir()?;
-        let report = crate::core::artifact_removal::remove_skill(&store, &home, &skillId)?;
+        let report = crate::core::artifact_removal::remove_skill(&store, &skillId)?;
         log::debug!("[delete_managed_skill] {}", report);
         Ok::<_, anyhow::Error>(())
     })

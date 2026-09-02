@@ -1,9 +1,8 @@
-// Tests at the ProjectState seam for the add-project → configure-tools →
-// gitignore sequence. The backend owns the persist → derive → write ordering
-// (`configure_project_tools` carries the ignore intent); the hook's job is
-// to capture the intent at registration and hand it to that single command
-// when the tool set is confirmed. The backend is mocked at the invokeTauri
-// module seam.
+// Tests at the ProjectState seam. Every project mutation returns the fresh
+// view of the project it changed (`ProjectViewDto`), so the hook applies one
+// result instead of orchestrating follow-up reads — these tests assert the
+// state that got applied, not how many calls it took. The backend is mocked
+// at the invokeTauri module seam.
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +11,9 @@ import type {
   GitignoreStatusDto,
   IgnoreUpdateOptions,
   ProjectDto,
+  ProjectSkillAssignmentDto,
   ProjectToolDto,
+  ProjectViewDto,
 } from "./types";
 
 vi.mock("../../lib/tauri", () => ({
@@ -36,56 +37,159 @@ const mockInvoke = vi.mocked(
   ) => Promise<unknown>,
 );
 
-function project(id: string, toolCount = 0): ProjectDto {
+function toolRecords(projectId: string, tools: string[]): ProjectToolDto[] {
+  return tools.map((tool) => ({
+    id: `${projectId}:${tool}`,
+    project_id: projectId,
+    tool,
+  }));
+}
+
+function assignmentRecord(
+  projectId: string,
+  skillId: string,
+  tool: string,
+): ProjectSkillAssignmentDto {
   return {
-    id,
-    path: `/work/${id}`,
-    name: id,
+    id: `${projectId}:${skillId}:${tool}`,
+    project_id: projectId,
+    skill_id: skillId,
+    skill_name: skillId,
+    tool,
+    mode: "symlink",
+    status: "synced",
+    last_error: null,
+    synced_at: 1,
+    content_hash: null,
     created_at: 1,
-    updated_at: 1,
-    tool_count: toolCount,
-    skill_count: 0,
-    assignment_count: 0,
-    sync_status: "synced",
-    path_exists: true,
   };
 }
 
-function toolRecords(projectId: string, tools: string[]): ProjectToolDto[] {
-  return tools.map((tool) => ({ id: `${projectId}:${tool}`, project_id: projectId, tool }));
-}
-
-/** Minimal echo backend: registration appends a project; tool config persists the set. */
+/**
+ * A tiny in-memory backend with the same contract as the real one: each
+ * mutation applies its write and answers with the resulting view.
+ */
 function stubBackend(options: { reconciled?: boolean } = {}) {
   const reconciled = options.reconciled ?? true;
-  const projects: ProjectDto[] = [];
+  const order: string[] = [];
+  const projectIds: string[] = [];
   const toolsByProject = new Map<string, string[]>();
+  const assignmentsByProject = new Map<string, ProjectSkillAssignmentDto[]>();
   let nextId = 1;
+
+  const projectRow = (id: string): ProjectDto => {
+    const tools = toolsByProject.get(id) ?? [];
+    const assignments = assignmentsByProject.get(id) ?? [];
+    return {
+      id,
+      path: `/work/${id}`,
+      name: id,
+      created_at: 1,
+      updated_at: 1,
+      tool_count: tools.length,
+      skill_count: new Set(assignments.map((a) => a.skill_id)).size,
+      assignment_count: assignments.length,
+      sync_status: assignments.length === 0 ? "none" : "synced",
+      path_exists: true,
+    };
+  };
+  const view = (id: string): ProjectViewDto => ({
+    project: projectRow(id),
+    tools: toolRecords(id, toolsByProject.get(id) ?? []),
+    assignments: assignmentsByProject.get(id) ?? [],
+    reconciled,
+  });
+
   mockInvoke.mockImplementation((command, ...args) => {
+    order.push(command);
     switch (command) {
       case "listProjects":
-        return Promise.resolve([...projects]);
+        return Promise.resolve(projectIds.map(projectRow));
       case "getManagedSkills":
         return Promise.resolve([]);
       case "registerProject": {
-        const created = project(`p${nextId++}`);
-        projects.push(created);
-        return Promise.resolve(created);
+        const id = `p${nextId++}`;
+        projectIds.push(id);
+        return Promise.resolve(view(id));
       }
-      case "listProjectTools": {
-        const [projectId] = args as Parameters<Commands["listProjectTools"]>;
-        return Promise.resolve(
-          toolRecords(projectId, toolsByProject.get(projectId) ?? []),
-        );
+      case "removeProject": {
+        const [projectId] = args as Parameters<Commands["removeProject"]>;
+        projectIds.splice(projectIds.indexOf(projectId), 1);
+        return Promise.resolve(projectIds.map(projectRow));
       }
-      case "listProjectSkillAssignments":
-        return Promise.resolve({ assignments: [], reconciled });
+      case "getProjectView": {
+        const [projectId] = args as Parameters<Commands["getProjectView"]>;
+        return Promise.resolve(view(projectId));
+      }
       case "configureProjectTools": {
         const [projectId, tools] = args as Parameters<
           Commands["configureProjectTools"]
         >;
         toolsByProject.set(projectId, tools);
-        return Promise.resolve(toolRecords(projectId, tools));
+        // Dropping a tool cascades to its assignments — the backend's view
+        // already reflects that.
+        assignmentsByProject.set(
+          projectId,
+          (assignmentsByProject.get(projectId) ?? []).filter((a) =>
+            tools.includes(a.tool),
+          ),
+        );
+        return Promise.resolve(view(projectId));
+      }
+      case "toggleProjectSkillAssignment": {
+        const [projectId, skillId, tool] = args as Parameters<
+          Commands["toggleProjectSkillAssignment"]
+        >;
+        const rows = assignmentsByProject.get(projectId) ?? [];
+        const existing = rows.findIndex(
+          (a) => a.skill_id === skillId && a.tool === tool,
+        );
+        if (existing >= 0) rows.splice(existing, 1);
+        else rows.push(assignmentRecord(projectId, skillId, tool));
+        assignmentsByProject.set(projectId, rows);
+        return Promise.resolve({
+          view: view(projectId),
+          assigned: existing < 0,
+        });
+      }
+      case "bulkAssignSkill": {
+        const [projectId, skillId] = args as Parameters<
+          Commands["bulkAssignSkill"]
+        >;
+        const rows = assignmentsByProject.get(projectId) ?? [];
+        for (const tool of toolsByProject.get(projectId) ?? []) {
+          if (!rows.some((a) => a.skill_id === skillId && a.tool === tool)) {
+            rows.push(assignmentRecord(projectId, skillId, tool));
+          }
+        }
+        assignmentsByProject.set(projectId, rows);
+        return Promise.resolve({ view: view(projectId), failed: [] });
+      }
+      case "resyncProject": {
+        const [projectId] = args as Parameters<Commands["resyncProject"]>;
+        return Promise.resolve({
+          view: view(projectId),
+          summary: {
+            project_id: projectId,
+            synced: (assignmentsByProject.get(projectId) ?? []).length,
+            failed: 0,
+            errors: [],
+          },
+        });
+      }
+      case "resyncAllProjects":
+        return Promise.resolve({
+          summaries: projectIds.map((id) => ({
+            project_id: id,
+            synced: 0,
+            failed: 0,
+            errors: [],
+          })),
+          projects: projectIds.map(projectRow),
+        });
+      case "updateProjectPath": {
+        const [projectId] = args as Parameters<Commands["updateProjectPath"]>;
+        return Promise.resolve(view(projectId));
       }
       case "getProjectGitignoreStatus":
         return Promise.resolve({
@@ -98,6 +202,7 @@ function stubBackend(options: { reconciled?: boolean } = {}) {
         return Promise.resolve(undefined);
     }
   });
+  return { order };
 }
 
 /** Positional args of every call to `command`, typed from the bindings. */
@@ -119,6 +224,25 @@ async function renderReady() {
     expect(rendered.result.current.projectsLoading).toBe(false);
   });
   return rendered;
+}
+
+/** Register p1, select it, and give it a tool set. */
+async function withSelectedProject(
+  result: { current: ReturnType<typeof useProjectState> },
+  tools: string[] = ["claude_code"],
+) {
+  await act(async () => {
+    await result.current.registerProject("/work/p1", {
+      add_to_gitignore: false,
+      add_to_exclude: false,
+    });
+  });
+  await act(async () => {
+    await result.current.selectProject("p1");
+  });
+  await act(async () => {
+    await result.current.configureTools(tools);
+  });
 }
 
 describe("useProjectState add-project → configure-tools → gitignore", () => {
@@ -180,26 +304,12 @@ describe("useProjectState add-project → configure-tools → gitignore", () => 
 
     expect(
       callsTo("configureProjectTools").map(([, , gitignore]) => gitignore),
-    ).toEqual([
-      { add_to_gitignore: true, add_to_exclude: true },
-      null,
-    ]);
+    ).toEqual([{ add_to_gitignore: true, add_to_exclude: true }, null]);
   });
 
   it("registers without an intent when neither toggle is set", async () => {
     const { result } = await renderReady();
-    await act(async () => {
-      await result.current.registerProject("/work/p1", {
-        add_to_gitignore: false,
-        add_to_exclude: false,
-      });
-    });
-    await act(async () => {
-      await result.current.selectProject("p1");
-    });
-    await act(async () => {
-      await result.current.configureTools(["claude_code"]);
-    });
+    await withSelectedProject(result);
 
     expect(callsTo("configureProjectTools")[0]?.[2]).toBeNull();
   });
@@ -231,7 +341,7 @@ describe("useProjectState add-project → configure-tools → gitignore", () => 
     ]);
   });
 
-  it("re-fetches tools when the batch command fails so state converges on the backend", async () => {
+  it("converges on the backend's view when the batch command fails", async () => {
     const { result } = await renderReady();
     await act(async () => {
       await result.current.registerProject("/work/p1", {
@@ -243,10 +353,10 @@ describe("useProjectState add-project → configure-tools → gitignore", () => 
       await result.current.selectProject("p1");
     });
     // Tools persisted, ignore write failed: the command errors but the
-    // backend now lists the new tool set. The rejection carries a real wire
-    // code (typed as `CommandError`, so a fabricated code fails the build) —
-    // this is what the backend raises when the project dir went missing
-    // between registration and the ignore write.
+    // backend now reports the new tool set. The rejection carries a real
+    // wire code (typed as `CommandError`, so a fabricated code fails the
+    // build) — this is what the backend raises when the project dir went
+    // missing between registration and the ignore write.
     const ignoreWriteFailure: CommandError = {
       code: "INVALID_PATH",
       path: "/work/p1",
@@ -329,45 +439,151 @@ describe("useProjectState add-project → configure-tools → gitignore", () => 
 
     expect(callsTo("configureProjectTools")[0]?.[2]).toBeNull();
   });
+});
 
-  it("refreshes tools, assignments and the project list after configuring", async () => {
+describe("useProjectState applies the view a mutation returns", () => {
+  it("applies tools, assignments and the project row from configureTools alone", async () => {
     const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    mockInvoke.mockClear();
+
     await act(async () => {
-      await result.current.registerProject("/work/p1", {
-        add_to_gitignore: false,
-        add_to_exclude: false,
-      });
+      await result.current.configureTools(["pi", "cursor"]);
     });
+
+    expect(commandOrder()).toEqual(["configureProjectTools"]);
+    expect(result.current.tools.map((t) => t.tool)).toEqual(["pi", "cursor"]);
+    expect(
+      result.current.projects.find((p) => p.id === "p1")?.tool_count,
+    ).toBe(2);
+  });
+
+  it("shows the cascade when a tool is dropped, without re-reading", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi", "cursor"]);
+    await act(async () => {
+      await result.current.toggleAssignment("s1", "pi");
+    });
+    await act(async () => {
+      await result.current.toggleAssignment("s1", "cursor");
+    });
+    expect(result.current.assignments).toHaveLength(2);
+    mockInvoke.mockClear();
+
+    await act(async () => {
+      await result.current.configureTools(["cursor"]);
+    });
+
+    expect(commandOrder()).toEqual(["configureProjectTools"]);
+    expect(result.current.assignments.map((a) => a.tool)).toEqual(["cursor"]);
+    const row = result.current.projects.find((p) => p.id === "p1");
+    expect(row?.tool_count).toBe(1);
+    expect(row?.assignment_count).toBe(1);
+  });
+
+  it("toggles an assignment on and off from the backend's own decision", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["claude_code"]);
+    mockInvoke.mockClear();
+
+    await act(async () => {
+      await result.current.toggleAssignment("s1", "claude_code");
+    });
+    expect(result.current.assignments.map((a) => a.skill_id)).toEqual(["s1"]);
+    expect(
+      result.current.projects.find((p) => p.id === "p1")?.assignment_count,
+    ).toBe(1);
+
+    await act(async () => {
+      await result.current.toggleAssignment("s1", "claude_code");
+    });
+    expect(result.current.assignments).toEqual([]);
+
+    // No refetch tail: each toggle is one command, and the frontend never
+    // told the backend which way to go.
+    expect(commandOrder()).toEqual([
+      "toggleProjectSkillAssignment",
+      "toggleProjectSkillAssignment",
+    ]);
+    expect(
+      callsTo("toggleProjectSkillAssignment"),
+    ).toEqual([
+      ["p1", "s1", "claude_code"],
+      ["p1", "s1", "claude_code"],
+    ]);
+  });
+
+  it("applies the bulk-assign view without a follow-up read", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi", "cursor"]);
+    mockInvoke.mockClear();
+
+    await act(async () => {
+      await result.current.bulkAssign("s1");
+    });
+
+    expect(commandOrder()).toEqual(["bulkAssignSkill"]);
+    expect(result.current.assignments.map((a) => a.tool)).toEqual([
+      "pi",
+      "cursor",
+    ]);
+  });
+
+  it("applies the resync view and returns its summary", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    await act(async () => {
+      await result.current.toggleAssignment("s1", "pi");
+    });
+    mockInvoke.mockClear();
+
+    let summary: Awaited<
+      ReturnType<typeof result.current.resyncProject>
+    > | null = null;
+    await act(async () => {
+      summary = await result.current.resyncProject();
+    });
+
+    expect(commandOrder()).toEqual(["resyncProject"]);
+    expect(summary).toMatchObject({ project_id: "p1", synced: 1, failed: 0 });
+    expect(result.current.assignments).toHaveLength(1);
+  });
+
+  it("takes the remaining project list straight from removeProject", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result);
+    mockInvoke.mockClear();
+
+    await act(async () => {
+      await result.current.removeProject("p1");
+    });
+
+    expect(commandOrder()).toEqual(["removeProject"]);
+    expect(result.current.projects).toEqual([]);
+    expect(result.current.selectedProjectId).toBeNull();
+    expect(result.current.assignments).toEqual([]);
+  });
+
+  it("selects a project with one view read", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    mockInvoke.mockClear();
+
     await act(async () => {
       await result.current.selectProject("p1");
     });
-    mockInvoke.mockClear();
-    await act(async () => {
-      await result.current.configureTools(["pi"]);
-    });
 
-    const order = commandOrder();
-    expect(order[0]).toBe("configureProjectTools");
-    expect(order).toContain("listProjectSkillAssignments");
-    expect(order).toContain("listProjects");
+    expect(commandOrder()).toEqual(["getProjectView"]);
     expect(result.current.tools.map((t) => t.tool)).toEqual(["pi"]);
   });
 });
 
 describe("useProjectState assignment reconciliation flag", () => {
-  it("defaults to reconciled and carries a reconciled listing through", async () => {
+  it("defaults to reconciled and carries a reconciled view through", async () => {
     const { result } = await renderReady();
     expect(result.current.assignmentsReconciled).toBe(true);
 
-    await act(async () => {
-      await result.current.registerProject("/work/p1", {
-        add_to_gitignore: false,
-        add_to_exclude: false,
-      });
-    });
-    await act(async () => {
-      await result.current.selectProject("p1");
-    });
+    await withSelectedProject(result);
 
     expect(result.current.assignmentsReconciled).toBe(true);
   });
@@ -376,17 +592,36 @@ describe("useProjectState assignment reconciliation flag", () => {
     stubBackend({ reconciled: false });
     const { result } = await renderReady();
 
-    await act(async () => {
-      await result.current.registerProject("/work/p1", {
-        add_to_gitignore: false,
-        add_to_exclude: false,
-      });
-    });
-    await act(async () => {
-      await result.current.selectProject("p1");
-    });
+    await withSelectedProject(result);
 
     expect(result.current.assignmentsReconciled).toBe(false);
+  });
+});
+
+describe("useProjectState dialog", () => {
+  it("opens, replaces and closes one dialog value", async () => {
+    const { result } = await renderReady();
+    expect(result.current.dialog).toBeNull();
+
+    act(() => {
+      result.current.openDialog({ kind: "add" });
+    });
+    expect(result.current.dialog).toEqual({ kind: "add" });
+
+    act(() => {
+      result.current.openDialog({ kind: "remove", projectId: "p1" });
+    });
+    // Opening a dialog replaces the previous one: two cannot be open, and a
+    // target can never outlive the dialog it belongs to.
+    expect(result.current.dialog).toEqual({
+      kind: "remove",
+      projectId: "p1",
+    });
+
+    act(() => {
+      result.current.closeDialog();
+    });
+    expect(result.current.dialog).toBeNull();
   });
 });
 

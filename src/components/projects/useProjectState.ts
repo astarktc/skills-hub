@@ -6,13 +6,24 @@ import type {
   ProjectDto,
   ProjectToolDto,
   ProjectSkillAssignmentDto,
-  ProjectAssignmentListingDto,
+  ProjectViewDto,
   ResyncSummaryDto,
   BulkAssignResultDto,
   GitignoreStatusDto,
   IgnoreUpdateOptions,
 } from "./types";
 import type { ManagedSkill, ToolStatusDto } from "../skills/types";
+
+/**
+ * Which modal the project world is showing, and what it is about. One value
+ * instead of a flag-plus-target pair per modal: the two can never disagree,
+ * and closing is one call.
+ */
+export type ProjectDialog =
+  | { kind: "add" }
+  | { kind: "edit"; projectId: string }
+  | { kind: "toolConfig" }
+  | { kind: "remove"; projectId: string };
 
 export type ProjectState = {
   // Data
@@ -21,7 +32,7 @@ export type ProjectState = {
   tools: ProjectToolDto[];
   assignments: ProjectSkillAssignmentDto[];
   /**
-   * Whether the last assignment listing's reconcile pass actually ran. The
+   * Whether the last applied view's reconcile pass actually ran. The
    * backend skips it (rather than queue) while a Sync-target mutation is in
    * flight, so `false` means the rows shown are stored, not re-derived from
    * disk — never treat it as "healthy".
@@ -36,12 +47,7 @@ export type ProjectState = {
   // Errors
   loadFailed: boolean;
   // Modal state
-  showAddModal: boolean;
-  showEditModal: boolean;
-  editTargetId: string | null;
-  showToolConfigModal: boolean;
-  showRemoveModal: boolean;
-  removeTargetId: string | null;
+  dialog: ProjectDialog | null;
   // Actions
   loadProjects: () => Promise<void>;
   selectProject: (id: string) => Promise<void>;
@@ -78,12 +84,8 @@ export type ProjectState = {
     projectId: string,
     options: IgnoreUpdateOptions,
   ) => Promise<void>;
-  setShowAddModal: (show: boolean) => void;
-  setShowEditModal: (show: boolean) => void;
-  setEditTargetId: (id: string | null) => void;
-  setShowToolConfigModal: (show: boolean) => void;
-  setShowRemoveModal: (show: boolean) => void;
-  setRemoveTargetId: (id: string | null) => void;
+  openDialog: (dialog: ProjectDialog) => void;
+  closeDialog: () => void;
 };
 
 export function useProjectState(): ProjectState {
@@ -97,16 +99,6 @@ export function useProjectState(): ProjectState {
     [],
   );
   const [assignmentsReconciled, setAssignmentsReconciled] = useState(true);
-
-  // Every listing result lands through here, so the reconcile flag can never
-  // drift from the rows it describes.
-  const applyAssignmentListing = useCallback(
-    (listing: ProjectAssignmentListingDto) => {
-      setAssignments(listing.assignments);
-      setAssignmentsReconciled(listing.reconciled);
-    },
-    [],
-  );
   const [skills, setSkills] = useState<ManagedSkill[]>([]);
   const [toolStatus, setToolStatus] = useState<ToolStatusDto | null>(null);
 
@@ -119,15 +111,7 @@ export function useProjectState(): ProjectState {
   const [loadFailed, setLoadFailed] = useState(false);
 
   // Modal state
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [editTargetId, setEditTargetId] = useState<string | null>(null);
-  const [showToolConfigModal, setShowToolConfigModal] = useState(false);
-  const [showRemoveModal, setShowRemoveModal] = useState(false);
-  const [removeTargetId, setRemoveTargetId] = useState<string | null>(null);
-
-  // Version counter for stale result discard on project selection
-  const selectVersionRef = useRef(0);
+  const [dialog, setDialog] = useState<ProjectDialog | null>(null);
 
   // Ignore intent captured by registerProject, consumed by the next
   // configureTools for that project (and dropped by any other registration
@@ -137,15 +121,49 @@ export function useProjectState(): ProjectState {
     options: IgnoreUpdateOptions;
   } | null>(null);
 
-  // Track latest assignments for stale-closure protection in toggleAssignment.
-  // Write the ref in an effect (after commit) rather than during render to
-  // satisfy react-hooks/refs. toggleAssignment reads assignmentsRef.current
-  // only inside an async event handler (always after the latest commit), so
-  // the ref still reflects the newest assignments when read — behavior-preserving.
-  const assignmentsRef = useRef(assignments);
-  useEffect(() => {
-    assignmentsRef.current = assignments;
-  }, [assignments]);
+  // Version counter for stale result discard on project selection.
+  const selectVersionRef = useRef(0);
+
+  /**
+   * Apply one backend view: the project row replaces its entry in the list,
+   * and the matrix takes the view's tools and assignments wholesale. Every
+   * mutation returns a view, so nothing here needs a follow-up read — and a
+   * view for a project the operator has since navigated away from only
+   * updates that project's row.
+   */
+  const applyView = useCallback((view: ProjectViewDto) => {
+    setProjects((prev) => {
+      const index = prev.findIndex((p) => p.id === view.project.id);
+      if (index === -1) return [view.project, ...prev];
+      const next = [...prev];
+      next[index] = view.project;
+      return next;
+    });
+    setSelectedProjectId((current) => {
+      if (current === view.project.id) {
+        setTools(view.tools);
+        setAssignments(view.assignments);
+        setAssignmentsReconciled(view.reconciled);
+      }
+      return current;
+    });
+  }, []);
+
+  /**
+   * Error-path convergence only: re-read a project's view after a mutation
+   * failed, so what is shown matches what the backend settled. Success
+   * paths never need it — the mutation returned its own view.
+   */
+  const refreshView = useCallback(
+    async (projectId: string) => {
+      try {
+        applyView(await invokeTauri("getProjectView", projectId));
+      } catch {
+        // Silent fallback — state may be stale
+      }
+    },
+    [applyView],
+  );
 
   const loadProjects = useCallback(async () => {
     setProjectsLoading(true);
@@ -179,80 +197,61 @@ export function useProjectState(): ProjectState {
     })();
   }, [loadProjects, loadSkills]);
 
-  const selectProject = useCallback(async (id: string) => {
-    setSelectedProjectId(id);
-    setMatrixLoading(true);
-    const version = ++selectVersionRef.current;
-    try {
-      const [fetchedTools, fetchedAssignments] = await Promise.all([
-        invokeTauri("listProjectTools", id),
-        invokeTauri("listProjectSkillAssignments", id),
-      ]);
-      // Discard stale results if another selection happened
-      if (selectVersionRef.current !== version) return;
-      setTools(fetchedTools);
-      applyAssignmentListing(fetchedAssignments);
-    } catch (err) {
-      if (selectVersionRef.current !== version) return;
-      setTools([]);
-      setAssignments([]);
-      throw err;
-    } finally {
-      if (selectVersionRef.current === version) {
-        setMatrixLoading(false);
+  const selectProject = useCallback(
+    async (id: string) => {
+      setSelectedProjectId(id);
+      setMatrixLoading(true);
+      const version = ++selectVersionRef.current;
+      try {
+        const view = await invokeTauri("getProjectView", id);
+        // `applyView` ignores a view for a project no longer selected; the
+        // version guard covers the loading flag and the failure path.
+        if (selectVersionRef.current !== version) return;
+        applyView(view);
+      } catch (err) {
+        if (selectVersionRef.current !== version) return;
+        setTools([]);
+        setAssignments([]);
+        throw err;
+      } finally {
+        if (selectVersionRef.current === version) {
+          setMatrixLoading(false);
+        }
       }
-    }
-  }, [applyAssignmentListing]);
-
-  // Silently re-fetch assignments for a project, keeping stale state when
-  // even the re-fetch fails. Shared by mutation error paths and the resync
-  // flows so the matrix converges on the backend's view of the assignments.
-  // (Success paths of toggle/bulk re-fetch unguarded on purpose: there a
-  // failed list surfaces to the caller.)
-  const refreshAssignments = useCallback(async (projectId: string) => {
-    try {
-      const updated = await invokeTauri(
-        "listProjectSkillAssignments",
-        projectId,
-      );
-      applyAssignmentListing(updated);
-    } catch {
-      // Silent fallback — state may be stale
-    }
-  }, [applyAssignmentListing]);
+    },
+    [applyView],
+  );
 
   const registerProject = useCallback(
     async (
       path: string,
       gitignore: IgnoreUpdateOptions,
     ): Promise<ProjectDto> => {
-      const result = await invokeTauri("registerProject", path);
+      const view = await invokeTauri("registerProject", path);
       setPendingIgnore(
         gitignore.add_to_gitignore || gitignore.add_to_exclude
-          ? { projectId: result.id, options: gitignore }
+          ? { projectId: view.project.id, options: gitignore }
           : null,
       );
-      await loadProjects();
-      return result;
+      applyView(view);
+      return view.project;
     },
-    [loadProjects],
+    [applyView],
   );
 
-  const removeProject = useCallback(
-    async (id: string) => {
-      await invokeTauri("removeProject", id);
-      setSelectedProjectId((prev) => {
-        if (prev === id) {
-          setTools([]);
-          setAssignments([]);
-          return null;
-        }
-        return prev;
-      });
-      await loadProjects();
-    },
-    [loadProjects],
-  );
+  const removeProject = useCallback(async (id: string) => {
+    // The project is gone, so the mutation's view is the remaining list.
+    const remaining = await invokeTauri("removeProject", id);
+    setProjects(remaining);
+    setSelectedProjectId((prev) => {
+      if (prev === id) {
+        setTools([]);
+        setAssignments([]);
+        return null;
+      }
+      return prev;
+    });
+  }, []);
 
   const toggleAssignment = useCallback(
     async (skillId: string, tool: string) => {
@@ -266,33 +265,20 @@ export function useProjectState(): ProjectState {
         return next;
       });
       try {
-        const exists = assignmentsRef.current.some(
-          (a) => a.skill_id === skillId && a.tool === tool,
-        );
-        if (exists) {
-          await invokeTauri(
-            "removeProjectSkillAssignment",
-            selectedProjectId,
-            skillId,
-            tool,
-          );
-        } else {
-          await invokeTauri(
-            "addProjectSkillAssignment",
-            selectedProjectId,
-            skillId,
-            tool,
-          );
-        }
-        const updated = await invokeTauri(
-          "listProjectSkillAssignments",
+        // Add-vs-remove is the backend's decision, read from its own rows
+        // under the mutation guard — the frontend mirrors nothing.
+        const result = await invokeTauri(
+          "toggleProjectSkillAssignment",
           selectedProjectId,
+          skillId,
+          tool,
         );
-        applyAssignmentListing(updated);
-        await loadProjects();
+        applyView(result.view);
       } catch (err) {
-        // Re-fetch to get consistent state even on error
-        await refreshAssignments(selectedProjectId);
+        // A failed mutation may still have settled rows (an unassign whose
+        // artifact stayed keeps the row with status `error`), so converge on
+        // the backend's view before surfacing the failure.
+        await refreshView(selectedProjectId);
         throw err;
       } finally {
         setPendingCells((prev) => {
@@ -302,13 +288,7 @@ export function useProjectState(): ProjectState {
         });
       }
     },
-    [
-      selectedProjectId,
-      loadProjects,
-      pendingCells,
-      refreshAssignments,
-      applyAssignmentListing,
-    ],
+    [selectedProjectId, pendingCells, applyView, refreshView],
   );
 
   const bulkAssign = useCallback(
@@ -327,15 +307,10 @@ export function useProjectState(): ProjectState {
           selectedProjectId,
           skillId,
         );
-        const updated = await invokeTauri(
-          "listProjectSkillAssignments",
-          selectedProjectId,
-        );
-        applyAssignmentListing(updated);
-        await loadProjects();
+        applyView(result.view);
         return result;
       } catch (err) {
-        await refreshAssignments(selectedProjectId);
+        await refreshView(selectedProjectId);
         throw err;
       } finally {
         setPendingCells((prev) => {
@@ -345,42 +320,34 @@ export function useProjectState(): ProjectState {
         });
       }
     },
-    [
-      selectedProjectId,
-      tools,
-      loadProjects,
-      refreshAssignments,
-      applyAssignmentListing,
-    ],
+    [selectedProjectId, tools, applyView, refreshView],
   );
 
   const updateProjectPath = useCallback(
     async (projectId: string, newPath: string): Promise<ProjectDto> => {
-      const result = await invokeTauri("updateProjectPath", projectId, newPath);
-      await loadProjects();
-      return result;
+      const view = await invokeTauri("updateProjectPath", projectId, newPath);
+      applyView(view);
+      return view.project;
     },
-    [loadProjects],
+    [applyView],
   );
 
   const resyncProject = useCallback(async (): Promise<ResyncSummaryDto> => {
     if (!selectedProjectId) throw new Error("No project selected");
     const result = await invokeTauri("resyncProject", selectedProjectId);
-    // Re-fetch assignments to reflect updated sync status
-    await refreshAssignments(selectedProjectId);
-    await loadProjects();
-    return result;
-  }, [selectedProjectId, loadProjects, refreshAssignments]);
+    applyView(result.view);
+    return result.summary;
+  }, [selectedProjectId, applyView]);
 
   const resyncAll = useCallback(async (): Promise<ResyncSummaryDto[]> => {
     const result = await invokeTauri("resyncAllProjects");
-    await loadProjects();
-    // Re-fetch assignments for selected project if any
+    setProjects(result.projects);
+    // The batch touches every project; only the shown one needs its matrix.
     if (selectedProjectId) {
-      await refreshAssignments(selectedProjectId);
+      applyView(await invokeTauri("getProjectView", selectedProjectId));
     }
-    return result;
-  }, [selectedProjectId, loadProjects, refreshAssignments]);
+    return result.summaries;
+  }, [selectedProjectId, applyView]);
 
   const loadToolStatus = useCallback(async () => {
     const result = await invokeTauri("getProjectToolStatus");
@@ -395,35 +362,27 @@ export function useProjectState(): ProjectState {
           ? pendingIgnore.options
           : null;
       try {
-        const updatedTools = await invokeTauri(
+        // The view already reflects the cascade of dropping a tool (its
+        // assignments are gone), so there is nothing to re-read.
+        const view = await invokeTauri(
           "configureProjectTools",
           selectedProjectId,
           toolIds,
           gitignore,
         );
-        setTools(updatedTools);
+        applyView(view);
         // Consume the intent only once the backend has written it. On
         // rejection the modal stays open, so keeping the intent lets a
         // retry replay it instead of silently persisting tools alone.
         setPendingIgnore(null);
       } catch (err) {
         // The tools may have been persisted before the ignore write failed;
-        // converge on the backend's view (silently, like refreshAssignments).
-        try {
-          setTools(
-            await invokeTauri("listProjectTools", selectedProjectId),
-          );
-        } catch {
-          // Silent fallback — state may be stale
-        }
+        // converge on the backend's view (silently — the caller sees `err`).
+        await refreshView(selectedProjectId);
         throw err;
-      } finally {
-        // Removing a tool cascades to its assignments; tool_count changed.
-        await refreshAssignments(selectedProjectId);
-        await loadProjects();
       }
     },
-    [selectedProjectId, pendingIgnore, refreshAssignments, loadProjects],
+    [selectedProjectId, pendingIgnore, applyView, refreshView],
   );
 
   // Dismissing the tool-config modal abandons the registration flow that
@@ -446,6 +405,14 @@ export function useProjectState(): ProjectState {
     [],
   );
 
+  const openDialog = useCallback((next: ProjectDialog) => {
+    setDialog(next);
+  }, []);
+
+  const closeDialog = useCallback(() => {
+    setDialog(null);
+  }, []);
+
   return {
     projects,
     selectedProjectId,
@@ -458,12 +425,7 @@ export function useProjectState(): ProjectState {
     matrixLoading,
     pendingCells,
     loadFailed,
-    showAddModal,
-    showEditModal,
-    editTargetId,
-    showToolConfigModal,
-    showRemoveModal,
-    removeTargetId,
+    dialog,
     loadProjects,
     selectProject,
     registerProject,
@@ -478,11 +440,7 @@ export function useProjectState(): ProjectState {
     discardPendingIgnore,
     getGitignoreStatus,
     updateGitignore,
-    setShowAddModal,
-    setShowEditModal,
-    setEditTargetId,
-    setShowToolConfigModal,
-    setShowRemoveModal,
-    setRemoveTargetId,
+    openDialog,
+    closeDialog,
   };
 }

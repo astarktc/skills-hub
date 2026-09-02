@@ -2,8 +2,8 @@ use crate::core::sync_status::{ProjectSyncStatus, SyncMode, SyncStatus};
 use std::path::PathBuf;
 
 use crate::core::skill_store::{
-    AssignmentTransition, ProjectRecord, ProjectSkillAssignmentRecord, ProjectToolRecord,
-    SkillRecord, SkillStore, SkillTargetRecord,
+    AssignmentTransition, ProjectAggregate, ProjectRecord, ProjectSkillAssignmentRecord,
+    ProjectToolRecord, SkillRecord, SkillStore, SkillTargetRecord,
 };
 
 fn make_store() -> (tempfile::TempDir, SkillStore) {
@@ -770,7 +770,7 @@ fn aggregate_sync_status_all_synced() {
     store.add_project_skill_assignment(&a2).unwrap();
 
     assert_eq!(
-        store.aggregate_project_sync_status("p1").unwrap(),
+        store.project_aggregate("p1").unwrap().sync_status,
         ProjectSyncStatus::Synced
     );
 }
@@ -822,7 +822,7 @@ fn aggregate_sync_status_mixed() {
     store.add_project_skill_assignment(&a2).unwrap();
 
     assert_eq!(
-        store.aggregate_project_sync_status("p1").unwrap(),
+        store.project_aggregate("p1").unwrap().sync_status,
         ProjectSyncStatus::Error
     );
 }
@@ -840,13 +840,105 @@ fn aggregate_sync_status_no_assignments() {
     store.register_project(&p).unwrap();
 
     assert_eq!(
-        store.aggregate_project_sync_status("p1").unwrap(),
+        store.project_aggregate("p1").unwrap().sync_status,
         ProjectSyncStatus::Empty
     );
 }
 
+/// The grouped read is what the project listing uses: every project's
+/// numbers and status fold arrive from one pass, so three projects with
+/// different statuses come back correct without a per-project query.
 #[test]
-fn count_project_assignments_and_tools() {
+fn project_aggregates_reads_every_project_in_one_pass() {
+    let (_dir, store) = make_store();
+    for (id, path) in [("p1", "/a"), ("p2", "/b"), ("p3", "/c")] {
+        store
+            .register_project(&ProjectRecord {
+                id: id.to_string(),
+                path: path.to_string(),
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+    }
+    for (id, project_id, tool) in [
+        ("t1", "p1", "cursor"),
+        ("t2", "p1", "claude_code"),
+        ("t3", "p2", "cursor"),
+    ] {
+        store
+            .add_project_tool(&ProjectToolRecord {
+                id: id.to_string(),
+                project_id: project_id.to_string(),
+                tool: tool.to_string(),
+            })
+            .unwrap();
+    }
+    for skill in ["s1", "s2"] {
+        store
+            .upsert_skill(&make_skill(skill, skill, &format!("/central/{skill}"), 1))
+            .unwrap();
+    }
+    // p1: one skill on two tools, one stale — stale wins over synced.
+    // p2: two skills, one errored — error wins.
+    // p3: nothing at all — empty.
+    for (id, project_id, skill_id, tool, status) in [
+        ("a1", "p1", "s1", "cursor", SyncStatus::Synced),
+        ("a2", "p1", "s1", "claude_code", SyncStatus::Stale),
+        ("a3", "p2", "s1", "cursor", SyncStatus::Synced),
+        ("a4", "p2", "s2", "cursor", SyncStatus::Error),
+    ] {
+        store
+            .add_project_skill_assignment(&ProjectSkillAssignmentRecord {
+                id: id.to_string(),
+                project_id: project_id.to_string(),
+                skill_id: skill_id.to_string(),
+                skill_name: skill_id.to_string(),
+                tool: tool.to_string(),
+                mode: SyncMode::Symlink,
+                status,
+                last_error: None,
+                synced_at: None,
+                content_hash: None,
+                created_at: 1,
+            })
+            .unwrap();
+    }
+
+    let aggregates = store.project_aggregates().unwrap();
+
+    assert_eq!(
+        aggregates.get("p1").cloned().unwrap_or_default(),
+        ProjectAggregate {
+            tool_count: 2,
+            skill_count: 1,
+            assignment_count: 2,
+            sync_status: ProjectSyncStatus::Stale,
+        }
+    );
+    assert_eq!(
+        aggregates.get("p2").cloned().unwrap_or_default(),
+        ProjectAggregate {
+            tool_count: 1,
+            skill_count: 2,
+            assignment_count: 2,
+            sync_status: ProjectSyncStatus::Error,
+        }
+    );
+    assert_eq!(
+        aggregates.get("p3").cloned().unwrap_or_default(),
+        ProjectAggregate::default(),
+        "a project with nothing configured reads as the default aggregate"
+    );
+    // Same numbers through the single-project door.
+    assert_eq!(
+        store.project_aggregate("p1").unwrap(),
+        aggregates.get("p1").cloned().unwrap()
+    );
+}
+
+#[test]
+fn project_aggregate_counts_tools_assignments_and_skills() {
     let (_dir, store) = make_store();
 
     let p = ProjectRecord {
@@ -857,8 +949,10 @@ fn count_project_assignments_and_tools() {
     };
     store.register_project(&p).unwrap();
 
-    assert_eq!(store.count_project_assignments("p1").unwrap(), 0);
-    assert_eq!(store.count_project_tools("p1").unwrap(), 0);
+    assert_eq!(
+        store.project_aggregate("p1").unwrap(),
+        ProjectAggregate::default()
+    );
 
     let tool = ProjectToolRecord {
         id: "pt1".to_string(),
@@ -866,7 +960,7 @@ fn count_project_assignments_and_tools() {
         tool: "cursor".to_string(),
     };
     store.add_project_tool(&tool).unwrap();
-    assert_eq!(store.count_project_tools("p1").unwrap(), 1);
+    assert_eq!(store.project_aggregate("p1").unwrap().tool_count, 1);
 
     let skill = make_skill("s1", "S1", "/central/s1", 1);
     store.upsert_skill(&skill).unwrap();
@@ -885,7 +979,9 @@ fn count_project_assignments_and_tools() {
         created_at: 100,
     };
     store.add_project_skill_assignment(&assign).unwrap();
-    assert_eq!(store.count_project_assignments("p1").unwrap(), 1);
+    let aggregate = store.project_aggregate("p1").unwrap();
+    assert_eq!(aggregate.assignment_count, 1);
+    assert_eq!(aggregate.skill_count, 1);
 }
 
 #[test]
@@ -1160,7 +1256,7 @@ fn delete_skill_targets_removes_only_specified_skill() {
 }
 
 #[test]
-fn aggregate_project_sync_status_treats_missing_as_error() {
+fn project_aggregate_sync_status_treats_missing_as_error() {
     let (_dir, store) = make_store();
     let project = ProjectRecord {
         id: "p1".to_string(),
@@ -1185,7 +1281,7 @@ fn aggregate_project_sync_status_treats_missing_as_error() {
         created_at: 1,
     };
     store.add_project_skill_assignment(&assignment).unwrap();
-    let status = store.aggregate_project_sync_status("p1").unwrap();
+    let status = store.project_aggregate("p1").unwrap().sync_status;
     assert_eq!(status, ProjectSyncStatus::Error);
 }
 
@@ -1378,7 +1474,7 @@ fn unknown_stored_status_surfaces_as_error_with_diagnostic() {
         SyncStatus::Error
     );
     assert_eq!(
-        store.aggregate_project_sync_status("p1").unwrap(),
+        store.project_aggregate("p1").unwrap().sync_status,
         ProjectSyncStatus::Error
     );
     let raw: String = raw_conn(&store)

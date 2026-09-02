@@ -189,6 +189,20 @@ fn fixture(name: &str) -> Fixture {
     }
 }
 
+/// The toggle reads its own rows and acts on them in one critical section,
+/// so the decision cannot be raced by another mutation.
+#[test]
+fn toggle_skill_assignment_is_serialized() {
+    let f = fixture("toggle-guard");
+    let store = f.store.clone();
+    let project_id = f.project.id.clone();
+    let skill_id = f.skill.id.clone();
+    assert_serialized("toggle_skill_assignment", move || {
+        project_sync::toggle_skill_assignment(&store, &project_id, &skill_id, "claude_code", 4000)
+            .expect("toggle");
+    });
+}
+
 #[test]
 fn resync_project_is_serialized() {
     let f = fixture("resync-guard");
@@ -204,10 +218,8 @@ fn deleting_a_managed_skill_is_serialized() {
     let f = fixture("delete-guard");
     let store = f.store.clone();
     let skill_id = f.skill.id.clone();
-    let home = f._work_dir.path().join("empty-home");
-    fs::create_dir_all(&home).expect("create home");
     assert_serialized("remove_skill", move || {
-        artifact_removal::remove_skill(&store, &home, &skill_id).expect("remove skill");
+        artifact_removal::remove_skill(&store, &skill_id).expect("remove skill");
     });
 }
 

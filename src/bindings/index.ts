@@ -55,25 +55,36 @@ export const commands = {
 	unhideExploreSkill: (sourceUrl: string) => __TAURI_INVOKE<null>("unhide_explore_skill", { sourceUrl }),
 	getHiddenExploreSkills: () => __TAURI_INVOKE<string[]>("get_hidden_explore_skills"),
 	cancelCurrentOperation: () => __TAURI_INVOKE<null>("cancel_current_operation"),
-	registerProject: (path: string) => __TAURI_INVOKE<ProjectDto>("register_project", { path }),
-	removeProject: (projectId: string) => __TAURI_INVOKE<null>("remove_project", { projectId }),
+	registerProject: (path: string) => __TAURI_INVOKE<ProjectViewDto>("register_project", { path }),
+	/**
+	 *  Remove a project and every artifact it owns. The project it named is
+	 *  gone, so the fresh view is the *remaining* project list.
+	 */
+	removeProject: (projectId: string) => __TAURI_INVOKE<ProjectDto[]>("remove_project", { projectId }),
 	listProjects: () => __TAURI_INVOKE<ProjectDto[]>("list_projects"),
-	updateProjectPath: (projectId: string, path: string) => __TAURI_INVOKE<ProjectDto>("update_project_path", { projectId, path }),
+	updateProjectPath: (projectId: string, path: string) => __TAURI_INVOKE<ProjectViewDto>("update_project_path", { projectId, path }),
 	/**
 	 *  Replace the project's configured tool set and, when `gitignore` is given,
 	 *  update its ignore files afterwards. Core owns the ordering
-	 *  (`project_ops::configure_project_tools`); returns the resulting tools.
+	 *  (`project_ops::configure_project_tools`). Removing a tool cascades to its
+	 *  assignments, so the returned view already reflects that cascade.
 	 */
 	configureProjectTools: (projectId: string, tools: string[], gitignore: {
 	add_to_gitignore: boolean,
 	add_to_exclude: boolean,
-} | null) => __TAURI_INVOKE<ProjectToolDto[]>("configure_project_tools", { projectId, tools, gitignore }),
-	listProjectTools: (projectId: string) => __TAURI_INVOKE<ProjectToolDto[]>("list_project_tools", { projectId }),
-	addProjectSkillAssignment: (projectId: string, skillId: string, tool: string) => __TAURI_INVOKE<ProjectSkillAssignmentDto>("add_project_skill_assignment", { projectId, skillId, tool }),
-	removeProjectSkillAssignment: (projectId: string, skillId: string, tool: string) => __TAURI_INVOKE<null>("remove_project_skill_assignment", { projectId, skillId, tool }),
-	listProjectSkillAssignments: (projectId: string) => __TAURI_INVOKE<ProjectAssignmentListingDto>("list_project_skill_assignments", { projectId }),
-	resyncProject: (projectId: string) => __TAURI_INVOKE<ResyncSummaryDto>("resync_project", { projectId }),
-	resyncAllProjects: () => __TAURI_INVOKE<ResyncSummaryDto[]>("resync_all_projects"),
+} | null) => __TAURI_INVOKE<ProjectViewDto>("configure_project_tools", { projectId, tools, gitignore }),
+	/**
+	 *  The read counterpart of the mutation views: what selecting a project
+	 *  loads.
+	 */
+	getProjectView: (projectId: string) => __TAURI_INVOKE<ProjectViewDto>("get_project_view", { projectId }),
+	/**
+	 *  Assign or unassign one skill × project Tool pair — the backend decides
+	 *  which from its own rows, so no caller mirrors assignment existence.
+	 */
+	toggleProjectSkillAssignment: (projectId: string, skillId: string, tool: string) => __TAURI_INVOKE<ToggleAssignmentResultDto>("toggle_project_skill_assignment", { projectId, skillId, tool }),
+	resyncProject: (projectId: string) => __TAURI_INVOKE<ResyncProjectResultDto>("resync_project", { projectId }),
+	resyncAllProjects: () => __TAURI_INVOKE<ResyncAllResultDto>("resync_all_projects"),
 	bulkAssignSkill: (projectId: string, skillId: string) => __TAURI_INVOKE<BulkAssignResultDto>("bulk_assign_skill", { projectId, skillId }),
 	updateProjectGitignore: (projectId: string, gitignore: IgnoreUpdateOptions) => __TAURI_INVOKE<null>("update_project_gitignore", { projectId, gitignore }),
 	getProjectGitignoreStatus: (projectId: string) => __TAURI_INVOKE<GitignoreStatusDto>("get_project_gitignore_status", { projectId }),
@@ -138,8 +149,13 @@ export type BulkAssignErrorDto = {
 	error: CommandError,
 };
 
+/**
+ *  The fan-out's fresh view plus the tools it could not assign. Tools that
+ *  were already assigned are silent (nothing changed for them); the view
+ *  carries every assignment that now exists.
+ */
 export type BulkAssignResultDto = {
-	assigned: ProjectSkillAssignmentDto[],
+	view: ProjectViewDto,
 	failed: BulkAssignErrorDto[],
 };
 
@@ -375,18 +391,6 @@ export type OnlineSkillDto = {
 	source_url: string,
 };
 
-/**
- *  A project's assignment rows plus whether the reconcile pass ran.
- * 
- *  `reconciled == false` means a Sync-target mutation was in flight and the
- *  listing skipped reconciliation rather than queue behind it: the rows are
- *  the stored ones. Consumers must not read that as healthy.
- */
-export type ProjectAssignmentListingDto = {
-	assignments: ProjectSkillAssignmentDto[],
-	reconciled: boolean,
-};
-
 export type ProjectDto = {
 	id: string,
 	path: string,
@@ -426,6 +430,28 @@ export type ProjectToolDto = {
 	id: string,
 	project_id: string,
 	tool: string,
+};
+
+/**
+ *  Everything the project world shows for one project, as one wire value:
+ *  the project row (counts and aggregate status included), its configured
+ *  Tools, and its assignments with the reconcile flag.
+ * 
+ *  Every project mutation returns this, so the frontend applies one result
+ *  instead of chasing the mutation with follow-up reads. It is always built
+ *  *after* the mutation released the mutation guard, so its reconcile pass
+ *  can take the guard normally.
+ */
+export type ProjectViewDto = {
+	project: ProjectDto,
+	tools: ProjectToolDto[],
+	assignments: ProjectSkillAssignmentDto[],
+	/**
+	 *  `false` means a Sync-target mutation was in flight and the reconcile
+	 *  pass was skipped rather than queued: the rows are the stored ones,
+	 *  not re-derived from disk. Never read it as healthy.
+	 */
+	reconciled: boolean,
 };
 
 /**  Which Sync target a Propagation outcome is about. */
@@ -495,6 +521,22 @@ export type RemovalTargetDto = {
  *  command error.
  */
 export type RemovalTargetStatusDto = { status: "removed" } | { status: "failed"; error: CommandError };
+
+/**
+ *  Per-project counts and errors plus the refreshed project list. A single
+ *  project's assignments are not returned here — the caller re-reads the
+ *  view of whichever project it is showing.
+ */
+export type ResyncAllResultDto = {
+	summaries: ResyncSummaryDto[],
+	projects: ProjectDto[],
+};
+
+/**  A resync's counts and errors alongside the project's fresh view. */
+export type ResyncProjectResultDto = {
+	view: ProjectViewDto,
+	summary: ResyncSummaryDto,
+};
 
 export type ResyncSummaryDto = {
 	project_id: string,
@@ -603,6 +645,16 @@ export type SyncTargetResultDto = {
  *  the typed error so call sites choose what to surface.
  */
 export type SyncTargetStatusDto = { status: "synced"; mode_used: SyncMode } | { status: "skipped"; error: CommandError } | { status: "failed"; error: CommandError };
+
+/**  Which way a toggle went, with the resulting view. */
+export type ToggleAssignmentResultDto = {
+	view: ProjectViewDto,
+	/**
+	 *  True when the skill is now assigned to the tool, false when the
+	 *  assignment was removed.
+	 */
+	assigned: boolean,
+};
 
 export type ToolInfoDto = {
 	key: string,

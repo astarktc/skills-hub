@@ -170,7 +170,6 @@ fn restore_permissions(dir: &Path) {
 fn skill_scope_plans_global_and_project_targets_using_project_scope_mapping() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &["claude_code"]);
     let central = make_skill_dir(&tmp.path().join("central"), "alpha");
     let skill = seed_skill(&store, "alpha", &central);
     let global = seed_global_target(&store, &skill, "claude_code", &tmp.path().join("tools"));
@@ -182,7 +181,6 @@ fn skill_scope_plans_global_and_project_targets_using_project_scope_mapping() {
 
     let planned = plan(
         &store,
-        &home,
         &RemovalScope::Skill {
             skill_id: skill.id.clone(),
         },
@@ -219,7 +217,6 @@ fn plan_dedupes_a_shared_skills_dir_into_one_target_with_every_member_row() {
 
     let planned = plan(
         &store,
-        &home,
         &RemovalScope::SkillGlobal {
             skill_id: skill.id.clone(),
         },
@@ -247,10 +244,10 @@ fn skill_tool_scope_expands_the_shared_dir_group_and_leaves_other_tools_alone() 
 
     let planned = plan(
         &store,
-        &home,
         &RemovalScope::SkillTool {
             skill_id: skill.id.clone(),
             tool_key: "amp".to_string(),
+            home: home.clone(),
         },
     )
     .expect("plan");
@@ -272,10 +269,10 @@ fn skill_tool_scope_plans_nothing_when_no_group_tool_is_installed() {
 
     let planned = plan(
         &store,
-        &home,
         &RemovalScope::SkillTool {
             skill_id: skill.id.clone(),
             tool_key: "claude_code".to_string(),
+            home: home.clone(),
         },
     )
     .expect("plan");
@@ -287,7 +284,6 @@ fn skill_tool_scope_plans_nothing_when_no_group_tool_is_installed() {
 fn project_scopes_plan_the_projects_assignments() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &[]);
     let central = make_skill_dir(&tmp.path().join("central"), "beta");
     let skill = seed_skill(&store, "beta", &central);
     let project = seed_project(&store, tmp.path(), "proj");
@@ -298,7 +294,6 @@ fn project_scopes_plan_the_projects_assignments() {
 
     let whole_project = plan(
         &store,
-        &home,
         &RemovalScope::Project {
             project_id: project.id.clone(),
         },
@@ -317,7 +312,6 @@ fn project_scopes_plan_the_projects_assignments() {
 
     let one_tool = plan(
         &store,
-        &home,
         &RemovalScope::ProjectTool {
             project_id: project.id.clone(),
             tool_key: "claude_code".to_string(),
@@ -338,7 +332,6 @@ fn project_scopes_plan_the_projects_assignments() {
 fn every_global_target_scope_plans_every_skills_global_rows() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &[]);
     let central = tmp.path().join("central");
     let a = seed_skill(&store, "a", &make_skill_dir(&central, "a"));
     let b = seed_skill(&store, "b", &make_skill_dir(&central, "b"));
@@ -348,7 +341,7 @@ fn every_global_target_scope_plans_every_skills_global_rows() {
     let project = seed_project(&store, tmp.path(), "proj");
     let project_target = seed_assignment(&store, &project, &a, "claude_code", SyncStatus::Synced);
 
-    let planned = plan(&store, &home, &RemovalScope::EveryGlobalTarget).expect("plan");
+    let planned = plan(&store, &RemovalScope::EveryGlobalTarget).expect("plan");
 
     let paths: Vec<&Path> = planned.targets.iter().map(|t| t.path.as_path()).collect();
     assert_eq!(paths.len(), 2);
@@ -365,7 +358,6 @@ fn plan_for_a_missing_skill_row_still_lists_orphaned_global_targets() {
     // Legacy shape: skill row gone but a skill_targets row survives.
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &[]);
     let central = make_skill_dir(&tmp.path().join("central"), "gamma");
     let skill = seed_skill(&store, "gamma", &central);
     let global = seed_global_target(&store, &skill, "claude_code", &tmp.path().join("tools"));
@@ -381,7 +373,6 @@ fn plan_for_a_missing_skill_row_still_lists_orphaned_global_targets() {
 
     let planned = plan(
         &store,
-        &home,
         &RemovalScope::Skill {
             skill_id: skill.id.clone(),
         },
@@ -405,13 +396,14 @@ fn plan_for_a_skill_with_no_rows_is_empty() {
         RemovalScope::SkillTool {
             skill_id: "ghost".to_string(),
             tool_key: "claude_code".to_string(),
+            home: home.clone(),
         },
         RemovalScope::Project {
             project_id: "ghost".to_string(),
         },
         RemovalScope::EveryGlobalTarget,
     ] {
-        let planned = plan(&store, &home, &scope).expect("plan");
+        let planned = plan(&store, &scope).expect("plan");
         assert!(planned.targets.is_empty(), "{scope:?} plans nothing");
     }
 }
@@ -427,7 +419,6 @@ fn a_broken_symlink_counts_as_present_and_is_removed() {
 
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &[]);
     let central = make_skill_dir(&tmp.path().join("central"), "link");
     let skill = seed_skill(&store, "link", &central);
     let link = tmp.path().join("tools").join("broken-link");
@@ -436,7 +427,7 @@ fn a_broken_symlink_counts_as_present_and_is_removed() {
     assert!(!link.exists(), "the link's destination is gone");
     seed_global_target_at(&store, &skill, "claude_code", &link);
 
-    let report = unsync_skill_targets(&store, &home, &skill.id).expect("unsync");
+    let report = unsync_skill_targets(&store, &skill.id).expect("unsync");
 
     assert!(!exists_any(&link), "the dangling link itself is removed");
     assert_eq!(report.removed_rows(), 1);
@@ -447,13 +438,12 @@ fn a_broken_symlink_counts_as_present_and_is_removed() {
 fn an_already_absent_artifact_is_a_successful_removal_and_its_row_goes() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &[]);
     let central = make_skill_dir(&tmp.path().join("central"), "zeta");
     let skill = seed_skill(&store, "zeta", &central);
     let global = seed_global_target(&store, &skill, "claude_code", &tmp.path().join("tools"));
     fs::remove_dir_all(&global).unwrap();
 
-    let report = unsync_skill_targets(&store, &home, &skill.id).expect("unsync");
+    let report = unsync_skill_targets(&store, &skill.id).expect("unsync");
 
     assert!(matches!(
         report.targets[0].status,
@@ -466,11 +456,10 @@ fn an_already_absent_artifact_is_a_successful_removal_and_its_row_goes() {
 fn removal_of_a_skill_with_no_rows_reports_nothing_and_still_deletes_the_skill() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &[]);
     let central = make_skill_dir(&tmp.path().join("central"), "solo");
     let skill = seed_skill(&store, "solo", &central);
 
-    let report = remove_skill(&store, &home, &skill.id).expect("remove");
+    let report = remove_skill(&store, &skill.id).expect("remove");
 
     assert!(report.targets.is_empty());
     assert_eq!(report.removed_rows(), 0);
@@ -512,7 +501,7 @@ fn a_failed_removal_keeps_every_attached_row_with_status_error() {
         return; // running as root
     }
 
-    let report = unsync_skill_targets(&store, &home, &skill.id).expect("unsync reports failures");
+    let report = unsync_skill_targets(&store, &skill.id).expect("unsync reports failures");
     restore_permissions(&shared);
 
     assert_eq!(report.failed_rows(), 2);
@@ -533,7 +522,6 @@ fn a_failed_removal_keeps_every_attached_row_with_status_error() {
 fn a_failed_project_artifact_keeps_its_assignment_row_with_status_error() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &[]);
     let central = make_skill_dir(&tmp.path().join("central"), "pstuck");
     let skill = seed_skill(&store, "pstuck", &central);
     let project = seed_project(&store, tmp.path(), "proj");
@@ -544,7 +532,6 @@ fn a_failed_project_artifact_keeps_its_assignment_row_with_status_error() {
 
     let planned = plan(
         &store,
-        &home,
         &RemovalScope::Project {
             project_id: project.id.clone(),
         },
@@ -567,7 +554,6 @@ fn a_failed_project_artifact_keeps_its_assignment_row_with_status_error() {
 fn a_partial_failure_isolates_the_healthy_target() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &[]);
     let central = make_skill_dir(&tmp.path().join("central"), "eta");
     let skill = seed_skill(&store, "eta", &central);
     let tools = tmp.path().join("tools");
@@ -577,7 +563,7 @@ fn a_partial_failure_isolates_the_healthy_target() {
         return;
     }
 
-    let report = unsync_skill_targets(&store, &home, &skill.id).expect("unsync");
+    let report = unsync_skill_targets(&store, &skill.id).expect("unsync");
     restore_permissions(&bad);
 
     assert!(!exists_any(&good), "the healthy target is still removed");
@@ -602,14 +588,13 @@ fn a_partial_failure_isolates_the_healthy_target() {
 fn remove_skill_removes_global_project_central_and_record() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &[]);
     let central = make_skill_dir(&tmp.path().join("central"), "delta");
     let skill = seed_skill(&store, "delta", &central);
     let global = seed_global_target(&store, &skill, "claude_code", &tmp.path().join("tools"));
     let project = seed_project(&store, tmp.path(), "proj");
     let project_target = seed_assignment(&store, &project, &skill, "pi", SyncStatus::Synced);
 
-    let report = remove_skill(&store, &home, &skill.id).expect("remove");
+    let report = remove_skill(&store, &skill.id).expect("remove");
 
     assert!(!exists_any(&global));
     assert!(!exists_any(&project_target));
@@ -630,13 +615,12 @@ fn remove_skill_cleans_project_artifacts_before_the_cascade() {
     // rows and the project artifact would be unreachable — it must be gone.
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &[]);
     let central = make_skill_dir(&tmp.path().join("central"), "kappa");
     let skill = seed_skill(&store, "kappa", &central);
     let project = seed_project(&store, tmp.path(), "proj");
     let target = seed_assignment(&store, &project, &skill, "windsurf", SyncStatus::Synced);
 
-    remove_skill(&store, &home, &skill.id).expect("remove");
+    remove_skill(&store, &skill.id).expect("remove");
 
     assert!(!exists_any(&target));
     assert!(store
@@ -649,7 +633,6 @@ fn remove_skill_cleans_project_artifacts_before_the_cascade() {
 fn remove_skill_with_no_record_sweeps_targets_without_touching_a_central_copy() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &[]);
     let central = make_skill_dir(&tmp.path().join("central"), "eps");
     let skill = seed_skill(&store, "eps", &central);
     let global = seed_global_target(&store, &skill, "claude_code", &tmp.path().join("tools"));
@@ -663,7 +646,7 @@ fn remove_skill_with_no_record_sweeps_targets_without_touching_a_central_copy() 
         .unwrap();
     }
 
-    let report = remove_skill(&store, &home, &skill.id).expect("remove");
+    let report = remove_skill(&store, &skill.id).expect("remove");
 
     assert!(!exists_any(&global));
     assert!(
@@ -678,7 +661,6 @@ fn remove_skill_with_no_record_sweeps_targets_without_touching_a_central_copy() 
 fn remove_skill_keeps_the_skill_and_raises_delete_cleanup_failed_on_partial_failure() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &[]);
     let central = make_skill_dir(&tmp.path().join("central"), "iota");
     let skill = seed_skill(&store, "iota", &central);
     let bad = seed_global_target(&store, &skill, "claude_code", &tmp.path().join("tools"));
@@ -686,7 +668,7 @@ fn remove_skill_keeps_the_skill_and_raises_delete_cleanup_failed_on_partial_fail
         return;
     }
 
-    let err = remove_skill(&store, &home, &skill.id).expect_err("must fail");
+    let err = remove_skill(&store, &skill.id).expect_err("must fail");
     restore_permissions(&bad);
 
     match err.downcast_ref::<SignalError>() {
@@ -711,14 +693,13 @@ fn remove_skill_keeps_the_skill_and_raises_delete_cleanup_failed_on_partial_fail
 fn unsync_skill_targets_leaves_project_artifacts_and_the_skill_alone() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &[]);
     let central = make_skill_dir(&tmp.path().join("central"), "theta");
     let skill = seed_skill(&store, "theta", &central);
     let global = seed_global_target(&store, &skill, "claude_code", &tmp.path().join("tools"));
     let project = seed_project(&store, tmp.path(), "proj");
     let project_target = seed_assignment(&store, &project, &skill, "pi", SyncStatus::Synced);
 
-    let report = unsync_skill_targets(&store, &home, &skill.id).expect("unsync");
+    let report = unsync_skill_targets(&store, &skill.id).expect("unsync");
 
     assert!(!exists_any(&global));
     assert!(exists_any(&project_target), "project artifact untouched");
@@ -732,7 +713,6 @@ fn unsync_skill_targets_leaves_project_artifacts_and_the_skill_alone() {
 fn unsync_all_skill_targets_sweeps_every_skill() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &[]);
     let central = tmp.path().join("central");
     let a = seed_skill(&store, "a", &make_skill_dir(&central, "a"));
     let b = seed_skill(&store, "b", &make_skill_dir(&central, "b"));
@@ -740,7 +720,7 @@ fn unsync_all_skill_targets_sweeps_every_skill() {
     let a_target = seed_global_target(&store, &a, "claude_code", &tools);
     let b_target = seed_global_target(&store, &b, "codex", &tools);
 
-    let report = unsync_all_skill_targets(&store, &home).expect("unsync all");
+    let report = unsync_all_skill_targets(&store).expect("unsync all");
 
     assert!(!exists_any(&a_target) && !exists_any(&b_target));
     assert_eq!(report.removed_rows(), 2);

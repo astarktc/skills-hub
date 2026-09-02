@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -153,6 +154,29 @@ pub struct ProjectToolRecord {
     pub id: String,
     pub project_id: String,
     pub tool: String,
+}
+
+/// One project's derived numbers: how many Tools it has configured, how many
+/// distinct Managed skills and assignment rows it carries, and the
+/// precedence fold of those rows' Sync statuses (Project sync status).
+/// Read by [`SkillStore::project_aggregates`] in one grouped pass.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectAggregate {
+    pub tool_count: usize,
+    pub skill_count: usize,
+    pub assignment_count: usize,
+    pub sync_status: ProjectSyncStatus,
+}
+
+impl Default for ProjectAggregate {
+    fn default() -> Self {
+        Self {
+            tool_count: 0,
+            skill_count: 0,
+            assignment_count: 0,
+            sync_status: ProjectSyncStatus::Empty,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1126,59 +1150,95 @@ impl SkillStore {
         })
     }
 
-    pub fn count_project_assignments(&self, project_id: &str) -> Result<usize> {
-        self.with_conn(|conn| {
-            let count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM project_skill_assignments WHERE project_id = ?1",
-                params![project_id],
-                |row| row.get(0),
-            )?;
-            Ok(count as usize)
-        })
+    /// Every project's counts and status fold, in two grouped queries — the
+    /// cost is independent of the project count, so a listing of N projects
+    /// never fans out to N×4 reads. Projects with no tools and no
+    /// assignments are absent from the map; read them as
+    /// [`ProjectAggregate::default`].
+    pub fn project_aggregates(&self) -> Result<HashMap<String, ProjectAggregate>> {
+        self.aggregates_for(None)
     }
 
-    pub fn count_project_unique_skills(&self, project_id: &str) -> Result<usize> {
-        self.with_conn(|conn| {
-            let count: i64 = conn.query_row(
-                "SELECT COUNT(DISTINCT skill_id) FROM project_skill_assignments WHERE project_id = ?1",
-                params![project_id],
-                |row| row.get(0),
-            )?;
-            Ok(count as usize)
-        })
+    /// One project's counts and status fold — the same two queries, filtered.
+    pub fn project_aggregate(&self, project_id: &str) -> Result<ProjectAggregate> {
+        Ok(self
+            .aggregates_for(Some(project_id))?
+            .remove(project_id)
+            .unwrap_or_default())
     }
 
-    pub fn count_project_tools(&self, project_id: &str) -> Result<usize> {
+    /// The one aggregation pass: tool counts, then assignment rows folded per
+    /// project. Statuses pass through the same legacy seam as row reads (an
+    /// unrecognised value counts as `Error`) and the fold is
+    /// `sync_status::aggregate`, so the precedence rule stays in one place.
+    fn aggregates_for(&self, only: Option<&str>) -> Result<HashMap<String, ProjectAggregate>> {
         self.with_conn(|conn| {
-            let count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM project_tools WHERE project_id = ?1",
-                params![project_id],
-                |row| row.get(0),
-            )?;
-            Ok(count as usize)
-        })
-    }
+            let mut aggregates: HashMap<String, ProjectAggregate> = HashMap::new();
 
-    /// Fold the project's assignment statuses (see `sync_status::aggregate`).
-    /// Statuses pass through the same legacy seam as row reads: an
-    /// unrecognised value counts as `Error`.
-    pub fn aggregate_project_sync_status(&self, project_id: &str) -> Result<ProjectSyncStatus> {
-        self.with_conn(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, mode, status, last_error
-                 FROM project_skill_assignments
-                 WHERE project_id = ?1",
-            )?;
-            let rows = stmt.query_map(params![project_id], |row| {
-                let id: String = row.get(0)?;
-                let (_, status, _) = read_lifecycle(&id, row.get(1)?, row.get(2)?, row.get(3)?);
-                Ok(status)
-            })?;
-            let mut statuses = Vec::new();
-            for row in rows {
-                statuses.push(row?);
+            let tools_sql = match only {
+                Some(_) => {
+                    "SELECT project_id, COUNT(*) FROM project_tools \
+                     WHERE project_id = ?1 GROUP BY project_id"
+                }
+                None => "SELECT project_id, COUNT(*) FROM project_tools GROUP BY project_id",
+            };
+            let mut stmt = conn.prepare(tools_sql)?;
+            let read_tools =
+                |row: &rusqlite::Row<'_>| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?));
+            let tool_rows = match only {
+                Some(project_id) => stmt.query_map(params![project_id], read_tools)?,
+                None => stmt.query_map([], read_tools)?,
+            };
+            for row in tool_rows {
+                let (project_id, count) = row?;
+                aggregates.entry(project_id).or_default().tool_count = count as usize;
             }
-            Ok(aggregate(statuses))
+
+            let assignments_sql = match only {
+                Some(_) => {
+                    "SELECT project_id, skill_id, id, mode, status, last_error \
+                     FROM project_skill_assignments WHERE project_id = ?1"
+                }
+                None => {
+                    "SELECT project_id, skill_id, id, mode, status, last_error \
+                     FROM project_skill_assignments"
+                }
+            };
+            let mut stmt = conn.prepare(assignments_sql)?;
+            let read_assignment = |row: &rusqlite::Row<'_>| {
+                let project_id: String = row.get(0)?;
+                let skill_id: String = row.get(1)?;
+                let id: String = row.get(2)?;
+                let (_, status, _) = read_lifecycle(&id, row.get(3)?, row.get(4)?, row.get(5)?);
+                Ok((project_id, skill_id, status))
+            };
+            let assignment_rows = match only {
+                Some(project_id) => stmt.query_map(params![project_id], read_assignment)?,
+                None => stmt.query_map([], read_assignment)?,
+            };
+
+            let mut statuses: HashMap<String, Vec<SyncStatus>> = HashMap::new();
+            let mut skills: HashMap<String, HashSet<String>> = HashMap::new();
+            for row in assignment_rows {
+                let (project_id, skill_id, status) = row?;
+                aggregates
+                    .entry(project_id.clone())
+                    .or_default()
+                    .assignment_count += 1;
+                skills
+                    .entry(project_id.clone())
+                    .or_default()
+                    .insert(skill_id);
+                statuses.entry(project_id).or_default().push(status);
+            }
+            for (project_id, skill_ids) in skills {
+                aggregates.entry(project_id).or_default().skill_count = skill_ids.len();
+            }
+            for (project_id, statuses) in statuses {
+                aggregates.entry(project_id).or_default().sync_status = aggregate(statuses);
+            }
+
+            Ok(aggregates)
         })
     }
 
