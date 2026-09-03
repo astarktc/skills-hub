@@ -208,7 +208,26 @@ jobs:
             echo "ℹ️ 未配置 APPLE_SIGNING_IDENTITY，构建未签名版本"
             unset APPLE_SIGNING_IDENTITY
           fi
-          npm run tauri:build -- --target ${{ matrix.target }} --bundles app,dmg
+          # Step 1: compile + bundle the .app (the expensive part; updater *.tar.gz/*.sig derive from it).
+          npm run tauri:build -- --target ${{ matrix.target }} --bundles app
+          # Step 2: the DMG. Tauri's bundle_dmg.sh (hdiutil create/attach/detach) flakes
+          # intermittently on GitHub macOS runners (hdiutil "Resource busy" racing Spotlight/
+          # XProtect, DiskArbitration detach timeouts — actions/runner-images#7522,
+          # tauri-action#801). v1.2.1 x86_64 failed this way while aarch64 passed on the same
+          # image. Retry the cheap DMG-only step; --verbose surfaces the script's real stderr.
+          DMG_ATTEMPTS=3
+          for attempt in $(seq 1 "$DMG_ATTEMPTS"); do
+            echo "=== DMG bundle attempt ${attempt}/${DMG_ATTEMPTS} ==="
+            if npm run tauri:build -- --target ${{ matrix.target }} --bundles dmg --verbose; then
+              break
+            fi
+            if [ "$attempt" -eq "$DMG_ATTEMPTS" ]; then
+              echo "❌ DMG bundling failed after ${DMG_ATTEMPTS} attempts" >&2
+              exit 1
+            fi
+            echo "⚠️ DMG bundling failed; retrying in 15s" >&2
+            sleep 15
+          done
           echo "=== Build completed ==="
           ls -la src-tauri/target/${{ matrix.target }}/release/bundle/ || true
 
