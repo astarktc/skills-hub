@@ -481,6 +481,10 @@ export const resources = {
         confirm: "Continue",
         cancel: "Cancel",
       },
+      syncTarget: {
+        errorTitle:
+          "{{tool}}: this sync target is in error — its artifact could not be updated or removed.",
+      },
     },
   },
   zh: {
@@ -937,6 +941,9 @@ export const resources = {
         body: "提示：{{tool}} 与 {{others}} 共用同一个全局 skills 目录，本次修改会同时影响它们。是否继续？",
         confirm: "继续",
         cancel: "取消",
+      },
+      syncTarget: {
+        errorTitle: "{{tool}}：该同步目标出错 —— 其产物无法更新或移除。",
       },
     },
   },

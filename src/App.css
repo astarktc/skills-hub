@@ -578,6 +578,21 @@
   transform: translateY(-1px);
 }
 
+.tool-pill.active.error {
+  background: var(--danger-soft-bg);
+  color: var(--status-error);
+  border-color: var(--status-error);
+}
+
+.tool-pill.active.error:hover {
+  border-color: var(--status-error);
+}
+
+.tool-pill.active.error .status-badge {
+  background: var(--status-error);
+  box-shadow: none;
+}
+
 .tool-pill.inactive {
   background: var(--bg-element);
   color: var(--text-tertiary);

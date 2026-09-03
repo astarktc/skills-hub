@@ -146,18 +146,25 @@ const SkillCard = ({
         <div
           className={`tool-matrix${!expanded && needsCollapse ? " collapsed" : ""}`}
         >
-          {visibleSynced.map(({ tool, target }) => (
-            <button
-              key={`${skill.id}-${tool.id}`}
-              type="button"
-              className="tool-pill active"
-              title={`${tool.label} (${target.mode ?? t("unknown")})`}
-              onClick={() => void onToggleTool(skill, tool.id)}
-            >
-              <span className="status-badge" />
-              {tool.label}
-            </button>
-          ))}
+          {visibleSynced.map(({ tool, target }) => {
+            const isError = target.status === "error";
+            return (
+              <button
+                key={`${skill.id}-${tool.id}`}
+                type="button"
+                className={`tool-pill active${isError ? " error" : ""}`}
+                title={
+                  isError
+                    ? t("syncTarget.errorTitle", { tool: tool.label })
+                    : `${tool.label} (${target.mode ?? t("unknown")})`
+                }
+                onClick={() => void onToggleTool(skill, tool.id)}
+              >
+                <span className="status-badge" />
+                {tool.label}
+              </button>
+            );
+          })}
           {needsCollapse && !expanded ? (
             <button
               type="button"

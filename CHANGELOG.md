@@ -28,6 +28,7 @@ A second architecture round (11 tickets): the operations that put skills into to
 - **Refresh/install from a GitHub repository whose default branch is not `main`** no longer fails with "skill not found": the API fast path falls back to a clone when its assumed branch does not exist.
 - **Refreshing a skill can no longer leave a drifting copy**: a copy on a tool that supports symlinks is re-materialised as a link, and the recorded sync mode matches what is on disk.
 - **Repository links in the My Skills grouping**: a non-GitHub git source no longer produces a bogus `github.com` link, and the same skill now shows the same repository label on My Skills, the assignment matrix and Explore.
+- **My Skills shows a sync target in error**: a tool pill whose target failed removal or update is now marked and explained, matching the assignment matrix (ADR-0002).
 
 ### Internal/architecture
 
