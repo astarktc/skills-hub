@@ -7,7 +7,8 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
-    port: 5173,
+    // Override with VITE_DEV_PORT when 5173 is taken; tauri:dev follows it (scripts/tauri-dev.mjs).
+    port: Number(process.env.VITE_DEV_PORT ?? 5173),
     strictPort: true,
   },
   test: {

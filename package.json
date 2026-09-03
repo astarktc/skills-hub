@@ -4,7 +4,7 @@
   "version": "1.2.2",
   "type": "module",
   "scripts": {
-    "dev": "vite --port 5173 --strictPort",
+    "dev": "vite --strictPort",
     "build": "node node_modules/typescript-7/lib/tsc.js -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",
@@ -18,7 +18,7 @@
     "version:sync": "node scripts/version.mjs sync",
     "version:check": "node scripts/version.mjs check",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
+    "tauri:dev": "node scripts/tauri-dev.mjs",
     "tauri:icon:desktop": "node scripts/tauri-icon-desktop.mjs",
     "tauri:build": "npm run version:check && tauri build",
     "tauri:build:mac:dmg": "npm run tauri:build -- --bundles dmg",
