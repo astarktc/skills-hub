@@ -111,6 +111,8 @@ fn local_source(repo: &Path) -> GitSource {
 #[derive(Default)]
 struct StubApi<'a> {
     sha: String,
+    /// Failure raised instead of serving the branch SHA.
+    sha_error: Option<GithubApiError>,
     /// Failure raised instead of serving the directory download.
     download_error: Option<GithubApiError>,
     /// Files the download writes into `dest`.
@@ -141,6 +143,20 @@ impl StubApi<'_> {
         }
     }
 
+    /// The branch itself is the failure: the SHA lookup answers `status` and
+    /// the download is never reached.
+    fn failing_branch(status: u16) -> Self {
+        StubApi {
+            sha: "0".repeat(40),
+            sha_error: Some(GithubApiError {
+                status,
+                reset_minutes: None,
+                url: "stub".to_string(),
+            }),
+            ..Default::default()
+        }
+    }
+
     fn calls(&self) -> Vec<String> {
         self.calls.borrow().clone()
     }
@@ -152,6 +168,9 @@ impl GithubApi for StubApi<'_> {
             "sha:{}/{}@{}",
             coords.owner, coords.repo, coords.branch
         ));
+        if let Some(err) = &self.sha_error {
+            return Err(anyhow::Error::new(err.clone()));
+        }
         Ok(self.sha.clone())
     }
 
@@ -373,10 +392,71 @@ fn an_api_failure_falls_back_to_a_clone() {
     );
 }
 
-/// 404 is the operator's answer, not a reason to clone: the typed condition
-/// reaches the caller and nothing is fetched.
+/// A branch the operator never named was only *assumed* to be `main`: when it
+/// does not exist the fast path is not applicable, so the clone — which uses
+/// the repository's real default branch — serves the skill.
 #[test]
-fn a_not_found_is_typed_and_never_falls_back() {
+fn an_assumed_branch_that_does_not_exist_falls_back_to_a_clone() {
+    let repo = single_skill_repo();
+    let source = local_source_with_api(repo.path());
+    assert!(source.branch.is_none(), "the branch is assumed, not named");
+    let (_fx, cache_dir, dest) = Fixture::new();
+    let api = StubApi::failing_branch(404);
+
+    let acquired = acquire(
+        &request(&source, SkillIntent::Subpath("skills/a"), &dest, &cache_dir),
+        &api,
+    )
+    .expect("the clone fallback acquires");
+
+    assert_eq!(
+        acquired.strategy,
+        AcquireStrategy::GitClone { sparse: true }
+    );
+    assert_eq!(acquired.revision, head_of(repo.path()));
+    assert!(dest.join("SKILL.md").exists());
+    assert_eq!(
+        api.calls(),
+        vec!["sha:owner/repo@main".to_string()],
+        "the assumed branch was tried and no bytes were requested"
+    );
+}
+
+/// A branch the URL named is the operator's own coordinate: when it does not
+/// exist, that is their answer, not a reason to clone.
+#[test]
+fn a_named_branch_that_does_not_exist_is_typed_not_found() {
+    let repo = single_skill_repo();
+    let source = GitSource {
+        branch: Some("nope".to_string()),
+        ..local_source_with_api(repo.path())
+    };
+    let (_fx, cache_dir, dest) = Fixture::new();
+    let api = StubApi::failing_branch(404);
+
+    let err = acquire(
+        &request(&source, SkillIntent::Subpath("skills/a"), &dest, &cache_dir),
+        &api,
+    )
+    .expect_err("a missing named branch fails");
+
+    assert!(
+        matches!(
+            err.downcast_ref::<SignalError>(),
+            Some(SignalError::GithubSkillNotFound { url }) if url.contains("tree/nope/")
+        ),
+        "expected GithubSkillNotFound, got: {err:#}"
+    );
+    assert!(
+        !git_cache_root_exists(&cache_dir),
+        "a named branch that does not exist must not fall back to a clone"
+    );
+}
+
+/// 404 on the download is the operator's answer, not a reason to clone: the
+/// branch exists, the subpath does not.
+#[test]
+fn a_missing_subpath_on_an_existing_branch_is_typed_not_found() {
     let repo = single_skill_repo();
     let source = local_source_with_api(repo.path());
     let (_fx, cache_dir, dest) = Fixture::new();

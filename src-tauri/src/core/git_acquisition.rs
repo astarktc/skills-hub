@@ -20,7 +20,10 @@
 //! The fallback is deliberately partial: a GitHub **404** (skill not found)
 //! and **403** (rate limited) are answers for the operator, raised as typed
 //! [`SignalError`]s and never retried as a clone. Any other API failure is
-//! infrastructure noise and falls back.
+//! infrastructure noise and falls back. The one 404 that is *not* an answer:
+//! a source URL that named no branch only had `main` **assumed** for it, so a
+//! 404 on the branch SHA means the fast path does not apply and the clone —
+//! which uses the repository's real default branch — serves it.
 //!
 //! Core resolves no roots here: `cache_dir`, `dest`, `ttl_ms` and the API
 //! token are values the caller supplies. Everything the function touches is
@@ -207,11 +210,11 @@ pub fn acquire(req: &AcquireRequest, api: &dyn GithubApi) -> Result<Acquired> {
     if let Some(coords) = fast_path_coords(req, known_subpath) {
         match fast_path(&coords, req, api) {
             Ok(acquired) => return Ok(report(acquired, req)),
-            Err(err) => {
+            Err(failure) => {
                 // Whatever the failure, the partial download is not part of
                 // the answer.
                 let _ = std::fs::remove_dir_all(req.dest);
-                classify_fast_path_failure(err, &coords)?;
+                classify_fast_path_failure(failure, &coords, req.source.branch.is_none())?;
             }
         }
     }
@@ -252,10 +255,29 @@ fn fast_path_coords(req: &AcquireRequest, known_subpath: Option<&str>) -> Option
     })
 }
 
+/// Which of the fast path's two requests failed. The stage is part of the
+/// classification: only the branch-SHA stage can fail because the branch was
+/// merely assumed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FastPathStage {
+    Sha,
+    Download,
+}
+
+/// A failed fast path, with the stage that failed.
+struct FastPathFailure {
+    stage: FastPathStage,
+    error: anyhow::Error,
+}
+
 /// Adapter one: the GitHub Contents API. The SHA is fetched **before** the
 /// download so a served fast path always records the real commit — and so a
 /// bad branch fails before any bytes land.
-fn fast_path(coords: &GithubCoords, req: &AcquireRequest, api: &dyn GithubApi) -> Result<Acquired> {
+fn fast_path(
+    coords: &GithubCoords,
+    req: &AcquireRequest,
+    api: &dyn GithubApi,
+) -> std::result::Result<Acquired, FastPathFailure> {
     log::info!(
         "[acquire] GitHub API download: {}/{}@{} path={}",
         coords.owner,
@@ -263,8 +285,15 @@ fn fast_path(coords: &GithubCoords, req: &AcquireRequest, api: &dyn GithubApi) -
         coords.branch,
         coords.subpath
     );
-    let revision = api.branch_sha(coords)?;
-    api.download_directory(coords, req.dest, req.cancel)?;
+    let revision = api.branch_sha(coords).map_err(|error| FastPathFailure {
+        stage: FastPathStage::Sha,
+        error,
+    })?;
+    api.download_directory(coords, req.dest, req.cancel)
+        .map_err(|error| FastPathFailure {
+            stage: FastPathStage::Download,
+            error,
+        })?;
     Ok(Acquired {
         revision,
         strategy: AcquireStrategy::GithubApi,
@@ -278,11 +307,31 @@ fn fast_path(coords: &GithubCoords, req: &AcquireRequest, api: &dyn GithubApi) -
 /// The HTTP layer classifies the status at the origin ([`GithubApiError`]);
 /// this maps the two codes acquisition owns to typed signals. No string
 /// sniffing, and cancellation is never a "failed strategy".
-fn classify_fast_path_failure(err: anyhow::Error, coords: &GithubCoords) -> Result<()> {
+///
+/// `branch_assumed` is the one nuance: when the source URL named no branch,
+/// [`fast_path_coords`] guessed `main`, so a 404 on the SHA stage says nothing
+/// about the skill — it is a wrong guess, and the clone knows better.
+fn classify_fast_path_failure(
+    failure: FastPathFailure,
+    coords: &GithubCoords,
+    branch_assumed: bool,
+) -> Result<()> {
+    let FastPathFailure { stage, error: err } = failure;
     if err.downcast_ref::<SignalError>() == Some(&SignalError::Cancelled) {
         return Err(err);
     }
     match err.downcast_ref::<GithubApiError>() {
+        Some(GithubApiError { status: 404, .. })
+            if stage == FastPathStage::Sha && branch_assumed =>
+        {
+            log::warn!(
+                "[acquire] assumed branch {:?} does not exist in {}/{}, falling back to git clone",
+                coords.branch,
+                coords.owner,
+                coords.repo
+            );
+            Ok(())
+        }
         Some(GithubApiError { status: 404, .. }) => {
             anyhow::bail!(SignalError::GithubSkillNotFound {
                 url: coords.tree_url(),
