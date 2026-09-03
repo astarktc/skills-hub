@@ -100,10 +100,13 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   types, narrowed with `Pick<>`, are the established pattern for declaring deps). A world may be built
   from smaller building-block hooks it owns (e.g. `useAddSkillFlow` instantiates `useCandidatePick`
   twice); those are internal to that world, not a cross-world seam. After a mutation, the **project**
-  world applies what the mutation returned (every project mutation answers with a `ProjectViewDto`;
-  `useProjectState::applyView` — no success-path refetch tail, only a failure-path `refreshView`),
-  while the **skills** world re-invokes `getManagedSkills` (`loadManagedSkills`) after refresh, import
-  and delete.
+  world applies what the mutation returned — a `ProjectViewDto` fed to `useProjectState::applyView`, no
+  success-path refetch tail, only a failure-path `refreshView`; while the **skills** world re-invokes
+  `getManagedSkills` (`loadManagedSkills`) after refresh, import and delete. Three project mutations cannot
+  answer with a view: `remove_project` returns `Vec<ProjectDto>` (the project is gone),
+  `update_project_gitignore` returns `()` (it changes no view row), and `resync_all_projects` returns
+  `{ summaries, projects }` spanning every project, so the hook refetches `getProjectView` for the selected
+  project alone.
 - **Frontend tests are hook-level only** (vitest + `renderHook`, jsdom; colocated `src/**/*.test.ts`,
   type-checked by `npm run build`): mock at module seams — `src/lib/tauri.ts` for backend calls,
   `sonner` for toasts, `@tauri-apps/api/core` for `Channel`. Every hook **and component** calls the
