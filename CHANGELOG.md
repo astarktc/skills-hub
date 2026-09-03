@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-09-02
+## [1.2.2] - 2026-09-03
 
 A second architecture round (11 tickets): the operations that put skills into tools and take them out again each became one backend operation with one report. See "Internal/architecture" below.
 
