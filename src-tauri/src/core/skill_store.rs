@@ -1275,6 +1275,11 @@ impl SkillStore {
     fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         let conn = Connection::open(&self.db_path)
             .with_context(|| format!("failed to open db at {:?}", self.db_path))?;
+        // Every call opens its own connection and several may run at once (the
+        // Refresh acquire pool). Wait out a sibling's write window instead of
+        // failing the caller with SQLITE_BUSY. Stated here rather than relying
+        // on rusqlite's own default.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         // Enforce foreign key constraints on every connection (rusqlite PRAGMA is per-connection).
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         f(&conn)

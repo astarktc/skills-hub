@@ -1634,3 +1634,69 @@ fn no_legacy_db_under_the_data_root_is_a_no_op() {
     super::migrate_legacy_db_if_needed(&data_root, &target).unwrap();
     assert!(!target.exists(), "nothing to adopt, nothing created");
 }
+
+/// Every call opens a fresh connection, and the Refresh acquire pool runs four
+/// of them at once (`refresh::acquire_all` -> `installer::acquire_update`, which
+/// reads and then upserts). Without a `busy_timeout` a call landing inside a
+/// sibling's write window fails immediately with `SQLITE_BUSY`; with one it
+/// waits for the window to close.
+#[test]
+fn a_call_landing_in_a_write_window_waits_instead_of_failing_busy() {
+    let (_dir, store) = make_store();
+    store
+        .upsert_skill(&make_skill("held", "held", "/tmp/central/held", 1))
+        .expect("seed");
+
+    let db_path = store.db_path.clone();
+    let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let conn = rusqlite::Connection::open(&db_path).expect("open competing connection");
+        conn.execute_batch("BEGIN EXCLUSIVE;")
+            .expect("take the write lock");
+        locked_tx.send(()).expect("announce the lock");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        conn.execute_batch("COMMIT;")
+            .expect("release the write lock");
+    });
+    locked_rx.recv().expect("lock taken");
+
+    // The window is open right now: without a busy timeout both of these
+    // return SQLITE_BUSY at once.
+    store
+        .get_skill_by_id("held")
+        .expect("a read waits out the write window");
+    store
+        .upsert_skill(&make_skill("held", "held", "/tmp/central/held", 2))
+        .expect("a write waits out the write window");
+
+    holder.join().expect("holder thread");
+}
+
+/// The pool's real shape: several workers doing the read + upsert pair against
+/// one database at once, every call `Ok`.
+#[test]
+fn concurrent_readers_and_writers_all_succeed() {
+    let (_dir, store) = make_store();
+    const WORKERS: usize = 8;
+    const ROUNDS: usize = 50;
+
+    std::thread::scope(|scope| {
+        for worker in 0..WORKERS {
+            let store = store.clone();
+            scope.spawn(move || {
+                let id = format!("skill-{worker}");
+                let central = format!("/tmp/central/{id}");
+                for round in 0..ROUNDS {
+                    let skill = make_skill(&id, &id, &central, round as i64);
+                    store
+                        .upsert_skill(&skill)
+                        .unwrap_or_else(|err| panic!("upsert in worker {worker}: {err:#}"));
+                    let found = store
+                        .get_skill_by_id(&id)
+                        .unwrap_or_else(|err| panic!("read in worker {worker}: {err:#}"));
+                    assert!(found.is_some());
+                }
+            });
+        }
+    });
+}
