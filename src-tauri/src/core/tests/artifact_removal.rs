@@ -580,6 +580,44 @@ fn a_partial_failure_isolates_the_healthy_target() {
     assert_eq!(kept.status, SyncStatus::Error);
 }
 
+/// A stat error that is not `NotFound` must not read as absence: the target
+/// may well still be there, so removal is attempted, fails, and the row is
+/// kept with Sync status `error` (ADR-0002).
+#[cfg(unix)]
+#[test]
+fn an_unstattable_target_is_treated_as_present_and_keeps_its_row_with_status_error() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = make_skill_dir(&tmp.path().join("central"), "blind");
+    let skill = seed_skill(&store, "blind", &central);
+    let tools = tmp.path().join("tools");
+    let target = seed_global_target(&store, &skill, "claude_code", &tools);
+    let parent = target.parent().expect("parent").to_path_buf();
+    // A search-permission-less parent makes `symlink_metadata` fail with
+    // EACCES rather than NotFound.
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o000)).unwrap();
+    if target.symlink_metadata().is_ok() {
+        // Root ignores permission bits: there is nothing to test here.
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+
+    let report = unsync_skill_targets(&store, &skill.id).expect("unsync");
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(report.failed_rows(), 1, "the target reports Failed");
+    assert_eq!(report.removed_rows(), 0);
+    assert!(exists_any(&target), "the artifact is in fact still there");
+    let kept = store
+        .get_skill_target(&skill.id, "claude_code")
+        .unwrap()
+        .expect("row kept, never deleted on a stat error");
+    assert_eq!(kept.status, SyncStatus::Error);
+    assert!(kept.last_error.is_some());
+}
+
 // ---------------------------------------------------------------------------
 // Entry points
 // ---------------------------------------------------------------------------

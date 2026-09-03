@@ -429,11 +429,17 @@ impl TargetBuilder {
 // Execution
 // ---------------------------------------------------------------------------
 
-/// The one presence rule: `symlink_metadata` succeeds, so a broken symlink
-/// counts as present (and must be removed) while a truly absent path does
-/// not.
+/// The one presence rule: absence is only `NotFound`. `symlink_metadata`
+/// succeeding means present, so a broken symlink counts as present (and must
+/// be removed); any *other* stat error (EACCES on a parent, EIO, ENOTDIR)
+/// also counts as present, because it does not prove absence — removal is
+/// attempted, fails, and the row is kept with Sync status `error` (ADR-0002)
+/// rather than deleted blind.
 fn is_present(path: &Path) -> bool {
-    path.symlink_metadata().is_ok()
+    match path.symlink_metadata() {
+        Ok(_) => true,
+        Err(err) => err.kind() != std::io::ErrorKind::NotFound,
+    }
 }
 
 /// Execute a plan. Each target is removed once and its rows settled: deleted
