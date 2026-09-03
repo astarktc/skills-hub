@@ -214,9 +214,6 @@ pub struct ResyncSummaryDto {
     pub errors: Vec<String>,
 }
 
-#[tauri::command]
-#[specta::specta]
-#[allow(non_snake_case)]
 fn to_resync_summary_dto(summary: project_sync::ResyncSummary) -> ResyncSummaryDto {
     ResyncSummaryDto {
         project_id: summary.project_id,
