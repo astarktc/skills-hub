@@ -150,7 +150,11 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     [formatError, t],
   );
 
-  /** Sync targets Propagation could not bring into line. Skips stay silent. */
+  /**
+   * Sync targets Propagation could not bring into line, plus a failed
+   * auto-sync re-assert (its targets never got planned at all). Skips stay
+   * silent.
+   */
   const targetFailureEntries = useCallback(
     (report: RefreshReportDto) => {
       const entries: ActionErrorEntry[] = [];
@@ -165,6 +169,12 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
               tool: toolLabelById[tool] ?? tool,
             }),
             message: formatError(target.status.error) ?? "",
+          });
+        }
+        if (skill.status.reassert_error) {
+          entries.push({
+            title: t("errors.reassertFailedTitle", { name: skill.skill_name }),
+            message: formatError(skill.status.reassert_error) ?? "",
           });
         }
       }

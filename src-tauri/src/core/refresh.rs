@@ -95,10 +95,15 @@ pub struct RefreshProgress<'a> {
 #[derive(Debug)]
 pub enum SkillRefreshStatus {
     /// Acquired, finalized and propagated. `targets` is Propagation's report.
+    /// `reassert_error` carries a store failure inside the auto-sync re-assert:
+    /// the skill is still `Refreshed` (finalize and Propagation did succeed),
+    /// but the targets the re-assert would have created are unknown, and that
+    /// is report data rather than a log line.
     Refreshed {
         content_hash: Option<String>,
         source_revision: Option<String>,
         targets: Vec<PropagationOutcome>,
+        reassert_error: Option<anyhow::Error>,
     },
     /// Acquisition or finalize failed; this skill's targets were left alone.
     Failed { error: anyhow::Error },
@@ -349,28 +354,41 @@ fn apply_one_unlocked(
         Ok(outcome) => outcome,
         Err(error) => return SkillRefreshStatus::Failed { error },
     };
-    let mut targets = outcome.propagation.targets;
-    if policy.reassert_auto_sync {
-        match reassert_auto_sync_unlocked(
+    let targets = outcome.propagation.targets;
+    let (targets, reassert_error) = if policy.reassert_auto_sync {
+        let extra = reassert_auto_sync_unlocked(
             paths,
             store,
             &outcome.skill_id,
             &outcome.name,
             now,
             &targets,
-        ) {
-            Ok(extra) => targets.extend(extra),
-            Err(error) => log::warn!(
-                "failed to re-assert auto-sync for {}: {:#}",
-                outcome.name,
-                error
-            ),
-        }
-    }
+        );
+        merge_reassert(targets, extra)
+    } else {
+        (targets, None)
+    };
     SkillRefreshStatus::Refreshed {
         content_hash: outcome.content_hash,
         source_revision: outcome.source_revision,
         targets,
+        reassert_error,
+    }
+}
+
+/// Fold the re-assert's result into the skill's target list. The skill stays
+/// `Refreshed` either way; an `Err` is carried out as report data instead of
+/// being logged away.
+pub(crate) fn merge_reassert(
+    mut targets: Vec<PropagationOutcome>,
+    result: Result<Vec<PropagationOutcome>>,
+) -> (Vec<PropagationOutcome>, Option<anyhow::Error>) {
+    match result {
+        Ok(extra) => {
+            targets.extend(extra);
+            (targets, None)
+        }
+        Err(error) => (targets, Some(error)),
     }
 }
 

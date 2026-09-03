@@ -90,6 +90,7 @@ function refreshedReport(names: string[]): RefreshReportDto {
         content_hash: null,
         source_revision: null,
         targets: [],
+        reassert_error: null,
       },
     })),
     refreshed: names.length,
@@ -300,6 +301,7 @@ describe("useSkillLibrary refresh", () => {
                   },
                 },
               ],
+              reassert_error: null,
             },
           },
           {
@@ -341,6 +343,41 @@ describe("useSkillLibrary refresh", () => {
     expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
       'status.refreshSummary {"refreshed":1,"failed":1}',
     );
+  });
+
+  it("reports a failed auto-sync re-assert even though the skill refreshed", async () => {
+    const setup = makeDeps({
+      refreshReport: {
+        skills: [
+          {
+            skill_id: "s1",
+            skill_name: "alpha",
+            status: {
+              status: "refreshed",
+              content_hash: null,
+              source_revision: null,
+              targets: [],
+              reassert_error: { code: "OTHER", message: "store is gone" },
+            },
+          },
+        ],
+        refreshed: 1,
+        failed: 0,
+        target_failures: 1,
+      },
+    });
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleRefresh();
+    });
+
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
+      {
+        title: 'errors.reassertFailedTitle {"name":"alpha"}',
+        message: "formatted:OTHER",
+      },
+    ]);
   });
 });
 

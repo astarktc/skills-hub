@@ -29,6 +29,9 @@ A second architecture round (11 tickets): the operations that put skills into to
 - **Refreshing a skill can no longer leave a drifting copy**: a copy on a tool that supports symlinks is re-materialised as a link, and the recorded sync mode matches what is on disk.
 - **Repository links in the My Skills grouping**: a non-GitHub git source no longer produces a bogus `github.com` link, and the same skill now shows the same repository label on My Skills, the assignment matrix and Explore.
 - **My Skills shows a sync target in error**: a tool pill whose target failed removal or update is now marked and explained, matching the assignment matrix (ADR-0002).
+- **A synced copy Skills Hub cannot inspect is no longer forgotten**: if the check for whether a skill's folder is still on disk fails outright (an unreadable parent directory, an I/O error) rather than reporting it absent, the entry is now kept and marked `error` instead of being dropped as already-removed.
+- **A refresh that cannot re-check auto-sync says so**: when re-asserting auto-sync fails for a skill, refresh now reports it per skill and counts it, instead of only writing to the log while presenting the skill as fully refreshed.
+- **Parallel refresh no longer fails a skill on a busy database**: store connections wait for a concurrent write to finish instead of giving up immediately.
 
 ### Internal/architecture
 

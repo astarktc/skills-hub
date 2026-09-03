@@ -493,7 +493,10 @@ export type RefreshReportDto = {
 	skills: SkillRefreshResultDto[],
 	refreshed: number,
 	failed: number,
-	/**  Sync targets that failed across every refreshed skill. */
+	/**
+	 *  Sync targets that failed across every refreshed skill. A failed
+	 *  auto-sync re-assert counts as one.
+	 */
 	target_failures: number,
 };
 
@@ -590,7 +593,13 @@ export type SkillRefreshResultDto = {
  *  Per-skill result of a Refresh batch. A skill whose bytes could not be
  *  acquired is `failed` — its Sync targets were left alone.
  */
-export type SkillRefreshStatusDto = { status: "refreshed"; content_hash: string | null; source_revision: string | null; targets: PropagationTargetDto[] } | { status: "failed"; error: CommandError };
+export type SkillRefreshStatusDto = { status: "refreshed"; content_hash: string | null; source_revision: string | null; targets: PropagationTargetDto[]; 
+/**
+ *  A store failure inside the auto-sync re-assert. The skill is still
+ *  `refreshed`; the targets the re-assert would have created are
+ *  unknown, so this counts as one `target_failures`.
+ */
+reassert_error: CommandError | null } | { status: "failed"; error: CommandError };
 
 export type SkillTargetDto = {
 	tool: string,

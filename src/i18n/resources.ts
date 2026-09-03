@@ -294,6 +294,8 @@ export const resources = {
           "Review it and remove it yourself if you no longer need it.",
         importCleanupFailedTitle:
           "Could not remove the original: {{name}} -> {{tool}}",
+        reassertFailedTitle:
+          "Could not check which tools still need {{name}}",
       },
       actions: {
         importApplyStep: "Importing ({{index}}/{{total}}) {{name}} ...",
@@ -762,6 +764,7 @@ export const resources = {
         importKeptDivergentMessage:
           "{{path}} 中的副本与导入的 Skill 内容不同，已保留在原处。\n请自行确认，若不再需要可手动删除。",
         importCleanupFailedTitle: "无法删除原始副本：{{name}} -> {{tool}}",
+        reassertFailedTitle: "无法确认哪些工具仍需要 {{name}}",
       },
       actions: {
         importApplyStep: "导入中 ({{index}}/{{total}}) {{name}} ...",

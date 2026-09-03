@@ -11,9 +11,10 @@ use std::sync::Mutex;
 use crate::core::cancel_token::CancelToken;
 use crate::core::errors::SignalError;
 use crate::core::installer::{install_local_skill, InstallerPaths};
+use crate::core::propagation::{PropagationOutcome, PropagationScope, PropagationStatus};
 use crate::core::refresh::{
-    refresh_managed_skills, refresh_managed_skills_with, RefreshPhase, RefreshPolicy,
-    RefreshSelection, SkillRefreshStatus,
+    merge_reassert, refresh_managed_skills, refresh_managed_skills_with, RefreshPhase,
+    RefreshPolicy, RefreshSelection, SkillRefreshStatus,
 };
 use crate::core::skill_store::SkillStore;
 use crate::core::tool_adapters::adapter_by_key;
@@ -192,6 +193,54 @@ fn without_the_reassert_policy_a_missing_target_stays_missing() {
         "refresh alone never creates a Sync target"
     );
     assert!(!f.paths.home.join(".claude/skills/alpha").exists());
+}
+
+/// A store failure inside the re-assert is report data, not a log line: the
+/// skill stays `Refreshed` (finalize and Propagation did succeed) and carries
+/// the error so the batch report can count it.
+#[test]
+fn a_failed_reassert_is_reported_alongside_the_refreshed_status() {
+    let targets = vec![outcome_for("claude_code")];
+
+    let (kept, error) = merge_reassert(targets, Err(anyhow::anyhow!("store is gone")));
+
+    assert_eq!(kept.len(), 1, "Propagation's own outcomes survive");
+    assert_eq!(
+        format!(
+            "{:#}",
+            error.expect("the failure is carried, never dropped")
+        ),
+        "store is gone"
+    );
+}
+
+#[test]
+fn a_successful_reassert_extends_the_targets_and_reports_no_error() {
+    let (kept, error) = merge_reassert(
+        vec![outcome_for("claude_code")],
+        Ok(vec![outcome_for("codex")]),
+    );
+
+    let tools: Vec<String> = kept
+        .iter()
+        .map(|o| match &o.scope {
+            PropagationScope::Global { tool } => tool.clone(),
+            other => panic!("expected a global scope, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(tools, vec!["claude_code".to_string(), "codex".to_string()]);
+    assert!(error.is_none());
+}
+
+fn outcome_for(tool: &str) -> PropagationOutcome {
+    PropagationOutcome {
+        scope: PropagationScope::Global {
+            tool: tool.to_string(),
+        },
+        status: PropagationStatus::Synced {
+            mode_used: crate::core::sync_status::SyncMode::Symlink,
+        },
+    }
 }
 
 #[test]

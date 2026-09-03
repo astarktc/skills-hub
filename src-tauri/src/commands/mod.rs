@@ -621,6 +621,10 @@ pub enum SkillRefreshStatusDto {
         content_hash: Option<String>,
         source_revision: Option<String>,
         targets: Vec<PropagationTargetDto>,
+        /// A store failure inside the auto-sync re-assert. The skill is still
+        /// `refreshed`; the targets the re-assert would have created are
+        /// unknown, so this counts as one `target_failures`.
+        reassert_error: Option<CommandError>,
     },
     Failed {
         error: CommandError,
@@ -639,7 +643,8 @@ pub struct RefreshReportDto {
     pub skills: Vec<SkillRefreshResultDto>,
     pub refreshed: u32,
     pub failed: u32,
-    /// Sync targets that failed across every refreshed skill.
+    /// Sync targets that failed across every refreshed skill. A failed
+    /// auto-sync re-assert counts as one.
     pub target_failures: u32,
 }
 
@@ -734,6 +739,7 @@ fn to_refresh_report_dto(report: crate::core::refresh::RefreshReport) -> Refresh
                 content_hash,
                 source_revision,
                 targets,
+                reassert_error,
             } => {
                 dto.refreshed += 1;
                 let targets: Vec<PropagationTargetDto> = targets
@@ -782,6 +788,10 @@ fn to_refresh_report_dto(report: crate::core::refresh::RefreshReport) -> Refresh
                     content_hash,
                     source_revision,
                     targets,
+                    reassert_error: reassert_error.map(|error| {
+                        dto.target_failures += 1;
+                        CommandError::from_anyhow(error)
+                    }),
                 }
             }
             SkillRefreshStatus::Failed { error } => {
