@@ -4,15 +4,23 @@ import type {
   RefreshProgressDto,
   RefreshReportDto,
   RemovalReportDto,
+  UnlocatableState,
 } from "../components/skills/types";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type {
   ActionErrorEntry,
+  ActionHandle,
   CompletionToast,
   StatusReporter,
   TranslateFn,
 } from "./useStatusReporter";
+
+/** The panel row's message for a skill Refresh (all) skipped, by state. */
+const SKIPPED_REASON_KEY: Record<UnlocatableState, string> = {
+  source_missing: "errors.refreshSkippedSourceMissing",
+  central_missing: "errors.refreshSkippedCentralMissing",
+};
 
 /** The `{skill_id, name, source_path}` batch item for a managed skill. */
 const toSyncItem = (skill: ManagedSkill) => ({
@@ -56,6 +64,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     setError,
     formatError,
     showActionErrors,
+    showActionWarnings,
   } = reporter;
   const {
     autoSyncEnabled,
@@ -184,22 +193,48 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     [formatError, t, toolLabelById],
   );
 
+  /**
+   * Unlocatable skills Refresh (all) did not dispatch: not failures (nothing
+   * was attempted), but each one is worth a row in the panel — with why.
+   */
+  const skippedEntries = useCallback(
+    (report: RefreshReportDto) => {
+      const entries: ActionErrorEntry[] = [];
+      for (const skill of report.skills) {
+        if (skill.status.status !== "skipped") continue;
+        entries.push({
+          title: t("errors.refreshSkippedTitle", { name: skill.skill_name }),
+          message: t(SKIPPED_REASON_KEY[skill.status.state]),
+        });
+      }
+      return entries;
+    },
+    [t],
+  );
+
   const handleRefresh = useCallback(async () => {
     if (managedSkills.length === 0) return;
 
     await runAction<RefreshReportDto>(
       {
-        // A batch that finished with failures is a warning, not a success.
-        successToast: (report): CompletionToast =>
-          report.failed === 0
-            ? t("status.refreshCompleted")
-            : {
-                kind: "warning",
-                title: t("status.refreshSummary", {
-                  refreshed: report.refreshed,
-                  failed: report.failed,
-                }),
-              },
+        // A batch that finished with failures or skipped skills is a
+        // warning, not a success.
+        successToast: (report): CompletionToast => {
+          if (report.failed === 0 && report.skipped === 0) {
+            return t("status.refreshCompleted");
+          }
+          const counts = { refreshed: report.refreshed, failed: report.failed };
+          return {
+            kind: "warning",
+            title:
+              report.skipped > 0
+                ? t("status.refreshSummarySkipped", {
+                    ...counts,
+                    skipped: report.skipped,
+                  })
+                : t("status.refreshSummary", counts),
+          };
+        },
       },
       async () => {
         const report = await refreshSkills(null);
@@ -208,6 +243,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           ...skillFailureEntries(report),
           ...targetFailureEntries(report),
         ]);
+        showActionWarnings(skippedEntries(report));
         return report;
       },
     );
@@ -217,7 +253,9 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     refreshSkills,
     runAction,
     showActionErrors,
+    showActionWarnings,
     skillFailureEntries,
+    skippedEntries,
     t,
     targetFailureEntries,
   ]);
@@ -444,36 +482,48 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     [loading, requestSharedDirConfirmation, runToggleToolForSkill],
   );
 
-  const handleUpdateManaged = useCallback(
-    async (skill: ManagedSkill) => {
+  /**
+   * Render a single-skill batch report inside an action: the skill's own
+   * failure fails the action, target failures are batched. Shared by
+   * Update, Restore and Re-point (all three end in the same batch of one).
+   */
+  const settleSingleReport = useCallback(
+    (action: ActionHandle, report: RefreshReportDto) => {
+      const failed = report.skills.find(
+        (entry) => entry.status.status === "failed",
+      );
+      if (failed && failed.status.status === "failed") {
+        return action.fail(formatError(failed.status.error));
+      }
+      showActionErrors(targetFailureEntries(report));
+      return undefined;
+    },
+    [formatError, showActionErrors, targetFailureEntries],
+  );
+
+  /** The single-skill Update, under the copy the caller names. */
+  const runSingleRefresh = useCallback(
+    async (skill: ManagedSkill, copy: { message: string; success: string }) => {
       await runAction(
-        {
-          message: t("actions.updating", { name: skill.name }),
-          successToast: t("status.updated", { name: skill.name }),
-        },
+        { message: copy.message, successToast: copy.success },
         async (action) => {
           // A single Update is the same batch, of one.
           const report = await refreshSkills([skill.id]);
           await loadManagedSkills();
-          const failed = report.skills.find(
-            (entry) => entry.status.status === "failed",
-          );
-          if (failed && failed.status.status === "failed") {
-            return action.fail(formatError(failed.status.error));
-          }
-          showActionErrors(targetFailureEntries(report));
+          return settleSingleReport(action, report);
         },
       );
     },
-    [
-      formatError,
-      loadManagedSkills,
-      refreshSkills,
-      runAction,
-      showActionErrors,
-      t,
-      targetFailureEntries,
-    ],
+    [loadManagedSkills, refreshSkills, runAction, settleSingleReport],
+  );
+
+  const handleUpdateManaged = useCallback(
+    (skill: ManagedSkill) =>
+      runSingleRefresh(skill, {
+        message: t("actions.updating", { name: skill.name }),
+        success: t("status.updated", { name: skill.name }),
+      }),
+    [runSingleRefresh, t],
   );
 
   const handleUpdateSkill = useCallback(
@@ -481,6 +531,80 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
       void handleUpdateManaged(skill);
     },
     [handleUpdateManaged],
+  );
+
+  /**
+   * Restore an Unlocatable skill whose central copy is gone: the same
+   * batch of one — the backend re-acquires it from its source and rebuilds
+   * the central copy, and Propagation follows.
+   */
+  const handleRestoreSkill = useCallback(
+    (skill: ManagedSkill) =>
+      runSingleRefresh(skill, {
+        message: t("actions.restoring", { name: skill.name }),
+        success: t("status.restored", { name: skill.name }),
+      }),
+    [runSingleRefresh, t],
+  );
+
+  /**
+   * Re-point a `local` skill whose folder is gone: pick its new location,
+   * then the backend rewrites the source and runs the Update from it. A
+   * cancelled picker is not an action at all.
+   */
+  const handleRepointSkill = useCallback(
+    async (skill: ManagedSkill) => {
+      let newPath: string;
+      try {
+        const { open } = await import("@tauri-apps/plugin-dialog");
+        const selected = await open({
+          directory: true,
+          multiple: false,
+          title: t("unlocatable.selectNewSourceFolder", { name: skill.name }),
+        });
+        if (!selected || Array.isArray(selected)) return;
+        newPath = selected;
+      } catch (err) {
+        setError(formatError(err));
+        return;
+      }
+      await runAction(
+        {
+          message: t("actions.repointing", { name: skill.name }),
+          successToast: t("status.repointed", { name: skill.name }),
+        },
+        async (action) => {
+          const report = await invokeTauri(
+            "repointLocalSkillSource",
+            skill.id,
+            newPath,
+          );
+          await loadManagedSkills();
+          return settleSingleReport(action, report);
+        },
+      );
+    },
+    [formatError, loadManagedSkills, runAction, setError, settleSingleReport, t],
+  );
+
+  /**
+   * Detach a `local` skill from its vanished folder: it becomes `imported`
+   * (the central copy is its truth). Store-only on the backend.
+   */
+  const handleDetachSkill = useCallback(
+    async (skill: ManagedSkill) => {
+      await runAction(
+        {
+          message: t("actions.detaching", { name: skill.name }),
+          successToast: t("status.detached", { name: skill.name }),
+        },
+        async () => {
+          await invokeTauri("detachSkillFromSource", skill.id);
+          await loadManagedSkills();
+        },
+      );
+    },
+    [loadManagedSkills, runAction, t],
   );
 
   return {
@@ -499,6 +623,9 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     handleCloseDelete,
     handleToggleToolForSkill,
     handleUpdateSkill,
+    handleRestoreSkill,
+    handleRepointSkill,
+    handleDetachSkill,
   };
 }
 

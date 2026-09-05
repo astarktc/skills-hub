@@ -24,6 +24,7 @@ export type { RefreshPolicyDto } from "../../bindings";
 export type { RefreshProgressDto } from "../../bindings";
 export type { SkillRefreshResultDto } from "../../bindings";
 export type { SkillRefreshStatusDto } from "../../bindings";
+export type { UnlocatableState } from "../../bindings";
 export type { PropagationTargetDto } from "../../bindings";
 export type { PropagationScopeDto } from "../../bindings";
 export type { PropagationStatusDto } from "../../bindings";

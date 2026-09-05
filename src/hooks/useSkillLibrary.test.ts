@@ -27,6 +27,11 @@ vi.mock("@tauri-apps/api/core", () => ({
     onmessage: ((message: unknown) => void) | null = null;
   },
 }));
+// Re-point picks the folder through the dialog plugin (lazily imported).
+const pickFolder = vi.fn<() => Promise<string | null>>();
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: (...args: unknown[]) => pickFolder(...(args as [])),
+}));
 
 import { invokeTauri, type CommandName } from "../lib/tauri";
 import { useSkillLibrary } from "./useSkillLibrary";
@@ -71,6 +76,7 @@ function skill(id: string, name: string, targets: string[] = []): ManagedSkill {
       synced_at: null,
     })),
     refreshable: true,
+    unlocatable: null,
   };
 }
 
@@ -97,6 +103,7 @@ function refreshedReport(names: string[]): RefreshReportDto {
     })),
     refreshed: names.length,
     failed: 0,
+    skipped: 0,
     target_failures: 0,
   };
 }
@@ -132,6 +139,7 @@ function makeDeps(overrides?: {
       case "getManagedSkills":
         return Promise.resolve(skills);
       case "refreshManagedSkills":
+      case "repointLocalSkillSource":
         return Promise.resolve(refreshReport);
       case "unsyncSkill":
       case "unsyncAllSkills":
@@ -329,6 +337,7 @@ describe("useSkillLibrary refresh", () => {
         ],
         refreshed: 1,
         failed: 1,
+        skipped: 0,
         target_failures: 1,
       },
     });
@@ -376,6 +385,7 @@ describe("useSkillLibrary refresh", () => {
         ],
         refreshed: 1,
         failed: 0,
+        skipped: 0,
         target_failures: 1,
       },
     });
@@ -391,6 +401,257 @@ describe("useSkillLibrary refresh", () => {
         message: "formatted:OTHER",
       },
     ]);
+  });
+
+  it("reports skipped Unlocatable skills as a warning summary with one entry per skill", async () => {
+    const setup = makeDeps({
+      skills: [skill("s1", "alpha"), skill("s2", "beta"), skill("s3", "gamma")],
+      refreshReport: {
+        skills: [
+          {
+            skill_id: "s1",
+            skill_name: "alpha",
+            status: {
+              status: "refreshed",
+              content_hash: null,
+              source_revision: null,
+              targets: [],
+              reassert_error: null,
+            },
+          },
+          {
+            skill_id: "s2",
+            skill_name: "beta",
+            status: { status: "skipped", state: "source_missing" },
+          },
+          {
+            skill_id: "s3",
+            skill_name: "gamma",
+            status: { status: "skipped", state: "central_missing" },
+          },
+        ],
+        refreshed: 1,
+        failed: 0,
+        skipped: 2,
+        target_failures: 0,
+      },
+    });
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleRefresh();
+    });
+
+    // Skips are not failures: nothing goes through the error batch...
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([]);
+    // ...but each skipped skill is its own warning row in the panel.
+    expect(setup.reporter.showActionWarnings).toHaveBeenCalledWith([
+      {
+        title: 'errors.refreshSkippedTitle {"name":"beta"}',
+        message: "errors.refreshSkippedSourceMissing",
+      },
+      {
+        title: 'errors.refreshSkippedTitle {"name":"gamma"}',
+        message: "errors.refreshSkippedCentralMissing",
+      },
+    ]);
+    // The summary is a warning that counts the skipped.
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith({
+      kind: "warning",
+      title:
+        'status.refreshSummarySkipped {"refreshed":1,"failed":0,"skipped":2}',
+    });
+  });
+});
+
+describe("useSkillLibrary unlocatable skill actions", () => {
+  it("Re-point picks a folder, re-points through the backend and reloads", async () => {
+    const setup = makeDeps();
+    pickFolder.mockResolvedValue("/new/place/alpha");
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleRepointSkill(setup.skills[0]);
+    });
+
+    expect(pickFolder).toHaveBeenCalledWith(
+      expect.objectContaining({ directory: true, multiple: false }),
+    );
+    expect(mockInvoke).toHaveBeenCalledWith(
+      "repointLocalSkillSource",
+      "s1",
+      "/new/place/alpha",
+    );
+    const calls = mockInvoke.mock.calls.map(([command]) => command);
+    expect(calls.indexOf("getManagedSkills", 1)).toBeGreaterThan(
+      calls.indexOf("repointLocalSkillSource"),
+    );
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
+      'status.repointed {"name":"alpha"}',
+    );
+  });
+
+  it("Re-point does nothing when the folder picker is cancelled", async () => {
+    const setup = makeDeps();
+    pickFolder.mockResolvedValue(null);
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleRepointSkill(setup.skills[0]);
+    });
+
+    expect(mockInvoke).not.toHaveBeenCalledWith(
+      "repointLocalSkillSource",
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(setup.reporter.runAction).not.toHaveBeenCalled();
+  });
+
+  it("Re-point surfaces a refused folder as the action's failure", async () => {
+    const setup = makeDeps();
+    pickFolder.mockResolvedValue("/home/u/.claude/skills/alpha");
+    mockInvoke.mockImplementation((command) => {
+      if (command === "repointLocalSkillSource") {
+        return Promise.reject({
+          code: "LOCAL_SOURCE_INSIDE_TOOL_DIR",
+          path: "/home/u/.claude/skills/alpha",
+          tool: "claude_code",
+        });
+      }
+      return Promise.resolve(setup.skills);
+    });
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleRepointSkill(setup.skills[0]);
+    });
+
+    expect(setup.reporter.setError).toHaveBeenCalledWith(
+      "formatted:LOCAL_SOURCE_INSIDE_TOOL_DIR",
+    );
+    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
+  });
+
+  it("Re-point surfaces the Update's own failure from the report", async () => {
+    const setup = makeDeps();
+    pickFolder.mockResolvedValue("/new/place/alpha");
+    mockInvoke.mockImplementation((command) => {
+      if (command === "repointLocalSkillSource") {
+        return Promise.resolve({
+          skills: [
+            {
+              skill_id: "s1",
+              skill_name: "alpha",
+              status: {
+                status: "failed",
+                error: { code: "SKILL_INVALID", reason: "missing_skill_md" },
+              },
+            },
+          ],
+          refreshed: 0,
+          failed: 1,
+          skipped: 0,
+          target_failures: 0,
+        } satisfies RefreshReportDto);
+      }
+      return Promise.resolve(setup.skills);
+    });
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleRepointSkill(setup.skills[0]);
+    });
+
+    expect(setup.reporter.setError).toHaveBeenCalledWith(
+      "formatted:SKILL_INVALID",
+    );
+    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
+  });
+
+  it("Detach hands the skill to the backend and reloads", async () => {
+    const setup = makeDeps();
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleDetachSkill(setup.skills[0]);
+    });
+
+    expect(mockInvoke).toHaveBeenCalledWith("detachSkillFromSource", "s1");
+    const calls = mockInvoke.mock.calls.map(([command]) => command);
+    expect(calls.indexOf("getManagedSkills", 1)).toBeGreaterThan(
+      calls.indexOf("detachSkillFromSource"),
+    );
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
+      'status.detached {"name":"alpha"}',
+    );
+  });
+
+  it("Detach surfaces a backend refusal", async () => {
+    const setup = makeDeps();
+    mockInvoke.mockImplementation((command) =>
+      command === "detachSkillFromSource"
+        ? Promise.reject({ code: "NOT_FOUND", kind: "skill", id: "s1" })
+        : Promise.resolve(setup.skills),
+    );
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleDetachSkill(setup.skills[0]);
+    });
+
+    expect(setup.reporter.setError).toHaveBeenCalledWith("formatted:NOT_FOUND");
+    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
+  });
+
+  it("Restore is the single-skill Update with its own copy", async () => {
+    const setup = makeDeps();
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleRestoreSkill(setup.skills[0]);
+    });
+
+    expect(mockInvoke).toHaveBeenCalledWith(
+      "refreshManagedSkills",
+      ["s1"],
+      { reassert_auto_sync: true },
+      expect.anything(),
+    );
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
+      'status.restored {"name":"alpha"}',
+    );
+  });
+
+  it("Restore surfaces the skill's own failure from the report", async () => {
+    const setup = makeDeps({
+      refreshReport: {
+        skills: [
+          {
+            skill_id: "s1",
+            skill_name: "alpha",
+            status: {
+              status: "failed",
+              error: { code: "SOURCE_PATH_MISSING", path: "/old/alpha" },
+            },
+          },
+        ],
+        refreshed: 0,
+        failed: 1,
+        skipped: 0,
+        target_failures: 0,
+      },
+    });
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleRestoreSkill(setup.skills[0]);
+    });
+
+    expect(setup.reporter.setError).toHaveBeenCalledWith(
+      "formatted:SOURCE_PATH_MISSING",
+    );
+    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
   });
 });
 
@@ -435,6 +696,7 @@ describe("useSkillLibrary single update", () => {
         ],
         refreshed: 0,
         failed: 1,
+        skipped: 0,
         target_failures: 0,
       },
     });
