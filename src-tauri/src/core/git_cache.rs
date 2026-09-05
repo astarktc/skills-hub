@@ -47,6 +47,7 @@ use super::cancel_token::CancelToken;
 use super::clock::now_ms;
 use super::errors::SignalError;
 use super::git_fetcher::{clone_or_pull, clone_or_pull_sparse, reshape_checkout};
+use super::repo_subpath::normalize_subpath;
 
 /// Freshness record written next to each cached clone.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -119,10 +120,6 @@ impl Checkout {
             Checkout::Sparse { subpaths } => Some(subpaths.iter().map(String::as_str).collect()),
         }
     }
-}
-
-fn normalize_subpath(subpath: &str) -> String {
-    subpath.trim_matches('/').to_string()
 }
 
 /// One `Arc<Mutex<()>>` per cache key. Entries are never removed: a cache key

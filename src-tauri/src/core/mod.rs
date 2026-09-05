@@ -23,6 +23,7 @@ pub mod project_ops;
 pub mod project_sync;
 pub mod propagation;
 pub mod refresh;
+pub mod repo_subpath;
 pub mod settings;
 pub mod skill_catalog;
 pub mod skill_discovery;

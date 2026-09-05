@@ -572,6 +572,58 @@ fn a_second_subpath_widens_the_entry_without_removing_the_first() {
     assert_eq!(head_again, head_a);
 }
 
+/// The cache's coverage record and the fetcher's sparse pattern set go
+/// through one normaliser: a subpath spelled with stray separators is the
+/// same subpath — a hit, not a second entry or a second pattern — and the
+/// checkout git actually holds is the canonical spelling.
+#[test]
+fn the_cache_record_and_the_sparse_pattern_normalise_a_subpath_identically() {
+    let repo = two_skill_fixture();
+    let cache = tempfile::tempdir().expect("tempdir");
+    let url = url_of(repo.path());
+    let install = |subpath: &'static str| FetchRequest {
+        subpath: Some(subpath),
+        ..request(&url, FRESH_TTL_MS)
+    };
+
+    let (repo_dir, head_a) =
+        fetch_through_cache(cache.path(), &install("/skills/a/")).expect("first spelling");
+    commit_more(repo.path(), "after-first.txt");
+    let (_dir, head_b) =
+        fetch_through_cache(cache.path(), &install("skills/./a")).expect("second spelling");
+
+    assert_eq!(
+        head_a, head_b,
+        "a differently spelled subpath is covered by the entry, not refetched"
+    );
+    assert_eq!(
+        entry_checkout_subpaths(&repo_dir),
+        vec!["skills/a".to_string()],
+        "the record holds one canonical spelling"
+    );
+    let out = std::process::Command::new("git")
+        .args(["sparse-checkout", "list"])
+        .current_dir(&repo_dir)
+        .output()
+        .expect("run git");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "skills/a",
+        "the fetcher's pattern is that same spelling"
+    );
+}
+
+fn entry_checkout_subpaths(repo_dir: &Path) -> Vec<String> {
+    let raw = fs::read_to_string(repo_dir.join(".skills-hub-cache.json")).expect("meta written");
+    let meta: serde_json::Value = serde_json::from_str(&raw).expect("meta json");
+    meta["checkout"]["subpaths"]
+        .as_array()
+        .expect("checkout.subpaths")
+        .iter()
+        .map(|v| v.as_str().expect("subpath string").to_string())
+        .collect()
+}
+
 /// A clone whose record is gone (a crashed run, a failed sidecar write) has
 /// an unknown shape. Unknown is treated as full — the widest shape — so the
 /// sparse request refetches the whole tree instead of narrowing what may be

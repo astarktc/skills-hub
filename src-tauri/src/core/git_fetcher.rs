@@ -9,6 +9,7 @@ use git2::{FetchOptions, Repository};
 
 use super::cancel_token::CancelToken;
 use super::errors::SignalError;
+use super::repo_subpath::normalize_subpath;
 
 pub fn clone_or_pull(
     repo_url: &str,
@@ -244,9 +245,9 @@ pub fn reshape_checkout(
 ) -> Result<()> {
     match sparse_subpaths {
         Some(subpaths) => {
-            let clean: Vec<&str> = subpaths
+            let clean: Vec<String> = subpaths
                 .iter()
-                .map(|s| s.trim_matches('/'))
+                .map(|s| normalize_subpath(s))
                 .filter(|s| !s.is_empty())
                 .collect();
             if clean.is_empty() {
