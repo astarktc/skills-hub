@@ -541,7 +541,10 @@ fn a_failed_removal_reports_the_error_chain_not_its_rendering() {
     match &report.targets[0].status {
         RemovalTargetStatus::Failed { error } => {
             assert!(
-                error.root_cause().downcast_ref::<std::io::Error>().is_some(),
+                error
+                    .root_cause()
+                    .downcast_ref::<std::io::Error>()
+                    .is_some(),
                 "the io failure is still downcastable through the chain: {error:#}"
             );
             assert!(error.chain().count() > 1, "context layers are kept");

@@ -53,7 +53,10 @@ fn removal_report_dto_classifies_a_typed_target_failure_at_the_seam() {
             RemovalTargetStatusDto::Failed {
                 error: CommandError::PathOutsideToolDirs { path },
             } => assert_eq!(path, refused),
-            other => panic!("expected PATH_OUTSIDE_TOOL_DIRS for {}, got {other:?}", target.tool),
+            other => panic!(
+                "expected PATH_OUTSIDE_TOOL_DIRS for {}, got {other:?}",
+                target.tool
+            ),
         }
     }
 }
