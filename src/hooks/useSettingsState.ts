@@ -275,7 +275,7 @@ export function useSettingsState({
     }
   }, [formatError, setError, setSuccessToastMessage, t]);
 
-  /** Reveal the backend log dir: the post-restart record of past failures. */
+  /** Reveal the backend log: partial forensics (backend-logged events) for earlier runs. */
   const handleOpenLogFolder = useCallback(async () => {
     if (!isTauri) {
       setError(t("errors.notTauri"));

@@ -89,7 +89,7 @@ Landing a skill's bytes from a git source in a directory, once, for every flow t
 _Avoid_: download, fetch (that's the cache's job), clone (that's one of the two adapters)
 
 **Notification**:
-One user-visible outcome of an action — a kind (error, warning, success or info), a title, an optional message and the time it was raised. It is shown once as a toast whose lifetime the reporter owns (an error stays until closed; a warning lingers; a success or info flashes) and kept in the session's history, where errors and warnings count as unread until the operator opens the panel. The history is in memory for the session only; what happened in earlier runs is the backend log (see Open log folder in Settings).
+One user-visible outcome of an action — a kind (error, warning, success or info), a title, an optional message and the time it was raised. It is shown as a toast — or folded into one batch toast when an action reports many — whose lifetime the reporter owns (an error stays until closed; a warning lingers; a success or info flashes) and kept in the session's history, where errors and warnings count as unread until the operator opens the panel. The history is in memory for the session only; the backend log (see Open log folder in Settings) is partial forensics — backend-logged events only — not a record of Notifications.
 _Avoid_: alert, log line (the backend log is a different thing), toast (that's the transient rendering of one)
 
 **Project sync status**:

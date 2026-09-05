@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+A follow-up round: the outcome of every action is now readable after the fact, and the review-panel residue from 1.2.2 is settled.
+
+### Added
+
+- **Notification history**: a bell in the app header opens the session's notifications (errors, warnings, successes) with an unread badge for errors and warnings, per-entry copy and *Copy all*, and *Clear*. In memory for the session; earlier runs are in the backend log.
+- **Open log folder** in Settings reveals the app's log file in the file manager.
+
+### Changed
+
+- **Error toasts stay until you close them**; warnings linger five seconds; successes and confirmations flash. A refresh, unsync or import that finished with failures is reported as a warning (it lingers and counts as unread), not a success, and every failure of a batch is its own row in the history even when the screen shows one toast.
+- **Onboarding import always overwrites the source Tool's original**: with auto-sync on, the Tool the chosen variant was found in is synced even when it is deselected in the auto-sync selection, so the original becomes the managed copy instead of an untracked duplicate. The completion toast names the Tool and why.
+- **Adding a skill from a non-GitHub repository clones it once**: the listing's clone serves the install within the cache window, so the second clone (and its wait) is gone.
+
+### Fixed
+
+- **Typed removal errors**: a failure while removing a skill's folder from a tool (unsync, delete, unassign, project removal) is reported with its own localized message instead of a generic error.
+- **Import completion explanation is readable**: the "also synced to …" lines render as separate lines in the toast and the history rather than running into the title.
+- **Project removal that fails** re-reads the project view, like the other project actions, so the list shows what is actually on disk.
+- **`npm run version:set`** rewrites both lockfiles as well as the three manifests, and `version:check` verifies all five, so a bump no longer dirties the next `cargo test` or `npm ci`.
+
+### Internal/architecture
+
+- **Notification** joins the glossary; the reporter (`useStatusReporter`) is the single owner of toast lifetime and the only writer of the history — every direct toast call outside it is gone.
+- **Git cache keyed by repository and ref**, never the subpath: the checkout shape is entry metadata and an entry is only ever widened (a clone without a readable record is treated as full); the key digest is pinned.
+- **Removal reports carry the error chain** (`anyhow::Error`, as Propagation does) so typed signals survive to the command seam; callerless `*_unlocked` twins and blind bulk target deletes are deleted; project-side removal entry points are named after Artifact removal.
+- **One rule each**: the shared-skills-dir group is the registry's answer everywhere; `assignment_artifact_name` is the one naming rule for a project assignment's artifact (the stored name, never the live one); one function syncs one assignment.
+
 ## [1.2.2] - 2026-09-03
 
 A second architecture round (11 tickets): the operations that put skills into tools and take them out again each became one backend operation with one report. See "Internal/architecture" below.

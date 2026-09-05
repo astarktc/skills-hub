@@ -192,10 +192,10 @@ pub async fn clear_git_cache_now(app: tauri::AppHandle) -> Result<usize, Command
 
 /// Reveal the app log file — where `tauri-plugin-log` writes (`LogDir`,
 /// see `lib.rs`) — selected in its folder in the operator's file manager
-/// (the folder itself when no file exists yet). The backend log is the
-/// post-restart record of what a Notification reported. Both the paths
-/// and the opener are resolved here at the command seam: `core` never sees
-/// the app handle.
+/// (the folder itself when no file exists yet). The backend log is partial
+/// forensics for earlier runs — backend-logged events only, not a record of
+/// what a Notification reported. Both the paths and the opener are resolved
+/// here at the command seam: `core` never sees the app handle.
 #[tauri::command]
 #[specta::specta]
 pub async fn open_log_folder(app: tauri::AppHandle) -> Result<(), CommandError> {

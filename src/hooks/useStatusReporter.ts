@@ -199,8 +199,9 @@ export type StatusReporter = {
   notify: NotifyFn;
   /**
    * This session's notification history, newest first, bounded at
-   * NOTIFICATION_HISTORY_LIMIT. In memory only: the backend log is the
-   * post-restart record.
+   * NOTIFICATION_HISTORY_LIMIT. In memory only; the backend log is partial
+   * forensics for earlier runs (backend-logged events), not a record of
+   * these.
    */
   notifications: Notification[];
   /** Errors and warnings raised since the last `markAllRead`. */

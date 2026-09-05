@@ -58,10 +58,10 @@ export const commands = {
 	/**
 	 *  Reveal the app log file — where `tauri-plugin-log` writes (`LogDir`,
 	 *  see `lib.rs`) — selected in its folder in the operator's file manager
-	 *  (the folder itself when no file exists yet). The backend log is the
-	 *  post-restart record of what a Notification reported. Both the paths
-	 *  and the opener are resolved here at the command seam: `core` never sees
-	 *  the app handle.
+	 *  (the folder itself when no file exists yet). The backend log is partial
+	 *  forensics for earlier runs — backend-logged events only, not a record of
+	 *  what a Notification reported. Both the paths and the opener are resolved
+	 *  here at the command seam: `core` never sees the app handle.
 	 */
 	openLogFolder: () => __TAURI_INVOKE<null>("open_log_folder"),
 	registerProject: (path: string) => __TAURI_INVOKE<ProjectViewDto>("register_project", { path }),
