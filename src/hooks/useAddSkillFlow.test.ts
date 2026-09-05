@@ -16,6 +16,7 @@ import type {
   LocalSkillCandidate,
   OnboardingPlan,
 } from "../components/skills/types";
+import { describeCommandError } from "../commandError";
 import type { AddSkillFlowDeps } from "./useAddSkillFlow";
 
 vi.mock("sonner", () => ({
@@ -479,6 +480,55 @@ describe("useAddSkillFlow local flow", () => {
     expect(
       mockInvoke.mock.calls.some(([cmd]) => cmd === "installLocalSelection"),
     ).toBe(false);
+  });
+
+  it("surfaces the backend's refusal of a folder inside a Tool's skills dir as an error Notification that steers to Import", async () => {
+    const refusal = {
+      code: "LOCAL_SOURCE_INSIDE_TOOL_DIR",
+      path: "/home/u/.claude/skills/alpha",
+      tool: "claude_code",
+    };
+    stubBackend({
+      localCandidates: [
+        {
+          name: "alpha",
+          description: null,
+          subpath: ".",
+          valid: true,
+          reason: null,
+        },
+      ],
+    });
+    const listing = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "installLocalSelection"
+        ? Promise.reject(refusal)
+        : listing(command, ...args),
+    );
+    const setup = makeDeps();
+    // The real error copy seam, so the assertion reads the key the
+    // Notification carries rather than the double's placeholder.
+    vi.mocked(setup.reporter.formatError).mockImplementation((err) =>
+      describeCommandError(err, t),
+    );
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+
+    act(() => {
+      result.current.setAddModalTab("local");
+      result.current.setLocalPath("/home/u/.claude/skills/alpha");
+    });
+    await act(async () => {
+      await result.current.handleCreate();
+    });
+
+    // The thrown refusal lands on the reporter's one-shot error channel,
+    // which the reporter records as an error Notification.
+    expect(setup.reporter.setError).toHaveBeenCalledWith(
+      'errors.localSourceInsideToolDir {"tool":"tools.claude_code {\\"defaultValue\\":\\"claude_code\\"}"}\n\n/home/u/.claude/skills/alpha',
+    );
+    // Nothing was installed, so nothing was deployed.
+    expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
+    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
   });
 });
 
