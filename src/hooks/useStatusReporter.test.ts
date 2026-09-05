@@ -7,7 +7,12 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    warning: vi.fn(),
+    info: vi.fn(),
+  },
 }));
 vi.mock("../lib/tauri", () => ({
   isTauri: true,
@@ -25,6 +30,15 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+// The lifetimes the reporter owns (spec Q5): errors never auto-dismiss,
+// successes flash. Warning/info are asserted in the `notify` block.
+const ERROR_OPTIONS = {
+  description: undefined,
+  duration: Infinity,
+  closeButton: true,
+};
+const SUCCESS_OPTIONS = { description: undefined, duration: 2000 };
+
 describe("useStatusReporter", () => {
   it("renders a success toast once, then auto-clears the trigger", async () => {
     const { result } = renderHook(() => useStatusReporter(t));
@@ -33,10 +47,67 @@ describe("useStatusReporter", () => {
       result.current.setSuccessToastMessage("done!");
     });
 
-    expect(toast.success).toHaveBeenCalledWith("done!", { duration: 1800 });
+    expect(toast.success).toHaveBeenCalledWith("done!", SUCCESS_OPTIONS);
     // The one-shot flag clears in a microtask; a second render must not
     // re-fire the toast.
     await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
+  });
+
+  // Toast lifetime is owned here and nowhere else: an error stays until the
+  // operator closes it, a warning lingers, a success/info flashes.
+  describe("notify", () => {
+    it("an error stays on screen until closed, with its message as description", () => {
+      const { result } = renderHook(() => useStatusReporter(t));
+
+      act(() => {
+        result.current.notify("error", "Install failed", "disk full");
+      });
+
+      expect(toast.error).toHaveBeenCalledWith("Install failed", {
+        description: "disk full",
+        duration: Infinity,
+        closeButton: true,
+      });
+    });
+
+    it("a warning lingers 5 s", () => {
+      const { result } = renderHook(() => useStatusReporter(t));
+
+      act(() => {
+        result.current.notify("warning", "Skipped", "already present");
+      });
+
+      expect(toast.warning).toHaveBeenCalledWith("Skipped", {
+        description: "already present",
+        duration: 5000,
+      });
+    });
+
+    it("a success flashes 2 s", () => {
+      const { result } = renderHook(() => useStatusReporter(t));
+
+      act(() => {
+        result.current.notify("success", "Installed");
+      });
+
+      expect(toast.success).toHaveBeenCalledWith("Installed", {
+        description: undefined,
+        duration: 2000,
+      });
+    });
+
+    it("an info flashes 2 s", () => {
+      const { result } = renderHook(() => useStatusReporter(t));
+
+      act(() => {
+        result.current.notify("info", "Checking for updates");
+      });
+
+      expect(toast.info).toHaveBeenCalledWith("Checking for updates", {
+        description: undefined,
+        duration: 2000,
+      });
+    });
   });
 
   it("renders an error toast and clears the action message with it", async () => {
@@ -47,7 +118,7 @@ describe("useStatusReporter", () => {
       result.current.setError("it broke");
     });
 
-    expect(toast.error).toHaveBeenCalledWith("it broke", { duration: 2600 });
+    expect(toast.error).toHaveBeenCalledWith("it broke", ERROR_OPTIONS);
     await waitFor(() => expect(result.current.actionMessage).toBeNull());
   });
 
@@ -62,10 +133,10 @@ describe("useStatusReporter", () => {
       ]);
     });
 
-    expect(toast.error).toHaveBeenCalledWith(
-      'skill-b\nb failed' + 'errors.moreCount {"count":1}',
-      { duration: 3200 },
-    );
+    expect(toast.error).toHaveBeenCalledWith("skill-b", {
+      ...ERROR_OPTIONS,
+      description: 'b failed' + 'errors.moreCount {"count":1}',
+    });
   });
 
   it("showActionErrors with only silenced entries shows nothing", () => {
@@ -158,7 +229,7 @@ describe("useStatusReporter runAction", () => {
     expect(result.current.loadingStartAt).toBeNull();
     expect(result.current.actionMessage).toBeNull();
     await waitFor(() =>
-      expect(toast.success).toHaveBeenCalledWith("done!", { duration: 1800 }),
+      expect(toast.success).toHaveBeenCalledWith("done!", SUCCESS_OPTIONS),
     );
     expect(toast.error).not.toHaveBeenCalled();
   });
@@ -174,9 +245,7 @@ describe("useStatusReporter runAction", () => {
     });
 
     await waitFor(() =>
-      expect(toast.success).toHaveBeenCalledWith("removed 3", {
-        duration: 1800,
-      }),
+      expect(toast.success).toHaveBeenCalledWith("removed 3", SUCCESS_OPTIONS),
     );
   });
 
@@ -209,9 +278,10 @@ describe("useStatusReporter runAction", () => {
     expect(result.current.loading).toBe(false);
     expect(result.current.loadingStartAt).toBeNull();
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith("errors.targetExists", {
-        duration: 2600,
-      }),
+      expect(toast.error).toHaveBeenCalledWith(
+        "errors.targetExists",
+        ERROR_OPTIONS,
+      ),
     );
     expect(toast.success).not.toHaveBeenCalled();
     await waitFor(() => expect(result.current.actionMessage).toBeNull());
@@ -266,9 +336,7 @@ describe("useStatusReporter runAction", () => {
     expect(value).toBeUndefined();
     expect(result.current.loading).toBe(false);
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith("name taken", {
-        duration: 2600,
-      }),
+      expect(toast.error).toHaveBeenCalledWith("name taken", ERROR_OPTIONS),
     );
     expect(toast.success).not.toHaveBeenCalled();
   });

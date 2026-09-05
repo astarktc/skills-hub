@@ -77,7 +77,9 @@ export function useUpdateChecker(t: TranslateFn) {
     } catch (err) {
       setUpdateInstalling(false);
       const msg = describeCommandError(err, t);
-      if (msg) toast.error(msg, { duration: 3200 });
+      // Routed through the reporter's `notify` in round-3 ticket 02; until
+      // then no duration is chosen here (the reporter owns lifetimes).
+      if (msg) toast.error(msg);
     }
   }, [t]);
 

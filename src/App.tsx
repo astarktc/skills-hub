@@ -191,11 +191,8 @@ function App() {
 
   return (
     <div className="skills-app">
-      <Toaster
-        position="top-right"
-        richColors
-        toastOptions={{ duration: 1800 }}
-      />
+      {/* Toast lifetime is owned by useStatusReporter, per kind. */}
+      <Toaster position="top-right" richColors />
       <LoadingOverlay
         loading={loading}
         actionMessage={actionMessage}

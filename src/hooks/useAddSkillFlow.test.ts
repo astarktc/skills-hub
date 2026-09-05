@@ -146,6 +146,7 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
     // vi.fn erases the generic; the spy still records calls.
     runAction: runAction as StatusReporter["runAction"],
     setActionMessage: vi.fn(),
+    notify: vi.fn(),
     setError,
     setSuccessToastMessage,
     formatError,

@@ -5,6 +5,43 @@ import { invokeTauri } from "../lib/tauri";
 
 export type ActionErrorEntry = { title: string; message: string };
 
+/** The severity of one user-visible notification. */
+export type NotificationKind = "error" | "warning" | "success" | "info";
+
+/**
+ * How long each kind stays on screen. The single owner of toast lifetime:
+ * an error stays until the operator closes it (it is the only record of a
+ * failed install/refresh), a warning lingers long enough to read, a success
+ * or info just confirms. No other module passes a `duration` to the toast
+ * library and the app-level `<Toaster>` sets none.
+ */
+const TOAST_DURATION_MS: Record<NotificationKind, number> = {
+  error: Infinity,
+  warning: 5000,
+  success: 2000,
+  info: 2000,
+};
+
+/** The one place the toast library is called. */
+function showToast(kind: NotificationKind, title: string, message?: string) {
+  const options = { description: message, duration: TOAST_DURATION_MS[kind] };
+  switch (kind) {
+    case "error":
+      // An infinite toast needs an explicit way off the screen.
+      toast.error(title, { ...options, closeButton: true });
+      break;
+    case "warning":
+      toast.warning(title, options);
+      break;
+    case "success":
+      toast.success(title, options);
+      break;
+    case "info":
+      toast.info(title, options);
+      break;
+  }
+}
+
 export type TranslateFn = (
   key: string,
   opts?: Record<string, unknown>,
@@ -90,6 +127,12 @@ export type StatusReporter = {
    */
   setActionMessage: (value: string | null) => void;
   /**
+   * The single entry point for every user-visible notification: shows the
+   * toast for `kind` with the lifetime the reporter owns. The setters below
+   * and runAction's success/failure paths all end here.
+   */
+  notify: (kind: NotificationKind, title: string, message?: string) => void;
+  /**
    * One-shot error trigger: rendered as a toast, then auto-cleared. For
    * failures outside an action (input validation before one starts, hooks
    * that never show the overlay) or non-fatal warnings inside one; a failure
@@ -125,6 +168,13 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
     [t],
   );
 
+  const notify = useCallback(
+    (kind: NotificationKind, title: string, message?: string) => {
+      showToast(kind, title, message);
+    },
+    [],
+  );
+
   const showActionErrors = useCallback(
     (errors: ActionErrorEntry[]) => {
       // Entries with an empty message are silenced failures (e.g. cancelled).
@@ -135,24 +185,24 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
         visible.length > 1
           ? t("errors.moreCount", { count: visible.length - 1 })
           : "";
-      toast.error(`${head.title}\n${head.message}${more}`, { duration: 3200 });
+      notify("error", head.title, `${head.message}${more}`);
     },
-    [t],
+    [notify, t],
   );
 
   useEffect(() => {
     if (!successToastMessage) return;
-    toast.success(successToastMessage, { duration: 1800 });
+    notify("success", successToastMessage);
     // Clear the one-shot trigger in a microtask so the reset is not a
     // synchronous setState in the effect body (satisfies
     // react-hooks/set-state-in-effect). The flag is internal and only consumed
     // by this effect, so deferring it one microtask is behavior-preserving.
     void Promise.resolve().then(() => setSuccessToastMessage(null));
-  }, [successToastMessage]);
+  }, [notify, successToastMessage]);
 
   useEffect(() => {
     if (!error) return;
-    toast.error(error, { duration: 2600 });
+    notify("error", error);
     // Reset the one-shot error/action triggers in a microtask (see the success
     // toast effect above) to keep the setState out of the synchronous effect
     // body. Behavior-preserving: these flags are only consumed here.
@@ -160,7 +210,7 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
       setError(null);
       setActionMessage(null);
     });
-  }, [error]);
+  }, [error, notify]);
 
   const cancelLoading = useCallback(() => {
     void invokeTauri("cancelCurrentOperation").catch(() => {});
@@ -212,6 +262,7 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
     actionMessage,
     runAction,
     setActionMessage,
+    notify,
     setError,
     setSuccessToastMessage,
     formatError,
