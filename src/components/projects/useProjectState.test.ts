@@ -564,6 +564,56 @@ describe("useProjectState applies the view a mutation returns", () => {
     expect(result.current.assignments).toEqual([]);
   });
 
+  it("converges on the backend's view when project removal fails", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    await act(async () => {
+      await result.current.toggleAssignment("s1", "pi");
+    });
+    // Artifact removal could not take s1's link off disk: ADR-0002 keeps
+    // the row with status `error`, the project stays registered, and the
+    // command reports the failure. The view the hook shows must be the one
+    // the backend settled — visible now, not after a reselect.
+    const removalFailure: CommandError = {
+      code: "DELETE_CLEANUP_FAILED",
+      failures: ["/work/p1/.pi/skills/s1: permission denied"],
+    };
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) => {
+      if (command === "removeProject") return Promise.reject(removalFailure);
+      if (command === "getProjectView") {
+        return base(command, ...args).then((view) => {
+          const settled = view as ProjectViewDto;
+          return {
+            ...settled,
+            project: { ...settled.project, sync_status: "error" },
+            assignments: settled.assignments.map((a) => ({
+              ...a,
+              status: "error",
+              last_error: "permission denied",
+            })),
+          } satisfies ProjectViewDto;
+        });
+      }
+      return base(command, ...args);
+    });
+    mockInvoke.mockClear();
+
+    await act(async () => {
+      await expect(result.current.removeProject("p1")).rejects.toMatchObject({
+        code: "DELETE_CLEANUP_FAILED",
+      });
+    });
+
+    expect(commandOrder()).toEqual(["removeProject", "getProjectView"]);
+    expect(callsTo("getProjectView")).toEqual([["p1"]]);
+    expect(result.current.selectedProjectId).toBe("p1");
+    expect(result.current.assignments.map((a) => a.status)).toEqual(["error"]);
+    expect(
+      result.current.projects.find((p) => p.id === "p1")?.sync_status,
+    ).toBe("error");
+  });
+
   it("selects a project with one view read", async () => {
     const { result } = await renderReady();
     await withSelectedProject(result, ["pi"]);

@@ -239,19 +239,31 @@ export function useProjectState(): ProjectState {
     [applyView],
   );
 
-  const removeProject = useCallback(async (id: string) => {
-    // The project is gone, so the mutation's view is the remaining list.
-    const remaining = await invokeTauri("removeProject", id);
-    setProjects(remaining);
-    setSelectedProjectId((prev) => {
-      if (prev === id) {
-        setTools([]);
-        setAssignments([]);
-        return null;
+  const removeProject = useCallback(
+    async (id: string) => {
+      let remaining: ProjectDto[];
+      try {
+        // The project is gone, so the mutation's view is the remaining list.
+        remaining = await invokeTauri("removeProject", id);
+      } catch (err) {
+        // Artifact removal keeps a row whose artifact stayed on disk with
+        // status `error` (ADR-0002) and the project stays registered, so
+        // converge on the backend's view before surfacing the failure.
+        await refreshView(id);
+        throw err;
       }
-      return prev;
-    });
-  }, []);
+      setProjects(remaining);
+      setSelectedProjectId((prev) => {
+        if (prev === id) {
+          setTools([]);
+          setAssignments([]);
+          return null;
+        }
+        return prev;
+      });
+    },
+    [refreshView],
+  );
 
   const toggleAssignment = useCallback(
     async (skillId: string, tool: string) => {
