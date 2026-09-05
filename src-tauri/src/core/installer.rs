@@ -72,7 +72,7 @@ pub fn install_imported_skill(
     store: &SkillStore,
     source_path: &Path,
     name: Option<String>,
-    found_in_tool: &str,
+    found_in_tool: Option<&str>,
 ) -> Result<InstallResult> {
     install_from_dir(paths, store, source_path, name, || {
         SkillProvenance::imported(found_in_tool)

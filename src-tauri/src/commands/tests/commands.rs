@@ -427,7 +427,7 @@ fn update_of_an_imported_skill_is_typed_not_refreshable() {
         &store,
         &found,
         Some("taken-over".to_string()),
-        "claude_code",
+        Some("claude_code"),
     )
     .unwrap();
 

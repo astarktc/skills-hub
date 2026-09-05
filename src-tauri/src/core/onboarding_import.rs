@@ -235,13 +235,7 @@ fn apply_one_unlocked(
     now: i64,
 ) -> ImportGroupStatus {
     let name = selection.name.clone().unwrap_or_else(|| group.name.clone());
-    // `admit` proved the chosen path is one of the group's variants.
-    let found_in_tool = group
-        .variants
-        .iter()
-        .find(|variant| variant.path == selection.chosen_path)
-        .map(|variant| variant.tool.as_str())
-        .unwrap_or_default();
+    let found_in_tool = chosen_variant(group, selection).map(|variant| variant.tool.as_str());
     let installed = match install_imported_skill(
         paths,
         store,
@@ -310,10 +304,7 @@ fn sync_imported_unlocked(
         .tools
         .clone()
         .unwrap_or_else(|| installed_keys(&global_tool_entries(&paths.home)));
-    let chosen = group
-        .variants
-        .iter()
-        .find(|variant| variant.path == selection.chosen_path);
+    let chosen = chosen_variant(group, selection);
     let mut identical_tools: Vec<String> = Vec::new();
     let mut originals: Vec<OriginalOutcome> = Vec::new();
     for variant in &group.variants {
@@ -369,6 +360,19 @@ fn sync_imported_unlocked(
 /// path itself always does; any other variant does when both fingerprints
 /// are known and equal. A variant whose fingerprint could not be taken is
 /// never assumed identical.
+/// The group's variant the selection chose. `admit` proved it is one of
+/// them; `None` is unreachable after admission and is passed through as
+/// "unknown", never as an empty Tool.
+fn chosen_variant<'a>(
+    group: &'a OnboardingGroup,
+    selection: &ImportSelection,
+) -> Option<&'a OnboardingVariant> {
+    group
+        .variants
+        .iter()
+        .find(|variant| variant.path == selection.chosen_path)
+}
+
 fn is_identical_to_chosen(variant: &OnboardingVariant, chosen: Option<&OnboardingVariant>) -> bool {
     let Some(chosen) = chosen else {
         return false;

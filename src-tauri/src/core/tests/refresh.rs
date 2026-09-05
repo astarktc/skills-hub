@@ -659,9 +659,15 @@ fn install_imported(paths: &InstallerPaths, store: &SkillStore, name: &str) -> S
     let found = paths.home.join(claude.relative_skills_dir).join(name);
     fs::create_dir_all(&found).expect("tool skill dir");
     fs::write(found.join("SKILL.md"), format!("---\nname: {name}\n---\n")).expect("write");
-    install_imported_skill(paths, store, &found, Some(name.to_string()), "claude_code")
-        .expect("import")
-        .skill_id
+    install_imported_skill(
+        paths,
+        store,
+        &found,
+        Some(name.to_string()),
+        Some("claude_code"),
+    )
+    .expect("import")
+    .skill_id
 }
 
 /// Refresh (all) over one `git` and one `imported` skill: the imported one

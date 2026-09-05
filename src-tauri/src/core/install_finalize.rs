@@ -103,14 +103,15 @@ impl SkillProvenance {
 
     /// A skill taken over from a Tool's skills directory. It has no external
     /// source — the central copy is its truth (ADR-0003) — so `source_ref`
-    /// is `None`; `found_in_tool` is kept as display-only history.
-    pub fn imported(found_in_tool: &str) -> Self {
+    /// is `None`; `found_in_tool` is kept as display-only history when the
+    /// import knows it — never an empty placeholder.
+    pub fn imported(found_in_tool: Option<&str>) -> Self {
         SkillProvenance {
             source_type: Provenance::Imported.as_str().to_string(),
             source_ref: None,
             source_subpath: None,
             source_revision: None,
-            imported_from_tool: Some(found_in_tool.to_string()),
+            imported_from_tool: found_in_tool.map(str::to_string),
         }
     }
 }

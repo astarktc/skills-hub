@@ -207,7 +207,7 @@ fn only_a_local_skill_can_be_repointed_or_detached() {
         &f.store,
         &found,
         Some("taken-over".to_string()),
-        "claude_code",
+        Some("claude_code"),
     )
     .unwrap();
 
