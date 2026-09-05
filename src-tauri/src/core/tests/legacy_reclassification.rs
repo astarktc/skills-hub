@@ -1,6 +1,6 @@
 //! Tests for `core::legacy_reclassification` — the once-per-launch pass that
 //! turns `local` rows whose "source" was really a Tool's skills directory
-//! into `imported` rows (spec Q5).
+//! into `imported` rows (ADR-0003).
 //!
 //! Every case runs against a temp home / central dir / DB; nothing touches
 //! the operator's real library.
@@ -129,18 +129,44 @@ fn a_local_row_whose_path_links_into_central_becomes_imported() {
     assert_eq!(after.imported_from_tool, None);
 }
 
+/// Rule (ii) is canonical containment, not a leaf link: the stored source
+/// is a real directory *below* a symlink into the central repo, so the path
+/// resolves into central through an ancestor. The "source" is still the
+/// skill's own central copy.
+#[test]
+fn a_local_row_below_a_link_into_central_becomes_imported() {
+    let f = fixture();
+    let central_copy = f.central.join("baz");
+    fs::create_dir_all(&central_copy).expect("central copy");
+    let link = f.home.join("outside").join("library");
+    symlink_dir(&f.central, &link);
+    seed_local_row(&f, "baz", &link.join("baz"));
+
+    let changed = reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("pass");
+
+    assert_eq!(changed, 1);
+    let after = row(&f, "baz");
+    assert_eq!(after.source_type, "imported");
+    assert_eq!(after.source_ref, None);
+    assert_eq!(after.imported_from_tool, None);
+}
+
 /// Rule (iii): the stored source does not exist on this machine but has the
-/// shape of a Tool skills-dir path under some other home prefix — a row
+/// shape of a Tool's *global* skills-dir path under some other home — a row
 /// migrated from a Windows/WSL database. The Tool is read off the shape.
 #[test]
 fn a_missing_path_shaped_like_a_tool_skills_dir_becomes_imported() {
     let f = fixture();
     seed_local_row(&f, "wsl", Path::new("/mnt/c/Users/x/.claude/skills/wsl"));
     seed_local_row(&f, "win", Path::new(r"C:\Users\x\.pi\agent\skills\win"));
+    seed_local_row(&f, "cursor", Path::new(r"C:\Users\x\.cursor\skills\cursor"));
+    seed_local_row(&f, "linux", Path::new("/home/x/.claude/skills/linux"));
+    seed_local_row(&f, "root", Path::new("/root/.claude/skills/root"));
+    seed_local_row(&f, "tilde", Path::new("~/.claude/skills/tilde"));
 
     let changed = reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("pass");
 
-    assert_eq!(changed, 2);
+    assert_eq!(changed, 6);
     let wsl = row(&f, "wsl");
     assert_eq!(wsl.source_type, "imported");
     assert_eq!(wsl.source_ref, None);
@@ -148,6 +174,58 @@ fn a_missing_path_shaped_like_a_tool_skills_dir_becomes_imported() {
     let win = row(&f, "win");
     assert_eq!(win.source_type, "imported");
     assert_eq!(win.imported_from_tool.as_deref(), Some("pi"));
+    assert_eq!(
+        row(&f, "cursor").imported_from_tool.as_deref(),
+        Some("cursor")
+    );
+    for id in ["linux", "root", "tilde"] {
+        assert_eq!(row(&f, id).source_type, "imported", "{id}");
+        assert_eq!(
+            row(&f, id).imported_from_tool.as_deref(),
+            Some("claude_code"),
+            "{id}"
+        );
+    }
+}
+
+/// Rule (iii) never fires for a path the operator's own home answers for, nor
+/// for a Tool-shaped run that is not directly under a home: `.agents/skills`
+/// and `.claude/skills` are project-scope dirs too, and a vanished project
+/// checkout (a removed worktree, an unmounted volume) is not an import. Such
+/// a `local` row keeps its source — Re-point can still show where it was.
+#[test]
+fn a_vanished_project_scope_tool_dir_is_not_reclassified() {
+    let f = fixture();
+    let under_home = seed_local_row(
+        &f,
+        "under-home",
+        &f.home.join("Projects/repo/.agents/skills/under-home"),
+    );
+    let on_volume = seed_local_row(
+        &f,
+        "on-volume",
+        Path::new("/Volumes/w/repo/.claude/skills/on-volume"),
+    );
+    let tilde_project = seed_local_row(
+        &f,
+        "tilde-project",
+        Path::new("~/Projects/repo/.agents/skills/tilde-project"),
+    );
+    let other_users_project = seed_local_row(
+        &f,
+        "other-project",
+        Path::new("/Users/x/Projects/repo/.claude/skills/other-project"),
+    );
+
+    let changed = reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("pass");
+
+    assert_eq!(changed, 0);
+    for expected in [under_home, on_volume, tilde_project, other_users_project] {
+        let after = row(&f, &expected.id);
+        assert_eq!(after.source_type, "local", "{}", expected.id);
+        assert_eq!(after.source_ref, expected.source_ref, "{}", expected.id);
+        assert_eq!(after.imported_from_tool, None, "{}", expected.id);
+    }
 }
 
 /// Untouched: a `local` row whose folder is the operator's own — outside every

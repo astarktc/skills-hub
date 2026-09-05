@@ -106,8 +106,9 @@ pub fn run() {
                         log::warn!("failed to create central repo {:?}: {}", central, err);
                     }
                     // Once per launch: `local` rows whose "source" was really a
-                    // Tool's skills dir become `imported` (spec Q5). Roots are
-                    // resolved here, at the wiring tier; the pass is idempotent.
+                    // Tool's skills dir become `imported` (ADR-0003). Roots are
+                    // resolved here, at the wiring tier; the pass is idempotent
+                    // and logs each row it changes.
                     match core::environment::home_dir().and_then(|home| {
                         core::legacy_reclassification::reclassify_legacy_imports(
                             &store, &home, &central,
