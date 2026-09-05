@@ -32,6 +32,7 @@ type SettingsPageProps = {
   onGitCacheCleanupDaysChange: (nextDays: number) => void;
   onGitCacheTtlSecsChange: (nextSecs: number) => void;
   onClearGitCacheNow: () => void;
+  onOpenLogFolder: () => void;
   onGithubTokenChange: (token: string) => void;
   onBack: () => void;
   t: TFunction;
@@ -53,6 +54,7 @@ const SettingsPage = ({
   onGitCacheCleanupDaysChange,
   onGitCacheTtlSecsChange,
   onClearGitCacheNow,
+  onOpenLogFolder,
   githubToken,
   onGithubTokenChange,
   onBack,
@@ -423,6 +425,21 @@ const SettingsPage = ({
             </div>
           )}
           <div className="settings-helper">{t("updateHint")}</div>
+        </div>
+
+        <div className="settings-field">
+          <label className="settings-label">{t("diagnostics")}</label>
+          <div className="settings-input-row">
+            <button
+              className="btn btn-secondary btn-sm"
+              type="button"
+              disabled={!isTauri}
+              onClick={onOpenLogFolder}
+            >
+              {t("openLogFolder")}
+            </button>
+          </div>
+          <div className="settings-helper">{t("openLogFolderHint")}</div>
         </div>
       </div>
     </div>

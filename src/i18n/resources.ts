@@ -123,6 +123,10 @@ export const resources = {
         "Optional. Set a GitHub personal access token to increase API rate limits from 60/hr to 5,000/hr.",
       appUpdates: "App updates",
       updateHint: "Click “Check” to look for updates.",
+      diagnostics: "Diagnostics",
+      openLogFolder: "Open log folder",
+      openLogFolderHint:
+        "The app log records what the backend did, including failures after their notification is gone.",
       checkForUpdates: "Check",
       downloadAndInstall: "Download & Install",
       checkingUpdates: "Checking...",
@@ -612,6 +616,10 @@ export const resources = {
         "可选。设置 GitHub 个人访问令牌，可将 API 速率限制从 60 次/小时提升到 5,000 次/小时。",
       appUpdates: "应用更新",
       updateHint: "点击“检查更新”获取最新版本。",
+      diagnostics: "诊断",
+      openLogFolder: "打开日志文件夹",
+      openLogFolderHint:
+        "应用日志记录后端的操作，包括通知消失后的失败详情。",
       checkForUpdates: "检查更新",
       downloadAndInstall: "下载并安装",
       checkingUpdates: "检查中...",

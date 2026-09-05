@@ -55,6 +55,14 @@ export const commands = {
 	unhideExploreSkill: (sourceUrl: string) => __TAURI_INVOKE<null>("unhide_explore_skill", { sourceUrl }),
 	getHiddenExploreSkills: () => __TAURI_INVOKE<string[]>("get_hidden_explore_skills"),
 	cancelCurrentOperation: () => __TAURI_INVOKE<null>("cancel_current_operation"),
+	/**
+	 *  Open the app log directory — where `tauri-plugin-log` writes (`LogDir`,
+	 *  see `lib.rs`) — in the operator's file manager. The backend log is the
+	 *  post-restart record of what a Notification reported. Both the directory
+	 *  and the opener are resolved here at the command seam: `core` never sees
+	 *  the app handle.
+	 */
+	openLogFolder: () => __TAURI_INVOKE<null>("open_log_folder"),
 	registerProject: (path: string) => __TAURI_INVOKE<ProjectViewDto>("register_project", { path }),
 	/**
 	 *  Remove a project and every artifact it owns. The project it named is

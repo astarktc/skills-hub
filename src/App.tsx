@@ -283,6 +283,7 @@ function App() {
             onGitCacheCleanupDaysChange={settings.handleGitCacheCleanupDaysChange}
             onGitCacheTtlSecsChange={settings.handleGitCacheTtlSecsChange}
             onClearGitCacheNow={settings.handleClearGitCacheNow}
+            onOpenLogFolder={settings.handleOpenLogFolder}
             githubToken={settings.githubToken}
             onGithubTokenChange={settings.handleGithubTokenChange}
             onBack={handleCloseSettings}

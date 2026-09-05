@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::ipc::Channel;
 use tauri::{Manager, State};
+use tauri_plugin_opener::OpenerExt;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -183,6 +184,33 @@ pub async fn get_onboarding_plan(
 pub async fn clear_git_cache_now(app: tauri::AppHandle) -> Result<usize, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         cleanup_git_cache_dirs(&app, std::time::Duration::from_secs(0))
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+/// Open the app log directory — where `tauri-plugin-log` writes (`LogDir`,
+/// see `lib.rs`) — in the operator's file manager. The backend log is the
+/// post-restart record of what a Notification reported. Both the directory
+/// and the opener are resolved here at the command seam: `core` never sees
+/// the app handle.
+#[tauri::command]
+#[specta::specta]
+pub async fn open_log_folder(app: tauri::AppHandle) -> Result<(), CommandError> {
+    let log_dir = app
+        .path()
+        .app_log_dir()
+        .context("failed to resolve app log dir")
+        .map_err(CommandError::from_anyhow)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        // The log plugin creates the dir at startup; opening a missing one
+        // would surface an opaque opener error, so make it exist first.
+        std::fs::create_dir_all(&log_dir)
+            .with_context(|| format!("failed to create log dir {:?}", log_dir))?;
+        app.opener()
+            .open_path(log_dir.to_string_lossy(), None::<&str>)
+            .with_context(|| format!("failed to open log dir {:?}", log_dir))
     })
     .await
     .map_err(CommandError::internal)?

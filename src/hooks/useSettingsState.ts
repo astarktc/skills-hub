@@ -275,6 +275,19 @@ export function useSettingsState({
     }
   }, [formatError, setError, setSuccessToastMessage, t]);
 
+  /** Reveal the backend log dir: the post-restart record of past failures. */
+  const handleOpenLogFolder = useCallback(async () => {
+    if (!isTauri) {
+      setError(t("errors.notTauri"));
+      return;
+    }
+    try {
+      await invokeTauri("openLogFolder");
+    } catch (err) {
+      setError(formatError(err));
+    }
+  }, [formatError, setError, t]);
+
   const handleThemeChange = useCallback(
     (nextTheme: "system" | "light" | "dark") => {
       setThemePreference(nextTheme);
@@ -311,6 +324,7 @@ export function useSettingsState({
     handleGitCacheTtlSecsChange,
     handleGithubTokenChange,
     handleClearGitCacheNow,
+    handleOpenLogFolder,
     handleThemeChange,
     handleZoomLevelChange,
   };

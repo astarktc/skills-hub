@@ -273,3 +273,39 @@ describe("useSettingsState single-field adoption", () => {
     expect(result.current.githubToken).toBe("new-token");
   });
 });
+
+describe("useSettingsState open log folder", () => {
+  it("asks the backend to open the app log folder", async () => {
+    stubBackend();
+    const reporter = makeReporter();
+    const { result } = renderSettings(reporter);
+    await waitFor(() => expect(result.current.bounds).not.toBeNull());
+
+    await act(async () => {
+      await result.current.handleOpenLogFolder();
+    });
+
+    expect(mockInvoke).toHaveBeenCalledWith("openLogFolder");
+    expect(reporter.setError).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a failure to open through the reporter", async () => {
+    stubBackend();
+    const reporter = makeReporter();
+    const { result } = renderSettings(reporter);
+    await waitFor(() => expect(result.current.bounds).not.toBeNull());
+    mockInvoke.mockImplementation((command) =>
+      command === "openLogFolder"
+        ? Promise.reject({ code: "OTHER", message: "no opener" })
+        : Promise.resolve(undefined),
+    );
+
+    await act(async () => {
+      await result.current.handleOpenLogFolder();
+    });
+
+    expect(reporter.setError).toHaveBeenCalledWith(
+      "formatted:[object Object]",
+    );
+  });
+});
