@@ -15,9 +15,12 @@
 //!    [`PropagationSkip::LinkFollowsSource`] and left untouched.
 //! 2. **How do the bytes get there?** Only through
 //!    [`sync_engine::sync_dir_for_tool_with_overwrite`], the capability-aware
-//!    entry point the batch engines use. It may re-materialise a drifting
-//!    copy as a link on a symlink-capable Tool; the row records the mode
-//!    actually used, so it stays truthful (and can no longer drift).
+//!    entry point the batch engines use (a project assignment reaches it
+//!    through `project_sync::sync_assignment_target`, the one function that
+//!    syncs an assignment and records `SyncCompleted`). It may
+//!    re-materialise a drifting copy as a link on a symlink-capable Tool; the
+//!    row records the mode actually used, so it stays truthful (and can no
+//!    longer drift).
 //! 3. **What does a target's outcome mean?** Every target resolves to
 //!    synced / skipped / failed as *report data*
 //!    (continue-and-report): one target's failure never fails the operation.
@@ -125,7 +128,6 @@ pub(crate) fn propagate_unlocked(
         store,
         &central_path,
         skill_id,
-        &skill.name,
         content_hash,
         now,
         &mut report,
@@ -314,7 +316,6 @@ fn propagate_project_rows(
     store: &SkillStore,
     central_path: &Path,
     skill_id: &str,
-    skill_name: &str,
     content_hash: Option<&str>,
     now: i64,
     report: &mut PropagationReport,
@@ -324,23 +325,18 @@ fn propagate_project_rows(
             project_id: assignment.project_id.clone(),
             tool: assignment.tool.clone(),
         };
-        let status = propagate_one_assignment(
-            store,
-            central_path,
-            skill_name,
-            content_hash,
-            now,
-            &assignment,
-        )?;
+        let status = propagate_one_assignment(store, central_path, content_hash, now, &assignment)?;
         report.targets.push(PropagationOutcome { scope, status });
     }
     Ok(())
 }
 
+/// One project assignment: decide whether it needs new bytes, then sync it
+/// through `project_sync::sync_assignment_target` (which locates the artifact
+/// by its stored name and records `SyncCompleted`) and settle a failure here.
 fn propagate_one_assignment(
     store: &SkillStore,
     central_path: &Path,
-    skill_name: &str,
     content_hash: Option<&str>,
     now: i64,
     assignment: &ProjectSkillAssignmentRecord,
@@ -372,34 +368,26 @@ fn propagate_one_assignment(
         });
     }
 
-    let target =
-        super::project_sync::resolve_project_sync_target(&project_path, adapter, skill_name);
+    // The freshly finalized central hash is the supplier: computed once for
+    // every target, and absent when finalize did not compute one.
     let result = if central_path.is_dir() {
-        sync_engine::sync_dir_for_tool_with_overwrite(adapter, central_path, &target, true)
+        super::project_sync::sync_assignment_target(
+            store,
+            &project_path,
+            central_path,
+            assignment,
+            true,
+            now,
+            || content_hash.map(str::to_string),
+        )
     } else {
         Err(missing_source(central_path))
     };
 
     match result {
-        Ok(outcome) => {
-            // Only copies can drift, so only copies record a hash.
-            let hash = if outcome.mode_used.can_drift() {
-                content_hash
-            } else {
-                None
-            };
-            store.transition_assignment(
-                &assignment.id,
-                AssignmentTransition::SyncCompleted {
-                    mode: outcome.mode_used,
-                    synced_at: now,
-                    content_hash: hash,
-                },
-            )?;
-            Ok(PropagationStatus::Synced {
-                mode_used: outcome.mode_used,
-            })
-        }
+        Ok(outcome) => Ok(PropagationStatus::Synced {
+            mode_used: outcome.mode_used,
+        }),
         Err(error) => {
             let detail = format!("{:#}", error);
             store.transition_assignment(

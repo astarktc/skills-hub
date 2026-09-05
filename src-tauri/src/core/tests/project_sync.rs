@@ -1407,3 +1407,80 @@ fn toggle_raises_typed_not_found_for_unknown_project() {
         })
     );
 }
+
+// ---------------------------------------------------------------------------
+// One naming rule: the artifact is located by the stored assignment name
+// ---------------------------------------------------------------------------
+
+/// Assign a copy, then rename the Managed skill through the store (finalize
+/// never renames today, so there is no entry point). Returns the artifact
+/// path the assignment was materialised under.
+fn assign_copy_then_rename_skill(
+    store: &SkillStore,
+    tmp: &Path,
+) -> (ProjectRecord, SkillRecord, std::path::PathBuf) {
+    let skill_dir = make_skill_dir(tmp, "named-skill");
+    let project_dir = tmp.join("rename-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+    let (project, skill) = register_project_and_skill(
+        store,
+        &project_dir.to_string_lossy(),
+        "named-skill",
+        &skill_dir.to_string_lossy(),
+    );
+    let tool = copy_only_tool();
+    let record = project_sync::assign_and_sync(store, &project, &skill, tool, 2000)
+        .expect("assign should succeed");
+    assert_eq!(record.status, SyncStatus::Synced);
+    let adapter = crate::core::tool_adapters::adapter_by_key(tool).expect("adapter");
+    let target = project_sync::resolve_project_sync_target(&project_dir, adapter, "named-skill");
+    assert!(target.join("SKILL.md").exists(), "assignment materialised");
+
+    let mut renamed = skill.clone();
+    renamed.name = "named-skill-v2".to_string();
+    store.upsert_skill(&renamed).expect("rename skill");
+    (project, renamed, target)
+}
+
+#[test]
+fn resync_rematerialises_the_artifact_under_its_stored_name_after_a_rename() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+    let (project, skill, target) = assign_copy_then_rename_skill(&store, tmpdir.path());
+    fs::write(
+        Path::new(&skill.central_path).join("extra.txt"),
+        "new content",
+    )
+    .expect("change the central copy");
+
+    let summary = project_sync::resync_project(&store, &project.id, 3000).expect("resync");
+
+    assert_eq!(summary.synced, 1, "errors: {:?}", summary.errors);
+    assert!(
+        target.join("extra.txt").exists(),
+        "the stored-name artifact receives the new bytes"
+    );
+    let live_name_path = target.with_file_name("named-skill-v2");
+    assert!(
+        live_name_path.symlink_metadata().is_err(),
+        "no second artifact under the live name: {}",
+        live_name_path.display()
+    );
+}
+
+#[test]
+fn reconcile_observes_the_artifact_under_its_stored_name_after_a_rename() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+    let (project, _skill, _target) = assign_copy_then_rename_skill(&store, tmpdir.path());
+
+    let assignments = list_reconciled(&store, &project.id);
+
+    assert_eq!(assignments.len(), 1);
+    assert_eq!(
+        assignments[0].status,
+        SyncStatus::Synced,
+        "the artifact is still there under the name it was materialised with"
+    );
+    assert_eq!(assignments[0].skill_name, "named-skill");
+}

@@ -49,7 +49,7 @@ use anyhow::{Context, Result};
 use crate::core::{
     errors::SignalError,
     mutation_guard,
-    project_sync::resolve_project_sync_target,
+    project_sync::resolve_assignment_artifact,
     skill_store::{AssignmentTransition, ProjectRecord, SkillRecord, SkillStore, TargetTransition},
     sync_engine::remove_path_any,
     tool_adapters::{adapter_by_key, adapters_sharing_skills_dir, is_installed_in},
@@ -366,23 +366,17 @@ fn push_assignments(
             );
             continue;
         };
-        // The stored skill name locates the artifact; the skill row is
-        // consulted only when the column is empty (pre-V6 rows).
-        let skill_name = if assignment.skill_name.is_empty() {
-            match store.get_skill_by_id(&assignment.skill_id)? {
-                Some(skill) => skill.name,
-                None => {
-                    log::warn!(
-                        "artifact removal: assignment {} has no skill name to locate its artifact",
-                        assignment.id
-                    );
-                    continue;
-                }
-            }
-        } else {
-            assignment.skill_name.clone()
+        // One naming rule for project artifacts: the stored assignment name
+        // (`project_sync::assignment_artifact_name`).
+        let Some(path) =
+            resolve_assignment_artifact(store, Path::new(&project.path), adapter, &assignment)?
+        else {
+            log::warn!(
+                "artifact removal: assignment {} has no skill name to locate its artifact",
+                assignment.id
+            );
+            continue;
         };
-        let path = resolve_project_sync_target(Path::new(&project.path), adapter, &skill_name);
         builder.push(
             path,
             RowRef::Assignment {

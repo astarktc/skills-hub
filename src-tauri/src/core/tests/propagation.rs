@@ -442,3 +442,52 @@ fn a_project_whose_directory_is_gone_is_skipped() {
         "a skipped row keeps its previous status"
     );
 }
+
+/// The artifact is located by the name it was materialised under (the stored
+/// `assignment.skill_name`), not by the Managed skill's live name: renaming
+/// the skill after assignment must not strand the old artifact and grow a
+/// second one under the new name.
+#[test]
+fn a_project_artifact_is_found_by_its_stored_name_after_the_skill_is_renamed() {
+    let f = fixture();
+    let project_dir = tempfile::tempdir().expect("project tempdir");
+    let target = seed_project_copy_assignment(&f, project_dir.path());
+    seed_stale_copy(&target);
+
+    // Finalize never renames today, so the rename is a direct store update.
+    let mut skill = f
+        .store
+        .get_skill_by_id(&f.skill_id)
+        .expect("query")
+        .expect("skill row");
+    skill.name = "skill-renamed".to_string();
+    f.store.upsert_skill(&skill).expect("rename skill");
+
+    let outcomes = propagate(&f);
+
+    let scope = PropagationScope::Project {
+        project_id: "p1".to_string(),
+        tool: copy_only_tool().key().to_string(),
+    };
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &scope),
+            PropagationStatus::Synced {
+                mode_used: SyncMode::Copy
+            }
+        ),
+        "got {:?}",
+        outcomes
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("a.txt")).expect("read the artifact under its stored name"),
+        "v2",
+        "the stored-name artifact receives the new bytes"
+    );
+    let renamed = target.with_file_name("skill-renamed");
+    assert!(
+        renamed.symlink_metadata().is_err(),
+        "no second artifact under the live name: {}",
+        renamed.display()
+    );
+}

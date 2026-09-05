@@ -585,6 +585,55 @@ fn a_failed_project_artifact_keeps_its_assignment_row_with_status_error() {
     assert!(rows[0].last_error.is_some());
 }
 
+/// The artifact is located by the name it was materialised under (the stored
+/// `assignment.skill_name`), never the Managed skill's live name — the same
+/// rule Propagation and project sync follow, so a rename after assignment
+/// leaves nothing behind.
+#[test]
+fn a_project_artifact_is_removed_under_its_stored_name_after_the_skill_is_renamed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = make_skill_dir(&tmp.path().join("central"), "gamma");
+    let skill = seed_skill(&store, "gamma", &central);
+    let project = seed_project(&store, tmp.path(), "proj");
+    let target = seed_assignment(&store, &project, &skill, "claude_code", SyncStatus::Synced);
+
+    // Finalize never renames today, so the rename is a direct store update.
+    let mut renamed = skill.clone();
+    renamed.name = "gamma-renamed".to_string();
+    store.upsert_skill(&renamed).expect("rename skill");
+
+    let planned = plan(
+        &store,
+        &RemovalScope::ProjectSkillTool {
+            project_id: project.id.clone(),
+            skill_id: skill.id.clone(),
+            tool_key: "claude_code".to_string(),
+        },
+    )
+    .expect("plan");
+    assert_eq!(
+        planned
+            .targets
+            .iter()
+            .map(|t| t.path.clone())
+            .collect::<Vec<_>>(),
+        vec![target.clone()],
+        "planned from the stored name"
+    );
+    let report = execute_unlocked(&store, planned).expect("execute");
+
+    assert_eq!(report.removed_rows(), 1);
+    assert!(!exists_any(&target), "the stored-name artifact is gone");
+    assert!(
+        store
+            .list_project_skill_assignments(&project.id)
+            .expect("rows")
+            .is_empty(),
+        "the row went with it"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn a_partial_failure_isolates_the_healthy_target() {
