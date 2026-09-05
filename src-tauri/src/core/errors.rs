@@ -79,6 +79,12 @@ pub enum SignalError {
     /// re-acquire from (`imported` provenance: the central copy is its
     /// truth). Owned by `core::provenance::is_refreshable`.
     NotRefreshable { name: String },
+    /// Add → local folder was pointed at a folder inside a Tool's global
+    /// skills directory. A Tool's copy is not an independent source (the app
+    /// would later overwrite or remove it); Onboarding import is how such a
+    /// skill is taken over. `tool` is the registry key of the holding Tool.
+    /// Owned by the Tool registry (`tool_adapters::tool_holding_path`).
+    LocalSourceInsideToolDir { path: String, tool: String },
 }
 
 impl fmt::Display for SignalError {
@@ -147,6 +153,12 @@ impl fmt::Display for SignalError {
             }
             SignalError::NotRefreshable { name } => {
                 write!(f, "skill has no source to refresh from: {name}")
+            }
+            SignalError::LocalSourceInsideToolDir { path, tool } => {
+                write!(
+                    f,
+                    "folder is inside the {tool} skills directory (import it instead): {path}"
+                )
             }
         }
     }

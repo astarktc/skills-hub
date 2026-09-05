@@ -5,6 +5,7 @@ use crate::core::errors::SignalError;
 use crate::core::installer::InstallerPaths;
 use crate::core::skill_matching::CandidateMatch;
 use crate::core::skill_store::SkillStore;
+use crate::core::tool_adapters::{adapter_by_key, skills_dir_in};
 
 fn make_store() -> (tempfile::TempDir, SkillStore) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -106,6 +107,88 @@ fn parses_github_urls() {
 
     let p = super::parse_github_url("/local/path/to/repo");
     assert_eq!(p.clone_url, "/local/path/to/repo");
+}
+
+/// Add → local folder refuses a folder that lives inside a Tool's skills
+/// directory: such a copy is Import's business (it would otherwise become a
+/// source the app later overwrites or removes). The refusal is typed, names
+/// the Tool, and happens before anything is copied or recorded.
+#[test]
+fn adding_a_folder_inside_a_tool_skills_dir_is_refused_before_anything_is_written() {
+    let (_dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+
+    let claude = adapter_by_key("claude_code").unwrap();
+    let source = skills_dir_in(&paths.home, claude).join("taken");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("SKILL.md"), b"---\nname: taken\n---\n").unwrap();
+
+    let err = super::install_local_skill(&paths, &store, &source, Some("taken".to_string()))
+        .expect_err("a Tool's copy is not an independent source");
+
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::LocalSourceInsideToolDir {
+            path: source.to_string_lossy().to_string(),
+            tool: "claude_code".to_string(),
+        })
+    );
+    // Nothing reached the central repo (not even the repo itself) and no
+    // record was written.
+    assert!(!paths.central_dir.exists());
+    assert!(store.list_skills().unwrap().is_empty());
+    // The Tool's copy is untouched.
+    assert!(source.join("SKILL.md").exists());
+}
+
+/// The refusal reaches the selection flow too (it installs through
+/// `install_local_skill`), so picking a candidate under a Tool dir is refused
+/// the same way.
+#[test]
+fn selecting_a_candidate_inside_a_tool_skills_dir_is_refused_the_same_way() {
+    let (_dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+
+    let pi = adapter_by_key("pi").unwrap();
+    let base = skills_dir_in(&paths.home, pi);
+    let source = base.join("taken");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("SKILL.md"), b"---\nname: taken\n---\n").unwrap();
+
+    let err = super::install_local_skill_from_selection(&paths, &store, &base, "taken", None)
+        .expect_err("a Tool's copy is not an independent source");
+
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::LocalSourceInsideToolDir {
+            path: source.to_string_lossy().to_string(),
+            tool: "pi".to_string(),
+        })
+    );
+    assert!(store.list_skills().unwrap().is_empty());
+}
+
+/// An ordinary folder anywhere else — here under the operator's home but
+/// outside every Tool's skills dir — installs as before.
+#[test]
+fn adding_a_folder_outside_every_tool_skills_dir_installs_as_before() {
+    let (_dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+
+    let source = paths.home.join("Documents/my-skill");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("SKILL.md"), b"---\nname: my-skill\n---\n").unwrap();
+
+    let res = super::install_local_skill(&paths, &store, &source, None).unwrap();
+
+    assert!(res.central_path.join("SKILL.md").exists());
+    let skill = store.get_skill_by_id(&res.skill_id).unwrap().unwrap();
+    assert_eq!(skill.name, "my-skill");
+    assert_eq!(skill.source_type, "local");
+    assert_eq!(
+        skill.source_ref.as_deref(),
+        Some(source.to_string_lossy().as_ref())
+    );
 }
 
 #[test]

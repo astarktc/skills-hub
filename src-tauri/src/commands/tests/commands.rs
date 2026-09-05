@@ -468,6 +468,29 @@ fn an_open_log_folder_failure_is_typed_with_its_chain_as_detail() {
 }
 
 /// The requested subpath is the only thing a `SUBPATH_MISSING` carries.
+/// The Add → local folder refusal crosses the seam as its own code carrying
+/// the refused path and the holding Tool's registry key (the frontend
+/// localizes the Tool's label and steers to Import).
+#[test]
+fn local_source_inside_tool_dir_serializes_the_path_and_the_tool_key() {
+    let err = anyhow::Error::new(SignalError::LocalSourceInsideToolDir {
+        path: "/home/u/.claude/skills/taken".to_string(),
+        tool: "claude_code".to_string(),
+    })
+    .context("install local skill");
+
+    let json = serde_json::to_value(CommandError::from_anyhow(err)).unwrap();
+
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "code": "LOCAL_SOURCE_INSIDE_TOOL_DIR",
+            "path": "/home/u/.claude/skills/taken",
+            "tool": "claude_code",
+        })
+    );
+}
+
 #[test]
 fn subpath_missing_serializes_the_requested_subpath_only() {
     let err = anyhow::Error::new(SignalError::SubpathMissing {

@@ -206,7 +206,11 @@ subpath: string;
 /**  The link's raw target (absolute, or climbing out of the repository). */
 target: string } | { code: "NOT_REFRESHABLE"; 
 /**  The Managed skill that has no external source (imported provenance). */
-name: string } | { code: "OTHER"; message: string };
+name: string } | { code: "LOCAL_SOURCE_INSIDE_TOOL_DIR"; 
+/**  The refused folder (inside a Tool's global skills directory). */
+path: string; 
+/**  Registry key of the Tool whose skills directory holds it. */
+tool: string } | { code: "OTHER"; message: string };
 
 export type FeaturedSkillDto = {
 	slug: string,

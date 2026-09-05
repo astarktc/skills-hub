@@ -128,6 +128,12 @@ pub enum CommandError {
         /// The Managed skill that has no external source (imported provenance).
         name: String,
     },
+    LocalSourceInsideToolDir {
+        /// The refused folder (inside a Tool's global skills directory).
+        path: String,
+        /// Registry key of the Tool whose skills directory holds it.
+        tool: String,
+    },
     Other {
         message: String,
     },
@@ -254,6 +260,9 @@ impl From<SignalError> for CommandError {
                 CommandError::SymlinkEscapesRepo { subpath, target }
             }
             SignalError::NotRefreshable { name } => CommandError::NotRefreshable { name },
+            SignalError::LocalSourceInsideToolDir { path, tool } => {
+                CommandError::LocalSourceInsideToolDir { path, tool }
+            }
         }
     }
 }

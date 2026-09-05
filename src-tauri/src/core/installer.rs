@@ -26,6 +26,7 @@ use super::skill_lock::try_enrich_from_skill_lock_with_home;
 use super::skill_matching::{match_skill_candidate, CandidateMatch, MatchableSkill};
 use super::skill_store::SkillStore;
 use super::sync_engine::copy_dir_recursive;
+use super::tool_adapters::{tool_holding_path, ToolAdapter};
 
 /// Filesystem roots the installer reads. Resolved once per command at the
 /// wiring seam (home, central repo setting, app cache dir) so core never
@@ -42,13 +43,19 @@ pub struct InstallerPaths {
 
 /// Add a skill from an independent local folder the operator maintains.
 /// The folder stays the skill's source (`local` provenance), so Update can
-/// copy from it again.
+/// copy from it again — which is why a folder inside a Tool's skills
+/// directory is refused before anything is copied: the app would later
+/// overwrite or remove that source, so a Tool's copy is Import's business
+/// (`install_imported_skill`).
 pub fn install_local_skill(
     paths: &InstallerPaths,
     store: &SkillStore,
     source_path: &Path,
     name: Option<String>,
 ) -> Result<InstallResult> {
+    if let Some(holder) = tool_holding_path(&paths.home, source_path) {
+        anyhow::bail!(local_source_inside_tool_dir(source_path, holder));
+    }
     install_from_dir(paths, store, source_path, name, || {
         SkillProvenance::local(source_path)
     })
@@ -132,6 +139,15 @@ fn install_from_dir(
 fn not_refreshable(record: &super::skill_store::SkillRecord) -> SignalError {
     SignalError::NotRefreshable {
         name: record.name.clone(),
+    }
+}
+
+/// The typed condition for an Add → local folder pointed at a Tool's own
+/// copy (`tool_adapters::tool_holding_path` said which Tool).
+fn local_source_inside_tool_dir(path: &Path, holder: &ToolAdapter) -> SignalError {
+    SignalError::LocalSourceInsideToolDir {
+        path: path.to_string_lossy().to_string(),
+        tool: holder.key().to_string(),
     }
 }
 
