@@ -27,6 +27,7 @@ import type {
 import type { ManagedSkill, SkillFileEntry } from "./types";
 import {
   formatRelativeTime,
+  importedSourceLine,
   repoInfo,
   sourceKind,
 } from "../../lib/skillPresentation";
@@ -514,13 +515,7 @@ const SkillDetailView = ({
     kind === "git"
       ? (repoInfo(skill.source_ref)?.label ?? skill.source_ref ?? "")
       : kind === "imported"
-        ? `${t("provenance.managedHere")} · ${t("provenance.importedFrom", {
-            tool: skill.imported_from_tool
-              ? t(`tools.${skill.imported_from_tool}`, {
-                  defaultValue: skill.imported_from_tool,
-                })
-              : t("unknown"),
-          })}`
+        ? importedSourceLine(skill, t).text
         : (skill.source_ref ?? "");
 
   const SourceIcon =

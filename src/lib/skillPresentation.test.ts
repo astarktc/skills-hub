@@ -4,9 +4,11 @@ import {
   filterAndSortSkills,
   formatRelativeTime,
   groupSkillsByRepo,
+  importedSourceLine,
   repoInfo,
   skillSourceLabel,
   sourceKind,
+  toolLabel,
   unlocatableRepairs,
   type ImportVariantFields,
   type SkillPresentationFields,
@@ -362,5 +364,37 @@ describe("unlocatableRepairs", () => {
         detachable: false,
       }),
     ).toEqual([]);
+  });
+});
+
+describe("toolLabel", () => {
+  it("reads the Tool's label from the tools.* catalog", () => {
+    expect(toolLabel(t, "claude_code")).toBe(
+      'tools.claude_code({"defaultValue":"claude_code"})',
+    );
+  });
+
+  it("falls back to the registry key for a Tool the catalog does not name", () => {
+    const withDefault = (key: string, opts?: Record<string, unknown>) =>
+      String(opts?.defaultValue ?? key);
+    expect(toolLabel(withDefault, "not-a-tool")).toBe("not-a-tool");
+  });
+});
+
+describe("importedSourceLine", () => {
+  it("composes 'Managed here' with the found-in Tool as display-only history", () => {
+    const line = importedSourceLine({ imported_from_tool: "pi" }, t);
+    expect(line.tool).toBe('tools.pi({"defaultValue":"pi"})');
+    expect(line.managedHere).toBe("provenance.managedHere");
+    expect(line.importedFrom).toBe(
+      'provenance.importedFrom({"tool":"tools.pi({\\"defaultValue\\":\\"pi\\"})"})',
+    );
+    expect(line.text).toBe(`${line.managedHere} · ${line.importedFrom}`);
+  });
+
+  it("names the Tool 'unknown' when the record kept none", () => {
+    const line = importedSourceLine({ imported_from_tool: null }, t);
+    expect(line.tool).toBe("unknown");
+    expect(line.importedFrom).toBe('provenance.importedFrom({"tool":"unknown"})');
   });
 });

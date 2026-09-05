@@ -4,6 +4,7 @@
 // via i18n; nothing else in the frontend should inspect command failures.
 
 import type { CommandError } from "./bindings";
+import { toolLabel } from "./lib/skillPresentation";
 
 type TranslateFn = (key: string, opts?: Record<string, unknown>) => string;
 
@@ -154,11 +155,9 @@ export function describeCommandError(
       return t("errors.notRefreshable", { name: e.name });
     case "LOCAL_SOURCE_INSIDE_TOOL_DIR":
       // The wire carries the Tool's registry key; its label is the same
-      // `tools.*` catalog entry the cards use.
+      // rule the cards use.
       return withDetail(
-        t("errors.localSourceInsideToolDir", {
-          tool: t(`tools.${e.tool}`, { defaultValue: e.tool }),
-        }),
+        t("errors.localSourceInsideToolDir", { tool: toolLabel(t, e.tool) }),
         e.path,
       );
     case "OTHER":

@@ -16,6 +16,7 @@ import InvocationModeBadge from "./InvocationModeBadge";
 import type { ManagedSkill, ToolOption } from "./types";
 import {
   formatRelativeTime,
+  importedSourceLine,
   repoInfo,
   skillSourceLabel,
   sourceKind,
@@ -73,11 +74,7 @@ const SkillCard = ({
   const copyValue = (github?.href ?? skill.source_ref ?? "").trim();
   // An imported skill's found-in Tool is display-only history: shown, never
   // treated as a source.
-  const importedFromTool = skill.imported_from_tool
-    ? t(`tools.${skill.imported_from_tool}`, {
-        defaultValue: skill.imported_from_tool,
-      })
-    : t("unknown");
+  const imported = importedSourceLine(skill, t);
 
   const handleCopy = () => {
     if (!copyValue) return;
@@ -141,12 +138,12 @@ const SkillCard = ({
             <div
               className="skill-source"
               title={t("provenance.managedHereTooltip", {
-                tool: importedFromTool,
+                tool: imported.tool,
               })}
             >
-              <span className="repo-pill">{t("provenance.managedHere")}</span>
+              <span className="repo-pill">{imported.managedHere}</span>
               <span className="dot">•</span>
-              {t("provenance.importedFrom", { tool: importedFromTool })}
+              {imported.importedFrom}
             </div>
           ) : github ? (
             <div className="skill-source">

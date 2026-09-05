@@ -53,6 +53,44 @@ export function sourceKind(
   return type.includes("git") ? "git" : "local";
 }
 
+/**
+ * The label a Tool is shown under, from its registry key: the `tools.*`
+ * catalog entry, or the key itself for a Tool the catalog does not name.
+ * The one Tool-key→label rule (cards, detail, error copy).
+ */
+export function toolLabel(t: Translate, key: string): string {
+  return t(`tools.${key}`, { defaultValue: key });
+}
+
+/** The pieces of an imported skill's source line. */
+export type ImportedSourceLine = {
+  /** The found-in Tool's label, or the "unknown" label. */
+  tool: string;
+  /** "Managed here" — the central copy is the truth. */
+  managedHere: string;
+  /** "Imported from {tool}" — display-only history. */
+  importedFrom: string;
+  /** Both, as one line. */
+  text: string;
+};
+
+/**
+ * An imported skill's source line: "Managed here · Imported from {Tool}".
+ * The found-in Tool is display-only history — shown, never treated as a
+ * source — and the record may have kept none.
+ */
+export function importedSourceLine(
+  skill: { imported_from_tool: string | null },
+  t: Translate,
+): ImportedSourceLine {
+  const tool = skill.imported_from_tool
+    ? toolLabel(t, skill.imported_from_tool)
+    : t("unknown");
+  const managedHere = t("provenance.managedHere");
+  const importedFrom = t("provenance.importedFrom", { tool });
+  return { tool, managedHere, importedFrom, text: `${managedHere} · ${importedFrom}` };
+}
+
 /** The label a skill's source is shown under when it has no repo. */
 export function skillSourceLabel(
   skill: Pick<

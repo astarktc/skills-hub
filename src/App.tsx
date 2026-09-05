@@ -324,6 +324,7 @@ function App() {
             githubToken={settings.githubToken}
             onGithubTokenChange={settings.handleGithubTokenChange}
             onBack={handleCloseSettings}
+            formatError={formatError}
             t={t}
           />
         ) : activeView === "projects" ? (
