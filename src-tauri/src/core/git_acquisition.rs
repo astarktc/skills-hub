@@ -30,16 +30,18 @@
 //! shared behind `&`, so a bounded parallel pool can call it from worker
 //! threads (each with its own [`HttpGithubApi`]).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
 use super::cancel_token::CancelToken;
 use super::errors::SignalError;
 use super::git_cache::{fetch_through_cache, FetchRequest};
+use super::git_fetcher::symlink_on_path;
 use super::github_download::{
     download_github_directory, fetch_branch_sha, parse_github_repo, GithubApiError,
 };
+use super::repo_subpath::{normalize_subpath, LinkChain};
 use super::skill_discovery::{discover_skills, DiscoveredSkill};
 use super::skill_matching::{match_skill_candidate, SkillMatch};
 use super::sync_engine::copy_dir_recursive;
@@ -358,22 +360,25 @@ fn classify_fast_path_failure(
 }
 
 /// Adapter two: the git clone cache. Sparse when a subpath is known, then the
-/// intent decides which directory of the tree is the skill.
+/// intent decides which directory of the tree is the skill, and upstream
+/// symlinks on the way to it are followed through the cache.
 fn clone_path(req: &AcquireRequest, known_subpath: Option<&str>) -> Result<Acquired> {
-    let (repo_dir, revision) = fetch_through_cache(
-        req.cache_dir,
-        &FetchRequest {
-            clone_url: &req.source.clone_url,
-            branch: req.source.branch.as_deref(),
-            subpath: known_subpath,
-            ttl_ms: req.ttl_ms,
-            cancel: req.cancel,
-        },
-    )?;
+    let (mut repo_dir, mut revision) = fetch_repo(req, known_subpath)?;
     check_cancelled(req.cancel)?;
 
     let resolved_subpath = resolve_subpath(&repo_dir, req.intent, known_subpath)?;
-    let copy_src = match &resolved_subpath {
+    // The directory the bytes are really in: the alias itself unless the
+    // tree records a link somewhere on it. The alias is what gets reported.
+    let checkout_subpath = match &resolved_subpath {
+        Some(alias) => Some(follow_upstream_links(
+            req,
+            &mut repo_dir,
+            &mut revision,
+            alias,
+        )?),
+        None => None,
+    };
+    let copy_src = match &checkout_subpath {
         Some(subpath) => repo_dir.join(subpath),
         None => repo_dir.clone(),
     };
@@ -400,6 +405,69 @@ fn clone_path(req: &AcquireRequest, known_subpath: Option<&str>) -> Result<Acqui
         },
         resolved_subpath,
     })
+}
+
+/// One fetch through the git cache for this request, sparse when `subpath`
+/// names one.
+fn fetch_repo(req: &AcquireRequest, subpath: Option<&str>) -> Result<(PathBuf, String)> {
+    fetch_through_cache(
+        req.cache_dir,
+        &FetchRequest {
+            clone_url: &req.source.clone_url,
+            branch: req.source.branch.as_deref(),
+            subpath,
+            ttl_ms: req.ttl_ms,
+            cancel: req.cancel,
+        },
+    )
+}
+
+/// Follow upstream in-repo symlinks from `alias` to the directory that holds
+/// the bytes, at acquire time, every time.
+///
+/// A sparse checkout of an alias that is a link (or lies below one) holds
+/// nothing usable, so each hop asks the tree for the link, resolves its
+/// target within the repository root ([`LinkChain`] — the typed refusal and
+/// the depth bound live there), and fetches the resolved path through the
+/// cache: the entry is widened by the target, never narrowed, so the next
+/// Refresh of this alias is a plain hit. `repo_dir` and `revision` follow the
+/// last fetch, which is the tree the bytes are copied from. The alias is
+/// never rewritten — the resolved path is diagnostics only.
+fn follow_upstream_links(
+    req: &AcquireRequest,
+    repo_dir: &mut PathBuf,
+    revision: &mut String,
+    alias: &str,
+) -> Result<String> {
+    let mut chain = LinkChain::new();
+    let mut subpath = normalize_subpath(alias);
+    while let Some((link, target)) = symlink_on_path(repo_dir, &subpath, req.cancel)? {
+        let rest = subpath
+            .strip_prefix(&link)
+            .map(|rest| rest.trim_start_matches('/'))
+            .filter(|_| subpath == link || subpath.starts_with(&format!("{link}/")))
+            .ok_or_else(|| {
+                anyhow::anyhow!("symlink {link} reported off the path of subpath {subpath}")
+            })?;
+        let resolved = chain.follow(&link, &target)?;
+        subpath = if rest.is_empty() {
+            resolved
+        } else {
+            format!("{resolved}/{rest}")
+        };
+        let (dir, rev) = fetch_repo(req, Some(&subpath))?;
+        *repo_dir = dir;
+        *revision = rev;
+        check_cancelled(req.cancel)?;
+    }
+    if subpath != normalize_subpath(alias) {
+        log::info!(
+            "[acquire] subpath {} resolved through upstream symlinks to {} (recorded subpath unchanged)",
+            alias,
+            subpath
+        );
+    }
+    Ok(subpath)
 }
 
 /// The one place multi-skill name matching and subpath backfill live: which

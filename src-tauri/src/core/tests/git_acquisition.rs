@@ -52,6 +52,87 @@ fn fixture_repo(files: &[(&str, &str)]) -> tempfile::TempDir {
     dir
 }
 
+/// A local repository with regular files plus committed symlink entries
+/// (`120000`), each `(link path, raw target)`. The links go straight into
+/// the index as blobs, so no symlink is created on the host filesystem and
+/// the fixture builds on every platform.
+fn fixture_repo_with_links(files: &[(&str, &str)], links: &[(&str, &str)]) -> tempfile::TempDir {
+    let dir = fixture_repo(files);
+    for (path, target) in links {
+        let out = std::process::Command::new("git")
+            .args(["hash-object", "-w", "--stdin"])
+            .current_dir(dir.path())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                child
+                    .stdin
+                    .take()
+                    .expect("stdin")
+                    .write_all(target.as_bytes())?;
+                child.wait_with_output()
+            })
+            .expect("hash link blob");
+        assert!(out.status.success(), "git hash-object failed");
+        let blob = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        git(
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("120000,{blob},{path}"),
+            ],
+            dir.path(),
+        );
+    }
+    git(&["commit", "-q", "-m", "links"], dir.path());
+    dir
+}
+
+/// The alias the operator's records hold for the upstream case this models
+/// (`tanstack-skills/tanstack-skills`), and where the bytes really live.
+const BUNDLE_ALIAS: &str = "plugins/tanstack-all/skills/tanstack-table";
+const BUNDLE_TARGET: &str = "plugins/tanstack-table/skills/tanstack-table";
+const BUNDLE_SKILL_MD: &str = "---\nname: tanstack-table\n---\nthe real skill\n";
+
+/// An aggregation bundle: the skill lives at `plugins/<name>/skills/<name>`
+/// and is published again from `plugins/tanstack-all/skills/<name>` as a
+/// link to `../../<name>/skills/<name>` — relative to the link's own
+/// directory.
+fn bundle_repo() -> tempfile::TempDir {
+    fixture_repo_with_links(
+        &[
+            ("README.md", "root"),
+            (
+                "plugins/tanstack-table/skills/tanstack-table/SKILL.md",
+                BUNDLE_SKILL_MD,
+            ),
+        ],
+        &[(BUNDLE_ALIAS, "../../tanstack-table/skills/tanstack-table")],
+    )
+}
+
+/// The sparse coverage the (single) cache entry records.
+fn cache_entry_subpaths(cache_dir: &Path) -> Vec<String> {
+    let entries: Vec<_> = fs::read_dir(cache_dir.join("skills-hub-git-cache"))
+        .expect("cache root")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.join(".skills-hub-cache.json").exists())
+        .collect();
+    assert_eq!(entries.len(), 1, "one cache entry: {entries:?}");
+    let raw = fs::read_to_string(entries[0].join(".skills-hub-cache.json")).expect("sidecar");
+    let meta: serde_json::Value = serde_json::from_str(&raw).expect("meta json");
+    meta["checkout"]["subpaths"]
+        .as_array()
+        .expect("a sparse entry")
+        .iter()
+        .map(|v| v.as_str().expect("subpath").to_string())
+        .collect()
+}
+
 /// One skill at `skills/a`, plus an unrelated file at the root.
 fn single_skill_repo() -> tempfile::TempDir {
     fixture_repo(&[
@@ -817,6 +898,239 @@ fn a_url_subpath_supplies_a_named_intent() {
 
     assert_eq!(acquired.strategy, AcquireStrategy::GithubApi);
     assert_eq!(acquired.resolved_subpath.as_deref(), Some("skills/a"));
+}
+
+// ---------------------------------------------------------------------------
+// Upstream in-repo symlinks (clone path)
+// ---------------------------------------------------------------------------
+
+/// The operator's case: a skill recorded under its bundle alias, which
+/// upstream publishes as a symlink. The sparse clone follows the link — the
+/// target joins the entry's coverage — and the real content lands, while
+/// the reported subpath stays the alias. A second acquisition (the Refresh)
+/// is served the same way from the now-covering entry.
+#[test]
+fn a_subpath_that_is_an_upstream_symlink_acquires_the_targets_content() {
+    let repo = bundle_repo();
+    let source = local_source(repo.path());
+    let (_fx, cache_dir, dest) = Fixture::new();
+    let api = StubApi::serving("unused");
+
+    let acquired = acquire(
+        &request(
+            &source,
+            SkillIntent::Subpath(BUNDLE_ALIAS),
+            &dest,
+            &cache_dir,
+        ),
+        &api,
+    )
+    .expect("the link is followed");
+
+    assert_eq!(
+        fs::read_to_string(dest.join("SKILL.md")).expect("the target's SKILL.md landed"),
+        BUNDLE_SKILL_MD
+    );
+    assert_eq!(
+        acquired.resolved_subpath.as_deref(),
+        Some(BUNDLE_ALIAS),
+        "the record keeps the alias the operator chose"
+    );
+    assert_eq!(
+        acquired.strategy,
+        AcquireStrategy::GitClone { sparse: true }
+    );
+    assert_eq!(acquired.revision, head_of(repo.path()));
+    let coverage = cache_entry_subpaths(&cache_dir);
+    assert!(
+        coverage.contains(&BUNDLE_TARGET.to_string()),
+        "the entry's coverage includes the link's target: {coverage:?}"
+    );
+
+    // The Refresh: the same alias again, served from the widened entry.
+    let refresh_dest = dest.with_file_name("refresh");
+    let refreshed = acquire(
+        &request(
+            &source,
+            SkillIntent::Subpath(BUNDLE_ALIAS),
+            &refresh_dest,
+            &cache_dir,
+        ),
+        &api,
+    )
+    .expect("the refresh follows the link too");
+    assert_eq!(refreshed.revision, acquired.revision);
+    assert_eq!(
+        fs::read_to_string(refresh_dest.join("SKILL.md")).expect("refreshed SKILL.md"),
+        BUNDLE_SKILL_MD
+    );
+}
+
+/// A link on the way to the subpath — a bundle directory that is itself a
+/// symlink — is followed the same way, even though a sparse checkout of the
+/// requested path materialises nothing under it.
+#[test]
+fn a_symlinked_component_of_the_subpath_is_followed() {
+    let repo = fixture_repo_with_links(
+        &[("bundles/all/skills/x/SKILL.md", "---\nname: x\n---\n")],
+        &[("plugins/tanstack-all", "../bundles/all")],
+    );
+    let source = local_source(repo.path());
+    let (_fx, cache_dir, dest) = Fixture::new();
+    let api = StubApi::serving("unused");
+
+    let acquired = acquire(
+        &request(
+            &source,
+            SkillIntent::Subpath("plugins/tanstack-all/skills/x"),
+            &dest,
+            &cache_dir,
+        ),
+        &api,
+    )
+    .expect("the component link is followed");
+
+    assert_eq!(
+        fs::read_to_string(dest.join("SKILL.md")).expect("SKILL.md landed"),
+        "---\nname: x\n---\n"
+    );
+    assert_eq!(
+        acquired.resolved_subpath.as_deref(),
+        Some("plugins/tanstack-all/skills/x")
+    );
+    assert!(cache_entry_subpaths(&cache_dir).contains(&"bundles/all/skills/x".to_string()));
+}
+
+/// A chain of two links resolves …
+#[test]
+fn a_chain_of_two_symlinks_resolves() {
+    let repo = fixture_repo_with_links(
+        &[("plugins/real/skills/t/SKILL.md", "---\nname: t\n---\n")],
+        &[
+            ("plugins/all/skills/t", "../../mid/skills/t"),
+            ("plugins/mid/skills/t", "../../real/skills/t"),
+        ],
+    );
+    let source = local_source(repo.path());
+    let (_fx, cache_dir, dest) = Fixture::new();
+    let api = StubApi::serving("unused");
+
+    let acquired = acquire(
+        &request(
+            &source,
+            SkillIntent::Subpath("plugins/all/skills/t"),
+            &dest,
+            &cache_dir,
+        ),
+        &api,
+    )
+    .expect("two hops resolve");
+
+    assert!(dest.join("SKILL.md").exists());
+    assert_eq!(
+        acquired.resolved_subpath.as_deref(),
+        Some("plugins/all/skills/t")
+    );
+}
+
+/// … and a chain deeper than the bound is refused rather than followed
+/// forever; nothing lands.
+#[test]
+fn a_symlink_chain_deeper_than_the_bound_is_refused() {
+    let depth = crate::core::repo_subpath::MAX_LINK_DEPTH + 1;
+    let links: Vec<(String, String)> = (0..depth)
+        .map(|hop| (format!("l{hop}"), format!("l{}", hop + 1)))
+        .collect();
+    let links: Vec<(&str, &str)> = links
+        .iter()
+        .map(|(l, t)| (l.as_str(), t.as_str()))
+        .collect();
+    let real = format!("l{depth}/SKILL.md");
+    let repo = fixture_repo_with_links(&[(&real, "---\nname: deep\n---\n")], &links);
+    let source = local_source(repo.path());
+    let (_fx, cache_dir, dest) = Fixture::new();
+    let api = StubApi::serving("unused");
+
+    let err = acquire(
+        &request(&source, SkillIntent::Subpath("l0"), &dest, &cache_dir),
+        &api,
+    )
+    .expect_err("a chain past the bound is refused");
+
+    assert!(
+        format!("{err:#}").contains("exceeds"),
+        "unexpected error: {err:#}"
+    );
+    assert!(!dest.join("SKILL.md").exists(), "nothing lands");
+}
+
+/// An absolute target is refused with the typed condition before anything
+/// is read: the directory it points at holds a real SKILL.md, and none of
+/// it lands; the entry's coverage never widened toward it.
+#[test]
+fn an_absolute_symlink_target_is_refused_typed_and_never_read() {
+    let outside = tempfile::tempdir().expect("tempdir");
+    fs::write(outside.path().join("SKILL.md"), "---\nname: outside\n---\n").expect("write");
+    let outside_path = outside.path().to_string_lossy().to_string();
+    let repo = fixture_repo_with_links(&[("README.md", "root")], &[("skills/x", &outside_path)]);
+    let source = local_source(repo.path());
+    let (_fx, cache_dir, dest) = Fixture::new();
+    let api = StubApi::serving("unused");
+
+    let err = acquire(
+        &request(&source, SkillIntent::Subpath("skills/x"), &dest, &cache_dir),
+        &api,
+    )
+    .expect_err("an absolute target is refused");
+
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::SymlinkEscapesRepo {
+            subpath: "skills/x".to_string(),
+            target: outside_path,
+        })
+    );
+    assert!(!dest.join("SKILL.md").exists(), "nothing outside was read");
+    assert_eq!(
+        cache_entry_subpaths(&cache_dir),
+        vec!["skills/x".to_string()],
+        "the sparse set never widened toward the target"
+    );
+}
+
+/// A relative target that climbs out of the repository is refused the same
+/// way: a SKILL.md planted exactly where `../../outside` would land next to
+/// the cache entry never reaches dest.
+#[test]
+fn an_escaping_symlink_target_is_refused_typed_and_never_read() {
+    let repo = fixture_repo_with_links(&[("README.md", "root")], &[("skills/x", "../../outside")]);
+    let source = local_source(repo.path());
+    let (_fx, cache_dir, dest) = Fixture::new();
+    let api = StubApi::serving("unused");
+    // `skills/x -> ../../outside` is `<repo root>/../outside`; in the cache
+    // that is a sibling of the entry directory.
+    let planted = cache_dir.join("skills-hub-git-cache").join("outside");
+    fs::create_dir_all(&planted).expect("mkdir");
+    fs::write(planted.join("SKILL.md"), "---\nname: outside\n---\n").expect("write");
+
+    let err = acquire(
+        &request(&source, SkillIntent::Subpath("skills/x"), &dest, &cache_dir),
+        &api,
+    )
+    .expect_err("an escaping target is refused");
+
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::SymlinkEscapesRepo {
+            subpath: "skills/x".to_string(),
+            target: "../../outside".to_string(),
+        })
+    );
+    assert!(!dest.join("SKILL.md").exists(), "nothing outside was read");
+    assert_eq!(
+        cache_entry_subpaths(&cache_dir),
+        vec!["skills/x".to_string()]
+    );
 }
 
 // ---------------------------------------------------------------------------

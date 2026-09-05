@@ -298,6 +298,97 @@ pub fn reshape_checkout(
     Ok(())
 }
 
+/// The first symlink on a repo-relative path, as the checked-out commit's
+/// tree records it (mode `120000`): `(link subpath, raw target)`, or `None`
+/// when no component of `subpath` is a link.
+///
+/// Asks the tree, never the working tree: a sparse checkout of a path
+/// *below* a link materialises nothing at all, and a leaf link is a
+/// dangling entry until its target is checked out. The target is the link
+/// blob's content, readable from a partial clone (fetched on demand).
+pub fn symlink_on_path(
+    dest: &Path,
+    subpath: &str,
+    cancel: Option<&CancelToken>,
+) -> Result<Option<(String, String)>> {
+    let subpath = normalize_subpath(subpath);
+    if subpath.is_empty() {
+        return Ok(None);
+    }
+    // Every prefix of the path: `a`, `a/b`, `a/b/c`. `ls-tree` answers with
+    // the entry each one names, when it exists.
+    let mut prefixes: Vec<String> = Vec::new();
+    for segment in subpath.split('/') {
+        let prefix = match prefixes.last() {
+            Some(parent) => format!("{parent}/{segment}"),
+            None => segment.to_string(),
+        };
+        prefixes.push(prefix);
+    }
+    let out = run_cmd_with_timeout(
+        {
+            let mut cmd = git_cmd();
+            cmd.arg("-C")
+                .arg(dest)
+                .args(["ls-tree", "-z", "HEAD", "--"])
+                .args(&prefixes);
+            cmd
+        },
+        git_fetch_timeout(),
+        format!("git ls-tree {:?} in {:?}", prefixes, dest),
+        cancel,
+    )?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "git ls-tree failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    // `-z` records: `<mode> <type> <sha>\t<path>\0`. The shallowest link is
+    // the first one on the path.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut link: Option<(String, String)> = None;
+    for record in stdout.split('\0').filter(|r| !r.is_empty()) {
+        let Some((meta, path)) = record.split_once('\t') else {
+            continue;
+        };
+        let fields: Vec<&str> = meta.split(' ').collect();
+        if fields.len() < 3 || fields[0] != "120000" {
+            continue;
+        }
+        if link
+            .as_ref()
+            .is_none_or(|(have, _)| path.len() < have.len())
+        {
+            link = Some((path.to_string(), fields[2].to_string()));
+        }
+    }
+    let Some((link_path, blob)) = link else {
+        return Ok(None);
+    };
+
+    let out = run_cmd_with_timeout(
+        {
+            let mut cmd = git_cmd();
+            cmd.arg("-C").arg(dest).args(["cat-file", "-p", &blob]);
+            cmd
+        },
+        git_fetch_timeout(),
+        format!("git cat-file -p {} in {:?}", blob, dest),
+        cancel,
+    )?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "git cat-file failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let target = String::from_utf8_lossy(&out.stdout)
+        .trim_end_matches(['\r', '\n'])
+        .to_string();
+    Ok(Some((link_path, target)))
+}
+
 /// Whether `dest`'s working tree is a sparse checkout (`core.sparseCheckout`).
 fn is_sparse_checkout(dest: &Path, cancel: Option<&CancelToken>) -> Result<bool> {
     let out = run_cmd_with_timeout(
