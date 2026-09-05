@@ -56,9 +56,10 @@ export const commands = {
 	getHiddenExploreSkills: () => __TAURI_INVOKE<string[]>("get_hidden_explore_skills"),
 	cancelCurrentOperation: () => __TAURI_INVOKE<null>("cancel_current_operation"),
 	/**
-	 *  Open the app log directory — where `tauri-plugin-log` writes (`LogDir`,
-	 *  see `lib.rs`) — in the operator's file manager. The backend log is the
-	 *  post-restart record of what a Notification reported. Both the directory
+	 *  Reveal the app log file — where `tauri-plugin-log` writes (`LogDir`,
+	 *  see `lib.rs`) — selected in its folder in the operator's file manager
+	 *  (the folder itself when no file exists yet). The backend log is the
+	 *  post-restart record of what a Notification reported. Both the paths
 	 *  and the opener are resolved here at the command seam: `core` never sees
 	 *  the app handle.
 	 */

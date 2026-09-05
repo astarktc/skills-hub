@@ -190,9 +190,10 @@ pub async fn clear_git_cache_now(app: tauri::AppHandle) -> Result<usize, Command
     .map_err(CommandError::from_anyhow)
 }
 
-/// Open the app log directory — where `tauri-plugin-log` writes (`LogDir`,
-/// see `lib.rs`) — in the operator's file manager. The backend log is the
-/// post-restart record of what a Notification reported. Both the directory
+/// Reveal the app log file — where `tauri-plugin-log` writes (`LogDir`,
+/// see `lib.rs`) — selected in its folder in the operator's file manager
+/// (the folder itself when no file exists yet). The backend log is the
+/// post-restart record of what a Notification reported. Both the paths
 /// and the opener are resolved here at the command seam: `core` never sees
 /// the app handle.
 #[tauri::command]
@@ -203,14 +204,29 @@ pub async fn open_log_folder(app: tauri::AppHandle) -> Result<(), CommandError> 
         .app_log_dir()
         .context("failed to resolve app log dir")
         .map_err(CommandError::from_anyhow)?;
+    // Same derivation as tauri-plugin-log's `LogDir { file_name: None }`
+    // target: `app_log_dir/<package name>.log` (the product name, e.g.
+    // "Skills Hub.log"), so the file revealed is the one the plugin writes.
+    let log_file = log_dir.join(&app.package_info().name).with_extension("log");
     tauri::async_runtime::spawn_blocking(move || {
-        // The log plugin creates the dir at startup; opening a missing one
+        // The log plugin creates the dir at startup; revealing a missing one
         // would surface an opaque opener error, so make it exist first.
         std::fs::create_dir_all(&log_dir)
             .with_context(|| format!("failed to create log dir {:?}", log_dir))?;
+        // Reveal (select in the file manager) rather than open: the log dir is
+        // named after the bundle identifier (`com.skillshub.app`) and macOS
+        // `open` treats a directory ending in `.app` as an application bundle,
+        // failing silently in the detached opener. Revealing the log file
+        // selects it inside its folder; before the first write there is no
+        // file yet, so the dir itself is revealed (selected in its parent).
+        let target = if log_file.is_file() {
+            &log_file
+        } else {
+            &log_dir
+        };
         app.opener()
-            .open_path(log_dir.to_string_lossy(), None::<&str>)
-            .with_context(|| format!("failed to open log dir {:?}", log_dir))
+            .reveal_item_in_dir(target)
+            .with_context(|| format!("failed to reveal log path {:?}", target))
     })
     .await
     .map_err(CommandError::internal)?
