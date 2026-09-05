@@ -102,6 +102,22 @@ pub enum CommandError {
         /// The refused path (not inside any Tool's skills directory).
         path: String,
     },
+    SourcePathMissing {
+        /// The external source folder that is not there.
+        path: String,
+    },
+    CentralPathMissing {
+        /// The Managed skill's central copy that is not there.
+        path: String,
+    },
+    SubpathMissing {
+        /// The requested repo-relative subpath (never a cache-internal path).
+        subpath: String,
+    },
+    RevealLogFailed {
+        /// Opener error chain, diagnostics only.
+        detail: String,
+    },
     Other {
         message: String,
     },
@@ -220,6 +236,10 @@ impl From<SignalError> for CommandError {
                 CommandError::DeleteCleanupFailed { failures }
             }
             SignalError::PathOutsideToolDirs { path } => CommandError::PathOutsideToolDirs { path },
+            SignalError::SourcePathMissing { path } => CommandError::SourcePathMissing { path },
+            SignalError::CentralPathMissing { path } => CommandError::CentralPathMissing { path },
+            SignalError::SubpathMissing { subpath } => CommandError::SubpathMissing { subpath },
+            SignalError::RevealLogFailed { detail } => CommandError::RevealLogFailed { detail },
         }
     }
 }

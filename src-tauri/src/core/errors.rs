@@ -57,6 +57,19 @@ pub enum SignalError {
     /// directory, so Skills Hub refuses to touch it. Owned by the Tool
     /// registry (`tool_adapters::ensure_path_within_tool_dirs`).
     PathOutsideToolDirs { path: String },
+    /// A skill's external source folder (a `local` provenance's `source_ref`,
+    /// or the folder an Add flow was pointed at) is not there.
+    SourcePathMissing { path: String },
+    /// A Managed skill's central copy is not there, so nothing can be
+    /// updated or moved from it.
+    CentralPathMissing { path: String },
+    /// The requested repo-relative subpath is not in the fetched repository.
+    /// Carries the subpath the caller asked for, never a cache-internal
+    /// absolute path.
+    SubpathMissing { subpath: String },
+    /// Revealing the app log folder in the file manager failed. `detail` is
+    /// diagnostic text (the opener's error chain), not user copy.
+    RevealLogFailed { detail: String },
 }
 
 impl fmt::Display for SignalError {
@@ -104,6 +117,18 @@ impl fmt::Display for SignalError {
             }
             SignalError::PathOutsideToolDirs { path } => {
                 write!(f, "path is not under a known tool skills directory: {path}")
+            }
+            SignalError::SourcePathMissing { path } => {
+                write!(f, "source path is missing: {path}")
+            }
+            SignalError::CentralPathMissing { path } => {
+                write!(f, "central path is missing: {path}")
+            }
+            SignalError::SubpathMissing { subpath } => {
+                write!(f, "subpath is not in the repository: {subpath}")
+            }
+            SignalError::RevealLogFailed { detail } => {
+                write!(f, "revealing the log folder failed: {detail}")
             }
         }
     }

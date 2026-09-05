@@ -140,6 +140,45 @@ describe("describeCommandError", () => {
     ).toBe('errors.pathOutsideToolDirs {"path":"/home/u/Documents"}');
   });
 
+  it("shows the missing path as a detail line for SOURCE_PATH_MISSING", () => {
+    expect(
+      describeCommandError(
+        { code: "SOURCE_PATH_MISSING", path: "/home/u/skills/gone" },
+        t,
+      ),
+    ).toBe("errors.sourcePathMissing\n\n/home/u/skills/gone");
+  });
+
+  it("shows the missing path as a detail line for CENTRAL_PATH_MISSING", () => {
+    expect(
+      describeCommandError(
+        { code: "CENTRAL_PATH_MISSING", path: "/home/u/.skillshub/gone" },
+        t,
+      ),
+    ).toBe("errors.centralPathMissing\n\n/home/u/.skillshub/gone");
+  });
+
+  it("shows the requested subpath as a detail line for SUBPATH_MISSING", () => {
+    expect(
+      describeCommandError(
+        { code: "SUBPATH_MISSING", subpath: "skills/nope" },
+        t,
+      ),
+    ).toBe("errors.subpathMissing\n\nskills/nope");
+  });
+
+  it("shows the opener diagnostics as a detail line for REVEAL_LOG_FAILED", () => {
+    expect(
+      describeCommandError(
+        { code: "REVEAL_LOG_FAILED", detail: "opener: exit 1" },
+        t,
+      ),
+    ).toBe("errors.revealLogFailed\n\nopener: exit 1");
+    expect(
+      describeCommandError({ code: "REVEAL_LOG_FAILED", detail: "" }, t),
+    ).toBe("errors.revealLogFailed");
+  });
+
   it("names the unknown tool key for UNKNOWN_TOOL", () => {
     expect(
       describeCommandError({ code: "UNKNOWN_TOOL", tool: "not-a-tool" }, t),

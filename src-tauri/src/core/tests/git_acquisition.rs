@@ -665,9 +665,18 @@ fn a_missing_subpath_fails() {
         &api,
     )
     .expect_err("a missing subpath fails");
-    assert!(
-        format!("{err:#}").contains("not found in repo"),
+    // The typed condition carries the subpath the caller asked for, never
+    // the cache-internal absolute path of the checkout.
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::SubpathMissing {
+            subpath: "skills/nope".to_string(),
+        }),
         "unexpected error: {err:#}"
+    );
+    assert!(
+        !format!("{err:#}").contains(cache_dir.to_str().unwrap()),
+        "the cache path must not leak: {err:#}"
     );
 }
 

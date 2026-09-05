@@ -189,7 +189,15 @@ url: string } | { code: "DELETE_CLEANUP_FAILED";
 /**  `"<path>: <io error>"` diagnostics per failed removal target. */
 failures: string[] } | { code: "PATH_OUTSIDE_TOOL_DIRS"; 
 /**  The refused path (not inside any Tool's skills directory). */
-path: string } | { code: "OTHER"; message: string };
+path: string } | { code: "SOURCE_PATH_MISSING"; 
+/**  The external source folder that is not there. */
+path: string } | { code: "CENTRAL_PATH_MISSING"; 
+/**  The Managed skill's central copy that is not there. */
+path: string } | { code: "SUBPATH_MISSING"; 
+/**  The requested repo-relative subpath (never a cache-internal path). */
+subpath: string } | { code: "REVEAL_LOG_FAILED"; 
+/**  Opener error chain, diagnostics only. */
+detail: string } | { code: "OTHER"; message: string };
 
 export type FeaturedSkillDto = {
 	slug: string,

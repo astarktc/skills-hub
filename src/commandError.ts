@@ -29,6 +29,10 @@ const COMMAND_ERROR_CODE_MAP = {
   GITHUB_SKILL_NOT_FOUND: true,
   DELETE_CLEANUP_FAILED: true,
   PATH_OUTSIDE_TOOL_DIRS: true,
+  SOURCE_PATH_MISSING: true,
+  CENTRAL_PATH_MISSING: true,
+  SUBPATH_MISSING: true,
+  REVEAL_LOG_FAILED: true,
   OTHER: true,
 } as const satisfies Record<CommandError["code"], true>;
 
@@ -68,6 +72,12 @@ const INVALID_PATH_KEYS: Record<string, string> = {
   missing: "errors.invalidPathMissing",
   not_a_directory: "errors.invalidPathNotADirectory",
 };
+
+/** A localized sentence followed by a structured detail (a path, a subpath,
+ * diagnostics) on its own line — the detail never travels inside the prose. */
+function withDetail(message: string, detail: string): string {
+  return detail ? `${message}\n\n${detail}` : message;
+}
 
 /**
  * Localized user-facing message for a command failure, or `null` when the
@@ -113,16 +123,25 @@ export function describeCommandError(
       return e.resetMinutes > 0
         ? t("errors.rateLimited", { minutes: e.resetMinutes })
         : t("errors.rateLimitedNoEta");
-    case "GIT_CLONE_FAILED": {
-      const hint = t(GIT_CLONE_HINT_KEYS[e.kind] ?? "errors.gitCloneUnknown");
-      return e.detail ? `${hint}\n\n${e.detail}` : hint;
-    }
+    case "GIT_CLONE_FAILED":
+      return withDetail(
+        t(GIT_CLONE_HINT_KEYS[e.kind] ?? "errors.gitCloneUnknown"),
+        e.detail,
+      );
     case "GITHUB_SKILL_NOT_FOUND":
       return t("errors.githubSkillNotFound", { url: e.url });
     case "DELETE_CLEANUP_FAILED":
       return t("errors.deleteCleanupFailed") + "\n- " + e.failures.join("\n- ");
     case "PATH_OUTSIDE_TOOL_DIRS":
       return t("errors.pathOutsideToolDirs", { path: e.path });
+    case "SOURCE_PATH_MISSING":
+      return withDetail(t("errors.sourcePathMissing"), e.path);
+    case "CENTRAL_PATH_MISSING":
+      return withDetail(t("errors.centralPathMissing"), e.path);
+    case "SUBPATH_MISSING":
+      return withDetail(t("errors.subpathMissing"), e.subpath);
+    case "REVEAL_LOG_FAILED":
+      return withDetail(t("errors.revealLogFailed"), e.detail);
     case "OTHER":
       return e.message;
   }

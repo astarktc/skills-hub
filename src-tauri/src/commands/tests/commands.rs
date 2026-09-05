@@ -290,3 +290,111 @@ fn project_signal_errors_serialize_with_payload_fields() {
         serde_json::json!({ "code": "NOT_FOUND", "kind": "skill", "id": "nonexistent-uuid" })
     );
 }
+
+/// Installer roots isolated under one temp dir, the same shape the commands
+/// resolve at the seam (`installer_paths`).
+fn missing_path_fixture() -> (
+    tempfile::TempDir,
+    crate::core::installer::InstallerPaths,
+    crate::core::skill_store::SkillStore,
+) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let paths = crate::core::installer::InstallerPaths {
+        home: dir.path().join("home"),
+        central_dir: dir.path().join("central"),
+        cache_dir: dir.path().join("cache"),
+    };
+    std::fs::create_dir_all(&paths.home).unwrap();
+    let store = crate::core::skill_store::SkillStore::new(dir.path().join("test.db"));
+    store.ensure_schema().expect("ensure_schema");
+    (dir, paths, store)
+}
+
+/// Run the single-skill Update the way the command does (a Refresh batch of
+/// one) and classify its outcome at the seam.
+fn update_outcome_at_the_seam(
+    paths: &crate::core::installer::InstallerPaths,
+    store: &crate::core::skill_store::SkillStore,
+    skill_id: &str,
+) -> CommandError {
+    let report = crate::core::refresh::refresh_managed_skills(
+        paths,
+        store,
+        crate::core::refresh::RefreshSelection::Ids(vec![skill_id.to_string()]),
+        crate::core::refresh::RefreshPolicy::default(),
+        None,
+        0,
+        |_| {},
+    )
+    .expect("a per-skill failure is report data, not a batch error");
+    let outcome = report
+        .skills
+        .into_iter()
+        .next()
+        .expect("one outcome for the one skill");
+    match outcome.status {
+        crate::core::refresh::SkillRefreshStatus::Failed { error } => {
+            CommandError::from_anyhow(error)
+        }
+        other => panic!("expected the update to fail, got {other:?}"),
+    }
+}
+
+/// Update of a `local` skill whose folder is gone reaches the wire as its own
+/// code with the path in a structured field — never `OTHER` prose carrying
+/// the path.
+#[test]
+fn update_of_a_local_skill_whose_source_is_gone_is_typed_source_path_missing() {
+    let (_dir, paths, store) = missing_path_fixture();
+    let source = tempfile::tempdir().unwrap();
+    std::fs::write(source.path().join("SKILL.md"), b"---\nname: x\n---\n").unwrap();
+    let installed = crate::core::installer::install_local_skill(
+        &paths,
+        &store,
+        source.path(),
+        Some("gone-local".to_string()),
+    )
+    .unwrap();
+    let source_path = source.path().to_string_lossy().to_string();
+    drop(source);
+
+    let error = update_outcome_at_the_seam(&paths, &store, &installed.skill_id);
+
+    let json = serde_json::to_value(&error).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "code": "SOURCE_PATH_MISSING", "path": source_path }),
+        "got {error}"
+    );
+    assert!(json.get("message").is_none(), "no prose on the wire");
+}
+
+/// Update of a skill whose central copy is gone reaches the wire as its own
+/// code with the central path in a structured field.
+#[test]
+fn update_of_a_skill_whose_central_copy_is_gone_is_typed_central_path_missing() {
+    let (_dir, paths, store) = missing_path_fixture();
+    let source = tempfile::tempdir().unwrap();
+    std::fs::write(source.path().join("SKILL.md"), b"---\nname: x\n---\n").unwrap();
+    let installed = crate::core::installer::install_local_skill(
+        &paths,
+        &store,
+        source.path(),
+        Some("gone-central".to_string()),
+    )
+    .unwrap();
+    std::fs::remove_dir_all(&installed.central_path).unwrap();
+
+    let error = update_outcome_at_the_seam(&paths, &store, &installed.skill_id);
+
+    let json = serde_json::to_value(&error).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "code": "CENTRAL_PATH_MISSING",
+            "path": installed.central_path.to_string_lossy(),
+        }),
+        "got {error}"
+    );
+    assert!(json.get("message").is_none(), "no prose on the wire");
+}

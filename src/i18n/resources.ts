@@ -275,6 +275,13 @@ export const resources = {
           "Some artifacts could not be removed, so what describes them was kept — you can retry:",
         pathOutsideToolDirs:
           "Refused to delete {{path}}: it is not inside a known tool skills directory.",
+        sourcePathMissing:
+          "The skill's source folder is missing. It may have been moved or deleted:",
+        centralPathMissing:
+          "The skill's central copy is missing from the Skills Hub library, so it cannot be updated:",
+        subpathMissing:
+          "The repository no longer contains this skill folder. It may have been moved or renamed:",
+        revealLogFailed: "Could not open the log folder.",
         unsyncFailedTitle: "Could not remove from {{tool}}",
         gitCloneUnknown:
           "Could not fetch the repository from GitHub. Please check your network/proxy and try again.",
@@ -774,6 +781,11 @@ export const resources = {
           "部分产物无法移除，相关记录已保留，你可以重试：",
         pathOutsideToolDirs:
           "已拒绝删除 {{path}}：该路径不在已知的工具 Skills 目录内。",
+        sourcePathMissing: "该 Skill 的来源文件夹不存在，可能已被移动或删除：",
+        centralPathMissing:
+          "该 Skill 在 Skills Hub 库中的中央副本不存在，无法更新：",
+        subpathMissing: "仓库中已不存在该 Skill 文件夹，可能已被移动或重命名：",
+        revealLogFailed: "无法打开日志文件夹。",
         unsyncFailedTitle: "无法从 {{tool}} 中移除",
         gitCloneUnknown:
           "无法从 GitHub 拉取仓库。请检查网络/代理，或稍后重试。",

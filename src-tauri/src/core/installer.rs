@@ -46,7 +46,7 @@ pub fn install_local_skill(
     name: Option<String>,
 ) -> Result<InstallResult> {
     if !source_path.exists() {
-        anyhow::bail!("source path not found: {:?}", source_path);
+        anyhow::bail!(source_path_missing(source_path));
     }
     // Skill discovery owns the admission rule: no `SKILL.md`, no skill.
     require_skill_md(source_path)?;
@@ -87,6 +87,14 @@ pub fn install_local_skill(
         NameIntent::UserProvided(name),
         provenance,
     )
+}
+
+/// The typed condition for an external source folder that is not there,
+/// raised wherever an install or Update reads one.
+fn source_path_missing(path: &Path) -> SignalError {
+    SignalError::SourcePathMissing {
+        path: path.to_string_lossy().to_string(),
+    }
 }
 
 /// Wrap an optional operator-supplied name as a [`NameIntent`], deriving one
@@ -191,7 +199,9 @@ pub(crate) fn acquire_managed_skill_update_with(
 
     let central_path = PathBuf::from(record.central_path.clone());
     if !central_path.exists() {
-        anyhow::bail!("central path not found: {:?}", central_path);
+        anyhow::bail!(SignalError::CentralPathMissing {
+            path: record.central_path.clone(),
+        });
     }
     let central_parent = central_path
         .parent()
@@ -254,7 +264,7 @@ pub(crate) fn acquire_managed_skill_update_with(
             .ok_or_else(|| anyhow::anyhow!("missing source_ref for local skill"))?;
         let source_path = PathBuf::from(source);
         if !source_path.exists() {
-            anyhow::bail!("source path not found: {:?}", source_path);
+            anyhow::bail!(source_path_missing(&source_path));
         }
         copy_dir_recursive(&source_path, &staging_dir)
             .with_context(|| format!("copy {:?} -> {:?}", source_path, staging_dir))?;
@@ -407,7 +417,7 @@ fn git_candidates_in(repo_dir: &Path, subpath: Option<&str>) -> Vec<GitSkillCand
 /// declared skills dir is not selectable.
 pub fn list_local_skills(base_path: &Path) -> Result<Vec<LocalSkillCandidate>> {
     if !base_path.exists() {
-        anyhow::bail!("source path not found: {:?}", base_path);
+        anyhow::bail!(source_path_missing(base_path));
     }
     Ok(discover_skills(base_path)
         .into_iter()
@@ -504,7 +514,7 @@ pub fn install_local_skill_from_selection(
     name: Option<String>,
 ) -> Result<InstallResult> {
     if !base_path.exists() {
-        anyhow::bail!("source path not found: {:?}", base_path);
+        anyhow::bail!(source_path_missing(base_path));
     }
 
     let selected_dir = if subpath == "." {
@@ -513,7 +523,7 @@ pub fn install_local_skill_from_selection(
         base_path.join(subpath)
     };
     if !selected_dir.exists() {
-        anyhow::bail!("source path not found: {:?}", selected_dir);
+        anyhow::bail!(source_path_missing(&selected_dir));
     }
 
     let skill_md = require_skill_md(&selected_dir)?;

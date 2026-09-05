@@ -378,7 +378,16 @@ fn clone_path(req: &AcquireRequest, known_subpath: Option<&str>) -> Result<Acqui
         None => repo_dir.clone(),
     };
     if !copy_src.exists() {
-        anyhow::bail!("path not found in repo: {:?}", copy_src);
+        match &resolved_subpath {
+            // Report the subpath the caller asked for: the checkout's absolute
+            // location is cache-internal and means nothing to the operator.
+            Some(subpath) => anyhow::bail!(SignalError::SubpathMissing {
+                subpath: subpath.clone(),
+            }),
+            // The repo root was just fetched; its absence is an infrastructure
+            // failure, not an answer about the source.
+            None => anyhow::bail!("repository checkout is missing after fetch"),
+        }
     }
 
     copy_dir_recursive(&copy_src, req.dest)

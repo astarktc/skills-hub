@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use super::clock::now_ms;
+use super::errors::SignalError;
 use super::skill_store::SkillStore;
 use super::sync_engine::copy_dir_recursive;
 
@@ -21,7 +22,9 @@ pub fn move_central_repo(store: &SkillStore, new_base: &Path) -> Result<()> {
     for skill in skills {
         let old_path = Path::new(&skill.central_path).to_path_buf();
         if !old_path.exists() {
-            anyhow::bail!("central path not found: {:?}", old_path);
+            anyhow::bail!(SignalError::CentralPathMissing {
+                path: skill.central_path.clone(),
+            });
         }
         let file_name = old_path
             .file_name()

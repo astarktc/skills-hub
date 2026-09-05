@@ -82,11 +82,28 @@ fn move_central_repo_refuses_when_target_exists_without_moving_anything() {
     assert!(!new_base.join("a").exists());
 }
 
+/// A move refuses before touching anything when a central copy is gone, and
+/// says so as the typed condition carrying that path.
 #[test]
 fn move_central_repo_refuses_when_source_missing() {
     let (dir, store) = make_store();
-    let missing = dir.path().join("old").join("ghost");
-    store.upsert_skill(&skill("ghost", &missing)).unwrap();
-    let err = move_central_repo(&store, &dir.path().join("new")).unwrap_err();
-    assert!(err.to_string().contains("not found"), "{err}");
+    let old_base = dir.path().join("old");
+    let new_base = dir.path().join("new");
+    let present = old_base.join("present");
+    std::fs::create_dir_all(&present).unwrap();
+    store.upsert_skill(&skill("present", &present)).unwrap();
+    let gone = old_base.join("gone");
+    store.upsert_skill(&skill("gone", &gone)).unwrap();
+    std::fs::create_dir_all(&new_base).unwrap();
+
+    let err = move_central_repo(&store, &new_base).expect_err("a missing central copy refuses");
+
+    assert_eq!(
+        err.downcast_ref::<crate::core::errors::SignalError>(),
+        Some(&crate::core::errors::SignalError::CentralPathMissing {
+            path: gone.to_string_lossy().to_string(),
+        })
+    );
+    assert!(present.exists(), "nothing was moved");
+    assert!(!new_base.join("present").exists());
 }
