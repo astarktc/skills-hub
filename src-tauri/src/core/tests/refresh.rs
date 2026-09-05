@@ -6,7 +6,9 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Condvar, Mutex};
+use std::time::Duration;
 
 use crate::core::cancel_token::CancelToken;
 use crate::core::errors::SignalError;
@@ -313,11 +315,12 @@ fn pool_fixture(n: usize) -> PoolFixture {
     }
 }
 
-/// The real (fast, local-source) acquisition with an artificial latency, so a
-/// pooled batch is distinguishable from a sequential one by wall clock alone.
+/// The real (fast, local-source) acquisition with an artificial per-skill
+/// latency, so the pool's completion order and its cancellation window are
+/// observable.
 fn slow_acquire<'a>(
     f: &'a PoolFixture,
-    delay: impl Fn(&str) -> std::time::Duration + Sync + 'a,
+    delay: impl Fn(&str) -> Duration + Sync + 'a,
 ) -> impl Fn(&str, Option<&CancelToken>) -> anyhow::Result<crate::core::installer::AcquiredUpdate>
        + Sync
        + 'a {
@@ -340,16 +343,72 @@ fn slow_acquire<'a>(
     }
 }
 
-const LATENCY_MS: u64 = 150;
+/// A door every acquisition passes through, counting how many are inside at
+/// once. Until overlap has been witnessed, an acquisition waits at the door
+/// for a second one to arrive — a rendezvous only a pool can complete, so
+/// concurrency is proven by what was observed, never by how long the batch
+/// took. The wait is bounded so a sequential regression fails the assertion
+/// below instead of hanging the gate; once it has timed out nobody waits.
+struct OverlapDoor {
+    in_flight: Mutex<usize>,
+    arrived: Condvar,
+    max_in_flight: AtomicUsize,
+    gave_up: AtomicBool,
+}
 
-/// Eight skills, each acquisition ~150ms: sequential would be ~1.2s, a pool of
-/// four is ~0.3s. Overlap is the only way to come in under 60% of sequential.
+impl OverlapDoor {
+    const RENDEZVOUS_BOUND: Duration = Duration::from_secs(10);
+
+    fn new() -> Self {
+        Self {
+            in_flight: Mutex::new(0),
+            arrived: Condvar::new(),
+            max_in_flight: AtomicUsize::new(0),
+            gave_up: AtomicBool::new(false),
+        }
+    }
+
+    fn overlap_witnessed(&self) -> bool {
+        self.max_in_flight.load(Ordering::SeqCst) >= 2
+    }
+
+    fn enter(&self) {
+        let mut inside = self.in_flight.lock().expect("door lock");
+        *inside += 1;
+        self.arrived.notify_all();
+        while *inside < 2 && !self.overlap_witnessed() && !self.gave_up.load(Ordering::SeqCst) {
+            let (guard, timeout) = self
+                .arrived
+                .wait_timeout(inside, Self::RENDEZVOUS_BOUND)
+                .expect("door lock");
+            inside = guard;
+            if timeout.timed_out() {
+                self.gave_up.store(true, Ordering::SeqCst);
+            }
+        }
+        self.max_in_flight.fetch_max(*inside, Ordering::SeqCst);
+    }
+
+    fn leave(&self) {
+        *self.in_flight.lock().expect("door lock") -= 1;
+    }
+}
+
+/// Eight skills through a pool of four: at some point two acquisitions are
+/// inside the door together. A sequential batch would never have two in
+/// flight, whatever the load on the machine.
 #[test]
 fn acquisitions_overlap_instead_of_running_one_at_a_time() {
     let f = pool_fixture(8);
-    let acquire = slow_acquire(&f, |_| std::time::Duration::from_millis(LATENCY_MS));
+    let door = OverlapDoor::new();
+    let inner = slow_acquire(&f, |_| Duration::ZERO);
+    let acquire = |skill_id: &str, cancel: Option<&CancelToken>| {
+        door.enter();
+        let result = inner(skill_id, cancel);
+        door.leave();
+        result
+    };
 
-    let started = std::time::Instant::now();
     let report = refresh_managed_skills_with(
         &f.paths,
         &f.store,
@@ -361,7 +420,6 @@ fn acquisitions_overlap_instead_of_running_one_at_a_time() {
         &acquire,
     )
     .expect("refresh");
-    let elapsed = started.elapsed();
 
     assert_eq!(report.skills.len(), 8);
     assert!(
@@ -371,10 +429,10 @@ fn acquisitions_overlap_instead_of_running_one_at_a_time() {
             .all(|o| matches!(o.status, SkillRefreshStatus::Refreshed { .. })),
         "every skill is refreshed: {report:?}"
     );
-    let sequential = std::time::Duration::from_millis(LATENCY_MS * 8);
+    let observed = door.max_in_flight.load(Ordering::SeqCst);
     assert!(
-        elapsed < sequential.mul_f32(0.6),
-        "pooled acquisition took {elapsed:?}, sequential would be {sequential:?}"
+        observed >= 2,
+        "acquisitions ran one at a time: at most {observed} in flight"
     );
 }
 
@@ -386,7 +444,7 @@ fn acquire_progress_counts_completions_in_completion_order() {
     let f = pool_fixture(4);
     // s0 is dispatched first and is by far the slowest.
     let acquire = slow_acquire(&f, |name| {
-        std::time::Duration::from_millis(if name == "s0" { 400 } else { 20 })
+        Duration::from_millis(if name == "s0" { 400 } else { 20 })
     });
 
     let mut ticks: Vec<(usize, String)> = Vec::new();
@@ -426,7 +484,7 @@ fn cancelling_mid_batch_finalizes_nothing() {
     let f = pool_fixture(6);
     let token = CancelToken::new();
     let completed = Mutex::new(0usize);
-    let inner = slow_acquire(&f, |_| std::time::Duration::from_millis(30));
+    let inner = slow_acquire(&f, |_| Duration::from_millis(30));
     let acquire = |skill_id: &str, cancel: Option<&CancelToken>| {
         let result = inner(skill_id, cancel);
         let mut done = completed.lock().expect("lock");
