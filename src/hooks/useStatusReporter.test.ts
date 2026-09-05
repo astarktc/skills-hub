@@ -391,6 +391,64 @@ describe("useStatusReporter runAction", () => {
     );
   });
 
+  // A completion toast may carry a message (rendered as the toast's
+  // description and kept on the history row) so multi-line explanations
+  // are not collapsed into the title.
+  it("a successToast may resolve to a title with a message", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+
+    await act(async () => {
+      await result.current.runAction(
+        {
+          successToast: (name: string) => ({
+            title: "Import completed.",
+            message: `${name}: source tool synced`,
+          }),
+        },
+        async () => "alpha",
+      );
+    });
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Import completed.", {
+        description: "alpha: source tool synced",
+        duration: 2000,
+      }),
+    );
+    expect(result.current.notifications[0]).toMatchObject({
+      kind: "success",
+      title: "Import completed.",
+      message: "alpha: source tool synced",
+    });
+  });
+
+  // A batch that completed with failures is a warning, not a success: it
+  // lingers and counts as unread.
+  it("a successToast may downgrade a completed batch to a warning", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+
+    await act(async () => {
+      await result.current.runAction(
+        {
+          successToast: (failed: number) =>
+            failed > 0
+              ? { kind: "warning", title: `${failed} failed` }
+              : "all refreshed",
+        },
+        async () => 2,
+      );
+    });
+
+    await waitFor(() =>
+      expect(toast.warning).toHaveBeenCalledWith("2 failed", {
+        description: undefined,
+        duration: 5000,
+      }),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(result.current.unreadCount).toBe(1);
+  });
+
   it("without a successToast, completes silently", async () => {
     const { result } = renderHook(() => useStatusReporter(t));
 

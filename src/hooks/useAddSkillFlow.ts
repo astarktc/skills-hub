@@ -15,6 +15,7 @@ import type { SkillLibrary } from "./useSkillLibrary";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type {
   ActionErrorEntry,
+  CompletionToast,
   StatusReporter,
   TranslateFn,
 } from "./useStatusReporter";
@@ -374,27 +375,31 @@ export function useAddSkillFlow({
   );
 
   /**
-   * The success toast for an import: the completion line, plus one line per
-   * group whose source Tool the backend synced beyond the auto-sync policy
-   * (the chosen variant was found in a deselected Tool, so its original was
-   * overwritten in place rather than left as an untracked copy). Not an
-   * error — the operator is told why a deselected Tool received a link.
+   * The completion toast for an import: the completion line as the title
+   * and, as the message, one line per group whose source Tool the backend
+   * synced beyond the auto-sync policy (the chosen variant was found in a
+   * deselected Tool, so its original was overwritten in place rather than
+   * left as an untracked copy). Not an error — the operator is told why a
+   * deselected Tool received a link, on lines that stay readable.
    */
   const importSuccessToast = useCallback(
-    (report: ImportReportDto) => {
-      const lines = [t("status.importCompleted")];
+    (report: ImportReportDto): CompletionToast => {
+      const forcedLines: string[] = [];
       for (const group of report.groups) {
         if (group.status.status !== "imported") continue;
         const forced = group.status.forced_source_tool;
         if (!forced) continue;
-        lines.push(
+        forcedLines.push(
           t("status.importSourceToolForced", {
             name: group.group_name,
             tool: toolLabelById[forced] ?? forced,
           }),
         );
       }
-      return lines.join("\n");
+      return {
+        title: t("status.importCompleted"),
+        message: forcedLines.length > 0 ? forcedLines.join("\n") : undefined,
+      };
     },
     [t, toolLabelById],
   );

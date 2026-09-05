@@ -585,9 +585,9 @@ describe("useAddSkillFlow import flow", () => {
     ]);
     // goose is selected but not installed; cursor installed but deselected.
     expect(policy).toEqual({ auto_sync: true, tools: ["claude"] });
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
-      "status.importCompleted",
-    );
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith({
+      title: "status.importCompleted",
+    });
     expect(setup.reporter.showActionErrors).not.toHaveBeenCalled();
     expect(result.current.showImportModal).toBe(false);
   });
@@ -622,9 +622,13 @@ describe("useAddSkillFlow import flow", () => {
 
     const result = await runImport(setup);
 
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
-      'status.importCompleted\nstatus.importSourceToolForced {"name":"alpha","tool":"CURSOR"}',
-    );
+    // The explanation is the toast's message, never folded into its
+    // title: a title collapses newlines, the message renders as lines.
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith({
+      title: "status.importCompleted",
+      message:
+        'status.importSourceToolForced {"name":"alpha","tool":"CURSOR"}',
+    });
     expect(setup.reporter.showActionErrors).not.toHaveBeenCalled();
     expect(result.current.showImportModal).toBe(false);
   });
@@ -651,9 +655,9 @@ describe("useAddSkillFlow import flow", () => {
 
     // Every selected group imported, so the action completed: success toast
     // fires and the modal closes...
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
-      "status.importCompleted",
-    );
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith({
+      title: "status.importCompleted",
+    });
     expect(result.current.showImportModal).toBe(false);
     // ...while the reload failure is surfaced on its own, not as an import
     // failure.

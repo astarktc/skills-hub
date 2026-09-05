@@ -124,6 +124,31 @@ export type ActionHandle = {
   fail: (message: string | null) => ActionExit;
 };
 
+/**
+ * What an action notifies when its body completes: a bare title, or a title
+ * with a message (rendered as the toast's description and kept on the
+ * history row, so explanatory lines stay readable instead of being folded
+ * into the title). A batch that completed *with failures* sets `kind:
+ * "warning"` — it lingers and counts as unread, where a success would flash
+ * and be forgotten; one rule for every summary that carries a failure count.
+ */
+export type CompletionToast =
+  | string
+  | { kind?: "success" | "warning"; title: string; message?: string };
+
+function completionToastParts(value: CompletionToast): {
+  kind: "success" | "warning";
+  title: string;
+  message?: string;
+} {
+  if (typeof value === "string") return { kind: "success", title: value };
+  return {
+    kind: value.kind ?? "success",
+    title: value.title,
+    message: value.message,
+  };
+}
+
 export type RunActionOptions<T> = {
   /** Initial progress line for the loading overlay. */
   message?: string;
@@ -131,7 +156,7 @@ export type RunActionOptions<T> = {
    * Toast shown only when the body completes (no throw, no exit); a function
    * receives the body's value for copy that depends on the result.
    */
-  successToast?: string | ((value: T) => string);
+  successToast?: CompletionToast | ((value: T) => CompletionToast);
 };
 
 /**
@@ -211,9 +236,10 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
   const [loadingStartAt, setLoadingStartAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [successToastMessage, setSuccessToastMessage] = useState<string | null>(
-    null,
-  );
+  // The one-shot completion trigger. Public callers set a string (see
+  // `setSuccessToastMessage`); runAction may set the full shape.
+  const [successToastMessage, setSuccessToastMessage] =
+    useState<CompletionToast | null>(null);
 
   const formatError = useCallback(
     (err: unknown) => describeCommandError(err, t),
@@ -286,7 +312,8 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
 
   useEffect(() => {
     if (!successToastMessage) return;
-    notify("success", successToastMessage);
+    const { kind, title, message } = completionToastParts(successToastMessage);
+    notify(kind, title, message);
     // Clear the one-shot trigger in a microtask so the reset is not a
     // synchronous setState in the effect body (satisfies
     // react-hooks/set-state-in-effect). The flag is internal and only consumed

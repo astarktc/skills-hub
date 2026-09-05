@@ -1018,6 +1018,12 @@
   overflow-wrap: anywhere;
 }
 
+/* A notification's message may carry several lines (one per forced source
+   Tool on import); the toast keeps them as lines, like .notif-message. */
+[data-sonner-toast] [data-description] {
+  white-space: pre-wrap;
+}
+
 .notif-time {
   font-size: 11px;
   color: var(--text-tertiary);
