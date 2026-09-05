@@ -357,13 +357,15 @@ pub(crate) fn sync_skills_to_planned_tools(
                 tool_key,
             });
 
+            // An override names a tool key; it applies to this target when
+            // that tool shares the target's skills dir (the registry's answer).
             let overwrite = policy.overwrite
                 || policy.overrides.iter().any(|o| {
                     o.overwrite
                         && o.skill_id == skill.skill_id
-                        && adapter_by_key(&o.tool_key).is_some_and(|oa| {
-                            oa.relative_skills_dir == target.adapter.relative_skills_dir
-                        })
+                        && adapters_sharing_skills_dir(target.adapter)
+                            .iter()
+                            .any(|a| a.key() == o.tool_key)
                 });
             let pair_policy = OverwritePolicy {
                 overwrite,

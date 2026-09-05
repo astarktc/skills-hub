@@ -42,7 +42,9 @@ use super::skill_store::{
 };
 use super::sync_engine;
 use super::sync_status::SyncMode;
-use super::tool_adapters::{adapter_by_key, is_installed_in, ToolAdapter};
+use super::tool_adapters::{
+    adapter_by_key, adapters_sharing_skills_dir, is_installed_in, ToolAdapter,
+};
 
 /// Which Sync target an outcome is about.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -174,12 +176,17 @@ fn propagate_global_rows(
             continue;
         };
 
-        // The group: this skill's rows whose tools resolve to the same
-        // global skills dir (the dir, not the key, is a target's identity).
+        // The group: this skill's rows whose tools share the global skills
+        // dir (the dir, not the key, is a target's identity). Which tools
+        // those are is the registry's answer; the rows are matched by key.
+        let sharing: Vec<&str> = adapters_sharing_skills_dir(adapter)
+            .into_iter()
+            .map(ToolAdapter::key)
+            .collect();
         let group: Vec<(&SkillTargetRecord, &'static ToolAdapter)> = rows
             .iter()
+            .filter(|r| sharing.contains(&r.tool.as_str()))
             .filter_map(|r| adapter_by_key(&r.tool).map(|a| (r, a)))
-            .filter(|(_, a)| a.relative_skills_dir == adapter.relative_skills_dir)
             .collect();
         for (member, _) in &group {
             if !handled.contains(&member.tool) {
