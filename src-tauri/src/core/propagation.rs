@@ -181,13 +181,17 @@ fn propagate_global_rows(
         // The group: this skill's rows whose tools share the global skills
         // dir (the dir, not the key, is a target's identity). Which tools
         // those are is the registry's answer; the rows are matched by key.
+        // The row's own Tool is a member by definition — the registry
+        // answers from its static entries while the row resolved through
+        // `adapter_by_key`, and the two may disagree (a test shadow), so the
+        // membership is not left to the registry's reflexivity.
         let sharing: Vec<&str> = adapters_sharing_skills_dir(adapter)
             .into_iter()
             .map(ToolAdapter::key)
             .collect();
         let group: Vec<(&SkillTargetRecord, &'static ToolAdapter)> = rows
             .iter()
-            .filter(|r| sharing.contains(&r.tool.as_str()))
+            .filter(|r| r.tool == row.tool || sharing.contains(&r.tool.as_str()))
             .filter_map(|r| adapter_by_key(&r.tool).map(|a| (r, a)))
             .collect();
         for (member, _) in &group {

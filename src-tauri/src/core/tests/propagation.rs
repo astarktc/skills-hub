@@ -302,6 +302,49 @@ fn a_shared_skills_dir_group_syncs_once_and_settles_every_member_row() {
     );
 }
 
+/// A row's own Tool is always a member of its shared skills dir group. The
+/// group is the registry's answer, but a row resolves its Tool through
+/// `adapter_by_key` — which a test may shadow with an adapter whose skills
+/// dir no shipped entry shares. The row must still be written, not dropped
+/// from the report because the static registry does not list its Tool.
+#[test]
+fn a_row_whose_tool_shares_no_dir_with_the_registry_is_still_its_own_group() {
+    let f = fixture();
+    let mut lone = adapter_by_key("cursor").expect("cursor adapter").clone();
+    lone.relative_skills_dir = ".lone-tool/skills";
+    lone.relative_detect_dir = ".lone-tool";
+    lone.supports_symlink = false;
+    let lone = crate::core::tool_adapters::test_overrides::shadow(lone);
+    install_tool(&f, lone);
+    let target = f.paths.home.join(".lone-tool/skills/skill");
+    seed_stale_copy(&target);
+    seed_global_target(&f, "t-lone", lone.key(), &target, SyncMode::Copy);
+
+    let outcomes = propagate(&f);
+
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &global(lone.key())),
+            PropagationStatus::Synced {
+                mode_used: SyncMode::Copy
+            }
+        ),
+        "the row's own Tool drives its group, got {:?}",
+        outcomes
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("a.txt")).expect("read target"),
+        "v2"
+    );
+    let row = f
+        .store
+        .get_skill_target(&f.skill_id, lone.key())
+        .expect("query")
+        .expect("row");
+    assert_eq!(row.status, SyncStatus::Synced);
+    assert_eq!(row.synced_at, Some(2000));
+}
+
 #[test]
 fn a_missing_central_source_fails_every_row_as_report_data() {
     let f = fixture();
