@@ -20,6 +20,7 @@ use crate::core::refresh::{
 };
 use crate::core::skill_store::SkillStore;
 use crate::core::tool_adapters::adapter_by_key;
+use crate::core::unlocatable::UnlocatableState;
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -121,11 +122,21 @@ fn a_skill_that_fails_acquisition_is_reported_and_never_finalized() {
         .get_skill_by_id(&f.skill_id)
         .expect("query")
         .expect("skill");
-    // The local source is gone: acquisition cannot produce bytes.
+    // The local source is gone: acquisition cannot produce bytes. Named
+    // explicitly (a single Update) — Refresh (all) would skip it instead.
     let source_path = f.source.path().to_path_buf();
     fs::remove_dir_all(&source_path).expect("remove source");
 
-    let report = refresh(&f, RefreshPolicy::default());
+    let report = refresh_managed_skills(
+        &f.paths,
+        &f.store,
+        RefreshSelection::Ids(vec![f.skill_id.clone()]),
+        RefreshPolicy::default(),
+        None,
+        3000,
+        |_| {},
+    )
+    .expect("refresh");
 
     assert!(
         matches!(
@@ -779,4 +790,131 @@ fn a_single_update_of_an_imported_skill_is_refused_with_a_typed_condition() {
             .is_file(),
         "the central copy is untouched"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Unlocatable skills
+// ---------------------------------------------------------------------------
+
+/// Refresh (all) over one healthy `local` skill, one whose source folder is
+/// gone and one whose central copy is gone: only the healthy one reaches the
+/// acquire pool; the two unlocatable ones are reported *skipped* by name
+/// with their state, and — auto-sync on — get no Sync target minted (a
+/// central-missing skill's target would be a dangling link).
+#[test]
+fn refresh_all_skips_unlocatable_skills_and_mints_no_targets_for_them() {
+    let f = pool_fixture(3);
+    let claude = adapter_by_key("claude_code").expect("claude_code adapter");
+    fs::create_dir_all(f.paths.home.join(claude.relative_detect_dir)).expect("install tool");
+    let ids: Vec<String> = f
+        .store
+        .list_skills()
+        .expect("list")
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    let by_name = |name: &str| {
+        f.store
+            .list_skills()
+            .expect("list")
+            .into_iter()
+            .find(|s| s.name == name)
+            .expect("skill")
+    };
+    // s1: source folder gone (moved away).
+    let mut source_gone = by_name("s1");
+    source_gone.source_ref = Some(
+        f.paths
+            .home
+            .join("moved-away")
+            .to_string_lossy()
+            .to_string(),
+    );
+    f.store.upsert_skill(&source_gone).expect("upsert");
+    // s2: central copy gone.
+    let central_gone = by_name("s2");
+    fs::remove_dir_all(&central_gone.central_path).expect("remove central");
+
+    let acquired: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let mut progress: Vec<(RefreshPhase, String)> = Vec::new();
+    let report = refresh_managed_skills_with(
+        &f.paths,
+        &f.store,
+        RefreshSelection::All,
+        RefreshPolicy {
+            reassert_auto_sync: true,
+        },
+        None,
+        3000,
+        |p| progress.push((p.phase, p.skill_name.to_string())),
+        &|skill_id, cancel| {
+            acquired.lock().unwrap().push(skill_id.to_string());
+            crate::core::installer::acquire_managed_skill_update_with(
+                &f.paths,
+                &f.store,
+                skill_id,
+                cancel,
+                &crate::core::git_acquisition::HttpGithubApi::new(None),
+                0,
+            )
+        },
+    )
+    .expect("refresh");
+
+    let healthy = by_name("s0");
+    assert_eq!(
+        acquired.into_inner().unwrap(),
+        vec![healthy.id.clone()],
+        "only the healthy skill reaches the acquire pool"
+    );
+    assert!(
+        progress.iter().all(|(_, name)| name == "s0"),
+        "progress ticks name the batch's members only: {progress:?}"
+    );
+    assert_eq!(ids.len(), 3);
+    assert_eq!(
+        report.skills.len(),
+        3,
+        "every skill is accounted for: {report:?}"
+    );
+    let status_of = |name: &str| {
+        &report
+            .skills
+            .iter()
+            .find(|o| o.skill_name == name)
+            .unwrap_or_else(|| panic!("{name} is in the report: {report:?}"))
+            .status
+    };
+    assert!(matches!(
+        status_of("s0"),
+        SkillRefreshStatus::Refreshed { .. }
+    ));
+    assert!(matches!(
+        status_of("s1"),
+        SkillRefreshStatus::Skipped {
+            state: UnlocatableState::SourceMissing
+        }
+    ));
+    assert!(matches!(
+        status_of("s2"),
+        SkillRefreshStatus::Skipped {
+            state: UnlocatableState::CentralMissing
+        }
+    ));
+    // The auto-sync re-assert ran for the healthy skill only.
+    assert!(f
+        .store
+        .get_skill_target(&healthy.id, "claude_code")
+        .expect("query")
+        .is_some());
+    for name in ["s1", "s2"] {
+        assert!(
+            f.store
+                .list_skill_targets(&by_name(name).id)
+                .expect("query")
+                .is_empty(),
+            "no target is minted for a skipped skill ({name})"
+        );
+    }
+    assert!(!f.paths.home.join(".claude/skills/s2").exists());
 }

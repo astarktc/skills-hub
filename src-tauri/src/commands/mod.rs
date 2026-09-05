@@ -675,7 +675,8 @@ pub struct PropagationTargetDto {
 }
 
 /// Per-skill result of a Refresh batch. A skill whose bytes could not be
-/// acquired is `failed` — its Sync targets were left alone.
+/// acquired is `failed` — its Sync targets were left alone. A skill the
+/// app cannot locate is `skipped` with its state — nothing was touched.
 #[derive(Debug, Serialize, Type)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum SkillRefreshStatusDto {
@@ -691,6 +692,9 @@ pub enum SkillRefreshStatusDto {
     Failed {
         error: CommandError,
     },
+    Skipped {
+        state: UnlocatableState,
+    },
 }
 
 #[derive(Debug, Serialize, Type)]
@@ -705,6 +709,9 @@ pub struct RefreshReportDto {
     pub skills: Vec<SkillRefreshResultDto>,
     pub refreshed: u32,
     pub failed: u32,
+    /// Unlocatable skills Refresh (all) did not dispatch (one `skipped`
+    /// entry each in `skills`).
+    pub skipped: u32,
     /// Sync targets that failed across every refreshed skill. A failed
     /// auto-sync re-assert counts as one.
     pub target_failures: u32,
@@ -793,6 +800,7 @@ fn to_refresh_report_dto(report: crate::core::refresh::RefreshReport) -> Refresh
         skills: Vec::with_capacity(report.skills.len()),
         refreshed: 0,
         failed: 0,
+        skipped: 0,
         target_failures: 0,
     };
     for skill in report.skills {
@@ -861,6 +869,10 @@ fn to_refresh_report_dto(report: crate::core::refresh::RefreshReport) -> Refresh
                 SkillRefreshStatusDto::Failed {
                     error: CommandError::from_anyhow(error),
                 }
+            }
+            SkillRefreshStatus::Skipped { state } => {
+                dto.skipped += 1;
+                SkillRefreshStatusDto::Skipped { state }
             }
         };
         dto.skills.push(SkillRefreshResultDto {

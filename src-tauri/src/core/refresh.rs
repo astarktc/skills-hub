@@ -24,8 +24,10 @@
 //!
 //! Everything is report data: a skill that fails acquisition is reported and
 //! excluded from phase two (and from the re-assert); a Sync target that fails
-//! is reported by Propagation. Only reading the skill list can fail the
-//! operation.
+//! is reported by Propagation. An Unlocatable skill (source folder or central
+//! copy gone) is never dispatched — it is reported *skipped* with its state,
+//! so the re-assert can never mint a dangling link for it. Only reading the
+//! skill list can fail the operation.
 
 use std::sync::mpsc;
 use std::sync::Mutex;
@@ -46,9 +48,10 @@ use super::mutation_guard;
 use super::propagation::{
     PropagationOutcome, PropagationScope, PropagationSkip, PropagationStatus,
 };
-use super::provenance::is_refreshable;
+use super::provenance::{refresh_eligibility, RefreshEligibility};
 use super::skill_store::SkillStore;
 use super::tool_adapters::{global_tool_entries, installed_keys};
+use super::unlocatable::UnlocatableState;
 
 /// Which Managed skills to refresh.
 #[derive(Clone, Debug)]
@@ -108,6 +111,12 @@ pub enum SkillRefreshStatus {
     },
     /// Acquisition or finalize failed; this skill's targets were left alone.
     Failed { error: anyhow::Error },
+    /// Refresh (all) did not dispatch this skill because the app cannot
+    /// locate it (`provenance::refresh_eligibility`); nothing was touched.
+    /// Only `All` skips — an explicitly named id proceeds to the acquire
+    /// step, which answers with the typed condition (or, for a missing
+    /// central copy, rebuilds it: that is Restore).
+    Skipped { state: UnlocatableState },
 }
 
 #[derive(Debug)]
@@ -182,7 +191,10 @@ pub(crate) fn refresh_managed_skills_with(
     mut on_progress: impl FnMut(RefreshProgress),
     acquire: &AcquireFn,
 ) -> Result<RefreshReport> {
-    let selected = select_skills(store, &selection)?;
+    let Selection {
+        members: selected,
+        skipped,
+    } = select_skills(store, &selection)?;
     let total = selected.len();
 
     // Phase 1 — acquire (unlocked, slow I/O) over the bounded pool.
@@ -199,7 +211,7 @@ pub(crate) fn refresh_managed_skills_with(
         // No partial finalize: dropping `results` drops every Staging dir,
         // which removes it.
         drop(results);
-        return Ok(RefreshReport {
+        let mut report = RefreshReport {
             skills: selected
                 .into_iter()
                 .map(|(skill_id, skill_name)| SkillRefreshOutcome {
@@ -210,7 +222,9 @@ pub(crate) fn refresh_managed_skills_with(
                     },
                 })
                 .collect(),
-        });
+        };
+        report.skills.extend(skipped);
+        return Ok(report);
     }
 
     let acquired: Vec<(String, String, Result<AcquiredUpdate>)> = selected
@@ -254,6 +268,7 @@ pub(crate) fn refresh_managed_skills_with(
             status,
         });
     }
+    report.skills.extend(skipped);
     Ok(report)
 }
 
@@ -318,36 +333,50 @@ fn is_cancelled(cancel: Option<&CancelToken>) -> bool {
     cancel.is_some_and(|token| token.is_cancelled())
 }
 
-/// `(id, name)` for every selected skill. An id with no row is dropped rather
-/// than failing the batch — the listing that produced it may be stale.
+/// What a selection resolved to: the `(id, name)` members the batch
+/// dispatches, and the outcomes already settled for skills it skipped.
+struct Selection {
+    members: Vec<(String, String)>,
+    skipped: Vec<SkillRefreshOutcome>,
+}
+
+/// Resolve the selection. An id with no row is dropped rather than failing
+/// the batch — the listing that produced it may be stale.
 ///
-/// Membership is the Provenance rule (`provenance::is_refreshable`): `All`
-/// means every *refreshable* Managed skill — an imported skill is not a
-/// member, so it is neither acquired nor reported (not "skipped"). An id
-/// named explicitly is kept as is: the acquire step answers it with the
-/// typed `NotRefreshable`, so a single Update of such a skill reports a
-/// refusal instead of an empty batch.
-fn select_skills(
-    store: &SkillStore,
-    selection: &RefreshSelection,
-) -> Result<Vec<(String, String)>> {
+/// Membership is `provenance::refresh_eligibility`: `All` means every
+/// *refreshable* Managed skill the app can locate — an imported skill is not
+/// a member, so it is neither acquired nor reported (not "skipped"), while an
+/// Unlocatable one is reported skipped with its state and never dispatched.
+/// An id named explicitly is kept as is: the acquire step answers it with
+/// the typed condition (`NotRefreshable`, `SourcePathMissing`) or rebuilds a
+/// missing central copy (Restore), so a single Update reports what happened
+/// instead of an empty batch.
+fn select_skills(store: &SkillStore, selection: &RefreshSelection) -> Result<Selection> {
+    let mut members = Vec::new();
+    let mut skipped = Vec::new();
     match selection {
-        RefreshSelection::All => Ok(store
-            .list_skills()?
-            .into_iter()
-            .filter(is_refreshable)
-            .map(|s| (s.id, s.name))
-            .collect()),
-        RefreshSelection::Ids(ids) => {
-            let mut out = Vec::with_capacity(ids.len());
-            for id in ids {
-                if let Some(skill) = store.get_skill_by_id(id)? {
-                    out.push((skill.id, skill.name));
+        RefreshSelection::All => {
+            for skill in store.list_skills()? {
+                match refresh_eligibility(&skill) {
+                    RefreshEligibility::Refreshable => members.push((skill.id, skill.name)),
+                    RefreshEligibility::NotAMember => {}
+                    RefreshEligibility::Unlocatable(state) => skipped.push(SkillRefreshOutcome {
+                        skill_id: skill.id,
+                        skill_name: skill.name,
+                        status: SkillRefreshStatus::Skipped { state },
+                    }),
                 }
             }
-            Ok(out)
+        }
+        RefreshSelection::Ids(ids) => {
+            for id in ids {
+                if let Some(skill) = store.get_skill_by_id(id)? {
+                    members.push((skill.id, skill.name));
+                }
+            }
         }
     }
+    Ok(Selection { members, skipped })
 }
 
 /// Finalize one acquired skill and bring its Sync targets into line. The

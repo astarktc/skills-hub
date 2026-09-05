@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use crate::core::skill_catalog::managed_skill_catalog;
 use crate::core::skill_discovery::InvocationMode;
 use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
-use crate::core::unlocatable::UnlocatableState;
 use crate::core::sync_status::{SyncMode, SyncStatus};
+use crate::core::unlocatable::UnlocatableState;
 
 fn make_store(base: &Path) -> SkillStore {
     let store = SkillStore::new(base.join("test.db"));
@@ -229,12 +229,7 @@ fn catalog_marks_unlocatable_skills_by_their_recorded_paths() {
         "source-gone",
         &write_manifest(&central, "source-gone", "---\nname: source-gone\n---\n"),
     );
-    source_gone.source_ref = Some(
-        tmp.path()
-            .join("moved-away")
-            .to_string_lossy()
-            .to_string(),
-    );
+    source_gone.source_ref = Some(tmp.path().join("moved-away").to_string_lossy().to_string());
     store.upsert_skill(&source_gone).unwrap();
 
     let mut central_gone = seed_skill(&store, "s3", "central-gone", &central.join("central-gone"));
@@ -256,8 +251,14 @@ fn catalog_marks_unlocatable_skills_by_their_recorded_paths() {
     catalog.sort_by(|a, b| a.skill.id.cmp(&b.skill.id));
 
     assert_eq!(catalog[0].unlocatable, None, "a healthy local skill");
-    assert_eq!(catalog[1].unlocatable, Some(UnlocatableState::SourceMissing));
-    assert_eq!(catalog[2].unlocatable, Some(UnlocatableState::CentralMissing));
+    assert_eq!(
+        catalog[1].unlocatable,
+        Some(UnlocatableState::SourceMissing)
+    );
+    assert_eq!(
+        catalog[2].unlocatable,
+        Some(UnlocatableState::CentralMissing)
+    );
     assert_eq!(
         catalog[3].unlocatable, None,
         "an imported skill has no source to be missing"

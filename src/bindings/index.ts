@@ -395,6 +395,13 @@ export type ManagedSkillDto = {
 	 *  Provenance rule); the UI offers Update only when `true`.
 	 */
 	refreshable: boolean,
+	/**
+	 *  Which recorded path the app can no longer find, if any (see
+	 *  **Unlocatable skill** in `CONTEXT.md`): `source_missing` offers
+	 *  Re-point / Detach / Remove, `central_missing` offers Restore (when
+	 *  `refreshable`) / Remove. Computed at list time, never stored.
+	 */
+	unlocatable: UnlocatableState | null,
 };
 
 export type OnboardingGroup = {
@@ -539,6 +546,11 @@ export type RefreshReportDto = {
 	refreshed: number,
 	failed: number,
 	/**
+	 *  Unlocatable skills Refresh (all) did not dispatch (one `skipped`
+	 *  entry each in `skills`).
+	 */
+	skipped: number,
+	/**
 	 *  Sync targets that failed across every refreshed skill. A failed
 	 *  auto-sync re-assert counts as one.
 	 */
@@ -636,7 +648,8 @@ export type SkillRefreshResultDto = {
 
 /**
  *  Per-skill result of a Refresh batch. A skill whose bytes could not be
- *  acquired is `failed` — its Sync targets were left alone.
+ *  acquired is `failed` — its Sync targets were left alone. A skill the
+ *  app cannot locate is `skipped` with its state — nothing was touched.
  */
 export type SkillRefreshStatusDto = { status: "refreshed"; content_hash: string | null; source_revision: string | null; targets: PropagationTargetDto[]; 
 /**
@@ -644,7 +657,7 @@ export type SkillRefreshStatusDto = { status: "refreshed"; content_hash: string 
  *  `refreshed`; the targets the re-assert would have created are
  *  unknown, so this counts as one `target_failures`.
  */
-reassert_error: CommandError | null } | { status: "failed"; error: CommandError };
+reassert_error: CommandError | null } | { status: "failed"; error: CommandError } | { status: "skipped"; state: UnlocatableState };
 
 export type SkillTargetDto = {
 	tool: string,
@@ -735,4 +748,11 @@ export type ToolStatusDto = {
 	installed: string[],
 	newly_installed: string[],
 };
+
+/**  Which of a skill's recorded paths is gone. */
+export type UnlocatableState = 
+/**  A `local` skill's source folder is not there. */
+"source_missing" | 
+/**  The central copy is not there. */
+"central_missing";
 
