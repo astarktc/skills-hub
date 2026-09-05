@@ -268,13 +268,15 @@ export type ImportGroupOutcomeDto = {
 };
 
 /**
- *  Per-group result. `targets` carries the sync outcomes (auto-sync on) and
- *  `originals` the settled originals (auto-sync off); the other is empty.
- *  `forced_source_tool` names the Tool the chosen variant was found in when
- *  it was synced beyond the policy's Tools (so its original is overwritten
- *  in place rather than left as an untracked copy); `null` otherwise.
+ *  Per-group result. `targets` carries the sync outcomes (auto-sync on);
+ *  `originals` the settled originals — every variant when auto-sync is off,
+ *  only the divergent siblings kept in place when it is on. `forced_tools`
+ *  lists the Tools synced beyond the policy's Tools because they held a
+ *  variant byte-identical to the chosen one (so their originals are
+ *  overwritten in place rather than left as untracked duplicates); empty
+ *  when the policy already named every one of them.
  */
-export type ImportGroupStatusDto = { status: "imported"; skill_id: string; skill_name: string; targets: SyncTargetResultDto[]; forced_source_tool: string | null; originals: ImportOriginalDto[] } | { status: "failed"; error: CommandError };
+export type ImportGroupStatusDto = { status: "imported"; skill_id: string; skill_name: string; targets: SyncTargetResultDto[]; forced_tools: string[]; originals: ImportOriginalDto[] } | { status: "failed"; error: CommandError };
 
 export type ImportOriginalDto = {
 	path: string,
@@ -283,9 +285,10 @@ export type ImportOriginalDto = {
 };
 
 /**
- *  What happened to one original directory (auto-sync off). `kept_divergent`
- *  means the directory's content differs from the imported skill, so it was
- *  deliberately left in place — report data, not a command error.
+ *  What happened to one original directory. `kept_divergent` means the
+ *  directory's content differs from the imported skill, so it was
+ *  deliberately left in place (under either auto-sync policy) — report data,
+ *  not a command error.
  */
 export type ImportOriginalStatusDto = { status: "removed" } | { status: "kept_divergent" } | { status: "failed"; error: CommandError };
 

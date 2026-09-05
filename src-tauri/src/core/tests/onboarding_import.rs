@@ -59,6 +59,38 @@ fn seed_skill_dir(f: &Fixture, key: &str, name: &str, body: &str) -> PathBuf {
     dir
 }
 
+/// A Tool's variant that is a symlink to another Tool's real skill dir —
+/// the shape the operator's library has when one Tool was linked into
+/// another by hand (or by an earlier tool's sync).
+fn seed_skill_link(f: &Fixture, key: &str, name: &str, target: &Path) -> PathBuf {
+    let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {}", key));
+    let skills_dir = f.paths.home.join(adapter.relative_skills_dir);
+    fs::create_dir_all(&skills_dir).expect("create skills dir");
+    let link = skills_dir.join(name);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, &link).expect("symlink");
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(target, &link).expect("symlink");
+    link
+}
+
+fn assert_links_to_central(f: &Fixture, path: &Path, name: &str) {
+    assert!(
+        path.symlink_metadata()
+            .expect("target present")
+            .file_type()
+            .is_symlink(),
+        "{:?} should be a link",
+        path
+    );
+    assert_eq!(
+        fs::read_link(path).expect("link"),
+        f.paths.central_dir.join(name),
+        "{:?} should point at the central copy",
+        path
+    );
+}
+
 fn selection(group_name: &str, chosen: &Path) -> ImportSelection {
     ImportSelection {
         group_name: group_name.to_string(),
@@ -109,16 +141,17 @@ fn auto_sync_on_overwrites_the_source_tool_in_place_across_its_shared_dir_group(
         skill_id,
         targets,
         originals,
-        forced_source_tool,
+        forced_tools,
         ..
     } = imported(&report, "alpha")
     else {
         panic!("alpha should import: {:?}", report);
     };
     assert!(originals.is_empty(), "auto-sync on removes nothing");
-    assert_eq!(
-        *forced_source_tool, None,
-        "a source Tool the policy already names is not a forced inclusion"
+    assert!(
+        forced_tools.is_empty(),
+        "a source Tool the policy already names is not a forced inclusion: {:?}",
+        forced_tools
     );
     // One artifact, one attempted pair (shared dir dedupe), both rows written.
     assert_eq!(targets.len(), 1, "shared dir attempted once: {:?}", targets);
@@ -169,7 +202,7 @@ fn auto_sync_on_force_includes_a_source_tool_the_policy_deselected() {
         skill_id,
         targets,
         originals,
-        forced_source_tool,
+        forced_tools,
         ..
     } = imported(&report, "alpha")
     else {
@@ -177,8 +210,8 @@ fn auto_sync_on_force_includes_a_source_tool_the_policy_deselected() {
     };
     assert!(originals.is_empty(), "auto-sync on removes nothing");
     assert_eq!(
-        forced_source_tool.as_deref(),
-        Some("claude_code"),
+        *forced_tools,
+        vec!["claude_code".to_string()],
         "the report names the Tool included beyond the policy"
     );
     // The policy's Tool and the source Tool are both synced, nothing else.
@@ -220,6 +253,181 @@ fn auto_sync_on_force_includes_a_source_tool_the_policy_deselected() {
         "the link points at the central copy"
     );
     assert!(f.paths.central_dir.join("alpha").join("SKILL.md").is_file());
+}
+
+#[test]
+fn auto_sync_on_takes_over_every_identical_original_in_the_group() {
+    // The operator's smoke-test shape: pi holds the real dir, claude_code a
+    // symlink to it — one group, same fingerprint, no conflict. The policy
+    // deselects pi. Both Tools must end holding a link to the central copy;
+    // pi is reported as the Tool included beyond the policy.
+    let f = fixture();
+    install_tool(&f, "pi");
+    install_tool(&f, "claude_code");
+    let real = seed_skill_dir(&f, "pi", "alpha", "v1");
+    let link = seed_skill_link(&f, "claude_code", "alpha", &real);
+
+    let report = run(
+        &f,
+        &[selection("alpha", &real)],
+        ImportPolicy {
+            auto_sync: true,
+            tools: Some(vec!["claude_code".to_string()]),
+        },
+    );
+
+    let ImportGroupStatus::Imported {
+        skill_id,
+        targets,
+        originals,
+        forced_tools,
+        ..
+    } = imported(&report, "alpha")
+    else {
+        panic!("alpha should import: {:?}", report);
+    };
+    assert_eq!(*forced_tools, vec!["pi".to_string()], "{:?}", report);
+    assert!(
+        originals.is_empty(),
+        "no divergent sibling to report: {:?}",
+        originals
+    );
+    let mut synced: Vec<&str> = targets
+        .iter()
+        .filter(|t| {
+            matches!(
+                t.status,
+                crate::core::global_sync::BatchTargetStatus::Synced { .. }
+            )
+        })
+        .map(|t| t.tool_key.as_str())
+        .collect();
+    synced.sort_unstable();
+    assert_eq!(synced, vec!["claude_code", "pi"], "{:?}", targets);
+    assert_eq!(targets.len(), 2, "{:?}", targets);
+
+    for (key, path) in [("pi", &real), ("claude_code", &link)] {
+        let row = f
+            .store
+            .get_skill_target(skill_id, key)
+            .expect("query")
+            .unwrap_or_else(|| panic!("row for {}", key));
+        assert_eq!(row.target_path, path.to_string_lossy());
+        assert_eq!(row.mode, SyncMode::Symlink);
+        assert_links_to_central(&f, path, "alpha");
+    }
+    assert!(f.paths.central_dir.join("alpha").join("SKILL.md").is_file());
+}
+
+#[test]
+fn auto_sync_on_leaves_a_divergent_sibling_in_place_and_reports_it() {
+    // pi (real dir) and claude_code (link to it) are identical; cursor holds
+    // a same-named skill with different bytes. Sharing a name never proved
+    // it was the same skill: cursor's copy is neither overwritten nor
+    // force-included — it is kept and reported, as the auto-sync-off path
+    // already does.
+    let f = fixture();
+    install_tool(&f, "pi");
+    install_tool(&f, "claude_code");
+    install_tool(&f, "cursor");
+    let real = seed_skill_dir(&f, "pi", "alpha", "same");
+    let link = seed_skill_link(&f, "claude_code", "alpha", &real);
+    let divergent = seed_skill_dir(&f, "cursor", "alpha", "different");
+    let divergent_bytes = fs::read(divergent.join("SKILL.md")).expect("read");
+
+    let report = run(
+        &f,
+        &[selection("alpha", &real)],
+        ImportPolicy {
+            auto_sync: true,
+            tools: Some(vec!["claude_code".to_string()]),
+        },
+    );
+
+    let ImportGroupStatus::Imported {
+        targets,
+        originals,
+        forced_tools,
+        ..
+    } = imported(&report, "alpha")
+    else {
+        panic!("alpha should import: {:?}", report);
+    };
+    assert_eq!(*forced_tools, vec!["pi".to_string()], "{:?}", report);
+    assert!(
+        !targets.iter().any(|t| t.tool_key == "cursor"),
+        "a divergent sibling's Tool is never force-included: {:?}",
+        targets
+    );
+    assert_eq!(originals.len(), 1, "{:?}", originals);
+    let kept = &originals[0];
+    assert_eq!(kept.path, divergent);
+    assert_eq!(kept.tool, "cursor");
+    assert!(
+        matches!(kept.status, OriginalStatus::KeptDivergent),
+        "divergent sibling is kept: {:?}",
+        kept.status
+    );
+    assert!(
+        !divergent
+            .symlink_metadata()
+            .expect("still present")
+            .file_type()
+            .is_symlink(),
+        "the divergent copy stays a real directory"
+    );
+    assert_eq!(
+        fs::read(divergent.join("SKILL.md")).expect("read"),
+        divergent_bytes,
+        "the divergent copy's bytes are untouched"
+    );
+    assert_links_to_central(&f, &real, "alpha");
+    assert_links_to_central(&f, &link, "alpha");
+}
+
+#[test]
+fn auto_sync_on_reports_nothing_beyond_a_policy_naming_every_identical_tool() {
+    let f = fixture();
+    install_tool(&f, "pi");
+    install_tool(&f, "claude_code");
+    let real = seed_skill_dir(&f, "pi", "alpha", "v1");
+    let link = seed_skill_link(&f, "claude_code", "alpha", &real);
+
+    let report = run(
+        &f,
+        &[selection("alpha", &real)],
+        ImportPolicy {
+            auto_sync: true,
+            tools: Some(vec!["claude_code".to_string(), "pi".to_string()]),
+        },
+    );
+
+    let ImportGroupStatus::Imported {
+        targets,
+        originals,
+        forced_tools,
+        ..
+    } = imported(&report, "alpha")
+    else {
+        panic!("alpha should import: {:?}", report);
+    };
+    assert!(
+        forced_tools.is_empty(),
+        "every identical Tool was already in the policy: {:?}",
+        forced_tools
+    );
+    assert!(originals.is_empty(), "{:?}", originals);
+    assert_eq!(targets.len(), 2, "{:?}", targets);
+    assert!(
+        targets.iter().all(|t| matches!(
+            t.status,
+            crate::core::global_sync::BatchTargetStatus::Synced { .. }
+        )),
+        "{:?}",
+        targets
+    );
+    assert_links_to_central(&f, &real, "alpha");
+    assert_links_to_central(&f, &link, "alpha");
 }
 
 #[test]

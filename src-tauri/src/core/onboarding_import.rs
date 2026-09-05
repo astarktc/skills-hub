@@ -16,14 +16,17 @@
 //!   seams are used (`sync_skills_to_tools_unlocked`, `remove_path_any`) —
 //!   an entry point never calls another entry point.
 //! * **Auto-sync on**: the finalized skill is synced to the requested Tools
-//!   *plus* the chosen variant's own Tool (the source Tool), whether or not
-//!   the policy names it — otherwise a deselected source Tool would keep its
-//!   original as an untracked copy. The source Tool carries a
-//!   force-overwrite override — that copy *is* the import source and its
-//!   bytes are already in the central repo, so replacing it in place with
-//!   the Sync target is safe. When the policy did not name the source Tool,
-//!   the group reports it as `forced_source_tool` so the UI can say why a
-//!   deselected Tool received a link.
+//!   *plus* every Tool holding a variant byte-identical to the chosen one
+//!   (the chosen variant's own Tool always among them), whether or not the
+//!   policy names them — otherwise a deselected Tool would keep its original
+//!   as an untracked duplicate (a real dir in one Tool with another Tool's
+//!   symlink into it is the common shape). Each identical Tool carries a
+//!   force-overwrite override — that copy's bytes *are* the import source
+//!   and already live in the central repo, so replacing it in place with
+//!   the Sync target is safe. The Tools the policy did not name are reported
+//!   as `forced_tools` so the UI can say why a deselected Tool received a
+//!   link. A divergent sibling is neither force-included nor overwritten:
+//!   it is left in place and reported, exactly as on the auto-sync-off path.
 //! * **Auto-sync off**: every original of the group (the chosen variant's own
 //!   path included — it now lives in the central repo) is removed *only* when
 //!   it is byte-identical to the finalized central copy. A divergent sibling
@@ -46,7 +49,7 @@ use super::global_sync::{
 };
 use super::installer::{install_local_skill, InstallerPaths};
 use super::mutation_guard;
-use super::onboarding::{build_onboarding_plan, OnboardingGroup};
+use super::onboarding::{build_onboarding_plan, OnboardingGroup, OnboardingVariant};
 use super::skill_discovery::require_skill_md;
 use super::skill_store::SkillStore;
 use super::sync_engine::remove_path_any;
@@ -91,12 +94,14 @@ pub struct ImportProgress<'a> {
     pub phase: ImportPhase,
 }
 
-/// What happened to one original directory (auto-sync off).
+/// What happened to one original directory.
 #[derive(Debug)]
 pub enum OriginalStatus {
-    /// Byte-identical to the central copy (or already gone) — removed.
+    /// Byte-identical to the central copy (or already gone) — removed
+    /// (auto-sync off).
     Removed,
-    /// Content differs from the central copy, so it was left in place.
+    /// Content differs from the central copy, so it was left in place
+    /// (either policy).
     KeptDivergent,
     /// The path was refused or could not be removed. Report data.
     Failed { error: anyhow::Error },
@@ -116,11 +121,13 @@ pub enum ImportGroupStatus {
         skill_name: String,
         /// Sync targets (auto-sync on); empty when auto-sync is off.
         targets: Vec<BatchTargetOutcome>,
-        /// The source Tool's key when it was synced beyond the policy's
-        /// Tools (auto-sync on, source Tool deselected); `None` when the
-        /// policy already named it or auto-sync is off.
-        forced_source_tool: Option<String>,
-        /// Originals settled (auto-sync off); empty when auto-sync is on.
+        /// The Tools synced beyond the policy's Tools because they held a
+        /// variant byte-identical to the chosen one (auto-sync on), in the
+        /// order they were appended to the target set; empty when the
+        /// policy already named every one of them or auto-sync is off.
+        forced_tools: Vec<String>,
+        /// Originals settled: every variant when auto-sync is off; only the
+        /// divergent siblings (kept in place) when auto-sync is on.
         originals: Vec<OriginalOutcome>,
     },
     /// Admission or finalize failed; nothing of this group was touched.
@@ -233,14 +240,12 @@ fn apply_one_unlocked(
         Err(error) => return ImportGroupStatus::Failed { error },
     };
 
-    let (targets, forced_source_tool, originals) = if policy.auto_sync {
-        let (targets, forced_source_tool) =
-            sync_imported_unlocked(paths, store, &installed, group, selection, policy, now);
-        (targets, forced_source_tool, Vec::new())
+    let (targets, forced_tools, originals) = if policy.auto_sync {
+        sync_imported_unlocked(paths, store, &installed, group, selection, policy, now)
     } else {
         (
             Vec::new(),
-            None,
+            Vec::new(),
             group
                 .variants
                 .iter()
@@ -260,23 +265,25 @@ fn apply_one_unlocked(
         skill_id: installed.skill_id,
         skill_name: installed.name,
         targets,
-        forced_source_tool,
+        forced_tools,
         originals,
     }
 }
 
 /// Auto-sync on: fan the freshly imported skill out to the requested Tools
-/// and the source Tool. The target set is `policy.tools ∪ {source Tool}`:
-/// the chosen variant's own Tool is always synced and force-overwritten —
-/// the original at that path *is* the source, and its bytes are already in
-/// the central repo — so a deselected source Tool never keeps an untracked
-/// copy. Returns the outcomes plus the source Tool's key when it was
-/// included beyond the policy.
+/// and every Tool holding a variant byte-identical to the chosen one. The
+/// target set is `policy.tools ∪ {identical variants' Tools}`: each of those
+/// Tools is synced and force-overwritten — its original *is* the source, and
+/// its bytes are already in the central repo — so a deselected Tool never
+/// keeps an untracked duplicate. A variant whose fingerprint differs is not
+/// touched: it is reported `KeptDivergent`, as the auto-sync-off path
+/// reports it. Returns the outcomes, the Tools included beyond the policy,
+/// and the divergent originals.
 ///
-/// The source Tool is appended *after* the policy's Tools so the batch's
-/// shared-skills-dir dedupe keeps its caller-order semantics: a source Tool
-/// sharing its dir with a policy Tool is covered by that Tool's record
-/// fan-out, exactly as before.
+/// The identical Tools are appended *after* the policy's Tools so the
+/// batch's shared-skills-dir dedupe keeps its caller-order semantics: a
+/// forced Tool sharing its dir with a policy Tool is covered by that Tool's
+/// record fan-out, exactly as before.
 fn sync_imported_unlocked(
     paths: &InstallerPaths,
     store: &SkillStore,
@@ -285,29 +292,44 @@ fn sync_imported_unlocked(
     selection: &ImportSelection,
     policy: &ImportPolicy,
     now: i64,
-) -> (Vec<BatchTargetOutcome>, Option<String>) {
+) -> (Vec<BatchTargetOutcome>, Vec<String>, Vec<OriginalOutcome>) {
     let mut tools = policy
         .tools
         .clone()
         .unwrap_or_else(|| installed_keys(&global_tool_entries(&paths.home)));
-    let source_tool = group
+    let chosen = group
         .variants
         .iter()
-        .find(|variant| variant.path == selection.chosen_path)
-        .map(|variant| variant.tool.clone());
-    let forced_source_tool = source_tool
-        .clone()
-        .filter(|tool_key| !tools.contains(tool_key));
-    tools.extend(forced_source_tool.clone());
-    let overrides = source_tool
-        .map(|tool_key| {
-            vec![BatchOverride {
-                skill_id: installed.skill_id.clone(),
-                tool_key,
-                overwrite: true,
-            }]
+        .find(|variant| variant.path == selection.chosen_path);
+    let mut identical_tools: Vec<String> = Vec::new();
+    let mut originals: Vec<OriginalOutcome> = Vec::new();
+    for variant in &group.variants {
+        if is_identical_to_chosen(variant, chosen) {
+            if !identical_tools.contains(&variant.tool) {
+                identical_tools.push(variant.tool.clone());
+            }
+        } else {
+            originals.push(OriginalOutcome {
+                path: variant.path.clone(),
+                tool: variant.tool.clone(),
+                status: OriginalStatus::KeptDivergent,
+            });
+        }
+    }
+    let forced_tools: Vec<String> = identical_tools
+        .iter()
+        .filter(|tool_key| !tools.contains(tool_key))
+        .cloned()
+        .collect();
+    tools.extend(forced_tools.iter().cloned());
+    let overrides = identical_tools
+        .into_iter()
+        .map(|tool_key| BatchOverride {
+            skill_id: installed.skill_id.clone(),
+            tool_key,
+            overwrite: true,
         })
-        .unwrap_or_default();
+        .collect();
     let skills = [BatchSkill {
         skill_id: installed.skill_id.clone(),
         skill_name: installed.name.clone(),
@@ -327,7 +349,19 @@ fn sync_imported_unlocked(
         now,
         |_| {},
     );
-    (targets, forced_source_tool)
+    (targets, forced_tools, originals)
+}
+
+/// Whether a group variant holds the chosen variant's bytes: the chosen
+/// path itself always does; any other variant does when both fingerprints
+/// are known and equal. A variant whose fingerprint could not be taken is
+/// never assumed identical.
+fn is_identical_to_chosen(variant: &OnboardingVariant, chosen: Option<&OnboardingVariant>) -> bool {
+    let Some(chosen) = chosen else {
+        return false;
+    };
+    variant.path == chosen.path
+        || (chosen.fingerprint.is_some() && variant.fingerprint == chosen.fingerprint)
 }
 
 /// Auto-sync off: remove one original, but only when it is byte-identical to
