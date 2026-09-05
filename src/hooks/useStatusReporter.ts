@@ -230,7 +230,18 @@ export type StatusReporter = {
    * is written for callers outside runAction.
    */
   notifyError: NotifyErrorFn;
+  /**
+   * A batch's failures as error Notifications: one toast on screen (the
+   * first entry, "+N more"), every entry its own history row. Entries with
+   * an empty message are silenced failures (e.g. cancelled) and dropped.
+   */
   showActionErrors: (errors: ActionErrorEntry[]) => void;
+  /**
+   * The same batching as warnings — for outcomes that are not failures but
+   * must not be forgotten either (a Refresh that skipped skills it could
+   * not locate): they linger and count as unread.
+   */
+  showActionWarnings: (warnings: ActionErrorEntry[]) => void;
   /**
    * The one clipboard helper. Copying is a courtesy, not an outcome: a
    * success flashes a toast without becoming a Notification (it is never
@@ -274,27 +285,37 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
     [record],
   );
 
-  const showActionErrors = useCallback(
-    (errors: ActionErrorEntry[]) => {
+  // One batch rule for both kinds: one toast (head + "+N more"), every
+  // entry its own history row, so the N behind the suffix stay readable.
+  const showActionBatch = useCallback(
+    (kind: "error" | "warning", entries: ActionErrorEntry[]) => {
       // Entries with an empty message are silenced failures (e.g. cancelled).
-      const visible = errors.filter((entry) => entry.message);
+      const visible = entries.filter((entry) => entry.message);
       if (visible.length === 0) return;
-      // One toast on screen (head + "+N more"), but the history keeps every
-      // entry as its own row so the N behind the suffix stay readable.
       const head = visible[0];
       const more =
         visible.length > 1
           ? t("errors.moreCount", { count: visible.length - 1 })
           : "";
-      showToast("error", head.title, `${head.message}${more}`);
+      showToast(kind, head.title, `${head.message}${more}`);
       // The history lists newest first, so the batch is recorded last-to-
-      // first: its first failure ends up at the top of its block and the
+      // first: its first entry ends up at the top of its block and the
       // entries read top-down in the order they happened.
       for (let i = visible.length - 1; i >= 0; i--) {
-        record("error", visible[i].title, visible[i].message);
+        record(kind, visible[i].title, visible[i].message);
       }
     },
     [record, t],
+  );
+
+  const showActionErrors = useCallback(
+    (errors: ActionErrorEntry[]) => showActionBatch("error", errors),
+    [showActionBatch],
+  );
+
+  const showActionWarnings = useCallback(
+    (warnings: ActionErrorEntry[]) => showActionBatch("warning", warnings),
+    [showActionBatch],
   );
 
   const notifyError = useCallback<NotifyErrorFn>(
@@ -402,6 +423,7 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
     formatError,
     notifyError,
     showActionErrors,
+    showActionWarnings,
     copyToClipboard,
     cancelLoading,
   };

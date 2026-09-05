@@ -197,6 +197,7 @@ function makeDeps(overrides?: {
     formatError,
     notifyError: vi.fn(),
     showActionErrors: vi.fn(),
+    showActionWarnings: vi.fn(),
     copyToClipboard: vi.fn().mockResolvedValue(true),
     cancelLoading: vi.fn(),
   };

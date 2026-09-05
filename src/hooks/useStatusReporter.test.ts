@@ -341,6 +341,34 @@ describe("useStatusReporter", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
+  // A batch that skipped skills (Refresh all over Unlocatable ones) reports
+  // them the same way, as warnings: one toast, one history row per skill,
+  // each counting as unread.
+  it("showActionWarnings toasts once but records every entry as its own warning", () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+
+    act(() => {
+      result.current.showActionWarnings([
+        { title: "skill-a", message: "a skipped" },
+        { title: "skill-b", message: "b skipped" },
+      ]);
+    });
+
+    expect(toast.warning).toHaveBeenCalledTimes(1);
+    expect(toast.warning).toHaveBeenCalledWith("skill-a", {
+      description: 'a skipped' + 'errors.moreCount {"count":1}',
+      duration: 5000,
+    });
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(
+      result.current.notifications.map((n) => [n.kind, n.title, n.message]),
+    ).toEqual([
+      ["warning", "skill-a", "a skipped"],
+      ["warning", "skill-b", "b skipped"],
+    ]);
+    expect(result.current.unreadCount).toBe(2);
+  });
+
   it("cancelLoading fires the backend cancel and resets the loading surface", async () => {
     const { result } = renderHook(() => useStatusReporter(t));
     let finish: () => void = () => {};
