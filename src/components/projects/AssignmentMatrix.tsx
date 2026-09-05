@@ -15,8 +15,10 @@ import type {
   ResyncSummaryDto,
 } from "./types";
 import type { ManagedSkill } from "../skills/types";
-import type { NotifyFn } from "../../hooks/useStatusReporter";
-import { describeCommandError } from "../../commandError";
+import type {
+  NotifyErrorFn,
+  NotifyFn,
+} from "../../hooks/useStatusReporter";
 import { SYNC_STATUS_CLASS } from "../../syncStatus";
 import {
   filterAndSortSkills,
@@ -46,6 +48,8 @@ export type AssignmentMatrixProps = {
   onConfigureTools: () => void;
   /** The reporter's notification entry point, handed down by the page. */
   notify: NotifyFn;
+  /** The reporter's command-failure entry point: `notifyError(err)`. */
+  notifyError: NotifyErrorFn;
   t: TFunction;
 };
 
@@ -63,6 +67,7 @@ const AssignmentMatrix = ({
   onResyncAll,
   onConfigureTools,
   notify,
+  notifyError,
   t,
 }: AssignmentMatrixProps) => {
   const lastSyncAt = useMemo(() => {
@@ -119,10 +124,9 @@ const AssignmentMatrix = ({
         );
       }
     } catch (err) {
-      const msg = describeCommandError(err, t);
-      if (msg) notify("error", msg);
+      notifyError(err);
     }
-  }, [notify, onResyncProject, t]);
+  }, [notify, notifyError, onResyncProject, t]);
 
   const handleResyncAll = useCallback(async () => {
     try {
@@ -144,10 +148,9 @@ const AssignmentMatrix = ({
         );
       }
     } catch (err) {
-      const msg = describeCommandError(err, t);
-      if (msg) notify("error", msg);
+      notifyError(err);
     }
-  }, [notify, onResyncAll, t]);
+  }, [notify, notifyError, onResyncAll, t]);
 
   if (!project) {
     return (

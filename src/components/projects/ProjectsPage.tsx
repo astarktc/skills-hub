@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
 import { useProjectState } from "./useProjectState";
-import { describeCommandError } from "../../commandError";
 import ProjectList from "./ProjectList";
 import AssignmentMatrix from "./AssignmentMatrix";
 import AddProjectModal from "./AddProjectModal";
@@ -11,14 +10,26 @@ import EditProjectModal from "./EditProjectModal";
 import ToolConfigModal from "../shared/ToolConfigModal";
 import RemoveProjectModal from "./RemoveProjectModal";
 import type { IgnoreUpdateOptions } from "./types";
-import type { NotifyFn } from "../../hooks/useStatusReporter";
+import type {
+  FormatErrorFn,
+  NotifyErrorFn,
+  NotifyFn,
+} from "../../hooks/useStatusReporter";
 
 type ProjectsPageProps = {
   /** The reporter's notification entry point, handed down by the binder. */
   notify: NotifyFn;
+  /** The reporter's command-failure entry point: `notifyError(err)`. */
+  notifyError: NotifyErrorFn;
+  /** The reporter's formatter, for failures folded into one message. */
+  formatError: FormatErrorFn;
 };
 
-const ProjectsPage = ({ notify }: ProjectsPageProps) => {
+const ProjectsPage = ({
+  notify,
+  notifyError,
+  formatError,
+}: ProjectsPageProps) => {
   const { t } = useTranslation();
   const state = useProjectState();
 
@@ -32,11 +43,10 @@ const ProjectsPage = ({ notify }: ProjectsPageProps) => {
         state.openDialog({ kind: "toolConfig" });
         await state.loadToolStatus();
       } catch (err) {
-        const msg = describeCommandError(err, t);
-        if (msg) notify("error", msg);
+        notifyError(err);
       }
     },
-    [notify, state, t],
+    [notifyError, state],
   );
 
   const handleToolConfigConfirm = useCallback(
@@ -45,11 +55,10 @@ const ProjectsPage = ({ notify }: ProjectsPageProps) => {
         await state.configureTools(selectedTools);
         state.closeDialog();
       } catch (err) {
-        const msg = describeCommandError(err, t);
-        if (msg) notify("error", msg);
+        notifyError(err);
       }
     },
-    [notify, state, t],
+    [notifyError, state],
   );
 
   const dialog = state.dialog;
@@ -65,10 +74,9 @@ const ProjectsPage = ({ notify }: ProjectsPageProps) => {
       state.closeDialog();
       notify("success", t("projects.removeConfirm"));
     } catch (err) {
-      const msg = describeCommandError(err, t);
-      if (msg) notify("error", msg);
+      notifyError(err);
     }
-  }, [dialog, notify, state, t]);
+  }, [dialog, notify, notifyError, state, t]);
 
   const handlePromptRemove = useCallback(
     (id: string) => {
@@ -91,11 +99,10 @@ const ProjectsPage = ({ notify }: ProjectsPageProps) => {
         state.closeDialog();
         notify("success", t("projects.configureProject"));
       } catch (err) {
-        const msg = describeCommandError(err, t);
-        if (msg) notify("error", msg);
+        notifyError(err);
       }
     },
-    [notify, state, t],
+    [notify, notifyError, state, t],
   );
 
   const handleResyncProject = useCallback(async () => {
@@ -111,11 +118,10 @@ const ProjectsPage = ({ notify }: ProjectsPageProps) => {
       try {
         await state.toggleAssignment(skillId, tool);
       } catch (err) {
-        const msg = describeCommandError(err, t);
-        if (msg) notify("error", msg);
+        notifyError(err);
       }
     },
-    [notify, state, t],
+    [notifyError, state],
   );
 
   const handleBulkAssign = useCallback(
@@ -126,7 +132,7 @@ const ProjectsPage = ({ notify }: ProjectsPageProps) => {
           const details = result.failed
             .map(
               (f) =>
-                `${f.tool}: ${describeCommandError(f.error, t) ?? f.error.code}`,
+                `${f.tool}: ${formatError(f.error) ?? f.error.code}`,
             )
             .join(", ");
           notify(
@@ -137,11 +143,10 @@ const ProjectsPage = ({ notify }: ProjectsPageProps) => {
           );
         }
       } catch (err) {
-        const msg = describeCommandError(err, t);
-        if (msg) notify("error", msg);
+        notifyError(err);
       }
     },
-    [notify, state, t],
+    [formatError, notify, notifyError, state, t],
   );
 
   const handleConfigureToolsFromToolbar = useCallback(async () => {
@@ -159,11 +164,10 @@ const ProjectsPage = ({ notify }: ProjectsPageProps) => {
         await state.updateProjectPath(projectId, newPath);
         notify("success", t("projects.updatePathSuccess"));
       } catch (err) {
-        const msg = describeCommandError(err, t);
-        if (msg) notify("error", msg);
+        notifyError(err);
       }
     },
-    [notify, state, t],
+    [notify, notifyError, state, t],
   );
 
   return (
@@ -221,6 +225,7 @@ const ProjectsPage = ({ notify }: ProjectsPageProps) => {
                   onResyncAll={handleResyncAll}
                   onConfigureTools={handleConfigureToolsFromToolbar}
                   notify={notify}
+                  notifyError={notifyError}
                   t={t}
                 />
               </div>

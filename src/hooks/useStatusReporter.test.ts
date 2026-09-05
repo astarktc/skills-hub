@@ -369,6 +369,37 @@ describe("useStatusReporter", () => {
     });
   });
 
+  // The one place a caught command failure becomes an error Notification:
+  // localized through formatError, and silent for a cancellation.
+  describe("notifyError", () => {
+    it("reports a command failure as an error Notification", () => {
+      const { result } = renderHook(() => useStatusReporter(t));
+
+      act(() => {
+        result.current.notifyError({ code: "TARGET_EXISTS" });
+      });
+
+      expect(toast.error).toHaveBeenCalledWith(
+        "errors.targetExists",
+        ERROR_OPTIONS,
+      );
+      expect(result.current.notifications).toMatchObject([
+        { kind: "error", title: "errors.targetExists" },
+      ]);
+    });
+
+    it("is silent for a cancelled command", () => {
+      const { result } = renderHook(() => useStatusReporter(t));
+
+      act(() => {
+        result.current.notifyError({ code: "CANCELLED" });
+      });
+
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(result.current.notifications).toEqual([]);
+    });
+  });
+
   it("formatError localizes via describeCommandError and silences CANCELLED", () => {
     const { result } = renderHook(() => useStatusReporter(t));
 

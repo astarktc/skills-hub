@@ -71,6 +71,15 @@ export type NotifyFn = (
 ) => void;
 
 /**
+ * The reporter's command-failure entry point as a value components can
+ * receive from the binder: `notifyError(err)` in a catch block.
+ */
+export type NotifyErrorFn = (err: unknown) => void;
+
+/** Localized copy for a command failure, or null for silent cancellation. */
+export type FormatErrorFn = (err: unknown) => string | null;
+
+/**
  * The reporter's clipboard entry point as a value components can receive
  * from the binder. Resolves to whether the text landed on the clipboard.
  */
@@ -216,7 +225,13 @@ export type StatusReporter = {
    * Single narrow waist for command failures: localized copy (or null for
    * silent cancellation) comes from describeCommandError.
    */
-  formatError: (err: unknown) => string | null;
+  formatError: FormatErrorFn;
+  /**
+   * A caught command failure as an error Notification: `formatError`, then
+   * `notify` unless it was a silent cancellation. The one place that rule
+   * is written for callers outside runAction.
+   */
+  notifyError: NotifyErrorFn;
   showActionErrors: (errors: ActionErrorEntry[]) => void;
   /**
    * The one clipboard helper. Copying is a courtesy, not an outcome: a
@@ -282,6 +297,14 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
       }
     },
     [record, t],
+  );
+
+  const notifyError = useCallback<NotifyErrorFn>(
+    (err) => {
+      const message = formatError(err);
+      if (message) notify("error", message);
+    },
+    [formatError, notify],
   );
 
   const copyToClipboard = useCallback<CopyToClipboardFn>(
@@ -379,6 +402,7 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
     setError,
     setSuccessToastMessage,
     formatError,
+    notifyError,
     showActionErrors,
     copyToClipboard,
     cancelLoading,

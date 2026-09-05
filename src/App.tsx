@@ -104,6 +104,8 @@ function App() {
     actionMessage,
     cancelLoading,
     notify,
+    notifyError,
+    formatError,
     copyToClipboard,
     notifications,
     unreadCount,
@@ -319,7 +321,11 @@ function App() {
             t={t}
           />
         ) : activeView === "projects" ? (
-          <ProjectsPage notify={notify} />
+          <ProjectsPage
+            notify={notify}
+            notifyError={notifyError}
+            formatError={formatError}
+          />
         ) : (
           <ExplorePage
             featuredSkills={explore.featuredSkills}
