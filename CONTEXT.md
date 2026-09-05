@@ -88,6 +88,10 @@ _Avoid_: sync mutex, lock, transaction
 Landing a skill's bytes from a git source in a directory, once, for every flow that needs it (`core/git_acquisition.rs`): given a parsed source and an intent it answers with the bytes, the revision and the strategy used. Two adapters meet at one seam — the GitHub Contents API fast path (fetches the branch SHA first, so the recorded revision is the real commit) and the clone through the git cache (sparse when a subpath is known). A GitHub 404 or 403 is an answer for the operator, raised typed and never retried as a clone; other API failures fall back.
 _Avoid_: download, fetch (that's the cache's job), clone (that's one of the two adapters)
 
+**Notification**:
+One user-visible outcome of an action — a kind (error, warning, success or info), a title, an optional message and the time it was raised. It is shown once as a toast whose lifetime the reporter owns (an error stays until closed; a warning lingers; a success or info flashes) and kept in the session's history, where errors and warnings count as unread until the operator opens the panel. The history is in memory for the session only; what happened in earlier runs is the backend log (see Open log folder in Settings).
+_Avoid_: alert, log line (the backend log is a different thing), toast (that's the transient rendering of one)
+
 **Project sync status**:
 The precedence fold of a project's assignment statuses shown on the project list: error/missing > stale > pending > synced, `none` when the project has no assignments (`ProjectSyncStatus`, `aggregate`).
 _Avoid_: project health, overall status
