@@ -25,6 +25,15 @@
 //! 404 on the branch SHA means the fast path does not apply and the clone —
 //! which uses the repository's real default branch — serves it.
 //!
+//! Both adapters follow **upstream in-repo symlinks** at acquire time, every
+//! time — an aggregation bundle that publishes `plugins/all/skills/<name>`
+//! as a link to `../../<name>/skills/<name>` serves the real bytes — under
+//! one rule ([`super::repo_subpath::LinkChain`]): resolved against the link's
+//! own directory within the repository root, bounded in depth, and refused
+//! typed ([`SignalError::SymlinkEscapesRepo`]) when the target is absolute
+//! or leaves the repository. The subpath reported (and recorded) stays the
+//! alias the operator chose; the resolved path is logged.
+//!
 //! Core resolves no roots here: `cache_dir`, `dest`, `ttl_ms` and the API
 //! token are values the caller supplies. Everything the function touches is
 //! shared behind `&`, so a bounded parallel pool can call it from worker
@@ -308,7 +317,9 @@ fn fast_path(
 ///
 /// The HTTP layer classifies the status at the origin ([`GithubApiError`]);
 /// this maps the two codes acquisition owns to typed signals. No string
-/// sniffing, and cancellation is never a "failed strategy".
+/// sniffing, and a typed condition the download already raised (cancellation,
+/// an upstream link refused) is never a "failed strategy" — a clone would
+/// only answer the same.
 ///
 /// `branch_assumed` is the one nuance: when the source URL named no branch,
 /// [`fast_path_coords`] guessed `main`, so a 404 on the SHA stage says nothing
@@ -319,7 +330,7 @@ fn classify_fast_path_failure(
     branch_assumed: bool,
 ) -> Result<()> {
     let FastPathFailure { stage, error: err } = failure;
-    if err.downcast_ref::<SignalError>() == Some(&SignalError::Cancelled) {
+    if err.downcast_ref::<SignalError>().is_some() {
         return Err(err);
     }
     match err.downcast_ref::<GithubApiError>() {

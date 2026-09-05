@@ -10,6 +10,9 @@ use serde::Deserialize;
 
 use super::cancel_token::CancelToken;
 use super::errors::SignalError;
+use super::repo_subpath::LinkChain;
+
+const GITHUB_API_BASE: &str = "https://api.github.com";
 
 /// A non-success HTTP status from the GitHub API, classified at the origin.
 ///
@@ -48,6 +51,19 @@ struct GithubContent {
     content_type: String,
     download_url: Option<String>,
     path: String,
+    /// The raw link target; present only on the object the API answers for
+    /// a path that *is* a symlink (listing entries of that type carry none).
+    #[serde(default)]
+    target: Option<String>,
+}
+
+/// What `GET /contents/<path>` answers: a listing for a directory, one
+/// object for anything else (a file, a symlink, a submodule).
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ContentsResponse {
+    Listing(Vec<GithubContent>),
+    Entry(GithubContent),
 }
 
 /// Download a directory from a GitHub repo using the Contents API.
@@ -66,19 +82,23 @@ pub fn download_github_directory(
     cancel: Option<&CancelToken>,
     token: Option<&str>,
 ) -> Result<()> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .context("build HTTP client")?;
-
-    std::fs::create_dir_all(dest).with_context(|| format!("create directory {:?}", dest))?;
-
-    download_dir_recursive(&client, owner, repo, branch, path, dest, cancel, token)
+    download_github_directory_from(
+        GITHUB_API_BASE,
+        owner,
+        repo,
+        branch,
+        path,
+        dest,
+        cancel,
+        token,
+    )
 }
 
+/// [`download_github_directory`] against an explicit API origin (tests point
+/// it at a local server).
 #[allow(clippy::too_many_arguments)]
-fn download_dir_recursive(
-    client: &Client,
+fn download_github_directory_from(
+    api_base: &str,
     owner: &str,
     repo: &str,
     branch: &str,
@@ -87,13 +107,39 @@ fn download_dir_recursive(
     cancel: Option<&CancelToken>,
     token: Option<&str>,
 ) -> Result<()> {
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .context("build HTTP client")?;
+
+    std::fs::create_dir_all(dest).with_context(|| format!("create directory {:?}", dest))?;
+
+    let mut chain = LinkChain::new();
+    download_dir_recursive(
+        &client, api_base, owner, repo, branch, path, dest, cancel, token, &mut chain,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn download_dir_recursive(
+    client: &Client,
+    api_base: &str,
+    owner: &str,
+    repo: &str,
+    branch: &str,
+    path: &str,
+    dest: &Path,
+    cancel: Option<&CancelToken>,
+    token: Option<&str>,
+    chain: &mut LinkChain,
+) -> Result<()> {
     if cancel.is_some_and(|c| c.is_cancelled()) {
         anyhow::bail!(SignalError::Cancelled);
     }
 
     let url = format!(
-        "https://api.github.com/repos/{}/{}/contents/{}?ref={}",
-        owner, repo, path, branch
+        "{}/repos/{}/{}/contents/{}?ref={}",
+        api_base, owner, repo, path, branch
     );
 
     let mut req = client
@@ -108,9 +154,32 @@ fn download_dir_recursive(
         .with_context(|| format!("request GitHub contents: {}", url))?;
     let resp = check_github_response(resp, &url)?;
 
-    let items: Vec<GithubContent> = resp
-        .json()
-        .with_context(|| format!("parse GitHub contents response: {}", url))?;
+    let items = match resp
+        .json::<ContentsResponse>()
+        .with_context(|| format!("parse GitHub contents response: {}", url))?
+    {
+        ContentsResponse::Listing(items) => items,
+        // The path is an upstream symlink: follow it, relative to the
+        // entry's own directory and within the repository (the shared rule
+        // refuses an escaping target before anything at it is requested).
+        ContentsResponse::Entry(GithubContent {
+            content_type,
+            target: Some(target),
+            ..
+        }) if content_type == "symlink" => {
+            let resolved = chain.follow(path, &target)?;
+            return download_dir_recursive(
+                client, api_base, owner, repo, branch, &resolved, dest, cancel, token, chain,
+            );
+        }
+        ContentsResponse::Entry(entry) => {
+            anyhow::bail!(
+                "GitHub contents path is not a directory (type {}): {}",
+                entry.content_type,
+                entry.path
+            );
+        }
+    };
 
     for item in items {
         if cancel.is_some_and(|c| c.is_cancelled()) {
@@ -145,6 +214,7 @@ fn download_dir_recursive(
             "dir" => {
                 download_dir_recursive(
                     client,
+                    api_base,
                     owner,
                     repo,
                     branch,
@@ -152,10 +222,12 @@ fn download_dir_recursive(
                     &local_path,
                     cancel,
                     token,
+                    chain,
                 )?;
             }
             _ => {
-                // Skip symlinks, submodules, etc.
+                // Skip symlinks nested inside the directory (a listing entry
+                // carries no target), submodules, etc.
             }
         }
     }
@@ -397,6 +469,119 @@ mod tests {
             .unwrap_or_else(|| panic!("expected GithubApiError, got: {:#}", err));
         assert_eq!(api.status, 502);
         assert_eq!(api.reset_minutes, None);
+    }
+
+    // -----------------------------------------------------------------------
+    // Upstream in-repo symlinks (API path)
+    // -----------------------------------------------------------------------
+
+    /// A directory listing entry as the Contents API spells it.
+    fn listing_file(server: &str, dir: &str, name: &str) -> String {
+        format!(
+            r#"{{"name":"{name}","path":"{dir}/{name}","type":"file","download_url":"{server}/raw/{dir}/{name}"}}"#
+        )
+    }
+
+    /// The Contents API's answer for a path that is a symlink: one object
+    /// (not a listing) with `type: symlink` and the raw `target`.
+    fn symlink_object(path: &str, target: &str) -> String {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        format!(
+            r#"{{"name":"{name}","path":"{path}","type":"symlink","target":"{target}","download_url":null}}"#
+        )
+    }
+
+    /// The upstream case: the requested path answers `type: symlink`, whose
+    /// target is followed relative to the entry's own directory, and the
+    /// real directory's files land in dest.
+    #[test]
+    fn a_symlink_path_is_followed_to_its_target_directory() {
+        let mut server = mockito::Server::new();
+        let base = server.url();
+        let alias = "plugins/tanstack-all/skills/tanstack-table";
+        let real = "plugins/tanstack-table/skills/tanstack-table";
+        let _alias = server
+            .mock(
+                "GET",
+                format!("/repos/o/r/contents/{alias}?ref=main").as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(symlink_object(
+                alias,
+                "../../tanstack-table/skills/tanstack-table",
+            ))
+            .create();
+        let _real = server
+            .mock(
+                "GET",
+                format!("/repos/o/r/contents/{real}?ref=main").as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!("[{}]", listing_file(&base, real, "SKILL.md")))
+            .create();
+        let _raw = server
+            .mock("GET", format!("/raw/{real}/SKILL.md").as_str())
+            .with_status(200)
+            .with_body("---\nname: tanstack-table\n---\nthe real skill\n")
+            .create();
+        let dest = tempfile::tempdir().unwrap();
+
+        download_github_directory_from(&base, "o", "r", "main", alias, dest.path(), None, None)
+            .expect("the link is followed");
+
+        assert_eq!(
+            std::fs::read_to_string(dest.path().join("SKILL.md")).expect("SKILL.md landed"),
+            "---\nname: tanstack-table\n---\nthe real skill\n"
+        );
+    }
+
+    /// An absolute target and a target that climbs out of the repository are
+    /// each refused with the typed condition, and the API is never asked for
+    /// anything beyond the link itself.
+    #[test]
+    fn an_escaping_symlink_target_is_refused_typed_and_never_requested() {
+        for target in ["/etc/skills", "../../../../outside"] {
+            let mut server = mockito::Server::new();
+            let base = server.url();
+            let _alias = server
+                .mock("GET", "/repos/o/r/contents/skills/x?ref=main")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(symlink_object("skills/x", target))
+                .create();
+            // Mocks match in definition order: anything the alias mock did
+            // not answer is a read past the refusal.
+            let nothing_else = server.mock("GET", mockito::Matcher::Any).expect(0).create();
+            let dest = tempfile::tempdir().unwrap();
+
+            let err = download_github_directory_from(
+                &base,
+                "o",
+                "r",
+                "main",
+                "skills/x",
+                dest.path(),
+                None,
+                None,
+            )
+            .expect_err("the target is refused");
+
+            assert_eq!(
+                err.downcast_ref::<SignalError>(),
+                Some(&SignalError::SymlinkEscapesRepo {
+                    subpath: "skills/x".to_string(),
+                    target: target.to_string(),
+                }),
+                "{target}"
+            );
+            nothing_else.assert();
+            assert!(
+                std::fs::read_dir(dest.path()).unwrap().next().is_none(),
+                "nothing landed for {target}"
+            );
+        }
     }
 
     #[test]

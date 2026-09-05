@@ -196,6 +196,8 @@ struct StubApi<'a> {
     sha_error: Option<GithubApiError>,
     /// Failure raised instead of serving the directory download.
     download_error: Option<GithubApiError>,
+    /// Typed condition raised by the download (an upstream link refused).
+    download_signal: Option<SignalError>,
     /// Files the download writes into `dest`.
     files: Vec<(&'a str, &'a str)>,
     /// Cancel this token when the download is entered (mid-acquisition cancel).
@@ -275,6 +277,9 @@ impl GithubApi for StubApi<'_> {
             fs::create_dir_all(dest).expect("create dest");
             fs::write(dest.join("partial.txt"), "half a download").expect("write");
             return Err(anyhow::Error::new(err.clone()));
+        }
+        if let Some(signal) = &self.download_signal {
+            return Err(anyhow::Error::new(signal.clone()).context("download skill"));
         }
         fs::create_dir_all(dest).expect("create dest");
         for (path, contents) in &self.files {
@@ -605,6 +610,36 @@ fn a_rate_limit_without_an_eta_reports_zero() {
     assert_eq!(
         err.downcast_ref::<SignalError>(),
         Some(&SignalError::RateLimited { reset_minutes: 0 })
+    );
+}
+
+/// A typed refusal raised by the fast path — an upstream link whose target
+/// leaves the repository — is the operator's answer: it reaches the caller
+/// as-is and is never retried as a clone (which would only refuse again).
+#[test]
+fn a_typed_refusal_on_the_fast_path_is_not_retried_as_a_clone() {
+    let repo = single_skill_repo();
+    let source = local_source_with_api(repo.path());
+    let (_fx, cache_dir, dest) = Fixture::new();
+    let refused = SignalError::SymlinkEscapesRepo {
+        subpath: "skills/a".to_string(),
+        target: "../../outside".to_string(),
+    };
+    let api = StubApi {
+        download_signal: Some(refused.clone()),
+        ..StubApi::serving("deadbeef")
+    };
+
+    let err = acquire(
+        &request(&source, SkillIntent::Subpath("skills/a"), &dest, &cache_dir),
+        &api,
+    )
+    .expect_err("the refusal fails the acquisition");
+
+    assert_eq!(err.downcast_ref::<SignalError>(), Some(&refused));
+    assert!(
+        !git_cache_root_exists(&cache_dir),
+        "a typed refusal must not fall back to a clone"
     );
 }
 
