@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use crate::core::cancel_token::CancelToken;
 use crate::core::errors::SignalError;
-use crate::core::installer::{install_local_skill, InstallerPaths};
+use crate::core::installer::{install_imported_skill, install_local_skill, InstallerPaths};
 use crate::core::propagation::{PropagationOutcome, PropagationScope, PropagationStatus};
 use crate::core::refresh::{
     merge_reassert, refresh_managed_skills, refresh_managed_skills_with, RefreshPhase,
@@ -638,5 +638,145 @@ fn two_skills_from_one_repository_share_the_cache_without_corrupting_it() {
     assert!(
         meta.contains(&revisions[0]),
         "cache metadata records the fetched head: {meta}"
+    );
+}
+
+/// An `imported` Managed skill taken over from `claude_code`'s skills dir,
+/// installed the way Onboarding import records it.
+fn install_imported(paths: &InstallerPaths, store: &SkillStore, name: &str) -> String {
+    let claude = adapter_by_key("claude_code").expect("claude_code adapter");
+    let found = paths.home.join(claude.relative_skills_dir).join(name);
+    fs::create_dir_all(&found).expect("tool skill dir");
+    fs::write(found.join("SKILL.md"), format!("---\nname: {name}\n---\n")).expect("write");
+    install_imported_skill(paths, store, &found, Some(name.to_string()), "claude_code")
+        .expect("import")
+        .skill_id
+}
+
+/// Refresh (all) over one `git` and one `imported` skill: the imported one
+/// is not a member of the batch — not acquired, not applied, not reported —
+/// so the report counts exactly one skill, not "1 refreshed, 1 skipped".
+#[test]
+fn refresh_all_never_puts_an_imported_skill_in_the_batch() {
+    let f = pool_fixture(0);
+    let repo = fixture_repo();
+    let url = repo.path().to_string_lossy().to_string();
+    let git_skill = crate::core::installer::install_git_skill_from_selection(
+        &f.paths,
+        &f.store,
+        &url,
+        "skills/a",
+        Some("from-git".to_string()),
+        None,
+    )
+    .expect("install from the fixture repo");
+    let imported_id = install_imported(&f.paths, &f.store, "taken-over");
+    let imported_before = f
+        .store
+        .get_skill_by_id(&imported_id)
+        .expect("query")
+        .expect("imported record");
+
+    let acquired: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let mut progress: Vec<(RefreshPhase, String)> = Vec::new();
+    let report = refresh_managed_skills_with(
+        &f.paths,
+        &f.store,
+        RefreshSelection::All,
+        RefreshPolicy {
+            reassert_auto_sync: true,
+        },
+        None,
+        3000,
+        |p| progress.push((p.phase, p.skill_name.to_string())),
+        &|skill_id, cancel| {
+            acquired.lock().unwrap().push(skill_id.to_string());
+            crate::core::installer::acquire_managed_skill_update_with(
+                &f.paths,
+                &f.store,
+                skill_id,
+                cancel,
+                &crate::core::git_acquisition::HttpGithubApi::new(None),
+                0,
+            )
+        },
+    )
+    .expect("refresh");
+
+    assert_eq!(
+        acquired.into_inner().unwrap(),
+        vec![git_skill.skill_id.clone()],
+        "only the git skill reaches the acquire pool"
+    );
+    assert_eq!(report.skills.len(), 1, "got {:?}", report);
+    assert_eq!(report.skills[0].skill_id, git_skill.skill_id);
+    assert!(matches!(
+        report.skills[0].status,
+        SkillRefreshStatus::Refreshed { .. }
+    ));
+    assert!(
+        progress
+            .iter()
+            .all(|(_, name)| name == "from-git" && progress.len() == 2),
+        "progress ticks name the batch's one member only: {:?}",
+        progress
+    );
+    // The auto-sync re-assert ran for the git skill only: the imported skill
+    // got no target and its record was not touched.
+    let claude = adapter_by_key("claude_code").expect("claude_code adapter");
+    fs::create_dir_all(f.paths.home.join(claude.relative_detect_dir)).expect("install tool");
+    assert!(
+        f.store
+            .list_skill_targets(&imported_id)
+            .expect("query")
+            .is_empty(),
+        "reassert_auto_sync never runs for a non-member"
+    );
+    let imported_after = f
+        .store
+        .get_skill_by_id(&imported_id)
+        .expect("query")
+        .expect("imported record");
+    assert_eq!(imported_after.updated_at, imported_before.updated_at);
+}
+
+/// A single Update names the skill explicitly; for an imported skill the
+/// answer is a typed refusal, not a silent empty report.
+#[test]
+fn a_single_update_of_an_imported_skill_is_refused_with_a_typed_condition() {
+    let f = pool_fixture(0);
+    let imported_id = install_imported(&f.paths, &f.store, "taken-over");
+
+    let report = refresh_managed_skills(
+        &f.paths,
+        &f.store,
+        RefreshSelection::Ids(vec![imported_id.clone()]),
+        RefreshPolicy::default(),
+        None,
+        3000,
+        |_| {},
+    )
+    .expect("refresh");
+
+    let [outcome] = report.skills.as_slice() else {
+        panic!("one outcome for the one requested skill: {:?}", report);
+    };
+    let SkillRefreshStatus::Failed { error } = &outcome.status else {
+        panic!("an imported skill cannot be updated: {:?}", outcome);
+    };
+    assert_eq!(
+        error.downcast_ref::<SignalError>(),
+        Some(&SignalError::NotRefreshable {
+            name: "taken-over".to_string(),
+        }),
+        "got {error:#}"
+    );
+    assert!(
+        f.paths
+            .central_dir
+            .join("taken-over")
+            .join("SKILL.md")
+            .is_file(),
+        "the central copy is untouched"
     );
 }

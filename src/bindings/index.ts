@@ -204,7 +204,9 @@ detail: string } | { code: "SYMLINK_ESCAPES_REPO";
 /**  Repo-relative path of the symlink that was refused. */
 subpath: string; 
 /**  The link's raw target (absolute, or climbing out of the repository). */
-target: string } | { code: "OTHER"; message: string };
+target: string } | { code: "NOT_REFRESHABLE"; 
+/**  The Managed skill that has no external source (imported provenance). */
+name: string } | { code: "OTHER"; message: string };
 
 export type FeaturedSkillDto = {
 	slug: string,
@@ -367,8 +369,12 @@ export type ManagedSkillDto = {
 	id: string,
 	name: string,
 	description: string | null,
+	/**  Provenance: `git`, `local` or `imported` (see `CONTEXT.md`). */
 	source_type: string,
+	/**  The external source (repo URL or folder); `None` for an imported skill. */
 	source_ref: string | null,
+	/**  For an imported skill, the Tool it was found in — display-only history. */
+	imported_from_tool: string | null,
 	central_path: string,
 	created_at: number,
 	updated_at: number,
@@ -380,6 +386,11 @@ export type ManagedSkillDto = {
 	 */
 	invocation_mode: InvocationMode,
 	targets: SkillTargetDto[],
+	/**
+	 *  Whether Update / Refresh can re-acquire this skill (backend-owned
+	 *  Provenance rule); the UI offers Update only when `true`.
+	 */
+	refreshable: boolean,
 };
 
 export type OnboardingGroup = {

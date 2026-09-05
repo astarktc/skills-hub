@@ -75,6 +75,10 @@ pub enum SignalError {
     /// to follow it. Nothing at the target is read. Owned by
     /// `repo_subpath::LinkChain`.
     SymlinkEscapesRepo { subpath: String, target: String },
+    /// An Update was asked of a skill that has no external source to
+    /// re-acquire from (`imported` provenance: the central copy is its
+    /// truth). Owned by `core::provenance::is_refreshable`.
+    NotRefreshable { name: String },
 }
 
 impl fmt::Display for SignalError {
@@ -140,6 +144,9 @@ impl fmt::Display for SignalError {
                     f,
                     "symlink at {subpath} escapes the repository (target: {target})"
                 )
+            }
+            SignalError::NotRefreshable { name } => {
+                write!(f, "skill has no source to refresh from: {name}")
             }
         }
     }

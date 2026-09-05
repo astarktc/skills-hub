@@ -16,6 +16,7 @@ use anyhow::{Context, Result};
 use std::path::Path;
 
 use crate::core::{
+    provenance::is_refreshable,
     skill_discovery::{invocation_mode_for_dir, InvocationMode},
     skill_store::{SkillRecord, SkillStore, SkillTargetRecord},
 };
@@ -29,6 +30,10 @@ pub struct ManagedSkillEntry {
     pub invocation_mode: InvocationMode,
     /// Every global Sync target row of this skill, in store order.
     pub targets: Vec<SkillTargetRecord>,
+    /// Whether Refresh / Update can re-acquire this skill — the Provenance
+    /// rule (`provenance::is_refreshable`), answered here so the UI shows or
+    /// hides Update without re-deriving it.
+    pub refreshable: bool,
 }
 
 /// Assemble the Managed-skill catalog: every Managed skill with its Sync
@@ -41,10 +46,12 @@ pub fn managed_skill_catalog(store: &SkillStore) -> Result<Vec<ManagedSkillEntry
             .list_skill_targets(&skill.id)
             .with_context(|| format!("list sync targets for skill {}", skill.id))?;
         let invocation_mode = invocation_mode_for_dir(Path::new(&skill.central_path));
+        let refreshable = is_refreshable(&skill);
         entries.push(ManagedSkillEntry {
             skill,
             invocation_mode,
             targets,
+            refreshable,
         });
     }
     Ok(entries)

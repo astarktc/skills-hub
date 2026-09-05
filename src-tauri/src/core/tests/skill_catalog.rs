@@ -164,3 +164,37 @@ fn a_failing_target_query_fails_the_catalog_instead_of_hiding_targets() {
         "the failure names the skill it could not describe: {chain}"
     );
 }
+
+/// The listing answers "can this skill be refreshed?" itself, from the one
+/// Provenance predicate, so the UI never re-derives it from `source_type`.
+#[test]
+fn catalog_marks_an_imported_skill_not_refreshable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = tmp.path().join("central");
+    seed_skill(
+        &store,
+        "s1",
+        "alpha",
+        &write_manifest(&central, "alpha", "---\nname: alpha\n---\n"),
+    );
+    let mut imported = seed_skill(
+        &store,
+        "s2",
+        "beta",
+        &write_manifest(&central, "beta", "---\nname: beta\n---\n"),
+    );
+    imported.source_type = "imported".to_string();
+    imported.imported_from_tool = Some("claude_code".to_string());
+    store.upsert_skill(&imported).expect("upsert imported");
+
+    let mut catalog = managed_skill_catalog(&store).expect("catalog");
+    catalog.sort_by(|a, b| a.skill.id.cmp(&b.skill.id));
+
+    assert!(catalog[0].refreshable, "a local skill is refreshable");
+    assert!(!catalog[1].refreshable, "an imported skill is not");
+    assert_eq!(
+        catalog[1].skill.imported_from_tool.as_deref(),
+        Some("claude_code")
+    );
+}

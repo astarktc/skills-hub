@@ -124,6 +124,10 @@ pub enum CommandError {
         /// The link's raw target (absolute, or climbing out of the repository).
         target: String,
     },
+    NotRefreshable {
+        /// The Managed skill that has no external source (imported provenance).
+        name: String,
+    },
     Other {
         message: String,
     },
@@ -249,6 +253,7 @@ impl From<SignalError> for CommandError {
             SignalError::SymlinkEscapesRepo { subpath, target } => {
                 CommandError::SymlinkEscapesRepo { subpath, target }
             }
+            SignalError::NotRefreshable { name } => CommandError::NotRefreshable { name },
         }
     }
 }

@@ -418,6 +418,35 @@ fn update_of_a_skill_whose_central_copy_is_gone_is_typed_central_path_missing() 
     assert!(json.get("message").is_none(), "no prose on the wire");
 }
 
+/// Update of an `imported` skill reaches the wire as `NOT_REFRESHABLE` with
+/// the skill's name — the card hides Update for it, so this is the answer to
+/// a stale or hand-built request.
+#[test]
+fn update_of_an_imported_skill_is_typed_not_refreshable() {
+    let (_dir, paths, store) = missing_path_fixture();
+    let found = paths.home.join(".claude/skills/taken-over");
+    std::fs::create_dir_all(&found).unwrap();
+    std::fs::write(found.join("SKILL.md"), b"---\nname: taken-over\n---\n").unwrap();
+    let installed = crate::core::installer::install_imported_skill(
+        &paths,
+        &store,
+        &found,
+        Some("taken-over".to_string()),
+        "claude_code",
+    )
+    .unwrap();
+
+    let error = update_outcome_at_the_seam(&paths, &store, &installed.skill_id);
+
+    let json = serde_json::to_value(&error).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "code": "NOT_REFRESHABLE", "name": "taken-over" }),
+        "got {error}"
+    );
+    assert!(json.get("message").is_none(), "no prose on the wire");
+}
+
 /// Whatever fails on the way to revealing the log folder (resolving the dir,
 /// creating it, the opener) reaches the wire as `REVEAL_LOG_FAILED` with
 /// the whole chain as diagnostics.

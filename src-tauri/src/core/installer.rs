@@ -17,6 +17,7 @@ use super::install_finalize::{
     StagingDir,
 };
 use super::propagation::{propagate_unlocked, PropagationReport};
+use super::provenance::{is_refreshable, Provenance};
 use super::skill_discovery::{
     discover_skills, find_skill_md, is_skill_dir, parse_skill_md, parse_skill_md_with_reason,
     require_skill_md, DiscoveredSkill,
@@ -124,6 +125,14 @@ fn install_from_dir(
         NameIntent::UserProvided(name),
         provenance,
     )
+}
+
+/// The typed condition for an Update of a skill that has no external source
+/// (`provenance::is_refreshable` said no).
+fn not_refreshable(record: &super::skill_store::SkillRecord) -> SignalError {
+    SignalError::NotRefreshable {
+        name: record.name.clone(),
+    }
 }
 
 /// The typed condition for an external source folder that is not there,
@@ -234,6 +243,12 @@ pub(crate) fn acquire_managed_skill_update_with(
         })
     })?;
 
+    // The Provenance rule first: a skill with no external source has nothing
+    // to acquire, whatever the state of its central copy.
+    if !is_refreshable(&record) {
+        anyhow::bail!(not_refreshable(&record));
+    }
+
     let central_path = PathBuf::from(record.central_path.clone());
     if !central_path.exists() {
         anyhow::bail!(SignalError::CentralPathMissing {
@@ -251,62 +266,65 @@ pub(crate) fn acquire_managed_skill_update_with(
 
     let mut new_revision: Option<String> = None;
 
-    if record.source_type == "git" {
-        let repo_url = record
-            .source_ref
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("missing source_ref for git skill"))?;
-        let source = parse_github_url(repo_url);
+    match Provenance::parse(&record.source_type) {
+        Some(Provenance::Git) => {
+            let repo_url = record
+                .source_ref
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("missing source_ref for git skill"))?;
+            let source = parse_github_url(repo_url);
 
-        // Prefer the stored source_subpath (from install time) over the one
-        // the URL names. A legacy record has neither: the acquisition module
-        // matches the skill's name against the repo and reports what it took,
-        // which is the subpath backfilled below.
-        let known_subpath = record
-            .source_subpath
-            .clone()
-            .or_else(|| source.subpath.clone());
-        let skill_name = record.name.clone();
-        let intent = match &known_subpath {
-            Some(subpath) => SkillIntent::Subpath(subpath),
-            None => SkillIntent::NamedSkillOrWholeRepo(&skill_name),
-        };
+            // Prefer the stored source_subpath (from install time) over the one
+            // the URL names. A legacy record has neither: the acquisition module
+            // matches the skill's name against the repo and reports what it took,
+            // which is the subpath backfilled below.
+            let known_subpath = record
+                .source_subpath
+                .clone()
+                .or_else(|| source.subpath.clone());
+            let skill_name = record.name.clone();
+            let intent = match &known_subpath {
+                Some(subpath) => SkillIntent::Subpath(subpath),
+                None => SkillIntent::NamedSkillOrWholeRepo(&skill_name),
+            };
 
-        let acquired = acquire(
-            &AcquireRequest {
-                source: &source,
-                intent,
-                dest: &staging_dir,
-                cache_dir: &paths.cache_dir,
-                ttl_ms,
-                cancel,
-                allow_fast_path: true,
-            },
-            api,
-        )?;
-        new_revision = Some(acquired.revision);
+            let acquired = acquire(
+                &AcquireRequest {
+                    source: &source,
+                    intent,
+                    dest: &staging_dir,
+                    cache_dir: &paths.cache_dir,
+                    ttl_ms,
+                    cancel,
+                    allow_fast_path: true,
+                },
+                api,
+            )?;
+            new_revision = Some(acquired.revision);
 
-        if known_subpath.is_none() {
-            if let Some(resolved) = acquired.resolved_subpath {
-                // Backfill source_subpath for future updates (carried into the
-                // refreshed record by finalize_update as well).
-                record.source_subpath = Some(resolved);
-                let _ = store.upsert_skill(&record);
+            if known_subpath.is_none() {
+                if let Some(resolved) = acquired.resolved_subpath {
+                    // Backfill source_subpath for future updates (carried into the
+                    // refreshed record by finalize_update as well).
+                    record.source_subpath = Some(resolved);
+                    let _ = store.upsert_skill(&record);
+                }
             }
         }
-    } else if record.source_type == "local" {
-        let source = record
-            .source_ref
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("missing source_ref for local skill"))?;
-        let source_path = PathBuf::from(source);
-        if !source_path.exists() {
-            anyhow::bail!(source_path_missing(&source_path));
+        Some(Provenance::Local) => {
+            let source = record
+                .source_ref
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("missing source_ref for local skill"))?;
+            let source_path = PathBuf::from(source);
+            if !source_path.exists() {
+                anyhow::bail!(source_path_missing(&source_path));
+            }
+            copy_dir_recursive(&source_path, &staging_dir)
+                .with_context(|| format!("copy {:?} -> {:?}", source_path, staging_dir))?;
         }
-        copy_dir_recursive(&source_path, &staging_dir)
-            .with_context(|| format!("copy {:?} -> {:?}", source_path, staging_dir))?;
-    } else {
-        anyhow::bail!("unsupported source_type for update: {}", record.source_type);
+        // Excluded by the predicate above; restated so the match is total.
+        Some(Provenance::Imported) | None => anyhow::bail!(not_refreshable(&record)),
     }
 
     Ok(AcquiredUpdate {

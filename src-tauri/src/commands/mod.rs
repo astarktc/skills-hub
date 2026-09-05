@@ -1106,8 +1106,12 @@ pub struct ManagedSkillDto {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
+    /// Provenance: `git`, `local` or `imported` (see `CONTEXT.md`).
     pub source_type: String,
+    /// The external source (repo URL or folder); `None` for an imported skill.
     pub source_ref: Option<String>,
+    /// For an imported skill, the Tool it was found in — display-only history.
+    pub imported_from_tool: Option<String>,
     pub central_path: String,
     pub created_at: i64,
     pub updated_at: i64,
@@ -1117,6 +1121,9 @@ pub struct ManagedSkillDto {
     /// frontmatter at list time (not persisted).
     pub invocation_mode: InvocationMode,
     pub targets: Vec<SkillTargetDto>,
+    /// Whether Update / Refresh can re-acquire this skill (backend-owned
+    /// Provenance rule); the UI offers Update only when `true`.
+    pub refreshable: bool,
 }
 
 #[derive(Debug, Serialize, Type)]
@@ -1170,6 +1177,7 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
             skill,
             invocation_mode,
             targets,
+            refreshable,
         } = entry;
         ManagedSkillDto {
             id: skill.id,
@@ -1177,6 +1185,7 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
             description: skill.description,
             source_type: skill.source_type,
             source_ref: skill.source_ref,
+            imported_from_tool: skill.imported_from_tool,
             central_path: skill.central_path,
             created_at: skill.created_at,
             updated_at: skill.updated_at,
@@ -1193,6 +1202,7 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
                     synced_at: target.synced_at,
                 })
                 .collect(),
+            refreshable,
         }
     }
 }

@@ -46,6 +46,7 @@ use super::mutation_guard;
 use super::propagation::{
     PropagationOutcome, PropagationScope, PropagationSkip, PropagationStatus,
 };
+use super::provenance::is_refreshable;
 use super::skill_store::SkillStore;
 use super::tool_adapters::{global_tool_entries, installed_keys};
 
@@ -319,6 +320,13 @@ fn is_cancelled(cancel: Option<&CancelToken>) -> bool {
 
 /// `(id, name)` for every selected skill. An id with no row is dropped rather
 /// than failing the batch — the listing that produced it may be stale.
+///
+/// Membership is the Provenance rule (`provenance::is_refreshable`): `All`
+/// means every *refreshable* Managed skill — an imported skill is not a
+/// member, so it is neither acquired nor reported (not "skipped"). An id
+/// named explicitly is kept as is: the acquire step answers it with the
+/// typed `NotRefreshable`, so a single Update of such a skill reports a
+/// refusal instead of an empty batch.
 fn select_skills(
     store: &SkillStore,
     selection: &RefreshSelection,
@@ -327,6 +335,7 @@ fn select_skills(
         RefreshSelection::All => Ok(store
             .list_skills()?
             .into_iter()
+            .filter(is_refreshable)
             .map(|s| (s.id, s.name))
             .collect()),
         RefreshSelection::Ids(ids) => {
