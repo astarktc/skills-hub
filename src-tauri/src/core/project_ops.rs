@@ -269,42 +269,38 @@ pub(crate) fn configure_project_tools_unlocked(
     project_tool_dtos(store, project_id)
 }
 
-/// Artifact removal for a whole project, then the project record.
-///
-/// Mutation entry point: serialised against every other Sync-target mutation.
-pub fn remove_project_with_cleanup(store: &SkillStore, project_id: &str) -> Result<()> {
-    mutation_guard::serialized(|| remove_project_with_cleanup_unlocked(store, project_id))
-}
-
-/// The [`RemovalScope::Project`] plan, executed once, then this caller's
-/// final policy — mirroring the whole-skill rule of ADR-0002: the project row
-/// goes only when every artifact went. If any removal failed, the project and
-/// its `error` assignment rows are kept and the typed `DeleteCleanupFailed`
-/// names what is still on disk, so a retry can re-plan exactly those paths.
+/// Artifact removal for a whole project, then the project record: the
+/// [`RemovalScope::Project`] plan, executed once, then this caller's final
+/// policy — mirroring the whole-skill rule of ADR-0002: the project row goes
+/// only when every artifact went. If any removal failed, the project and its
+/// `error` assignment rows are kept and the typed `DeleteCleanupFailed` names
+/// what is still on disk, so a retry can re-plan exactly those paths.
 ///
 /// Assignment rows the plan skipped (no locatable artifact: unknown tool key,
 /// no skill name) are deleted with the project — `delete_project` cascades
 /// `project_skill_assignments` — because there is nothing left to retry for
 /// them.
-pub(crate) fn remove_project_with_cleanup_unlocked(
-    store: &SkillStore,
-    project_id: &str,
-) -> Result<()> {
-    require_project(store, project_id)?;
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
+/// No composite operation removes a project, so it has no unlocked seam.
+pub fn remove_project_with_cleanup(store: &SkillStore, project_id: &str) -> Result<()> {
+    mutation_guard::serialized(|| {
+        require_project(store, project_id)?;
 
-    let scope = RemovalScope::Project {
-        project_id: project_id.to_string(),
-    };
-    let plan = artifact_removal::plan(store, &scope)?;
-    let report = artifact_removal::execute_unlocked(store, plan)?;
+        let scope = RemovalScope::Project {
+            project_id: project_id.to_string(),
+        };
+        let plan = artifact_removal::plan(store, &scope)?;
+        let report = artifact_removal::execute_unlocked(store, plan)?;
 
-    let failures = report.failures();
-    if !failures.is_empty() {
-        bail!(SignalError::DeleteCleanupFailed { failures });
-    }
+        let failures = report.failures();
+        if !failures.is_empty() {
+            bail!(SignalError::DeleteCleanupFailed { failures });
+        }
 
-    store.delete_project(project_id)?;
-    Ok(())
+        store.delete_project(project_id)?;
+        Ok(())
+    })
 }
 
 /// Every project as a wire row. Two grouped queries plus the project read,

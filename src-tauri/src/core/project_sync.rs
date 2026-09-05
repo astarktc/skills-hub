@@ -193,6 +193,7 @@ pub fn lookup_project_and_skill(
 /// results are data.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
+/// No composite operation composes it, so it has no unlocked seam.
 pub fn assign_skill_to_project_tools(
     store: &SkillStore,
     project_id: &str,
@@ -200,25 +201,16 @@ pub fn assign_skill_to_project_tools(
     now: i64,
 ) -> Result<Vec<AssignTargetOutcome>> {
     mutation_guard::serialized(|| {
-        assign_skill_to_project_tools_unlocked(store, project_id, skill_id, now)
+        let (project, skill) = lookup_project_and_skill(store, project_id, skill_id)?;
+        let tool_keys: Vec<String> = store
+            .list_project_tools(project_id)?
+            .into_iter()
+            .map(|t| t.tool)
+            .collect();
+        Ok(assign_skill_to_tools(
+            store, &project, &skill, &tool_keys, now,
+        ))
     })
-}
-
-pub(crate) fn assign_skill_to_project_tools_unlocked(
-    store: &SkillStore,
-    project_id: &str,
-    skill_id: &str,
-    now: i64,
-) -> Result<Vec<AssignTargetOutcome>> {
-    let (project, skill) = lookup_project_and_skill(store, project_id, skill_id)?;
-    let tool_keys: Vec<String> = store
-        .list_project_tools(project_id)?
-        .into_iter()
-        .map(|t| t.tool)
-        .collect();
-    Ok(assign_skill_to_tools(
-        store, &project, &skill, &tool_keys, now,
-    ))
 }
 
 /// Assign one skill to one tool: the single-target view of the same engine,
@@ -342,37 +334,33 @@ pub(crate) fn resync_project_unlocked(
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
 /// The per-project step is the unlocked seam — the guard is not reentrant.
+/// Nothing composes the whole batch, so it has no unlocked seam of its own.
 pub fn resync_all_projects(store: &SkillStore, now: i64) -> Result<Vec<ResyncSummary>> {
-    mutation_guard::serialized(|| resync_all_projects_unlocked(store, now))
-}
+    mutation_guard::serialized(|| {
+        let projects = store.list_projects()?;
+        let mut summaries = Vec::with_capacity(projects.len());
 
-pub(crate) fn resync_all_projects_unlocked(
-    store: &SkillStore,
-    now: i64,
-) -> Result<Vec<ResyncSummary>> {
-    let projects = store.list_projects()?;
-    let mut summaries = Vec::with_capacity(projects.len());
-
-    for project in &projects {
-        match resync_project_unlocked(store, &project.id, now) {
-            Ok(summary) => summaries.push(summary),
-            Err(e) => {
-                log::warn!(
-                    "resync_all: failed to resync project {}: {:#}",
-                    project.id,
-                    e
-                );
-                summaries.push(ResyncSummary {
-                    project_id: project.id.clone(),
-                    synced: 0,
-                    failed: 0,
-                    errors: vec![format!("project-level error: {:#}", e)],
-                });
+        for project in &projects {
+            match resync_project_unlocked(store, &project.id, now) {
+                Ok(summary) => summaries.push(summary),
+                Err(e) => {
+                    log::warn!(
+                        "resync_all: failed to resync project {}: {:#}",
+                        project.id,
+                        e
+                    );
+                    summaries.push(ResyncSummary {
+                        project_id: project.id.clone(),
+                        synced: 0,
+                        failed: 0,
+                        errors: vec![format!("project-level error: {:#}", e)],
+                    });
+                }
             }
         }
-    }
 
-    Ok(summaries)
+        Ok(summaries)
+    })
 }
 
 /// One assignment's on-disk facts, resolved by `observe_assignment`. Owns the

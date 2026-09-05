@@ -701,28 +701,6 @@ impl SkillStore {
         })
     }
 
-    /// Bulk delete, kept as a store capability; Artifact removal settles
-    /// rows one at a time so a failed artifact keeps its row.
-    #[allow(dead_code)]
-    pub fn delete_all_skill_targets(&self) -> Result<()> {
-        self.with_conn(|conn| {
-            conn.execute("DELETE FROM skill_targets", [])?;
-            Ok(())
-        })
-    }
-
-    /// Bulk delete of one skill's rows; see [`Self::delete_all_skill_targets`].
-    #[allow(dead_code)]
-    pub fn delete_skill_targets(&self, skill_id: &str) -> Result<()> {
-        self.with_conn(|conn| {
-            conn.execute(
-                "DELETE FROM skill_targets WHERE skill_id = ?1",
-                params![skill_id],
-            )?;
-            Ok(())
-        })
-    }
-
     pub fn list_project_skill_assignments_by_skill(
         &self,
         skill_id: &str,
@@ -1070,7 +1048,6 @@ impl SkillStore {
         })
     }
 
-    #[allow(dead_code)] // Used in Phase 2 (project_sync module)
     pub fn get_project_skill_assignment(
         &self,
         project_id: &str,
@@ -1110,7 +1087,6 @@ impl SkillStore {
         })
     }
 
-    #[allow(dead_code)] // Used in Phase 2 (sync logic)
     pub fn list_project_skill_assignments_for_project_tool(
         &self,
         project_id: &str,

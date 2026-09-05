@@ -1198,64 +1198,6 @@ fn get_project_skill_assignment_returns_none() {
 }
 
 #[test]
-fn delete_all_skill_targets_clears_table() {
-    let (_dir, store) = make_store();
-    let skill = make_skill("s1", "SkillA", "/central/a", 10);
-    store.upsert_skill(&skill).unwrap();
-    store
-        .upsert_skill_target(&SkillTargetRecord {
-            id: "t1".to_string(),
-            skill_id: "s1".to_string(),
-            tool: "claude_code".to_string(),
-            target_path: "/tmp/target".to_string(),
-            mode: SyncMode::Symlink,
-            status: SyncStatus::Synced,
-            last_error: None,
-            synced_at: Some(10),
-        })
-        .unwrap();
-    assert_eq!(store.list_skill_targets("s1").unwrap().len(), 1);
-    store.delete_all_skill_targets().unwrap();
-    assert_eq!(store.list_skill_targets("s1").unwrap().len(), 0);
-}
-
-#[test]
-fn delete_skill_targets_removes_only_specified_skill() {
-    let (_dir, store) = make_store();
-    let s1 = make_skill("s1", "A", "/central/a", 10);
-    let s2 = make_skill("s2", "B", "/central/b", 10);
-    store.upsert_skill(&s1).unwrap();
-    store.upsert_skill(&s2).unwrap();
-    store
-        .upsert_skill_target(&SkillTargetRecord {
-            id: "t1".to_string(),
-            skill_id: "s1".to_string(),
-            tool: "claude_code".to_string(),
-            target_path: "/tmp/t1".to_string(),
-            mode: SyncMode::Symlink,
-            status: SyncStatus::Synced,
-            last_error: None,
-            synced_at: Some(10),
-        })
-        .unwrap();
-    store
-        .upsert_skill_target(&SkillTargetRecord {
-            id: "t2".to_string(),
-            skill_id: "s2".to_string(),
-            tool: "claude_code".to_string(),
-            target_path: "/tmp/t2".to_string(),
-            mode: SyncMode::Symlink,
-            status: SyncStatus::Synced,
-            last_error: None,
-            synced_at: Some(10),
-        })
-        .unwrap();
-    store.delete_skill_targets("s1").unwrap();
-    assert_eq!(store.list_skill_targets("s1").unwrap().len(), 0);
-    assert_eq!(store.list_skill_targets("s2").unwrap().len(), 1);
-}
-
-#[test]
 fn project_aggregate_sync_status_treats_missing_as_error() {
     let (_dir, store) = make_store();
     let project = ProjectRecord {
