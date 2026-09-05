@@ -47,6 +47,46 @@ function replaceCargoPackageVersion(filePath, newValue) {
   return { from: m[1], to: newValue, changed: updated !== original };
 }
 
+// package-lock.json: npm writes `JSON.stringify(lock, null, 2) + "\n"`, so re-serialising the parsed
+// object touches only the two root `version` fields (top-level and the `""` package entry).
+function readPackageLockVersions(filePath = "package-lock.json") {
+  const lock = JSON.parse(read(filePath));
+  return { root: lock.version, rootPackage: lock.packages?.[""]?.version };
+}
+
+function replacePackageLockVersions(filePath, newValue) {
+  const original = read(filePath);
+  const lock = JSON.parse(original);
+  const from = { root: lock.version, rootPackage: lock.packages?.[""]?.version };
+  if (typeof from.root !== "string") throw new Error(`Cannot find root "version" in ${filePath}`);
+  if (typeof from.rootPackage !== "string") throw new Error(`Cannot find packages[""].version in ${filePath}`);
+  lock.version = newValue;
+  lock.packages[""].version = newValue;
+  const updated = `${JSON.stringify(lock, null, 2)}\n`;
+  if (updated !== original) write(filePath, updated);
+  return { from: `${from.root}/${from.rootPackage}`, to: newValue, changed: updated !== original };
+}
+
+// Cargo.lock: the app crate's own `[[package]]` block. Anchored on the `name = "app"` line that
+// directly follows the block header so no dependency named otherwise can match; every other byte
+// of the file is preserved (no TOML parser — cargo owns this file).
+const CARGO_LOCK_APP_RE = /(^\[\[package\]\]\r?\nname = "app"\r?\nversion = ")([^"]*)(")/m;
+
+function readCargoLockAppVersion(filePath = "src-tauri/Cargo.lock") {
+  const m = read(filePath).match(CARGO_LOCK_APP_RE);
+  if (!m) throw new Error(`Cannot find the [[package]] name = "app" entry in ${filePath}`);
+  return m[2];
+}
+
+function replaceCargoLockAppVersion(filePath, newValue) {
+  const original = read(filePath);
+  const m = original.match(CARGO_LOCK_APP_RE);
+  if (!m) throw new Error(`Cannot find the [[package]] name = "app" entry in ${filePath}`);
+  const updated = original.replace(CARGO_LOCK_APP_RE, `$1${newValue}$3`);
+  if (updated !== original) write(filePath, updated);
+  return { from: m[2], to: newValue, changed: updated !== original };
+}
+
 function getPackageJsonVersion() {
   const pkg = JSON.parse(read("package.json"));
   if (!pkg.version || typeof pkg.version !== "string") {
@@ -65,6 +105,8 @@ function syncFromPackageJson() {
   results.push({ file: "package.json", ...(replaceJsonStringProp("package.json", "version", version)) });
   results.push({ file: "src-tauri/tauri.conf.json", ...(replaceJsonStringProp("src-tauri/tauri.conf.json", "version", version)) });
   results.push({ file: "src-tauri/Cargo.toml", ...(replaceCargoPackageVersion("src-tauri/Cargo.toml", version)) });
+  results.push({ file: "package-lock.json", ...(replacePackageLockVersions("package-lock.json", version)) });
+  results.push({ file: "src-tauri/Cargo.lock", ...(replaceCargoLockAppVersion("src-tauri/Cargo.lock", version)) });
   return { version, results };
 }
 
@@ -90,6 +132,19 @@ function checkInSync() {
   const cargoVersion = m[1];
   if (cargoVersion !== version) {
     mismatches.push(`src-tauri/Cargo.toml version=${cargoVersion} (expected ${version})`);
+  }
+
+  const lock = readPackageLockVersions();
+  if (lock.root !== version) {
+    mismatches.push(`package-lock.json version=${lock.root} (expected ${version})`);
+  }
+  if (lock.rootPackage !== version) {
+    mismatches.push(`package-lock.json packages[""].version=${lock.rootPackage} (expected ${version})`);
+  }
+
+  const cargoLockVersion = readCargoLockAppVersion();
+  if (cargoLockVersion !== version) {
+    mismatches.push(`src-tauri/Cargo.lock [[package]] app version=${cargoLockVersion} (expected ${version})`);
   }
 
   return { version, mismatches };
