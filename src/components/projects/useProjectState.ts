@@ -88,17 +88,36 @@ export type ProjectState = {
   closeDialog: () => void;
 };
 
+/**
+ * The selected project together with the matrix shown for it. One value so
+ * that "is this view for the selected project?" is answered inside a pure
+ * updater against the selection it will update — never by a side effect in
+ * another state's updater (which React invokes twice under StrictMode).
+ */
+type Selection = {
+  projectId: string | null;
+  tools: ProjectToolDto[];
+  assignments: ProjectSkillAssignmentDto[];
+  reconciled: boolean;
+};
+
+const NO_SELECTION: Selection = {
+  projectId: null,
+  tools: [],
+  assignments: [],
+  reconciled: true,
+};
+
 export function useProjectState(): ProjectState {
   // Data state
   const [projects, setProjects] = useState<ProjectDto[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
-    null,
-  );
-  const [tools, setTools] = useState<ProjectToolDto[]>([]);
-  const [assignments, setAssignments] = useState<ProjectSkillAssignmentDto[]>(
-    [],
-  );
-  const [assignmentsReconciled, setAssignmentsReconciled] = useState(true);
+  const [selection, setSelection] = useState<Selection>(NO_SELECTION);
+  const {
+    projectId: selectedProjectId,
+    tools,
+    assignments,
+    reconciled: assignmentsReconciled,
+  } = selection;
   const [skills, setSkills] = useState<ManagedSkill[]>([]);
   const [toolStatus, setToolStatus] = useState<ToolStatusDto | null>(null);
 
@@ -139,14 +158,16 @@ export function useProjectState(): ProjectState {
       next[index] = view.project;
       return next;
     });
-    setSelectedProjectId((current) => {
-      if (current === view.project.id) {
-        setTools(view.tools);
-        setAssignments(view.assignments);
-        setAssignmentsReconciled(view.reconciled);
-      }
-      return current;
-    });
+    setSelection((current) =>
+      current.projectId === view.project.id
+        ? {
+            projectId: current.projectId,
+            tools: view.tools,
+            assignments: view.assignments,
+            reconciled: view.reconciled,
+          }
+        : current,
+    );
   }, []);
 
   /**
@@ -199,7 +220,9 @@ export function useProjectState(): ProjectState {
 
   const selectProject = useCallback(
     async (id: string) => {
-      setSelectedProjectId(id);
+      // The previous matrix stays up under the loading flag until the view
+      // lands; `applyView` matches it by this id.
+      setSelection((current) => ({ ...current, projectId: id }));
       setMatrixLoading(true);
       const version = ++selectVersionRef.current;
       try {
@@ -210,8 +233,7 @@ export function useProjectState(): ProjectState {
         applyView(view);
       } catch (err) {
         if (selectVersionRef.current !== version) return;
-        setTools([]);
-        setAssignments([]);
+        setSelection((current) => ({ ...current, tools: [], assignments: [] }));
         throw err;
       } finally {
         if (selectVersionRef.current === version) {
@@ -253,14 +275,9 @@ export function useProjectState(): ProjectState {
         throw err;
       }
       setProjects(remaining);
-      setSelectedProjectId((prev) => {
-        if (prev === id) {
-          setTools([]);
-          setAssignments([]);
-          return null;
-        }
-        return prev;
-      });
+      setSelection((current) =>
+        current.projectId === id ? NO_SELECTION : current,
+      );
     },
     [refreshView],
   );

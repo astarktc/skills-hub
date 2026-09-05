@@ -4,6 +4,7 @@
 // state that got applied, not how many calls it took. The backend is mocked
 // at the invokeTauri module seam.
 
+import { StrictMode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -625,6 +626,85 @@ describe("useProjectState applies the view a mutation returns", () => {
 
     expect(commandOrder()).toEqual(["getProjectView"]);
     expect(result.current.tools.map((t) => t.tool)).toEqual(["pi"]);
+  });
+});
+
+describe("useProjectState selection and matrix agree", () => {
+  it("applies a late mutation result for a deselected project to its row only", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    await act(async () => {
+      await result.current.registerProject("/work/p2", {
+        add_to_gitignore: false,
+        add_to_exclude: false,
+      });
+    });
+
+    // p1's toggle is still in flight when the operator selects p2.
+    const base = mockInvoke.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockInvoke.mockImplementation((command, ...args) => {
+      if (command === "toggleProjectSkillAssignment") {
+        return gate.then(() => base(command, ...args));
+      }
+      return base(command, ...args);
+    });
+    let toggle!: Promise<void>;
+    act(() => {
+      toggle = result.current.toggleAssignment("s1", "pi");
+    });
+    await act(async () => {
+      await result.current.selectProject("p2");
+    });
+    await act(async () => {
+      release();
+      await toggle;
+    });
+
+    // The matrix is p2's; p1's new assignment shows only on p1's row.
+    expect(result.current.selectedProjectId).toBe("p2");
+    expect(result.current.assignments).toEqual([]);
+    expect(
+      result.current.projects.find((p) => p.id === "p1")?.assignment_count,
+    ).toBe(1);
+  });
+
+  it("derives the matrix once per view under StrictMode's doubled updaters", async () => {
+    // StrictMode invokes state updaters twice; deriving the matrix inside
+    // one would double-fire. Selection and removal must settle on the
+    // single view read either way.
+    const rendered = renderHook(() => useProjectState(), {
+      wrapper: StrictMode,
+    });
+    await waitFor(() => {
+      expect(rendered.result.current.projectsLoading).toBe(false);
+    });
+    const { result } = rendered;
+    await withSelectedProject(result, ["pi"]);
+    await act(async () => {
+      await result.current.toggleAssignment("s1", "pi");
+    });
+    mockInvoke.mockClear();
+
+    await act(async () => {
+      await result.current.selectProject("p1");
+    });
+
+    expect(commandOrder()).toEqual(["getProjectView"]);
+    expect(result.current.tools.map((t) => t.tool)).toEqual(["pi"]);
+    expect(result.current.assignments.map((a) => a.skill_id)).toEqual(["s1"]);
+    expect(result.current.assignmentsReconciled).toBe(true);
+
+    await act(async () => {
+      await result.current.removeProject("p1");
+    });
+
+    expect(result.current.selectedProjectId).toBeNull();
+    expect(result.current.tools).toEqual([]);
+    expect(result.current.assignments).toEqual([]);
   });
 });
 
