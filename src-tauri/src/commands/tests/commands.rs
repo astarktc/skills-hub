@@ -1,8 +1,62 @@
 use super::*;
+use crate::core::artifact_removal::{
+    RemovalReport, RemovalScope, RemovalTargetOutcome, RemovalTargetStatus, RowRef,
+};
 use crate::core::errors::SignalError;
 use crate::core::global_sync::GlobalSyncError;
 use crate::core::sync_engine::remove_path_any;
 use error::GitCloneFailureKind;
+
+/// A removal target that failed with a typed condition reaches the wire as
+/// that condition's own code — the report carries the error value, so the
+/// seam classifies it the way it classifies a thrown error (never `OTHER`).
+/// A shared skills dir settles several rows from one failure: every row
+/// carries the same classified error.
+#[test]
+fn removal_report_dto_classifies_a_typed_target_failure_at_the_seam() {
+    let refused = "/home/user/Documents/not-a-skill";
+    let error = anyhow::Error::new(SignalError::PathOutsideToolDirs {
+        path: refused.to_string(),
+    })
+    .context("remove dir");
+    let report = RemovalReport {
+        scope: RemovalScope::SkillGlobal {
+            skill_id: "s1".to_string(),
+        },
+        targets: vec![RemovalTargetOutcome {
+            path: std::path::PathBuf::from(refused),
+            rows: vec![
+                RowRef::GlobalTarget {
+                    id: "t1".to_string(),
+                    skill_id: "s1".to_string(),
+                    tool: "amp".to_string(),
+                },
+                RowRef::GlobalTarget {
+                    id: "t2".to_string(),
+                    skill_id: "s1".to_string(),
+                    tool: "kimi_cli".to_string(),
+                },
+            ],
+            status: RemovalTargetStatus::Failed { error },
+        }],
+        central_removed: false,
+        record_deleted: false,
+    };
+
+    let dto = to_removal_report_dto(report);
+
+    assert_eq!(dto.failed, 2);
+    assert_eq!(dto.removed, 0);
+    assert_eq!(dto.targets.len(), 2, "one DTO row per settled row");
+    for target in &dto.targets {
+        match &target.status {
+            RemovalTargetStatusDto::Failed {
+                error: CommandError::PathOutsideToolDirs { path },
+            } => assert_eq!(path, refused),
+            other => panic!("expected PATH_OUTSIDE_TOOL_DIRS for {}, got {other:?}", target.tool),
+        }
+    }
+}
 
 #[test]
 fn from_anyhow_recovers_signal_errors_through_context() {

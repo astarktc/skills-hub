@@ -147,16 +147,21 @@ pub struct RemovalPlan {
     pub skill: Option<SkillRecord>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Like `PropagationStatus`, the failure carries the error value itself —
+/// not its rendered chain — so a typed `SignalError` inside it survives to
+/// the command seam, where `CommandError::from_anyhow` classifies it. That
+/// costs `Clone`/`PartialEq` (an `anyhow::Error` has neither); the report is
+/// consumed once, so nothing needs them.
+#[derive(Debug)]
 pub enum RemovalTargetStatus {
     /// Removed, or already absent.
     Removed,
-    /// `error` is the `{:#}` chain of the removal failure (diagnostic text,
-    /// not user copy). Every attached row was kept with status `error`.
-    Failed { error: String },
+    /// The removal failure, chain intact. Every attached row was kept with
+    /// status `error` carrying its `{:#}` rendering as the diagnostic.
+    Failed { error: anyhow::Error },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct RemovalTargetOutcome {
     pub path: PathBuf,
     pub rows: Vec<RowRef>,
@@ -181,7 +186,7 @@ impl RemovalReport {
             .iter()
             .filter_map(|t| match &t.status {
                 RemovalTargetStatus::Failed { error } => {
-                    Some(format!("{}: {}", t.path.display(), error))
+                    Some(format!("{}: {:#}", t.path.display(), error))
                 }
                 RemovalTargetStatus::Removed => None,
             })
@@ -218,7 +223,7 @@ impl fmt::Display for RemovalReport {
         for target in &self.targets {
             let status = match &target.status {
                 RemovalTargetStatus::Removed => "removed".to_string(),
-                RemovalTargetStatus::Failed { error } => format!("failed: {}", error),
+                RemovalTargetStatus::Failed { error } => format!("failed: {:#}", error),
             };
             let tools: Vec<&str> = target.rows.iter().map(RowRef::tool).collect();
             write!(
@@ -454,9 +459,7 @@ pub(crate) fn execute_unlocked(store: &SkillStore, plan: RemovalPlan) -> Result<
         let status = if is_present(&target.path) {
             match remove_path_any(&target.path) {
                 Ok(()) => RemovalTargetStatus::Removed,
-                Err(err) => RemovalTargetStatus::Failed {
-                    error: format!("{:#}", err),
-                },
+                Err(error) => RemovalTargetStatus::Failed { error },
             }
         } else {
             RemovalTargetStatus::Removed
@@ -465,7 +468,9 @@ pub(crate) fn execute_unlocked(store: &SkillStore, plan: RemovalPlan) -> Result<
         for row in &target.rows {
             match &status {
                 RemovalTargetStatus::Removed => delete_row(store, row)?,
-                RemovalTargetStatus::Failed { error } => settle_row_as_error(store, row, error)?,
+                RemovalTargetStatus::Failed { error } => {
+                    settle_row_as_error(store, row, &format!("{:#}", error))?
+                }
             }
         }
 

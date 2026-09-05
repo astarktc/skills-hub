@@ -517,6 +517,39 @@ fn a_failed_removal_keeps_every_attached_row_with_status_error() {
     }
 }
 
+/// The report carries the failure as an error value, not rendered text, so
+/// the command seam can classify it (a typed `SignalError` becomes its own
+/// wire code rather than `OTHER`). Here the chain bottoms out in the io error.
+#[cfg(unix)]
+#[test]
+fn a_failed_removal_reports_the_error_chain_not_its_rendering() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let home = home_with(tmp.path(), &["amp"]);
+    let central = make_skill_dir(&tmp.path().join("central"), "stuck");
+    let skill = seed_skill(&store, "stuck", &central);
+    let shared = home.join(".config/agents/skills/stuck");
+    seed_global_target_at(&store, &skill, "amp", &shared);
+    if !make_unremovable(&shared) {
+        return; // running as root
+    }
+
+    let report = unsync_skill_targets(&store, &skill.id).expect("unsync reports failures");
+    restore_permissions(&shared);
+
+    assert_eq!(report.targets.len(), 1);
+    match &report.targets[0].status {
+        RemovalTargetStatus::Failed { error } => {
+            assert!(
+                error.root_cause().downcast_ref::<std::io::Error>().is_some(),
+                "the io failure is still downcastable through the chain: {error:#}"
+            );
+            assert!(error.chain().count() > 1, "context layers are kept");
+        }
+        RemovalTargetStatus::Removed => panic!("the stuck artifact must report Failed"),
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_failed_project_artifact_keeps_its_assignment_row_with_status_error() {

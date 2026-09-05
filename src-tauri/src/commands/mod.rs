@@ -524,7 +524,9 @@ pub struct RemovalReportDto {
 }
 
 /// One DTO row per settled row: a shared skills dir removes one artifact but
-/// settles every member row, and the frontend reports per tool.
+/// settles every member row, and the frontend reports per tool. A failure is
+/// classified once per target (the report carries the error chain, so a typed
+/// `SignalError` becomes its own code here) and repeated on every member row.
 fn to_removal_report_dto(report: crate::core::artifact_removal::RemovalReport) -> RemovalReportDto {
     use crate::core::artifact_removal::RemovalTargetStatus;
 
@@ -535,11 +537,15 @@ fn to_removal_report_dto(report: crate::core::artifact_removal::RemovalReport) -
     };
     for target in report.targets {
         let path = target.path.to_string_lossy().to_string();
+        let error = match target.status {
+            RemovalTargetStatus::Removed => None,
+            RemovalTargetStatus::Failed { error } => Some(CommandError::from_anyhow(error)),
+        };
         for row in target.rows {
-            let status = match &target.status {
-                RemovalTargetStatus::Removed => RemovalTargetStatusDto::Removed,
-                RemovalTargetStatus::Failed { error } => RemovalTargetStatusDto::Failed {
-                    error: CommandError::from_anyhow(anyhow::anyhow!("{}", error)),
+            let status = match &error {
+                None => RemovalTargetStatusDto::Removed,
+                Some(error) => RemovalTargetStatusDto::Failed {
+                    error: error.clone(),
                 },
             };
             let scope = match row.project_id() {
