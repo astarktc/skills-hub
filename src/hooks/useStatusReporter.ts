@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { describeCommandError } from "../commandError";
 import { invokeTauri } from "../lib/tauri";
@@ -7,6 +7,28 @@ export type ActionErrorEntry = { title: string; message: string };
 
 /** The severity of one user-visible notification. */
 export type NotificationKind = "error" | "warning" | "success" | "info";
+
+/**
+ * One user-visible outcome of an action: shown once as a toast and kept in
+ * the session's history (spec Q3/Q4). `id` increases monotonically within
+ * the session, so "unread" is a watermark on it.
+ */
+export type Notification = {
+  id: number;
+  kind: NotificationKind;
+  title: string;
+  message?: string;
+  /** Wall-clock time the notification was raised (ms since epoch). */
+  at: number;
+};
+
+/** The history keeps this many entries, newest first; older ones drop off. */
+export const NOTIFICATION_HISTORY_LIMIT = 100;
+
+/** Only these kinds count as unread: a success or info needs no follow-up. */
+function isAttentionKind(kind: NotificationKind): boolean {
+  return kind === "error" || kind === "warning";
+}
 
 /**
  * How long each kind stays on screen. The single owner of toast lifetime:
@@ -46,6 +68,16 @@ export type TranslateFn = (
   key: string,
   opts?: Record<string, unknown>,
 ) => string;
+
+/**
+ * The reporter's notification entry point as a value components can receive
+ * from the binder (they never import the hook themselves).
+ */
+export type NotifyFn = (
+  kind: NotificationKind,
+  title: string,
+  message?: string,
+) => void;
 
 /**
  * An early end to an action body, returned (never thrown) so control flow
@@ -128,10 +160,23 @@ export type StatusReporter = {
   setActionMessage: (value: string | null) => void;
   /**
    * The single entry point for every user-visible notification: shows the
-   * toast for `kind` with the lifetime the reporter owns. The setters below
-   * and runAction's success/failure paths all end here.
+   * toast for `kind` with the lifetime the reporter owns and records the
+   * entry in `notifications`. The setters below and runAction's
+   * success/failure paths all end here.
    */
-  notify: (kind: NotificationKind, title: string, message?: string) => void;
+  notify: NotifyFn;
+  /**
+   * This session's notification history, newest first, bounded at
+   * NOTIFICATION_HISTORY_LIMIT. In memory only: the backend log is the
+   * post-restart record.
+   */
+  notifications: Notification[];
+  /** Errors and warnings raised since the last `markAllRead`. */
+  unreadCount: number;
+  /** Opening the history panel: everything listed counts as seen. */
+  markAllRead: () => void;
+  /** Empties the history (and with it the unread count). */
+  clearNotifications: () => void;
   /**
    * One-shot error trigger: rendered as a toast, then auto-cleared. For
    * failures outside an action (input validation before one starts, hooks
@@ -168,12 +213,40 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
     [t],
   );
 
-  const notify = useCallback(
-    (kind: NotificationKind, title: string, message?: string) => {
-      showToast(kind, title, message);
-    },
-    [],
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  // Every entry with an id above this watermark is unread; ids only grow.
+  const [lastReadId, setLastReadId] = useState(0);
+  const nextIdRef = useRef(1);
+
+  const notify = useCallback<NotifyFn>((kind, title, message) => {
+    showToast(kind, title, message);
+    const entry: Notification = {
+      id: nextIdRef.current++,
+      kind,
+      title,
+      message,
+      at: Date.now(),
+    };
+    setNotifications((prev) =>
+      [entry, ...prev].slice(0, NOTIFICATION_HISTORY_LIMIT),
+    );
+  }, []);
+
+  const unreadCount = useMemo(
+    () =>
+      notifications.filter((n) => n.id > lastReadId && isAttentionKind(n.kind))
+        .length,
+    [notifications, lastReadId],
   );
+
+  const markAllRead = useCallback(() => {
+    setLastReadId(nextIdRef.current - 1);
+  }, []);
+
+  const clearNotifications = useCallback(() => {
+    setNotifications([]);
+    setLastReadId(nextIdRef.current - 1);
+  }, []);
 
   const showActionErrors = useCallback(
     (errors: ActionErrorEntry[]) => {
@@ -263,6 +336,10 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
     runAction,
     setActionMessage,
     notify,
+    notifications,
+    unreadCount,
+    markAllRead,
+    clearNotifications,
     setError,
     setSuccessToastMessage,
     formatError,

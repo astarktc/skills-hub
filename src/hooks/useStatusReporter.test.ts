@@ -110,6 +110,118 @@ describe("useStatusReporter", () => {
     });
   });
 
+  // The session's notification history (spec Q3/Q4): every notify() both
+  // toasts and records; the ring is bounded; only errors and warnings count
+  // as unread until the operator opens the panel.
+  describe("notification history", () => {
+    it("notify records an entry newest first and toasts it", () => {
+      const before = Date.now();
+      const { result } = renderHook(() => useStatusReporter(t));
+
+      act(() => {
+        result.current.notify("success", "Installed", "skill-a");
+        result.current.notify("error", "Install failed", "disk full");
+      });
+
+      expect(toast.success).toHaveBeenCalledTimes(1);
+      expect(toast.error).toHaveBeenCalledTimes(1);
+      expect(result.current.notifications).toHaveLength(2);
+      const [newest, oldest] = result.current.notifications;
+      expect(newest).toMatchObject({
+        kind: "error",
+        title: "Install failed",
+        message: "disk full",
+      });
+      expect(oldest).toMatchObject({ kind: "success", title: "Installed" });
+      expect(newest.at).toBeGreaterThanOrEqual(before);
+      expect(newest.id).not.toBe(oldest.id);
+    });
+
+    it("the setters land in the history too (setError, showActionErrors)", () => {
+      const { result } = renderHook(() => useStatusReporter(t));
+
+      act(() => {
+        result.current.setError("it broke");
+        result.current.showActionErrors([{ title: "skill-b", message: "b failed" }]);
+      });
+
+      // setError is an effect-rendered trigger, so it lands after the
+      // synchronous showActionErrors; only presence is asserted.
+      expect(result.current.notifications.map((n) => n.title).sort()).toEqual(
+        ["it broke", "skill-b"],
+      );
+      expect(result.current.unreadCount).toBe(2);
+    });
+
+    it("keeps only the last 100 entries, dropping the oldest", () => {
+      const { result } = renderHook(() => useStatusReporter(t));
+
+      act(() => {
+        for (let i = 1; i <= 101; i++) {
+          result.current.notify("info", `n${i}`);
+        }
+      });
+
+      expect(result.current.notifications).toHaveLength(100);
+      expect(result.current.notifications[0].title).toBe("n101");
+      expect(result.current.notifications[99].title).toBe("n2");
+      expect(
+        result.current.notifications.some((n) => n.title === "n1"),
+      ).toBe(false);
+    });
+
+    it("counts only errors and warnings as unread", () => {
+      const { result } = renderHook(() => useStatusReporter(t));
+      expect(result.current.unreadCount).toBe(0);
+
+      act(() => {
+        result.current.notify("error", "e");
+        result.current.notify("warning", "w");
+        result.current.notify("success", "s");
+        result.current.notify("info", "i");
+      });
+
+      expect(result.current.unreadCount).toBe(2);
+    });
+
+    it("markAllRead zeroes the unread count; later entries count again", () => {
+      const { result } = renderHook(() => useStatusReporter(t));
+
+      act(() => {
+        result.current.notify("error", "e1");
+        result.current.notify("warning", "w1");
+      });
+      act(() => {
+        result.current.markAllRead();
+      });
+
+      expect(result.current.unreadCount).toBe(0);
+      // Reading does not discard: the entries stay listed.
+      expect(result.current.notifications).toHaveLength(2);
+
+      act(() => {
+        result.current.notify("error", "e2");
+      });
+
+      expect(result.current.unreadCount).toBe(1);
+    });
+
+    it("clearNotifications empties the history and the unread count", () => {
+      const { result } = renderHook(() => useStatusReporter(t));
+
+      act(() => {
+        result.current.notify("error", "e1");
+        result.current.notify("success", "s1");
+      });
+      act(() => {
+        result.current.clearNotifications();
+      });
+
+      expect(result.current.notifications).toEqual([]);
+      expect(result.current.unreadCount).toBe(0);
+    });
+  });
+
   it("renders an error toast and clears the action message with it", async () => {
     const { result } = renderHook(() => useStatusReporter(t));
 
