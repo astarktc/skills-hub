@@ -302,19 +302,21 @@ fn fetch_into(repo_dir: &Path, req: &FetchRequest, checkout: &Checkout) -> Resul
 
 /// Stable cache-dir name for one set of [`CacheKeyInputs`].
 pub(crate) fn repo_cache_key(inputs: &CacheKeyInputs) -> String {
-    hash_key_parts(inputs.clone_url, inputs.branch, None)
+    hash_key_parts(inputs.clone_url, inputs.branch)
 }
 
 /// The explore-cache's preview-directory key. It shares this module's hash
 /// scheme (and therefore its stability guarantee) but not its inputs: a
 /// preview is keyed by source URL and skill name, never by branch.
 pub(crate) fn explore_preview_key(source_url: &str, skill_name: Option<&str>) -> String {
-    hash_key_parts(source_url, skill_name, None)
+    hash_key_parts(source_url, skill_name)
 }
 
-/// The shipped digest: `sha256(url \n second \n third)`, hex-encoded. Kept
-/// private so the two named key functions above are the only way to build one.
-fn hash_key_parts(first: &str, second: Option<&str>, third: Option<&str>) -> String {
+/// The shipped digest: `sha256(first \n second \n)`, hex-encoded. The
+/// trailing separator is a fossil of a third slot the scheme once had; it
+/// stays because the digest names directories on disk. Kept private so the
+/// two named key functions above are the only way to build one.
+fn hash_key_parts(first: &str, second: Option<&str>) -> String {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
     hasher.update(first.as_bytes());
@@ -323,9 +325,6 @@ fn hash_key_parts(first: &str, second: Option<&str>, third: Option<&str>) -> Str
         hasher.update(value.as_bytes());
     }
     hasher.update(b"\n");
-    if let Some(value) = third {
-        hasher.update(value.as_bytes());
-    }
     hex::encode(hasher.finalize())
 }
 

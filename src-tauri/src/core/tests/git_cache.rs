@@ -6,7 +6,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use super::{fetch_through_cache, key_lock, repo_cache_key, CacheKeyInputs, FetchRequest};
+use super::{
+    explore_preview_key, fetch_through_cache, key_lock, repo_cache_key, CacheKeyInputs,
+    FetchRequest,
+};
 use crate::core::cancel_token::CancelToken;
 use crate::core::errors::SignalError;
 
@@ -91,6 +94,21 @@ fn cache_key_is_pinned_to_the_shipped_scheme() {
             clone_url: "https://example.com/owner/repo.git",
             branch: None,
         }),
+        "b829837329c3112a34f654c04151145daf5bed54b33cd60e41c3aa365f4b5d87"
+    );
+}
+
+/// The explore preview key shares the scheme (`printf 'URL\nSKILL\n' |
+/// shasum -a 256`), so existing preview directories stay valid at their
+/// old names too.
+#[test]
+fn explore_preview_key_is_pinned_to_the_shipped_scheme() {
+    assert_eq!(
+        explore_preview_key("https://example.com/owner/repo.git", Some("my-skill")),
+        "c70f2ba2cfbb795273e3721b8d8385eeda3255b0f240d81a1829b335d0c1f0bb"
+    );
+    assert_eq!(
+        explore_preview_key("https://example.com/owner/repo.git", None),
         "b829837329c3112a34f654c04151145daf5bed54b33cd60e41c3aa365f4b5d87"
     );
 }
