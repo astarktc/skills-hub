@@ -251,6 +251,36 @@ describe("useStatusReporter", () => {
     });
   });
 
+  // A batch with many per-target failures (Refresh all) must stay readable:
+  // the screen gets one toast, the history gets every entry.
+  it("showActionErrors toasts once but records every visible entry as its own error", () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+
+    act(() => {
+      result.current.showActionErrors([
+        { title: "skill-a", message: "a failed" },
+        { title: "skill-b", message: "b failed" },
+        { title: "skill-c", message: "c failed" },
+      ]);
+    });
+
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(toast.error).toHaveBeenCalledWith("skill-a", {
+      ...ERROR_OPTIONS,
+      description: 'a failed' + 'errors.moreCount {"count":2}',
+    });
+    // Newest first, and the head's row carries the plain message: the
+    // "+N more" belongs to the toast, the panel lists the N themselves.
+    expect(
+      result.current.notifications.map((n) => [n.kind, n.title, n.message]),
+    ).toEqual([
+      ["error", "skill-c", "c failed"],
+      ["error", "skill-b", "b failed"],
+      ["error", "skill-a", "a failed"],
+    ]);
+    expect(result.current.unreadCount).toBe(3);
+  });
+
   it("showActionErrors with only silenced entries shows nothing", () => {
     const { result } = renderHook(() => useStatusReporter(t));
 

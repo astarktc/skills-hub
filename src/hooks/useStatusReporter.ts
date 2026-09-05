@@ -225,8 +225,9 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
   const [lastReadId, setLastReadId] = useState(0);
   const nextIdRef = useRef(1);
 
-  const notify = useCallback<NotifyFn>((kind, title, message) => {
-    showToast(kind, title, message);
+  // The history's only writer: every recorded entry passes through here,
+  // toasted or not.
+  const record = useCallback<NotifyFn>((kind, title, message) => {
     const entry: Notification = {
       id: nextIdRef.current++,
       kind,
@@ -238,6 +239,14 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
       [entry, ...prev].slice(0, NOTIFICATION_HISTORY_LIMIT),
     );
   }, []);
+
+  const notify = useCallback<NotifyFn>(
+    (kind, title, message) => {
+      showToast(kind, title, message);
+      record(kind, title, message);
+    },
+    [record],
+  );
 
   const unreadCount = useMemo(
     () =>
@@ -260,14 +269,19 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
       // Entries with an empty message are silenced failures (e.g. cancelled).
       const visible = errors.filter((entry) => entry.message);
       if (visible.length === 0) return;
+      // One toast on screen (head + "+N more"), but the history keeps every
+      // entry as its own row so the N behind the suffix stay readable.
       const head = visible[0];
       const more =
         visible.length > 1
           ? t("errors.moreCount", { count: visible.length - 1 })
           : "";
-      notify("error", head.title, `${head.message}${more}`);
+      showToast("error", head.title, `${head.message}${more}`);
+      for (const entry of visible) {
+        record("error", entry.title, entry.message);
+      }
     },
-    [notify, t],
+    [record, t],
   );
 
   useEffect(() => {
