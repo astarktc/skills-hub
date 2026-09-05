@@ -103,6 +103,22 @@ pub fn run() {
                     if let Err(err) = core::central_repo::ensure_central_repo(&central) {
                         log::warn!("failed to create central repo {:?}: {}", central, err);
                     }
+                    // Once per launch: `local` rows whose "source" was really a
+                    // Tool's skills dir become `imported` (spec Q5). Roots are
+                    // resolved here, at the wiring tier; the pass is idempotent.
+                    match core::environment::home_dir().and_then(|home| {
+                        core::legacy_reclassification::reclassify_legacy_imports(
+                            &store, &home, &central,
+                        )
+                    }) {
+                        Ok(0) => {}
+                        Ok(count) => {
+                            log::info!("reclassified {} legacy local skill(s) as imported", count)
+                        }
+                        Err(err) => {
+                            log::warn!("legacy import reclassification failed: {}", err)
+                        }
+                    }
                 }
                 Err(err) => log::warn!("failed to resolve central repo path: {}", err),
             }

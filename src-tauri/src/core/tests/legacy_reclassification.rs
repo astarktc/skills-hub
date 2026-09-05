@@ -162,7 +162,12 @@ fn genuine_local_git_and_imported_rows_are_left_exactly_as_they_are() {
     let vanished = seed_local_row(&f, "vanished", &f.home.join("gone").join("skill"));
     // A folder that exists under a *different* home's Tool dir is not this
     // operator's Tool dir; only the missing-path rule reads shape.
-    let other_home = f.home.join("other-user").join(".claude").join("skills").join("x");
+    let other_home = f
+        .home
+        .join("other-user")
+        .join(".claude")
+        .join("skills")
+        .join("x");
     fs::create_dir_all(&other_home).expect("other home");
     let other = seed_local_row(&f, "other", &other_home);
     let git = seed(

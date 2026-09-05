@@ -66,7 +66,11 @@ fn classify(
         });
     }
     if links_into(source, canonical_central) {
-        return Some(ImportEvidence { found_in_tool: None });
+        // The link's own path may still name the Tool it sat in (a Tool dir
+        // outside this `home`); when it does not, there is no history to keep.
+        return Some(ImportEvidence {
+            found_in_tool: tool_shaping_path(source),
+        });
     }
     if !source.exists() {
         if let Some(tool) = tool_shaping_path(source) {
@@ -76,6 +80,28 @@ fn classify(
         }
     }
     None
+}
+
+/// Rule (ii): `path` is a symlink whose resolved target lies inside
+/// `canonical_central` — the "source" is the skill's own central copy.
+fn links_into(path: &Path, canonical_central: Option<&Path>) -> bool {
+    let Some(central) = canonical_central else {
+        return false;
+    };
+    let is_link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    is_link && std::fs::canonicalize(path).is_ok_and(|resolved| resolved.starts_with(central))
+}
+
+/// Rule (i): the Tool whose global skills dir under `home` strictly contains
+/// `path` — the first in registry order when Tools share a directory.
+fn tool_owning_path(home: &Path, path: &Path) -> Option<&'static str> {
+    default_tool_adapters()
+        .iter()
+        .find(|adapter| {
+            path.strip_prefix(skills_dir_in(home, adapter))
+                .is_ok_and(|rest| rest.components().next().is_some())
+        })
+        .map(|adapter| adapter.key())
 }
 
 /// Rule (iii): `path` has the shape of a Tool skills-dir entry under *any*
@@ -94,29 +120,6 @@ fn tool_shaping_path(path: &Path) -> Option<&'static str> {
             // The run must end exactly one component before the path's end.
             components.len() > dir.len()
                 && components[components.len() - 1 - dir.len()..components.len() - 1] == dir[..]
-        })
-        .map(|adapter| adapter.key())
-}
-
-/// Rule (ii): `path` is a symlink whose resolved target lies inside
-/// `canonical_central` — the "source" is the skill's own central copy.
-fn links_into(path: &Path, canonical_central: Option<&Path>) -> bool {
-    let Some(central) = canonical_central else {
-        return false;
-    };
-    let is_link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
-    is_link
-        && std::fs::canonicalize(path).is_ok_and(|resolved| resolved.starts_with(central))
-}
-
-/// Rule (i): the Tool whose global skills dir under `home` strictly contains
-/// `path` — the first in registry order when Tools share a directory.
-fn tool_owning_path(home: &Path, path: &Path) -> Option<&'static str> {
-    default_tool_adapters()
-        .iter()
-        .find(|adapter| {
-            path.strip_prefix(skills_dir_in(home, adapter))
-                .is_ok_and(|rest| rest.components().next().is_some())
         })
         .map(|adapter| adapter.key())
 }
