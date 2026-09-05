@@ -515,3 +515,80 @@ fn entry_fetch_time(repo_dir: &Path) -> i64 {
     let meta: serde_json::Value = serde_json::from_str(&raw).expect("meta json");
     meta["last_fetched_ms"].as_i64().expect("last_fetched_ms")
 }
+
+/// Two skills of one repository share the entry, and the entry is only ever
+/// widened: the second skill's sparse request adds its path to the checkout
+/// while the first skill's files stay in place — a Refresh worker copying
+/// `skills/a` out of the entry cannot have it pulled from under it by a
+/// sibling fetching `skills/b`.
+#[test]
+fn a_second_subpath_widens_the_entry_without_removing_the_first() {
+    let repo = two_skill_fixture();
+    let cache = tempfile::tempdir().expect("tempdir");
+    let url = url_of(repo.path());
+    let install = |subpath: &'static str| FetchRequest {
+        subpath: Some(subpath),
+        ..request(&url, FRESH_TTL_MS)
+    };
+
+    let (dir_a, head_a) = fetch_through_cache(cache.path(), &install("skills/a")).expect("a");
+    let (dir_b, head_b) = fetch_through_cache(cache.path(), &install("skills/b")).expect("b");
+
+    assert_eq!(dir_a, dir_b, "one entry per repository");
+    assert_eq!(head_a, head_b, "the fresh head is served, not refetched");
+    assert!(
+        dir_b.join("skills/a/SKILL.md").exists(),
+        "skills/a is still there"
+    );
+    assert!(
+        dir_b.join("skills/b/SKILL.md").exists(),
+        "skills/b was added"
+    );
+    assert!(
+        !dir_b.join("SKILL.md").exists(),
+        "the union of two sparse paths is still sparse"
+    );
+
+    // And now both are covered: a third request for either is a plain hit.
+    let (_, head_again) = fetch_through_cache(cache.path(), &install("skills/a")).expect("a again");
+    assert_eq!(head_again, head_a);
+}
+
+/// A metadata record written before the checkout shape existed belongs to a
+/// full clone (sparse entries lived under their own key then), so it keeps
+/// serving sparse requests as a hit instead of being widened or refetched.
+#[test]
+fn a_legacy_record_without_a_checkout_shape_reads_as_full() {
+    let repo = two_skill_fixture();
+    let cache = tempfile::tempdir().expect("tempdir");
+    let url = url_of(repo.path());
+
+    let (repo_dir, head_a) =
+        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("listing fetch");
+
+    // Rewrite the record in the pre-shape format.
+    let meta_path = repo_dir.join(".skills-hub-cache.json");
+    let raw = fs::read_to_string(&meta_path).expect("meta written");
+    let mut meta: serde_json::Value = serde_json::from_str(&raw).expect("meta json");
+    meta.as_object_mut().expect("object").remove("checkout");
+    fs::write(&meta_path, meta.to_string()).expect("write legacy meta");
+
+    commit_more(repo.path(), "after-listing.txt");
+
+    let (_dir, head_b) = fetch_through_cache(
+        cache.path(),
+        &FetchRequest {
+            subpath: Some("skills/a"),
+            ..request(&url, FRESH_TTL_MS)
+        },
+    )
+    .expect("install fetch");
+    assert_eq!(
+        head_a, head_b,
+        "a legacy full entry is a hit for a sparse request"
+    );
+    assert!(
+        repo_dir.join("skills/b/SKILL.md").exists() && repo_dir.join("SKILL.md").exists(),
+        "a legacy full entry is left whole, never narrowed to the request"
+    );
+}
