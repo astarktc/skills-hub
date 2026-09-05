@@ -61,6 +61,7 @@ fn fixture() -> Fixture {
         last_sync_at: None,
         last_seen_at: 1,
         status: "ok".to_string(),
+        imported_from_tool: None,
     };
     store.upsert_skill(&skill).expect("seed skill");
 

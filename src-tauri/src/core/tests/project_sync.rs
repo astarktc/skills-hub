@@ -81,6 +81,7 @@ fn register_project_and_skill(
         last_sync_at: None,
         last_seen_at: now,
         status: "ok".to_string(),
+        imported_from_tool: None,
     };
     store.upsert_skill(&skill).unwrap();
 
@@ -374,6 +375,7 @@ fn resync_updates_all() {
         last_sync_at: None,
         last_seen_at: 1000,
         status: "ok".to_string(),
+        imported_from_tool: None,
     };
     store.upsert_skill(&skill2).unwrap();
 
@@ -434,6 +436,7 @@ fn resync_continues_on_error() {
         last_sync_at: None,
         last_seen_at: 1000,
         status: "ok".to_string(),
+        imported_from_tool: None,
     };
     store.upsert_skill(&bad_skill).unwrap();
 

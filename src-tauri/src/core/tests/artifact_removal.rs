@@ -48,6 +48,7 @@ fn seed_skill(store: &SkillStore, name: &str, central_path: &Path) -> SkillRecor
         last_sync_at: None,
         last_seen_at: 1,
         status: "ok".to_string(),
+        imported_from_tool: None,
     };
     store.upsert_skill(&skill).expect("upsert skill");
     skill

@@ -398,6 +398,7 @@ fn apply_central_repo_path_moves_managed_skills() {
             last_sync_at: None,
             last_seen_at: now,
             status: "active".to_string(),
+            imported_from_tool: None,
         })
         .unwrap();
 

@@ -30,7 +30,28 @@ fn make_skill(id: &str, name: &str, central_path: &str, updated_at: i64) -> Skil
         last_sync_at: None,
         last_seen_at: 1,
         status: "ok".to_string(),
+        imported_from_tool: None,
     }
+}
+
+/// A database exactly as v1.2.3 left it (schema version 8): every DDL step
+/// the upgrade path ran, and nothing this version added.
+fn open_v8_database(db: &std::path::Path) {
+    let conn = rusqlite::Connection::open(db).expect("open");
+    conn.execute_batch(super::SCHEMA_V1).expect("v1");
+    conn.execute_batch("ALTER TABLE skills ADD COLUMN description TEXT NULL;")
+        .expect("v2");
+    conn.execute_batch("ALTER TABLE skills ADD COLUMN source_subpath TEXT NULL;")
+        .expect("v3");
+    conn.execute_batch(super::MIGRATION_V4).expect("v4");
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS hidden_explore_skills (
+            source_url TEXT PRIMARY KEY,
+            hidden_at INTEGER NOT NULL
+        );",
+    )
+    .expect("v7");
+    conn.pragma_update(None, "user_version", 8).expect("v8");
 }
 
 #[test]
@@ -48,6 +69,64 @@ fn settings_roundtrip_and_update() {
     assert_eq!(store.get_setting("k").unwrap().as_deref(), Some("v1"));
     store.set_setting("k", "v2").unwrap();
     assert_eq!(store.get_setting("k").unwrap().as_deref(), Some("v2"));
+}
+
+/// Upgrading a v8 database adds the imported-from column: legacy rows read
+/// back with no found-in Tool, and an `imported` row round-trips its own.
+#[test]
+fn v9_migration_adds_imported_from_tool_to_a_v8_database() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("test.db");
+    open_v8_database(&db);
+    {
+        let conn = rusqlite::Connection::open(&db).expect("open");
+        conn.execute(
+            "INSERT INTO skills (id, name, source_type, source_ref, central_path,
+                                 created_at, updated_at, last_seen_at, status)
+             VALUES ('legacy', 'legacy', 'local', '/home/u/.claude/skills/legacy',
+                     '/central/legacy', 1, 1, 1, 'ok')",
+            [],
+        )
+        .expect("seed a v8 row");
+    }
+
+    let store = SkillStore::new(db.clone());
+    store
+        .ensure_schema()
+        .expect("upgrade to the current schema");
+    store
+        .ensure_schema()
+        .expect("the next launch finds the version recorded and adds nothing twice");
+
+    let version: i32 = rusqlite::Connection::open(&db)
+        .expect("open")
+        .query_row("PRAGMA user_version;", [], |row| row.get(0))
+        .expect("user_version");
+    assert_eq!(version, 9);
+
+    let legacy = store
+        .get_skill_by_id("legacy")
+        .unwrap()
+        .expect("legacy row");
+    assert_eq!(legacy.source_type, "local");
+    assert_eq!(legacy.imported_from_tool, None);
+
+    let mut imported = make_skill("imp", "imp", "/central/imp", 2);
+    imported.source_type = "imported".to_string();
+    imported.source_ref = None;
+    imported.imported_from_tool = Some("claude_code".to_string());
+    store.upsert_skill(&imported).unwrap();
+    let read = store.get_skill_by_id("imp").unwrap().expect("imported row");
+    assert_eq!(read.source_type, "imported");
+    assert_eq!(read.source_ref, None);
+    assert_eq!(read.imported_from_tool.as_deref(), Some("claude_code"));
+    assert_eq!(
+        store.list_skills().unwrap()[0]
+            .imported_from_tool
+            .as_deref(),
+        Some("claude_code"),
+        "the listing carries the found-in Tool too"
+    );
 }
 
 #[test]
@@ -1521,6 +1600,7 @@ fn seeded_db(path: &std::path::Path, skill_name: &str) {
             last_sync_at: None,
             last_seen_at: 1,
             status: "active".to_string(),
+            imported_from_tool: None,
         })
         .unwrap();
 }

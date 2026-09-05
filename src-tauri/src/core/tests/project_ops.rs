@@ -39,6 +39,7 @@ fn make_skill(store: &SkillStore, name: &str) -> String {
         last_sync_at: None,
         last_seen_at: now,
         status: "ok".to_string(),
+        imported_from_tool: None,
     };
     store.upsert_skill(&record).expect("upsert_skill");
     id
@@ -241,6 +242,7 @@ fn register_project_and_skill_at(
         last_sync_at: None,
         last_seen_at: now,
         status: "ok".to_string(),
+        imported_from_tool: None,
     };
     store.upsert_skill(&skill).unwrap();
 
@@ -279,6 +281,7 @@ fn remove_project_tool_and_artifacts_deletes_assignments_and_artifacts() {
         last_sync_at: None,
         last_seen_at: now_ms(),
         status: "ok".to_string(),
+        imported_from_tool: None,
     };
     store.upsert_skill(&skill2).unwrap();
 

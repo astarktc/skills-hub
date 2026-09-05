@@ -32,6 +32,7 @@ fn seed_skill(store: &SkillStore, id: &str, name: &str, central_path: &Path) -> 
         last_sync_at: None,
         last_seen_at: 1,
         status: "ok".to_string(),
+        imported_from_tool: None,
     };
     store.upsert_skill(&skill).expect("upsert skill");
     skill

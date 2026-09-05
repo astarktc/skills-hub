@@ -22,6 +22,7 @@ pub mod onboarding_import;
 pub mod project_ops;
 pub mod project_sync;
 pub mod propagation;
+pub mod provenance;
 pub mod refresh;
 pub mod repo_subpath;
 pub mod settings;

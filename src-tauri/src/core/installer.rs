@@ -74,6 +74,7 @@ pub fn install_local_skill(
             source_ref: Some(lock_entry.source_url),
             source_subpath: lock_entry.source_subpath,
             source_revision: None,
+            imported_from_tool: None,
         },
         None => SkillProvenance::local(source_path),
     };

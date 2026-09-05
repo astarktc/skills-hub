@@ -26,6 +26,7 @@ fn skill(id: &str, central_path: &std::path::Path) -> SkillRecord {
         last_sync_at: None,
         last_seen_at: 1,
         status: "active".to_string(),
+        imported_from_tool: None,
     }
 }
 

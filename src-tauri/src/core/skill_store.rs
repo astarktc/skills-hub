@@ -16,7 +16,7 @@ const LEGACY_APP_IDENTIFIERS: &[&str] = &[
 ];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 8;
+const SCHEMA_VERSION: i32 = 9;
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -127,6 +127,10 @@ pub struct SkillRecord {
     pub last_sync_at: Option<i64>,
     pub last_seen_at: i64,
     pub status: String,
+    /// The Tool an `imported` skill was found in — display-only history, never
+    /// a source (see Provenance in `CONTEXT.md`). `None` for every other
+    /// provenance.
+    pub imported_from_tool: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -304,6 +308,10 @@ impl SkillStore {
                         hidden_at INTEGER NOT NULL
                     );",
                 )?;
+                // V9: the Tool an `imported` skill was found in
+                conn.execute_batch(
+                    "ALTER TABLE skills ADD COLUMN imported_from_tool TEXT NULL;",
+                )?;
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version < SCHEMA_VERSION {
                 // Incremental migrations
@@ -354,6 +362,14 @@ impl SkillStore {
                             WHERE tool IN ('cursor','codex','amp','kimi_cli','antigravity','cline','gemini_cli','github_copilot','opencode');",
                     )?;
                 }
+                if user_version < 9 {
+                    // `imported` provenance: where the skill was found, as
+                    // display-only history (ticket r4/06).
+                    conn.execute_batch(
+                        "ALTER TABLE skills ADD COLUMN imported_from_tool TEXT NULL;",
+                    )?;
+                }
+                conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
                 anyhow::bail!(
                     "database schema version {} is newer than app supports {}",
@@ -406,10 +422,10 @@ impl SkillStore {
             conn.execute(
                 "INSERT INTO skills (
           id, name, description, source_type, source_ref, source_subpath, source_revision, central_path, content_hash,
-          created_at, updated_at, last_sync_at, last_seen_at, status
+          created_at, updated_at, last_sync_at, last_seen_at, status, imported_from_tool
         ) VALUES (
           ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
-          ?10, ?11, ?12, ?13, ?14
+          ?10, ?11, ?12, ?13, ?14, ?15
         )
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
@@ -424,7 +440,8 @@ impl SkillStore {
           updated_at = excluded.updated_at,
           last_sync_at = excluded.last_sync_at,
           last_seen_at = excluded.last_seen_at,
-          status = excluded.status",
+          status = excluded.status,
+          imported_from_tool = excluded.imported_from_tool",
                 params![
                     record.id,
                     record.name,
@@ -439,7 +456,8 @@ impl SkillStore {
                     record.updated_at,
                     record.last_sync_at,
                     record.last_seen_at,
-                    record.status
+                    record.status,
+                    record.imported_from_tool
                 ],
             )?;
             Ok(())
@@ -479,7 +497,7 @@ impl SkillStore {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
         "SELECT id, name, description, source_type, source_ref, source_subpath, source_revision, central_path, content_hash,
-                created_at, updated_at, last_sync_at, last_seen_at, status
+                created_at, updated_at, last_sync_at, last_seen_at, status, imported_from_tool
          FROM skills
          ORDER BY updated_at DESC",
       )?;
@@ -499,6 +517,7 @@ impl SkillStore {
                     last_sync_at: row.get(11)?,
                     last_seen_at: row.get(12)?,
                     status: row.get(13)?,
+                    imported_from_tool: row.get(14)?,
                 })
             })?;
 
@@ -514,7 +533,7 @@ impl SkillStore {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
         "SELECT id, name, description, source_type, source_ref, source_subpath, source_revision, central_path, content_hash,
-                created_at, updated_at, last_sync_at, last_seen_at, status
+                created_at, updated_at, last_sync_at, last_seen_at, status, imported_from_tool
          FROM skills
          WHERE id = ?1
          LIMIT 1",
@@ -536,6 +555,7 @@ impl SkillStore {
                     last_sync_at: row.get(11)?,
                     last_seen_at: row.get(12)?,
                     status: row.get(13)?,
+                    imported_from_tool: row.get(14)?,
                 }))
             } else {
                 Ok(None)
@@ -571,7 +591,7 @@ impl SkillStore {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
         "SELECT id, name, description, source_type, source_ref, source_subpath, source_revision, central_path, content_hash,
-                created_at, updated_at, last_sync_at, last_seen_at, status
+                created_at, updated_at, last_sync_at, last_seen_at, status, imported_from_tool
          FROM skills
          WHERE description IS NULL",
       )?;
@@ -591,6 +611,7 @@ impl SkillStore {
                     last_sync_at: row.get(11)?,
                     last_seen_at: row.get(12)?,
                     status: row.get(13)?,
+                    imported_from_tool: row.get(14)?,
                 })
             })?;
             let mut items = Vec::new();

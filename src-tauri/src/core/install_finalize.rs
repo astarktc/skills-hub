@@ -20,6 +20,7 @@ use uuid::Uuid;
 use super::clock::now_ms;
 use super::content_hash::hash_dir;
 use super::errors::SignalError;
+use super::provenance::Provenance;
 use super::skill_discovery::{find_skill_md, parse_skill_md};
 use super::skill_store::{SkillRecord, SkillStore};
 use super::sync_engine::copy_dir_recursive;
@@ -62,23 +63,29 @@ impl NameIntent {
     }
 }
 
-/// Where the staged bytes came from, as recorded on the `SkillRecord`.
+/// Where the staged bytes came from, as recorded on the `SkillRecord`. One
+/// of the three Provenances (`core::provenance`): `git`, `local`, `imported`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkillProvenance {
     pub source_type: String,
     pub source_ref: Option<String>,
     pub source_subpath: Option<String>,
     pub source_revision: Option<String>,
+    /// Display-only history for an `imported` skill: the Tool it was found
+    /// in. Never a source.
+    pub imported_from_tool: Option<String>,
 }
 
 impl SkillProvenance {
-    /// A skill copied from a local directory.
+    /// A skill copied from an independent local directory the operator
+    /// maintains; that directory stays its source.
     pub fn local(source_path: &Path) -> Self {
         SkillProvenance {
-            source_type: "local".to_string(),
+            source_type: Provenance::Local.as_str().to_string(),
             source_ref: Some(source_path.to_string_lossy().to_string()),
             source_subpath: None,
             source_revision: None,
+            imported_from_tool: None,
         }
     }
 
@@ -86,10 +93,24 @@ impl SkillProvenance {
     /// bytes came via the GitHub API download path (no commit is known).
     pub fn git(repo_url: &str, subpath: Option<String>, revision: Option<String>) -> Self {
         SkillProvenance {
-            source_type: "git".to_string(),
+            source_type: Provenance::Git.as_str().to_string(),
             source_ref: Some(repo_url.to_string()),
             source_subpath: subpath,
             source_revision: Some(revision.unwrap_or_else(|| "api-download".to_string())),
+            imported_from_tool: None,
+        }
+    }
+
+    /// A skill taken over from a Tool's skills directory. It has no external
+    /// source — the central copy is its truth (ADR-0003) — so `source_ref`
+    /// is `None`; `found_in_tool` is kept as display-only history.
+    pub fn imported(found_in_tool: &str) -> Self {
+        SkillProvenance {
+            source_type: Provenance::Imported.as_str().to_string(),
+            source_ref: None,
+            source_subpath: None,
+            source_revision: None,
+            imported_from_tool: Some(found_in_tool.to_string()),
         }
     }
 }
@@ -214,6 +235,7 @@ pub fn finalize_install(
         last_sync_at: None,
         last_seen_at: now,
         status: "ok".to_string(),
+        imported_from_tool: provenance.imported_from_tool,
     };
     store.upsert_skill(&record)?;
 

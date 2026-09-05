@@ -173,6 +173,7 @@ fn fixture(name: &str) -> Fixture {
         last_sync_at: None,
         last_seen_at: now,
         status: "ok".to_string(),
+        imported_from_tool: None,
     };
     store.upsert_skill(&skill).expect("upsert skill");
 
