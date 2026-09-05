@@ -35,6 +35,7 @@ const COMMAND_ERROR_CODE_MAP = {
   REVEAL_LOG_FAILED: true,
   SYMLINK_ESCAPES_REPO: true,
   NOT_REFRESHABLE: true,
+  LOCAL_SOURCE_INSIDE_TOOL_DIR: true,
   OTHER: true,
 } as const satisfies Record<CommandError["code"], true>;
 
@@ -151,6 +152,15 @@ export function describeCommandError(
       });
     case "NOT_REFRESHABLE":
       return t("errors.notRefreshable", { name: e.name });
+    case "LOCAL_SOURCE_INSIDE_TOOL_DIR":
+      // The wire carries the Tool's registry key; its label is the same
+      // `tools.*` catalog entry the cards use.
+      return withDetail(
+        t("errors.localSourceInsideToolDir", {
+          tool: t(`tools.${e.tool}`, { defaultValue: e.tool }),
+        }),
+        e.path,
+      );
     case "OTHER":
       return e.message;
   }

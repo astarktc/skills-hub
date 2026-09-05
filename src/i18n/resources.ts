@@ -292,6 +292,8 @@ export const resources = {
           "Refused to follow the symlink at {{subpath}} in the repository: its target ({{target}}) points outside the repository.",
         notRefreshable:
           '"{{name}}" is managed here: it was imported from a tool and has no source to update from.',
+        localSourceInsideToolDir:
+          "This folder is already inside {{tool}}'s skills directory. Use Import to take over a skill that lives in a tool:",
         unsyncFailedTitle: "Could not remove from {{tool}}",
         gitCloneUnknown:
           "Could not fetch the repository from GitHub. Please check your network/proxy and try again.",
@@ -806,6 +808,8 @@ export const resources = {
           "已拒绝跟随仓库中 {{subpath}} 处的符号链接：其目标（{{target}}）指向仓库之外。",
         notRefreshable:
           "“{{name}}” 由 Skills Hub 管理：它是从工具目录导入的，没有可供更新的来源。",
+        localSourceInsideToolDir:
+          "该文件夹已位于 {{tool}} 的 Skills 目录内。要接管已在工具中的 Skill，请使用“导入”：",
         unsyncFailedTitle: "无法从 {{tool}} 中移除",
         gitCloneUnknown:
           "无法从 GitHub 拉取仓库。请检查网络/代理，或稍后重试。",

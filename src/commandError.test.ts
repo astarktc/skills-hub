@@ -200,6 +200,21 @@ describe("describeCommandError", () => {
     ).toBe('errors.notRefreshable {"name":"taken-over"}');
   });
 
+  it("names the holding Tool's label and shows the refused path as a detail line for LOCAL_SOURCE_INSIDE_TOOL_DIR", () => {
+    expect(
+      describeCommandError(
+        {
+          code: "LOCAL_SOURCE_INSIDE_TOOL_DIR",
+          path: "/home/u/.claude/skills/taken",
+          tool: "claude_code",
+        },
+        t,
+      ),
+    ).toBe(
+      'errors.localSourceInsideToolDir {"tool":"tools.claude_code {\\"defaultValue\\":\\"claude_code\\"}"}\n\n/home/u/.claude/skills/taken',
+    );
+  });
+
   it("names the unknown tool key for UNKNOWN_TOOL", () => {
     expect(
       describeCommandError({ code: "UNKNOWN_TOOL", tool: "not-a-tool" }, t),
