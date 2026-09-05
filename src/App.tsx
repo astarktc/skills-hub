@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
 import { useTranslation } from "react-i18next";
-import { Toaster } from "sonner";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import ExplorePage from "./components/skills/ExplorePage";
@@ -26,7 +25,10 @@ import { useAddSkillFlow } from "./hooks/useAddSkillFlow";
 import { useExploreState } from "./hooks/useExploreState";
 import { useSettingsState } from "./hooks/useSettingsState";
 import { useSkillLibrary } from "./hooks/useSkillLibrary";
-import { useStatusReporter } from "./hooks/useStatusReporter";
+import {
+  NotificationToaster,
+  useStatusReporter,
+} from "./hooks/useStatusReporter";
 import { useSyncOrchestration } from "./hooks/useSyncOrchestration";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import { usePersistedPreference } from "./hooks/usePersistedPreference";
@@ -75,7 +77,7 @@ function App() {
   // settings/explore/addFlow. Hooks never import each other; every
   // cross-world need flows through the interfaces passed here.
   const reporter = useStatusReporter(t);
-  const updates = useUpdateChecker(t);
+  const updates = useUpdateChecker({ reporter });
   const sync = useSyncOrchestration({ t, reporter });
   const library = useSkillLibrary({ t, reporter, sync });
 
@@ -214,7 +216,7 @@ function App() {
   return (
     <div className="skills-app">
       {/* Toast lifetime is owned by useStatusReporter, per kind. */}
-      <Toaster position="top-right" richColors />
+      <NotificationToaster position="top-right" richColors />
       <LoadingOverlay
         loading={loading}
         actionMessage={actionMessage}
@@ -246,6 +248,7 @@ function App() {
                 : handleBackToList
             }
             invokeTauri={invokeTauri}
+            notify={notify}
             t={t}
             isExplorePreview={activeView === "explore-detail"}
             onInstall={
@@ -287,6 +290,7 @@ function App() {
               onUnsyncSkill={library.handleUnsyncSkill}
               onSyncSkillToAllTools={library.handleSyncSkillToAllTools}
               onOpenDetail={handleOpenDetail}
+              notify={notify}
               t={t}
             />
           </div>
@@ -314,7 +318,7 @@ function App() {
             t={t}
           />
         ) : activeView === "projects" ? (
-          <ProjectsPage />
+          <ProjectsPage notify={notify} />
         ) : (
           <ExplorePage
             featuredSkills={explore.featuredSkills}

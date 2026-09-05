@@ -2,7 +2,6 @@ import { memo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
-import { toast } from "sonner";
 import { useProjectState } from "./useProjectState";
 import { describeCommandError } from "../../commandError";
 import ProjectList from "./ProjectList";
@@ -12,8 +11,14 @@ import EditProjectModal from "./EditProjectModal";
 import ToolConfigModal from "../shared/ToolConfigModal";
 import RemoveProjectModal from "./RemoveProjectModal";
 import type { IgnoreUpdateOptions } from "./types";
+import type { NotifyFn } from "../../hooks/useStatusReporter";
 
-const ProjectsPage = () => {
+type ProjectsPageProps = {
+  /** The reporter's notification entry point, handed down by the binder. */
+  notify: NotifyFn;
+};
+
+const ProjectsPage = ({ notify }: ProjectsPageProps) => {
   const { t } = useTranslation();
   const state = useProjectState();
 
@@ -28,10 +33,10 @@ const ProjectsPage = () => {
         await state.loadToolStatus();
       } catch (err) {
         const msg = describeCommandError(err, t);
-        if (msg) toast.error(msg);
+        if (msg) notify("error", msg);
       }
     },
-    [state, t],
+    [notify, state, t],
   );
 
   const handleToolConfigConfirm = useCallback(
@@ -41,10 +46,10 @@ const ProjectsPage = () => {
         state.closeDialog();
       } catch (err) {
         const msg = describeCommandError(err, t);
-        if (msg) toast.error(msg);
+        if (msg) notify("error", msg);
       }
     },
-    [state, t],
+    [notify, state, t],
   );
 
   const dialog = state.dialog;
@@ -58,12 +63,12 @@ const ProjectsPage = () => {
     try {
       await state.removeProject(dialog.projectId);
       state.closeDialog();
-      toast.success(t("projects.removeConfirm"));
+      notify("success", t("projects.removeConfirm"));
     } catch (err) {
       const msg = describeCommandError(err, t);
-      if (msg) toast.error(msg);
+      if (msg) notify("error", msg);
     }
-  }, [dialog, state, t]);
+  }, [dialog, notify, state, t]);
 
   const handlePromptRemove = useCallback(
     (id: string) => {
@@ -84,13 +89,13 @@ const ProjectsPage = () => {
       try {
         await state.updateGitignore(projectId, gitignore);
         state.closeDialog();
-        toast.success(t("projects.configureProject"));
+        notify("success", t("projects.configureProject"));
       } catch (err) {
         const msg = describeCommandError(err, t);
-        if (msg) toast.error(msg);
+        if (msg) notify("error", msg);
       }
     },
-    [state, t],
+    [notify, state, t],
   );
 
   const handleResyncProject = useCallback(async () => {
@@ -107,10 +112,10 @@ const ProjectsPage = () => {
         await state.toggleAssignment(skillId, tool);
       } catch (err) {
         const msg = describeCommandError(err, t);
-        if (msg) toast.error(msg);
+        if (msg) notify("error", msg);
       }
     },
-    [state, t],
+    [notify, state, t],
   );
 
   const handleBulkAssign = useCallback(
@@ -124,7 +129,8 @@ const ProjectsPage = () => {
                 `${f.tool}: ${describeCommandError(f.error, t) ?? f.error.code}`,
             )
             .join(", ");
-          toast.warning(
+          notify(
+            "warning",
             t("projects.bulkAssignFailed", {
               details,
             }),
@@ -132,10 +138,10 @@ const ProjectsPage = () => {
         }
       } catch (err) {
         const msg = describeCommandError(err, t);
-        if (msg) toast.error(msg);
+        if (msg) notify("error", msg);
       }
     },
-    [state, t],
+    [notify, state, t],
   );
 
   const handleConfigureToolsFromToolbar = useCallback(async () => {
@@ -151,13 +157,13 @@ const ProjectsPage = () => {
         const newPath = typeof selected === "string" ? selected : selected[0];
         if (!newPath) return;
         await state.updateProjectPath(projectId, newPath);
-        toast.success(t("projects.updatePathSuccess"));
+        notify("success", t("projects.updatePathSuccess"));
       } catch (err) {
         const msg = describeCommandError(err, t);
-        if (msg) toast.error(msg);
+        if (msg) notify("error", msg);
       }
     },
-    [state, t],
+    [notify, state, t],
   );
 
   return (
@@ -214,6 +220,7 @@ const ProjectsPage = () => {
                   onResyncProject={handleResyncProject}
                   onResyncAll={handleResyncAll}
                   onConfigureTools={handleConfigureToolsFromToolbar}
+                  notify={notify}
                   t={t}
                 />
               </div>

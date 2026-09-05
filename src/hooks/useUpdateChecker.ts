@@ -1,20 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
-import { toast } from "sonner";
-import { describeCommandError } from "../commandError";
 import { isTauri } from "../lib/tauri";
 import { ignoredUpdateVersionPreference } from "../lib/preferences";
-import type { TranslateFn } from "./useStatusReporter";
+import type { StatusReporter } from "./useStatusReporter";
 
 /**
  * App-update world: checks for a newer release on mount (unless the user
  * ignored that version), fetches its release notes, and drives the
- * download-and-install flow. Self-contained — reports through its own toast,
- * not the shared status reporter, because update failures should never mix
- * with skill-operation status.
+ * download-and-install flow. It never touches the loading overlay (update
+ * failures must not mix with skill-operation status), but an install
+ * failure is a notification like any other, so it goes through the
+ * reporter's `notify` and lands in the history.
  */
-export function useUpdateChecker(t: TranslateFn) {
+export function useUpdateChecker({
+  reporter,
+}: {
+  reporter: Pick<StatusReporter, "notify" | "formatError">;
+}) {
+  const { notify, formatError } = reporter;
   const [updateAvailableVersion, setUpdateAvailableVersion] = useState<
     string | null
   >(null);
@@ -76,12 +80,10 @@ export function useUpdateChecker(t: TranslateFn) {
       setUpdateDone(true);
     } catch (err) {
       setUpdateInstalling(false);
-      const msg = describeCommandError(err, t);
-      // Routed through the reporter's `notify` in round-3 ticket 02; until
-      // then no duration is chosen here (the reporter owns lifetimes).
-      if (msg) toast.error(msg);
+      const msg = formatError(err);
+      if (msg) notify("error", msg);
     }
-  }, [t]);
+  }, [formatError, notify]);
 
   return {
     updateAvailableVersion,

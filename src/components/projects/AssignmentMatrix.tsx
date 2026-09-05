@@ -7,7 +7,6 @@ import {
   RefreshCw,
   Settings,
 } from "lucide-react";
-import { toast } from "sonner";
 import type { TFunction } from "i18next";
 import type {
   ProjectDto,
@@ -16,6 +15,7 @@ import type {
   ResyncSummaryDto,
 } from "./types";
 import type { ManagedSkill } from "../skills/types";
+import type { NotifyFn } from "../../hooks/useStatusReporter";
 import { describeCommandError } from "../../commandError";
 import { SYNC_STATUS_CLASS } from "../../syncStatus";
 import {
@@ -44,6 +44,8 @@ export type AssignmentMatrixProps = {
   onResyncProject: () => Promise<ResyncSummaryDto>;
   onResyncAll: () => Promise<ResyncSummaryDto[]>;
   onConfigureTools: () => void;
+  /** The reporter's notification entry point, handed down by the page. */
+  notify: NotifyFn;
   t: TFunction;
 };
 
@@ -60,6 +62,7 @@ const AssignmentMatrix = ({
   onResyncProject,
   onResyncAll,
   onConfigureTools,
+  notify,
   t,
 }: AssignmentMatrixProps) => {
   const lastSyncAt = useMemo(() => {
@@ -102,20 +105,24 @@ const AssignmentMatrix = ({
     try {
       const summary = await onResyncProject();
       if (summary.failed > 0) {
-        toast.warning(
+        notify(
+          "warning",
           t("projects.resyncPartial", {
             synced: summary.synced,
             failed: summary.failed,
           }),
         );
       } else {
-        toast.success(t("projects.resyncSuccess", { synced: summary.synced }));
+        notify(
+          "success",
+          t("projects.resyncSuccess", { synced: summary.synced }),
+        );
       }
     } catch (err) {
       const msg = describeCommandError(err, t);
-      if (msg) toast.error(msg);
+      if (msg) notify("error", msg);
     }
-  }, [onResyncProject, t]);
+  }, [notify, onResyncProject, t]);
 
   const handleResyncAll = useCallback(async () => {
     try {
@@ -123,20 +130,24 @@ const AssignmentMatrix = ({
       const totalSynced = summaries.reduce((sum, s) => sum + s.synced, 0);
       const totalFailed = summaries.reduce((sum, s) => sum + s.failed, 0);
       if (totalFailed > 0) {
-        toast.warning(
+        notify(
+          "warning",
           t("projects.resyncPartial", {
             synced: totalSynced,
             failed: totalFailed,
           }),
         );
       } else {
-        toast.success(t("projects.resyncSuccess", { synced: totalSynced }));
+        notify(
+          "success",
+          t("projects.resyncSuccess", { synced: totalSynced }),
+        );
       }
     } catch (err) {
       const msg = describeCommandError(err, t);
-      if (msg) toast.error(msg);
+      if (msg) notify("error", msg);
     }
-  }, [onResyncAll, t]);
+  }, [notify, onResyncAll, t]);
 
   if (!project) {
     return (

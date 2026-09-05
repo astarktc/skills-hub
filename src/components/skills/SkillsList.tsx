@@ -2,6 +2,7 @@ import { memo, useMemo } from "react";
 import { GitBranch, MessageCircle } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { ManagedSkill, OnboardingPlan, ToolOption } from "./types";
+import type { NotifyFn } from "../../hooks/useStatusReporter";
 import SkillCard from "./SkillCard";
 import { groupSkillsByRepo } from "../../lib/skillPresentation";
 
@@ -19,6 +20,8 @@ type SkillsListProps = {
   onUnsyncSkill: (skillId: string) => void;
   onSyncSkillToAllTools: (skill: ManagedSkill) => void;
   onOpenDetail: (skill: ManagedSkill) => void;
+  /** The reporter's notification entry point, handed down by the binder. */
+  notify: NotifyFn;
   t: TFunction;
 };
 
@@ -36,6 +39,7 @@ const SkillsList = ({
   onUnsyncSkill,
   onSyncSkillToAllTools,
   onOpenDetail,
+  notify,
   t,
 }: SkillsListProps) => {
   const groups = useMemo(() => {
@@ -58,6 +62,7 @@ const SkillsList = ({
       onUnsync={onUnsyncSkill}
       onSyncToAllTools={onSyncSkillToAllTools}
       onOpenDetail={onOpenDetail}
+      notify={notify}
       t={t}
     />
   );

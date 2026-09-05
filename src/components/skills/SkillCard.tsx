@@ -9,8 +9,8 @@ import {
   Unlink,
 } from "lucide-react";
 import { SiGithub } from "@icons-pack/react-simple-icons";
-import { toast } from "sonner";
 import type { TFunction } from "i18next";
+import type { NotifyFn } from "../../hooks/useStatusReporter";
 import InvocationModeBadge from "./InvocationModeBadge";
 import type { ManagedSkill, ToolOption } from "./types";
 import {
@@ -29,6 +29,8 @@ type SkillCardProps = {
   onUnsync: (skillId: string) => void;
   onSyncToAllTools: (skill: ManagedSkill) => void;
   onOpenDetail: (skill: ManagedSkill) => void;
+  /** The reporter's notification entry point, handed down by the list. */
+  notify: NotifyFn;
   t: TFunction;
 };
 
@@ -44,6 +46,7 @@ const SkillCard = ({
   onUnsync,
   onSyncToAllTools,
   onOpenDetail,
+  notify,
   t,
 }: SkillCardProps) => {
   const typeKey = skill.source_type.toLowerCase();
@@ -61,9 +64,9 @@ const SkillCard = ({
     if (!copyValue) return;
     try {
       await navigator.clipboard.writeText(copyValue);
-      toast.success(t("copied"));
+      notify("success", t("copied"));
     } catch {
-      toast.error(t("copyFailed"));
+      notify("error", t("copyFailed"));
     }
   };
 

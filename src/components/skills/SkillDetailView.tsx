@@ -17,9 +17,9 @@ import {
 import Markdown from "react-markdown";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
-import { toast } from "sonner";
 import type { TFunction } from "i18next";
 import type { InvokeTauri } from "../../lib/tauri";
+import type { NotifyFn } from "../../hooks/useStatusReporter";
 import type { ManagedSkill, SkillFileEntry } from "./types";
 import { describeCommandError } from "../../commandError";
 import {
@@ -33,6 +33,8 @@ type SkillDetailViewProps = {
   skill: ManagedSkill;
   onBack: () => void;
   invokeTauri: InvokeTauri;
+  /** The reporter's notification entry point, handed down by the binder. */
+  notify: NotifyFn;
   t: TFunction;
   isExplorePreview?: boolean;
   onInstall?: () => void;
@@ -413,6 +415,7 @@ const SkillDetailView = ({
   skill,
   onBack,
   invokeTauri,
+  notify,
   t,
   isExplorePreview = false,
   onInstall,
@@ -443,7 +446,7 @@ const SkillDetailView = ({
         }
       } catch {
         if (!cancelled) {
-          toast.error(t("detail.readError"));
+          notify("error", t("detail.readError"));
         }
       } finally {
         if (!cancelled) setLoadingFiles(false);
@@ -453,7 +456,7 @@ const SkillDetailView = ({
     return () => {
       cancelled = true;
     };
-  }, [invokeTauri, skill.central_path, t]);
+  }, [invokeTauri, notify, skill.central_path, t]);
 
   useEffect(() => {
     if (!activeFile) return;

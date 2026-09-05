@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
+import { Toaster, toast } from "sonner";
 import { describeCommandError } from "../commandError";
 import { invokeTauri } from "../lib/tauri";
+
+/**
+ * The toast mount point, rendered once by the binder. Re-exported from here
+ * so the toast library has exactly one importer: this module owns the mount
+ * and every call (the durations below), and nothing else can drift from it.
+ */
+export { Toaster as NotificationToaster };
 
 export type ActionErrorEntry = { title: string; message: string };
 
