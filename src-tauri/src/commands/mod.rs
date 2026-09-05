@@ -16,11 +16,11 @@ use crate::core::cache_cleanup::cleanup_git_cache_dirs;
 use crate::core::cancel_token::CancelToken;
 use crate::core::clock::now_ms;
 use crate::core::environment::{expand_home_path, home_dir};
+use crate::core::errors::SignalError;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::global_sync::{
     BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome, BatchTargetStatus,
 };
-use crate::core::errors::SignalError;
 use crate::core::installer::{
     clone_for_explore_preview, install_git_skill_from_selection,
     install_local_skill_from_selection, list_git_skills, list_local_skills, GitSkillListing,

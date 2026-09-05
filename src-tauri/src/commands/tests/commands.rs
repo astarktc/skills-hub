@@ -412,7 +412,10 @@ fn an_open_log_folder_failure_is_typed_with_its_chain_as_detail() {
     assert_eq!(json["code"], "REVEAL_LOG_FAILED");
     let detail = json["detail"].as_str().expect("detail is a string");
     assert!(detail.contains("failed to reveal log path"), "got {detail}");
-    assert!(detail.contains("launcher exited with code 1"), "got {detail}");
+    assert!(
+        detail.contains("launcher exited with code 1"),
+        "got {detail}"
+    );
     assert!(json.get("message").is_none(), "no prose on the wire");
 }
 

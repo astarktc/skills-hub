@@ -61,7 +61,10 @@ export const commands = {
 	 *  (the folder itself when no file exists yet). The backend log is partial
 	 *  forensics for earlier runs — backend-logged events only, not a record of
 	 *  what a Notification reported. Both the paths and the opener are resolved
-	 *  here at the command seam: `core` never sees the app handle.
+	 *  here at the command seam: `core` never sees the app handle; it owns only
+	 *  the reveal rule (`core::log_reveal::log_reveal_target`). Every failure
+	 *  on the way reaches the operator as `RevealLogFailed` with the chain as
+	 *  diagnostics.
 	 */
 	openLogFolder: () => __TAURI_INVOKE<null>("open_log_folder"),
 	registerProject: (path: string) => __TAURI_INVOKE<ProjectViewDto>("register_project", { path }),
