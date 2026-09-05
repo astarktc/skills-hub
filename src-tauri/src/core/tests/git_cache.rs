@@ -74,42 +74,40 @@ fn cache_root(cache_dir: &Path) -> PathBuf {
 
 /// The key scheme is persisted on disk (directory names) and shared with the
 /// explore cache, so it is pinned against an independently computed digest:
-/// `printf 'URL\nBRANCH\nSUBPATH' | shasum -a 256`.
+/// `printf 'URL\nBRANCH\n' | shasum -a 256`. The digest of a full clone is
+/// unchanged from the shipped scheme, so every existing full entry stays
+/// valid at its old name.
 #[test]
 fn cache_key_is_pinned_to_the_shipped_scheme() {
     assert_eq!(
         repo_cache_key(&CacheKeyInputs {
             clone_url: "https://example.com/owner/repo.git",
             branch: Some("main"),
-            subpath: Some("skills/a"),
         }),
-        "87e6f47a9a465d9c00d01d7330bdaacbfb9f2ebee184825ba61ebf04603d719d"
+        "4c2a09a63982c289942fa539948f44244f02350748df81f4bd7b448ed4f876dd"
     );
     assert_eq!(
         repo_cache_key(&CacheKeyInputs {
             clone_url: "https://example.com/owner/repo.git",
             branch: None,
-            subpath: None,
         }),
         "b829837329c3112a34f654c04151145daf5bed54b33cd60e41c3aa365f4b5d87"
     );
 }
 
-/// Every input participates: no two of the three fields can be swapped
-/// without changing the key.
+/// The branch participates in the key: the same URL on two refs is two
+/// entries.
 #[test]
-fn cache_key_separates_branch_from_subpath() {
-    let branch_only = repo_cache_key(&CacheKeyInputs {
+fn cache_key_separates_branches() {
+    let main = repo_cache_key(&CacheKeyInputs {
         clone_url: "u",
-        branch: Some("x"),
-        subpath: None,
+        branch: Some("main"),
     });
-    let subpath_only = repo_cache_key(&CacheKeyInputs {
+    let dev = repo_cache_key(&CacheKeyInputs {
         clone_url: "u",
-        branch: None,
-        subpath: Some("x"),
+        branch: Some("dev"),
     });
-    assert_ne!(branch_only, subpath_only);
+    assert_ne!(main, dev);
 }
 
 // ---------------------------------------------------------------------------
@@ -192,7 +190,6 @@ fn corrupt_cache_dir_is_rebuilt_once() {
     let key = repo_cache_key(&CacheKeyInputs {
         clone_url: &url,
         branch: None,
-        subpath: None,
     });
     let repo_dir = cache_root(cache.path()).join(&key);
     fs::create_dir_all(&repo_dir).expect("create corrupt dir");
@@ -243,7 +240,6 @@ fn cancelled_fetch_leaves_no_fresh_entry() {
     let key = repo_cache_key(&CacheKeyInputs {
         clone_url: &url,
         branch: None,
-        subpath: None,
     });
     let repo_dir = cache_root(cache.path()).join(&key);
     assert!(
@@ -330,32 +326,69 @@ fn concurrent_fetches_of_different_repos_both_succeed() {
 }
 
 // ---------------------------------------------------------------------------
-// Sparse fetches
+// Sparse fetches share the entry
 // ---------------------------------------------------------------------------
 
-/// `subpath` selects the sparse fetcher and gets its own cache dir.
-#[test]
-fn a_subpath_request_uses_its_own_cache_entry() {
+/// The Add flow's repository: two skills under `skills/`, so a listing and
+/// an install of one of them are distinguishable on disk.
+fn two_skill_fixture() -> tempfile::TempDir {
     let repo = fixture_repo();
-    fs::create_dir_all(repo.path().join("skills/a")).expect("mkdir");
-    fs::write(repo.path().join("skills/a/SKILL.md"), "---\nname: a\n---\n").expect("write");
+    for name in ["a", "b"] {
+        let dir = repo.path().join("skills").join(name);
+        fs::create_dir_all(&dir).expect("mkdir");
+        fs::write(dir.join("SKILL.md"), format!("---\nname: {name}\n---\n")).expect("write");
+    }
     git(&["add", "-A"], repo.path());
-    git(&["commit", "-q", "-m", "add subskill"], repo.path());
+    git(&["commit", "-q", "-m", "add subskills"], repo.path());
+    repo
+}
 
+/// Every cache entry directory under the cache root — the count is the
+/// number of clones the cache has made.
+fn cache_entries(cache_dir: &Path) -> Vec<PathBuf> {
+    let mut entries: Vec<PathBuf> = fs::read_dir(cache_root(cache_dir))
+        .expect("cache root")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    entries.sort();
+    entries
+}
+
+/// The Add flow on a non-GitHub host: the listing's full clone is the
+/// install's cache hit. The fixture moves on between the two calls, so a
+/// second fetch would show as a different head; the sparse request instead
+/// gets the listing's directory, the listing's head, and its skill's bytes.
+#[test]
+fn a_full_entry_serves_a_later_subpath_request() {
+    let repo = two_skill_fixture();
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (full_dir, _) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("full fetch");
-    let (sparse_dir, _) = fetch_through_cache(
+    let (listing_dir, listing_head) =
+        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("listing fetch");
+
+    commit_more(repo.path(), "after-listing.txt");
+
+    let (install_dir, install_head) = fetch_through_cache(
         cache.path(),
         &FetchRequest {
             subpath: Some("skills/a"),
             ..request(&url, FRESH_TTL_MS)
         },
     )
-    .expect("sparse fetch");
+    .expect("install fetch");
 
-    assert_ne!(full_dir, sparse_dir);
-    assert!(sparse_dir.join("skills/a/SKILL.md").exists());
+    assert_eq!(install_dir, listing_dir, "one key for listing and install");
+    assert_eq!(
+        install_head, listing_head,
+        "the install must be a cache hit, not a second fetch"
+    );
+    assert!(install_dir.join("skills/a/SKILL.md").exists());
+    assert_eq!(
+        cache_entries(cache.path()),
+        vec![listing_dir],
+        "exactly one clone directory exists after listing + install"
+    );
 }

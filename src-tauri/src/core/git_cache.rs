@@ -6,6 +6,18 @@
 //! [`fetch_through_cache`] — and `subpath` on the request selects the sparse
 //! fetcher.
 //!
+//! **One entry per repository and ref.** The key is the normalised clone URL
+//! and branch — what identifies the bytes — never the subpath. How much of
+//! the tree is checked out is a property of the entry's metadata
+//! ([`Checkout`]), and a hit needs both freshness *and* a checkout that
+//! covers the request: a full clone answers any later sparse request (the
+//! Add flow's listing then install), a sparse one never answers a full
+//! listing. An entry is only ever **widened** (union of sparse paths, or up
+//! to the full tree), never narrowed — a fresh-but-uncovered request widens
+//! the working tree in place without moving HEAD, a stale one refetches with
+//! the widened shape. Never narrowing is what lets two skills of one
+//! repository share an entry while a parallel Refresh copies them out.
+//!
 //! The module takes no database handle: freshness is a **value** the caller
 //! resolves (`settings::git_cache_ttl_ms`) and passes as `ttl_ms`, keeping the
 //! shipped `0 = never fresh` semantics.
@@ -34,13 +46,83 @@ use serde::{Deserialize, Serialize};
 use super::cancel_token::CancelToken;
 use super::clock::now_ms;
 use super::errors::SignalError;
-use super::git_fetcher::{clone_or_pull, clone_or_pull_sparse};
+use super::git_fetcher::{clone_or_pull, clone_or_pull_sparse, reshape_checkout};
 
 /// Freshness record written next to each cached clone.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct RepoCacheMeta {
     last_fetched_ms: i64,
     head: Option<String>,
+    /// How much of the tree the entry has checked out. A record without the
+    /// field predates the field and was written by the full fetcher (sparse
+    /// entries used to live under their own key), so it defaults to `Full`.
+    #[serde(default)]
+    checkout: Checkout,
+}
+
+/// What an entry's working tree contains.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum Checkout {
+    /// The whole tree.
+    #[default]
+    Full,
+    /// Exactly these repo-relative paths (a sparse checkout).
+    Sparse { subpaths: Vec<String> },
+}
+
+impl Checkout {
+    fn requested(subpath: Option<&str>) -> Self {
+        match subpath {
+            Some(subpath) => Checkout::Sparse {
+                subpaths: vec![normalize_subpath(subpath)],
+            },
+            None => Checkout::Full,
+        }
+    }
+
+    /// Whether this checkout already contains what the request wants: the
+    /// full tree contains everything, a sparse one contains a subpath at or
+    /// below one of its own.
+    fn covers(&self, subpath: Option<&str>) -> bool {
+        match (self, subpath) {
+            (Checkout::Full, _) => true,
+            (Checkout::Sparse { .. }, None) => false,
+            (Checkout::Sparse { subpaths }, Some(wanted)) => {
+                let wanted = normalize_subpath(wanted);
+                subpaths
+                    .iter()
+                    .any(|have| wanted == *have || wanted.starts_with(&format!("{have}/")))
+            }
+        }
+    }
+
+    /// The smallest checkout containing both this one and the request.
+    fn widened_to(&self, subpath: Option<&str>) -> Self {
+        match (self, subpath) {
+            (Checkout::Full, _) | (Checkout::Sparse { .. }, None) => Checkout::Full,
+            (Checkout::Sparse { subpaths }, Some(wanted)) => {
+                let wanted = normalize_subpath(wanted);
+                let mut union = subpaths.clone();
+                if !union.contains(&wanted) {
+                    union.push(wanted);
+                }
+                Checkout::Sparse { subpaths: union }
+            }
+        }
+    }
+
+    /// The sparse pattern set to hand the fetcher; `None` is the full tree.
+    fn sparse_subpaths(&self) -> Option<Vec<&str>> {
+        match self {
+            Checkout::Full => None,
+            Checkout::Sparse { subpaths } => Some(subpaths.iter().map(String::as_str).collect()),
+        }
+    }
+}
+
+fn normalize_subpath(subpath: &str) -> String {
+    subpath.trim_matches('/').to_string()
 }
 
 /// One `Arc<Mutex<()>>` per cache key. Entries are never removed: a cache key
@@ -58,12 +140,12 @@ pub(crate) fn key_lock(key: &str) -> Arc<Mutex<()>> {
         .clone()
 }
 
-/// The inputs that identify one cached clone. Named so a caller cannot put a
-/// skill name in the branch slot.
+/// The inputs that identify one cached clone: the bytes' origin, never the
+/// subpath being asked for. Named so a caller cannot put a skill name in the
+/// branch slot.
 pub(crate) struct CacheKeyInputs<'a> {
     pub clone_url: &'a str,
     pub branch: Option<&'a str>,
-    pub subpath: Option<&'a str>,
 }
 
 /// One fetch-through-cache request. `subpath.is_some()` selects the sparse
@@ -81,7 +163,6 @@ impl<'a> FetchRequest<'a> {
         CacheKeyInputs {
             clone_url: self.clone_url,
             branch: self.branch,
-            subpath: self.subpath,
         }
     }
 }
@@ -89,10 +170,11 @@ impl<'a> FetchRequest<'a> {
 /// Clone (or refresh) `req.clone_url` into the git cache under `cache_dir`,
 /// returning the cached clone's directory and head revision.
 ///
-/// Serves the cached head when the entry's metadata is within `req.ttl_ms`;
-/// otherwise fetches under this key's lock. A fetch that fails against an
-/// existing entry is retried exactly once from a clean directory, which is how
-/// a corrupt cache entry heals.
+/// Serves the cached head when the entry's metadata is within `req.ttl_ms`
+/// and its checkout covers `req.subpath` (widening the working tree in place
+/// first when it does not); otherwise fetches under this key's lock. A fetch
+/// that fails against an existing entry is retried exactly once from a clean
+/// directory, which is how a corrupt cache entry heals.
 pub(crate) fn fetch_through_cache(
     cache_dir: &Path,
     req: &FetchRequest,
@@ -105,14 +187,59 @@ pub(crate) fn fetch_through_cache(
     let lock = key_lock(&key);
     let _guard = lock.lock().unwrap_or_else(|err| err.into_inner());
 
-    if let Some(head) = fresh_head(req.ttl_ms, &repo_dir, &meta_path) {
-        log_cache(
-            "hit (fresh)",
-            &started,
-            req,
-            &format!("repo_dir={:?}", repo_dir),
-        );
-        return Ok((repo_dir, head));
+    let existing = read_meta(&repo_dir, &meta_path);
+    let checkout = existing
+        .as_ref()
+        .map(|meta| meta.checkout.widened_to(req.subpath))
+        .unwrap_or_else(|| Checkout::requested(req.subpath));
+
+    if let Some((meta, head)) = existing
+        .as_ref()
+        .and_then(|meta| fresh_head(req.ttl_ms, meta).map(|head| (meta, head)))
+    {
+        if meta.checkout.covers(req.subpath) {
+            log_cache(
+                "hit (fresh)",
+                &started,
+                req,
+                &format!("repo_dir={:?}", repo_dir),
+            );
+            return Ok((repo_dir, head));
+        }
+
+        if req.cancel.is_some_and(|c| c.is_cancelled()) {
+            anyhow::bail!(SignalError::Cancelled);
+        }
+
+        // Fresh head, narrower tree: widen without moving HEAD. The record
+        // keeps its fetch time — nothing was refetched, so nothing gets
+        // fresher. A widening that fails takes the same road as a failed
+        // fetch below.
+        match reshape_checkout(&repo_dir, checkout.sparse_subpaths().as_deref(), req.cancel) {
+            Ok(()) => {
+                write_meta(
+                    &meta_path,
+                    &RepoCacheMeta {
+                        last_fetched_ms: meta.last_fetched_ms,
+                        head: Some(head.clone()),
+                        checkout: checkout.clone(),
+                    },
+                );
+                log_cache(
+                    "hit (fresh, widened)",
+                    &started,
+                    req,
+                    &format!("repo_dir={:?} checkout={:?}", repo_dir, checkout),
+                );
+                return Ok((repo_dir, head));
+            }
+            Err(err) if err.downcast_ref::<SignalError>() == Some(&SignalError::Cancelled) => {
+                return Err(err);
+            }
+            Err(err) => {
+                log::warn!("[installer] git cache widen failed, refetching: {:#}", err);
+            }
+        }
     }
 
     if req.cancel.is_some_and(|c| c.is_cancelled()) {
@@ -123,10 +250,10 @@ pub(crate) fn fetch_through_cache(
         "miss/stale; fetching",
         &started,
         req,
-        &format!("repo_dir={:?}", repo_dir),
+        &format!("repo_dir={:?} checkout={:?}", repo_dir, checkout),
     );
 
-    let rev = match fetch_into(&repo_dir, req) {
+    let rev = match fetch_into(&repo_dir, req, &checkout) {
         Ok(rev) => rev,
         Err(err) => {
             // A cancelled fetch is a decision, not a corrupt cache: never
@@ -138,22 +265,30 @@ pub(crate) fn fetch_through_cache(
             if repo_dir.exists() {
                 let _ = std::fs::remove_dir_all(&repo_dir);
             }
-            fetch_into(&repo_dir, req).with_context(|| format!("{:#}", err))?
+            fetch_into(&repo_dir, req, &checkout).with_context(|| format!("{:#}", err))?
         }
     };
 
-    write_meta(&meta_path, &rev);
+    write_meta(
+        &meta_path,
+        &RepoCacheMeta {
+            last_fetched_ms: now_ms(),
+            head: Some(rev.clone()),
+            checkout,
+        },
+    );
 
     log_cache("ready", &started, req, &format!("head={}", rev));
     Ok((repo_dir, rev))
 }
 
-/// The one place that picks a fetcher: sparse when the request names a
-/// subpath, full clone otherwise.
-fn fetch_into(repo_dir: &Path, req: &FetchRequest) -> Result<String> {
-    match req.subpath {
-        Some(subpath) => {
-            clone_or_pull_sparse(req.clone_url, repo_dir, req.branch, subpath, req.cancel)
+/// The one place that picks a fetcher: sparse for a sparse checkout, full
+/// clone otherwise. `checkout` is the shape the entry ends up with — the
+/// request's own subpath widened by whatever the entry already held.
+fn fetch_into(repo_dir: &Path, req: &FetchRequest, checkout: &Checkout) -> Result<String> {
+    match checkout.sparse_subpaths() {
+        Some(subpaths) => {
+            clone_or_pull_sparse(req.clone_url, repo_dir, req.branch, &subpaths, req.cancel)
         }
         None => clone_or_pull(req.clone_url, repo_dir, req.branch, req.cancel),
     }
@@ -161,7 +296,7 @@ fn fetch_into(repo_dir: &Path, req: &FetchRequest) -> Result<String> {
 
 /// Stable cache-dir name for one set of [`CacheKeyInputs`].
 pub(crate) fn repo_cache_key(inputs: &CacheKeyInputs) -> String {
-    hash_key_parts(inputs.clone_url, inputs.branch, inputs.subpath)
+    hash_key_parts(inputs.clone_url, inputs.branch, None)
 }
 
 /// The explore-cache's preview-directory key. It shares this module's hash
@@ -196,14 +331,18 @@ fn prepare_repo_dir(cache_dir: &Path, key: &str) -> Result<PathBuf> {
     Ok(cache_root.join(key))
 }
 
-/// The cached head, when the clone exists and its metadata is within TTL.
-fn fresh_head(ttl_ms: i64, repo_dir: &Path, meta_path: &Path) -> Option<String> {
+/// The entry's metadata, when the clone exists and the record parses.
+fn read_meta(repo_dir: &Path, meta_path: &Path) -> Option<RepoCacheMeta> {
     if !repo_dir.join(".git").exists() {
         return None;
     }
     let raw = std::fs::read_to_string(meta_path).ok()?;
-    let meta: RepoCacheMeta = serde_json::from_str(&raw).ok()?;
-    let head = meta.head?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// The cached head, when the metadata is within TTL.
+fn fresh_head(ttl_ms: i64, meta: &RepoCacheMeta) -> Option<String> {
+    let head = meta.head.clone()?;
     if ttl_ms > 0 && now_ms().saturating_sub(meta.last_fetched_ms) < ttl_ms {
         Some(head)
     } else {
@@ -211,14 +350,10 @@ fn fresh_head(ttl_ms: i64, repo_dir: &Path, meta_path: &Path) -> Option<String> 
     }
 }
 
-fn write_meta(meta_path: &Path, rev: &str) {
+fn write_meta(meta_path: &Path, meta: &RepoCacheMeta) {
     let _ = std::fs::write(
         meta_path,
-        serde_json::to_string(&RepoCacheMeta {
-            last_fetched_ms: now_ms(),
-            head: Some(rev.to_string()),
-        })
-        .unwrap_or_else(|_| "{}".to_string()),
+        serde_json::to_string(meta).unwrap_or_else(|_| "{}".to_string()),
     );
 }
 

@@ -95,18 +95,17 @@ pub fn clone_or_pull(
     Ok(head.to_string())
 }
 
+/// Clone (or refresh) `repo_url` into `dest` with a sparse checkout of
+/// exactly `subpaths`. On an existing clone the checkout is re-shaped to the
+/// given set before the fetch, so a caller widening an entry passes the whole
+/// union, not just the new path.
 pub fn clone_or_pull_sparse(
     repo_url: &str,
     dest: &Path,
     branch: Option<&str>,
-    subpath: &str,
+    subpaths: &[&str],
     cancel: Option<&CancelToken>,
 ) -> Result<String> {
-    let clean_subpath = subpath.trim_matches('/');
-    if clean_subpath.is_empty() {
-        anyhow::bail!("sparse checkout path is empty");
-    }
-
     if resolve_git_bin().is_none() {
         anyhow::bail!("system git is required for sparse checkout");
     }
@@ -127,27 +126,7 @@ pub fn clone_or_pull_sparse(
             }
         }
 
-        let out = run_cmd_with_timeout(
-            {
-                let mut cmd = git_cmd();
-                cmd.arg("-C").arg(dest).args([
-                    "sparse-checkout",
-                    "set",
-                    "--no-cone",
-                    clean_subpath,
-                ]);
-                cmd
-            },
-            git_fetch_timeout(),
-            format!("git sparse-checkout set {} in {:?}", clean_subpath, dest),
-            cancel,
-        )?;
-        if !out.status.success() {
-            anyhow::bail!(
-                "git sparse-checkout set failed: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-        }
+        reshape_checkout(dest, Some(subpaths), cancel)?;
 
         let out = run_cmd_with_timeout(
             {
@@ -228,27 +207,7 @@ pub fn clone_or_pull_sparse(
             anyhow::bail!("git clone failed: {}", String::from_utf8_lossy(&out.stderr));
         }
 
-        let out = run_cmd_with_timeout(
-            {
-                let mut cmd = git_cmd();
-                cmd.arg("-C").arg(dest).args([
-                    "sparse-checkout",
-                    "set",
-                    "--no-cone",
-                    clean_subpath,
-                ]);
-                cmd
-            },
-            git_fetch_timeout(),
-            format!("git sparse-checkout set {} in {:?}", clean_subpath, dest),
-            cancel,
-        )?;
-        if !out.status.success() {
-            anyhow::bail!(
-                "git sparse-checkout set failed: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-        }
+        reshape_checkout(dest, Some(subpaths), cancel)?;
     }
 
     let out = run_cmd_with_timeout(
@@ -268,6 +227,92 @@ pub fn clone_or_pull_sparse(
         );
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Re-shape an existing clone's working tree without moving HEAD: a sparse
+/// checkout of exactly `sparse_subpaths`, or the full tree when `None`.
+///
+/// Widening a partial (`--filter=blob:none`) clone fetches only the blobs
+/// the new shape needs. Disabling is skipped on a tree that was never sparse
+/// (older `git` binaries lack the subcommand and a full clone never needs
+/// it); a sparse tree that cannot be restored is an error, never a silent
+/// subset.
+pub fn reshape_checkout(
+    dest: &Path,
+    sparse_subpaths: Option<&[&str]>,
+    cancel: Option<&CancelToken>,
+) -> Result<()> {
+    match sparse_subpaths {
+        Some(subpaths) => {
+            let clean: Vec<&str> = subpaths
+                .iter()
+                .map(|s| s.trim_matches('/'))
+                .filter(|s| !s.is_empty())
+                .collect();
+            if clean.is_empty() {
+                anyhow::bail!("sparse checkout path is empty");
+            }
+            let out = run_cmd_with_timeout(
+                {
+                    let mut cmd = git_cmd();
+                    cmd.arg("-C")
+                        .arg(dest)
+                        .args(["sparse-checkout", "set", "--no-cone"])
+                        .args(&clean);
+                    cmd
+                },
+                git_fetch_timeout(),
+                format!("git sparse-checkout set {:?} in {:?}", clean, dest),
+                cancel,
+            )?;
+            if !out.status.success() {
+                anyhow::bail!(
+                    "git sparse-checkout set failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+        }
+        None => {
+            if !is_sparse_checkout(dest, cancel)? {
+                return Ok(());
+            }
+            let out = run_cmd_with_timeout(
+                {
+                    let mut cmd = git_cmd();
+                    cmd.arg("-C").arg(dest).args(["sparse-checkout", "disable"]);
+                    cmd
+                },
+                git_fetch_timeout(),
+                format!("git sparse-checkout disable in {:?}", dest),
+                cancel,
+            )?;
+            if !out.status.success() {
+                anyhow::bail!(
+                    "git sparse-checkout disable failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether `dest`'s working tree is a sparse checkout (`core.sparseCheckout`).
+fn is_sparse_checkout(dest: &Path, cancel: Option<&CancelToken>) -> Result<bool> {
+    let out = run_cmd_with_timeout(
+        {
+            let mut cmd = git_cmd();
+            cmd.arg("-C")
+                .arg(dest)
+                .args(["config", "--bool", "--get", "core.sparseCheckout"]);
+            cmd
+        },
+        git_fetch_timeout(),
+        format!("git config --get core.sparseCheckout in {:?}", dest),
+        cancel,
+    )?;
+    // `--get` of an unset key exits 1 with no output: not sparse.
+    Ok(out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "true")
 }
 
 fn git_timeout() -> Duration {
@@ -415,6 +460,10 @@ fn clone_or_pull_via_git_cli(
                 let _ = std::fs::remove_file(&lock_path);
             }
         }
+
+        // A full pull answers with the full tree, whatever shape a sparse
+        // fetch left the clone in.
+        reshape_checkout(dest, None, cancel)?;
 
         // Fetch updates.
         let out = run_cmd_with_timeout(

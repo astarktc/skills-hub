@@ -77,7 +77,7 @@ fn sparse_clone_only_materializes_requested_subpath() {
         origin_dir.path().to_string_lossy().as_ref(),
         &dest,
         None,
-        "skills/a",
+        &["skills/a"],
         None,
     ) {
         Ok(head) => head,
