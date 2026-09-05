@@ -392,3 +392,126 @@ fn a_full_entry_serves_a_later_subpath_request() {
         "exactly one clone directory exists after listing + install"
     );
 }
+
+/// The opposite order — a skill was installed or refreshed sparsely, then the
+/// operator lists the repository — must not be fooled by the fresh entry: a
+/// sparse tree does not cover a listing, so the full tree is materialised.
+#[test]
+fn a_sparse_entry_does_not_serve_a_later_full_request() {
+    let repo = two_skill_fixture();
+    let cache = tempfile::tempdir().expect("tempdir");
+    let url = url_of(repo.path());
+
+    let (sparse_dir, _) = fetch_through_cache(
+        cache.path(),
+        &FetchRequest {
+            subpath: Some("skills/a"),
+            ..request(&url, FRESH_TTL_MS)
+        },
+    )
+    .expect("sparse fetch");
+    assert!(sparse_dir.join("skills/a/SKILL.md").exists());
+    assert!(
+        !sparse_dir.join("skills/b/SKILL.md").exists(),
+        "precondition: the sparse entry holds only skills/a"
+    );
+
+    let (listing_dir, _) =
+        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("listing fetch");
+
+    assert_eq!(listing_dir, sparse_dir, "still one entry per repository");
+    assert!(
+        listing_dir.join("skills/b/SKILL.md").exists() && listing_dir.join("SKILL.md").exists(),
+        "a listing must see the whole tree, not the sparse subset"
+    );
+}
+
+/// Widening is not a refetch: the head stays the cached one and the entry's
+/// fetch time survives, so a widened entry expires exactly when the original
+/// one would have. The entry is aged to halfway through the TTL first so a
+/// renewed record is distinguishable from a preserved one.
+#[test]
+fn widening_does_not_renew_freshness() {
+    let repo = two_skill_fixture();
+    let cache = tempfile::tempdir().expect("tempdir");
+    let url = url_of(repo.path());
+
+    let (repo_dir, head_a) = fetch_through_cache(
+        cache.path(),
+        &FetchRequest {
+            subpath: Some("skills/a"),
+            ..request(&url, FRESH_TTL_MS)
+        },
+    )
+    .expect("sparse fetch");
+    let halfway = crate::core::clock::now_ms() - FRESH_TTL_MS / 2;
+    set_entry_fetch_time(&repo_dir, halfway);
+    commit_more(repo.path(), "after-sparse.txt");
+
+    let (_dir, head_b) =
+        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("listing fetch");
+
+    assert_eq!(
+        head_a, head_b,
+        "widening a fresh entry does not move its head"
+    );
+    assert_eq!(
+        entry_fetch_time(&repo_dir),
+        halfway,
+        "widening must not renew the entry's fetch time"
+    );
+}
+
+/// The acceptance case end to end: listing then install is one fetch, and an
+/// install after the TTL has expired fetches again.
+#[test]
+fn a_second_install_after_ttl_expiry_fetches_again() {
+    let repo = two_skill_fixture();
+    let cache = tempfile::tempdir().expect("tempdir");
+    let url = url_of(repo.path());
+    let install = |subpath: &'static str| FetchRequest {
+        subpath: Some(subpath),
+        ..request(&url, FRESH_TTL_MS)
+    };
+
+    let (repo_dir, listing_head) =
+        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("listing fetch");
+    let (_dir, install_head) =
+        fetch_through_cache(cache.path(), &install("skills/a")).expect("first install");
+    assert_eq!(
+        install_head, listing_head,
+        "the first install is a cache hit"
+    );
+
+    age_entry_past_ttl(&repo_dir);
+    commit_more(repo.path(), "after-install.txt");
+
+    let (later_dir, later_head) =
+        fetch_through_cache(cache.path(), &install("skills/a")).expect("second install");
+    assert_eq!(later_dir, repo_dir, "the entry is refreshed in place");
+    assert_ne!(
+        later_head, listing_head,
+        "an expired entry fetches the new commit"
+    );
+    assert!(later_dir.join("after-install.txt").exists());
+}
+
+/// Age an entry's metadata past [`FRESH_TTL_MS`] rather than sleeping.
+fn age_entry_past_ttl(repo_dir: &Path) {
+    set_entry_fetch_time(repo_dir, crate::core::clock::now_ms() - FRESH_TTL_MS - 1);
+}
+
+/// The test's clock lever: rewrite the entry's recorded fetch time.
+fn set_entry_fetch_time(repo_dir: &Path, last_fetched_ms: i64) {
+    let meta_path = repo_dir.join(".skills-hub-cache.json");
+    let raw = fs::read_to_string(&meta_path).expect("meta written");
+    let mut meta: serde_json::Value = serde_json::from_str(&raw).expect("meta json");
+    meta["last_fetched_ms"] = serde_json::json!(last_fetched_ms);
+    fs::write(&meta_path, meta.to_string()).expect("write meta");
+}
+
+fn entry_fetch_time(repo_dir: &Path) -> i64 {
+    let raw = fs::read_to_string(repo_dir.join(".skills-hub-cache.json")).expect("meta written");
+    let meta: serde_json::Value = serde_json::from_str(&raw).expect("meta json");
+    meta["last_fetched_ms"].as_i64().expect("last_fetched_ms")
+}
