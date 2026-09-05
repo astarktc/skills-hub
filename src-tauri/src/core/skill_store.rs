@@ -68,9 +68,9 @@ CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
 CREATE INDEX IF NOT EXISTS idx_skills_updated_at ON skills(updated_at);
 "#;
 
-// V4: project tables for per-project skill distribution.
+// V4: project tables for per-project skill distribution. No `BEGIN`/`COMMIT`
+// of its own: `ensure_schema` runs every step inside one transaction.
 const MIGRATION_V4: &str = r#"
-BEGIN;
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   path TEXT NOT NULL UNIQUE,
@@ -103,7 +103,6 @@ CREATE TABLE IF NOT EXISTS project_skill_assignments (
 CREATE INDEX IF NOT EXISTS idx_psa_project ON project_skill_assignments(project_id);
 CREATE INDEX IF NOT EXISTS idx_psa_skill ON project_skill_assignments(skill_id);
 CREATE INDEX IF NOT EXISTS idx_pt_project ON project_tools(project_id);
-COMMIT;
 "#;
 
 #[derive(Clone, Debug)]
@@ -277,6 +276,18 @@ pub enum AssignmentTransition<'a> {
     },
 }
 
+/// Whether `table` already has a column named `column` (`PRAGMA table_info`).
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table});"))?;
+    let names = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for name in names {
+        if name? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 impl SkillStore {
     pub fn new(db_path: PathBuf) -> Self {
         Self { db_path }
@@ -287,54 +298,60 @@ impl SkillStore {
         &self.db_path
     }
 
+    /// Create or upgrade the schema. Every DDL step and the `user_version`
+    /// write run in **one transaction**: a crash or a failing step leaves the
+    /// database exactly as it was, never half-upgraded with the old version
+    /// recorded (which would replay a non-idempotent `ALTER TABLE` and fail
+    /// every later launch).
     pub fn ensure_schema(&self) -> Result<()> {
         self.with_conn(|conn| {
             conn.execute_batch("PRAGMA foreign_keys = ON;")?;
 
-            let user_version: i32 = conn.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+            let tx = conn.unchecked_transaction()?;
+            let user_version: i32 = tx.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
             if user_version == 0 {
-                conn.execute_batch(SCHEMA_V1)?;
+                tx.execute_batch(SCHEMA_V1)?;
                 // V2: add description column
-                conn.execute_batch("ALTER TABLE skills ADD COLUMN description TEXT NULL;")?;
+                tx.execute_batch("ALTER TABLE skills ADD COLUMN description TEXT NULL;")?;
                 // V3: add source_subpath column
-                conn.execute_batch("ALTER TABLE skills ADD COLUMN source_subpath TEXT NULL;")?;
+                tx.execute_batch("ALTER TABLE skills ADD COLUMN source_subpath TEXT NULL;")?;
                 // V4: project tables for per-project skill distribution
                 // (DDL includes V5 content_hash column in project_skill_assignments)
-                conn.execute_batch(MIGRATION_V4)?;
+                tx.execute_batch(MIGRATION_V4)?;
                 // V7: hidden explore skills table
-                conn.execute_batch(
+                tx.execute_batch(
                     "CREATE TABLE IF NOT EXISTS hidden_explore_skills (
                         source_url TEXT PRIMARY KEY,
                         hidden_at INTEGER NOT NULL
                     );",
                 )?;
                 // V9: the Tool an `imported` skill was found in
-                conn.execute_batch(
+                tx.execute_batch(
                     "ALTER TABLE skills ADD COLUMN imported_from_tool TEXT NULL;",
                 )?;
-                conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version < SCHEMA_VERSION {
                 // Incremental migrations
                 if user_version < 2 {
-                    conn.execute_batch("ALTER TABLE skills ADD COLUMN description TEXT NULL;")?;
+                    tx.execute_batch("ALTER TABLE skills ADD COLUMN description TEXT NULL;")?;
                 }
                 if user_version < 3 {
-                    conn.execute_batch("ALTER TABLE skills ADD COLUMN source_subpath TEXT NULL;")?;
+                    tx.execute_batch("ALTER TABLE skills ADD COLUMN source_subpath TEXT NULL;")?;
                 }
                 if user_version < 4 {
-                    conn.execute_batch(MIGRATION_V4)?;
+                    tx.execute_batch(MIGRATION_V4)?;
                 }
                 if user_version < 5 {
-                    conn.execute_batch(
+                    tx.execute_batch(
                         "ALTER TABLE project_skill_assignments ADD COLUMN content_hash TEXT NULL;",
                     )?;
                 }
                 if user_version < 6 {
-                    conn.execute_batch(
+                    tx.execute_batch(
                         "ALTER TABLE project_skill_assignments ADD COLUMN skill_name TEXT NOT NULL DEFAULT '';",
                     )?;
                     // Backfill skill_name from the skills table for existing rows
-                    conn.execute_batch(
+                    tx.execute_batch(
                         "UPDATE project_skill_assignments SET skill_name = COALESCE(
                             (SELECT name FROM skills WHERE skills.id = project_skill_assignments.skill_id),
                             ''
@@ -344,7 +361,7 @@ impl SkillStore {
                 if user_version < 8 {
                     // Consolidate 9 .agents/skills tools into single agents_skills key.
                     // Must DELETE duplicates BEFORE UPDATE due to UNIQUE(project_id, tool) constraint.
-                    conn.execute_batch(
+                    tx.execute_batch(
                         "DELETE FROM project_tools WHERE rowid NOT IN (
                             SELECT MIN(rowid) FROM project_tools
                             WHERE tool IN ('cursor','codex','amp','kimi_cli','antigravity','cline','gemini_cli','github_copilot','opencode')
@@ -362,14 +379,16 @@ impl SkillStore {
                             WHERE tool IN ('cursor','codex','amp','kimi_cli','antigravity','cline','gemini_cli','github_copilot','opencode');",
                     )?;
                 }
-                if user_version < 9 {
+                if user_version < 9 && !column_exists(&tx, "skills", "imported_from_tool")? {
                     // `imported` provenance: where the skill was found, as
-                    // display-only history (ticket r4/06).
-                    conn.execute_batch(
+                    // display-only history (ADR-0003). Guarded by presence so
+                    // a database that gained the column before the version
+                    // write joined this transaction still upgrades.
+                    tx.execute_batch(
                         "ALTER TABLE skills ADD COLUMN imported_from_tool TEXT NULL;",
                     )?;
                 }
-                conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
                 anyhow::bail!(
                     "database schema version {} is newer than app supports {}",
@@ -379,13 +398,14 @@ impl SkillStore {
             }
 
             // Ensure V7 table exists (handles DBs that were created at V7 without this table)
-            conn.execute_batch(
+            tx.execute_batch(
                 "CREATE TABLE IF NOT EXISTS hidden_explore_skills (
                     source_url TEXT PRIMARY KEY,
                     hidden_at INTEGER NOT NULL
                 );",
             )?;
 
+            tx.commit()?;
             Ok(())
         })
     }

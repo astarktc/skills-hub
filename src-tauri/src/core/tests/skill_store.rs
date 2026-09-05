@@ -129,6 +129,98 @@ fn v9_migration_adds_imported_from_tool_to_a_v8_database() {
     );
 }
 
+/// The incremental upgrade is one transaction: when a later step fails, the
+/// steps before it are rolled back and `user_version` is untouched, so the
+/// next launch starts the same upgrade from the same state instead of
+/// meeting a half-applied one. Simulated here with a v7 database whose V8
+/// consolidation trips a trigger halfway through its batch.
+#[test]
+fn a_failing_migration_step_rolls_back_the_whole_upgrade_and_keeps_the_version() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("test.db");
+    open_v8_database(&db);
+    {
+        let conn = rusqlite::Connection::open(&db).expect("open");
+        conn.pragma_update(None, "user_version", 7).expect("v7");
+        conn.execute_batch(
+            "INSERT INTO skills (id, name, source_type, central_path, created_at, updated_at,
+                                 last_seen_at, status)
+             VALUES ('s', 's', 'local', '/central/s', 1, 1, 1, 'ok');
+             INSERT INTO projects (id, path, created_at, updated_at) VALUES ('p', '/p', 1, 1);
+             INSERT INTO project_tools (id, project_id, tool) VALUES ('pt', 'p', 'cursor');
+             INSERT INTO project_skill_assignments
+                 (id, project_id, skill_id, tool, mode, status, created_at)
+             VALUES ('a', 'p', 's', 'cursor', 'symlink', 'synced', 1);
+             CREATE TRIGGER simulated_failure BEFORE UPDATE ON project_skill_assignments
+             BEGIN SELECT RAISE(ABORT, 'simulated migration failure'); END;",
+        )
+        .expect("seed a v7 database");
+    }
+
+    let store = SkillStore::new(db.clone());
+    let err = store
+        .ensure_schema()
+        .expect_err("the failing step fails the upgrade");
+    assert!(
+        format!("{err:#}").contains("simulated migration failure"),
+        "{err:#}"
+    );
+
+    let conn = rusqlite::Connection::open(&db).expect("open");
+    let version: i32 = conn
+        .query_row("PRAGMA user_version;", [], |row| row.get(0))
+        .expect("user_version");
+    assert_eq!(version, 7, "the version is written only with the upgrade");
+    let tool: String = conn
+        .query_row(
+            "SELECT tool FROM project_tools WHERE id = 'pt'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("project tool row");
+    assert_eq!(
+        tool, "cursor",
+        "the step that had already run is rolled back with the failing one"
+    );
+}
+
+/// A database left with the V9 column present but `user_version` still 8
+/// (a crash between the two before they shared a transaction) upgrades
+/// cleanly: the column is added only when it is missing.
+#[test]
+fn a_partially_applied_v9_upgrade_completes_on_the_next_launch() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("test.db");
+    open_v8_database(&db);
+    rusqlite::Connection::open(&db)
+        .expect("open")
+        .execute_batch("ALTER TABLE skills ADD COLUMN imported_from_tool TEXT NULL;")
+        .expect("the column is already there");
+
+    let store = SkillStore::new(db.clone());
+    store
+        .ensure_schema()
+        .expect("the upgrade tolerates the column it was about to add");
+
+    let version: i32 = rusqlite::Connection::open(&db)
+        .expect("open")
+        .query_row("PRAGMA user_version;", [], |row| row.get(0))
+        .expect("user_version");
+    assert_eq!(version, 9);
+    let mut imported = make_skill("imp", "imp", "/central/imp", 2);
+    imported.imported_from_tool = Some("pi".to_string());
+    store.upsert_skill(&imported).unwrap();
+    assert_eq!(
+        store
+            .get_skill_by_id("imp")
+            .unwrap()
+            .expect("row")
+            .imported_from_tool
+            .as_deref(),
+        Some("pi")
+    );
+}
+
 #[test]
 fn skills_upsert_list_get_delete() {
     let (_dir, store) = make_store();
