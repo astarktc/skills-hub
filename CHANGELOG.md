@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-09-04
+
 A follow-up round: the outcome of every action is now readable after the fact, and the review-panel residue from 1.2.2 is settled.
 
 ### Added
