@@ -104,6 +104,7 @@ function App() {
     actionMessage,
     cancelLoading,
     notify,
+    copyToClipboard,
     notifications,
     unreadCount,
     markAllRead,
@@ -290,7 +291,7 @@ function App() {
               onUnsyncSkill={library.handleUnsyncSkill}
               onSyncSkillToAllTools={library.handleSyncSkillToAllTools}
               onOpenDetail={handleOpenDetail}
-              notify={notify}
+              copyToClipboard={copyToClipboard}
               t={t}
             />
           </div>
@@ -387,7 +388,7 @@ function App() {
         notifications={notifications}
         onRequestClose={handleCloseNotifications}
         onClear={clearNotifications}
-        notify={notify}
+        copyToClipboard={copyToClipboard}
         t={t}
       />
 

@@ -155,6 +155,7 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
     setSuccessToastMessage,
     formatError,
     showActionErrors: vi.fn(),
+    copyToClipboard: vi.fn().mockResolvedValue(true),
     cancelLoading: vi.fn(),
   };
   const sync = {

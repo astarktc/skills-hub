@@ -71,6 +71,12 @@ export type NotifyFn = (
 ) => void;
 
 /**
+ * The reporter's clipboard entry point as a value components can receive
+ * from the binder. Resolves to whether the text landed on the clipboard.
+ */
+export type CopyToClipboardFn = (text: string) => Promise<boolean>;
+
+/**
  * An early end to an action body, returned (never thrown) so control flow
  * stays visible at the call site: `return action.handOff()` /
  * `return action.fail(msg)`. Flows receive one only through the
@@ -212,6 +218,12 @@ export type StatusReporter = {
    */
   formatError: (err: unknown) => string | null;
   showActionErrors: (errors: ActionErrorEntry[]) => void;
+  /**
+   * The one clipboard helper. Copying is a courtesy, not an outcome: a
+   * success flashes a toast without becoming a Notification (it is never
+   * recorded), while a failure is an error Notification like any other.
+   */
+  copyToClipboard: CopyToClipboardFn;
   /** Cancel the in-flight backend operation and reset the loading surface. */
   cancelLoading: () => void;
 };
@@ -270,6 +282,20 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
       }
     },
     [record, t],
+  );
+
+  const copyToClipboard = useCallback<CopyToClipboardFn>(
+    async (text) => {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        notify("error", t("copyFailed"));
+        return false;
+      }
+      showToast("success", t("copied"));
+      return true;
+    },
+    [notify, t],
   );
 
   useEffect(() => {
@@ -354,6 +380,7 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
     setSuccessToastMessage,
     formatError,
     showActionErrors,
+    copyToClipboard,
     cancelLoading,
   };
 }

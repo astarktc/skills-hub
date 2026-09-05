@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { SiGithub } from "@icons-pack/react-simple-icons";
 import type { TFunction } from "i18next";
-import type { NotifyFn } from "../../hooks/useStatusReporter";
+import type { CopyToClipboardFn } from "../../hooks/useStatusReporter";
 import InvocationModeBadge from "./InvocationModeBadge";
 import type { ManagedSkill, ToolOption } from "./types";
 import {
@@ -29,8 +29,8 @@ type SkillCardProps = {
   onUnsync: (skillId: string) => void;
   onSyncToAllTools: (skill: ManagedSkill) => void;
   onOpenDetail: (skill: ManagedSkill) => void;
-  /** The reporter's notification entry point, handed down by the list. */
-  notify: NotifyFn;
+  /** The reporter's clipboard helper, handed down by the list. */
+  copyToClipboard: CopyToClipboardFn;
   t: TFunction;
 };
 
@@ -46,7 +46,7 @@ const SkillCard = ({
   onUnsync,
   onSyncToAllTools,
   onOpenDetail,
-  notify,
+  copyToClipboard,
   t,
 }: SkillCardProps) => {
   const typeKey = skill.source_type.toLowerCase();
@@ -60,14 +60,9 @@ const SkillCard = ({
   const github = repoInfo(skill.source_ref);
   const copyValue = (github?.href ?? skill.source_ref ?? "").trim();
 
-  const handleCopy = async () => {
+  const handleCopy = () => {
     if (!copyValue) return;
-    try {
-      await navigator.clipboard.writeText(copyValue);
-      notify("success", t("copied"));
-    } catch {
-      notify("error", t("copyFailed"));
-    }
+    void copyToClipboard(copyValue);
   };
 
   // Split tools into synced and remaining for badge display
@@ -115,7 +110,7 @@ const SkillCard = ({
                 type="button"
                 title={t("copy")}
                 aria-label={t("copy")}
-                onClick={() => void handleCopy()}
+                onClick={handleCopy}
                 disabled={!copyValue}
               >
                 {github.label}
@@ -131,7 +126,7 @@ const SkillCard = ({
                 type="button"
                 title={t("copy")}
                 aria-label={t("copy")}
-                onClick={() => void handleCopy()}
+                onClick={handleCopy}
                 disabled={!copyValue}
               >
                 <span className="mono">{skillSourceLabel(skill)}</span>

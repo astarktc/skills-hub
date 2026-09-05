@@ -194,6 +194,7 @@ function makeDeps(overrides?: {
     setSuccessToastMessage,
     formatError,
     showActionErrors: vi.fn(),
+    copyToClipboard: vi.fn().mockResolvedValue(true),
     cancelLoading: vi.fn(),
   };
 

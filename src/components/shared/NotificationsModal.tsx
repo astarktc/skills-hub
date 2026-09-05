@@ -11,9 +11,9 @@ import {
 import type { TFunction } from "i18next";
 import Modal from "./Modal";
 import type {
+  CopyToClipboardFn,
   Notification,
   NotificationKind,
-  NotifyFn,
 } from "../../hooks/useStatusReporter";
 import { formatRelativeTime } from "../../lib/skillPresentation";
 
@@ -23,8 +23,11 @@ type NotificationsModalProps = {
   notifications: Notification[];
   onRequestClose: () => void;
   onClear: () => void;
-  /** Copy failures are reported like any other outcome. */
-  notify: NotifyFn;
+  /**
+   * The reporter's clipboard helper: it toasts the outcome (a failure is
+   * reported like any other); the button's own "done" state is local.
+   */
+  copyToClipboard: CopyToClipboardFn;
   t: TFunction;
 };
 
@@ -63,7 +66,7 @@ const NotificationsModal = ({
   notifications,
   onRequestClose,
   onClear,
-  notify,
+  copyToClipboard,
   t,
 }: NotificationsModalProps) => {
   const [copied, setCopied] = useState<CopyTarget | null>(null);
@@ -77,19 +80,15 @@ const NotificationsModal = ({
 
   const copy = useCallback(
     async (target: CopyTarget, text: string) => {
-      try {
-        await navigator.clipboard.writeText(text);
-        setCopied(target);
-        if (copiedTimer.current) clearTimeout(copiedTimer.current);
-        copiedTimer.current = setTimeout(() => {
-          setCopied(null);
-          copiedTimer.current = null;
-        }, COPIED_FEEDBACK_MS);
-      } catch {
-        notify("error", t("copyFailed"));
-      }
+      if (!(await copyToClipboard(text))) return;
+      setCopied(target);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => {
+        setCopied(null);
+        copiedTimer.current = null;
+      }, COPIED_FEEDBACK_MS);
     },
-    [notify, t],
+    [copyToClipboard],
   );
 
   const isEmpty = notifications.length === 0;

@@ -222,6 +222,54 @@ describe("useStatusReporter", () => {
     });
   });
 
+  // Copying a path is a courtesy, not an outcome (spec Q10): its success
+  // flashes a toast but is never a Notification; only a failure is recorded.
+  describe("copyToClipboard", () => {
+    const writeText = vi.fn<(text: string) => Promise<void>>();
+
+    beforeEach(() => {
+      writeText.mockReset();
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText },
+        configurable: true,
+      });
+    });
+
+    it("writes the text, toasts a success and records nothing", async () => {
+      writeText.mockResolvedValue(undefined);
+      const { result } = renderHook(() => useStatusReporter(t));
+
+      let copied: boolean | undefined;
+      await act(async () => {
+        copied = await result.current.copyToClipboard("/tmp/skill");
+      });
+
+      expect(copied).toBe(true);
+      expect(writeText).toHaveBeenCalledWith("/tmp/skill");
+      expect(toast.success).toHaveBeenCalledWith("copied", SUCCESS_OPTIONS);
+      expect(result.current.notifications).toEqual([]);
+      expect(result.current.unreadCount).toBe(0);
+    });
+
+    it("reports a failed write as an error Notification", async () => {
+      writeText.mockRejectedValue(new Error("denied"));
+      const { result } = renderHook(() => useStatusReporter(t));
+
+      let copied: boolean | undefined;
+      await act(async () => {
+        copied = await result.current.copyToClipboard("/tmp/skill");
+      });
+
+      expect(copied).toBe(false);
+      expect(toast.error).toHaveBeenCalledWith("copyFailed", ERROR_OPTIONS);
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(result.current.notifications).toMatchObject([
+        { kind: "error", title: "copyFailed" },
+      ]);
+      expect(result.current.unreadCount).toBe(1);
+    });
+  });
+
   it("renders an error toast and clears the action message with it", async () => {
     const { result } = renderHook(() => useStatusReporter(t));
 
