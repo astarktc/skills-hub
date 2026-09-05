@@ -13,7 +13,7 @@ use crate::core::refresh::{
 };
 use crate::core::skill_store::SkillStore;
 use crate::core::unlocatable::{
-    detach_from_source, repoint_and_update, unlocatable_state, UnlocatableState,
+    detach_from_source, is_detachable, repoint_and_update, unlocatable_state, UnlocatableState,
 };
 
 struct Fixture {
@@ -167,6 +167,8 @@ fn repoint_validates_the_new_folder_the_way_add_does() {
 #[test]
 fn detach_turns_the_skill_imported_with_no_source_and_no_tool_history() {
     let (f, _new) = fixture_with_moved_source();
+    let before = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    assert!(is_detachable(&before), "a local skill with a central copy");
 
     let record = detach_from_source(&f.store, &f.skill_id).expect("detach");
 
@@ -199,6 +201,29 @@ fn detach_turns_the_skill_imported_with_no_source_and_no_tool_history() {
         SkillRefreshStatus::Failed { error }
             if matches!(error.downcast_ref::<SignalError>(), Some(SignalError::NotRefreshable { .. }))
     ));
+}
+
+/// Detach makes the central copy the skill's truth, so there must be one:
+/// with the source *and* the central copy gone, Detach would leave a row
+/// only Remove can touch. It is refused typed, and the record is untouched.
+#[test]
+fn detach_is_refused_when_the_central_copy_is_also_gone() {
+    let (f, _new) = fixture_with_moved_source();
+    fs::remove_dir_all(&f.central_path).expect("lose the central copy");
+    let before = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    assert!(!is_detachable(&before));
+
+    let err = detach_from_source(&f.store, &f.skill_id).expect_err("refused");
+
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::CentralPathMissing {
+            path: f.central_path.to_string_lossy().to_string(),
+        })
+    );
+    let after = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    assert_eq!(after.source_type, "local");
+    assert_eq!(after.source_ref, before.source_ref);
 }
 
 #[test]

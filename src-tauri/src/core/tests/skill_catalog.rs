@@ -267,3 +267,54 @@ fn catalog_marks_unlocatable_skills_by_their_recorded_paths() {
     // answers "refreshable": it has a source to re-acquire from.
     assert!(catalog[2].refreshable);
 }
+
+/// Detach is offered exactly when it would be accepted: a `local` skill
+/// with a central copy to become its truth. With source and central copy
+/// both gone the state is still `source_missing`, but Detach is off.
+#[test]
+fn catalog_offers_detach_only_when_the_central_copy_is_present() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = tmp.path().join("central");
+
+    let mut source_gone = seed_skill(
+        &store,
+        "s1",
+        "source-gone",
+        &write_manifest(&central, "source-gone", "---\nname: source-gone\n---\n"),
+    );
+    source_gone.source_ref = Some(tmp.path().join("moved-away").to_string_lossy().to_string());
+    store.upsert_skill(&source_gone).unwrap();
+
+    let mut both_gone = seed_skill(&store, "s2", "both-gone", &central.join("both-gone"));
+    both_gone.source_ref = Some(tmp.path().join("moved-away").to_string_lossy().to_string());
+    store.upsert_skill(&both_gone).unwrap();
+
+    let mut git = seed_skill(
+        &store,
+        "s3",
+        "git",
+        &write_manifest(&central, "git", "---\nname: git\n---\n"),
+    );
+    git.source_type = "git".to_string();
+    git.source_ref = Some("https://github.com/o/r".to_string());
+    store.upsert_skill(&git).unwrap();
+
+    let mut catalog = managed_skill_catalog(&store).expect("catalog");
+    catalog.sort_by(|a, b| a.skill.id.cmp(&b.skill.id));
+
+    assert_eq!(
+        catalog[0].unlocatable,
+        Some(UnlocatableState::SourceMissing)
+    );
+    assert!(catalog[0].detachable, "source gone, central present");
+    assert_eq!(
+        catalog[1].unlocatable,
+        Some(UnlocatableState::SourceMissing)
+    );
+    assert!(!catalog[1].detachable, "both gone: only Re-point or Remove");
+    assert!(
+        !catalog[2].detachable,
+        "a git skill has nothing to detach from"
+    );
+}

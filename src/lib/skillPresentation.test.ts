@@ -7,6 +7,7 @@ import {
   repoInfo,
   skillSourceLabel,
   sourceKind,
+  unlocatableRepairs,
   type ImportVariantFields,
   type SkillPresentationFields,
 } from "./skillPresentation";
@@ -312,5 +313,54 @@ describe("defaultImportVariantPath", () => {
     expect(
       defaultImportVariantPath({ has_conflict: false, variants: [] }),
     ).toBeUndefined();
+  });
+});
+
+describe("unlocatableRepairs", () => {
+  it("offers nothing for a skill the app can locate", () => {
+    expect(
+      unlocatableRepairs({
+        unlocatable: null,
+        refreshable: true,
+        detachable: true,
+      }),
+    ).toEqual([]);
+  });
+
+  it("offers Re-point and Detach when the source is gone and the central copy is present", () => {
+    expect(
+      unlocatableRepairs({
+        unlocatable: "source_missing",
+        refreshable: true,
+        detachable: true,
+      }),
+    ).toEqual(["repoint", "detach"]);
+  });
+
+  it("withholds Detach when the central copy is gone too — Re-point rebuilds both", () => {
+    expect(
+      unlocatableRepairs({
+        unlocatable: "source_missing",
+        refreshable: true,
+        detachable: false,
+      }),
+    ).toEqual(["repoint"]);
+  });
+
+  it("offers Restore for a missing central copy exactly when the skill is refreshable", () => {
+    expect(
+      unlocatableRepairs({
+        unlocatable: "central_missing",
+        refreshable: true,
+        detachable: false,
+      }),
+    ).toEqual(["restore"]);
+    expect(
+      unlocatableRepairs({
+        unlocatable: "central_missing",
+        refreshable: false,
+        detachable: false,
+      }),
+    ).toEqual([]);
   });
 });

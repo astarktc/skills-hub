@@ -193,6 +193,35 @@ export function defaultImportVariantPath(group: {
   return (preferred ?? group.variants[0])?.path;
 }
 
+/** The Unlocatable-skill fields the repair rule reads (all backend-owned). */
+export type UnlocatableRepairFields = {
+  unlocatable: "source_missing" | "central_missing" | null;
+  refreshable: boolean;
+  detachable: boolean;
+};
+
+/** One repair the card offers an Unlocatable skill; Remove is always there. */
+export type UnlocatableRepair = "repoint" | "detach" | "restore";
+
+/**
+ * Which repairs an Unlocatable skill is offered, in display order. The
+ * state and both affordance bits are the backend's answers (computed at
+ * list time); this only pairs them: a missing source offers Re-point, and
+ * Detach when the central copy is there to become the truth; a missing
+ * central copy offers Restore (an Update) when the skill is refreshable.
+ */
+export function unlocatableRepairs(
+  skill: UnlocatableRepairFields,
+): UnlocatableRepair[] {
+  if (skill.unlocatable === "source_missing") {
+    return skill.detachable ? ["repoint", "detach"] : ["repoint"];
+  }
+  if (skill.unlocatable === "central_missing" && skill.refreshable) {
+    return ["restore"];
+  }
+  return [];
+}
+
 /**
  * Relative time using the `relative.*` i18n family only. `now` defaults to
  * the current clock; tests (and any caller needing a fixed clock) pass it.

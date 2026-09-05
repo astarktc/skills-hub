@@ -19,7 +19,7 @@ use crate::core::{
     provenance::is_refreshable,
     skill_discovery::{invocation_mode_for_dir, InvocationMode},
     skill_store::{SkillRecord, SkillStore, SkillTargetRecord},
-    unlocatable::{unlocatable_state, UnlocatableState},
+    unlocatable::{is_detachable, unlocatable_state, UnlocatableState},
 };
 
 /// One Managed skill as the library list needs it.
@@ -39,6 +39,9 @@ pub struct ManagedSkillEntry {
     /// which is gone when not (`unlocatable::unlocatable_state`) — computed
     /// here at list time, never stored.
     pub unlocatable: Option<UnlocatableState>,
+    /// Whether Detach would be accepted for this skill (`unlocatable::is_detachable`):
+    /// the card offers it, for a `source_missing` skill, exactly when so.
+    pub detachable: bool,
 }
 
 /// Assemble the Managed-skill catalog: every Managed skill with its Sync
@@ -53,12 +56,14 @@ pub fn managed_skill_catalog(store: &SkillStore) -> Result<Vec<ManagedSkillEntry
         let invocation_mode = invocation_mode_for_dir(Path::new(&skill.central_path));
         let refreshable = is_refreshable(&skill);
         let unlocatable = unlocatable_state(&skill);
+        let detachable = is_detachable(&skill);
         entries.push(ManagedSkillEntry {
             skill,
             invocation_mode,
             targets,
             refreshable,
             unlocatable,
+            detachable,
         });
     }
     Ok(entries)

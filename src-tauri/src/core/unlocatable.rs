@@ -131,9 +131,11 @@ fn repoint_local_source(
 /// Detach a `local` skill from its source folder: it becomes `imported` —
 /// no external source, the central copy is its truth (ADR-0003) — with no
 /// found-in Tool history, because it came from a folder, not a Tool.
-/// Store-only: no Sync target changes.
+/// Store-only: no Sync target changes. Refused ([`require_detachable`])
+/// when there is no central copy to become the truth.
 pub fn detach_from_source(store: &SkillStore, skill_id: &str) -> Result<SkillRecord> {
     let record = require_local(store, skill_id)?;
+    require_detachable(&record)?;
     let updated = SkillRecord {
         source_type: Provenance::Imported.as_str().to_string(),
         source_ref: None,
@@ -144,6 +146,28 @@ pub fn detach_from_source(store: &SkillStore, skill_id: &str) -> Result<SkillRec
     };
     store.upsert_skill(&updated)?;
     Ok(updated)
+}
+
+/// Whether Detach is open to this skill — the **one** Detach rule, which
+/// [`detach_from_source`] enforces and the Managed-skill listing exposes so
+/// the card offers Detach exactly when it would be accepted: a `local`
+/// skill whose central copy is present. A skill whose source and central
+/// copy are both gone is `source_missing` (Re-point rebuilds both), and
+/// detaching it would leave a row only Remove can touch.
+pub fn is_detachable(record: &SkillRecord) -> bool {
+    Provenance::parse(&record.source_type) == Some(Provenance::Local)
+        && require_detachable(record).is_ok()
+}
+
+/// The typed half of the Detach rule: the central copy must be there to
+/// become the truth. Raised as the same condition `move_central_repo` uses.
+fn require_detachable(record: &SkillRecord) -> Result<()> {
+    if !Path::new(&record.central_path).exists() {
+        anyhow::bail!(SignalError::CentralPathMissing {
+            path: record.central_path.clone(),
+        });
+    }
+    Ok(())
 }
 
 fn require_local(store: &SkillStore, skill_id: &str) -> Result<SkillRecord> {

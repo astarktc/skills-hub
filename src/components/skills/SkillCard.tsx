@@ -19,6 +19,8 @@ import {
   repoInfo,
   skillSourceLabel,
   sourceKind,
+  unlocatableRepairs,
+  type UnlocatableRepair,
 } from "../../lib/skillPresentation";
 
 type SkillCardProps = {
@@ -82,24 +84,20 @@ const SkillCard = ({
     void copyToClipboard(copyValue);
   };
 
-  // The Unlocatable state is the backend's answer (computed at list time);
-  // the card only picks the repairs for it. Restore is an Update, so it is
-  // offered exactly when the skill is refreshable; an imported skill whose
-  // central copy is gone can only be removed.
+  // The Unlocatable state and the affordance bits are the backend's answers
+  // (computed at list time); `unlocatableRepairs` pairs them, the card only
+  // wires each repair to its handler. Remove is always offered.
   const unlocatable = skill.unlocatable;
-  const repairs: { key: string; label: string; onClick: () => void }[] = [];
-  if (unlocatable === "source_missing") {
-    repairs.push(
-      { key: "repoint", label: t("unlocatable.repoint"), onClick: () => onRepoint(skill) },
-      { key: "detach", label: t("unlocatable.detach"), onClick: () => onDetach(skill) },
-    );
-  } else if (unlocatable === "central_missing" && skill.refreshable) {
-    repairs.push({
-      key: "restore",
-      label: t("unlocatable.restore"),
-      onClick: () => onRestore(skill),
-    });
-  }
+  const repairHandlers: Record<UnlocatableRepair, () => void> = {
+    repoint: () => onRepoint(skill),
+    detach: () => onDetach(skill),
+    restore: () => onRestore(skill),
+  };
+  const repairs = unlocatableRepairs(skill).map((repair) => ({
+    key: repair,
+    label: t(`unlocatable.${repair}`),
+    onClick: repairHandlers[repair],
+  }));
 
   // Split tools into synced and remaining for badge display
   const syncedTools: { tool: ToolOption; target: (typeof skill.targets)[0] }[] =

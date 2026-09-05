@@ -37,11 +37,8 @@ export const commands = {
 	refreshManagedSkills: (skillIds: string[] | null, policy: RefreshPolicyDto, onProgress: Channel<RefreshProgressDto>) => __TAURI_INVOKE<RefreshReportDto>("refresh_managed_skills", { skillIds, policy, onProgress }),
 	/**
 	 *  Re-point a `local` skill whose source folder is gone at the folder's new
-	 *  location, then run the single-skill Update from it (see **Unlocatable
-	 *  skill** in `CONTEXT.md`). Two entry points in sequence: the re-point is
-	 *  store-only, the Update is the Refresh batch of one (which wraps the
-	 *  mutation guard itself). The Update's outcome is report data, exactly as
-	 *  for Update.
+	 *  location and update from it (see **Unlocatable skill** in `CONTEXT.md`).
+	 *  The Update's outcome is report data, exactly as for Update.
 	 */
 	repointLocalSkillSource: (skillId: string, newPath: string) => __TAURI_INVOKE<RefreshReportDto>("repoint_local_skill_source", { skillId, newPath }),
 	/**
@@ -413,10 +410,16 @@ export type ManagedSkillDto = {
 	/**
 	 *  Which recorded path the app can no longer find, if any (see
 	 *  **Unlocatable skill** in `CONTEXT.md`): `source_missing` offers
-	 *  Re-point / Detach / Remove, `central_missing` offers Restore (when
-	 *  `refreshable`) / Remove. Computed at list time, never stored.
+	 *  Re-point / Detach (when `detachable`) / Remove, `central_missing`
+	 *  offers Restore (when `refreshable`) / Remove. Computed at list time,
+	 *  never stored.
 	 */
 	unlocatable: UnlocatableState | null,
+	/**
+	 *  Whether Detach would be accepted (backend-owned rule: a `local` skill
+	 *  whose central copy is present); the UI offers Detach only when `true`.
+	 */
+	detachable: boolean,
 };
 
 export type OnboardingGroup = {

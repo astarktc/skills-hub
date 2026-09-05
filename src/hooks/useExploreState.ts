@@ -145,6 +145,7 @@ export function useExploreState({
           targets: [],
           refreshable: true,
           unlocatable: null,
+          detachable: false,
         };
         onOpenExploreDetail(exploreManagedSkill);
       });

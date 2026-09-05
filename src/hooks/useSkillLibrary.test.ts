@@ -77,6 +77,7 @@ function skill(id: string, name: string, targets: string[] = []): ManagedSkill {
     })),
     refreshable: true,
     unlocatable: null,
+    detachable: false,
   };
 }
 

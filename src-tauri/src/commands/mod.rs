@@ -1194,9 +1194,13 @@ pub struct ManagedSkillDto {
     pub refreshable: bool,
     /// Which recorded path the app can no longer find, if any (see
     /// **Unlocatable skill** in `CONTEXT.md`): `source_missing` offers
-    /// Re-point / Detach / Remove, `central_missing` offers Restore (when
-    /// `refreshable`) / Remove. Computed at list time, never stored.
+    /// Re-point / Detach (when `detachable`) / Remove, `central_missing`
+    /// offers Restore (when `refreshable`) / Remove. Computed at list time,
+    /// never stored.
     pub unlocatable: Option<UnlocatableState>,
+    /// Whether Detach would be accepted (backend-owned rule: a `local` skill
+    /// whose central copy is present); the UI offers Detach only when `true`.
+    pub detachable: bool,
 }
 
 #[derive(Debug, Serialize, Type)]
@@ -1252,6 +1256,7 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
             targets,
             refreshable,
             unlocatable,
+            detachable,
         } = entry;
         ManagedSkillDto {
             id: skill.id,
@@ -1278,6 +1283,7 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
                 .collect(),
             refreshable,
             unlocatable,
+            detachable,
         }
     }
 }
