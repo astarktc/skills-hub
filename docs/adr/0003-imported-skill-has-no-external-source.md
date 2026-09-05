@@ -36,13 +36,17 @@ a real upstream and is recorded `git`.
 
 ## Consequences
 
-- Refresh (all) selects its members through one backend predicate (`provenance::is_refreshable`);
+- Refresh (all) selects its members through one backend rule (`provenance::refresh_eligibility`);
   an imported skill is not "skipped" — it is not in the batch, so the summary counts only skills
-  that can actually be refreshed. A single Update of an imported skill is a typed refusal
-  (`NOT_REFRESHABLE`), and the card does not offer Update for it in the first place.
+  that can actually be refreshed. The provenance half of that rule — "is there a source to
+  re-acquire from?" (`provenance::is_refreshable`) — is what a single Update consults and what
+  the listing exposes: an Update of an imported skill is a typed refusal (`NOT_REFRESHABLE`),
+  and the card does not offer Update for it in the first place.
 - Because an imported skill's truth is its central copy, the operator's edits to that copy are the
   skill; there is nothing upstream to reconcile against. Detaching a `local` skill from a vanished
-  folder (round 4, ticket 09) is the same state reached by another road.
+  folder (see **Unlocatable skill** in `CONTEXT.md`) is the same state reached by another road —
+  which is why it needs a central copy to detach *to*: with both gone, Detach is neither offered
+  nor accepted.
 - The skills table gains a nullable `imported_from_tool` column (schema version 9). Existing
   `local` rows that were really imports are reclassified once on upgrade (ticket 07); a genuine
   `local` folder outside every Tool directory is never touched by that pass.
