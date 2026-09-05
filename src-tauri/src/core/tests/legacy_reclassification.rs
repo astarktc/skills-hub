@@ -37,8 +37,8 @@ fn fixture() -> Fixture {
 
 /// A `local` row exactly as v1.2.3's import recorded it: the Tool path as
 /// the source, and a central copy.
-fn seed_local_row(f: &Fixture, id: &str, source: &Path) -> SkillRecord {
-    let record = SkillRecord {
+fn local_row(f: &Fixture, id: &str, source: &Path) -> SkillRecord {
+    SkillRecord {
         id: id.to_string(),
         name: id.to_string(),
         description: None,
@@ -54,9 +54,16 @@ fn seed_local_row(f: &Fixture, id: &str, source: &Path) -> SkillRecord {
         last_seen_at: 3,
         status: "ok".to_string(),
         imported_from_tool: None,
-    };
+    }
+}
+
+fn seed(f: &Fixture, record: SkillRecord) -> SkillRecord {
     f.store.upsert_skill(&record).expect("upsert");
     record
+}
+
+fn seed_local_row(f: &Fixture, id: &str, source: &Path) -> SkillRecord {
+    seed(f, local_row(f, id, source))
 }
 
 /// A real skill directory inside a Tool's global skills dir under the temp home.
@@ -141,4 +148,52 @@ fn a_missing_path_shaped_like_a_tool_skills_dir_becomes_imported() {
     let win = row(&f, "win");
     assert_eq!(win.source_type, "imported");
     assert_eq!(win.imported_from_tool.as_deref(), Some("pi"));
+}
+
+/// Untouched: a `local` row whose folder is the operator's own — outside every
+/// Tool dir — whether or not it still exists; and `git` / `imported` rows,
+/// whatever their paths say.
+#[test]
+fn genuine_local_git_and_imported_rows_are_left_exactly_as_they_are() {
+    let f = fixture();
+    let own_folder = f.home.join("Projects").join("my-skill");
+    fs::create_dir_all(&own_folder).expect("own folder");
+    let existing = seed_local_row(&f, "existing", &own_folder);
+    let vanished = seed_local_row(&f, "vanished", &f.home.join("gone").join("skill"));
+    // A folder that exists under a *different* home's Tool dir is not this
+    // operator's Tool dir; only the missing-path rule reads shape.
+    let other_home = f.home.join("other-user").join(".claude").join("skills").join("x");
+    fs::create_dir_all(&other_home).expect("other home");
+    let other = seed_local_row(&f, "other", &other_home);
+    let git = seed(
+        &f,
+        SkillRecord {
+            source_type: "git".to_string(),
+            source_ref: Some("https://github.com/o/r".to_string()),
+            ..local_row(&f, "git", &tool_skill_dir(&f, "claude_code", "git"))
+        },
+    );
+    let imported = seed(
+        &f,
+        SkillRecord {
+            source_type: "imported".to_string(),
+            source_ref: None,
+            imported_from_tool: Some("pi".to_string()),
+            ..local_row(&f, "imported", &tool_skill_dir(&f, "pi", "imported"))
+        },
+    );
+
+    let changed = reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("pass");
+
+    assert_eq!(changed, 0);
+    for expected in [existing, vanished, other, git, imported] {
+        let after = row(&f, &expected.id);
+        assert_eq!(after.source_type, expected.source_type, "{}", expected.id);
+        assert_eq!(after.source_ref, expected.source_ref, "{}", expected.id);
+        assert_eq!(
+            after.imported_from_tool, expected.imported_from_tool,
+            "{}",
+            expected.id
+        );
+    }
 }
