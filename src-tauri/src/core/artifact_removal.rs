@@ -367,9 +367,14 @@ fn push_assignments(
             continue;
         };
         // One naming rule for project artifacts: the stored assignment name
-        // (`project_sync::assignment_artifact_name`).
+        // (`project_sync::assignment_artifact_name`); the live skill row is
+        // its fallback supplier, read only for an un-backfilled row.
         let Some(path) =
-            resolve_assignment_artifact(store, Path::new(&project.path), adapter, &assignment)?
+            resolve_assignment_artifact(Path::new(&project.path), adapter, &assignment, || {
+                Ok(store
+                    .get_skill_by_id(&assignment.skill_id)?
+                    .map(|skill| skill.name))
+            })?
         else {
             log::warn!(
                 "artifact removal: assignment {} has no skill name to locate its artifact",

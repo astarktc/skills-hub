@@ -21,7 +21,7 @@ use crate::core::{
 /// (`ToolAdapter::project_relative_skills_dir`) is chosen here and callers cannot reach for
 /// the global `relative_skills_dir` by mistake — that mix-up has shipped more
 /// than once (see `gitignore.rs` and the Artifact removal callers in `project_ops.rs`).
-pub fn resolve_project_sync_target(
+pub(crate) fn resolve_project_sync_target(
     project_path: &Path,
     adapter: &ToolAdapter,
     skill_name: &str,
@@ -42,32 +42,50 @@ pub fn resolve_project_sync_target(
 /// they cannot disagree — reading the live name in any of them would strand
 /// the old artifact and grow a second one under the new name.
 ///
-/// Rows that predate the `skill_name` column (schema V6) and whose backfill
-/// found no skill row carry an empty name; only then is the live skill row
-/// consulted, as a best effort. `None` means the artifact cannot be located.
+/// The live-name fallback fires **only** for an empty stored name: a row
+/// that predates the `skill_name` column (schema V6) and whose backfill
+/// found no skill row to copy the name from. Only then is `live_name`
+/// consulted — the Managed skill's current name, supplied by the caller
+/// (from the record it already holds, or a store lookup) — as a best
+/// effort: the artifact was materialised under whatever name the skill had
+/// at the time, which the live name may no longer be. A non-empty stored
+/// name is never overridden. `None` means the artifact cannot be located.
 pub(crate) fn assignment_artifact_name(
-    store: &SkillStore,
     assignment: &ProjectSkillAssignmentRecord,
+    live_name: impl FnOnce() -> Result<Option<String>>,
 ) -> Result<Option<String>> {
     if !assignment.skill_name.is_empty() {
         return Ok(Some(assignment.skill_name.clone()));
     }
-    Ok(store
-        .get_skill_by_id(&assignment.skill_id)?
-        .map(|skill| skill.name))
+    live_name()
 }
 
 /// The path of a Project assignment's artifact: the project's Tool skills
-/// dir joined with [`assignment_artifact_name`]. `None` when the name cannot
-/// be resolved.
+/// dir joined with [`assignment_artifact_name`] (`live_name` is its
+/// fallback supplier). `None` when the name cannot be resolved.
 pub(crate) fn resolve_assignment_artifact(
-    store: &SkillStore,
     project_path: &Path,
     adapter: &ToolAdapter,
     assignment: &ProjectSkillAssignmentRecord,
+    live_name: impl FnOnce() -> Result<Option<String>>,
 ) -> Result<Option<PathBuf>> {
-    Ok(assignment_artifact_name(store, assignment)?
+    Ok(assignment_artifact_name(assignment, live_name)?
         .map(|name| resolve_project_sync_target(project_path, adapter, &name)))
+}
+
+/// What one Project assignment's sync needs and its caller has already
+/// resolved: the assignment's Tool (its registry record) and its Managed
+/// skill (the source of the bytes and, for an un-backfilled row, the live
+/// name), the project root the artifact lives under, and the operation's
+/// policy. Resolved once per assignment by the caller and handed down, so
+/// no helper looks the adapter or the skill up a second time.
+pub(crate) struct AssignmentSyncContext<'a> {
+    pub store: &'a SkillStore,
+    pub project_path: &'a Path,
+    pub adapter: &'static ToolAdapter,
+    pub skill: &'a SkillRecord,
+    pub overwrite: bool,
+    pub now: i64,
 }
 
 /// Sync one Project assignment through the capability-aware entry point and
@@ -87,45 +105,42 @@ pub(crate) fn resolve_assignment_artifact(
 /// A sync failure is returned as is, the row untouched: each caller settles
 /// `SyncFailed` under its own policy (error, count, or report data).
 pub(crate) fn sync_assignment_target(
-    store: &SkillStore,
-    project_path: &Path,
-    source: &Path,
+    ctx: &AssignmentSyncContext<'_>,
     assignment: &ProjectSkillAssignmentRecord,
-    overwrite: bool,
-    now: i64,
     central_hash: impl FnOnce() -> Option<String>,
 ) -> Result<sync_engine::SyncOutcome> {
-    let adapter = tool_adapters::adapter_by_key(&assignment.tool).ok_or_else(|| {
-        anyhow::anyhow!(SignalError::UnknownTool {
-            tool: assignment.tool.clone(),
-        })
-    })?;
-    // The name is unresolvable only when the skill row is gone.
-    let target = resolve_assignment_artifact(store, project_path, adapter, assignment)?
-        .ok_or_else(|| {
-            anyhow::anyhow!(SignalError::NotFound {
-                kind: "skill".to_string(),
-                id: assignment.skill_id.clone(),
-            })
-        })?;
+    let source = Path::new(&ctx.skill.central_path);
+    let target = resolve_assignment_artifact(ctx.project_path, ctx.adapter, assignment, || {
+        Ok(Some(ctx.skill.name.clone()))
+    })?
+    .expect("a live skill name always locates the artifact");
 
     let outcome =
-        sync_engine::sync_dir_for_tool_with_overwrite(adapter, source, &target, overwrite)?;
+        sync_engine::sync_dir_for_tool_with_overwrite(ctx.adapter, source, &target, ctx.overwrite)?;
 
     let hash = if outcome.mode_used.can_drift() {
         central_hash()
     } else {
         None
     };
-    store.transition_assignment(
+    ctx.store.transition_assignment(
         &assignment.id,
         AssignmentTransition::SyncCompleted {
             mode: outcome.mode_used,
-            synced_at: now,
+            synced_at: ctx.now,
             content_hash: hash.as_deref(),
         },
     )?;
     Ok(outcome)
+}
+
+/// The registry record for an assignment's Tool, or the typed `UnknownTool`.
+fn require_adapter(tool_key: &str) -> Result<&'static ToolAdapter> {
+    tool_adapters::adapter_by_key(tool_key).ok_or_else(|| {
+        anyhow::anyhow!(SignalError::UnknownTool {
+            tool: tool_key.to_string(),
+        })
+    })
 }
 
 /// Unlocked internal seam: callers reach it through an entry point that has
@@ -138,11 +153,7 @@ pub(crate) fn assign_and_sync(
     now: i64,
 ) -> Result<ProjectSkillAssignmentRecord> {
     // Refuse before a row exists: an unknown tool gets no assignment.
-    if tool_adapters::adapter_by_key(tool_key).is_none() {
-        anyhow::bail!(SignalError::UnknownTool {
-            tool: tool_key.to_string(),
-        });
-    }
+    let adapter = require_adapter(tool_key)?;
 
     let record = ProjectSkillAssignmentRecord {
         id: uuid::Uuid::new_v4().to_string(),
@@ -159,16 +170,16 @@ pub(crate) fn assign_and_sync(
     };
     store.add_project_skill_assignment(&record)?;
 
-    let source = Path::new(&skill.central_path);
-    match sync_assignment_target(
+    let ctx = AssignmentSyncContext {
         store,
-        Path::new(&project.path),
-        source,
-        &record,
-        false,
+        project_path: Path::new(&project.path),
+        adapter,
+        skill,
+        overwrite: false,
         now,
-        || hash_source(source),
-    ) {
+    };
+    let source = Path::new(&skill.central_path);
+    match sync_assignment_target(&ctx, &record, || hash_source(source)) {
         Ok(_) => {
             let updated = store
                 .get_project_skill_assignment(&project.id, &skill.id, tool_key)?
@@ -356,16 +367,16 @@ pub(crate) fn sync_single_assignment(
                 id: assignment.skill_id.clone(),
             })
         })?;
-    let source = Path::new(&skill.central_path);
-    sync_assignment_target(
+    let ctx = AssignmentSyncContext {
         store,
-        Path::new(&project.path),
-        source,
-        assignment,
+        project_path: Path::new(&project.path),
+        adapter: require_adapter(&assignment.tool)?,
+        skill: &skill,
         overwrite,
         now,
-        || hash_source(source),
-    )?;
+    };
+    let source = Path::new(&skill.central_path);
+    sync_assignment_target(&ctx, assignment, || hash_source(source))?;
     Ok(())
 }
 
@@ -472,10 +483,12 @@ fn observe_assignment(
 
     let target_present = match (project, tool_adapters::adapter_by_key(&assignment.tool)) {
         (Some(project), Some(adapter)) => {
-            resolve_assignment_artifact(store, Path::new(&project.path), adapter, assignment)
-                .ok()
-                .flatten()
-                .is_some_and(|target| target.exists() || target.symlink_metadata().is_ok())
+            resolve_assignment_artifact(Path::new(&project.path), adapter, assignment, || {
+                Ok(Some(skill.name.clone()))
+            })
+            .ok()
+            .flatten()
+            .is_some_and(|target| target.exists() || target.symlink_metadata().is_ok())
         }
         _ => false,
     };

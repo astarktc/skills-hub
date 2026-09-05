@@ -39,8 +39,9 @@ use anyhow::Result;
 
 use super::errors::SignalError;
 use super::installer::InstallerPaths;
+use super::project_sync::AssignmentSyncContext;
 use super::skill_store::{
-    AssignmentTransition, ProjectSkillAssignmentRecord, SkillStore, SkillTargetRecord,
+    AssignmentTransition, ProjectSkillAssignmentRecord, SkillRecord, SkillStore, SkillTargetRecord,
     TargetTransition,
 };
 use super::sync_engine;
@@ -124,14 +125,7 @@ pub(crate) fn propagate_unlocked(
         now,
         &mut report,
     )?;
-    propagate_project_rows(
-        store,
-        &central_path,
-        skill_id,
-        content_hash,
-        now,
-        &mut report,
-    )?;
+    propagate_project_rows(store, &skill, content_hash, now, &mut report)?;
     Ok(report)
 }
 
@@ -318,18 +312,17 @@ fn skipped_global(tool: &str, reason: PropagationSkip) -> PropagationOutcome {
 
 fn propagate_project_rows(
     store: &SkillStore,
-    central_path: &Path,
-    skill_id: &str,
+    skill: &SkillRecord,
     content_hash: Option<&str>,
     now: i64,
     report: &mut PropagationReport,
 ) -> Result<()> {
-    for assignment in store.list_project_skill_assignments_by_skill(skill_id)? {
+    for assignment in store.list_project_skill_assignments_by_skill(&skill.id)? {
         let scope = PropagationScope::Project {
             project_id: assignment.project_id.clone(),
             tool: assignment.tool.clone(),
         };
-        let status = propagate_one_assignment(store, central_path, content_hash, now, &assignment)?;
+        let status = propagate_one_assignment(store, skill, content_hash, now, &assignment)?;
         report.targets.push(PropagationOutcome { scope, status });
     }
     Ok(())
@@ -338,9 +331,11 @@ fn propagate_project_rows(
 /// One project assignment: decide whether it needs new bytes, then sync it
 /// through `project_sync::sync_assignment_target` (which locates the artifact
 /// by its stored name and records `SyncCompleted`) and settle a failure here.
+/// The adapter is resolved here, once; the skill was read once for the whole
+/// Propagation — both travel down in the [`AssignmentSyncContext`].
 fn propagate_one_assignment(
     store: &SkillStore,
-    central_path: &Path,
+    skill: &SkillRecord,
     content_hash: Option<&str>,
     now: i64,
     assignment: &ProjectSkillAssignmentRecord,
@@ -374,16 +369,19 @@ fn propagate_one_assignment(
 
     // The freshly finalized central hash is the supplier: computed once for
     // every target, and absent when finalize did not compute one.
+    let central_path = Path::new(&skill.central_path);
     let result = if central_path.is_dir() {
-        super::project_sync::sync_assignment_target(
+        let ctx = AssignmentSyncContext {
             store,
-            &project_path,
-            central_path,
-            assignment,
-            true,
+            project_path: &project_path,
+            adapter,
+            skill,
+            overwrite: true,
             now,
-            || content_hash.map(str::to_string),
-        )
+        };
+        super::project_sync::sync_assignment_target(&ctx, assignment, || {
+            content_hash.map(str::to_string)
+        })
     } else {
         Err(missing_source(central_path))
     };
