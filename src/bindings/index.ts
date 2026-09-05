@@ -36,6 +36,21 @@ export const commands = {
 	 */
 	refreshManagedSkills: (skillIds: string[] | null, policy: RefreshPolicyDto, onProgress: Channel<RefreshProgressDto>) => __TAURI_INVOKE<RefreshReportDto>("refresh_managed_skills", { skillIds, policy, onProgress }),
 	/**
+	 *  Re-point a `local` skill whose source folder is gone at the folder's new
+	 *  location, then run the single-skill Update from it (see **Unlocatable
+	 *  skill** in `CONTEXT.md`). Two entry points in sequence: the re-point is
+	 *  store-only, the Update is the Refresh batch of one (which wraps the
+	 *  mutation guard itself). The Update's outcome is report data, exactly as
+	 *  for Update.
+	 */
+	repointLocalSkillSource: (skillId: string, newPath: string) => __TAURI_INVOKE<RefreshReportDto>("repoint_local_skill_source", { skillId, newPath }),
+	/**
+	 *  Detach a `local` skill from its vanished source folder: it becomes
+	 *  `imported` — the central copy is its truth from now on (ADR-0003).
+	 *  Store-only; no Sync target changes.
+	 */
+	detachSkillFromSource: (skillId: string) => __TAURI_INVOKE<null>("detach_skill_from_source", { skillId }),
+	/**
 	 *  Import pre-existing Tool skills the operator selected, in one call: admit
 	 *  each chosen variant, finalize it as a Managed skill, then sync it
 	 *  (auto-sync on) or remove the byte-identical originals (auto-sync off).

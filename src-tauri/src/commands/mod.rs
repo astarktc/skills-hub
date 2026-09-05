@@ -15,7 +15,7 @@ use std::sync::Arc;
 use crate::core::cache_cleanup::cleanup_git_cache_dirs;
 use crate::core::cancel_token::CancelToken;
 use crate::core::clock::now_ms;
-use crate::core::environment::{expand_home_path, home_dir};
+use crate::core::environment::{expand_home_path, expand_home_path_in, home_dir};
 use crate::core::errors::SignalError;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::global_sync::{
@@ -50,7 +50,7 @@ use crate::core::sync_status::{SyncMode, SyncStatus};
 use crate::core::tool_adapters::{
     global_tool_entries, installed_keys, project_tool_entries, ToolCatalogEntry,
 };
-use crate::core::unlocatable::UnlocatableState;
+use crate::core::unlocatable::{detach_from_source, repoint_local_source, UnlocatableState};
 
 pub use error::CommandError;
 
@@ -882,6 +882,65 @@ fn to_refresh_report_dto(report: crate::core::refresh::RefreshReport) -> Refresh
         });
     }
     dto
+}
+
+/// Re-point a `local` skill whose source folder is gone at the folder's new
+/// location, then run the single-skill Update from it (see **Unlocatable
+/// skill** in `CONTEXT.md`). Two entry points in sequence: the re-point is
+/// store-only, the Update is the Refresh batch of one (which wraps the
+/// mutation guard itself). The Update's outcome is report data, exactly as
+/// for Update.
+#[tauri::command]
+#[specta::specta]
+#[allow(non_snake_case)]
+pub async fn repoint_local_skill_source(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    cancel: State<'_, Arc<CancelToken>>,
+    skillId: String,
+    newPath: String,
+) -> Result<RefreshReportDto, CommandError> {
+    let store = store.inner().clone();
+    let cancel = cancel.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        cancel.reset();
+        let paths = installer_paths(&app, &store)?;
+        let new_source = expand_home_path_in(&paths.home, &newPath)?;
+        repoint_local_source(&store, &paths.home, &skillId, &new_source)?;
+        let report = refresh_managed_skills_core(
+            &paths,
+            &store,
+            RefreshSelection::Ids(vec![skillId]),
+            RefreshPolicy::default(),
+            Some(&cancel),
+            now_ms(),
+            |_| {},
+        )?;
+        Ok::<_, anyhow::Error>(to_refresh_report_dto(report))
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+/// Detach a `local` skill from its vanished source folder: it becomes
+/// `imported` — the central copy is its truth from now on (ADR-0003).
+/// Store-only; no Sync target changes.
+#[tauri::command]
+#[specta::specta]
+#[allow(non_snake_case)]
+pub async fn detach_skill_from_source(
+    store: State<'_, SkillStore>,
+    skillId: String,
+) -> Result<(), CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        detach_from_source(&store, &skillId)?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
 }
 
 #[tauri::command]
