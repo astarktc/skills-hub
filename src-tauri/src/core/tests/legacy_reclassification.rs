@@ -67,6 +67,14 @@ fn tool_skill_dir(f: &Fixture, key: &str, name: &str) -> PathBuf {
     dir
 }
 
+fn symlink_dir(target: &Path, link: &Path) {
+    fs::create_dir_all(link.parent().expect("link parent")).expect("create link parent");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).expect("symlink");
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(target, link).expect("symlink");
+}
+
 fn row(f: &Fixture, id: &str) -> SkillRecord {
     f.store
         .get_skill_by_id(id)
@@ -90,4 +98,26 @@ fn a_local_row_inside_a_tool_skills_dir_becomes_imported_from_that_tool() {
     assert_eq!(after.source_type, "imported");
     assert_eq!(after.source_ref, None);
     assert_eq!(after.imported_from_tool.as_deref(), Some("claude_code"));
+}
+
+/// Rule (ii): the stored source is a symlink that resolves into the central
+/// repo — the row's "source" is its own central copy, so it becomes
+/// `imported`. The link here lives outside every Tool dir, so rule (i) is
+/// not what catches it; without a Tool on the path there is no found-in Tool.
+#[test]
+fn a_local_row_whose_path_links_into_central_becomes_imported() {
+    let f = fixture();
+    let central_copy = f.central.join("bar");
+    fs::create_dir_all(&central_copy).expect("central copy");
+    let link = f.home.join("elsewhere").join("bar");
+    symlink_dir(&central_copy, &link);
+    seed_local_row(&f, "bar", &link);
+
+    let changed = reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("pass");
+
+    assert_eq!(changed, 1);
+    let after = row(&f, "bar");
+    assert_eq!(after.source_type, "imported");
+    assert_eq!(after.source_ref, None);
+    assert_eq!(after.imported_from_tool, None);
 }

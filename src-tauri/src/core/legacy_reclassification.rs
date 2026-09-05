@@ -21,8 +21,11 @@ use super::tool_adapters::{default_tool_adapters, skills_dir_in};
 pub fn reclassify_legacy_imports(
     store: &SkillStore,
     home: &Path,
-    _central_dir: &Path,
+    central_dir: &Path,
 ) -> Result<usize> {
+    // Canonical once: on macOS a temp `/var/...` central dir is really
+    // `/private/var/...`, and a link's resolved target is always canonical.
+    let canonical_central = std::fs::canonicalize(central_dir).ok();
     let mut changed = 0;
     for record in store.list_skills()? {
         if Provenance::parse(&record.source_type) != Some(Provenance::Local) {
@@ -31,18 +34,52 @@ pub fn reclassify_legacy_imports(
         let Some(source) = record.source_ref.as_deref().map(PathBuf::from) else {
             continue;
         };
-        let Some(tool) = tool_owning_path(home, &source) else {
+        let Some(verdict) = classify(home, canonical_central.as_deref(), &source) else {
             continue;
         };
         store.upsert_skill(&SkillRecord {
             source_type: Provenance::Imported.as_str().to_string(),
             source_ref: None,
-            imported_from_tool: Some(tool.to_string()),
+            imported_from_tool: verdict.found_in_tool.map(str::to_string),
             ..record
         })?;
         changed += 1;
     }
     Ok(changed)
+}
+
+/// The evidence that a stored `local` source was really an import: which
+/// Tool it was found in, when the path names one.
+struct ImportEvidence {
+    found_in_tool: Option<&'static str>,
+}
+
+/// Spec Q5's three rules, in order. `None` means "leave the row alone".
+fn classify(
+    home: &Path,
+    canonical_central: Option<&Path>,
+    source: &Path,
+) -> Option<ImportEvidence> {
+    if let Some(tool) = tool_owning_path(home, source) {
+        return Some(ImportEvidence {
+            found_in_tool: Some(tool),
+        });
+    }
+    if links_into(source, canonical_central) {
+        return Some(ImportEvidence { found_in_tool: None });
+    }
+    None
+}
+
+/// Rule (ii): `path` is a symlink whose resolved target lies inside
+/// `canonical_central` — the "source" is the skill's own central copy.
+fn links_into(path: &Path, canonical_central: Option<&Path>) -> bool {
+    let Some(central) = canonical_central else {
+        return false;
+    };
+    let is_link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    is_link
+        && std::fs::canonicalize(path).is_ok_and(|resolved| resolved.starts_with(central))
 }
 
 /// Rule (i): the Tool whose global skills dir under `home` strictly contains
