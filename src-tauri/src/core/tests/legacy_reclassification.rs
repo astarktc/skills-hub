@@ -197,3 +197,30 @@ fn genuine_local_git_and_imported_rows_are_left_exactly_as_they_are() {
         );
     }
 }
+
+/// The pass is idempotent: a second run over the same store changes nothing.
+#[test]
+fn running_the_pass_twice_changes_nothing_the_second_time() {
+    let f = fixture();
+    seed_local_row(&f, "foo", &tool_skill_dir(&f, "claude_code", "foo"));
+    seed_local_row(&f, "wsl", Path::new("/mnt/c/Users/x/.claude/skills/wsl"));
+    seed_local_row(&f, "mine", &f.home.join("mine"));
+    assert_eq!(
+        reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("first"),
+        2
+    );
+    let after_first: Vec<_> = f.store.list_skills().expect("list").into_iter().collect();
+
+    let second = reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("second");
+
+    assert_eq!(second, 0);
+    let after_second = f.store.list_skills().expect("list");
+    assert_eq!(after_first.len(), after_second.len());
+    for (a, b) in after_first.iter().zip(after_second.iter()) {
+        assert_eq!(a.id, b.id);
+        assert_eq!(a.source_type, b.source_type);
+        assert_eq!(a.source_ref, b.source_ref);
+        assert_eq!(a.imported_from_tool, b.imported_from_tool);
+        assert_eq!(a.updated_at, b.updated_at);
+    }
+}
