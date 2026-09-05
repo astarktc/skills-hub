@@ -269,14 +269,16 @@ describe("useStatusReporter", () => {
       ...ERROR_OPTIONS,
       description: 'a failed' + 'errors.moreCount {"count":2}',
     });
-    // Newest first, and the head's row carries the plain message: the
-    // "+N more" belongs to the toast, the panel lists the N themselves.
+    // The panel is newest first, so the batch is recorded last-to-first:
+    // its first failure sits at the top of its block and the entries read
+    // top-down in the order they happened. The head's row carries the plain
+    // message: the "+N more" belongs to the toast, the panel lists the N.
     expect(
       result.current.notifications.map((n) => [n.kind, n.title, n.message]),
     ).toEqual([
-      ["error", "skill-c", "c failed"],
-      ["error", "skill-b", "b failed"],
       ["error", "skill-a", "a failed"],
+      ["error", "skill-b", "b failed"],
+      ["error", "skill-c", "c failed"],
     ]);
     expect(result.current.unreadCount).toBe(3);
   });

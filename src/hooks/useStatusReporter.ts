@@ -262,8 +262,11 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
           ? t("errors.moreCount", { count: visible.length - 1 })
           : "";
       showToast("error", head.title, `${head.message}${more}`);
-      for (const entry of visible) {
-        record("error", entry.title, entry.message);
+      // The history lists newest first, so the batch is recorded last-to-
+      // first: its first failure ends up at the top of its block and the
+      // entries read top-down in the order they happened.
+      for (let i = visible.length - 1; i >= 0; i--) {
+        record("error", visible[i].title, visible[i].message);
       }
     },
     [record, t],
