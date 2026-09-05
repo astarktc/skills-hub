@@ -254,6 +254,7 @@ function App() {
             }
             invokeTauri={invokeTauri}
             notify={notify}
+            formatError={formatError}
             t={t}
             isExplorePreview={activeView === "explore-detail"}
             onInstall={

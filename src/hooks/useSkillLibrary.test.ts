@@ -56,6 +56,7 @@ function skill(id: string, name: string, targets: string[] = []): ManagedSkill {
     description: null,
     source_type: "local",
     source_ref: null,
+    imported_from_tool: null,
     central_path: `/hub/${name}`,
     created_at: 0,
     updated_at: 0,
@@ -69,6 +70,7 @@ function skill(id: string, name: string, targets: string[] = []): ManagedSkill {
       target_path: `/tools/${tool}/${name}`,
       synced_at: null,
     })),
+    refreshable: true,
   };
 }
 

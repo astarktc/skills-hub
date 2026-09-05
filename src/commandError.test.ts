@@ -194,6 +194,12 @@ describe("describeCommandError", () => {
     );
   });
 
+  it("names the skill for NOT_REFRESHABLE", () => {
+    expect(
+      describeCommandError({ code: "NOT_REFRESHABLE", name: "taken-over" }, t),
+    ).toBe('errors.notRefreshable {"name":"taken-over"}');
+  });
+
   it("names the unknown tool key for UNKNOWN_TOOL", () => {
     expect(
       describeCommandError({ code: "UNKNOWN_TOOL", tool: "not-a-tool" }, t),

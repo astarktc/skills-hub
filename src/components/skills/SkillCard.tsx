@@ -17,6 +17,7 @@ import {
   formatRelativeTime,
   repoInfo,
   skillSourceLabel,
+  sourceKind,
 } from "../../lib/skillPresentation";
 
 type SkillCardProps = {
@@ -49,16 +50,24 @@ const SkillCard = ({
   copyToClipboard,
   t,
 }: SkillCardProps) => {
-  const typeKey = skill.source_type.toLowerCase();
-  const iconNode = typeKey.includes("git") ? (
-    <SiGithub size={20} />
-  ) : typeKey.includes("local") ? (
-    <Folder size={20} />
-  ) : (
-    <Box size={20} />
-  );
+  const kind = sourceKind(skill);
+  const iconNode =
+    kind === "git" ? (
+      <SiGithub size={20} />
+    ) : kind === "local" ? (
+      <Folder size={20} />
+    ) : (
+      <Box size={20} />
+    );
   const github = repoInfo(skill.source_ref);
   const copyValue = (github?.href ?? skill.source_ref ?? "").trim();
+  // An imported skill's found-in Tool is display-only history: shown, never
+  // treated as a source.
+  const importedFromTool = skill.imported_from_tool
+    ? t(`tools.${skill.imported_from_tool}`, {
+        defaultValue: skill.imported_from_tool,
+      })
+    : t("unknown");
 
   const handleCopy = () => {
     if (!copyValue) return;
@@ -103,7 +112,18 @@ const SkillCard = ({
           <div className="skill-desc">{skill.description}</div>
         ) : null}
         <div className="skill-meta-row">
-          {github ? (
+          {kind === "imported" ? (
+            <div
+              className="skill-source"
+              title={t("provenance.managedHereTooltip", {
+                tool: importedFromTool,
+              })}
+            >
+              <span className="repo-pill">{t("provenance.managedHere")}</span>
+              <span className="dot">•</span>
+              {t("provenance.importedFrom", { tool: importedFromTool })}
+            </div>
+          ) : github ? (
             <div className="skill-source">
               <button
                 className="repo-pill copyable"
@@ -187,15 +207,17 @@ const SkillCard = ({
         </div>
       </div>
       <div className="skill-actions-col">
-        <button
-          className="card-btn primary-action"
-          type="button"
-          onClick={() => onUpdate(skill)}
-          disabled={loading}
-          aria-label={t("update")}
-        >
-          <RefreshCw size={16} />
-        </button>
+        {skill.refreshable ? (
+          <button
+            className="card-btn primary-action"
+            type="button"
+            onClick={() => onUpdate(skill)}
+            disabled={loading}
+            aria-label={t("update")}
+          >
+            <RefreshCw size={16} />
+          </button>
+        ) : null}
         <button
           className="card-btn secondary-action"
           type="button"

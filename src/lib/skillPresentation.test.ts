@@ -32,6 +32,12 @@ describe("sourceKind", () => {
     expect(sourceKind(skill({ name: "a", source_type: "git" }))).toBe("git");
   });
 
+  it("reads imported as its own kind — the central copy is the truth", () => {
+    expect(sourceKind(skill({ name: "a", source_type: "imported" }))).toBe(
+      "imported",
+    );
+  });
+
   it("treats everything else as local", () => {
     expect(sourceKind(skill({ name: "a", source_type: "local" }))).toBe(
       "local",

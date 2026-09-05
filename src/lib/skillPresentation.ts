@@ -1,6 +1,6 @@
 /**
  * Skill presentation: the one home for how a Managed skill's source is
- * identified and displayed (git vs local, repo label/href, repo grouping,
+ * identified and displayed (git / local / imported, repo label/href, repo grouping,
  * search/sort, relative time) and for the Onboarding import's default
  * variant. Pure — no React, no i18n instance: callers pass the translate
  * function in.
@@ -37,11 +37,20 @@ export type RepoGroup<T> = {
 
 export const LOCAL_GROUP_KEY = "__local__";
 
-/** Whether a skill came from a git remote or from a local directory. */
+/**
+ * The skill's Provenance as the UI needs it: `git` (an external repo),
+ * `imported` (taken over from a Tool's skills dir — the central copy is the
+ * truth, there is no source) or `local` (an independent folder). Every
+ * icon / label / source-line decision derives from this one rule.
+ */
+export type SourceKind = "git" | "local" | "imported";
+
 export function sourceKind(
   skill: Pick<SkillPresentationFields, "source_type">,
-): "git" | "local" {
-  return skill.source_type.toLowerCase().includes("git") ? "git" : "local";
+): SourceKind {
+  const type = skill.source_type.toLowerCase();
+  if (type === "imported") return "imported";
+  return type.includes("git") ? "git" : "local";
 }
 
 /** The label a skill's source is shown under when it has no repo. */

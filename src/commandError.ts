@@ -34,6 +34,7 @@ const COMMAND_ERROR_CODE_MAP = {
   SUBPATH_MISSING: true,
   REVEAL_LOG_FAILED: true,
   SYMLINK_ESCAPES_REPO: true,
+  NOT_REFRESHABLE: true,
   OTHER: true,
 } as const satisfies Record<CommandError["code"], true>;
 
@@ -148,6 +149,8 @@ export function describeCommandError(
         subpath: e.subpath,
         target: e.target,
       });
+    case "NOT_REFRESHABLE":
+      return t("errors.notRefreshable", { name: e.name });
     case "OTHER":
       return e.message;
   }

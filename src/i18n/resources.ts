@@ -173,6 +173,12 @@ export const resources = {
       },
       update: "Update",
       remove: "Remove",
+      provenance: {
+        managedHere: "Managed here",
+        importedFrom: "Imported from {{tool}}",
+        managedHereTooltip:
+          "Imported from {{tool}}. The copy in Skills Hub is the source of truth — there is nothing to update from.",
+      },
       localTab: "Local Folder",
       gitTab: "Git Repository",
       searchTab: "Search",
@@ -284,6 +290,8 @@ export const resources = {
         revealLogFailed: "Could not open the log folder.",
         symlinkEscapesRepo:
           "Refused to follow the symlink at {{subpath}} in the repository: its target ({{target}}) points outside the repository.",
+        notRefreshable:
+          '"{{name}}" is managed here: it was imported from a tool and has no source to update from.',
         unsyncFailedTitle: "Could not remove from {{tool}}",
         gitCloneUnknown:
           "Could not fetch the repository from GitHub. Please check your network/proxy and try again.",
@@ -692,6 +700,12 @@ export const resources = {
       },
       update: "更新",
       remove: "移除",
+      provenance: {
+        managedHere: "由此管理",
+        importedFrom: "导入自 {{tool}}",
+        managedHereTooltip:
+          "导入自 {{tool}}。Skills Hub 中的副本即为来源，没有可供更新的内容。",
+      },
       localTab: "本地目录",
       gitTab: "Git 仓库",
       searchTab: "搜索",
@@ -790,6 +804,8 @@ export const resources = {
         revealLogFailed: "无法打开日志文件夹。",
         symlinkEscapesRepo:
           "已拒绝跟随仓库中 {{subpath}} 处的符号链接：其目标（{{target}}）指向仓库之外。",
+        notRefreshable:
+          "“{{name}}” 由 Skills Hub 管理：它是从工具目录导入的，没有可供更新的来源。",
         unsyncFailedTitle: "无法从 {{tool}} 中移除",
         gitCloneUnknown:
           "无法从 GitHub 拉取仓库。请检查网络/代理，或稍后重试。",

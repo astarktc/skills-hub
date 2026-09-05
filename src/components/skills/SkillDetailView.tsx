@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
+  Box,
   ChevronDown,
   ChevronRight,
   Clock,
@@ -19,9 +20,11 @@ import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import type { TFunction } from "i18next";
 import type { InvokeTauri } from "../../lib/tauri";
-import type { NotifyFn } from "../../hooks/useStatusReporter";
+import type {
+  FormatErrorFn,
+  NotifyFn,
+} from "../../hooks/useStatusReporter";
 import type { ManagedSkill, SkillFileEntry } from "./types";
-import { describeCommandError } from "../../commandError";
 import {
   formatRelativeTime,
   repoInfo,
@@ -35,6 +38,8 @@ type SkillDetailViewProps = {
   invokeTauri: InvokeTauri;
   /** The reporter's notification entry point, handed down by the binder. */
   notify: NotifyFn;
+  /** The reporter's error formatter — the one home for command-error copy. */
+  formatError: FormatErrorFn;
   t: TFunction;
   isExplorePreview?: boolean;
   onInstall?: () => void;
@@ -416,6 +421,7 @@ const SkillDetailView = ({
   onBack,
   invokeTauri,
   notify,
+  formatError,
   t,
   isExplorePreview = false,
   onInstall,
@@ -472,7 +478,7 @@ const SkillDetailView = ({
         if (!cancelled) setFileContent(content);
       } catch (err) {
         if (!cancelled) {
-          setFileContent(describeCommandError(err, t) ?? "");
+          setFileContent(formatError(err) ?? "");
         }
       } finally {
         if (!cancelled) setLoadingContent(false);
@@ -482,7 +488,7 @@ const SkillDetailView = ({
     return () => {
       cancelled = true;
     };
-  }, [activeFile, invokeTauri, skill.central_path, t]);
+  }, [activeFile, formatError, invokeTauri, skill.central_path]);
 
   const handleSelectFile = useCallback((path: string) => {
     setActiveFile(path);
@@ -500,12 +506,25 @@ const SkillDetailView = ({
     });
   }, []);
 
-  const isGitSource = sourceKind(skill) === "git";
-  const sourceLabel = isGitSource
-    ? (repoInfo(skill.source_ref)?.label ?? skill.source_ref ?? "")
-    : (skill.source_ref ?? "");
+  // One Provenance rule decides the source line: a git skill shows its repo,
+  // a local skill its folder, an imported skill "Managed here" with the Tool
+  // it was found in as history (there is no source).
+  const kind = sourceKind(skill);
+  const sourceLabel =
+    kind === "git"
+      ? (repoInfo(skill.source_ref)?.label ?? skill.source_ref ?? "")
+      : kind === "imported"
+        ? `${t("provenance.managedHere")} · ${t("provenance.importedFrom", {
+            tool: skill.imported_from_tool
+              ? t(`tools.${skill.imported_from_tool}`, {
+                  defaultValue: skill.imported_from_tool,
+                })
+              : t("unknown"),
+          })}`
+        : (skill.source_ref ?? "");
 
-  const SourceIcon = isGitSource ? GitBranch : Folder;
+  const SourceIcon =
+    kind === "git" ? GitBranch : kind === "imported" ? Box : Folder;
 
   return (
     <div className="detail-view">

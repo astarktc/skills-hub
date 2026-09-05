@@ -135,6 +135,7 @@ export function useExploreState({
           description: summary ?? null,
           source_type: "github",
           source_ref: sourceUrl,
+          imported_from_tool: null,
           central_path: cachePath,
           created_at: 0,
           updated_at: Date.now(),
@@ -142,6 +143,7 @@ export function useExploreState({
           status: "",
           invocation_mode: "user-and-model",
           targets: [],
+          refreshable: true,
         };
         onOpenExploreDetail(exploreManagedSkill);
       });
