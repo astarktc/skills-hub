@@ -694,6 +694,32 @@ pub fn skills_dir_in(home: &Path, adapter: &ToolAdapter) -> PathBuf {
     home.join(adapter.relative_skills_dir)
 }
 
+/// Which Tool's global skills directory holds `path`, if any — the inverse
+/// of the deletion rule below (`ensure_path_within_tool_dirs`). Which
+/// directories those are is a registry fact, so a caller that must refuse
+/// to treat a Tool's copy as an independent source (the Add → local folder
+/// flow: such a copy is Import's business) asks here rather than testing
+/// paths itself.
+///
+/// A path is held when it lies under the directory as spelled, or when what
+/// it resolves to does (a `/private/var` alias of the directory, a link from
+/// elsewhere into it): the bytes live in the Tool's directory either way.
+/// Resolution needs the path and the directory to exist; when either does
+/// not, only the spelling counts.
+pub fn tool_holding_path(home: &Path, path: &Path) -> Option<&'static ToolAdapter> {
+    let resolved = path.canonicalize().ok();
+    TOOL_ADAPTERS.iter().find(|adapter| {
+        let dir = skills_dir_in(home, adapter);
+        if path.starts_with(&dir) {
+            return true;
+        }
+        match (&resolved, dir.canonicalize()) {
+            (Some(resolved), Ok(dir)) => resolved.starts_with(dir),
+            _ => false,
+        }
+    })
+}
+
 /// The registry's deletion safety rule: Skills Hub only removes paths inside
 /// a Tool's global skills directory. Which directories those are is a
 /// registry fact, so the refusal lives here rather than in a command body,

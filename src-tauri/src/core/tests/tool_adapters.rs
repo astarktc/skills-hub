@@ -4,7 +4,7 @@ use crate::core::errors::SignalError;
 use crate::core::tool_adapters::{
     adapter_by_key, adapters_sharing_skills_dir, constituents_of, default_tool_adapters,
     detect_dir_in, ensure_path_within_tool_dirs, is_installed_in, scan_tool_dir, skills_dir_in,
-    ToolAdapter, ToolId, VirtualGroup,
+    tool_holding_path, ToolAdapter, ToolId, VirtualGroup,
 };
 
 #[test]
@@ -310,4 +310,57 @@ fn a_path_outside_every_tool_skills_dir_is_refused_with_the_typed_condition() {
             other => panic!("expected PathOutsideToolDirs, got {other:?}"),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The inverse: which Tool holds a path (`tool_holding_path`)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_path_inside_a_tool_skills_dir_names_that_tool() {
+    let home = tempfile::tempdir().unwrap();
+    for key in ["claude_code", "pi", "cursor"] {
+        let adapter = adapter_by_key(key).unwrap();
+        let path = skills_dir_in(home.path(), adapter).join("some-skill");
+        let holder = tool_holding_path(home.path(), &path)
+            .unwrap_or_else(|| panic!("{key} should hold {path:?}"));
+        assert_eq!(holder.key(), key);
+    }
+}
+
+#[test]
+fn a_path_outside_every_tool_skills_dir_has_no_holder() {
+    let home = tempfile::tempdir().unwrap();
+    for outside in [
+        home.path().join("Documents/my-skill"),
+        home.path().join(".claude"), // the tool root, not its skills dir
+        std::path::PathBuf::from("/"),
+    ] {
+        assert_eq!(
+            tool_holding_path(home.path(), &outside).map(|a| a.key()),
+            None,
+            "{outside:?} is outside every tool skills dir"
+        );
+    }
+}
+
+/// A path that only *resolves* into a Tool's skills dir (an alias of the
+/// directory, or a link from elsewhere into it) is held by that Tool too:
+/// the bytes live in the Tool's directory whichever spelling reaches them.
+#[cfg(unix)]
+#[test]
+fn a_path_resolving_into_a_tool_skills_dir_names_that_tool() {
+    let home = tempfile::tempdir().unwrap();
+    let claude = adapter_by_key("claude_code").unwrap();
+    let real = skills_dir_in(home.path(), claude).join("some-skill");
+    fs::create_dir_all(&real).unwrap();
+    let elsewhere = home.path().join("Documents");
+    fs::create_dir_all(&elsewhere).unwrap();
+    let link = elsewhere.join("alias");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    assert_eq!(
+        tool_holding_path(home.path(), &link).map(|a| a.key()),
+        Some("claude_code")
+    );
 }
