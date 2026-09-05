@@ -188,10 +188,16 @@ pub(crate) fn fetch_through_cache(
     let _guard = lock.lock().unwrap_or_else(|err| err.into_inner());
 
     let existing = read_meta(&repo_dir, &meta_path);
-    let checkout = existing
-        .as_ref()
-        .map(|meta| meta.checkout.widened_to(req.subpath))
-        .unwrap_or_else(|| Checkout::requested(req.subpath));
+    // The shape the entry ends up with. A clone without a readable record
+    // (a crashed run, a failed sidecar write) has an unknown shape, and
+    // unknown is treated as the widest — full — so the refetch below can
+    // only widen it. Only a directory with no clone at all takes the
+    // request's own shape.
+    let checkout = match &existing {
+        Some(meta) => meta.checkout.widened_to(req.subpath),
+        None if clone_present(&repo_dir) => Checkout::Full,
+        None => Checkout::requested(req.subpath),
+    };
 
     if let Some((meta, head)) = existing
         .as_ref()
@@ -331,9 +337,14 @@ fn prepare_repo_dir(cache_dir: &Path, key: &str) -> Result<PathBuf> {
     Ok(cache_root.join(key))
 }
 
+/// Whether the entry directory holds a clone at all.
+fn clone_present(repo_dir: &Path) -> bool {
+    repo_dir.join(".git").exists()
+}
+
 /// The entry's metadata, when the clone exists and the record parses.
 fn read_meta(repo_dir: &Path, meta_path: &Path) -> Option<RepoCacheMeta> {
-    if !repo_dir.join(".git").exists() {
+    if !clone_present(repo_dir) {
         return None;
     }
     let raw = std::fs::read_to_string(meta_path).ok()?;
@@ -350,11 +361,19 @@ fn fresh_head(ttl_ms: i64, meta: &RepoCacheMeta) -> Option<String> {
     }
 }
 
+/// Record the entry's freshness and shape. A failed write is not fatal —
+/// the bytes are in place and the next request reads the missing record as
+/// an unknown shape (see [`fetch_through_cache`]) — but it is logged, since
+/// it costs that request a full refetch.
 fn write_meta(meta_path: &Path, meta: &RepoCacheMeta) {
-    let _ = std::fs::write(
-        meta_path,
-        serde_json::to_string(meta).unwrap_or_else(|_| "{}".to_string()),
-    );
+    let raw = serde_json::to_string(meta).unwrap_or_else(|_| "{}".to_string());
+    if let Err(err) = std::fs::write(meta_path, raw) {
+        log::warn!(
+            "[installer] git cache metadata write failed at {:?}: {}",
+            meta_path,
+            err
+        );
+    }
 }
 
 /// One log shape for both variants: the sparse fetch only changes the label

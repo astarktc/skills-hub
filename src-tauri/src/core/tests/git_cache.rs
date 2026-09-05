@@ -554,6 +554,105 @@ fn a_second_subpath_widens_the_entry_without_removing_the_first() {
     assert_eq!(head_again, head_a);
 }
 
+/// A clone whose record is gone (a crashed run, a failed sidecar write) has
+/// an unknown shape. Unknown is treated as full — the widest shape — so the
+/// sparse request refetches the whole tree instead of narrowing what may be
+/// a full clone to its own subpath. Never-narrow holds without a record.
+#[test]
+fn a_clone_without_a_record_is_refetched_full_never_narrowed() {
+    let repo = two_skill_fixture();
+    let cache = tempfile::tempdir().expect("tempdir");
+    let url = url_of(repo.path());
+
+    let (repo_dir, _) =
+        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("listing fetch");
+    let meta_path = repo_dir.join(".skills-hub-cache.json");
+    fs::remove_file(&meta_path).expect("drop the sidecar");
+
+    let (dir, _) = fetch_through_cache(
+        cache.path(),
+        &FetchRequest {
+            subpath: Some("skills/a"),
+            ..request(&url, FRESH_TTL_MS)
+        },
+    )
+    .expect("sparse request against a recordless clone");
+
+    assert_eq!(dir, repo_dir, "the entry is reused, not moved");
+    assert!(
+        dir.join("skills/b/SKILL.md").exists() && dir.join("SKILL.md").exists(),
+        "a clone of unknown shape is refetched full, never narrowed to the request"
+    );
+    assert_eq!(
+        entry_checkout_kind(&repo_dir),
+        "full",
+        "the new record says the entry is full"
+    );
+}
+
+/// The same rule for a record that exists but does not parse.
+#[test]
+fn a_clone_with_an_unparseable_record_is_refetched_full_never_narrowed() {
+    let repo = two_skill_fixture();
+    let cache = tempfile::tempdir().expect("tempdir");
+    let url = url_of(repo.path());
+
+    let (repo_dir, _) =
+        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("listing fetch");
+    fs::write(repo_dir.join(".skills-hub-cache.json"), "{not json").expect("corrupt the sidecar");
+
+    let (dir, _) = fetch_through_cache(
+        cache.path(),
+        &FetchRequest {
+            subpath: Some("skills/a"),
+            ..request(&url, FRESH_TTL_MS)
+        },
+    )
+    .expect("sparse request against a clone with a corrupt record");
+
+    assert_eq!(dir, repo_dir);
+    assert!(
+        dir.join("skills/b/SKILL.md").exists() && dir.join("SKILL.md").exists(),
+        "an unreadable record is an unknown shape, refetched full"
+    );
+    assert_eq!(entry_checkout_kind(&repo_dir), "full");
+}
+
+/// A sidecar that cannot be written (here: the path is a directory) does
+/// not fail the fetch — the bytes are in place — it is logged and the entry
+/// simply carries no record, which the next request reads as unknown shape.
+#[test]
+fn a_failed_record_write_does_not_fail_the_fetch() {
+    let repo = fixture_repo();
+    let cache = tempfile::tempdir().expect("tempdir");
+    let url = url_of(repo.path());
+
+    let (repo_dir, _) =
+        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("first fetch");
+    let meta_path = repo_dir.join(".skills-hub-cache.json");
+    fs::remove_file(&meta_path).expect("drop the sidecar");
+    fs::create_dir(&meta_path).expect("block the sidecar path");
+
+    let (dir, head) =
+        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("fetch succeeds");
+    assert_eq!(dir, repo_dir);
+    assert!(!head.is_empty());
+    assert!(dir.join("SKILL.md").exists(), "the bytes landed");
+    assert!(
+        meta_path.is_dir(),
+        "the blocked sidecar was left alone, not replaced by force"
+    );
+}
+
+fn entry_checkout_kind(repo_dir: &Path) -> String {
+    let raw = fs::read_to_string(repo_dir.join(".skills-hub-cache.json")).expect("meta written");
+    let meta: serde_json::Value = serde_json::from_str(&raw).expect("meta json");
+    meta["checkout"]["kind"]
+        .as_str()
+        .expect("checkout.kind")
+        .to_string()
+}
+
 /// A metadata record written before the checkout shape existed belongs to a
 /// full clone (sparse entries lived under their own key then), so it keeps
 /// serving sparse requests as a hit instead of being widened or refetched.
