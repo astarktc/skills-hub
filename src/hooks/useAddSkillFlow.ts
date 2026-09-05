@@ -376,11 +376,12 @@ export function useAddSkillFlow({
 
   /**
    * The completion toast for an import: the completion line as the title
-   * and, as the message, one line per group whose source Tool the backend
-   * synced beyond the auto-sync policy (the chosen variant was found in a
-   * deselected Tool, so its original was overwritten in place rather than
-   * left as an untracked copy). Not an error — the operator is told why a
-   * deselected Tool received a link, on lines that stay readable.
+   * (a warning carrying the counts when any group failed) and, as the
+   * message, one line per group whose source Tool the backend synced beyond
+   * the auto-sync policy (the chosen variant was found in a deselected Tool,
+   * so its original was overwritten in place rather than left as an
+   * untracked copy). Not an error — the operator is told why a deselected
+   * Tool received a link, on lines that stay readable.
    */
   const importSuccessToast = useCallback(
     (report: ImportReportDto): CompletionToast => {
@@ -396,10 +397,18 @@ export function useAddSkillFlow({
           }),
         );
       }
-      return {
-        title: t("status.importCompleted"),
-        message: forcedLines.length > 0 ? forcedLines.join("\n") : undefined,
-      };
+      const message =
+        forcedLines.length > 0 ? forcedLines.join("\n") : undefined;
+      return report.failed > 0
+        ? {
+            kind: "warning",
+            title: t("status.importPartial", {
+              imported: report.imported,
+              failed: report.failed,
+            }),
+            message,
+          }
+        : { title: t("status.importCompleted"), message };
     },
     [t, toolLabelById],
   );

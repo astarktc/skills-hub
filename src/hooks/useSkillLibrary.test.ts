@@ -345,9 +345,12 @@ describe("useSkillLibrary refresh", () => {
         message: "formatted:OTHER",
       },
     ]);
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
-      'status.refreshSummary {"refreshed":1,"failed":1}',
-    );
+    // A batch that finished with failures is a warning (lingers, unread),
+    // not a success.
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith({
+      kind: "warning",
+      title: 'status.refreshSummary {"refreshed":1,"failed":1}',
+    });
   });
 
   it("reports a failed auto-sync re-assert even though the skill refreshed", async () => {
@@ -493,9 +496,10 @@ describe("useSkillLibrary unsync", () => {
       await result.current.handleUnsyncAll();
     });
 
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
-      'unsyncPartial {"count":1,"failed":1}',
-    );
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith({
+      kind: "warning",
+      title: 'unsyncPartial {"count":1,"failed":1}',
+    });
     expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
       {
         title: 'errors.unsyncFailedTitle {"tool":"CURSOR"}',

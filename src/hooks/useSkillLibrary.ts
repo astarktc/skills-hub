@@ -9,6 +9,7 @@ import { invokeTauri, isTauri } from "../lib/tauri";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type {
   ActionErrorEntry,
+  CompletionToast,
   StatusReporter,
   TranslateFn,
 } from "./useStatusReporter";
@@ -188,13 +189,17 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
 
     await runAction<RefreshReportDto>(
       {
-        successToast: (report) =>
+        // A batch that finished with failures is a warning, not a success.
+        successToast: (report): CompletionToast =>
           report.failed === 0
             ? t("status.refreshCompleted")
-            : t("status.refreshSummary", {
-                refreshed: report.refreshed,
-                failed: report.failed,
-              }),
+            : {
+                kind: "warning",
+                title: t("status.refreshSummary", {
+                  refreshed: report.refreshed,
+                  failed: report.failed,
+                }),
+              },
       },
       async () => {
         const report = await refreshSkills(null);
@@ -239,13 +244,16 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   );
 
   const removalToast = useCallback(
-    (report: RemovalReportDto) =>
+    (report: RemovalReportDto): CompletionToast =>
       report.failed === 0
         ? t("unsyncAllComplete", { count: report.removed })
-        : t("unsyncPartial", {
-            count: report.removed,
-            failed: report.failed,
-          }),
+        : {
+            kind: "warning",
+            title: t("unsyncPartial", {
+              count: report.removed,
+              failed: report.failed,
+            }),
+          },
     [t],
   );
 

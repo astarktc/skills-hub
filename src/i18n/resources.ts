@@ -333,6 +333,7 @@ export const resources = {
       },
       status: {
         importCompleted: "Import completed.",
+        importPartial: "{{imported}} skills imported, {{failed}} failed.",
         importSourceToolForced:
           "{{name}}: also synced to {{tool}}, where the original was found.",
         localSkillCreated: "Local skill created.",
@@ -824,6 +825,7 @@ export const resources = {
       },
       status: {
         importCompleted: "导入完成。",
+        importPartial: "已导入 {{imported}} 个 Skills，{{failed}} 个失败。",
         importSourceToolForced:
           "{{name}}：已同步到发现原始副本的 {{tool}}。",
         localSkillCreated: "本地技能创建完成。",

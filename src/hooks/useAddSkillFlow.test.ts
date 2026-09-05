@@ -767,5 +767,10 @@ describe("useAddSkillFlow import flow", () => {
       },
     ]);
     expect(result.current.showImportModal).toBe(true);
+    // The batch summary is a warning carrying the counts, not "completed".
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith({
+      kind: "warning",
+      title: 'status.importPartial {"imported":0,"failed":1}',
+    });
   });
 });
