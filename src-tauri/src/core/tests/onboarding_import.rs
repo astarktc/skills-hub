@@ -14,6 +14,7 @@ use crate::core::onboarding_import::{
     OriginalStatus,
 };
 use crate::core::skill_store::SkillStore;
+use crate::core::sync_status::SyncMode;
 use crate::core::tool_adapters::adapter_by_key;
 
 struct Fixture {
@@ -108,12 +109,17 @@ fn auto_sync_on_overwrites_the_source_tool_in_place_across_its_shared_dir_group(
         skill_id,
         targets,
         originals,
+        forced_source_tool,
         ..
     } = imported(&report, "alpha")
     else {
         panic!("alpha should import: {:?}", report);
     };
     assert!(originals.is_empty(), "auto-sync on removes nothing");
+    assert_eq!(
+        *forced_source_tool, None,
+        "a source Tool the policy already names is not a forced inclusion"
+    );
     // One artifact, one attempted pair (shared dir dedupe), both rows written.
     assert_eq!(targets.len(), 1, "shared dir attempted once: {:?}", targets);
     assert!(
@@ -137,6 +143,83 @@ fn auto_sync_on_overwrites_the_source_tool_in_place_across_its_shared_dir_group(
     let central = f.paths.central_dir.join("alpha");
     assert!(central.join("SKILL.md").is_file(), "central copy exists");
     assert!(original.join("SKILL.md").is_file(), "target materialised");
+}
+
+#[test]
+fn auto_sync_on_force_includes_a_source_tool_the_policy_deselected() {
+    // The operator's global auto-sync selection excludes claude_code, yet
+    // that is where the chosen variant lives. Leaving its original behind
+    // would strand an untracked copy: the source Tool joins the target set
+    // and its original is overwritten in place, exactly as a selected one.
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    install_tool(&f, "cursor");
+    let original = seed_skill_dir(&f, "claude_code", "alpha", "v1");
+
+    let report = run(
+        &f,
+        &[selection("alpha", &original)],
+        ImportPolicy {
+            auto_sync: true,
+            tools: Some(vec!["cursor".to_string()]),
+        },
+    );
+
+    let ImportGroupStatus::Imported {
+        skill_id,
+        targets,
+        originals,
+        forced_source_tool,
+        ..
+    } = imported(&report, "alpha")
+    else {
+        panic!("alpha should import: {:?}", report);
+    };
+    assert!(originals.is_empty(), "auto-sync on removes nothing");
+    assert_eq!(
+        forced_source_tool.as_deref(),
+        Some("claude_code"),
+        "the report names the Tool included beyond the policy"
+    );
+    // The policy's Tool and the source Tool are both synced, nothing else.
+    let mut synced: Vec<&str> = targets
+        .iter()
+        .filter(|t| {
+            matches!(
+                t.status,
+                crate::core::global_sync::BatchTargetStatus::Synced { .. }
+            )
+        })
+        .map(|t| t.tool_key.as_str())
+        .collect();
+    synced.sort_unstable();
+    assert_eq!(synced, vec!["claude_code", "cursor"], "{:?}", targets);
+    assert_eq!(targets.len(), 2, "{:?}", targets);
+
+    // A target row exists for the source Tool and its dir holds the Sync
+    // target (a link on this platform), not the untracked original copy.
+    let row = f
+        .store
+        .get_skill_target(skill_id, "claude_code")
+        .expect("query")
+        .expect("row for the source Tool");
+    assert_eq!(row.target_path, original.to_string_lossy());
+    assert_eq!(row.mode, SyncMode::Symlink);
+    assert!(
+        original
+            .symlink_metadata()
+            .expect("target")
+            .file_type()
+            .is_symlink(),
+        "the original at {:?} was replaced by a link",
+        original
+    );
+    assert_eq!(
+        fs::read_link(&original).expect("link"),
+        f.paths.central_dir.join("alpha"),
+        "the link points at the central copy"
+    );
+    assert!(f.paths.central_dir.join("alpha").join("SKILL.md").is_file());
 }
 
 #[test]

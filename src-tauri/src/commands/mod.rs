@@ -898,6 +898,9 @@ pub struct ImportOriginalDto {
 
 /// Per-group result. `targets` carries the sync outcomes (auto-sync on) and
 /// `originals` the settled originals (auto-sync off); the other is empty.
+/// `forced_source_tool` names the Tool the chosen variant was found in when
+/// it was synced beyond the policy's Tools (so its original is overwritten
+/// in place rather than left as an untracked copy); `null` otherwise.
 #[derive(Debug, Serialize, Type)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ImportGroupStatusDto {
@@ -905,6 +908,7 @@ pub enum ImportGroupStatusDto {
         skill_id: String,
         skill_name: String,
         targets: Vec<SyncTargetResultDto>,
+        forced_source_tool: Option<String>,
         originals: Vec<ImportOriginalDto>,
     },
     Failed {
@@ -989,6 +993,7 @@ fn to_import_report_dto(report: crate::core::onboarding_import::ImportReport) ->
                 skill_id,
                 skill_name,
                 targets,
+                forced_source_tool,
                 originals,
             } => {
                 dto.imported += 1;
@@ -996,6 +1001,7 @@ fn to_import_report_dto(report: crate::core::onboarding_import::ImportReport) ->
                     skill_id,
                     skill_name,
                     targets: targets.into_iter().map(to_sync_target_result_dto).collect(),
+                    forced_source_tool,
                     originals: originals
                         .into_iter()
                         .map(|original| ImportOriginalDto {

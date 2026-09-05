@@ -250,8 +250,11 @@ export type ImportGroupOutcomeDto = {
 /**
  *  Per-group result. `targets` carries the sync outcomes (auto-sync on) and
  *  `originals` the settled originals (auto-sync off); the other is empty.
+ *  `forced_source_tool` names the Tool the chosen variant was found in when
+ *  it was synced beyond the policy's Tools (so its original is overwritten
+ *  in place rather than left as an untracked copy); `null` otherwise.
  */
-export type ImportGroupStatusDto = { status: "imported"; skill_id: string; skill_name: string; targets: SyncTargetResultDto[]; originals: ImportOriginalDto[] } | { status: "failed"; error: CommandError };
+export type ImportGroupStatusDto = { status: "imported"; skill_id: string; skill_name: string; targets: SyncTargetResultDto[]; forced_source_tool: string | null; originals: ImportOriginalDto[] } | { status: "failed"; error: CommandError };
 
 export type ImportOriginalDto = {
 	path: string,

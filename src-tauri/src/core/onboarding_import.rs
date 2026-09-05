@@ -15,10 +15,15 @@
 //!   blocked for the length of the run. Inside the guard only the unlocked
 //!   seams are used (`sync_skills_to_tools_unlocked`, `remove_path_any`) —
 //!   an entry point never calls another entry point.
-//! * **Auto-sync on**: the finalized skill is synced to the requested Tools.
-//!   The chosen variant's own Tool carries a force-overwrite override — that
-//!   copy *is* the import source and its bytes are already in the central
-//!   repo, so replacing it in place with the Sync target is safe.
+//! * **Auto-sync on**: the finalized skill is synced to the requested Tools
+//!   *plus* the chosen variant's own Tool (the source Tool), whether or not
+//!   the policy names it — otherwise a deselected source Tool would keep its
+//!   original as an untracked copy. The source Tool carries a
+//!   force-overwrite override — that copy *is* the import source and its
+//!   bytes are already in the central repo, so replacing it in place with
+//!   the Sync target is safe. When the policy did not name the source Tool,
+//!   the group reports it as `forced_source_tool` so the UI can say why a
+//!   deselected Tool received a link.
 //! * **Auto-sync off**: every original of the group (the chosen variant's own
 //!   path included — it now lives in the central repo) is removed *only* when
 //!   it is byte-identical to the finalized central copy. A divergent sibling
@@ -111,6 +116,10 @@ pub enum ImportGroupStatus {
         skill_name: String,
         /// Sync targets (auto-sync on); empty when auto-sync is off.
         targets: Vec<BatchTargetOutcome>,
+        /// The source Tool's key when it was synced beyond the policy's
+        /// Tools (auto-sync on, source Tool deselected); `None` when the
+        /// policy already named it or auto-sync is off.
+        forced_source_tool: Option<String>,
         /// Originals settled (auto-sync off); empty when auto-sync is on.
         originals: Vec<OriginalOutcome>,
     },
@@ -224,14 +233,14 @@ fn apply_one_unlocked(
         Err(error) => return ImportGroupStatus::Failed { error },
     };
 
-    let (targets, originals) = if policy.auto_sync {
-        (
-            sync_imported_unlocked(paths, store, &installed, group, selection, policy, now),
-            Vec::new(),
-        )
+    let (targets, forced_source_tool, originals) = if policy.auto_sync {
+        let (targets, forced_source_tool) =
+            sync_imported_unlocked(paths, store, &installed, group, selection, policy, now);
+        (targets, forced_source_tool, Vec::new())
     } else {
         (
             Vec::new(),
+            None,
             group
                 .variants
                 .iter()
@@ -251,13 +260,23 @@ fn apply_one_unlocked(
         skill_id: installed.skill_id,
         skill_name: installed.name,
         targets,
+        forced_source_tool,
         originals,
     }
 }
 
-/// Auto-sync on: fan the freshly imported skill out to the requested Tools.
-/// The chosen variant's own Tool is force-overwritten — the original at that
-/// path *is* the source, and its bytes are already in the central repo.
+/// Auto-sync on: fan the freshly imported skill out to the requested Tools
+/// and the source Tool. The target set is `policy.tools ∪ {source Tool}`:
+/// the chosen variant's own Tool is always synced and force-overwritten —
+/// the original at that path *is* the source, and its bytes are already in
+/// the central repo — so a deselected source Tool never keeps an untracked
+/// copy. Returns the outcomes plus the source Tool's key when it was
+/// included beyond the policy.
+///
+/// The source Tool is appended *after* the policy's Tools so the batch's
+/// shared-skills-dir dedupe keeps its caller-order semantics: a source Tool
+/// sharing its dir with a policy Tool is covered by that Tool's record
+/// fan-out, exactly as before.
 fn sync_imported_unlocked(
     paths: &InstallerPaths,
     store: &SkillStore,
@@ -266,8 +285,8 @@ fn sync_imported_unlocked(
     selection: &ImportSelection,
     policy: &ImportPolicy,
     now: i64,
-) -> Vec<BatchTargetOutcome> {
-    let tools = policy
+) -> (Vec<BatchTargetOutcome>, Option<String>) {
+    let mut tools = policy
         .tools
         .clone()
         .unwrap_or_else(|| installed_keys(&global_tool_entries(&paths.home)));
@@ -276,6 +295,10 @@ fn sync_imported_unlocked(
         .iter()
         .find(|variant| variant.path == selection.chosen_path)
         .map(|variant| variant.tool.clone());
+    let forced_source_tool = source_tool
+        .clone()
+        .filter(|tool_key| !tools.contains(tool_key));
+    tools.extend(forced_source_tool.clone());
     let overrides = source_tool
         .map(|tool_key| {
             vec![BatchOverride {
@@ -295,7 +318,7 @@ fn sync_imported_unlocked(
         overwrite_if_same_content: true,
         overrides,
     };
-    sync_skills_to_tools_unlocked(
+    let targets = sync_skills_to_tools_unlocked(
         &paths.home,
         store,
         &skills,
@@ -303,7 +326,8 @@ fn sync_imported_unlocked(
         &batch_policy,
         now,
         |_| {},
-    )
+    );
+    (targets, forced_source_tool)
 }
 
 /// Auto-sync off: remove one original, but only when it is byte-identical to
