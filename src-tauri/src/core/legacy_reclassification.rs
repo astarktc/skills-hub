@@ -68,7 +68,34 @@ fn classify(
     if links_into(source, canonical_central) {
         return Some(ImportEvidence { found_in_tool: None });
     }
+    if !source.exists() {
+        if let Some(tool) = tool_shaping_path(source) {
+            return Some(ImportEvidence {
+                found_in_tool: Some(tool),
+            });
+        }
+    }
     None
+}
+
+/// Rule (iii): `path` has the shape of a Tool skills-dir entry under *any*
+/// home prefix — its components contain an adapter's relative global skills
+/// dir as a contiguous run followed by exactly one more component (the skill
+/// name). Separators are normalised so `C:\Users\x\.claude\skills\foo` and
+/// `/mnt/c/Users/x/.claude/skills/foo` both match. First adapter in registry
+/// order wins when Tools share a directory.
+fn tool_shaping_path(path: &Path) -> Option<&'static str> {
+    let normalised = path.to_string_lossy().replace('\\', "/");
+    let components: Vec<&str> = normalised.split('/').filter(|c| !c.is_empty()).collect();
+    default_tool_adapters()
+        .iter()
+        .find(|adapter| {
+            let dir: Vec<&str> = adapter.relative_skills_dir.split('/').collect();
+            // The run must end exactly one component before the path's end.
+            components.len() > dir.len()
+                && components[components.len() - 1 - dir.len()..components.len() - 1] == dir[..]
+        })
+        .map(|adapter| adapter.key())
 }
 
 /// Rule (ii): `path` is a symlink whose resolved target lies inside

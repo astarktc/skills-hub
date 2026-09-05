@@ -121,3 +121,24 @@ fn a_local_row_whose_path_links_into_central_becomes_imported() {
     assert_eq!(after.source_ref, None);
     assert_eq!(after.imported_from_tool, None);
 }
+
+/// Rule (iii): the stored source does not exist on this machine but has the
+/// shape of a Tool skills-dir path under some other home prefix — a row
+/// migrated from a Windows/WSL database. The Tool is read off the shape.
+#[test]
+fn a_missing_path_shaped_like_a_tool_skills_dir_becomes_imported() {
+    let f = fixture();
+    seed_local_row(&f, "wsl", Path::new("/mnt/c/Users/x/.claude/skills/wsl"));
+    seed_local_row(&f, "win", Path::new(r"C:\Users\x\.pi\agent\skills\win"));
+
+    let changed = reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("pass");
+
+    assert_eq!(changed, 2);
+    let wsl = row(&f, "wsl");
+    assert_eq!(wsl.source_type, "imported");
+    assert_eq!(wsl.source_ref, None);
+    assert_eq!(wsl.imported_from_tool.as_deref(), Some("claude_code"));
+    let win = row(&f, "win");
+    assert_eq!(win.source_type, "imported");
+    assert_eq!(win.imported_from_tool.as_deref(), Some("pi"));
+}
