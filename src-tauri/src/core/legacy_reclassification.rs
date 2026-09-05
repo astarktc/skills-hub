@@ -14,7 +14,7 @@ use anyhow::Result;
 
 use super::provenance::Provenance;
 use super::skill_store::{SkillRecord, SkillStore};
-use super::tool_adapters::{default_tool_adapters, skills_dir_in};
+use super::tool_adapters::{default_tool_adapters, skills_dir_in, tool_holding_path};
 
 /// Reclassify every `local` row whose stored source path was really a Tool's
 /// skills directory as `imported`. Returns how many rows changed.
@@ -92,15 +92,13 @@ fn links_into(path: &Path, canonical_central: Option<&Path>) -> bool {
     is_link && std::fs::canonicalize(path).is_ok_and(|resolved| resolved.starts_with(central))
 }
 
-/// Rule (i): the Tool whose global skills dir under `home` strictly contains
-/// `path` — the first in registry order when Tools share a directory.
+/// Rule (i): the Tool whose global skills dir under `home` holds `path` —
+/// the registry's own answer (`tool_adapters::tool_holding_path`, the
+/// inverse of its deletion rule), narrowed to a strict descendant: a source
+/// that *is* a Tool's skills dir names no skill.
 fn tool_owning_path(home: &Path, path: &Path) -> Option<&'static str> {
-    default_tool_adapters()
-        .iter()
-        .find(|adapter| {
-            path.strip_prefix(skills_dir_in(home, adapter))
-                .is_ok_and(|rest| rest.components().next().is_some())
-        })
+    tool_holding_path(home, path)
+        .filter(|adapter| path != skills_dir_in(home, adapter))
         .map(|adapter| adapter.key())
 }
 
