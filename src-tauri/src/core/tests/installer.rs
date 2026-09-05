@@ -212,6 +212,55 @@ fn lists_and_installs_git_skills_without_network() {
     assert!(res.central_path.exists());
 }
 
+/// The Add flow on a host without GitHub coordinates fetches the repository
+/// once: the listing's clone is the install's cache hit. The fixture moves on
+/// between the two steps, so a second fetch would record the newer commit;
+/// the install instead records the listing's, and one clone directory exists.
+#[test]
+fn add_on_a_non_github_host_fetches_the_repository_once() {
+    let (_dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+
+    let repo_dir = tempfile::tempdir().unwrap();
+    for name in ["a", "b"] {
+        let skill = repo_dir.path().join("skills").join(name);
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), format!("---\nname: {name}\n---\n")).unwrap();
+    }
+    let repo = init_git_repo(repo_dir.path());
+    let listed_commit = commit_all(&repo, "add skills").to_string();
+    let url = repo_dir.path().to_string_lossy().to_string();
+
+    let listing = super::list_git_skills(&paths, &store, &url, None).unwrap();
+    assert!(listing.candidates.iter().any(|c| c.subpath == "skills/a"));
+
+    fs::write(repo_dir.path().join("after-listing.txt"), "later").unwrap();
+    let later_commit = commit_all(&repo, "after listing").to_string();
+    assert_ne!(listed_commit, later_commit);
+
+    let res = super::install_git_skill_from_selection(&paths, &store, &url, "skills/a", None, None)
+        .unwrap();
+    assert!(res.central_path.join("SKILL.md").exists());
+
+    let record = store
+        .get_skill_by_id(&res.skill_id)
+        .unwrap()
+        .expect("installed skill is recorded");
+    assert_eq!(
+        record.source_revision.as_deref(),
+        Some(listed_commit.as_str()),
+        "the install is served from the listing's clone, not a second fetch"
+    );
+
+    let cache_root = paths.cache_dir.join("skills-hub-git-cache");
+    let clones = fs::read_dir(&cache_root)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .count();
+    assert_eq!(clones, 1, "listing + install must leave exactly one clone");
+}
+
 #[test]
 fn git_fetch_errors_on_multi_skills_repo_root() {
     let (_dir, store) = make_store();
