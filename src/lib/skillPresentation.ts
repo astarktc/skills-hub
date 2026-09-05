@@ -1,8 +1,9 @@
 /**
  * Skill presentation: the one home for how a Managed skill's source is
  * identified and displayed (git vs local, repo label/href, repo grouping,
- * search/sort, relative time). Pure — no React, no i18n instance: callers
- * pass the translate function in.
+ * search/sort, relative time) and for the Onboarding import's default
+ * variant. Pure — no React, no i18n instance: callers pass the translate
+ * function in.
  */
 
 /** The Managed-skill fields presentation needs. Keeps the module testable. */
@@ -157,6 +158,30 @@ export function filterAndSortSkills<
       return (b.created_at ?? 0) - (a.created_at ?? 0);
     return (b.updated_at ?? 0) - (a.updated_at ?? 0);
   });
+}
+
+/** The onboarding-variant fields the default-variant rule needs. */
+export type ImportVariantFields = {
+  path: string;
+  is_link: boolean;
+};
+
+/**
+ * The variant an Onboarding import chooses by default for a group: in a
+ * consistent (no-conflict) group, the first real directory — a link is never
+ * what the app copies when the directory it points at is also in the group;
+ * ties, and a group with no real directory, fall back to the plan's order
+ * (the Tool registry's). A conflicting group stays at its first variant: the
+ * operator resolves it by hand. `undefined` for an empty group.
+ */
+export function defaultImportVariantPath(group: {
+  has_conflict: boolean;
+  variants: ImportVariantFields[];
+}): string | undefined {
+  const preferred = group.has_conflict
+    ? undefined
+    : group.variants.find((variant) => !variant.is_link);
+  return (preferred ?? group.variants[0])?.path;
 }
 
 /**

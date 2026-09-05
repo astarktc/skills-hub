@@ -512,7 +512,7 @@ describe("useAddSkillFlow import flow", () => {
     skill_id: "imported-id",
     skill_name: "alpha",
     targets: [],
-    forced_source_tool: null,
+    forced_tools: [],
     originals: [],
     ...overrides,
   });
@@ -594,10 +594,11 @@ describe("useAddSkillFlow import flow", () => {
     expect(result.current.showImportModal).toBe(false);
   });
 
-  it("says on the success toast when the source Tool was synced beyond the policy", async () => {
-    // cursor is deselected in the auto-sync selection, but the chosen
-    // variant was found there: the backend force-included it and reports
-    // so. Not an error — the modal closes and the toast explains the link.
+  it("says on the success toast, one line per Tool, which Tools were synced beyond the policy", async () => {
+    // cursor and goose are deselected in the auto-sync selection, but each
+    // held a variant byte-identical to the chosen one: the backend
+    // force-included both and reports so. Not an error — the modal closes
+    // and the toast explains each link.
     stubImportBackend(
       [() => Promise.resolve(PLAN)],
       report(
@@ -615,8 +616,14 @@ describe("useAddSkillFlow import flow", () => {
               tool: "cursor",
               status: { status: "synced", mode_used: "symlink" },
             },
+            {
+              skill_id: "imported-id",
+              skill_name: "alpha",
+              tool: "goose",
+              status: { status: "synced", mode_used: "symlink" },
+            },
           ],
-          forced_source_tool: "cursor",
+          forced_tools: ["cursor", "goose"],
         }),
       ),
     );
@@ -625,14 +632,67 @@ describe("useAddSkillFlow import flow", () => {
     const result = await runImport(setup);
 
     // The explanation is the toast's message, never folded into its
-    // title: a title collapses newlines, the message renders as lines.
+    // title: a title collapses newlines, the message renders as lines. A
+    // Tool without a label (goose here) is named by its key.
     expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith({
       title: "status.importCompleted",
-      message:
+      message: [
         'status.importSourceToolForced {"name":"alpha","tool":"CURSOR"}',
+        'status.importSourceToolForced {"name":"alpha","tool":"goose"}',
+      ].join("\n"),
     });
     expect(setup.reporter.showActionErrors).not.toHaveBeenCalled();
     expect(result.current.showImportModal).toBe(false);
+  });
+
+  it("names the real directory, not a link listed before it, as a consistent group's chosen variant", async () => {
+    // Registry order lists Claude before Pi, so the plan lists Claude's
+    // symlink first even though it points at Pi's real directory. A link
+    // is never what the app copies when the directory is also in the group.
+    const linked: OnboardingPlan = {
+      total_tools_scanned: 2,
+      total_skills_found: 2,
+      groups: [
+        {
+          name: "alpha",
+          has_conflict: false,
+          variants: [
+            {
+              tool: "claude",
+              name: "alpha",
+              path: "/home/.claude/skills/alpha",
+              fingerprint: "same",
+              is_link: true,
+              link_target: "/home/.pi/agent/skills/alpha",
+            },
+            {
+              tool: "pi",
+              name: "alpha",
+              path: "/home/.pi/agent/skills/alpha",
+              fingerprint: "same",
+              is_link: false,
+              link_target: null,
+            },
+          ],
+        },
+      ],
+    };
+    stubImportBackend([() => Promise.resolve(linked)]);
+    const setup = makeDeps();
+
+    const result = await runImport(setup);
+
+    expect(result.current.variantChoice).toEqual({
+      alpha: "/home/.pi/agent/skills/alpha",
+    });
+    const [, selections] = importCall()!;
+    expect(selections).toEqual([
+      {
+        group_name: "alpha",
+        chosen_path: "/home/.pi/agent/skills/alpha",
+        name: null,
+      },
+    ]);
   });
 
   it("asks for original removal instead of tools when auto-sync is off", async () => {

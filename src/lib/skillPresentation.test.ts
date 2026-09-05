@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  defaultImportVariantPath,
   filterAndSortSkills,
   formatRelativeTime,
   groupSkillsByRepo,
   repoInfo,
   skillSourceLabel,
   sourceKind,
+  type ImportVariantFields,
   type SkillPresentationFields,
 } from "./skillPresentation";
 
@@ -247,5 +249,62 @@ describe("formatRelativeTime", () => {
     expect(formatRelativeTime(now - 10 * 24 * 3_600_000, t, now)).toBe(
       'relative.daysAgo({"days":10})',
     );
+  });
+});
+
+describe("defaultImportVariantPath", () => {
+  // Registry order lists claude_code before pi, so a link found in Claude
+  // comes first even when the real directory it points at lives in Pi.
+  const link: ImportVariantFields = {
+    path: "/home/.claude/skills/alpha",
+    is_link: true,
+  };
+  const dir: ImportVariantFields = {
+    path: "/home/.pi/agent/skills/alpha",
+    is_link: false,
+  };
+
+  it("prefers a real directory over a link in a consistent group", () => {
+    expect(
+      defaultImportVariantPath({ has_conflict: false, variants: [link, dir] }),
+    ).toBe("/home/.pi/agent/skills/alpha");
+  });
+
+  it("keeps the first variant when no variant is a real directory", () => {
+    const other: ImportVariantFields = {
+      path: "/home/.cursor/skills/alpha",
+      is_link: true,
+    };
+    expect(
+      defaultImportVariantPath({
+        has_conflict: false,
+        variants: [link, other],
+      }),
+    ).toBe("/home/.claude/skills/alpha");
+  });
+
+  it("keeps the first real directory when several tie", () => {
+    const second: ImportVariantFields = {
+      path: "/home/.cursor/skills/alpha",
+      is_link: false,
+    };
+    expect(
+      defaultImportVariantPath({
+        has_conflict: false,
+        variants: [link, dir, second],
+      }),
+    ).toBe("/home/.pi/agent/skills/alpha");
+  });
+
+  it("leaves a conflicting group at its first variant for the operator to resolve", () => {
+    expect(
+      defaultImportVariantPath({ has_conflict: true, variants: [link, dir] }),
+    ).toBe("/home/.claude/skills/alpha");
+  });
+
+  it("is undefined for an empty group", () => {
+    expect(
+      defaultImportVariantPath({ has_conflict: false, variants: [] }),
+    ).toBeUndefined();
   });
 });

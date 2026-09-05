@@ -9,6 +9,7 @@ import type {
   OnboardingSelectionDto,
 } from "../components/skills/types";
 
+import { defaultImportVariantPath } from "../lib/skillPresentation";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import { useCandidatePick } from "./useCandidatePick";
 import type { SkillLibrary } from "./useSkillLibrary";
@@ -213,9 +214,9 @@ export function useAddSkillFlow({
     const defaultChoice: Record<string, string> = {};
     result.groups.forEach((group) => {
       defaultSelected[group.name] = true;
-      const first = group.variants[0];
-      if (first) {
-        defaultChoice[group.name] = first.path;
+      const chosen = defaultImportVariantPath(group);
+      if (chosen) {
+        defaultChoice[group.name] = chosen;
       }
     });
     setSelected(defaultSelected);
@@ -377,10 +378,10 @@ export function useAddSkillFlow({
   /**
    * The completion toast for an import: the completion line as the title
    * (a warning carrying the counts when any group failed) and, as the
-   * message, one line per group whose source Tool the backend synced beyond
-   * the auto-sync policy (the chosen variant was found in a deselected Tool,
-   * so its original was overwritten in place rather than left as an
-   * untracked copy). Not an error — the operator is told why a deselected
+   * message, one line per Tool the backend synced beyond the auto-sync
+   * policy (it held a variant byte-identical to the chosen one, so its
+   * original was overwritten in place rather than left as an untracked
+   * duplicate). Not an error — the operator is told why each deselected
    * Tool received a link, on lines that stay readable.
    */
   const importSuccessToast = useCallback(
@@ -388,14 +389,14 @@ export function useAddSkillFlow({
       const forcedLines: string[] = [];
       for (const group of report.groups) {
         if (group.status.status !== "imported") continue;
-        const forced = group.status.forced_source_tool;
-        if (!forced) continue;
-        forcedLines.push(
-          t("status.importSourceToolForced", {
-            name: group.group_name,
-            tool: toolLabelById[forced] ?? forced,
-          }),
-        );
+        for (const forced of group.status.forced_tools) {
+          forcedLines.push(
+            t("status.importSourceToolForced", {
+              name: group.group_name,
+              tool: toolLabelById[forced] ?? forced,
+            }),
+          );
+        }
       }
       const message =
         forcedLines.length > 0 ? forcedLines.join("\n") : undefined;
@@ -416,9 +417,10 @@ export function useAddSkillFlow({
   /**
    * Import is one backend call: the selections plus the auto-sync policy.
    * The backend admits each chosen variant, finalizes it, and either syncs
-   * it (auto-sync on — the chosen variant's own Tool is overwritten in
-   * place, whether or not the policy names it) or removes the byte-identical
-   * originals; this side only states the selection and renders the report.
+   * it (auto-sync on — every Tool holding a byte-identical variant is
+   * overwritten in place, whether or not the policy names it) or removes
+   * the byte-identical originals; this side only states the selection and
+   * renders the report.
    */
   const handleImport = async () => {
     if (!plan) return;
@@ -426,7 +428,8 @@ export function useAddSkillFlow({
       const selections: OnboardingSelectionDto[] = [];
       for (const group of plan.groups) {
         if (!selected[group.name]) continue;
-        const chosenPath = variantChoice[group.name] ?? group.variants[0]?.path;
+        const chosenPath =
+          variantChoice[group.name] ?? defaultImportVariantPath(group);
         if (!chosenPath) continue;
         selections.push({
           group_name: group.name,
