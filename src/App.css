@@ -3516,3 +3516,56 @@
   align-items: center;
   gap: 6px;
 }
+
+/* Unlocatable skill: the badge row under the source line, with its repairs
+   (Re-point / Detach / Restore) and Remove as small text buttons. */
+.skill-unlocatable {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.unlocatable-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--status-warning);
+  background: var(--warning-soft-bg);
+  border: 1px solid var(--warning-soft-border);
+  white-space: nowrap;
+}
+
+.unlocatable-action {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--text-secondary);
+  background: var(--bg-element);
+  border: 1px solid var(--border-subtle);
+  transition: all 0.2s;
+}
+
+.unlocatable-action:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.unlocatable-action.danger:hover {
+  color: var(--status-error);
+  background: var(--danger-soft-bg);
+  border-color: var(--danger-soft-border);
+}
+
+.unlocatable-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

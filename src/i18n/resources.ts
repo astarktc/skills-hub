@@ -179,6 +179,18 @@ export const resources = {
         managedHereTooltip:
           "Imported from {{tool}}. The copy in Skills Hub is the source of truth — there is nothing to update from.",
       },
+      unlocatable: {
+        source_missing: "Source folder missing",
+        source_missingTooltip:
+          "The folder this skill is updated from is gone. Re-point it at the folder's new location, detach it (the copy in Skills Hub becomes the source of truth), or remove it.",
+        central_missing: "Central copy missing",
+        central_missingTooltip:
+          "The copy in Skills Hub's library is gone, so every tool's link to it is dangling. Restore it from its source, or remove it.",
+        repoint: "Re-point",
+        detach: "Detach",
+        restore: "Restore",
+        selectNewSourceFolder: "Select the new folder for {{name}}",
+      },
       localTab: "Local Folder",
       gitTab: "Git Repository",
       searchTab: "Search",
@@ -284,7 +296,7 @@ export const resources = {
         sourcePathMissing:
           "The skill's source folder is missing. It may have been moved or deleted:",
         centralPathMissing:
-          "The skill's central copy is missing from the Skills Hub library, so it cannot be updated:",
+          "The skill's central copy is missing from the Skills Hub library:",
         subpathMissing:
           "The repository no longer contains this skill folder. It may have been moved or renamed:",
         revealLogFailed: "Could not open the log folder.",
@@ -336,6 +348,11 @@ export const resources = {
           "Could not remove the original: {{name}} -> {{tool}}",
         reassertFailedTitle:
           "Could not check which tools still need {{name}}",
+        refreshSkippedTitle: "Skipped: {{name}}",
+        refreshSkippedSourceMissing:
+          "Its source folder is missing. Re-point, detach or remove it from its card.",
+        refreshSkippedCentralMissing:
+          "Its central copy is missing. Restore or remove it from its card.",
       },
       actions: {
         importApplyStep: "Importing ({{index}}/{{total}}) {{name}} ...",
@@ -346,6 +363,9 @@ export const resources = {
         creatingGitSkill: "Creating Git skill...",
         removing: "Removing {{name}} ...",
         updating: "Updating {{name}} ...",
+        restoring: "Restoring {{name}} ...",
+        repointing: "Re-pointing {{name}} and updating ...",
+        detaching: "Detaching {{name}} ...",
         refreshFetchStep: "Fetched ({{index}}/{{total}}) {{name}} ...",
         refreshApplyStep: "Updating ({{index}}/{{total}}) {{name}} ...",
         unsyncing: "Unsync {{name}} -> {{tool}} ...",
@@ -362,10 +382,15 @@ export const resources = {
         syncCompleted: "Sync completed.",
         refreshCompleted: "All skills refreshed.",
         refreshSummary: "{{refreshed}} skills refreshed, {{failed}} failed.",
+        refreshSummarySkipped:
+          "{{refreshed}} skills refreshed, {{failed}} failed, {{skipped}} skipped (could not be located).",
         toolConfigSaved: "Tool configuration saved.",
         syncDisabled: "Sync disabled.",
         syncEnabled: "Sync enabled.",
         updated: "{{name}} updated.",
+        restored: "{{name}} restored.",
+        repointed: "{{name}} re-pointed and updated.",
+        detached: "{{name}} detached: the copy in Skills Hub is now its source.",
         gitCacheCleared: "Git cache cleared ({{count}} removed).",
         installed: "Installed",
       },
@@ -708,6 +733,18 @@ export const resources = {
         managedHereTooltip:
           "导入自 {{tool}}。Skills Hub 中的副本即为来源，没有可供更新的内容。",
       },
+      unlocatable: {
+        source_missing: "源目录缺失",
+        source_missingTooltip:
+          "该 Skill 用于更新的目录已不存在。可将其重新指向目录的新位置、分离（Skills Hub 中的副本成为来源），或移除。",
+        central_missing: "中央副本缺失",
+        central_missingTooltip:
+          "Skills Hub 库中的副本已不存在，所有工具指向它的链接均已失效。可从来源恢复，或移除。",
+        repoint: "重新指向",
+        detach: "分离",
+        restore: "恢复",
+        selectNewSourceFolder: "为 {{name}} 选择新的目录",
+      },
       localTab: "本地目录",
       gitTab: "Git 仓库",
       searchTab: "搜索",
@@ -801,7 +838,7 @@ export const resources = {
           "已拒绝删除 {{path}}：该路径不在已知的工具 Skills 目录内。",
         sourcePathMissing: "该 Skill 的来源文件夹不存在，可能已被移动或删除：",
         centralPathMissing:
-          "该 Skill 在 Skills Hub 库中的中央副本不存在，无法更新：",
+          "该 Skill 在 Skills Hub 库中的中央副本不存在：",
         subpathMissing: "仓库中已不存在该 Skill 文件夹，可能已被移动或重命名：",
         revealLogFailed: "无法打开日志文件夹。",
         symlinkEscapesRepo:
@@ -845,6 +882,11 @@ export const resources = {
           "{{path}} 中的副本与导入的 Skill 内容不同，已保留在原处。\n请自行确认，若不再需要可手动删除。",
         importCleanupFailedTitle: "无法删除原始副本：{{name}} -> {{tool}}",
         reassertFailedTitle: "无法确认哪些工具仍需要 {{name}}",
+        refreshSkippedTitle: "已跳过：{{name}}",
+        refreshSkippedSourceMissing:
+          "其源目录缺失。请在卡片上重新指向、分离或移除。",
+        refreshSkippedCentralMissing:
+          "其中央副本缺失。请在卡片上恢复或移除。",
       },
       actions: {
         importApplyStep: "导入中 ({{index}}/{{total}}) {{name}} ...",
@@ -855,6 +897,9 @@ export const resources = {
         creatingGitSkill: "创建 Git 技能...",
         removing: "移除 {{name}} ...",
         updating: "更新 {{name}} ...",
+        restoring: "恢复 {{name}} ...",
+        repointing: "重新指向 {{name}} 并更新 ...",
+        detaching: "分离 {{name}} ...",
         refreshFetchStep: "已获取 ({{index}}/{{total}}) {{name}} ...",
         refreshApplyStep: "更新 ({{index}}/{{total}}) {{name}} ...",
         unsyncing: "取消生效：{{name}} -> {{tool}} ...",
@@ -871,10 +916,15 @@ export const resources = {
         syncCompleted: "同步完成。",
         refreshCompleted: "所有 Skills 已刷新。",
         refreshSummary: "已刷新 {{refreshed}} 个 Skills，{{failed}} 个失败。",
+        refreshSummarySkipped:
+          "已刷新 {{refreshed}} 个 Skills，{{failed}} 个失败，{{skipped}} 个已跳过（无法定位）。",
         toolConfigSaved: "工具配置已保存。",
         syncDisabled: "已取消同步。",
         syncEnabled: "已同步到工具。",
         updated: "{{name}} 已更新。",
+        restored: "{{name}} 已恢复。",
+        repointed: "{{name}} 已重新指向并更新。",
+        detached: "{{name}} 已分离：Skills Hub 中的副本现为其来源。",
         gitCacheCleared: "Git 缓存已清理（删除 {{count}} 项）。",
         installed: "已安装",
       },

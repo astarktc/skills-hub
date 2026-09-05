@@ -15,6 +15,9 @@ type SkillsListProps = {
   loading: boolean;
   onReviewImport: () => void;
   onUpdateSkill: (skill: ManagedSkill) => void;
+  onRepointSkill: (skill: ManagedSkill) => void;
+  onDetachSkill: (skill: ManagedSkill) => void;
+  onRestoreSkill: (skill: ManagedSkill) => void;
   onDeleteSkill: (skillId: string) => void;
   onToggleTool: (skill: ManagedSkill, toolId: string) => void;
   onUnsyncSkill: (skillId: string) => void;
@@ -34,6 +37,9 @@ const SkillsList = ({
   loading,
   onReviewImport,
   onUpdateSkill,
+  onRepointSkill,
+  onDetachSkill,
+  onRestoreSkill,
   onDeleteSkill,
   onToggleTool,
   onUnsyncSkill,
@@ -57,6 +63,9 @@ const SkillsList = ({
       installedTools={installedTools}
       loading={loading}
       onUpdate={onUpdateSkill}
+      onRepoint={onRepointSkill}
+      onDetach={onDetachSkill}
+      onRestore={onRestoreSkill}
       onDelete={onDeleteSkill}
       onToggleTool={onToggleTool}
       onUnsync={onUnsyncSkill}

@@ -144,6 +144,7 @@ export function useExploreState({
           invocation_mode: "user-and-model",
           targets: [],
           refreshable: true,
+          unlocatable: null,
         };
         onOpenExploreDetail(exploreManagedSkill);
       });

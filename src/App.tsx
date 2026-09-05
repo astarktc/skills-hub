@@ -291,6 +291,9 @@ function App() {
               loading={loading}
               onReviewImport={addFlow.handleReviewImport}
               onUpdateSkill={library.handleUpdateSkill}
+              onRepointSkill={library.handleRepointSkill}
+              onDetachSkill={library.handleDetachSkill}
+              onRestoreSkill={library.handleRestoreSkill}
               onDeleteSkill={library.handleDeletePrompt}
               onToggleTool={library.handleToggleToolForSkill}
               onUnsyncSkill={library.handleUnsyncSkill}

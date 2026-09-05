@@ -1,5 +1,6 @@
 import { memo, useState } from "react";
 import {
+  AlertTriangle,
   Box,
   Copy,
   Folder,
@@ -25,6 +26,10 @@ type SkillCardProps = {
   installedTools: ToolOption[];
   loading: boolean;
   onUpdate: (skill: ManagedSkill) => void;
+  /** Unlocatable-skill repairs (see the badge row); Remove is `onDelete`. */
+  onRepoint: (skill: ManagedSkill) => void;
+  onDetach: (skill: ManagedSkill) => void;
+  onRestore: (skill: ManagedSkill) => void;
   onDelete: (skillId: string) => void;
   onToggleTool: (skill: ManagedSkill, toolId: string) => void;
   onUnsync: (skillId: string) => void;
@@ -42,6 +47,9 @@ const SkillCard = ({
   installedTools,
   loading,
   onUpdate,
+  onRepoint,
+  onDetach,
+  onRestore,
   onDelete,
   onToggleTool,
   onUnsync,
@@ -73,6 +81,25 @@ const SkillCard = ({
     if (!copyValue) return;
     void copyToClipboard(copyValue);
   };
+
+  // The Unlocatable state is the backend's answer (computed at list time);
+  // the card only picks the repairs for it. Restore is an Update, so it is
+  // offered exactly when the skill is refreshable; an imported skill whose
+  // central copy is gone can only be removed.
+  const unlocatable = skill.unlocatable;
+  const repairs: { key: string; label: string; onClick: () => void }[] = [];
+  if (unlocatable === "source_missing") {
+    repairs.push(
+      { key: "repoint", label: t("unlocatable.repoint"), onClick: () => onRepoint(skill) },
+      { key: "detach", label: t("unlocatable.detach"), onClick: () => onDetach(skill) },
+    );
+  } else if (unlocatable === "central_missing" && skill.refreshable) {
+    repairs.push({
+      key: "restore",
+      label: t("unlocatable.restore"),
+      onClick: () => onRestore(skill),
+    });
+  }
 
   // Split tools into synced and remaining for badge display
   const syncedTools: { tool: ToolOption; target: (typeof skill.targets)[0] }[] =
@@ -161,6 +188,37 @@ const SkillCard = ({
             {formatRelativeTime(skill.updated_at, t)}
           </div>
         </div>
+        {unlocatable ? (
+          <div
+            className="skill-unlocatable"
+            role="status"
+            title={t(`unlocatable.${unlocatable}Tooltip`)}
+          >
+            <span className="unlocatable-badge">
+              <AlertTriangle size={12} aria-hidden="true" />
+              {t(`unlocatable.${unlocatable}`)}
+            </span>
+            {repairs.map((repair) => (
+              <button
+                key={repair.key}
+                type="button"
+                className="unlocatable-action"
+                onClick={repair.onClick}
+                disabled={loading}
+              >
+                {repair.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="unlocatable-action danger"
+              onClick={() => onDelete(skill.id)}
+              disabled={loading}
+            >
+              {t("remove")}
+            </button>
+          </div>
+        ) : null}
         <div
           className={`tool-matrix${!expanded && needsCollapse ? " collapsed" : ""}`}
         >
@@ -207,7 +265,7 @@ const SkillCard = ({
         </div>
       </div>
       <div className="skill-actions-col">
-        {skill.refreshable ? (
+        {skill.refreshable && !unlocatable ? (
           <button
             className="card-btn primary-action"
             type="button"
