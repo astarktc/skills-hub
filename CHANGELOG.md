@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-09-05
+
+Refresh failures you can act on: skills whose upstream publishes them as symlinks refresh again, skills taken over from a tool no longer pretend to have a source, and what the app cannot locate is shown on the card with the actions that fix it.
+
+### Added
+
+- **Unlocatable skills are marked on their card** the moment the list loads: *Source folder missing* (a local skill whose folder is gone) offers **Re-point**, **Detach** and **Remove**; *Central copy missing* offers **Restore** and **Remove**. Refresh (all) skips such skills and reports how many, as a warning with one row per skill in the notification history, instead of failing them forever.
+- **Imported skills read "Managed here · Imported from <tool>"** and offer no Update: a skill taken over from a tool's skills directory has no external source — the Skills Hub library is its source of truth (ADR-0003).
+- **Adding a local folder that already lives inside a tool's skills directory is refused** with a message pointing at Import, so a skill can no longer be created with a source the app would later overwrite.
+
+### Changed
+
+- **Skills published as in-repo symlinks install and refresh** (e.g. an aggregation bundle such as `plugins/<all>/skills/<name>` linking to the real skill). The link is followed at fetch time on both the sparse-clone and the GitHub API paths; the recorded subpath stays the alias you chose. A link that points outside the repository is refused.
+- **Onboarding import takes over every byte-identical copy of a skill**, not only the one you picked: a real directory in one tool with another tool's symlink into it ends with both tools linked to the library copy. The default choice prefers a real directory over a link. Divergent copies are still left in place and reported.
+- **Missing-path failures are their own messages**: a source folder, a central copy or a repository subpath that is not there is reported as such, with the path shown on its own line — no more raw errors carrying internal cache paths.
+- **Notification history reads a batch top-down** in the order it happened; copying a path shows a toast but is no longer recorded in the history; up to five toasts are visible at once.
+- **"Open log folder"** failures are reported with their own message. On Linux and Windows the log folder is now opened directly (macOS still reveals it, because its name ends in `.app`).
+
+### Fixed
+
+- **Skills imported from a tool in earlier versions are recognised on first launch** and reclassified as imported, so the rows that failed every Refresh ("source path not found") stop failing without any action. Only sources that were a tool's own skills directory (under your home, resolving into the library, or a migrated Windows/WSL path) are touched; a folder of your own is never reclassified, and every change is logged with the former path.
+- **Database schema version is now recorded after incremental migrations** (it was not, so the previous migration re-ran on every launch) and the whole upgrade runs in one transaction.
+- **A Propagation row whose tool was shadowed in tests produced no outcome**; a row's own tool is now always in its shared-directory group.
+- **The Refresh overlap test no longer depends on wall-clock time** (it flaked under parallel load).
+
+### Internal/architecture
+
+- **Provenance** (git / local / imported) and **Unlocatable skill** join the glossary; ADR-0003 records that an imported skill has no external source. `provenance::refresh_eligibility` is the one Refresh membership rule (member / not a member / unlocatable → skipped); `is_refreshable` is its Update/listing half.
+- **One subpath normaliser and one link resolver** (`core/repo_subpath.rs`) serve the git cache, the sparse fetcher and both acquisition adapters; `..` and backslash segments are refused before anything is read.
+- **The registry answers "which tool holds this path"** (`tool_holding_path`), the inverse of its deletion rule; Add's refusal and legacy reclassification both ask it.
+- **Reporter world**: `useNotificationHistory` owns the ring; one `copyToClipboard`; `notifyError`/`formatError` travel from the binder instead of components re-formatting errors; Tool labels and the imported-source line live once in `skillPresentation.ts`.
+- **Project sync** resolves adapter and skill once per assignment (`AssignmentSyncContext`); a log-reveal rule is a pure, tested core function.
+
 ## [1.2.3] - 2026-09-04
 
 A follow-up round: the outcome of every action is now readable after the fact, and the review-panel residue from 1.2.2 is settled.
