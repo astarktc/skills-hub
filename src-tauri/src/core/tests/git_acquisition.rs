@@ -97,20 +97,32 @@ const BUNDLE_ALIAS: &str = "plugins/tanstack-all/skills/tanstack-table";
 const BUNDLE_TARGET: &str = "plugins/tanstack-table/skills/tanstack-table";
 const BUNDLE_SKILL_MD: &str = "---\nname: tanstack-table\n---\nthe real skill\n";
 
-/// An aggregation bundle: the skill lives at `plugins/<name>/skills/<name>`
+/// An aggregation bundle: each skill lives at `plugins/<name>/skills/<name>`
 /// and is published again from `plugins/tanstack-all/skills/<name>` as a
 /// link to `../../<name>/skills/<name>` — relative to the link's own
-/// directory.
+/// directory. The bundle holds a sibling link too (as the real one holds
+/// eighteen), so a lookup that confuses a sibling for the requested link
+/// is caught.
 fn bundle_repo() -> tempfile::TempDir {
     fixture_repo_with_links(
         &[
             ("README.md", "root"),
             (
+                "plugins/tanstack-ai/skills/tanstack-ai/SKILL.md",
+                "---\nname: tanstack-ai\n---\nthe wrong skill\n",
+            ),
+            (
                 "plugins/tanstack-table/skills/tanstack-table/SKILL.md",
                 BUNDLE_SKILL_MD,
             ),
         ],
-        &[(BUNDLE_ALIAS, "../../tanstack-table/skills/tanstack-table")],
+        &[
+            (
+                "plugins/tanstack-all/skills/tanstack-ai",
+                "../../tanstack-ai/skills/tanstack-ai",
+            ),
+            (BUNDLE_ALIAS, "../../tanstack-table/skills/tanstack-table"),
+        ],
     )
 }
 

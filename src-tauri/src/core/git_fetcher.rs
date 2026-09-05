@@ -344,8 +344,11 @@ pub fn symlink_on_path(
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    // `-z` records: `<mode> <type> <sha>\t<path>\0`. The shallowest link is
-    // the first one on the path.
+    // `-z` records: `<mode> <type> <sha>\t<path>\0`. The paths given are
+    // patterns, and one naming a directory lists that directory's children
+    // (the bundle's sibling links among them), so only a record that *is*
+    // one of the prefixes counts. The shallowest link is the first one on
+    // the path.
     let stdout = String::from_utf8_lossy(&out.stdout);
     let mut link: Option<(String, String)> = None;
     for record in stdout.split('\0').filter(|r| !r.is_empty()) {
@@ -353,7 +356,7 @@ pub fn symlink_on_path(
             continue;
         };
         let fields: Vec<&str> = meta.split(' ').collect();
-        if fields.len() < 3 || fields[0] != "120000" {
+        if fields.len() < 3 || fields[0] != "120000" || !prefixes.iter().any(|p| p == path) {
             continue;
         }
         if link
