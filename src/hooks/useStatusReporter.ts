@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Toaster, toast } from "sonner";
+import { toast } from "sonner";
 import { describeCommandError } from "../commandError";
 import { invokeTauri } from "../lib/tauri";
 import {
@@ -8,12 +8,9 @@ import {
   type NotificationKind,
 } from "./useNotificationHistory";
 
-/**
- * The toast mount point, rendered once by the binder. Re-exported from here
- * so the toast library has exactly one importer: this module owns the mount
- * and every call (the durations below), and nothing else can drift from it.
- */
-export { Toaster as NotificationToaster };
+// The toast library has two importers by design: this module makes every
+// call (and owns each toast's lifetime, below), and the binder (`App.tsx`)
+// mounts its `<Toaster>` once.
 
 // The history's shape is the reporter's public vocabulary; the ring itself
 // lives in the building block (`useNotificationHistory`).
@@ -26,7 +23,8 @@ export type ActionErrorEntry = { title: string; message: string };
  * an error stays until the operator closes it (it is the only record of a
  * failed install/refresh), a warning lingers long enough to read, a success
  * or info just confirms. No other module passes a `duration` to the toast
- * library and the app-level `<Toaster>` sets none.
+ * library and the app-level `<Toaster>` sets none (it only sets how many
+ * toasts stay visible at once).
  */
 const TOAST_DURATION_MS: Record<NotificationKind, number> = {
   error: Infinity,

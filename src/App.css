@@ -846,7 +846,7 @@
   padding: 0 5px;
   border-radius: 999px;
   background: var(--status-error);
-  color: #ffffff;
+  color: var(--accent-primary-fg);
   font-size: 10px;
   font-weight: 600;
   line-height: 18px;

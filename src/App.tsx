@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
 import { useTranslation } from "react-i18next";
+// The sanctioned second importer of the toast library: the binder mounts the
+// Toaster once; useStatusReporter makes every call and owns toast lifetime.
+import { Toaster } from "sonner";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import ExplorePage from "./components/skills/ExplorePage";
@@ -25,10 +28,7 @@ import { useAddSkillFlow } from "./hooks/useAddSkillFlow";
 import { useExploreState } from "./hooks/useExploreState";
 import { useSettingsState } from "./hooks/useSettingsState";
 import { useSkillLibrary } from "./hooks/useSkillLibrary";
-import {
-  NotificationToaster,
-  useStatusReporter,
-} from "./hooks/useStatusReporter";
+import { useStatusReporter } from "./hooks/useStatusReporter";
 import { useSyncOrchestration } from "./hooks/useSyncOrchestration";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import { usePersistedPreference } from "./hooks/usePersistedPreference";
@@ -218,8 +218,10 @@ function App() {
 
   return (
     <div className="skills-app">
-      {/* Toast lifetime is owned by useStatusReporter, per kind. */}
-      <NotificationToaster position="top-right" richColors />
+      {/* Toast lifetime is owned by useStatusReporter, per kind. Errors
+          never auto-dismiss, so the visible stack is raised above sonner's
+          default of 3: a fourth open error shows without hovering. */}
+      <Toaster position="top-right" richColors visibleToasts={5} />
       <LoadingOverlay
         loading={loading}
         actionMessage={actionMessage}
