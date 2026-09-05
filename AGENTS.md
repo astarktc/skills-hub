@@ -12,8 +12,8 @@ npm run build            # node node_modules/typescript-7/lib/tsc.js -b && vite 
 npm run lint             # ESLint
 npm run test             # vitest unit tests (hooks + commandError; jsdom, mocked seams)
 npm run check            # lint + test + build + rust:fmt:check + rust:clippy + rust:test
-npm run version:check    # verify the 3 version files are in sync
-npm run version:set X.Y.Z   # bump all 3 version files (never hand-edit)
+npm run version:check    # verify the 5 version locations (3 manifests + 2 lockfiles) agree
+npm run version:set X.Y.Z   # bump all 5 version locations (never hand-edit)
 
 cd src-tauri && cargo test <filter>              # single test / module by name substring
 cd src-tauri && cargo test <filter> -- --nocapture   # show println!/dbg! output
@@ -50,8 +50,10 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
 
 ## Invariants — touch X, then also update Y
 
-- **Version**: `package.json` + `src-tauri/tauri.conf.json` + `src-tauri/Cargo.toml` must match. Use
-  `npm run version:set X.Y.Z` (`scripts/version.mjs`); never edit a version field by hand.
+- **Version**: `package.json` + `src-tauri/tauri.conf.json` + `src-tauri/Cargo.toml` + the root `version`
+  entries of `package-lock.json` + the `app` package entry in `src-tauri/Cargo.lock` must match. Use
+  `npm run version:set X.Y.Z` (`scripts/version.mjs`) — it rewrites all five so the next `cargo test` or
+  `npm ci` dirties nothing; never edit a version field by hand.
 - **New Tauri command**: define it in `src-tauri/src/commands/` (`mod.rs` or `projects.rs`) with
   `#[tauri::command]` **and** `#[specta::specta]`, **and** list it in `specta_builder()`'s
   `collect_commands![...]` in `src-tauri/src/lib.rs` — that one list feeds both the invoke handler and
@@ -154,7 +156,8 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
     pool of 4, std threads), then finalize + propagate each under the guard, plus the
     `reassert_auto_sync` policy. A single Update is a batch of one.
   - Onboarding import → `import_onboarding_selection` (`core/onboarding_import.rs`): admit, finalize,
-    then propagate (auto-sync on) or remove byte-identical originals (auto-sync off), per group.
+    then sync through the global sync batch (auto-sync on — a first sync, not Propagation) or remove
+    byte-identical originals (auto-sync off), per group.
   - unsync / delete / project removal → `core/artifact_removal.rs` (below).
   Bringing every target of one changed skill into line is **Propagation** (`core/propagation.rs`) — the
   only writer of target rows on an update path, spanning global target rows and project assignment
