@@ -50,7 +50,7 @@ use super::git_fetcher::symlink_on_path;
 use super::github_download::{
     download_github_directory, fetch_branch_sha, parse_github_repo, GithubApiError,
 };
-use super::repo_subpath::{normalize_subpath, LinkChain};
+use super::repo_subpath::{normalize_subpath, require_plain_subpath, LinkChain};
 use super::skill_discovery::{discover_skills, DiscoveredSkill};
 use super::skill_matching::{match_skill_candidate, SkillMatch};
 use super::sync_engine::copy_dir_recursive;
@@ -217,6 +217,11 @@ pub fn acquire(req: &AcquireRequest, api: &dyn GithubApi) -> Result<Acquired> {
         }
     }
     .filter(|subpath| !subpath.is_empty() && *subpath != ".");
+    // A subpath names a directory inside the checkout; a traversal is refused
+    // before either adapter joins it onto anything or asks for it.
+    if let Some(subpath) = known_subpath {
+        require_plain_subpath(subpath)?;
+    }
 
     if let Some(coords) = fast_path_coords(req, known_subpath) {
         match fast_path(&coords, req, api) {

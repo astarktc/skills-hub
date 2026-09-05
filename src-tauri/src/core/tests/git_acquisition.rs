@@ -808,6 +808,36 @@ fn a_missing_subpath_fails() {
     );
 }
 
+/// A subpath is a name inside the checkout, never a traversal: one carrying
+/// a `..` segment is refused at the acquisition boundary before either
+/// adapter is asked for anything — no API call, no clone, nothing read.
+#[test]
+fn a_subpath_with_a_parent_segment_is_refused_before_anything_is_read() {
+    let repo = single_skill_repo();
+    let source = local_source_with_api(repo.path());
+    let (_fx, cache_dir, dest) = Fixture::new();
+    let api = StubApi::serving("unused");
+
+    for subpath in [
+        "../outside",
+        "skills/../../outside",
+        r"skills\..\..\outside",
+    ] {
+        let err = acquire(
+            &request(&source, SkillIntent::Subpath(subpath), &dest, &cache_dir),
+            &api,
+        )
+        .expect_err("a traversing subpath is refused");
+        assert!(
+            format!("{err:#}").contains(subpath),
+            "names the subpath: {err:#}"
+        );
+    }
+    assert!(api.calls().is_empty(), "the API was never asked");
+    assert!(!git_cache_root_exists(&cache_dir), "nothing was cloned");
+    assert!(!dest.exists(), "nothing landed");
+}
+
 /// The name-matching rule lives here once: a named skill in a multi-skill
 /// repo resolves to its subpath.
 #[test]

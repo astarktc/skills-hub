@@ -30,6 +30,19 @@ pub(crate) fn normalize_subpath(subpath: &str) -> String {
         .join("/")
 }
 
+/// The rule that keeps a requested subpath *inside* the checkout: it is a
+/// name, so a `..` segment or a backslash (a separator on Windows, where a
+/// `..\x` segment would traverse once joined) is refused here, before any
+/// adapter joins it onto a directory or asks an API for it. Plain, not
+/// typed: a subpath arrives from a URL the operator pasted or a record the
+/// app wrote, and neither has a legitimate way to spell a traversal.
+pub(crate) fn require_plain_subpath(subpath: &str) -> Result<()> {
+    if subpath.contains('\\') || subpath.split('/').any(|segment| segment == "..") {
+        anyhow::bail!("subpath {subpath} must name a path inside the repository");
+    }
+    Ok(())
+}
+
 /// One acquisition's walk along upstream symlinks. Each [`follow`] resolves a
 /// link's target against the link's own directory, *lexically and within the
 /// repository root* — the checkout's real filesystem is never consulted, so a
@@ -51,8 +64,10 @@ impl LinkChain {
     /// raw `target`.
     ///
     /// Refuses, typed ([`SignalError::SymlinkEscapesRepo`]), a target that is
-    /// absolute or resolves to or above the repository root; refuses, plain,
-    /// the hop past the bound. The resolved path is logged as diagnostics — a
+    /// absolute, contains a backslash (only `/` separates here, so a `\` in
+    /// a segment would be a traversal once joined on Windows), or resolves
+    /// to or above the repository root; refuses, plain, the hop past the
+    /// bound. The resolved path is logged as diagnostics — a
     /// caller records the alias it was asked for, never this.
     pub(crate) fn follow(&mut self, link_subpath: &str, target: &str) -> Result<String> {
         self.hops += 1;
@@ -67,7 +82,7 @@ impl LinkChain {
         };
         if target.is_empty()
             || target.starts_with('/')
-            || target.starts_with('\\')
+            || target.contains('\\')
             || Path::new(target).is_absolute()
         {
             anyhow::bail!(refused());
@@ -196,6 +211,47 @@ mod tests {
                         if subpath == link && t == target
                 ),
                 "{link} -> {target}: expected SymlinkEscapesRepo, got {err:#}"
+            );
+        }
+    }
+
+    /// A backslash is not a separator here, so `..\..\x` would be one
+    /// harmless-looking segment that Windows' `Path::join` later reads as a
+    /// traversal. Any backslash in a target is refused typed, before anything
+    /// is read.
+    #[test]
+    fn a_target_containing_a_backslash_is_refused_typed() {
+        for target in [r"..\..\outside", r"sub\dir", r"a/b\..\..\..\etc"] {
+            let mut chain = LinkChain::new();
+            let err = chain
+                .follow("skills/x", target)
+                .expect_err("a backslash target must be refused");
+            assert_eq!(
+                err.downcast_ref::<SignalError>(),
+                Some(&SignalError::SymlinkEscapesRepo {
+                    subpath: "skills/x".to_string(),
+                    target: target.to_string(),
+                }),
+                "{target}: {err:#}"
+            );
+        }
+    }
+
+    /// A requested subpath is a name inside the checkout, never a traversal:
+    /// a `..` segment or a backslash is refused before it is joined onto
+    /// anything. `.` segments and separators are spelling, not structure.
+    #[test]
+    fn require_plain_subpath_refuses_parent_segments_and_backslashes() {
+        for subpath in ["..", "../x", "a/../b", "a/..", r"a\..\b", r"..\x"] {
+            assert!(
+                require_plain_subpath(subpath).is_err(),
+                "{subpath:?} must be refused"
+            );
+        }
+        for subpath in ["a", "a/b", "./a/b/", "a/..b", "a/b..", ""] {
+            assert!(
+                require_plain_subpath(subpath).is_ok(),
+                "{subpath:?} is a plain name"
             );
         }
     }
