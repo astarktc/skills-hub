@@ -374,15 +374,41 @@ export function useAddSkillFlow({
   );
 
   /**
+   * The success toast for an import: the completion line, plus one line per
+   * group whose source Tool the backend synced beyond the auto-sync policy
+   * (the chosen variant was found in a deselected Tool, so its original was
+   * overwritten in place rather than left as an untracked copy). Not an
+   * error — the operator is told why a deselected Tool received a link.
+   */
+  const importSuccessToast = useCallback(
+    (report: ImportReportDto) => {
+      const lines = [t("status.importCompleted")];
+      for (const group of report.groups) {
+        if (group.status.status !== "imported") continue;
+        const forced = group.status.forced_source_tool;
+        if (!forced) continue;
+        lines.push(
+          t("status.importSourceToolForced", {
+            name: group.group_name,
+            tool: toolLabelById[forced] ?? forced,
+          }),
+        );
+      }
+      return lines.join("\n");
+    },
+    [t, toolLabelById],
+  );
+
+  /**
    * Import is one backend call: the selections plus the auto-sync policy.
    * The backend admits each chosen variant, finalizes it, and either syncs
    * it (auto-sync on — the chosen variant's own Tool is overwritten in
-   * place) or removes the byte-identical originals; this side only states
-   * the selection and renders the report.
+   * place, whether or not the policy names it) or removes the byte-identical
+   * originals; this side only states the selection and renders the report.
    */
   const handleImport = async () => {
     if (!plan) return;
-    await runAction({ successToast: t("status.importCompleted") }, async () => {
+    await runAction({ successToast: importSuccessToast }, async () => {
       const selections: OnboardingSelectionDto[] = [];
       for (const group of plan.groups) {
         if (!selected[group.name]) continue;
@@ -431,6 +457,7 @@ export function useAddSkillFlow({
       } else {
         setShowImportModal(false);
       }
+      return report;
     });
   };
 

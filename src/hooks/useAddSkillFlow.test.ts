@@ -505,6 +505,7 @@ describe("useAddSkillFlow import flow", () => {
     skill_id: "imported-id",
     skill_name: "alpha",
     targets: [],
+    forced_source_tool: null,
     originals: [],
     ...overrides,
   });
@@ -581,6 +582,43 @@ describe("useAddSkillFlow import flow", () => {
     expect(policy).toEqual({ auto_sync: true, tools: ["claude"] });
     expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
       "status.importCompleted",
+    );
+    expect(setup.reporter.showActionErrors).not.toHaveBeenCalled();
+    expect(result.current.showImportModal).toBe(false);
+  });
+
+  it("says on the success toast when the source Tool was synced beyond the policy", async () => {
+    // cursor is deselected in the auto-sync selection, but the chosen
+    // variant was found there: the backend force-included it and reports
+    // so. Not an error — the modal closes and the toast explains the link.
+    stubImportBackend(
+      [() => Promise.resolve(PLAN)],
+      report(
+        importedGroup({
+          targets: [
+            {
+              skill_id: "imported-id",
+              skill_name: "alpha",
+              tool: "claude",
+              status: { status: "synced", mode_used: "symlink" },
+            },
+            {
+              skill_id: "imported-id",
+              skill_name: "alpha",
+              tool: "cursor",
+              status: { status: "synced", mode_used: "symlink" },
+            },
+          ],
+          forced_source_tool: "cursor",
+        }),
+      ),
+    );
+    const setup = makeDeps();
+
+    const result = await runImport(setup);
+
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
+      'status.importCompleted\nstatus.importSourceToolForced {"name":"alpha","tool":"CURSOR"}',
     );
     expect(setup.reporter.showActionErrors).not.toHaveBeenCalled();
     expect(result.current.showImportModal).toBe(false);

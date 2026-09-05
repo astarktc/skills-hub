@@ -312,6 +312,8 @@ export const resources = {
       },
       status: {
         importCompleted: "Import completed.",
+        importSourceToolForced:
+          "{{name}}: also synced to {{tool}}, where the original was found.",
         localSkillCreated: "Local skill created.",
         gitSkillCreated: "Git skill created.",
         selectedSkillsInstalled: "Selected skills installed.",
@@ -781,6 +783,8 @@ export const resources = {
       },
       status: {
         importCompleted: "导入完成。",
+        importSourceToolForced:
+          "{{name}}：已同步到发现原始副本的 {{tool}}。",
         localSkillCreated: "本地技能创建完成。",
         gitSkillCreated: "Git 技能创建完成。",
         selectedSkillsInstalled: "选中技能安装完成。",
