@@ -80,7 +80,7 @@ pub async fn remove_project(
 ) -> Result<Vec<ProjectDto>, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        project_ops::remove_project_with_cleanup(&store, &projectId)?;
+        project_ops::remove_project_and_artifacts(&store, &projectId)?;
         project_ops::list_project_dtos(&store)
     })
     .await

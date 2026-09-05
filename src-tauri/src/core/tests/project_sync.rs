@@ -208,7 +208,7 @@ fn unassign_removes_symlink() {
     assert!(target.exists(), "target should exist after assign");
 
     // Now unassign
-    project_sync::unassign_and_cleanup(&store, &project, &skill, "claude_code")
+    project_sync::unassign_and_remove_artifacts(&store, &project, &skill, "claude_code")
         .expect("unassign should succeed");
 
     assert!(!target.exists(), "target should not exist after unassign");
@@ -252,7 +252,7 @@ fn unassign_target_not_found_cleans_db() {
     );
 
     // Unassign should gracefully clean up the DB record
-    project_sync::unassign_and_cleanup(&store, &project, &skill, "claude_code")
+    project_sync::unassign_and_remove_artifacts(&store, &project, &skill, "claude_code")
         .expect("unassign should succeed even when target is gone");
 
     let assignment = store
@@ -311,7 +311,7 @@ fn unassign_failure_keeps_the_row_as_error_and_reports_the_path() {
         return; // running as root
     }
 
-    let err = project_sync::unassign_and_cleanup(&store, &project, &skill, "claude_code")
+    let err = project_sync::unassign_and_remove_artifacts(&store, &project, &skill, "claude_code")
         .expect_err("a stuck artifact must fail the unassign");
     unlock_parent(&target);
 
@@ -679,7 +679,7 @@ fn global_and_project_sync_independent() {
     assert_eq!(project_assignments[0].project_id, project.id);
 
     // Remove project assignment -- global should remain
-    project_sync::unassign_and_cleanup(&store, &project, &skill, "claude_code")
+    project_sync::unassign_and_remove_artifacts(&store, &project, &skill, "claude_code")
         .expect("unassign should succeed");
 
     let global_after = store.list_skill_targets(&skill.id).unwrap();

@@ -248,7 +248,7 @@ fn register_project_and_skill_at(
 }
 
 #[test]
-fn remove_tool_with_cleanup_deletes_assignments_and_artifacts() {
+fn remove_project_tool_and_artifacts_deletes_assignments_and_artifacts() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().expect("tmpdir");
 
@@ -310,8 +310,8 @@ fn remove_tool_with_cleanup_deletes_assignments_and_artifacts() {
     );
 
     // Act: remove the tool
-    project_ops::remove_tool_with_cleanup(&store, &project.id, "claude_code")
-        .expect("remove_tool_with_cleanup should succeed");
+    project_ops::remove_project_tool_and_artifacts(&store, &project.id, "claude_code")
+        .expect("remove_project_tool_and_artifacts should succeed");
 
     // Assert: symlinks removed
     assert!(
@@ -338,7 +338,7 @@ fn remove_tool_with_cleanup_deletes_assignments_and_artifacts() {
 }
 
 #[test]
-fn remove_tool_with_cleanup_leaves_other_tools_intact() {
+fn remove_project_tool_and_artifacts_leaves_other_tools_intact() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().expect("tmpdir");
 
@@ -382,8 +382,8 @@ fn remove_tool_with_cleanup_leaves_other_tools_intact() {
     assert!(cursor_target.exists(), "cursor target should exist");
 
     // Act: remove only claude_code
-    project_ops::remove_tool_with_cleanup(&store, &project.id, "claude_code")
-        .expect("remove_tool_with_cleanup should succeed");
+    project_ops::remove_project_tool_and_artifacts(&store, &project.id, "claude_code")
+        .expect("remove_project_tool_and_artifacts should succeed");
 
     // Assert: claude_code target removed
     assert!(
@@ -414,7 +414,7 @@ fn remove_tool_with_cleanup_leaves_other_tools_intact() {
 }
 
 #[test]
-fn remove_tool_with_cleanup_handles_missing_skill_gracefully() {
+fn remove_project_tool_and_artifacts_handles_missing_skill_gracefully() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().expect("tmpdir");
 
@@ -451,8 +451,8 @@ fn remove_tool_with_cleanup_handles_missing_skill_gracefully() {
     );
 
     // Act: should not panic
-    project_ops::remove_tool_with_cleanup(&store, &project.id, "claude_code")
-        .expect("remove_tool_with_cleanup should succeed even with orphaned skill");
+    project_ops::remove_project_tool_and_artifacts(&store, &project.id, "claude_code")
+        .expect("remove_project_tool_and_artifacts should succeed even with orphaned skill");
 
     // Assert: tool row deleted
     let tools = store.list_project_tools(&project.id).unwrap();
@@ -473,9 +473,9 @@ fn remove_tool_with_cleanup_handles_missing_skill_gracefully() {
 }
 
 // ---------------------------------------------------------------------------
-// Regression: cleanup must use the project-scope path family, not the global
+// Regression: Artifact removal must use the project-scope path family, not the global
 // one. Pi's mappings diverge (`.pi/agent/skills` globally vs `.pi/skills` in a
-// project), so a cleanup that joins the global dir onto the project path
+// project), so a removal that joins the global dir onto the project path
 // silently leaves the synced skill dir on disk.
 // ---------------------------------------------------------------------------
 
@@ -533,12 +533,12 @@ fn setup_pi_assignment(
 }
 
 #[test]
-fn remove_project_with_cleanup_removes_project_scope_target_for_divergent_tool() {
+fn remove_project_and_artifacts_removes_project_scope_target_for_divergent_tool() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().expect("tmpdir");
     let (project, _skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rpc-pi-skill");
 
-    project_ops::remove_project_with_cleanup(&store, &project.id).expect("remove project");
+    project_ops::remove_project_and_artifacts(&store, &project.id).expect("remove project");
 
     assert!(
         target.symlink_metadata().is_err(),
@@ -549,7 +549,7 @@ fn remove_project_with_cleanup_removes_project_scope_target_for_divergent_tool()
 }
 
 #[test]
-fn remove_project_with_cleanup_orphan_branch_removes_project_scope_target() {
+fn remove_project_and_artifacts_orphan_branch_removes_project_scope_target() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().expect("tmpdir");
     let (project, skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rpc-pi-orphan");
@@ -565,7 +565,7 @@ fn remove_project_with_cleanup_orphan_branch_removes_project_scope_target() {
         "precondition: orphaned assignment row must survive"
     );
 
-    project_ops::remove_project_with_cleanup(&store, &project.id).expect("remove project");
+    project_ops::remove_project_and_artifacts(&store, &project.id).expect("remove project");
 
     assert!(
         target.symlink_metadata().is_err(),
@@ -575,12 +575,12 @@ fn remove_project_with_cleanup_orphan_branch_removes_project_scope_target() {
 }
 
 #[test]
-fn remove_tool_with_cleanup_removes_project_scope_target_for_divergent_tool() {
+fn remove_project_tool_and_artifacts_removes_project_scope_target_for_divergent_tool() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().expect("tmpdir");
     let (project, _skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rtc-pi-skill");
 
-    project_ops::remove_tool_with_cleanup(&store, &project.id, "pi").expect("remove tool");
+    project_ops::remove_project_tool_and_artifacts(&store, &project.id, "pi").expect("remove tool");
 
     assert!(
         target.symlink_metadata().is_err(),
@@ -590,7 +590,7 @@ fn remove_tool_with_cleanup_removes_project_scope_target_for_divergent_tool() {
 }
 
 #[test]
-fn remove_tool_with_cleanup_orphan_branch_removes_project_scope_target() {
+fn remove_project_tool_and_artifacts_orphan_branch_removes_project_scope_target() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().expect("tmpdir");
     let (project, skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rtc-pi-orphan");
@@ -605,7 +605,7 @@ fn remove_tool_with_cleanup_orphan_branch_removes_project_scope_target() {
         "precondition: orphaned assignment row must survive"
     );
 
-    project_ops::remove_tool_with_cleanup(&store, &project.id, "pi").expect("remove tool");
+    project_ops::remove_project_tool_and_artifacts(&store, &project.id, "pi").expect("remove tool");
 
     assert!(
         target.symlink_metadata().is_err(),
@@ -622,7 +622,7 @@ fn remove_tool_with_cleanup_orphan_branch_removes_project_scope_target() {
 /// skill that no longer exists, so the plan locates the artifact from the
 /// row's own `skill_name`, removes it, and settles the row.
 #[test]
-fn remove_tool_with_cleanup_plans_orphan_rows_from_their_stored_skill_name() {
+fn remove_project_tool_and_artifacts_plans_orphan_rows_from_their_stored_skill_name() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().expect("tmpdir");
     let (project, skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rtc-pi-report");
@@ -643,8 +643,8 @@ fn remove_tool_with_cleanup_plans_orphan_rows_from_their_stored_skill_name() {
         "planned from the row's stored skill name"
     );
 
-    let report =
-        project_ops::remove_tool_with_cleanup(&store, &project.id, "pi").expect("remove tool");
+    let report = project_ops::remove_project_tool_and_artifacts(&store, &project.id, "pi")
+        .expect("remove tool");
 
     assert!(report.failures().is_empty());
     assert_eq!(report.removed_rows(), 1);
@@ -685,7 +685,7 @@ fn unlock_parent(target: &std::path::Path) {
 /// the operator can retry the same removal against the same plan.
 #[cfg(unix)]
 #[test]
-fn remove_tool_with_cleanup_keeps_the_tool_row_when_an_artifact_stays() {
+fn remove_project_tool_and_artifacts_keeps_the_tool_row_when_an_artifact_stays() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().expect("tmpdir");
     let (project, skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rtc-pi-stuck");
@@ -693,7 +693,7 @@ fn remove_tool_with_cleanup_keeps_the_tool_row_when_an_artifact_stays() {
         return;
     }
 
-    let report = project_ops::remove_tool_with_cleanup(&store, &project.id, "pi")
+    let report = project_ops::remove_project_tool_and_artifacts(&store, &project.id, "pi")
         .expect("report, not error");
     unlock_parent(&target);
 
@@ -765,7 +765,7 @@ fn configure_tools_applies_the_rest_then_raises_the_removal_failures() {
 /// the project and its `error` rows, so a retry can still find every path.
 #[cfg(unix)]
 #[test]
-fn remove_project_with_cleanup_keeps_the_project_when_an_artifact_stays() {
+fn remove_project_and_artifacts_keeps_the_project_when_an_artifact_stays() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().expect("tmpdir");
     let (project, skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rpc-pi-stuck");
@@ -773,7 +773,7 @@ fn remove_project_with_cleanup_keeps_the_project_when_an_artifact_stays() {
         return;
     }
 
-    let err = project_ops::remove_project_with_cleanup(&store, &project.id)
+    let err = project_ops::remove_project_and_artifacts(&store, &project.id)
         .expect_err("a stuck artifact keeps the project");
     unlock_parent(&target);
 

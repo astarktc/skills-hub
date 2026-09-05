@@ -177,7 +177,7 @@ pub fn register_project_path(
 ///
 /// Unlocked internal seam: callers reach it through an entry point that has
 /// already taken the mutation guard (`mutation_guard`).
-pub(crate) fn remove_tool_with_cleanup(
+pub(crate) fn remove_project_tool_and_artifacts(
     store: &SkillStore,
     project_id: &str,
     tool: &str,
@@ -195,7 +195,7 @@ pub(crate) fn remove_tool_with_cleanup(
         store.remove_project_tool(project_id, tool)?;
     } else {
         log::warn!(
-            "remove_tool_with_cleanup: keeping project tool row {}/{} for retry: {}",
+            "remove_project_tool_and_artifacts: keeping project tool row {}/{} for retry: {}",
             project_id,
             tool,
             report
@@ -209,7 +209,7 @@ pub(crate) fn remove_tool_with_cleanup(
 /// are derived from the *persisted* tools, so tools are written first and the
 /// managed block is rewritten afterwards — callers cannot get the sequence
 /// wrong. Tools already configured keep their records; removed tools go
-/// through [`remove_tool_with_cleanup`]. Unknown tool keys fail before any
+/// through [`remove_project_tool_and_artifacts`]. Unknown tool keys fail before any
 /// write. Returns the resulting tool list.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
@@ -254,7 +254,9 @@ pub(crate) fn configure_project_tools_unlocked(
     let mut failures: Vec<String> = Vec::new();
     for record in &persisted {
         if !tools.contains(&record.tool) {
-            failures.extend(remove_tool_with_cleanup(store, project_id, &record.tool)?.failures());
+            failures.extend(
+                remove_project_tool_and_artifacts(store, project_id, &record.tool)?.failures(),
+            );
         }
     }
 
@@ -283,7 +285,7 @@ pub(crate) fn configure_project_tools_unlocked(
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
 /// No composite operation removes a project, so it has no unlocked seam.
-pub fn remove_project_with_cleanup(store: &SkillStore, project_id: &str) -> Result<()> {
+pub fn remove_project_and_artifacts(store: &SkillStore, project_id: &str) -> Result<()> {
     mutation_guard::serialized(|| {
         require_project(store, project_id)?;
 

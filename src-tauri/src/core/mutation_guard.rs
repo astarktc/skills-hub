@@ -15,7 +15,7 @@
 //!
 //! > **An entry point never calls another entry point.** Composite
 //! > operations call the unlocked `pub(crate)` internal seam of the
-//! > operation they compose (`*_unlocked`, `remove_tool_with_cleanup`,
+//! > operation they compose (`*_unlocked`, `remove_project_tool_and_artifacts`,
 //! > `artifact_removal::plan`, …). Calling the locked twin from inside the
 //! > critical section deadlocks.
 //!

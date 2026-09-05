@@ -28,7 +28,7 @@ pub enum SyncStatus {
     Stale,
     /// Source or a previously deployed target has disappeared.
     Missing,
-    /// The last sync/cleanup attempt failed; `last_error` carries the diagnostic.
+    /// The last sync or Artifact removal attempt failed; `last_error` carries the diagnostic.
     Error,
 }
 

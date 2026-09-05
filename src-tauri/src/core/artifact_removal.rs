@@ -75,16 +75,16 @@ pub enum RemovalScope {
         home: PathBuf,
     },
     /// Every Sync target of one Project. Planned by
-    /// `project_ops::remove_project_with_cleanup`.
+    /// `project_ops::remove_project_and_artifacts`.
     Project { project_id: String },
     /// One Project × Tool pair. Planned by
-    /// `project_ops::remove_tool_with_cleanup`.
+    /// `project_ops::remove_project_tool_and_artifacts`.
     ProjectTool {
         project_id: String,
         tool_key: String,
     },
     /// One Project × skill × Tool triple — a single assignment row. Planned
-    /// by `project_sync::unassign_and_cleanup`.
+    /// by `project_sync::unassign_and_remove_artifacts`.
     ProjectSkillTool {
         project_id: String,
         skill_id: String,

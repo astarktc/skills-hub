@@ -260,7 +260,7 @@ pub enum AssignmentTransition<'a> {
         synced_at: i64,
         content_hash: Option<&'a str>,
     },
-    /// A sync or cleanup failed; `error` is the diagnostic chain. The
+    /// A sync or Artifact removal failed; `error` is the diagnostic chain. The
     /// recorded hash is dropped (the target's content is unknown).
     SyncFailed { error: &'a str },
     /// A reconcile pass decided the row's true status (see

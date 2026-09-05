@@ -20,7 +20,7 @@ use crate::core::{
 /// Takes the adapter (not a bare dir string) so the project-scope mapping
 /// (`ToolAdapter::project_relative_skills_dir`) is chosen here and callers cannot reach for
 /// the global `relative_skills_dir` by mistake — that mix-up has shipped more
-/// than once (see `gitignore.rs` and the cleanup paths in `project_ops.rs`).
+/// than once (see `gitignore.rs` and the Artifact removal callers in `project_ops.rs`).
 pub fn resolve_project_sync_target(
     project_path: &Path,
     adapter: &ToolAdapter,
@@ -548,7 +548,7 @@ pub fn toggle_skill_assignment(
             .is_some()
         {
             let (project, skill) = lookup_project_and_skill(store, project_id, skill_id)?;
-            unassign_and_cleanup(store, &project, &skill, tool_key)?;
+            unassign_and_remove_artifacts(store, &project, &skill, tool_key)?;
             return Ok(ToggleOutcome::Unassigned);
         }
         assign_skill_to_project_tool_unlocked(store, project_id, skill_id, tool_key, now)?;
@@ -568,7 +568,7 @@ pub fn toggle_skill_assignment(
 ///
 /// Unlocked internal seam: callers reach it through an entry point that has
 /// already taken the mutation guard.
-pub(crate) fn unassign_and_cleanup(
+pub(crate) fn unassign_and_remove_artifacts(
     store: &SkillStore,
     project: &ProjectRecord,
     skill: &SkillRecord,

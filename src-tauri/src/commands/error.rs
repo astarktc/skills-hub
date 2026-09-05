@@ -95,7 +95,7 @@ pub enum CommandError {
         url: String,
     },
     DeleteCleanupFailed {
-        /// `"<path>: <io error>"` diagnostics per failed cleanup target.
+        /// `"<path>: <io error>"` diagnostics per failed removal target.
         failures: Vec<String>,
     },
     PathOutsideToolDirs {
