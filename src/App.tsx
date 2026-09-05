@@ -11,6 +11,7 @@ import Header from "./components/skills/Header";
 import LoadingOverlay from "./components/skills/LoadingOverlay";
 import SkillsList from "./components/skills/SkillsList";
 import Modal from "./components/shared/Modal";
+import NotificationsModal from "./components/shared/NotificationsModal";
 import AddSkillModal from "./components/skills/modals/AddSkillModal";
 import DeleteModal from "./components/skills/modals/DeleteModal";
 import GitPickModal from "./components/skills/modals/GitPickModal";
@@ -58,6 +59,7 @@ function App() {
     | "explore-detail"
   >("myskills");
   const [detailSkill, setDetailSkill] = useState<ManagedSkill | null>(null);
+  const [showNotifications, setShowNotifications] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "updated" | "added">("name");
   const [groupByRepo, setGroupByRepo] =
@@ -94,7 +96,17 @@ function App() {
   });
   const addFlow = useAddSkillFlow({ t, reporter, sync, library });
 
-  const { loading, loadingStartAt, actionMessage, cancelLoading } = reporter;
+  const {
+    loading,
+    loadingStartAt,
+    actionMessage,
+    cancelLoading,
+    notify,
+    notifications,
+    unreadCount,
+    markAllRead,
+    clearNotifications,
+  } = reporter;
   const {
     updateAvailableVersion,
     updateBody,
@@ -120,6 +132,16 @@ function App() {
 
   const handleCloseSettings = useCallback(() => {
     setActiveView("myskills");
+  }, []);
+
+  // Opening the history is what marks it read (spec Q4).
+  const handleOpenNotifications = useCallback(() => {
+    markAllRead();
+    setShowNotifications(true);
+  }, [markAllRead]);
+
+  const handleCloseNotifications = useCallback(() => {
+    setShowNotifications(false);
   }, []);
 
   const { loadFeaturedSkills, loadHiddenSkills } = explore;
@@ -205,7 +227,9 @@ function App() {
         language={language}
         loading={loading}
         activeView={activeView}
+        unreadNotifications={unreadCount}
         onToggleLanguage={toggleLanguage}
+        onOpenNotifications={handleOpenNotifications}
         onOpenSettings={handleOpenSettings}
         onViewChange={handleViewChange}
         t={t}
@@ -353,6 +377,15 @@ function App() {
           t={t}
         />
       ) : null}
+
+      <NotificationsModal
+        open={showNotifications}
+        notifications={notifications}
+        onRequestClose={handleCloseNotifications}
+        onClear={clearNotifications}
+        notify={notify}
+        t={t}
+      />
 
       <SharedDirModal
         pending={sync.sharedDirPending}

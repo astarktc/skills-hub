@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { FolderKanban, Layers, Search, Settings } from "lucide-react";
+import { Bell, FolderKanban, Layers, Search, Settings } from "lucide-react";
 import type { TFunction } from "i18next";
 
 type HeaderProps = {
@@ -12,20 +12,32 @@ type HeaderProps = {
     | "settings"
     | "projects"
     | "explore-detail";
+  /** Errors and warnings not yet seen in the notification panel. */
+  unreadNotifications: number;
   onToggleLanguage: () => void;
+  onOpenNotifications: () => void;
   onOpenSettings: () => void;
   onViewChange: (view: "myskills" | "explore" | "projects") => void;
   t: TFunction;
 };
 
+/** Past this the badge stops counting; the panel has the real number. */
+const BADGE_MAX = 99;
+
 const Header = ({
   language,
   activeView,
+  unreadNotifications,
   onToggleLanguage,
+  onOpenNotifications,
   onOpenSettings,
   onViewChange,
   t,
 }: HeaderProps) => {
+  const bellLabel =
+    unreadNotifications > 0
+      ? t("notifications.bellUnread", { count: unreadNotifications })
+      : t("notifications.bell");
   return (
     <header className="skills-header">
       <div className="header-left">
@@ -65,6 +77,22 @@ const Header = ({
       <div className="header-actions">
         <button className="lang-btn" type="button" onClick={onToggleLanguage}>
           {language === "en" ? t("languageShort.en") : t("languageShort.zh")}
+        </button>
+        <button
+          className="icon-btn notif-btn"
+          type="button"
+          onClick={onOpenNotifications}
+          aria-label={bellLabel}
+          title={bellLabel}
+        >
+          <Bell size={18} />
+          {unreadNotifications > 0 ? (
+            <span className="notif-badge" aria-hidden="true">
+              {unreadNotifications > BADGE_MAX
+                ? `${BADGE_MAX}+`
+                : unreadNotifications}
+            </span>
+          ) : null}
         </button>
         <button
           className={`icon-btn${activeView === "settings" ? " active" : ""}`}
