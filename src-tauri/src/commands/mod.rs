@@ -20,11 +20,13 @@ use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::global_sync::{
     BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome, BatchTargetStatus,
 };
+use crate::core::errors::SignalError;
 use crate::core::installer::{
     clone_for_explore_preview, install_git_skill_from_selection,
     install_local_skill_from_selection, list_git_skills, list_local_skills, GitSkillListing,
     InstallResult, InstallerPaths, LocalSkillCandidate,
 };
+use crate::core::log_reveal::log_reveal_target;
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
 use crate::core::onboarding_import::{
     import_onboarding_selection as import_onboarding_selection_core, ImportGroupStatus,
@@ -195,7 +197,10 @@ pub async fn clear_git_cache_now(app: tauri::AppHandle) -> Result<usize, Command
 /// (the folder itself when no file exists yet). The backend log is partial
 /// forensics for earlier runs — backend-logged events only, not a record of
 /// what a Notification reported. Both the paths and the opener are resolved
-/// here at the command seam: `core` never sees the app handle.
+/// here at the command seam: `core` never sees the app handle; it owns only
+/// the reveal rule (`core::log_reveal::log_reveal_target`). Every failure
+/// on the way reaches the operator as `RevealLogFailed` with the chain as
+/// diagnostics.
 #[tauri::command]
 #[specta::specta]
 pub async fn open_log_folder(app: tauri::AppHandle) -> Result<(), CommandError> {
@@ -203,7 +208,7 @@ pub async fn open_log_folder(app: tauri::AppHandle) -> Result<(), CommandError> 
         .path()
         .app_log_dir()
         .context("failed to resolve app log dir")
-        .map_err(CommandError::from_anyhow)?;
+        .map_err(reveal_log_failed)?;
     // Same derivation as tauri-plugin-log's `LogDir { file_name: None }`
     // target: `app_log_dir/<package name>.log` (the product name, e.g.
     // "Skills Hub.log"), so the file revealed is the one the plugin writes.
@@ -213,24 +218,30 @@ pub async fn open_log_folder(app: tauri::AppHandle) -> Result<(), CommandError> 
         // would surface an opaque opener error, so make it exist first.
         std::fs::create_dir_all(&log_dir)
             .with_context(|| format!("failed to create log dir {:?}", log_dir))?;
-        // Reveal (select in the file manager) rather than open: the log dir is
-        // named after the bundle identifier (`com.skillshub.app`) and macOS
-        // `open` treats a directory ending in `.app` as an application bundle,
-        // failing silently in the detached opener. Revealing the log file
-        // selects it inside its folder; before the first write there is no
-        // file yet, so the dir itself is revealed (selected in its parent).
-        let target = if log_file.is_file() {
-            &log_file
-        } else {
-            &log_dir
-        };
-        app.opener()
-            .reveal_item_in_dir(target)
-            .with_context(|| format!("failed to reveal log path {:?}", target))
+        let existing_log_file = log_file.is_file().then_some(log_file.as_path());
+        let target = log_reveal_target(&log_dir, existing_log_file);
+        match &target.selected {
+            Some(item) => app
+                .opener()
+                .reveal_item_in_dir(item)
+                .with_context(|| format!("failed to reveal log path {:?}", item)),
+            None => app
+                .opener()
+                .open_path(target.folder.to_string_lossy(), None::<&str>)
+                .with_context(|| format!("failed to open log dir {:?}", target.folder)),
+        }
     })
     .await
     .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
+    .map_err(reveal_log_failed)
+}
+
+/// Every failure of "Open log folder" is one typed condition carrying the
+/// chain as diagnostics, so the operator reads it as its own message.
+fn reveal_log_failed(err: anyhow::Error) -> CommandError {
+    CommandError::from(SignalError::RevealLogFailed {
+        detail: format!("{err:#}"),
+    })
 }
 
 #[derive(Debug, Serialize, Type)]

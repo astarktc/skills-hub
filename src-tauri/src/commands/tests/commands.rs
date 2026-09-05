@@ -398,3 +398,36 @@ fn update_of_a_skill_whose_central_copy_is_gone_is_typed_central_path_missing() 
     );
     assert!(json.get("message").is_none(), "no prose on the wire");
 }
+
+/// Whatever fails on the way to revealing the log folder (resolving the dir,
+/// creating it, the opener) reaches the wire as `REVEAL_LOG_FAILED` with
+/// the whole chain as diagnostics.
+#[test]
+fn an_open_log_folder_failure_is_typed_with_its_chain_as_detail() {
+    let err = anyhow::anyhow!("launcher exited with code 1")
+        .context("failed to reveal log path \"/Users/u/Library/Logs/com.skillshub.app\"");
+
+    let json = serde_json::to_value(reveal_log_failed(err)).unwrap();
+
+    assert_eq!(json["code"], "REVEAL_LOG_FAILED");
+    let detail = json["detail"].as_str().expect("detail is a string");
+    assert!(detail.contains("failed to reveal log path"), "got {detail}");
+    assert!(detail.contains("launcher exited with code 1"), "got {detail}");
+    assert!(json.get("message").is_none(), "no prose on the wire");
+}
+
+/// The requested subpath is the only thing a `SUBPATH_MISSING` carries.
+#[test]
+fn subpath_missing_serializes_the_requested_subpath_only() {
+    let err = anyhow::Error::new(SignalError::SubpathMissing {
+        subpath: "skills/nope".to_string(),
+    })
+    .context("acquire");
+
+    let json = serde_json::to_value(CommandError::from_anyhow(err)).unwrap();
+
+    assert_eq!(
+        json,
+        serde_json::json!({ "code": "SUBPATH_MISSING", "subpath": "skills/nope" })
+    );
+}
