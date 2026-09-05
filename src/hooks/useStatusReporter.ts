@@ -1,7 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Toaster, toast } from "sonner";
 import { describeCommandError } from "../commandError";
 import { invokeTauri } from "../lib/tauri";
+import {
+  useNotificationHistory,
+  type Notification,
+  type NotificationKind,
+} from "./useNotificationHistory";
 
 /**
  * The toast mount point, rendered once by the binder. Re-exported from here
@@ -10,32 +15,11 @@ import { invokeTauri } from "../lib/tauri";
  */
 export { Toaster as NotificationToaster };
 
+// The history's shape is the reporter's public vocabulary; the ring itself
+// lives in the building block (`useNotificationHistory`).
+export type { Notification, NotificationKind };
+
 export type ActionErrorEntry = { title: string; message: string };
-
-/** The severity of one user-visible notification. */
-export type NotificationKind = "error" | "warning" | "success" | "info";
-
-/**
- * One user-visible outcome of an action: shown once as a toast and kept in
- * the session's history (spec Q3/Q4). `id` increases monotonically within
- * the session, so "unread" is a watermark on it.
- */
-export type Notification = {
-  id: number;
-  kind: NotificationKind;
-  title: string;
-  message?: string;
-  /** Wall-clock time the notification was raised (ms since epoch). */
-  at: number;
-};
-
-/** The history keeps this many entries, newest first; older ones drop off. */
-export const NOTIFICATION_HISTORY_LIMIT = 100;
-
-/** Only these kinds count as unread: a success or info needs no follow-up. */
-function isAttentionKind(kind: NotificationKind): boolean {
-  return kind === "error" || kind === "warning";
-}
 
 /**
  * How long each kind stays on screen. The single owner of toast lifetime:
@@ -247,25 +231,15 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
     [t],
   );
 
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  // Every entry with an id above this watermark is unread; ids only grow.
-  const [lastReadId, setLastReadId] = useState(0);
-  const nextIdRef = useRef(1);
-
-  // The history's only writer: every recorded entry passes through here,
+  // The session ring: every recorded entry passes through `record`,
   // toasted or not.
-  const record = useCallback<NotifyFn>((kind, title, message) => {
-    const entry: Notification = {
-      id: nextIdRef.current++,
-      kind,
-      title,
-      message,
-      at: Date.now(),
-    };
-    setNotifications((prev) =>
-      [entry, ...prev].slice(0, NOTIFICATION_HISTORY_LIMIT),
-    );
-  }, []);
+  const {
+    notifications,
+    unreadCount,
+    record,
+    markAllRead,
+    clear: clearNotifications,
+  } = useNotificationHistory();
 
   const notify = useCallback<NotifyFn>(
     (kind, title, message) => {
@@ -274,22 +248,6 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
     },
     [record],
   );
-
-  const unreadCount = useMemo(
-    () =>
-      notifications.filter((n) => n.id > lastReadId && isAttentionKind(n.kind))
-        .length,
-    [notifications, lastReadId],
-  );
-
-  const markAllRead = useCallback(() => {
-    setLastReadId(nextIdRef.current - 1);
-  }, []);
-
-  const clearNotifications = useCallback(() => {
-    setNotifications([]);
-    setLastReadId(nextIdRef.current - 1);
-  }, []);
 
   const showActionErrors = useCallback(
     (errors: ActionErrorEntry[]) => {
