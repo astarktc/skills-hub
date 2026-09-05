@@ -259,22 +259,23 @@ pub(crate) fn acquire_managed_skill_update_with(
         })
     })?;
 
-    // The Provenance rule first: a skill with no external source has nothing
-    // to acquire, whatever the state of its central copy.
+    // The Provenance rule: a skill with no external source has nothing to
+    // acquire, whatever the state of its central copy. The central copy's
+    // own presence is deliberately *not* checked: a `git`/`local` skill
+    // whose central copy is gone is exactly what Restore re-acquires, and
+    // finalize rebuilds it at the recorded path.
     if !is_refreshable(&record) {
         anyhow::bail!(not_refreshable(&record));
     }
 
     let central_path = PathBuf::from(record.central_path.clone());
-    if !central_path.exists() {
-        anyhow::bail!(SignalError::CentralPathMissing {
-            path: record.central_path.clone(),
-        });
-    }
     let central_parent = central_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("invalid central path"))?
         .to_path_buf();
+    // The central repo itself may be gone too (a Restore after the whole
+    // library folder was lost); the staging dir needs its parent.
+    ensure_central_repo(&central_parent)?;
 
     // Build new content in a sibling staging dir; finalize swaps it in.
     let staged = StagingDir::new_in(&central_parent);

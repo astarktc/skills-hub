@@ -251,6 +251,10 @@ pub fn finalize_install(
 /// record (identity, name, provenance, and timestamps other than `updated_at`
 /// are preserved; `revision` overrides the stored one when known). Returns
 /// the upserted record.
+///
+/// A central copy that is already gone is not a failure: the staged bytes
+/// simply land at the recorded path — that is how Restore rebuilds an
+/// Unlocatable skill's central copy.
 pub fn finalize_update(
     store: &SkillStore,
     record: &SkillRecord,
@@ -258,8 +262,14 @@ pub fn finalize_update(
     revision: Option<String>,
 ) -> Result<SkillRecord> {
     let central_path = PathBuf::from(&record.central_path);
-    std::fs::remove_dir_all(&central_path)
-        .with_context(|| format!("failed to remove old central dir {:?}", central_path))?;
+    match std::fs::remove_dir_all(&central_path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("failed to remove old central dir {:?}", central_path))
+        }
+    }
     staged.move_into(&central_path)?;
 
     let now = now_ms();

@@ -388,30 +388,25 @@ fn update_of_a_local_skill_whose_source_is_gone_is_typed_source_path_missing() {
     assert!(json.get("message").is_none(), "no prose on the wire");
 }
 
-/// Update of a skill whose central copy is gone reaches the wire as its own
-/// code with the central path in a structured field.
+/// A missing central copy reaches the wire as its own code with the central
+/// path in a structured field. Since round 4 only moving the central repo
+/// raises it: an Update of a `git`/`local` skill whose central copy is gone
+/// is a Restore and rebuilds it (`core::refresh` tests pin that).
 #[test]
-fn update_of_a_skill_whose_central_copy_is_gone_is_typed_central_path_missing() {
-    let (_dir, paths, store) = missing_path_fixture();
-    let source = tempfile::tempdir().unwrap();
-    std::fs::write(source.path().join("SKILL.md"), b"---\nname: x\n---\n").unwrap();
-    let installed = crate::core::installer::install_local_skill(
-        &paths,
-        &store,
-        source.path(),
-        Some("gone-central".to_string()),
-    )
-    .unwrap();
-    std::fs::remove_dir_all(&installed.central_path).unwrap();
-
-    let error = update_outcome_at_the_seam(&paths, &store, &installed.skill_id);
+fn a_missing_central_copy_is_typed_central_path_missing_on_the_wire() {
+    let error = CommandError::from_anyhow(
+        anyhow::anyhow!(SignalError::CentralPathMissing {
+            path: "/home/u/.skillshub/gone".to_string(),
+        })
+        .context("move central repo"),
+    );
 
     let json = serde_json::to_value(&error).unwrap();
     assert_eq!(
         json,
         serde_json::json!({
             "code": "CENTRAL_PATH_MISSING",
-            "path": installed.central_path.to_string_lossy(),
+            "path": "/home/u/.skillshub/gone",
         }),
         "got {error}"
     );
