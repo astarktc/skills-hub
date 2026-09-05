@@ -1,7 +1,7 @@
-//! Tests for `core::unlocatable` — the two repairs of an Unlocatable skill
-//! that are store-only: Re-point (new source folder) and Detach (becomes
-//! `imported`). Restore is the single-skill Update and is tested with
-//! `core::refresh`.
+//! Tests for `core::unlocatable` — two of an Unlocatable skill's repairs:
+//! Re-point (new source folder, then the single-skill Update) and Detach
+//! (becomes `imported`). Restore is the single-skill Update and is tested
+//! with `core::refresh`.
 
 use std::fs;
 use std::path::PathBuf;
@@ -9,11 +9,11 @@ use std::path::PathBuf;
 use crate::core::errors::SignalError;
 use crate::core::installer::{install_imported_skill, install_local_skill, InstallerPaths};
 use crate::core::refresh::{
-    refresh_managed_skills, RefreshPolicy, RefreshSelection, SkillRefreshStatus,
+    refresh_managed_skills, RefreshPolicy, RefreshReport, RefreshSelection, SkillRefreshStatus,
 };
 use crate::core::skill_store::SkillStore;
 use crate::core::unlocatable::{
-    detach_from_source, repoint_local_source, unlocatable_state, UnlocatableState,
+    detach_from_source, repoint_and_update, unlocatable_state, UnlocatableState,
 };
 
 struct Fixture {
@@ -60,7 +60,19 @@ fn fixture_with_moved_source() -> (Fixture, PathBuf) {
     )
 }
 
-fn update(f: &Fixture) -> crate::core::refresh::RefreshReport {
+fn repoint(f: &Fixture, new_source: &std::path::Path) -> anyhow::Result<RefreshReport> {
+    repoint_and_update(
+        &f.paths,
+        &f.store,
+        &f.skill_id,
+        new_source,
+        None,
+        3000,
+        |_| {},
+    )
+}
+
+fn update(f: &Fixture) -> RefreshReport {
     refresh_managed_skills(
         &f.paths,
         &f.store,
@@ -73,8 +85,11 @@ fn update(f: &Fixture) -> crate::core::refresh::RefreshReport {
     .expect("refresh")
 }
 
+/// Re-point is one operation: the record names the new folder and the
+/// central copy holds its bytes when the call returns, with the Update's
+/// outcome as report data.
 #[test]
-fn repoint_rewrites_the_source_and_the_next_update_lands_the_new_folders_bytes() {
+fn repoint_rewrites_the_source_and_lands_the_new_folders_bytes() {
     let (f, new) = fixture_with_moved_source();
     let before = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
     assert_eq!(
@@ -82,30 +97,23 @@ fn repoint_rewrites_the_source_and_the_next_update_lands_the_new_folders_bytes()
         Some(UnlocatableState::SourceMissing)
     );
 
-    let record =
-        repoint_local_source(&f.store, &f.paths.home, &f.skill_id, &new).expect("re-point");
+    let report = repoint(&f, &new).expect("re-point");
 
+    assert!(
+        matches!(
+            report.skills.as_slice(),
+            [o] if o.skill_id == f.skill_id && matches!(o.status, SkillRefreshStatus::Refreshed { .. })
+        ),
+        "{report:?}"
+    );
+    let record = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
     assert_eq!(record.source_ref.as_deref(), Some(new.to_str().unwrap()));
     assert_eq!(record.source_type, "local", "still a local skill");
     assert_eq!(unlocatable_state(&record), None);
     assert_eq!(
         fs::read_to_string(f.central_path.join("a.txt")).unwrap(),
-        "v1",
-        "re-pointing alone moves no bytes"
-    );
-
-    let report = update(&f);
-    assert!(
-        matches!(
-            report.skills.as_slice(),
-            [o] if matches!(o.status, SkillRefreshStatus::Refreshed { .. })
-        ),
-        "{report:?}"
-    );
-    assert_eq!(
-        fs::read_to_string(f.central_path.join("a.txt")).unwrap(),
         "v2",
-        "the Update copies from the new folder"
+        "the Update copied from the new folder"
     );
 }
 
@@ -115,13 +123,7 @@ fn repoint_validates_the_new_folder_the_way_add_does() {
     let before = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
 
     // Not there.
-    let err = repoint_local_source(
-        &f.store,
-        &f.paths.home,
-        &f.skill_id,
-        &f.paths.home.join("nowhere"),
-    )
-    .expect_err("a missing folder is refused");
+    let err = repoint(&f, &f.paths.home.join("nowhere")).expect_err("a missing folder is refused");
     assert!(matches!(
         err.downcast_ref::<SignalError>(),
         Some(SignalError::SourcePathMissing { .. })
@@ -130,8 +132,7 @@ fn repoint_validates_the_new_folder_the_way_add_does() {
     // No SKILL.md.
     let empty = f.paths.home.join("Documents/empty");
     fs::create_dir_all(&empty).unwrap();
-    let err = repoint_local_source(&f.store, &f.paths.home, &f.skill_id, &empty)
-        .expect_err("a folder without SKILL.md is refused");
+    let err = repoint(&f, &empty).expect_err("a folder without SKILL.md is refused");
     assert!(matches!(
         err.downcast_ref::<SignalError>(),
         Some(SignalError::SkillInvalid { .. })
@@ -141,8 +142,7 @@ fn repoint_validates_the_new_folder_the_way_add_does() {
     let in_tool = f.paths.home.join(".claude/skills/alpha");
     fs::create_dir_all(&in_tool).unwrap();
     fs::write(in_tool.join("SKILL.md"), "---\nname: alpha\n---\n").unwrap();
-    let err = repoint_local_source(&f.store, &f.paths.home, &f.skill_id, &in_tool)
-        .expect_err("a Tool-dir folder is refused");
+    let err = repoint(&f, &in_tool).expect_err("a Tool-dir folder is refused");
     assert_eq!(
         err.downcast_ref::<SignalError>(),
         Some(&SignalError::LocalSourceInsideToolDir {
@@ -156,6 +156,11 @@ fn repoint_validates_the_new_folder_the_way_add_does() {
         format!("{after:?}"),
         format!("{before:?}"),
         "a refused re-point changes nothing"
+    );
+    assert_eq!(
+        fs::read_to_string(f.central_path.join("a.txt")).unwrap(),
+        "v1",
+        "a refused re-point runs no Update"
     );
 }
 
@@ -211,7 +216,16 @@ fn only_a_local_skill_can_be_repointed_or_detached() {
     )
     .unwrap();
 
-    assert!(repoint_local_source(&f.store, &f.paths.home, &imported.skill_id, &new).is_err());
+    assert!(repoint_and_update(
+        &f.paths,
+        &f.store,
+        &imported.skill_id,
+        &new,
+        None,
+        3000,
+        |_| {}
+    )
+    .is_err());
     assert!(detach_from_source(&f.store, &imported.skill_id).is_err());
     let err = detach_from_source(&f.store, "no-such-id").expect_err("unknown id");
     assert!(matches!(

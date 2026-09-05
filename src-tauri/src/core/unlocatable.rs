@@ -5,9 +5,10 @@
 //! stored:
 //!
 //! - `source_missing` — a `local` skill whose folder is gone. Repairs:
-//!   Re-point ([`repoint_local_source`], then the single-skill Update),
-//!   Detach ([`detach_from_source`] — it becomes `imported`, the central
-//!   copy is truth from now on), or Remove.
+//!   Re-point ([`repoint_and_update`] — the record names the new folder,
+//!   then the single-skill Update lands its bytes), Detach
+//!   ([`detach_from_source`] — it becomes `imported`, the central copy is
+//!   truth from now on), or Remove.
 //! - `central_missing` — the central copy is gone, so every Tool's link for
 //!   it is dangling. Repairs: Restore (the single-skill Update, which
 //!   rebuilds the central copy from a `git`/`local` source) or Remove.
@@ -20,8 +21,13 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use super::cancel_token::CancelToken;
 use super::errors::SignalError;
+use super::installer::InstallerPaths;
 use super::provenance::Provenance;
+use super::refresh::{
+    refresh_managed_skills, RefreshPolicy, RefreshProgress, RefreshReport, RefreshSelection,
+};
 use super::skill_discovery::require_skill_md;
 use super::skill_store::{SkillRecord, SkillStore};
 use super::tool_adapters::tool_holding_path;
@@ -60,16 +66,42 @@ pub fn unlocatable_state(record: &SkillRecord) -> Option<UnlocatableState> {
     None
 }
 
-/// Re-point a `local` skill at its folder's new location: the folder is
-/// validated the way Add validates one (present, holds a `SKILL.md`, not
-/// inside a Tool's skills directory) and recorded as the new `source_ref`.
-/// Store-only — the caller runs the single-skill Update next, which lands
-/// the folder's bytes in the central copy.
+/// Re-point a `local` skill at its folder's new location and update from
+/// it — the one Re-point operation. The folder is validated the way Add
+/// validates one (present, holds a `SKILL.md`, not inside a Tool's skills
+/// directory) and recorded as the new `source_ref`; then the single-skill
+/// Update (the Refresh batch of one, which takes the Mutation guard itself)
+/// lands the folder's bytes in the central copy and propagates. The
+/// Update's outcome is report data, exactly as for Update; a refused folder
+/// changes nothing and runs no Update.
 ///
 /// Only a `local` skill has a folder to re-point; any other provenance is a
 /// caller error, never an operator condition (the card offers Re-point for
 /// `source_missing` alone).
-pub fn repoint_local_source(
+pub fn repoint_and_update(
+    paths: &InstallerPaths,
+    store: &SkillStore,
+    skill_id: &str,
+    new_source: &Path,
+    cancel: Option<&CancelToken>,
+    now: i64,
+    on_progress: impl FnMut(RefreshProgress),
+) -> Result<RefreshReport> {
+    repoint_local_source(store, &paths.home, skill_id, new_source)?;
+    refresh_managed_skills(
+        paths,
+        store,
+        RefreshSelection::Ids(vec![skill_id.to_string()]),
+        RefreshPolicy::default(),
+        cancel,
+        now,
+        on_progress,
+    )
+}
+
+/// The store half of Re-point: validate the folder and record it as the
+/// new `source_ref`. No bytes move.
+fn repoint_local_source(
     store: &SkillStore,
     home: &Path,
     skill_id: &str,

@@ -50,7 +50,7 @@ use crate::core::sync_status::{SyncMode, SyncStatus};
 use crate::core::tool_adapters::{
     global_tool_entries, installed_keys, project_tool_entries, ToolCatalogEntry,
 };
-use crate::core::unlocatable::{detach_from_source, repoint_local_source, UnlocatableState};
+use crate::core::unlocatable::{detach_from_source, repoint_and_update, UnlocatableState};
 
 pub use error::CommandError;
 
@@ -885,11 +885,8 @@ fn to_refresh_report_dto(report: crate::core::refresh::RefreshReport) -> Refresh
 }
 
 /// Re-point a `local` skill whose source folder is gone at the folder's new
-/// location, then run the single-skill Update from it (see **Unlocatable
-/// skill** in `CONTEXT.md`). Two entry points in sequence: the re-point is
-/// store-only, the Update is the Refresh batch of one (which wraps the
-/// mutation guard itself). The Update's outcome is report data, exactly as
-/// for Update.
+/// location and update from it (see **Unlocatable skill** in `CONTEXT.md`).
+/// The Update's outcome is report data, exactly as for Update.
 #[tauri::command]
 #[specta::specta]
 #[allow(non_snake_case)]
@@ -906,12 +903,11 @@ pub async fn repoint_local_skill_source(
         cancel.reset();
         let paths = installer_paths(&app, &store)?;
         let new_source = expand_home_path_in(&paths.home, &newPath)?;
-        repoint_local_source(&store, &paths.home, &skillId, &new_source)?;
-        let report = refresh_managed_skills_core(
+        let report = repoint_and_update(
             &paths,
             &store,
-            RefreshSelection::Ids(vec![skillId]),
-            RefreshPolicy::default(),
+            &skillId,
+            &new_source,
             Some(&cancel),
             now_ms(),
             |_| {},
