@@ -19,6 +19,7 @@ use crate::core::{
     provenance::is_refreshable,
     skill_discovery::{invocation_mode_for_dir, InvocationMode},
     skill_store::{SkillRecord, SkillStore, SkillTargetRecord},
+    unlocatable::{unlocatable_state, UnlocatableState},
 };
 
 /// One Managed skill as the library list needs it.
@@ -34,6 +35,10 @@ pub struct ManagedSkillEntry {
     /// rule (`provenance::is_refreshable`), answered here so the UI shows or
     /// hides Update without re-deriving it.
     pub refreshable: bool,
+    /// Whether the app can still locate this skill's recorded paths, and
+    /// which is gone when not (`unlocatable::unlocatable_state`) — computed
+    /// here at list time, never stored.
+    pub unlocatable: Option<UnlocatableState>,
 }
 
 /// Assemble the Managed-skill catalog: every Managed skill with its Sync
@@ -47,11 +52,13 @@ pub fn managed_skill_catalog(store: &SkillStore) -> Result<Vec<ManagedSkillEntry
             .with_context(|| format!("list sync targets for skill {}", skill.id))?;
         let invocation_mode = invocation_mode_for_dir(Path::new(&skill.central_path));
         let refreshable = is_refreshable(&skill);
+        let unlocatable = unlocatable_state(&skill);
         entries.push(ManagedSkillEntry {
             skill,
             invocation_mode,
             targets,
             refreshable,
+            unlocatable,
         });
     }
     Ok(entries)

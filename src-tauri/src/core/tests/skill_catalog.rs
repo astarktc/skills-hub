@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::core::skill_catalog::managed_skill_catalog;
 use crate::core::skill_discovery::InvocationMode;
 use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
+use crate::core::unlocatable::UnlocatableState;
 use crate::core::sync_status::{SyncMode, SyncStatus};
 
 fn make_store(base: &Path) -> SkillStore {
@@ -197,4 +198,71 @@ fn catalog_marks_an_imported_skill_not_refreshable() {
         catalog[1].skill.imported_from_tool.as_deref(),
         Some("claude_code")
     );
+}
+
+/// The listing answers "can the app still locate this skill?" from the
+/// recorded paths alone (see **Unlocatable skill** in `CONTEXT.md`): a
+/// `local` skill whose folder is gone is `source_missing`, a skill whose
+/// central copy is gone is `central_missing`, and a healthy row — or an
+/// imported row with a healthy central copy — is neither.
+#[test]
+fn catalog_marks_unlocatable_skills_by_their_recorded_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = tmp.path().join("central");
+    let own_folder = tmp.path().join("own-folder");
+    fs::create_dir_all(&own_folder).unwrap();
+    fs::write(own_folder.join("SKILL.md"), "---\nname: healthy\n---\n").unwrap();
+
+    let mut healthy = seed_skill(
+        &store,
+        "s1",
+        "healthy",
+        &write_manifest(&central, "healthy", "---\nname: healthy\n---\n"),
+    );
+    healthy.source_ref = Some(own_folder.to_string_lossy().to_string());
+    store.upsert_skill(&healthy).unwrap();
+
+    let mut source_gone = seed_skill(
+        &store,
+        "s2",
+        "source-gone",
+        &write_manifest(&central, "source-gone", "---\nname: source-gone\n---\n"),
+    );
+    source_gone.source_ref = Some(
+        tmp.path()
+            .join("moved-away")
+            .to_string_lossy()
+            .to_string(),
+    );
+    store.upsert_skill(&source_gone).unwrap();
+
+    let mut central_gone = seed_skill(&store, "s3", "central-gone", &central.join("central-gone"));
+    central_gone.source_type = "git".to_string();
+    central_gone.source_ref = Some("https://github.com/o/r".to_string());
+    store.upsert_skill(&central_gone).unwrap();
+
+    let mut imported = seed_skill(
+        &store,
+        "s4",
+        "taken-over",
+        &write_manifest(&central, "taken-over", "---\nname: taken-over\n---\n"),
+    );
+    imported.source_type = "imported".to_string();
+    imported.imported_from_tool = Some("claude_code".to_string());
+    store.upsert_skill(&imported).unwrap();
+
+    let mut catalog = managed_skill_catalog(&store).expect("catalog");
+    catalog.sort_by(|a, b| a.skill.id.cmp(&b.skill.id));
+
+    assert_eq!(catalog[0].unlocatable, None, "a healthy local skill");
+    assert_eq!(catalog[1].unlocatable, Some(UnlocatableState::SourceMissing));
+    assert_eq!(catalog[2].unlocatable, Some(UnlocatableState::CentralMissing));
+    assert_eq!(
+        catalog[3].unlocatable, None,
+        "an imported skill has no source to be missing"
+    );
+    // Restore is Update, so a git skill whose central copy is gone still
+    // answers "refreshable": it has a source to re-acquire from.
+    assert!(catalog[2].refreshable);
 }

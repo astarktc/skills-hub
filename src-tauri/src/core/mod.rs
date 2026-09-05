@@ -38,3 +38,4 @@ pub mod sync_engine;
 pub mod sync_status;
 pub mod temp_cleanup;
 pub mod tool_adapters;
+pub mod unlocatable;

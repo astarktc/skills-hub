@@ -50,6 +50,7 @@ use crate::core::sync_status::{SyncMode, SyncStatus};
 use crate::core::tool_adapters::{
     global_tool_entries, installed_keys, project_tool_entries, ToolCatalogEntry,
 };
+use crate::core::unlocatable::UnlocatableState;
 
 pub use error::CommandError;
 
@@ -1124,6 +1125,11 @@ pub struct ManagedSkillDto {
     /// Whether Update / Refresh can re-acquire this skill (backend-owned
     /// Provenance rule); the UI offers Update only when `true`.
     pub refreshable: bool,
+    /// Which recorded path the app can no longer find, if any (see
+    /// **Unlocatable skill** in `CONTEXT.md`): `source_missing` offers
+    /// Re-point / Detach / Remove, `central_missing` offers Restore (when
+    /// `refreshable`) / Remove. Computed at list time, never stored.
+    pub unlocatable: Option<UnlocatableState>,
 }
 
 #[derive(Debug, Serialize, Type)]
@@ -1178,6 +1184,7 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
             invocation_mode,
             targets,
             refreshable,
+            unlocatable,
         } = entry;
         ManagedSkillDto {
             id: skill.id,
@@ -1203,6 +1210,7 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
                 })
                 .collect(),
             refreshable,
+            unlocatable,
         }
     }
 }
