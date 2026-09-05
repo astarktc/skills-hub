@@ -177,7 +177,7 @@ reason: string } | { code: "CANCELLED" } | { code: "RATE_LIMITED";
 resetMinutes: number } | { code: "GIT_CLONE_FAILED"; kind: GitCloneFailureKind; detail: string } | { code: "GITHUB_SKILL_NOT_FOUND"; 
 /**  Human-checkable GitHub tree URL for the missing skill path. */
 url: string } | { code: "DELETE_CLEANUP_FAILED"; 
-/**  `"<path>: <io error>"` diagnostics per failed cleanup target. */
+/**  `"<path>: <io error>"` diagnostics per failed removal target. */
 failures: string[] } | { code: "PATH_OUTSIDE_TOOL_DIRS"; 
 /**  The refused path (not inside any Tool's skills directory). */
 path: string } | { code: "OTHER"; message: string };
@@ -641,7 +641,7 @@ export type SyncStatus =
 "stale" | 
 /**  Source or a previously deployed target has disappeared. */
 "missing" | 
-/**  The last sync/cleanup attempt failed; `last_error` carries the diagnostic. */
+/**  The last sync or Artifact removal attempt failed; `last_error` carries the diagnostic. */
 "error";
 
 export type SyncTargetResultDto = {
