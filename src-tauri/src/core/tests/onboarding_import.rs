@@ -120,6 +120,80 @@ fn imported<'a>(
         .status
 }
 
+/// The record an import writes: provenance `imported`, no source path, and
+/// the Tool the chosen variant was found in kept as history (Q1/Q2).
+#[test]
+fn import_records_imported_provenance_with_the_found_in_tool_as_history() {
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    let chosen = seed_skill_dir(&f, "claude_code", "alpha", "body");
+
+    let report = run(&f, &[selection("alpha", &chosen)], ImportPolicy::default());
+
+    let ImportGroupStatus::Imported { skill_id, .. } = imported(&report, "alpha") else {
+        panic!("alpha should import: {:?}", report);
+    };
+    let record = f
+        .store
+        .get_skill_by_id(skill_id)
+        .expect("query")
+        .expect("record");
+    assert_eq!(record.source_type, "imported");
+    assert_eq!(
+        record.source_ref, None,
+        "an imported skill has no source path"
+    );
+    assert_eq!(record.source_subpath, None);
+    assert_eq!(record.source_revision, None);
+    assert_eq!(record.imported_from_tool.as_deref(), Some("claude_code"));
+    assert!(
+        !crate::core::provenance::is_refreshable(&record),
+        "the central copy is its truth: nothing to refresh from"
+    );
+}
+
+/// A Tool copy that `.skill-lock.json` identifies as installed by
+/// `npx skills add` has a real upstream: it is recorded `git`, not `imported`.
+#[test]
+fn import_of_a_variant_installed_by_npx_skills_add_records_its_upstream_as_git() {
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    // `npx skills add` keeps the bytes in ~/.agents/skills/<name> and links
+    // every Tool at it; the lock file names the upstream.
+    let agents_dir = f.paths.home.join(".agents");
+    let real = agents_dir.join("skills").join("alpha");
+    fs::create_dir_all(&real).expect("agents skills dir");
+    fs::write(real.join("SKILL.md"), "---\nname: alpha\n---\nbody\n").expect("SKILL.md");
+    fs::write(
+        agents_dir.join(".skill-lock.json"),
+        r#"{ "version": 3, "skills": { "alpha": {
+            "source": "owner/repo", "sourceType": "github",
+            "sourceUrl": "https://github.com/owner/repo.git",
+            "skillPath": "skills/alpha/SKILL.md", "skillFolderHash": "abc" } } }"#,
+    )
+    .expect("lock file");
+    let chosen = seed_skill_link(&f, "claude_code", "alpha", &real);
+
+    let report = run(&f, &[selection("alpha", &chosen)], ImportPolicy::default());
+
+    let ImportGroupStatus::Imported { skill_id, .. } = imported(&report, "alpha") else {
+        panic!("alpha should import: {:?}", report);
+    };
+    let record = f
+        .store
+        .get_skill_by_id(skill_id)
+        .expect("query")
+        .expect("record");
+    assert_eq!(record.source_type, "git");
+    assert_eq!(
+        record.source_ref.as_deref(),
+        Some("https://github.com/owner/repo.git")
+    );
+    assert_eq!(record.source_subpath.as_deref(), Some("skills/alpha"));
+    assert_eq!(record.imported_from_tool, None);
+    assert!(crate::core::provenance::is_refreshable(&record));
+}
+
 #[test]
 fn auto_sync_on_overwrites_the_source_tool_in_place_across_its_shared_dir_group() {
     // amp and kimi_cli share `.config/agents/skills` (one detect dir, one

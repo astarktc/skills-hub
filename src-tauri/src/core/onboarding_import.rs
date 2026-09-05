@@ -47,7 +47,7 @@ use super::global_sync::{
     sync_skills_to_tools_unlocked, target_has_same_content, BatchOverride, BatchPolicy, BatchSkill,
     BatchTargetOutcome,
 };
-use super::installer::{install_local_skill, InstallerPaths};
+use super::installer::{install_imported_skill, InstallerPaths};
 use super::mutation_guard;
 use super::onboarding::{build_onboarding_plan, OnboardingGroup, OnboardingVariant};
 use super::skill_discovery::require_skill_md;
@@ -235,7 +235,20 @@ fn apply_one_unlocked(
     now: i64,
 ) -> ImportGroupStatus {
     let name = selection.name.clone().unwrap_or_else(|| group.name.clone());
-    let installed = match install_local_skill(paths, store, &selection.chosen_path, Some(name)) {
+    // `admit` proved the chosen path is one of the group's variants.
+    let found_in_tool = group
+        .variants
+        .iter()
+        .find(|variant| variant.path == selection.chosen_path)
+        .map(|variant| variant.tool.as_str())
+        .unwrap_or_default();
+    let installed = match install_imported_skill(
+        paths,
+        store,
+        &selection.chosen_path,
+        Some(name),
+        found_in_tool,
+    ) {
         Ok(result) => result,
         Err(error) => return ImportGroupStatus::Failed { error },
     };

@@ -39,11 +39,47 @@ pub struct InstallerPaths {
     pub cache_dir: PathBuf,
 }
 
+/// Add a skill from an independent local folder the operator maintains.
+/// The folder stays the skill's source (`local` provenance), so Update can
+/// copy from it again.
 pub fn install_local_skill(
     paths: &InstallerPaths,
     store: &SkillStore,
     source_path: &Path,
     name: Option<String>,
+) -> Result<InstallResult> {
+    install_from_dir(paths, store, source_path, name, || {
+        SkillProvenance::local(source_path)
+    })
+}
+
+/// Take over a skill found in a Tool's skills directory (Onboarding import).
+/// Recorded with `imported` provenance: the path it was copied from is the
+/// import's own target — about to be overwritten with a link or removed —
+/// so it is **not** a source; `found_in_tool` is kept as display-only
+/// history (ADR-0003). The `.skill-lock.json` enrichment still wins: a copy
+/// `npx skills add` installed has a real upstream and is recorded `git`.
+pub fn install_imported_skill(
+    paths: &InstallerPaths,
+    store: &SkillStore,
+    source_path: &Path,
+    name: Option<String>,
+    found_in_tool: &str,
+) -> Result<InstallResult> {
+    install_from_dir(paths, store, source_path, name, || {
+        SkillProvenance::imported(found_in_tool)
+    })
+}
+
+/// Copy a directory into the central repo and record it. `provenance` is
+/// what the record says when `~/.agents/.skill-lock.json` has nothing to say
+/// about the path (a discovered upstream always wins).
+fn install_from_dir(
+    paths: &InstallerPaths,
+    store: &SkillStore,
+    source_path: &Path,
+    name: Option<String>,
+    provenance: impl FnOnce() -> SkillProvenance,
 ) -> Result<InstallResult> {
     if !source_path.exists() {
         anyhow::bail!(source_path_missing(source_path));
@@ -76,7 +112,7 @@ pub fn install_local_skill(
             source_revision: None,
             imported_from_tool: None,
         },
-        None => SkillProvenance::local(source_path),
+        None => provenance(),
     };
 
     // The name is always honored as given: callers either pass the operator's
