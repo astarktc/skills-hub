@@ -113,6 +113,25 @@ fn from_anyhow_recovers_unknown_tool_and_invalid_path_through_context() {
     }
 }
 
+/// An upstream symlink whose target leaves the repository reaches the wire
+/// as its own code, carrying the link's subpath and the raw target as
+/// diagnostics — never as prose.
+#[test]
+fn from_anyhow_recovers_symlink_escapes_repo_through_context() {
+    let err = anyhow::Error::new(SignalError::SymlinkEscapesRepo {
+        subpath: "plugins/all/skills/x".to_string(),
+        target: "../../../../etc".to_string(),
+    })
+    .context("acquire skill");
+    match CommandError::from_anyhow(err) {
+        CommandError::SymlinkEscapesRepo { subpath, target } => {
+            assert_eq!(subpath, "plugins/all/skills/x");
+            assert_eq!(target, "../../../../etc");
+        }
+        other => panic!("expected SymlinkEscapesRepo, got {other}"),
+    }
+}
+
 #[test]
 fn from_anyhow_recovers_global_sync_errors() {
     let err = anyhow::Error::new(GlobalSyncError::ToolNotWritable {

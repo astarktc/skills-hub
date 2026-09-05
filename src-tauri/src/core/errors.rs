@@ -70,6 +70,11 @@ pub enum SignalError {
     /// Revealing the app log folder in the file manager failed. `detail` is
     /// diagnostic text (the opener's error chain), not user copy.
     RevealLogFailed { detail: String },
+    /// An in-repo symlink at `subpath` points at `target`, which is absolute
+    /// or resolves to (or above) the repository root, so acquisition refuses
+    /// to follow it. Nothing at the target is read. Owned by
+    /// `repo_subpath::LinkChain`.
+    SymlinkEscapesRepo { subpath: String, target: String },
 }
 
 impl fmt::Display for SignalError {
@@ -129,6 +134,12 @@ impl fmt::Display for SignalError {
             }
             SignalError::RevealLogFailed { detail } => {
                 write!(f, "revealing the log folder failed: {detail}")
+            }
+            SignalError::SymlinkEscapesRepo { subpath, target } => {
+                write!(
+                    f,
+                    "symlink at {subpath} escapes the repository (target: {target})"
+                )
             }
         }
     }

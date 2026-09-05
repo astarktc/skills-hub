@@ -33,6 +33,7 @@ const COMMAND_ERROR_CODE_MAP = {
   CENTRAL_PATH_MISSING: true,
   SUBPATH_MISSING: true,
   REVEAL_LOG_FAILED: true,
+  SYMLINK_ESCAPES_REPO: true,
   OTHER: true,
 } as const satisfies Record<CommandError["code"], true>;
 
@@ -142,6 +143,11 @@ export function describeCommandError(
       return withDetail(t("errors.subpathMissing"), e.subpath);
     case "REVEAL_LOG_FAILED":
       return withDetail(t("errors.revealLogFailed"), e.detail);
+    case "SYMLINK_ESCAPES_REPO":
+      return t("errors.symlinkEscapesRepo", {
+        subpath: e.subpath,
+        target: e.target,
+      });
     case "OTHER":
       return e.message;
   }

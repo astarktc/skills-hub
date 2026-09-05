@@ -179,6 +179,21 @@ describe("describeCommandError", () => {
     ).toBe("errors.revealLogFailed");
   });
 
+  it("names the link and its target for SYMLINK_ESCAPES_REPO", () => {
+    expect(
+      describeCommandError(
+        {
+          code: "SYMLINK_ESCAPES_REPO",
+          subpath: "plugins/all/skills/x",
+          target: "../../../../etc",
+        },
+        t,
+      ),
+    ).toBe(
+      'errors.symlinkEscapesRepo {"subpath":"plugins/all/skills/x","target":"../../../../etc"}',
+    );
+  });
+
   it("names the unknown tool key for UNKNOWN_TOOL", () => {
     expect(
       describeCommandError({ code: "UNKNOWN_TOOL", tool: "not-a-tool" }, t),

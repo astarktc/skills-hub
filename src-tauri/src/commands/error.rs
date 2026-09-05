@@ -118,6 +118,12 @@ pub enum CommandError {
         /// Opener error chain, diagnostics only.
         detail: String,
     },
+    SymlinkEscapesRepo {
+        /// Repo-relative path of the symlink that was refused.
+        subpath: String,
+        /// The link's raw target (absolute, or climbing out of the repository).
+        target: String,
+    },
     Other {
         message: String,
     },
@@ -240,6 +246,9 @@ impl From<SignalError> for CommandError {
             SignalError::CentralPathMissing { path } => CommandError::CentralPathMissing { path },
             SignalError::SubpathMissing { subpath } => CommandError::SubpathMissing { subpath },
             SignalError::RevealLogFailed { detail } => CommandError::RevealLogFailed { detail },
+            SignalError::SymlinkEscapesRepo { subpath, target } => {
+                CommandError::SymlinkEscapesRepo { subpath, target }
+            }
         }
     }
 }

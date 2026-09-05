@@ -200,7 +200,11 @@ path: string } | { code: "SUBPATH_MISSING";
 /**  The requested repo-relative subpath (never a cache-internal path). */
 subpath: string } | { code: "REVEAL_LOG_FAILED"; 
 /**  Opener error chain, diagnostics only. */
-detail: string } | { code: "OTHER"; message: string };
+detail: string } | { code: "SYMLINK_ESCAPES_REPO"; 
+/**  Repo-relative path of the symlink that was refused. */
+subpath: string; 
+/**  The link's raw target (absolute, or climbing out of the repository). */
+target: string } | { code: "OTHER"; message: string };
 
 export type FeaturedSkillDto = {
 	slug: string,

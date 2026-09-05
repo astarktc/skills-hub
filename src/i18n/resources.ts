@@ -282,6 +282,8 @@ export const resources = {
         subpathMissing:
           "The repository no longer contains this skill folder. It may have been moved or renamed:",
         revealLogFailed: "Could not open the log folder.",
+        symlinkEscapesRepo:
+          "Refused to follow the symlink at {{subpath}} in the repository: its target ({{target}}) points outside the repository.",
         unsyncFailedTitle: "Could not remove from {{tool}}",
         gitCloneUnknown:
           "Could not fetch the repository from GitHub. Please check your network/proxy and try again.",
@@ -786,6 +788,8 @@ export const resources = {
           "该 Skill 在 Skills Hub 库中的中央副本不存在，无法更新：",
         subpathMissing: "仓库中已不存在该 Skill 文件夹，可能已被移动或重命名：",
         revealLogFailed: "无法打开日志文件夹。",
+        symlinkEscapesRepo:
+          "已拒绝跟随仓库中 {{subpath}} 处的符号链接：其目标（{{target}}）指向仓库之外。",
         unsyncFailedTitle: "无法从 {{tool}} 中移除",
         gitCloneUnknown:
           "无法从 GitHub 拉取仓库。请检查网络/代理，或稍后重试。",
