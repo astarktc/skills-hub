@@ -168,14 +168,44 @@ pub fn discover_skills(root: &Path) -> Vec<DiscoveredSkill> {
     );
 
     let mut seen: HashSet<String> = HashSet::new();
-    let mut out: Vec<DiscoveredSkill> = Vec::new();
+    let mut unique: Vec<(String, PathBuf)> = Vec::new();
     for dir in dirs {
         let subpath = relative_subpath(root, &dir);
-        if !seen.insert(subpath.clone()) {
-            continue;
+        if seen.insert(subpath.clone()) {
+            unique.push((subpath, dir));
         }
-        out.push(inspect(root, &dir, subpath));
     }
+
+    // A candidate's identity is the directory, not the subpath: a repo that
+    // publishes one skill under `skills/<name>` and links it from
+    // `.claude/skills/<name>` (and `.codex/skills/<name>`, ...) holds one
+    // skill, not one per alias — counted separately they would make its own
+    // name ambiguous. Aliases collapse into the real directory (the one whose
+    // subpath is where it actually lives); a link whose target discovery
+    // never visits stays a candidate of its own.
+    let canonical_root = root.canonicalize().ok();
+    let is_real = |subpath: &str, canonical: &Path| {
+        canonical_root
+            .as_ref()
+            .is_some_and(|croot| croot.join(subpath) == canonical)
+    };
+    let mut kept: Vec<(PathBuf, String, PathBuf)> = Vec::new();
+    for (subpath, dir) in unique {
+        let canonical = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+        match kept.iter_mut().find(|(c, _, _)| *c == canonical) {
+            Some(slot) => {
+                if is_real(&subpath, &canonical) {
+                    *slot = (canonical, subpath, dir);
+                }
+            }
+            None => kept.push((canonical, subpath, dir)),
+        }
+    }
+
+    let mut out: Vec<DiscoveredSkill> = kept
+        .into_iter()
+        .map(|(_, subpath, dir)| inspect(root, &dir, subpath))
+        .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.subpath.cmp(&b.subpath)));
     out
 }

@@ -856,7 +856,9 @@ fn existing_shallow_repos_still_work() {
     assert!(names.contains(&"Skill B".to_string()));
 
     // The multi-skill detection used by install/update sees the same two.
-    let count = crate::core::git_acquisition::installable_skills_in_repo(repo_dir.path()).len();
+    let count = crate::core::git_acquisition::installable_skills_in_repo(repo_dir.path())
+        .1
+        .len();
     assert_eq!(count, 2);
 }
 

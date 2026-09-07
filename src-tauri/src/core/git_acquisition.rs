@@ -503,33 +503,59 @@ fn resolve_subpath(
         SkillIntent::NamedSkillOrWholeRepo(name) => Some(name),
     };
 
-    // A repo with fewer than two installable skills is the skill: no name is
-    // needed and none is required.
-    let candidates = installable_skills_in_repo(repo_dir);
-    if candidates.len() < 2 {
+    // A repo without a nested installable skill is the skill (or nothing
+    // is): no name is needed and none is required.
+    let (root, candidates) = installable_skills_in_repo(repo_dir);
+    if candidates.is_empty() {
         return Ok(None);
     }
 
-    let lenient = matches!(intent, SkillIntent::NamedSkillOrWholeRepo(_));
     let matched = name.map(|name| match_skill_candidate(name, &candidates));
-    match matched {
-        Some(SkillMatch::Resolved(candidate)) => Ok(Some(candidate.subpath.clone())),
-        // Anything short of one unambiguous match: the strict intent makes the
-        // caller name the skill, the lenient one takes the repo whole.
-        _ if lenient => Ok(None),
-        _ => Err(anyhow::anyhow!(SignalError::MultiSkills)),
+    if let Some(SkillMatch::Resolved(candidate)) = matched {
+        return Ok(Some(candidate.subpath.clone()));
+    }
+
+    // One nested skill that no name picked out: it is the skill — unless the
+    // root is a skill too, in which case the repo is what an unnamed intent
+    // asked for.
+    if let [only] = candidates.as_slice() {
+        return Ok(if root.is_some() {
+            None
+        } else {
+            Some(only.subpath.clone())
+        });
+    }
+
+    // Anything short of one unambiguous match among several: the strict
+    // intent makes the caller name the skill, the lenient one takes the repo
+    // whole.
+    if matches!(intent, SkillIntent::NamedSkillOrWholeRepo(_)) {
+        Ok(None)
+    } else {
+        Err(anyhow::anyhow!(SignalError::MultiSkills))
     }
 }
 
 /// Skill candidates a git flow may install from a cloned repo: everything
 /// discovery found that has skill bytes (a `SKILL.md`, even a broken one, or
-/// a `.claude/skills/` child), excluding the repo root itself. The root is
-/// never one of the "skills in a multi-skill repo".
-pub fn installable_skills_in_repo(repo_dir: &Path) -> Vec<DiscoveredSkill> {
-    discover_skills(repo_dir)
-        .into_iter()
-        .filter(|c| c.validity.is_installable() && c.subpath != ".")
-        .collect()
+/// a `.claude/skills/` child). The root is reported apart from the nested
+/// candidates: it is never one of the "skills in a multi-skill repo".
+pub fn installable_skills_in_repo(
+    repo_dir: &Path,
+) -> (Option<DiscoveredSkill>, Vec<DiscoveredSkill>) {
+    let mut root = None;
+    let mut nested = Vec::new();
+    for c in discover_skills(repo_dir) {
+        if !c.validity.is_installable() {
+            continue;
+        }
+        if c.subpath == "." {
+            root = Some(c);
+        } else {
+            nested.push(c);
+        }
+    }
+    (root, nested)
 }
 
 fn check_cancelled(cancel: Option<&CancelToken>) -> Result<()> {

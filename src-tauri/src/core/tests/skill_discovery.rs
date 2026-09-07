@@ -353,6 +353,62 @@ fn same_name_candidates_are_ordered_by_subpath() {
     );
 }
 
+/// A symlink alias of a discovered directory is the same skill, not a second
+/// candidate: `citrolabs/ego-lite` publishes `skills/ego-browser` and links
+/// it from `.claude/skills/ego-browser` and `.codex/skills/ego-browser`. The
+/// real directory is the one reported.
+#[cfg(unix)]
+#[test]
+fn symlink_aliases_collapse_into_the_real_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+    write_skill(base, "skills/ego-browser", "ego-browser");
+    for tool in [".claude", ".codex"] {
+        fs::create_dir_all(base.join(tool).join("skills")).unwrap();
+        std::os::unix::fs::symlink(
+            "../../skills/ego-browser",
+            base.join(tool).join("skills/ego-browser"),
+        )
+        .unwrap();
+    }
+
+    let list = discover_skills(base);
+    assert_eq!(subpaths(&list), vec!["skills/ego-browser".to_string()]);
+}
+
+/// The real directory wins even when a scan base lists the alias first and
+/// the real one is only reached later, and a link to somewhere discovery
+/// never visits stays a candidate of its own.
+#[cfg(unix)]
+#[test]
+fn the_real_directory_wins_over_its_alias_regardless_of_visit_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+    // `.claude/skills` is a scan base (visited early); `lib/` is only found by
+    // the recursive fallback (visited last).
+    write_skill(base, "lib/real", "real");
+    fs::create_dir_all(base.join(".claude/skills")).unwrap();
+    std::os::unix::fs::symlink("../../lib/real", base.join(".claude/skills/real")).unwrap();
+    // A link whose target discovery never lists on its own.
+    fs::create_dir_all(base.join("node_modules/pkg/lonely")).unwrap();
+    fs::write(
+        base.join("node_modules/pkg/lonely/SKILL.md"),
+        "---\nname: lonely\n---\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        "../../node_modules/pkg/lonely",
+        base.join(".claude/skills/lonely"),
+    )
+    .unwrap();
+
+    let list = discover_skills(base);
+    assert_eq!(
+        subpaths(&list),
+        vec![".claude/skills/lonely".to_string(), "lib/real".to_string()]
+    );
+}
+
 // ── SKILL.md reading ──
 
 #[test]

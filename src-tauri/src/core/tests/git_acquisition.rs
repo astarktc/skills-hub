@@ -890,6 +890,73 @@ fn a_multi_skill_repo_without_a_usable_name_is_typed() {
     }
 }
 
+/// The shape `citrolabs/ego-lite` publishes: one real skill under
+/// `skills/<name>` plus per-tool aliases (`.claude/skills/<name>`,
+/// `.codex/skills/<name>`) that are in-repo symlinks to it. The aliases are
+/// the same skill, not rivals for the name — naming it must resolve to the
+/// real directory, never to `MultiSkills`.
+#[test]
+fn per_tool_symlink_aliases_of_one_skill_do_not_make_its_name_ambiguous() {
+    let repo = fixture_repo_with_links(
+        &[
+            ("README.md", "root"),
+            (
+                "skills/ego-browser/SKILL.md",
+                "---\nname: ego-browser\n---\nreal\n",
+            ),
+        ],
+        &[
+            (".claude/skills/ego-browser", "../../skills/ego-browser"),
+            (".codex/skills/ego-browser", "../../skills/ego-browser"),
+        ],
+    );
+    let source = local_source(repo.path());
+    let (_fx, cache_dir, dest) = Fixture::new();
+    let api = StubApi::serving("unused");
+
+    let acquired = acquire(
+        &request(
+            &source,
+            SkillIntent::NamedSkill(Some("ego-browser")),
+            &dest,
+            &cache_dir,
+        ),
+        &api,
+    )
+    .expect("one skill published under several aliases is one skill");
+
+    assert_eq!(
+        acquired.resolved_subpath.as_deref(),
+        Some("skills/ego-browser")
+    );
+    assert_eq!(
+        fs::read_to_string(dest.join("SKILL.md")).expect("read"),
+        "---\nname: ego-browser\n---\nreal\n"
+    );
+}
+
+/// A repo whose only skill is nested (a README at the root, the skill under
+/// `skills/`) is that nested skill, whether the intent names it or not —
+/// the whole repo would preview as a folder with no `SKILL.md`.
+#[test]
+fn a_lone_nested_skill_is_the_skill_named_or_not() {
+    let repo = single_skill_repo();
+    let source = local_source(repo.path());
+    let api = StubApi::serving("unused");
+
+    for name in [Some("alpha"), None] {
+        let (_fx, cache_dir, dest) = Fixture::new();
+        let acquired = acquire(
+            &request(&source, SkillIntent::NamedSkill(name), &dest, &cache_dir),
+            &api,
+        )
+        .expect("the nested skill acquires");
+        assert_eq!(acquired.resolved_subpath.as_deref(), Some("skills/a"));
+        assert!(dest.join("SKILL.md").exists());
+        assert!(!dest.join("README.md").exists());
+    }
+}
+
 /// A single-skill repo needs no name: the repo root is the skill.
 #[test]
 fn a_named_intent_on_a_single_skill_repo_takes_the_root() {
@@ -1253,7 +1320,8 @@ fn installable_skills_in_repo_excludes_root_and_missing_skill_md() {
         .unwrap();
     }
 
-    let candidates = super::installable_skills_in_repo(base);
+    let (root, candidates) = super::installable_skills_in_repo(base);
+    assert_eq!(root.map(|c| c.name), Some("Root".to_string()));
     let names: Vec<&str> = candidates.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, vec!["API Design", "Tailwind"]);
     assert_eq!(candidates[0].subpath, "plugins/a/skills/api-design");
