@@ -5,7 +5,7 @@ use anyhow::Result;
 use serde::Serialize;
 use specta::Type;
 
-use super::content_hash::hash_dir;
+use super::content_identity::{self, Source};
 use super::skill_store::SkillStore;
 use super::tool_adapters::{
     default_tool_adapters, is_installed_in, scan_tool_dir, skills_dir_in, DetectedSkill,
@@ -76,7 +76,7 @@ fn build_onboarding_plan_in_home(
 
     let mut grouped: HashMap<String, Vec<OnboardingVariant>> = HashMap::new();
     for skill in all_detected.iter() {
-        let fingerprint = hash_dir(&skill.path).ok();
+        let fingerprint = content_identity::read(Source::Directory(&skill.path));
         let entry = grouped.entry(skill.name.clone()).or_default();
         entry.push(OnboardingVariant {
             tool: skill.tool.as_key().to_string(),

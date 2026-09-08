@@ -104,7 +104,12 @@ fn finalize_install_prefers_skill_md_name_for_derived_names() {
     assert_eq!(record.source_revision.as_deref(), Some("api-download"));
     assert_eq!(record.central_path, res.central_path.to_string_lossy());
     assert_eq!(record.status, "ok");
-    let landed_hash = Some(crate::core::content_hash::hash_dir(&res.central_path).unwrap());
+    let landed_hash = Some(
+        crate::core::content_identity::read(crate::core::content_identity::Source::Directory(
+            &res.central_path,
+        ))
+        .unwrap(),
+    );
     assert_eq!(record.content_hash, landed_hash);
     assert_eq!(res.content_hash, landed_hash);
 }
@@ -214,7 +219,12 @@ fn finalize_update_swaps_content_and_preserves_identity() {
     assert_eq!(updated.description.as_deref(), Some("v1"));
     assert_eq!(central_entries(central.path()), vec!["s".to_string()]);
     let central_path = central.path().join("s");
-    let landed_hash = Some(crate::core::content_hash::hash_dir(&central_path).unwrap());
+    let landed_hash = Some(
+        crate::core::content_identity::read(crate::core::content_identity::Source::Directory(
+            &central_path,
+        ))
+        .unwrap(),
+    );
     assert_eq!(updated.content_hash, landed_hash);
     assert_eq!(
         store

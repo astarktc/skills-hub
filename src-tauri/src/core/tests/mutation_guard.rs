@@ -343,6 +343,7 @@ fn make_drifted_copy_assignment(f: &Fixture) -> (&'static str, String) {
         .expect("assign copy-mode");
     assert_eq!(record.status, SyncStatus::Synced);
     fs::write(f.skill_dir.join("drift.txt"), "changed").expect("write drift");
+    crate::core::content_identity::record(&f.store, &mut f.skill.clone()).unwrap();
     (tool, record.id)
 }
 

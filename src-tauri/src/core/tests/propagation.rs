@@ -110,7 +110,7 @@ fn seed_stale_copy(target_path: &Path) {
 }
 
 fn propagate(f: &Fixture) -> Vec<PropagationOutcome> {
-    propagate_unlocked(&f.store, &f.paths, &f.skill_id, Some("hash-v2"), 2000)
+    propagate_unlocked(&f.store, &f.paths, &f.skill_id, 2000)
         .expect("propagation reads its own rows")
         .targets
 }
@@ -452,6 +452,24 @@ fn a_project_copy_is_refreshed_and_its_row_settled() {
 }
 
 #[test]
+fn propagation_backfills_a_lost_identity_and_reconcile_keeps_copies_synced() {
+    let f = fixture();
+    let mut skill = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    skill.content_hash = None;
+    f.store.upsert_skill(&skill).unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let target = seed_project_copy_assignment(&f, project.path());
+    seed_stale_copy(&target);
+    crate::core::mutation_guard::serialized(|| {
+        propagate(&f);
+        let mut rows = f.store.list_project_skill_assignments("p1").unwrap();
+        assert!(rows[0].content_hash.is_some());
+        crate::core::project_sync::reconcile_listing_unlocked(&f.store, "p1", &mut rows);
+        assert_eq!(rows[0].status, SyncStatus::Synced);
+    });
+}
+
+#[test]
 fn update_supplies_a_real_hash_to_copy_assignments_and_reconcile_keeps_synced() {
     use crate::core::{installer, project_sync, refresh};
 
@@ -499,27 +517,23 @@ fn update_supplies_a_real_hash_to_copy_assignments_and_reconcile_keeps_synced() 
     assert_eq!(row.mode, SyncMode::Copy);
     assert_eq!(
         row.content_hash,
-        Some(crate::core::content_hash::hash_dir(&f.central_path).unwrap())
+        Some(
+            crate::core::content_identity::read(crate::core::content_identity::Source::Directory(
+                &f.central_path
+            ))
+            .unwrap()
+        )
     );
     assert_eq!(row.content_hash, skill.content_hash);
     assert_eq!(
         fs::read_to_string(target.join("a.txt")).unwrap(),
         "new bytes"
     );
-    // Listing deliberately skips while another test holds the mutation guard.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    loop {
-        let listing = project_sync::list_assignments_with_staleness(&f.store, "p1").unwrap();
-        if listing.reconciled {
-            assert_eq!(listing.assignments[0].status, SyncStatus::Synced);
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "reconcile remained busy"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    crate::core::mutation_guard::serialized(|| {
+        let mut rows = f.store.list_project_skill_assignments("p1").unwrap();
+        project_sync::reconcile_listing_unlocked(&f.store, "p1", &mut rows);
+        assert_eq!(rows[0].status, SyncStatus::Synced);
+    });
 }
 
 #[test]

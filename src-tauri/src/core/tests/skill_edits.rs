@@ -78,7 +78,10 @@ fn update_replays_and_clear_restores_current_upstream_bytes_and_hash() {
         frontmatter_edit::read_invocation_lines(&f.text()).mode(),
         InvocationMode::UserOnly
     );
-    assert_ne!(hash_dir(&f.central).unwrap(), hash_dir(&f.source).unwrap());
+    assert_ne!(
+        directory_identity(&f.central).unwrap(),
+        directory_identity(&f.source).unwrap()
+    );
     let upstream = "---\nuser-invocable: false  \nname: alpha\n---\nnew body\n";
     fs::write(f.source.join("SKILL.md"), upstream).unwrap();
     let report = f.update();
@@ -120,7 +123,10 @@ fn update_replays_and_clear_restores_current_upstream_bytes_and_hash() {
     let entry = f.set(None).unwrap();
     assert!(entry.invocation_override.is_none());
     assert_eq!(f.text(), upstream);
-    assert_eq!(entry.skill.content_hash, Some(hash_dir(&f.source).unwrap()));
+    assert_eq!(
+        entry.skill.content_hash,
+        Some(directory_identity(&f.source).unwrap())
+    );
     assert!(f
         .store
         .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
@@ -384,7 +390,7 @@ fn failed_update_replay_restores_bytes_skill_and_edit_then_retry_succeeds() {
                 frontmatter_edit::write_invocation_mode(upstream, InvocationMode::UserOnly);
             let expected = tempfile::tempdir().unwrap();
             fs::write(expected.path().join("SKILL.md"), replayed).unwrap();
-            let hash = hash_dir(expected.path()).unwrap();
+            let hash = directory_identity(expected.path()).unwrap();
             conn.execute_batch(&format!(
                 "CREATE TRIGGER fail_replay BEFORE INSERT ON skills
                 WHEN NEW.content_hash = '{hash}'
@@ -439,7 +445,7 @@ fn failed_update_replay_restores_bytes_skill_and_edit_then_retry_succeeds() {
                 .unwrap()
                 .unwrap()
                 .content_hash,
-            Some(hash_dir(&f.central).unwrap())
+            Some(directory_identity(&f.central).unwrap())
         );
         assert!(fs::read_dir(&f.paths.central_dir).unwrap().all(|e| !e
             .unwrap()
@@ -496,4 +502,8 @@ fn preexisting_database_gets_edit_table_and_skill_deletion_cascades() {
         .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
         .unwrap()
         .is_none());
+}
+
+fn directory_identity(path: &Path) -> Option<String> {
+    content_identity::read(content_identity::Source::Directory(path))
 }

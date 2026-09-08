@@ -179,6 +179,16 @@ fn overwrite_if_same_content_only_replaces_identical_targets() {
     seed_skill(&store, "skill-1");
     seed_skill(&store, "skill-2");
     let source = make_skill_dir(dir.path(), "central-skill", "# Same");
+    for id in ["skill-1", "skill-2"] {
+        let mut skill = store.get_skill_by_id(id).unwrap().unwrap();
+        let central = if id == "skill-1" {
+            source.clone()
+        } else {
+            make_skill_dir(dir.path(), "central-second", "# Same")
+        };
+        skill.central_path = central.to_string_lossy().into_owned();
+        crate::core::content_identity::record(&store, &mut skill).unwrap();
+    }
     let tool_root = dir.path().join("skills-root");
     let policy = OverwritePolicy {
         overwrite: false,

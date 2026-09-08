@@ -9,7 +9,8 @@ use anyhow::Result;
 use uuid::Uuid;
 
 use crate::core::{
-    content_hash, mutation_guard,
+    content_identity::{self, Source},
+    mutation_guard,
     skill_store::{SkillStore, SkillTargetRecord},
     sync_engine::{self, SyncOutcome},
     sync_status::SyncStatus,
@@ -78,16 +79,7 @@ pub struct OverwritePolicy {
 
 /// True when `target` exists and hashes identically to `source`.
 pub fn target_has_same_content(source: &Path, target: &Path) -> bool {
-    if !target.exists() {
-        return false;
-    }
-    match (
-        content_hash::hash_dir(source),
-        content_hash::hash_dir(target),
-    ) {
-        (Ok(s), Ok(t)) => s == t,
-        _ => false,
-    }
+    content_identity::same_content(Source::Directory(source), target)
 }
 
 /// Deterministic single-pair sync: probe writability of `tool_root`, apply
@@ -125,7 +117,8 @@ pub(crate) fn sync_skill_into_root(
 
     let target = tool_root.join(skill_name);
     let overwrite = policy.overwrite
-        || (policy.overwrite_if_same_content && target_has_same_content(source, &target));
+        || (policy.overwrite_if_same_content
+            && content_identity::same_content(Source::Managed { store, skill_id }, &target));
 
     let outcome =
         sync_engine::sync_dir_for_tool_with_overwrite(adapter, source, &target, overwrite)

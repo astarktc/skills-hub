@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::core::{
-    artifact_removal, content_hash,
+    artifact_removal, content_identity,
     errors::SignalError,
     mutation_guard, project_ops,
     skill_store::{
@@ -183,8 +183,12 @@ pub(crate) fn assign_and_sync(
         overwrite: false,
         now,
     };
-    let source = Path::new(&skill.central_path);
-    match sync_assignment_target(&ctx, &record, || hash_source(source)) {
+    match sync_assignment_target(&ctx, &record, || {
+        content_identity::read(content_identity::Source::Managed {
+            store,
+            skill_id: &skill.id,
+        })
+    }) {
         Ok(_) => {
             let updated = store
                 .get_project_skill_assignment(&project.id, &skill.id, tool_key)?
@@ -201,19 +205,6 @@ pub(crate) fn assign_and_sync(
                 .get_project_skill_assignment(&project.id, &skill.id, tool_key)?
                 .unwrap_or(record);
             Ok(updated)
-        }
-    }
-}
-
-/// Project sync's hash supplier for [`sync_assignment_target`]: hash the
-/// source on demand. A hashing failure is logged and leaves the hash unknown
-/// (the next reconcile pass then reports `Stale`).
-fn hash_source(source: &Path) -> Option<String> {
-    match content_hash::hash_dir(source) {
-        Ok(h) => Some(h),
-        Err(e) => {
-            log::warn!("failed to compute content hash after sync: {:#}", e);
-            None
         }
     }
 }
@@ -380,8 +371,12 @@ pub(crate) fn sync_single_assignment(
         overwrite,
         now,
     };
-    let source = Path::new(&skill.central_path);
-    sync_assignment_target(&ctx, assignment, || hash_source(source))?;
+    sync_assignment_target(&ctx, assignment, || {
+        content_identity::read(content_identity::Source::Managed {
+            store,
+            skill_id: &skill.id,
+        })
+    })?;
     Ok(())
 }
 
@@ -500,12 +495,9 @@ fn observe_assignment(
 
     // Only copies can drift, and hashing is only worth it when both sides exist.
     let source_hash = if assignment.mode.can_drift() && source_present && target_present {
-        skill.content_hash.clone().or_else(|| {
-            let h = content_hash::hash_dir(source).ok();
-            if let Some(ref hash_val) = h {
-                let _ = store.update_skill_content_hash(&skill.id, hash_val);
-            }
-            h
+        content_identity::read(content_identity::Source::Managed {
+            store,
+            skill_id: &skill.id,
         })
     } else {
         None
@@ -579,9 +571,10 @@ pub fn list_assignments_with_staleness(
 ) -> Result<AssignmentListing> {
     let mut assignments = store.list_project_skill_assignments(project_id)?;
     // Rows are reconciled in place, so the skipped path needs no fallback copy.
-    let reconciled =
-        mutation_guard::try_serialized(|| reconcile_listing(store, project_id, &mut assignments))
-            .is_some();
+    let reconciled = mutation_guard::try_serialized(|| {
+        reconcile_listing_unlocked(store, project_id, &mut assignments)
+    })
+    .is_some();
     Ok(AssignmentListing {
         assignments,
         reconciled,
@@ -590,7 +583,7 @@ pub fn list_assignments_with_staleness(
 
 /// The reconcile pass itself: observe every row and write the ones whose
 /// status changed. Unlocked internal seam — the caller holds the guard.
-fn reconcile_listing(
+pub(crate) fn reconcile_listing_unlocked(
     store: &SkillStore,
     project_id: &str,
     assignments: &mut Vec<ProjectSkillAssignmentRecord>,

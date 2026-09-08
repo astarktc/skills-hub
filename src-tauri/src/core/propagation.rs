@@ -4,7 +4,7 @@
 //! One module spans both scopes — the skill's global target rows and its
 //! project assignment rows — because "the bytes changed, make every target
 //! match" is one rule, not two. Propagation reads its own rows: callers hand
-//! it `(store, paths, skill_id, content_hash, now)` and nothing else.
+//! it `(store, paths, skill_id, now)` and nothing else.
 //!
 //! Three decisions live here and nowhere else:
 //!
@@ -99,21 +99,22 @@ pub(crate) fn needs_new_bytes(mode: SyncMode, adapter: &ToolAdapter) -> bool {
 
 /// Re-materialise every Sync target of `skill_id` from its central copy.
 ///
-/// `content_hash` is the freshly finalized central hash, recorded on copies
-/// (only copies can drift, so links record none). Unlocked internal seam.
+/// Content identity is read once, including legacy-row backfill, and recorded
+/// on copies (only copies can drift). Unlocked internal seam.
 pub(crate) fn propagate_unlocked(
     store: &SkillStore,
     paths: &InstallerPaths,
     skill_id: &str,
-    content_hash: Option<&str>,
     now: i64,
 ) -> Result<PropagationReport> {
-    let skill = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
+    let mut skill = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
         anyhow::anyhow!(SignalError::NotFound {
             kind: "skill".to_string(),
             id: skill_id.to_string(),
         })
     })?;
+    skill.content_hash =
+        super::content_identity::read(super::content_identity::Source::Managed { store, skill_id });
     let central_path = PathBuf::from(&skill.central_path);
 
     let mut report = PropagationReport::default();
@@ -125,7 +126,7 @@ pub(crate) fn propagate_unlocked(
         now,
         &mut report,
     )?;
-    propagate_project_rows(store, &skill, content_hash, now, &mut report)?;
+    propagate_project_rows(store, &skill, now, &mut report)?;
     Ok(report)
 }
 
@@ -320,7 +321,6 @@ fn skipped_global(tool: &str, reason: PropagationSkip) -> PropagationOutcome {
 fn propagate_project_rows(
     store: &SkillStore,
     skill: &SkillRecord,
-    content_hash: Option<&str>,
     now: i64,
     report: &mut PropagationReport,
 ) -> Result<()> {
@@ -329,7 +329,7 @@ fn propagate_project_rows(
             project_id: assignment.project_id.clone(),
             tool: assignment.tool.clone(),
         };
-        let status = propagate_one_assignment(store, skill, content_hash, now, &assignment)?;
+        let status = propagate_one_assignment(store, skill, now, &assignment)?;
         report.targets.push(PropagationOutcome { scope, status });
     }
     Ok(())
@@ -343,7 +343,6 @@ fn propagate_project_rows(
 fn propagate_one_assignment(
     store: &SkillStore,
     skill: &SkillRecord,
-    content_hash: Option<&str>,
     now: i64,
     assignment: &ProjectSkillAssignmentRecord,
 ) -> Result<PropagationStatus> {
@@ -386,9 +385,7 @@ fn propagate_one_assignment(
             overwrite: true,
             now,
         };
-        super::project_sync::sync_assignment_target(&ctx, assignment, || {
-            content_hash.map(str::to_string)
-        })
+        super::project_sync::sync_assignment_target(&ctx, assignment, || skill.content_hash.clone())
     } else {
         Err(missing_source(central_path))
     };

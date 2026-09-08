@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use uuid::Uuid;
 
 use super::clock::now_ms;
-use super::content_hash::hash_dir;
+use super::content_identity;
 use super::errors::SignalError;
 use super::provenance::Provenance;
 use super::skill_discovery::{find_skill_md, parse_skill_md};
@@ -220,8 +220,7 @@ pub fn finalize_install(
     staged.move_into(&central_path)?;
 
     let now = now_ms();
-    let content_hash = compute_content_hash(&central_path);
-    let record = SkillRecord {
+    let mut record = SkillRecord {
         id: Uuid::new_v4().to_string(),
         name,
         description,
@@ -230,7 +229,7 @@ pub fn finalize_install(
         source_subpath: provenance.source_subpath,
         source_revision: provenance.source_revision,
         central_path: central_path.to_string_lossy().to_string(),
-        content_hash: content_hash.clone(),
+        content_hash: None,
         created_at: now,
         updated_at: now,
         last_sync_at: None,
@@ -238,7 +237,7 @@ pub fn finalize_install(
         status: "ok".to_string(),
         imported_from_tool: provenance.imported_from_tool,
     };
-    if let Err(err) = store.upsert_skill(&record) {
+    if let Err(err) = content_identity::record(store, &mut record) {
         return Err(match std::fs::remove_dir_all(&central_path) {
             Ok(()) => err,
             Err(cleanup_err) if cleanup_err.kind() == std::io::ErrorKind::NotFound => err,
@@ -253,7 +252,7 @@ pub fn finalize_install(
         skill_id: record.id,
         name: record.name,
         central_path,
-        content_hash,
+        content_hash: record.content_hash,
     })
 }
 
@@ -291,18 +290,17 @@ pub fn finalize_update<T>(
     }
 
     let now = now_ms();
-    let content_hash = compute_content_hash(&central_path);
     let (_, description) = read_skill_md_meta(&central_path);
     let mut updated = SkillRecord {
         description: description.or_else(|| record.description.clone()),
         source_revision: revision.or_else(|| record.source_revision.clone()),
-        content_hash,
+        content_hash: None,
         updated_at: now,
         last_seen_at: now,
         status: "ok".to_string(),
         ..record.clone()
     };
-    if let Err(err) = store.upsert_skill(&updated) {
+    if let Err(err) = content_identity::record(store, &mut updated) {
         return Err(rollback_update(&central_path, backup.as_deref(), err));
     }
     let settled = match settle(&mut updated) {
@@ -487,16 +485,6 @@ fn read_skill_md_meta(dir: &Path) -> (Option<String>, Option<String>) {
     match find_skill_md(dir).and_then(|md| parse_skill_md(&md)) {
         Some((name, description)) => (Some(name), description),
         None => (None, None),
-    }
-}
-
-fn compute_content_hash(path: &Path) -> Option<String> {
-    match hash_dir(path) {
-        Ok(hash) => Some(hash),
-        Err(err) => {
-            log::warn!("[install] failed to hash {:?}: {}", path, err);
-            None
-        }
     }
 }
 

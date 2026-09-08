@@ -543,8 +543,9 @@ fn staleness_detected_for_copy() {
     assert_eq!(before.status, SyncStatus::Synced);
     assert!(before.content_hash.is_some());
 
-    // Modify source to change the hash
+    // Settle changed central bytes as finalize/Edit do.
     fs::write(skill_dir.join("new-file.txt"), "changed content").expect("write new file");
+    crate::core::content_identity::record(&store, &mut skill.clone()).unwrap();
 
     // list_assignments_with_staleness should detect the change
     let assignments = list_reconciled(&store, &project.id);

@@ -99,10 +99,16 @@ fn rename_failure_preserves_bytes_and_cleans_temp() {
 fn abandoned_temp_is_not_content() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("SKILL.md"), "original bytes").unwrap();
-    let before = crate::core::content_hash::hash_dir(dir.path()).unwrap();
+    let before = crate::core::content_identity::read(
+        crate::core::content_identity::Source::Directory(dir.path()),
+    )
+    .unwrap();
     std::fs::write(dir.path().join(".skills-hub-manifest-abandoned"), "partial").unwrap();
     assert_eq!(
-        crate::core::content_hash::hash_dir(dir.path()).unwrap(),
+        crate::core::content_identity::read(crate::core::content_identity::Source::Directory(
+            dir.path()
+        ))
+        .unwrap(),
         before
     );
 }

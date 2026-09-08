@@ -391,7 +391,7 @@ pub(crate) fn finalize_and_propagate_unlocked(
         })?;
     let content_hash = updated.content_hash.clone();
 
-    let propagation = propagate_unlocked(store, paths, &record.id, content_hash.as_deref(), now)?;
+    let propagation = propagate_unlocked(store, paths, &record.id, now)?;
 
     Ok(UpdateOutcome {
         skill_id: record.id,

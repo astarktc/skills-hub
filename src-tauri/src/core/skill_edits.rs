@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use super::{
     clock::now_ms,
-    content_hash::hash_dir,
+    content_identity,
     errors::SignalError,
     frontmatter_edit::{self, InvocationLines},
     installer::InstallerPaths,
@@ -72,9 +72,8 @@ fn manifest(record: &SkillRecord) -> Result<PathBuf> {
 }
 
 fn record_hash(store: &SkillStore, record: &mut SkillRecord) -> Result<()> {
-    record.content_hash = Some(hash_dir(Path::new(&record.central_path))?);
     record.updated_at = now_ms();
-    store.upsert_skill(record)
+    content_identity::record(store, record)
 }
 
 pub fn set_invocation_override(
@@ -123,13 +122,7 @@ pub fn set_invocation_override(
             }
         }
         record_hash(store, &mut record)?;
-        let report = propagate_unlocked(
-            store,
-            paths,
-            skill_id,
-            record.content_hash.as_deref(),
-            now_ms(),
-        )?;
+        let report = propagate_unlocked(store, paths, skill_id, now_ms())?;
         for target in report.targets {
             if let PropagationStatus::Failed { error } = target.status {
                 log::warn!(

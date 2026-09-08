@@ -3,7 +3,7 @@ pub mod cache_cleanup;
 pub mod cancel_token;
 pub mod central_repo;
 pub mod clock;
-pub mod content_hash;
+pub mod content_identity;
 pub mod environment;
 pub mod errors;
 pub mod featured_skills;
