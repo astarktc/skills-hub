@@ -267,7 +267,7 @@ function App() {
                 : undefined
             }
           />
-        ) : activeView === "myskills" ? (
+        ) : activeView === "myskills" || activeView === "detail" ? (
           <div className="dashboard-stack">
             <FilterBar
               sortBy={sortBy}
