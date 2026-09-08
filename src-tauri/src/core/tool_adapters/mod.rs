@@ -135,7 +135,14 @@ impl VirtualGroup {
 #[derive(Clone, Debug)]
 pub struct ToolAdapter {
     pub id: ToolId,
+    /// The label every scope uses unless a scope-specific one overrides it.
     pub display_name: &'static str,
+    /// Project-scope label, when it differs from `display_name`. A virtual
+    /// group absorbs its constituents at project scope only, so only there
+    /// may its label advertise them (`.agents/skills (9 tools)`); globally the
+    /// same entry is an independent target and reads `.agents/skills`.
+    /// `None` for every adapter whose label is scope-independent.
+    pub group_label: Option<&'static str>,
     /// Global skill directory under user home (aligned with add-skill docs).
     pub relative_skills_dir: &'static str,
     /// Directory used to detect whether the tool is installed (aligned with add-skill docs).
@@ -159,16 +166,20 @@ impl ToolAdapter {
         self.id.as_key()
     }
 
-    /// `Some` when this adapter is the entry of a virtual group.
+    /// The label for this adapter at project scope — `group_label` when the
+    /// registry states one, otherwise `display_name`.
+    pub fn project_display_name(&self) -> &'static str {
+        self.group_label.unwrap_or(self.display_name)
+    }
+
+    /// `Some` when this adapter is the entry of a virtual group. Only the
+    /// project catalog branches on this: globally a group entry is just
+    /// another target, so no path there asks the question.
     pub fn as_virtual_group(&self) -> Option<VirtualGroup> {
         VirtualGroup::ALL
             .iter()
             .copied()
             .find(|g| g.entry_id() == self.id)
-    }
-
-    pub fn is_virtual_group(&self) -> bool {
-        self.as_virtual_group().is_some()
     }
 }
 
@@ -184,10 +195,11 @@ pub struct DetectedSkill {
 static TOOL_ADAPTERS: &[ToolAdapter] = &[
     ToolAdapter {
         id: ToolId::AgentsStandard,
-        display_name: ".agents/skills (9 tools)",
+        display_name: ".agents/skills",
         relative_skills_dir: ".agents/skills",
         relative_detect_dir: ".agents",
         project_relative_skills_dir: ".agents/skills",
+        group_label: Some(".agents/skills (9 tools)"),
         group: None,
         supports_symlink: true,
     },
@@ -197,6 +209,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".cursor/skills",
         relative_detect_dir: ".cursor",
         project_relative_skills_dir: ".agents/skills",
+        group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
         // Copy-only until Cursor IDE 2.5 (Feb 2026) fixed symlink discovery
         // under ~/.cursor/skills; flipped in v-next ticket 38.
@@ -208,6 +221,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".claude/skills",
         relative_detect_dir: ".claude",
         project_relative_skills_dir: ".claude/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -217,6 +231,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".codex/skills",
         relative_detect_dir: ".codex",
         project_relative_skills_dir: ".agents/skills",
+        group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
     },
@@ -227,6 +242,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".config/opencode/skills",
         relative_detect_dir: ".config/opencode",
         project_relative_skills_dir: ".agents/skills",
+        group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
     },
@@ -237,6 +253,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".gemini/antigravity/global_skills",
         relative_detect_dir: ".gemini/antigravity",
         project_relative_skills_dir: ".agents/skills",
+        group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
     },
@@ -247,6 +264,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".config/agents/skills",
         relative_detect_dir: ".config/agents",
         project_relative_skills_dir: ".agents/skills",
+        group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
     },
@@ -258,6 +276,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".config/agents/skills",
         relative_detect_dir: ".config/agents",
         project_relative_skills_dir: ".agents/skills",
+        group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
     },
@@ -268,6 +287,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".augment/rules",
         relative_detect_dir: ".augment",
         project_relative_skills_dir: ".augment/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -278,6 +298,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".openclaw/skills",
         relative_detect_dir: ".openclaw",
         project_relative_skills_dir: "skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -288,6 +309,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".copaw/skill_pool",
         relative_detect_dir: ".copaw",
         project_relative_skills_dir: ".copaw/skill_pool",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -298,6 +320,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".cline/skills",
         relative_detect_dir: ".cline",
         project_relative_skills_dir: ".agents/skills",
+        group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
     },
@@ -308,6 +331,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".codebuddy/skills",
         relative_detect_dir: ".codebuddy",
         project_relative_skills_dir: ".codebuddy/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -318,6 +342,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".commandcode/skills",
         relative_detect_dir: ".commandcode",
         project_relative_skills_dir: ".commandcode/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -328,6 +353,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".continue/skills",
         relative_detect_dir: ".continue",
         project_relative_skills_dir: ".continue/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -338,6 +364,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".config/crush/skills",
         relative_detect_dir: ".config/crush",
         project_relative_skills_dir: ".crush/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -348,6 +375,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".junie/skills",
         relative_detect_dir: ".junie",
         project_relative_skills_dir: ".junie/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -358,6 +386,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".iflow/skills",
         relative_detect_dir: ".iflow",
         project_relative_skills_dir: ".iflow/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -368,6 +397,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".kiro/skills",
         relative_detect_dir: ".kiro",
         project_relative_skills_dir: ".kiro/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -378,6 +408,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".kode/skills",
         relative_detect_dir: ".kode",
         project_relative_skills_dir: ".kode/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -388,6 +419,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".mcpjam/skills",
         relative_detect_dir: ".mcpjam",
         project_relative_skills_dir: ".mcpjam/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -398,6 +430,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".vibe/skills",
         relative_detect_dir: ".vibe",
         project_relative_skills_dir: ".vibe/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -408,6 +441,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".mux/skills",
         relative_detect_dir: ".mux",
         project_relative_skills_dir: ".mux/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -418,6 +452,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".openclaude/skills",
         relative_detect_dir: ".openclaude",
         project_relative_skills_dir: ".openclaude/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -428,6 +463,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".openhands/skills",
         relative_detect_dir: ".openhands",
         project_relative_skills_dir: ".openhands/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -438,6 +474,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".pi/agent/skills",
         relative_detect_dir: ".pi",
         project_relative_skills_dir: ".pi/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -448,6 +485,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".qoder/skills",
         relative_detect_dir: ".qoder",
         project_relative_skills_dir: ".qoder/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -458,6 +496,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".qoderwork/skills",
         relative_detect_dir: ".qoderwork",
         project_relative_skills_dir: ".qoderwork/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -468,6 +507,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".qwen/skills",
         relative_detect_dir: ".qwen",
         project_relative_skills_dir: ".qwen/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -478,6 +518,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".trae/skills",
         relative_detect_dir: ".trae",
         project_relative_skills_dir: ".trae/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -488,6 +529,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".trae-cn/skills",
         relative_detect_dir: ".trae-cn",
         project_relative_skills_dir: ".trae/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -498,6 +540,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".zencoder/skills",
         relative_detect_dir: ".zencoder",
         project_relative_skills_dir: ".zencoder/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -508,6 +551,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".neovate/skills",
         relative_detect_dir: ".neovate",
         project_relative_skills_dir: ".neovate/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -518,6 +562,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".pochi/skills",
         relative_detect_dir: ".pochi",
         project_relative_skills_dir: ".pochi/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -528,6 +573,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".adal/skills",
         relative_detect_dir: ".adal",
         project_relative_skills_dir: ".adal/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -538,6 +584,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".kilocode/skills",
         relative_detect_dir: ".kilocode",
         project_relative_skills_dir: ".kilocode/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -548,6 +595,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".roo/skills",
         relative_detect_dir: ".roo",
         project_relative_skills_dir: ".roo/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -558,6 +606,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".config/goose/skills",
         relative_detect_dir: ".config/goose",
         project_relative_skills_dir: ".goose/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -568,6 +617,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".gemini/skills",
         relative_detect_dir: ".gemini",
         project_relative_skills_dir: ".agents/skills",
+        group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
     },
@@ -578,6 +628,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".copilot/skills",
         relative_detect_dir: ".copilot",
         project_relative_skills_dir: ".agents/skills",
+        group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
     },
@@ -588,6 +639,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".clawdbot/skills",
         relative_detect_dir: ".clawdbot",
         project_relative_skills_dir: ".clawdbot/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -598,6 +650,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".factory/skills",
         relative_detect_dir: ".factory",
         project_relative_skills_dir: ".factory/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -608,6 +661,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".codeium/windsurf/skills",
         relative_detect_dir: ".codeium/windsurf",
         project_relative_skills_dir: ".windsurf/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -618,6 +672,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".moltbot/skills",
         relative_detect_dir: ".moltbot",
         project_relative_skills_dir: ".moltbot/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },
@@ -627,6 +682,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         relative_skills_dir: ".hermes/skills",
         relative_detect_dir: ".hermes",
         project_relative_skills_dir: ".hermes/skills",
+        group_label: None,
         group: None,
         supports_symlink: true,
     },

@@ -2,8 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use crate::core::tool_adapters::{
-    adapter_by_key, constituents_of, global_tool_entries, installed_keys, project_tool_entries,
-    skills_dir_in, ToolCatalogEntry, ToolId, VirtualGroup,
+    adapter_by_key, constituents_of, default_tool_adapters, global_tool_entries, installed_keys,
+    project_tool_entries, skills_dir_in, ToolCatalogEntry, ToolId, VirtualGroup,
 };
 
 fn install(home: &Path, key: &str) {
@@ -19,19 +19,58 @@ fn entry<'a>(entries: &'a [ToolCatalogEntry], key: &str) -> &'a ToolCatalogEntry
 }
 
 #[test]
-fn global_catalog_lists_every_real_tool_and_no_virtual_group() {
+fn global_catalog_lists_the_virtual_group_alongside_its_constituents() {
     let home = tempfile::tempdir().unwrap();
     let entries = global_tool_entries(home.path());
 
     let agents_key = ToolId::AgentsStandard.as_key();
-    assert!(entries.iter().all(|e| e.key != agents_key));
+    // `~/.agents/skills` is a real global location, so it is selectable
+    // — as an independent target, not an aggregate.
+    let agents = entry(&entries, agents_key);
+    assert!(
+        agents.constituents.is_empty(),
+        "globally the group absorbs nothing, so it advertises no roster"
+    );
     assert!(entries.iter().all(|e| e.constituents.is_empty()));
-    // Constituent tools are real global tools and stay listed.
+    // Constituent tools are real global tools and stay listed individually.
     for a in constituents_of(VirtualGroup::AgentsStandard) {
         entry(&entries, a.key());
     }
+    assert_eq!(entries.len(), default_tool_adapters().len());
     let keys: std::collections::HashSet<_> = entries.iter().map(|e| e.key).collect();
     assert_eq!(keys.len(), entries.len(), "keys are unique");
+}
+
+#[test]
+fn the_group_label_carries_the_roster_count_at_project_scope_only() {
+    let home = tempfile::tempdir().unwrap();
+    let agents_key = ToolId::AgentsStandard.as_key();
+
+    let global = entry(&global_tool_entries(home.path()), agents_key).label;
+    let project = entry(&project_tool_entries(home.path()), agents_key).label;
+
+    assert_eq!(global, ".agents/skills");
+    assert_eq!(project, ".agents/skills (9 tools)");
+    assert!(
+        !global.contains("tools"),
+        "a global roster claim would make a user skip the real Cursor checkbox"
+    );
+}
+
+#[test]
+fn global_group_installedness_is_its_own_detect_dir() {
+    let home = tempfile::tempdir().unwrap();
+    let agents_key = ToolId::AgentsStandard.as_key();
+    assert!(!entry(&global_tool_entries(home.path()), agents_key).installed);
+
+    // A constituent being installed says nothing about `~/.agents`.
+    install(home.path(), "codex");
+    assert!(!entry(&global_tool_entries(home.path()), agents_key).installed);
+
+    install(home.path(), agents_key);
+    let entries = global_tool_entries(home.path());
+    assert!(entry(&entries, agents_key).installed);
+    assert!(installed_keys(&entries).contains(&agents_key.to_string()));
 }
 
 #[test]
@@ -47,6 +86,12 @@ fn global_catalog_groups_shared_skills_dirs_and_resolves_paths_under_home() {
     let claude = entry(&entries, "claude_code");
     assert_eq!(claude.shared_with, vec!["claude_code"]);
     assert!(entries.iter().all(|e| e.shared_with.contains(&e.key)));
+
+    // Honest grouping: the group's global dir (`~/.agents/skills`) is its own,
+    // not the union of what its project-scope constituents read.
+    let agents = entry(&entries, ToolId::AgentsStandard.as_key());
+    assert_eq!(agents.shared_with, vec![agents.key]);
+    assert_eq!(entry(&entries, "cursor").shared_with, vec!["cursor"]);
 
     // The catalog carries no dir (see `ToolCatalogEntry`); the grouping it
     // reports must still match what the registry resolves under this home.
