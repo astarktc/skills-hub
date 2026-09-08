@@ -539,7 +539,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
       copy: { message: string; success: string },
       requestRefresh?: () => Promise<RefreshReportDto>,
     ) => {
-      await runAction(
+      return runAction(
         { message: copy.message, successToast: copy.success },
         async (action) => {
           // A single Update is the same batch, of one.
@@ -551,7 +551,9 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           } finally {
             await loadManagedSkills();
           }
-          return settleSingleReport(action, report);
+          // A defined success value distinguishes completion from runAction's
+          // undefined result for thrown errors and ActionExit failures.
+          return settleSingleReport(action, report) ?? true;
         },
       );
     },
@@ -596,8 +598,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     async (url: string) => {
       const skill = pendingGitRepointSkill;
       if (!skill) return;
-      setPendingGitRepointSkill(null);
-      await runSingleRefresh(
+      const completed = await runSingleRefresh(
         skill,
         {
           message: t("actions.repointing", { name: skill.name }),
@@ -607,6 +608,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           reassert_auto_sync: autoSyncEnabled,
         }),
       );
+      if (completed === true) setPendingGitRepointSkill(null);
     },
     [autoSyncEnabled, pendingGitRepointSkill, runSingleRefresh, t],
   );

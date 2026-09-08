@@ -536,6 +536,22 @@ describe("useSkillLibrary unlocatable skill actions", () => {
     expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith('status.repointed {"name":"alpha"}');
   });
 
+  it("keeps git Re-point open until the request succeeds", async () => {
+    const setup = makeDeps();
+    const { result } = await renderLibrary(setup);
+    const gitSkill = { ...setup.skills[0], source_type: "git" };
+    act(() => result.current.handleRepointGitSkill(gitSkill));
+    let resolve!: (report: RefreshReportDto) => void;
+    const response = new Promise<RefreshReportDto>((done) => { resolve = done; });
+    mockInvoke.mockImplementation((command) => command === "repointGitSkillSource"
+      ? response : Promise.resolve(setup.skills));
+    let pending!: Promise<void>;
+    act(() => { pending = result.current.handleConfirmRepointGitSkill("https://github.com/new/repo"); });
+    expect(result.current.pendingGitRepointSkill).toEqual(gitSkill);
+    await act(async () => { resolve(refreshedReport(["alpha"])); await pending; });
+    expect(result.current.pendingGitRepointSkill).toBeNull();
+  });
+
   it("cancelling git Re-point performs no invoke or action", async () => {
     const setup = makeDeps();
     const { result } = await renderLibrary(setup);
@@ -564,6 +580,7 @@ describe("useSkillLibrary unlocatable skill actions", () => {
     const { result } = await renderLibrary(setup);
     act(() => result.current.handleRepointGitSkill({ ...setup.skills[0], source_type: "git" }));
     await act(async () => { await result.current.handleConfirmRepointGitSkill("https://github.com/new/repo"); });
+    expect(result.current.pendingGitRepointSkill).toEqual({ ...setup.skills[0], source_type: "git" });
     expect(setup.reporter.setError).toHaveBeenCalledWith(failure === "refused"
       ? "formatted:GIT_REPOINT_REQUIRES_GIT" : "formatted:GITHUB_SKILL_NOT_FOUND");
     expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
