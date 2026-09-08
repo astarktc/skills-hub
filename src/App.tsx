@@ -294,6 +294,7 @@ function App() {
               groupByRepo={groupByRepo}
               viewMode={viewMode}
               installedTools={sync.installedTools}
+              allTools={sync.tools}
               loading={loading}
               onReviewImport={addFlow.handleReviewImport}
               onUpdateSkill={library.handleUpdateSkill}

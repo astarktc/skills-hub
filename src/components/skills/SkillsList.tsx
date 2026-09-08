@@ -12,6 +12,8 @@ type SkillsListProps = {
   groupByRepo: boolean;
   viewMode: "list" | "auto-grid" | "dense-grid";
   installedTools: ToolOption[];
+  /** Every registry tool, detected or not — labels a card's orphaned rows. */
+  allTools: ToolOption[];
   loading: boolean;
   onReviewImport: () => void;
   onUpdateSkill: (skill: ManagedSkill) => void;
@@ -35,6 +37,7 @@ const SkillsList = ({
   groupByRepo,
   viewMode,
   installedTools,
+  allTools,
   loading,
   onReviewImport,
   onUpdateSkill,
@@ -63,6 +66,7 @@ const SkillsList = ({
       key={skill.id}
       skill={skill}
       installedTools={installedTools}
+      allTools={allTools}
       loading={loading}
       onUpdate={onUpdateSkill}
       onRepoint={onRepointSkill}
