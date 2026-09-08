@@ -42,3 +42,18 @@ store failure fails the whole operation; per-target failures are report data.
   said the record was already deleted).
 - The unsync commands return a removal report (`removed` / `failed` counts plus per-target
   outcomes) instead of a bare count, so the frontend can name every path it could not remove.
+
+## Note: a target row whose Tool is no longer detected
+
+The rules above are unchanged; only *how the path is found* differs. When the registry can no
+longer locate a Tool (it is uninstalled, so no member of its shared-skills-dir group is
+detected), the skill × Tool scope plans **the row itself, by its own recorded `target_path`** —
+no group fan-out, because there is no group left to fan out to. Deriving a path from the
+registry for an absent Tool stays forbidden; removing the artifact we ourselves created and
+recorded is cleaning up after ourselves, and without it an orphaned row has no supported
+removal path at all. Because that path is a stored string rather than a derived one, planning
+fences it with `tool_adapters::ensure_path_within_tool_dirs`: a row pointing outside every Tool
+skills dir raises the typed `PATH_OUTSIDE_TOOL_DIRS` and nothing is planned or settled, so the
+row survives. The presence rule and the settlement rule then apply unchanged — an absent
+artifact is a successful removal that deletes the row, a failed removal keeps the row with Sync
+status `error`.

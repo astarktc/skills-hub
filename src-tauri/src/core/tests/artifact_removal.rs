@@ -259,26 +259,40 @@ fn skill_tool_scope_expands_the_shared_dir_group_and_leaves_other_tools_alone() 
     assert!(exists_any(&claude), "another tool's artifact is untouched");
 }
 
+/// An undetected Tool has no group to fan out to, so its row is planned
+/// alone, by the path the row itself records — no path is derived from the
+/// registry for a Tool that is not there.
+///
+/// The rows here sit under `~/.agents/skills` (a Tool skills dir of its own),
+/// so seeding them does not create `~/.cursor` / `~/.codex` and leave those
+/// Tools "detected" — every adapter's detect dir is an ancestor of its own
+/// skills dir.
 #[test]
-fn skill_tool_scope_plans_nothing_when_no_group_tool_is_installed() {
+fn skill_tool_scope_plans_the_row_by_its_stored_path_when_no_group_tool_is_installed() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
     let home = home_with(tmp.path(), &[]);
     let central = make_skill_dir(&tmp.path().join("central"), "nope");
     let skill = seed_skill(&store, "nope", &central);
-    seed_global_target(&store, &skill, "claude_code", &tmp.path().join("tools"));
+    let orphan = home.join(".agents/skills/nope");
+    seed_global_target_at(&store, &skill, "cursor", &orphan);
+    // A row for a different (also undetected) tool stays out of the plan.
+    seed_global_target_at(&store, &skill, "codex", &home.join(".agents/skills/other"));
 
     let planned = plan(
         &store,
         &RemovalScope::SkillTool {
             skill_id: skill.id.clone(),
-            tool_key: "claude_code".to_string(),
+            tool_key: "cursor".to_string(),
             home: home.clone(),
         },
     )
     .expect("plan");
 
-    assert!(planned.targets.is_empty());
+    assert_eq!(planned.targets.len(), 1);
+    assert_eq!(planned.targets[0].path, orphan);
+    assert_eq!(planned.targets[0].rows.len(), 1);
+    assert_eq!(planned.targets[0].rows[0].tool(), "cursor");
 }
 
 #[test]
@@ -853,21 +867,106 @@ fn unsync_all_skill_targets_sweeps_every_skill() {
     assert!(store.get_skill_by_id(&a.id).unwrap().is_some());
 }
 
+/// A row whose Tool is no longer detected is still ours to clean up: the
+/// artifact we created and recorded is removed by the row's own stored path
+/// and the row is deleted. (Only *derived* paths are off limits for an
+/// uninstalled tool.)
 #[test]
-fn unsync_skill_from_tool_with_an_uninstalled_group_touches_nothing() {
+fn unsync_skill_from_tool_with_an_uninstalled_group_removes_the_rows_own_artifact() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
     let home = home_with(tmp.path(), &[]);
     let central = make_skill_dir(&tmp.path().join("central"), "idle");
     let skill = seed_skill(&store, "idle", &central);
-    let target = seed_global_target(&store, &skill, "claude_code", &tmp.path().join("tools"));
+    // Under `~/.agents/skills` so that seeding it leaves `~/.cursor` absent
+    // (Cursor uninstalled) while the path still lies inside a Tool skills dir.
+    let target = home.join(".agents/skills/idle");
+    seed_global_target_at(&store, &skill, "cursor", &target);
 
-    let report = unsync_skill_from_tool(&store, &home, &skill.id, "claude_code").expect("unsync");
+    let report = unsync_skill_from_tool(&store, &home, &skill.id, "cursor").expect("unsync");
 
-    assert!(exists_any(&target), "nothing installed ⇒ nothing touched");
-    assert!(report.targets.is_empty());
+    assert!(!exists_any(&target), "our own recorded artifact is removed");
+    assert_eq!(report.targets.len(), 1);
+    assert_eq!(report.removed_rows(), 1);
     assert!(store
-        .get_skill_target(&skill.id, "claude_code")
+        .get_skill_target(&skill.id, "cursor")
+        .unwrap()
+        .is_none());
+}
+
+/// ADR-0002's presence rule is unchanged for the orphan path: an artifact
+/// that is already gone is a successful removal, so the row goes too — the
+/// operator's stuck-row case (24 `cursor` rows whose artifacts were absent).
+#[test]
+fn unsync_skill_from_tool_with_an_uninstalled_group_deletes_a_row_whose_artifact_is_gone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let home = home_with(tmp.path(), &[]);
+    let central = make_skill_dir(&tmp.path().join("central"), "ghosted");
+    let skill = seed_skill(&store, "ghosted", &central);
+    let target = home.join(".cursor/skills/ghosted");
+    seed_global_target_at(&store, &skill, "cursor", &target);
+    // Cursor uninstalled: its directory (artifact included) is gone, exactly
+    // the operator's 24 stuck `cursor` rows.
+    fs::remove_dir_all(home.join(".cursor")).expect("artifact already gone");
+
+    let report = unsync_skill_from_tool(&store, &home, &skill.id, "cursor").expect("unsync");
+
+    assert_eq!(report.targets.len(), 1, "the row is still planned");
+    assert_eq!(report.removed_rows(), 1);
+    assert!(store
+        .get_skill_target(&skill.id, "cursor")
+        .unwrap()
+        .is_none());
+}
+
+/// Trusting the row's own path does not weaken the registry's deletion
+/// fence: a stored path outside every Tool skills dir is still refused, and
+/// a refusal keeps the row (nothing is planned, nothing is settled).
+#[test]
+fn unsync_skill_from_tool_with_an_uninstalled_group_refuses_a_path_outside_tool_dirs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let home = home_with(tmp.path(), &[]);
+    let central = make_skill_dir(&tmp.path().join("central"), "stray");
+    let skill = seed_skill(&store, "stray", &central);
+    let outside = tmp.path().join("elsewhere/stray");
+    seed_global_target_at(&store, &skill, "cursor", &outside);
+
+    let err = unsync_skill_from_tool(&store, &home, &skill.id, "cursor")
+        .expect_err("outside every tool dir");
+
+    match err.downcast_ref::<SignalError>() {
+        Some(SignalError::PathOutsideToolDirs { path }) => {
+            assert_eq!(path, &outside.to_string_lossy().to_string())
+        }
+        other => panic!("expected PathOutsideToolDirs, got {other:?}"),
+    }
+    assert!(exists_any(&outside), "a refused path is never removed");
+    assert!(store
+        .get_skill_target(&skill.id, "cursor")
         .unwrap()
         .is_some());
+}
+
+/// Regression guard for the normal path: when the Tool *is* detected the
+/// group fan-out is unchanged — the shared artifact is removed once and
+/// every member row settles, orphan handling notwithstanding.
+#[test]
+fn unsync_skill_from_tool_with_an_installed_group_still_fans_out_across_the_group() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let home = home_with(tmp.path(), &["amp"]);
+    let central = make_skill_dir(&tmp.path().join("central"), "grouped");
+    let skill = seed_skill(&store, "grouped", &central);
+    let shared = home.join(".config/agents/skills/grouped");
+    seed_global_target_at(&store, &skill, "amp", &shared);
+    seed_global_target_at(&store, &skill, "kimi_cli", &shared);
+
+    let report = unsync_skill_from_tool(&store, &home, &skill.id, "kimi_cli").expect("unsync");
+
+    assert!(!exists_any(&shared));
+    assert_eq!(report.targets.len(), 1, "one shared artifact");
+    assert_eq!(report.removed_rows(), 2, "both member rows settled");
+    assert!(store.list_skill_targets(&skill.id).unwrap().is_empty());
 }
