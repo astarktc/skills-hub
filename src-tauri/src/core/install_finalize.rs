@@ -305,6 +305,7 @@ pub fn finalize_update(
 }
 
 fn move_old_central_aside(central: &Path) -> Result<Option<PathBuf>> {
+    sweep_old_central_backups(central);
     match std::fs::symlink_metadata(central) {
         Ok(_) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -327,6 +328,71 @@ fn move_old_central_aside(central: &Path) -> Result<Option<PathBuf>> {
     std::fs::rename(central, &backup)
         .with_context(|| format!("move old central dir {:?} aside to {:?}", central, backup))?;
     Ok(Some(backup))
+}
+
+/// Best-effort, parent-local recovery cleanup; inspect links themselves, never
+/// their targets. Recent backups remain available for manual recovery.
+fn sweep_old_central_backups(central: &Path) {
+    let Some(parent) = central.parent() else {
+        return;
+    };
+    let entries = match std::fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(err) => {
+            log::warn!(
+                "[install] cannot sweep old central backups in {:?}: {}",
+                parent,
+                err
+            );
+            return;
+        }
+    };
+    let now = std::time::SystemTime::now();
+    let max_age = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                log::warn!(
+                    "[install] cannot inspect backup sibling in {:?}: {}",
+                    parent,
+                    err
+                );
+                continue;
+            }
+        };
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".skills-hub-old-")
+        {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        if !now.duration_since(modified).is_ok_and(|age| age > max_age) {
+            continue;
+        }
+        let removal = if metadata.is_dir() || metadata.is_symlink() {
+            // remove_dir_all removes a symlink itself without following it,
+            // including directory links on Windows (where remove_file fails).
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        if let Err(err) = removal {
+            log::warn!(
+                "[install] failed to remove old central backup {:?}: {}",
+                path,
+                err
+            );
+        }
+    }
 }
 
 /// Preserve the original failure as the error's source, even if recovery fails.

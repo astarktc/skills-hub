@@ -228,6 +228,127 @@ fn install_before_update(central: &Path, store: &SkillStore) -> super::SkillReco
     store.get_skill_by_id(&installed.skill_id).unwrap().unwrap()
 }
 
+fn age_backup(path: &Path) {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_BACKUP_SEMANTICS opens a directory; FILE_WRITE_ATTRIBUTES
+        // grants SetFileTime access without requesting directory-content writes.
+        options.custom_flags(0x02000000).access_mode(0x100);
+    }
+    options
+        .open(path)
+        .unwrap()
+        .set_modified(
+            std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 24 * 60 * 60),
+        )
+        .unwrap();
+}
+
+#[test]
+fn finalize_update_sweeps_only_aged_backup_siblings() {
+    let (_db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    let before = install_before_update(central.path(), &store);
+    let aged = central.path().join(".skills-hub-old-aged");
+    let fresh = central.path().join(".skills-hub-old-fresh");
+    let unrelated = central.path().join(".skills-hub-older-unrelated");
+    let other = central.path().join("other/.skills-hub-old-aged");
+    for path in [&aged, &fresh, &unrelated, &other] {
+        fs::create_dir_all(path).unwrap();
+        fs::write(path.join("recovery.txt"), b"recovery").unwrap();
+        if path != &fresh {
+            age_backup(path);
+        }
+    }
+
+    finalize_update(
+        &store,
+        &before,
+        stage_skill(central.path(), "---\nname: s\n---\n"),
+        None,
+    )
+    .unwrap();
+
+    assert!(!aged.exists());
+    assert!(fresh.join("recovery.txt").exists());
+    assert!(unrelated.join("recovery.txt").exists());
+    assert!(
+        other.join("recovery.txt").exists(),
+        "a different central parent is not swept"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn finalize_update_backup_sweep_does_not_follow_symlinks() {
+    let (_db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    let before = install_before_update(central.path(), &store);
+    let target = tempfile::tempdir().unwrap();
+    fs::write(target.path().join("keep"), b"recovery").unwrap();
+    age_backup(target.path());
+    let fresh = central.path().join(".skills-hub-old-fresh-link");
+    let aged = central.path().join(".skills-hub-old-aged-link");
+    let dangling = central.path().join(".skills-hub-old-dangling-link");
+    std::os::unix::fs::symlink(target.path(), &fresh).unwrap();
+    std::os::unix::fs::symlink(target.path(), &aged).unwrap();
+    std::os::unix::fs::symlink(target.path().join("missing"), &dangling).unwrap();
+    // std has no portable no-follow timestamp setter; touch -h ages the links,
+    // not their targets, without adding a production or dev dependency.
+    assert!(std::process::Command::new("touch")
+        .args(["-h", "-t", "200001010000"])
+        .arg(&aged)
+        .arg(&dangling)
+        .status()
+        .unwrap()
+        .success());
+
+    finalize_update(
+        &store,
+        &before,
+        stage_skill(central.path(), "---\nname: s\n---\n"),
+        None,
+    )
+    .unwrap();
+
+    assert!(fs::symlink_metadata(&aged).is_err());
+    assert!(fs::symlink_metadata(&dangling).is_err());
+    assert!(fs::symlink_metadata(&fresh).unwrap().is_symlink());
+    assert_eq!(fs::read(target.path().join("keep")).unwrap(), b"recovery");
+}
+
+#[cfg(unix)]
+#[test]
+fn finalize_update_backup_removal_failure_is_best_effort() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    let before = install_before_update(central.path(), &store);
+    let blocked = central.path().join(".skills-hub-old-blocked");
+    fs::create_dir(&blocked).unwrap();
+    fs::write(blocked.join("keep"), b"recovery").unwrap();
+    age_backup(&blocked);
+    let _permissions = RestorePermissions(
+        blocked.clone(),
+        fs::metadata(&blocked).unwrap().permissions(),
+    );
+    fs::set_permissions(&blocked, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let updated = finalize_update(
+        &store,
+        &before,
+        stage_skill(central.path(), "---\nname: s\ndescription: new\n---\n"),
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(updated.description.as_deref(), Some("new"));
+    assert!(blocked.join("keep").exists());
+}
+
 fn assert_old_skill(central: &Path, store: &SkillStore, before: &super::SkillRecord) {
     assert_eq!(fs::read(central.join("s/a.txt")).unwrap(), b"data");
     assert_eq!(
