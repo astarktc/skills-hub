@@ -6,7 +6,7 @@ use walkdir::{DirEntry, WalkDir};
 const IGNORE_NAMES: [&str; 4] = [".git", ".DS_Store", "Thumbs.db", ".gitignore"];
 const MAX_FILE_SIZE: u64 = 1_048_576; // 1 MB
 
-fn is_ignored(entry: &DirEntry) -> bool {
+pub(crate) fn is_ignored(entry: &DirEntry) -> bool {
     let file_name = entry.file_name().to_string_lossy();
     IGNORE_NAMES.iter().any(|name| name == &file_name.as_ref())
 }
