@@ -82,6 +82,7 @@ function App() {
   const updates = useUpdateChecker({ reporter });
   const sync = useSyncOrchestration({ t, reporter });
   const library = useSkillLibrary({ t, reporter, sync });
+  const effectiveView = activeView === "detail" && !library.detailSkill ? "myskills" : activeView;
 
   const openExploreDetail = useCallback((skill: ManagedSkill) => {
     setExploreDetailSkill(skill);
@@ -152,7 +153,7 @@ function App() {
 
   const { loadFeaturedSkills, loadHiddenSkills } = explore;
   const { openDetail, closeDetail } = library;
-  const detailSkill = activeView === "explore-detail"
+  const detailSkill = effectiveView === "explore-detail"
     ? exploreDetailSkill : library.detailSkill;
   const handleViewChange = useCallback(
     (view: "myskills" | "explore" | "projects") => {
@@ -237,7 +238,7 @@ function App() {
       <Header
         language={language}
         loading={loading}
-        activeView={activeView}
+        activeView={effectiveView}
         unreadNotifications={unreadCount}
         onToggleLanguage={toggleLanguage}
         onOpenNotifications={handleOpenNotifications}
@@ -247,28 +248,28 @@ function App() {
       />
 
       <main className="skills-main">
-        {(activeView === "detail" || activeView === "explore-detail") &&
+        {(effectiveView === "detail" || effectiveView === "explore-detail") &&
         detailSkill ? (
           <SkillDetailView
             skill={detailSkill}
             onRepoint={library.handleRepointGitSkill}
             actionLoading={loading}
             onBack={
-              activeView === "explore-detail"
+              effectiveView === "explore-detail"
                 ? handleBackToExplore
                 : handleBackToList
             }
             invokeTauri={invokeTauri}
             notify={notify}
             t={t}
-            isExplorePreview={activeView === "explore-detail"}
+            isExplorePreview={effectiveView === "explore-detail"}
             onInstall={
-              activeView === "explore-detail"
+              effectiveView === "explore-detail"
                 ? handleExploreInstallFromDetail
                 : undefined
             }
           />
-        ) : activeView === "myskills" || activeView === "detail" ? (
+        ) : effectiveView === "myskills" ? (
           <div className="dashboard-stack">
             <FilterBar
               sortBy={sortBy}
@@ -309,7 +310,7 @@ function App() {
               t={t}
             />
           </div>
-        ) : activeView === "settings" ? (
+        ) : effectiveView === "settings" ? (
           <SettingsPage
             isTauri={isTauri}
             language={language}
@@ -332,7 +333,7 @@ function App() {
             onBack={handleCloseSettings}
             t={t}
           />
-        ) : activeView === "projects" ? (
+        ) : effectiveView === "projects" ? (
           <ProjectsPage
             notify={notify}
             notifyError={notifyError}
