@@ -1058,6 +1058,7 @@ fn explore_preview_cache_miss_does_not_deadlock() {
 /// fails with a classified status.
 struct StubApi {
     sha: String,
+    missing_branch: Option<&'static str>,
     error: Option<crate::core::github_download::GithubApiError>,
 }
 
@@ -1065,6 +1066,7 @@ impl StubApi {
     fn serving(sha: &str) -> Self {
         StubApi {
             sha: sha.to_string(),
+            missing_branch: None,
             error: None,
         }
     }
@@ -1072,6 +1074,7 @@ impl StubApi {
     fn failing(status: u16) -> Self {
         StubApi {
             sha: "0".repeat(40),
+            missing_branch: None,
             error: Some(crate::core::github_download::GithubApiError {
                 status,
                 reset_minutes: None,
@@ -1092,8 +1095,16 @@ impl crate::core::git_acquisition::GithubApi for StubApi {
 
     fn branch_sha(
         &self,
-        _coords: &crate::core::git_acquisition::GithubCoords,
+        coords: &crate::core::git_acquisition::GithubCoords,
     ) -> anyhow::Result<String> {
+        if self.missing_branch == Some(coords.branch.as_str()) {
+            return Err(crate::core::github_download::GithubApiError {
+                status: 404,
+                reset_minutes: None,
+                url: "stub".into(),
+            }
+            .into());
+        }
         Ok(self.sha.clone())
     }
 
@@ -1174,6 +1185,65 @@ fn slash_branch_install_and_update_keep_url_and_resolved_subpath() {
     assert_eq!(acquired.record.source_ref.as_deref(), Some(url));
     assert_eq!(acquired.record.source_subpath.as_deref(), Some("skills/a"));
     assert_eq!(acquired.new_revision.as_deref(), Some("next"));
+}
+
+#[test]
+fn stale_split_repair_is_acquire_first_and_persisted_only_by_finalize() {
+    let (dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+    let installed = super::install_git_skill_from_selection_with(
+        &paths,
+        &store,
+        "https://github.com/owner/repo/tree/feature/x/skills/a",
+        "skills/a",
+        None,
+        None,
+        &StubApi::serving("first"),
+    )
+    .unwrap();
+    let mut before = store.get_skill_by_id(&installed.skill_id).unwrap().unwrap();
+    before.source_subpath = Some("x/skills/a".into());
+    store.upsert_skill(&before).unwrap();
+    let old_bytes = fs::read(installed.central_path.join("SKILL.md")).unwrap();
+    let db = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
+    db.execute_batch("CREATE TRIGGER reject_skill_write BEFORE INSERT ON skills BEGIN SELECT RAISE(ABORT, 'test upsert failure'); END;").unwrap();
+    let api = StubApi {
+        missing_branch: Some("feature"),
+        ..StubApi::serving("next")
+    };
+
+    let acquired = super::acquire_managed_skill_update_with(
+        &paths,
+        &store,
+        &installed.skill_id,
+        None,
+        &api,
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(acquired.record.source_subpath.as_deref(), Some("skills/a"));
+    assert_eq!(
+        format!(
+            "{:?}",
+            store.get_skill_by_id(&installed.skill_id).unwrap().unwrap()
+        ),
+        format!("{before:?}")
+    );
+    assert_eq!(
+        fs::read(installed.central_path.join("SKILL.md")).unwrap(),
+        old_bytes
+    );
+    db.execute_batch("DROP TRIGGER reject_skill_write;")
+        .unwrap();
+    crate::core::mutation_guard::serialized(|| {
+        super::finalize_and_propagate_unlocked(&paths, &store, acquired)
+    })
+    .unwrap();
+    let after = store.get_skill_by_id(&installed.skill_id).unwrap().unwrap();
+    assert_eq!(after.source_subpath.as_deref(), Some("skills/a"));
+    assert_eq!(after.source_revision.as_deref(), Some("next"));
+    assert_eq!(after.id, before.id);
 }
 
 /// The two GitHub conditions reach the operator from install, not only from

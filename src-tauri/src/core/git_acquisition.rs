@@ -219,7 +219,17 @@ impl GithubApi for HttpGithubApi {
 pub fn acquire(req: &AcquireRequest, api: &dyn GithubApi) -> Result<Acquired> {
     check_cancelled(req.cancel)?;
 
-    let source = resolve_tree_source(req.source, req.stored_subpath, api);
+    let (source, split) = resolve_tree_source(req.source, req.stored_subpath, api);
+    acquire_resolved(req, source, split, api)
+}
+
+fn acquire_resolved(
+    original_req: &AcquireRequest,
+    source: GitSource,
+    split: TreeSplit,
+    api: &dyn GithubApi,
+) -> Result<Acquired> {
+    let req = original_req;
     // An explicit URL root (e.g. /blob/main/SKILL.md) is a selection,
     // not an invitation to discover a nested skill by name. A branch consuming
     // the whole tree path resolves to None, so name discovery still runs.
@@ -261,12 +271,50 @@ pub fn acquire(req: &AcquireRequest, api: &dyn GithubApi) -> Result<Acquired> {
                 // Whatever the failure, the partial download is not part of
                 // the answer.
                 let _ = std::fs::remove_dir_all(req.dest);
+                if split == TreeSplit::StoredHint
+                    && failure.stage == FastPathStage::Sha
+                    && matches!(
+                        failure.error.downcast_ref::<GithubApiError>(),
+                        Some(GithubApiError { status: 404, .. })
+                    )
+                {
+                    let (corrected, origin) = resolve_tree_source(original_req.source, None, api);
+                    if origin == TreeSplit::MatchingRefs {
+                        // Only a persisted hint is repaired. An independent explicit
+                        // selection must keep its requested repo-relative path.
+                        let subpath = corrected.subpath.clone();
+                        let intent = match original_req.intent {
+                            SkillIntent::Subpath(path)
+                                if Some(path) == original_req.stored_subpath =>
+                            {
+                                SkillIntent::Subpath(subpath.as_deref().unwrap_or("."))
+                            }
+                            intent => intent,
+                        };
+                        return acquire_resolved(
+                            &AcquireRequest {
+                                intent,
+                                ..*original_req
+                            },
+                            corrected,
+                            origin,
+                            api,
+                        );
+                    }
+                }
                 classify_fast_path_failure(failure, &coords, req.source.branch.is_none())?;
             }
         }
     }
 
     clone_path(req, known_subpath).map(|acquired| report(acquired, req))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TreeSplit {
+    Parser,
+    StoredHint,
+    MatchingRefs,
 }
 
 /// Disambiguate the parser's first-segment split without changing its grammar.
@@ -276,14 +324,14 @@ pub(crate) fn resolve_tree_source(
     source: &GitSource,
     stored_subpath: Option<&str>,
     api: &dyn GithubApi,
-) -> GitSource {
+) -> (GitSource, TreeSplit) {
     let mut resolved = source.clone();
     let (Some(repo), Some(first), Some(rest)) = (&source.api, &source.branch, &source.subpath)
     else {
-        return resolved;
+        return (resolved, TreeSplit::Parser);
     };
     if rest.is_empty() || rest == "." {
-        return resolved;
+        return (resolved, TreeSplit::Parser);
     }
     let tree_path = format!("{first}/{rest}");
     if let Some(subpath) = stored_subpath.filter(|path| !path.is_empty() && *path != ".") {
@@ -291,14 +339,14 @@ pub(crate) fn resolve_tree_source(
         if let Some(branch) = branch.filter(|branch| !branch.is_empty()) {
             resolved.branch = Some(branch.to_string());
             resolved.subpath = Some(subpath.to_string());
-            return resolved;
+            return (resolved, TreeSplit::StoredHint);
         }
     }
     let refs = match api.matching_refs(repo, first) {
         Ok(refs) => refs,
         Err(err) => {
             log::debug!("[acquire] branch discovery failed; keeping first-segment split: {err:#}");
-            return resolved;
+            return (resolved, TreeSplit::Parser);
         }
     };
     let branch = refs
@@ -313,10 +361,11 @@ pub(crate) fn resolve_tree_source(
         resolved.subpath = tree_path
             .strip_prefix(&format!("{branch}/"))
             .map(str::to_string);
+        (resolved, TreeSplit::MatchingRefs)
     } else {
         log::debug!("[acquire] no matching branch for {tree_path}; keeping first-segment split");
+        (resolved, TreeSplit::Parser)
     }
-    resolved
 }
 
 /// One log line per acquisition, naming the adapter that served it.

@@ -452,7 +452,7 @@ pub fn list_git_skills(
     repo_url: &str,
     target_name: Option<&str>,
 ) -> Result<GitSkillListing> {
-    let parsed = super::git_acquisition::resolve_tree_source(
+    let (parsed, _) = super::git_acquisition::resolve_tree_source(
         &parse_github_url(repo_url),
         None,
         &HttpGithubApi::new(super::settings::github_token(store)?),

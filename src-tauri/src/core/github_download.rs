@@ -299,7 +299,12 @@ pub fn fetch_matching_refs(
     matching_refs_at(&url, token)
 }
 
-fn matching_refs_at(url: &str, token: Option<&str>) -> Result<Vec<String>> {
+/// Shared request policy for the lightweight GitHub metadata GETs.
+fn github_get(
+    url: &str,
+    token: Option<&str>,
+    operation: &str,
+) -> Result<reqwest::blocking::Response> {
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
@@ -313,8 +318,12 @@ fn matching_refs_at(url: &str, token: Option<&str>) -> Result<Vec<String>> {
     }
     let resp = req
         .send()
-        .with_context(|| format!("request matching refs: {url}"))?;
-    let resp = check_github_response(resp, url)?;
+        .with_context(|| format!("request {operation}: {url}"))?;
+    check_github_response(resp, url)
+}
+
+fn matching_refs_at(url: &str, token: Option<&str>) -> Result<Vec<String>> {
+    let resp = github_get(url, token, "matching refs")?;
     #[derive(serde::Deserialize)]
     struct BranchRef {
         r#ref: String,
@@ -337,28 +346,12 @@ pub fn fetch_branch_sha(
     branch: &str,
     token: Option<&str>,
 ) -> Result<String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .context("build HTTP client")?;
-
     let url = format!(
         "https://api.github.com/repos/{}/{}/commits/{}",
         owner, repo, branch
     );
 
-    let mut req = client
-        .get(&url)
-        .header("User-Agent", "skills-hub")
-        .header("Accept", "application/vnd.github.v3+json");
-    if let Some(t) = token {
-        req = req.header("Authorization", format!("Bearer {}", t));
-    }
-
-    let resp = req
-        .send()
-        .with_context(|| format!("request branch SHA: {}", url))?;
-    let resp = check_github_response(resp, &url)?;
+    let resp = github_get(&url, token, "branch SHA")?;
 
     let json: serde_json::Value = resp
         .json()
