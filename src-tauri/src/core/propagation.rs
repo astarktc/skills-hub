@@ -375,7 +375,7 @@ fn propagate_one_assignment(
     }
 
     // The freshly finalized central hash is the supplier: computed once for
-    // every target, and absent when finalize did not compute one.
+    // every target, and absent only when hashing the central copy failed.
     let central_path = Path::new(&skill.central_path);
     let result = if central_path.is_dir() {
         let ctx = AssignmentSyncContext {

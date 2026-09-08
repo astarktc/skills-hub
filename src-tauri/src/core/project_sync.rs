@@ -99,8 +99,8 @@ pub(crate) struct AssignmentSyncContext<'a> {
 /// the hash and is consulted only when the mode used can drift. The callers
 /// differ in where the hash comes from, not in the rule — Propagation passes
 /// the freshly finalized central hash (computed once for every target, and
-/// absent when finalize did not compute one), project sync hashes the source
-/// on demand.
+/// absent only when hashing the central copy failed), project sync hashes the
+/// source on demand.
 ///
 /// A sync failure is returned as is, the row untouched: each caller settles
 /// `SyncFailed` under its own policy (error, count, or report data).
