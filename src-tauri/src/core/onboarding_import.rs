@@ -303,10 +303,15 @@ fn sync_imported_unlocked(
     policy: &ImportPolicy,
     now: i64,
 ) -> (Vec<BatchTargetOutcome>, Vec<String>, Vec<OriginalOutcome>) {
-    let mut tools = policy
-        .tools
-        .clone()
-        .unwrap_or_else(|| installed_keys(&global_tool_entries(&paths.home)));
+    // No per-import selection means the operator's recorded global selection,
+    // not raw detection — the same rule the Refresh re-assert and the sync
+    // fan-out follow (`settings::effective_global_tool_targets`). Detection is
+    // only the fallback for a never-configured install.
+    let mut tools = match policy.tools.clone() {
+        Some(selected) => selected,
+        None => super::settings::effective_global_tool_targets(store, &paths.home)
+            .unwrap_or_else(|_| installed_keys(&global_tool_entries(&paths.home))),
+    };
     let mut identical_tools: Vec<String> = Vec::new();
     let mut originals: Vec<OriginalOutcome> = Vec::new();
     for variant in &group.variants {

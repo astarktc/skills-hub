@@ -805,3 +805,48 @@ fn progress_reports_both_phases_of_every_group() {
         ]
     );
 }
+
+#[test]
+fn import_without_a_policy_selection_follows_the_recorded_global_selection() {
+    // The fourth site of the "intent beats detection" rule
+    // (`settings::effective_global_tool_targets`): with no per-import
+    // selection, an import writes to the operator's recorded global selection,
+    // not to every detected Tool.
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    install_tool(&f, "codex");
+    crate::core::settings::apply_setting(
+        &f.store,
+        &f.paths.home,
+        crate::core::settings::SettingUpdate::GlobalToolConfig {
+            selected_tools: vec!["claude_code".to_string()],
+            scan_selected_only: false,
+        },
+    )
+    .expect("save the selection");
+    let alpha = seed_skill_dir(&f, "claude_code", "alpha", "v1");
+
+    let report = run(
+        &f,
+        &[selection("alpha", &alpha)],
+        ImportPolicy {
+            auto_sync: true,
+            tools: None,
+        },
+    );
+
+    let ImportGroupStatus::Imported { targets, .. } = imported(&report, "alpha") else {
+        panic!("alpha should import: {:?}", report);
+    };
+    let tools: Vec<&str> = targets.iter().map(|t| t.tool_key.as_str()).collect();
+    assert_eq!(
+        tools,
+        vec!["claude_code"],
+        "an installed-but-unselected Tool is never written to: {:?}",
+        targets
+    );
+    assert!(
+        !f.paths.home.join(".codex/skills/alpha").exists(),
+        "codex is detected but not selected, so it gets no artifact"
+    );
+}
