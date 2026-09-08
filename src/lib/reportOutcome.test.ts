@@ -54,6 +54,16 @@ const skipped: SkillRefreshResultDto = {
   skill_name: "local",
   status: { status: "skipped", state: "source_missing" },
 };
+const skippedGone: SkillRefreshResultDto = {
+  skill_id: "gone",
+  skill_name: "gone",
+  status: { status: "skipped_acquisition", reason: "skill_gone" },
+};
+const skippedStale: SkillRefreshResultDto = {
+  skill_id: "stale",
+  skill_name: "stale",
+  status: { status: "skipped_acquisition", reason: "stale_acquisition" },
+};
 function changed(
   kind: "conflict" | "target" | "reassert",
 ): SkillRefreshResultDto {
@@ -82,7 +92,11 @@ function refreshReport(skills: SkillRefreshResultDto[]): RefreshReportDto {
     skills,
     refreshed: skills.filter((s) => s.status.status === "refreshed").length,
     failed: skills.filter((s) => s.status.status === "failed").length,
-    skipped: skills.filter((s) => s.status.status === "skipped").length,
+    skipped: skills.filter(
+      (s) =>
+        s.status.status === "skipped" ||
+        s.status.status === "skipped_acquisition",
+    ).length,
     target_failures: skills.reduce(
       (n, s) =>
         n +
@@ -152,6 +166,15 @@ describe("refreshOutcome: one precedence and completion policy", () => {
       close: true,
     },
     {
+      name: "acquisition skips are warnings with their own reason",
+      rows: [skippedGone, skippedStale],
+      severity: "warning",
+      key: "status.refreshSummarySkipped",
+      errors: 0,
+      warnings: 2,
+      close: false,
+    },
+    {
       name: "failed beats skipped",
       rows: [failed, skipped],
       severity: "warning",
@@ -210,14 +233,17 @@ describe("refreshOutcome: one precedence and completion policy", () => {
       expect(single.completion).toEqual(batch.completion);
       expect(single.errors).toEqual(batch.errors);
       expect(single.warnings).toEqual(batch.warnings);
-      expect(single.toast?.kind).toBe(batch.toast?.kind);
-      expect(single.toast?.message).toBe(
-        batch.completion.conflict
-          ? t("invocationEdit.updateCompletedWithConflict", { name: "git" })
-          : severity === "success"
-            ? "single success"
-            : batch.toast?.message,
-      );
+      if (batch.completion.conflict) {
+        expect(single.toast?.kind).toBe(batch.toast?.kind);
+        expect(single.toast?.message).toBe(
+          t("invocationEdit.updateCompletedWithConflict", { name: "git" }),
+        );
+      } else if (severity === "success") {
+        expect(single.toast).toEqual({ kind: "success", message: "single success" });
+      } else {
+        // A batch of one never repeats its single entry as a count summary.
+        expect(single.toast).toBeNull();
+      }
       expect(JSON.stringify(report)).toBe(before);
     },
   );

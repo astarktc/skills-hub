@@ -46,6 +46,8 @@ const errorMessage = (ctx: ReportContext, error: unknown) =>
  * suppressing any detail entries. Every returned report reloads, even failure.
  * Only a fully refreshed batch closes a repair modal; conflicts/target failures
  * do not undo central settlement. Thrown invocation errors are not reports.
+ * A batch of one never shows the batch count summary: its failure or skip is
+ * already the one entry, so a second toast would repeat it.
  */
 export function refreshOutcome(
   report: RefreshReportDto,
@@ -122,6 +124,9 @@ export function refreshOutcome(
   out.completion.closeModal =
     report.refreshed > 0 && report.failed === 0 && !skipped;
   const counts = { refreshed: report.refreshed, failed: report.failed };
+  if (ctx.single && !out.completion.conflict && (failed || skipped)) {
+    return out;
+  }
   out.toast = {
     kind: out.completion.conflict || failed || skipped ? "warning" : "success",
     message: out.completion.conflict

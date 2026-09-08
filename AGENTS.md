@@ -10,7 +10,7 @@ npm run dev              # Vite dev server (port 5173, strict; VITE_DEV_PORT=517
 npm run tauri:dev        # Tauri dev window (frontend + backend) — see live-data warning below
 npm run build            # node node_modules/typescript-7/lib/tsc.js -b && vite build
 npm run lint             # ESLint
-npm run test             # vitest unit tests (hooks + commandError; jsdom, mocked seams)
+npm run test             # vitest unit tests (hooks + pure folds + commandError; jsdom, mocked seams)
 npm run check            # lint + test + build + rust:fmt:check + rust:clippy + rust:test
 npm run version:check    # verify the 5 version locations (3 manifests + 2 lockfiles) agree
 npm run version:set X.Y.Z   # bump all 5 version locations (never hand-edit)
@@ -195,7 +195,11 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   kind, repo label/href, repo grouping, the My Skills search/sort fold and the relative-time formatter
   (`relative.*` is the only i18n family for it); `src/lib/persistedPreference.ts` +
   `src/lib/preferences.ts` own persisted view preferences (the literal storage keys are a compat
-  contract with existing users). Components import pure functions (presentation, `describeCommandError`);
+  contract with existing users); `src/lib/reportOutcome.ts` owns turning every backend report (Refresh /
+  Update batch-of-one, removal, global sync, import, install, delete) into an `Outcome` — toast, error and
+  warning entries, and a `completion` (reload / closeModal / conflict) the hook executes; precedence is
+  conflict › failure › skipped › success, actions carry a skill *id* the hook resolves at click time, and
+  no hook reads a report field outside the fold. Components import pure functions (presentation, `describeCommandError`);
   the props App passes carry state — `notify`, `runAction`, data, actions — never a function that is
   only an import with an argument pre-bound.
 

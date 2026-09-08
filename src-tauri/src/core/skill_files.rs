@@ -8,6 +8,9 @@ const MAX_FILE_SIZE: u64 = 1_048_576; // 1 MB
 
 pub(crate) fn is_ignored(entry: &DirEntry) -> bool {
     let file_name = entry.file_name().to_string_lossy();
+    // `.skills-hub-manifest-*` is the temp file of `frontmatter_edit`'s atomic
+    // write; an abandoned one must be invisible to hashing (identity) and to
+    // file listings alike, so the rule lives in this one predicate.
     IGNORE_NAMES.iter().any(|name| name == &file_name.as_ref())
         || file_name.starts_with(".skills-hub-manifest-")
 }
