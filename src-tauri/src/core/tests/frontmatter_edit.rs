@@ -41,6 +41,33 @@ fn corpus_round_trips_preserving_unrelated_bytes_and_no_op() {
 }
 
 #[test]
+fn indented_fence_is_description_content_for_every_parser_and_writer() {
+    let text = "---\nname: fenced\ndescription: |\n  before\n  ---\n  after\ndisable-model-invocation: true\nuser-invocable: true\n---  \nBody\n---\nunchanged\n";
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("SKILL.md");
+    std::fs::write(&path, text).unwrap();
+    assert_eq!(
+        crate::core::skill_discovery::parse_skill_md_with_reason(&path).unwrap(),
+        ("fenced".into(), Some("before\n---\nafter".into()))
+    );
+    assert_eq!(parse_invocation_mode(text), InvocationMode::UserOnly);
+    let base = read_invocation_lines(text);
+    assert!(base.had_frontmatter);
+    assert_eq!(base.mode(), InvocationMode::UserOnly);
+    let edited = write_invocation_mode(text, InvocationMode::ModelOnly);
+    assert_eq!(
+        edited,
+        text.replace(
+            "disable-model-invocation: true",
+            "disable-model-invocation: false"
+        )
+        .replace("user-invocable: true", "user-invocable: false")
+    );
+    assert_eq!(parse_invocation_mode(&edited), InvocationMode::ModelOnly);
+    assert_eq!(restore_invocation_lines(&edited, &base), text);
+}
+
+#[test]
 fn replaces_top_level_lines_in_place_and_appends_only_missing_keys() {
     let text = "---\r\nuser-invocable: false  \r\nmetadata:\r\n  disable-model-invocation: false\r\n# comment\r\n---\r\nBody\n---\n";
     assert_eq!(write_invocation_mode(text, InvocationMode::UserOnly), "---\r\nuser-invocable: true\r\nmetadata:\r\n  disable-model-invocation: false\r\n# comment\r\ndisable-model-invocation: true\r\n---\r\nBody\n---\n");

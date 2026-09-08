@@ -4,7 +4,7 @@ use std::{io::Write, path::Path};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use super::skill_discovery::{parse_invocation_mode, InvocationMode};
+use super::skill_discovery::{header_end, parse_invocation_mode, InvocationMode};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Key {
@@ -65,18 +65,6 @@ impl InvocationLines {
             Key::UserInvocable => self.user_invocable.as_deref(),
         }
     }
-}
-
-fn header_end(lines: &[&str]) -> Option<usize> {
-    if lines.first()?.trim() != "---" {
-        return None;
-    }
-    lines
-        .iter()
-        .enumerate()
-        .skip(1)
-        .find(|(_, line)| line.trim() == "---")
-        .map(|(i, _)| i)
 }
 
 fn line_key(line: &str) -> Option<Key> {

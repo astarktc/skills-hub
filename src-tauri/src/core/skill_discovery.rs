@@ -318,6 +318,19 @@ fn is_claude_skill_dir(p: &Path) -> bool {
     false
 }
 
+/// Find the closing column-zero fence, tolerating only trailing whitespace.
+pub(crate) fn header_end(lines: &[&str]) -> Option<usize> {
+    if lines.first()?.trim() != "---" {
+        return None;
+    }
+    lines
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find(|(_, line)| line.trim_end() == "---")
+        .map(|(i, _)| i)
+}
+
 /// Parse a SKILL.md's frontmatter into `(name, description)`; `None` if unusable.
 pub(crate) fn parse_skill_md(path: &Path) -> Option<(String, Option<String>)> {
     parse_skill_md_with_reason(path).ok()
@@ -330,20 +343,13 @@ pub(crate) fn parse_skill_md_with_reason(
 ) -> Result<(String, Option<String>), &'static str> {
     let text = std::fs::read_to_string(path).map_err(|_| "read_failed")?;
     let lines: Vec<&str> = text.lines().collect();
-    if lines.first().map(|v| v.trim()) != Some("---") {
-        return Err("invalid_frontmatter");
-    }
+    let end = header_end(&lines).ok_or("invalid_frontmatter")?;
     let mut name: Option<String> = None;
     let mut desc: Option<String> = None;
-    let mut found_end = false;
     let mut i = 1usize;
-    while i < lines.len() {
+    while i < end {
         let raw = lines[i];
         let l = raw.trim();
-        if l == "---" {
-            found_end = true;
-            break;
-        }
         if let Some(v) = l.strip_prefix("name:") {
             name = Some(clean_frontmatter_value(v));
         } else if let Some(v) = l.strip_prefix("description:") {
@@ -351,11 +357,8 @@ pub(crate) fn parse_skill_md_with_reason(
             if v == "|" || v == ">" {
                 let folded = v == ">";
                 let mut block_lines: Vec<String> = Vec::new();
-                while i + 1 < lines.len() {
+                while i + 1 < end {
                     let next = lines[i + 1];
-                    if next.trim() == "---" {
-                        break;
-                    }
                     if !next.trim().is_empty() && !next.starts_with(char::is_whitespace) {
                         break;
                     }
@@ -378,9 +381,6 @@ pub(crate) fn parse_skill_md_with_reason(
             }
         }
         i += 1;
-    }
-    if !found_end {
-        return Err("invalid_frontmatter");
     }
     let name = name.ok_or("missing_name")?;
     Ok((name, desc))
@@ -447,18 +447,13 @@ pub fn invocation_mode_for_dir(dir: &Path) -> InvocationMode {
 /// shape that is not a recognised restriction means the default mode.
 pub fn parse_invocation_mode(text: &str) -> InvocationMode {
     let lines: Vec<&str> = text.lines().collect();
-    if lines.first().map(|v| v.trim()) != Some("---") {
+    let Some(end) = header_end(&lines) else {
         return InvocationMode::default();
-    }
+    };
     let mut model_disabled = false;
     let mut user_invocable = true;
-    let mut found_end = false;
-    for raw in lines.iter().skip(1) {
+    for raw in &lines[1..end] {
         let l = raw.trim();
-        if l == "---" {
-            found_end = true;
-            break;
-        }
         // Indented lines belong to a nested mapping (e.g. `metadata:`), not to
         // the top-level keys this reads.
         if raw.starts_with(char::is_whitespace) {
@@ -473,9 +468,6 @@ pub fn parse_invocation_mode(text: &str) -> InvocationMode {
                 user_invocable = flag;
             }
         }
-    }
-    if !found_end {
-        return InvocationMode::default();
     }
     match (user_invocable, model_disabled) {
         (true, false) => InvocationMode::UserAndModel,
