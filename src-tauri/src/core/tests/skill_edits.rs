@@ -102,7 +102,7 @@ fn update_replays_and_clear_restores_current_upstream_bytes_and_hash() {
         edit.base_value,
         serde_json::to_string(&frontmatter_edit::read_invocation_lines(upstream)).unwrap()
     );
-    // Only an explicit operator choice resolves a conflict.
+    // Unchanged upstream still disagrees with the override.
     assert!(matches!(
         f.update().skills[0].status,
         SkillRefreshStatus::Refreshed {
@@ -126,6 +126,55 @@ fn update_replays_and_clear_restores_current_upstream_bytes_and_hash() {
         .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
         .unwrap()
         .is_none());
+}
+
+#[test]
+fn upstream_convergence_keeps_override_and_clears_conflict() {
+    for previous_conflict in [false, true] {
+        let f = Fixture::new();
+        let user = frontmatter_edit::write_invocation_mode(UPSTREAM, InvocationMode::UserOnly);
+        fs::write(f.source.join("SKILL.md"), &user).unwrap();
+        f.update();
+        f.set(Some(InvocationMode::ModelOnly)).unwrap();
+        if previous_conflict {
+            fs::write(
+                f.source.join("SKILL.md"),
+                frontmatter_edit::write_invocation_mode(UPSTREAM, InvocationMode::Neither),
+            )
+            .unwrap();
+            assert!(matches!(
+                f.update().skills[0].status,
+                SkillRefreshStatus::Refreshed {
+                    edit_conflict: Some(_),
+                    ..
+                }
+            ));
+            assert!(
+                f.store
+                    .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
+                    .unwrap()
+                    .unwrap()
+                    .conflict
+            );
+        }
+        let model = frontmatter_edit::write_invocation_mode(UPSTREAM, InvocationMode::ModelOnly);
+        fs::write(f.source.join("SKILL.md"), &model).unwrap();
+        assert!(matches!(
+            f.update().skills[0].status,
+            SkillRefreshStatus::Refreshed {
+                edit_conflict: None,
+                ..
+            }
+        ));
+        let edit = f
+            .store
+            .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
+            .unwrap()
+            .unwrap();
+        assert!(!edit.conflict);
+        assert_eq!(edit_mode(&edit).unwrap(), InvocationMode::ModelOnly);
+        assert_eq!(f.text(), model);
+    }
 }
 
 #[test]

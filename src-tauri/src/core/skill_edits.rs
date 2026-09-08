@@ -156,9 +156,10 @@ pub(crate) fn replay_unlocked(
     let base_mode = base_lines(&edit)?.mode();
     let upstream_mode = upstream.mode();
     let override_mode = edit_mode(&edit)?;
-    // An unresolved conflict remains flagged across later unchanged Updates.
-    edit.conflict |= upstream_mode != base_mode;
-    let conflict = (upstream_mode != base_mode).then_some(InvocationEditConflict {
+    let disagrees = upstream_mode != base_mode && upstream_mode != override_mode;
+    // Preserve unresolved conflicts across unchanged Updates; convergence resolves them.
+    edit.conflict = upstream_mode != override_mode && (edit.conflict || disagrees);
+    let conflict = disagrees.then_some(InvocationEditConflict {
         base_mode,
         upstream_mode,
         override_mode,
