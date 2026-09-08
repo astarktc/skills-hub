@@ -164,8 +164,16 @@ export function removalOutcome(
     });
   }
   const failed = report.failed > 0 || out.errors.length > 0;
-  out.completion.closeModal = !failed;
+  // Zero targets is neither success nor failure: nothing was planned, so
+  // nothing was removed and whatever the operator clicked is still there.
+  // `failed` counts failures and must keep meaning exactly that.
+  const nothingPlanned = !failed && report.targets.length === 0;
+  out.completion.closeModal = !failed && !nothingPlanned;
   if (ctx.action === "toggle") out.completion.reload = !failed;
+  if (nothingPlanned) {
+    out.toast = { kind: "warning", message: ctx.t("unsyncNothingPlanned") };
+    return out;
+  }
   if (ctx.action === "all")
     out.toast = {
       kind: failed ? "warning" : "success",

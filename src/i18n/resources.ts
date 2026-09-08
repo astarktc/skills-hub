@@ -521,6 +521,8 @@ export const resources = {
       unsyncAllComplete: "Removed {{count}} tool directory deployments",
       unsyncPartial:
         "Removed {{count}} tool directory deployments; {{failed}} could not be removed",
+      unsyncNothingPlanned:
+        "Nothing was removed — no deployment could be located for this request",
       unsyncSkill: "Uninstall from tool directories",
       unsyncSkillTooltip: "Remove this skill from all tool directories",
       syncSkillTooltip: "Deploy this skill to all installed tools",
@@ -1096,6 +1098,7 @@ export const resources = {
       unsyncAll: "从工具目录中卸载",
       unsyncAllComplete: "已移除 {{count}} 个工具目录部署",
       unsyncPartial: "已移除 {{count}} 个工具目录部署；{{failed}} 个无法移除",
+      unsyncNothingPlanned: "未移除任何内容 — 未能定位到本次请求对应的部署",
       unsyncSkill: "从工具目录中卸载",
       unsyncSkillTooltip: "从所有工具目录中移除该 Skill",
       syncSkillTooltip: "将该 Skill 部署到所有已安装的工具",
