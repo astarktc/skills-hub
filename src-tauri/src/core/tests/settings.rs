@@ -119,7 +119,24 @@ fn github_token_reads_trimmed_and_empty_as_none() {
         let (_dir, store) = make_store();
         raw(&store, "github_token", stored);
         assert_eq!(github_token(&store).unwrap(), expected, "raw {stored:?}");
+        assert_eq!(
+            super::github_token_or_none(&store),
+            expected,
+            "raw {stored:?}"
+        );
     }
+}
+
+#[test]
+fn token_read_failure_degrades_only_for_acquisition_not_settings_page() {
+    let (dir, store) = make_store();
+    rusqlite::Connection::open(dir.path().join("test.db"))
+        .unwrap()
+        .execute_batch("DROP TABLE settings;")
+        .unwrap();
+    assert!(github_token(&store).is_err());
+    assert!(load_settings(&store, dir.path()).is_err());
+    assert_eq!(super::github_token_or_none(&store), None);
 }
 
 #[test]

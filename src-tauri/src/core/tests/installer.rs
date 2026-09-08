@@ -1049,6 +1049,31 @@ fn explore_preview_cache_miss_does_not_deadlock() {
     );
 }
 
+#[test]
+fn settings_read_failure_does_not_block_listing_install_or_preview() {
+    let (dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+    let repo_dir = tempfile::tempdir().unwrap();
+    fs::write(repo_dir.path().join("SKILL.md"), "---\nname: solo\n---\n").unwrap();
+    let _repo = init_git_repo(repo_dir.path());
+    let url = format!("file://{}", repo_dir.path().display());
+    // Damage only settings; skill writes still work, unlike a closed DB.
+    rusqlite::Connection::open(dir.path().join("test.db"))
+        .unwrap()
+        .execute_batch("DROP TABLE settings;")
+        .unwrap();
+    assert!(crate::core::settings::github_token(&store).is_err());
+
+    let listing = super::list_git_skills(&paths, &store, &url, None).unwrap();
+    assert_eq!(listing.candidates.len(), 1);
+    assert_eq!(listing.candidates[0].name, "solo");
+    let installed =
+        super::install_git_skill_from_selection(&paths, &store, &url, ".", None, None).unwrap();
+    assert!(installed.central_path.join("SKILL.md").exists());
+    let preview = super::clone_for_explore_preview(&paths, &store, &url, None, None).unwrap();
+    assert!(preview.join("SKILL.md").exists());
+}
+
 // ── Install and update over the GitHub fast path ──
 //
 // The adapter is injected, so these exercise the real install/update wiring

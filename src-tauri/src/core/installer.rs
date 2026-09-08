@@ -455,7 +455,7 @@ pub fn list_git_skills(
     let (parsed, _) = super::git_acquisition::resolve_tree_source(
         &parse_github_url(repo_url),
         None,
-        &HttpGithubApi::new(super::settings::github_token(store)?),
+        &HttpGithubApi::new(super::settings::github_token_or_none(store)),
     );
     let (repo_dir, _rev) = fetch_through_cache(
         &paths.cache_dir,
@@ -548,7 +548,7 @@ pub fn install_git_skill_from_selection(
         subpath,
         name,
         cancel,
-        &HttpGithubApi::new(super::settings::github_token(store)?),
+        &HttpGithubApi::new(super::settings::github_token_or_none(store)),
     )
 }
 
@@ -700,7 +700,7 @@ pub fn clone_for_explore_preview(
             cancel,
             allow_fast_path: true,
         },
-        &HttpGithubApi::new(super::settings::github_token(store)?),
+        &HttpGithubApi::new(super::settings::github_token_or_none(store)),
     )?;
     Ok(explore_skill_dir)
 }

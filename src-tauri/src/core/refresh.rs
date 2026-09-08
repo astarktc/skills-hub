@@ -150,7 +150,7 @@ pub fn refresh_managed_skills(
     // than per skill: the pool must not funnel through the store. A settings
     // read that fails is not worth failing the batch for — no token is the
     // shipped default.
-    let token = super::settings::github_token(store).unwrap_or_default();
+    let token = super::settings::github_token_or_none(store);
     let ttl_ms = super::settings::git_cache_ttl_ms(store);
     refresh_managed_skills_with(
         paths,
@@ -187,7 +187,7 @@ pub fn repoint_git_skill(
     cancel: Option<&CancelToken>,
     now: i64,
 ) -> Result<RefreshReport> {
-    let token = super::settings::github_token(store).unwrap_or_default();
+    let token = super::settings::github_token_or_none(store);
     repoint_git_skill_with(
         paths,
         store,

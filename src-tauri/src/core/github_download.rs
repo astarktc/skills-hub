@@ -388,6 +388,34 @@ mod tests {
     }
 
     #[test]
+    fn settings_read_failure_sends_no_bearer_to_github() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let store = crate::core::skill_store::SkillStore::new(db.clone());
+        store.ensure_schema().unwrap();
+        rusqlite::Connection::open(db)
+            .unwrap()
+            .execute_batch("DROP TABLE settings;")
+            .unwrap();
+        assert!(crate::core::settings::github_token(&store).is_err());
+        let token = crate::core::settings::github_token_or_none(&store);
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("GET", "/refs")
+            .match_header("authorization", mockito::Matcher::Missing)
+            .with_status(200)
+            .with_body(r#"[{"ref":"refs/heads/main"}]"#)
+            .expect(1)
+            .create();
+
+        assert_eq!(
+            matching_refs_at(&format!("{}/refs", server.url()), token.as_deref()).unwrap(),
+            ["main"]
+        );
+        mock.assert();
+    }
+
+    #[test]
     fn matching_refs_preserves_http_error_classification() {
         let mut server = mockito::Server::new();
         for status in [403, 404, 500] {

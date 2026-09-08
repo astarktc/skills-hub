@@ -214,6 +214,18 @@ pub fn github_token(store: &SkillStore) -> Result<Option<String>> {
         .filter(|v| !v.is_empty()))
 }
 
+/// Acquisition can continue unauthenticated when settings cannot be read.
+/// The Settings page keeps using `github_token` so it still surfaces failures.
+pub fn github_token_or_none(store: &SkillStore) -> Option<String> {
+    match github_token(store) {
+        Ok(token) => token,
+        Err(err) => {
+            log::warn!("[settings] cannot read GitHub token; continuing unauthenticated: {err:#}");
+            None
+        }
+    }
+}
+
 /// Webview zoom factor. Storage failures, malformed and out-of-range values
 /// read as the default so a bad row can never render an unusable window.
 pub fn ui_zoom_level(store: &SkillStore) -> f64 {
