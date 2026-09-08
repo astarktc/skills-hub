@@ -148,6 +148,18 @@ const NotificationsModal = ({
                   {n.message ? (
                     <div className="notif-message">{n.message}</div>
                   ) : null}
+                  {n.action ? (
+                    <button
+                      className="card-btn"
+                      type="button"
+                      onClick={() => {
+                        onRequestClose();
+                        n.action?.onClick();
+                      }}
+                    >
+                      {n.action.label}
+                    </button>
+                  ) : null}
                 </div>
                 <time
                   className="notif-time"

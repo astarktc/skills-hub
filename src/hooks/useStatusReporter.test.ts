@@ -331,6 +331,31 @@ describe("useStatusReporter", () => {
     expect(result.current.unreadCount).toBe(3);
   });
 
+  it("keeps batch actions on each history row and forwards the head action to its toast", () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    const action = { label: "Re-point", onClick: vi.fn() };
+    const secondAction = { label: "Repair", onClick: vi.fn() };
+
+    act(() => {
+      result.current.showActionErrors([
+        { title: "alpha", message: "not found", action },
+        { title: "beta", message: "failed", action: secondAction },
+        { title: "gamma", message: "failed" },
+      ]);
+    });
+
+    expect(toast.error).toHaveBeenCalledWith("alpha", {
+      ...ERROR_OPTIONS,
+      description: 'not founderrors.moreCount {"count":2}',
+      action,
+    });
+    expect(result.current.notifications[0].action).toBe(action);
+    expect(result.current.notifications[1].action).toBe(secondAction);
+    expect(result.current.notifications[2].action).toBeUndefined();
+    act(() => result.current.notifications[0].action?.onClick());
+    expect(action.onClick).toHaveBeenCalledTimes(1);
+  });
+
   it("showActionErrors with only silenced entries shows nothing", () => {
     const { result } = renderHook(() => useStatusReporter(t));
 

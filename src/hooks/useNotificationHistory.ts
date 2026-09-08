@@ -3,6 +3,9 @@ import { useCallback, useMemo, useRef, useState } from "react";
 /** The severity of one user-visible notification. */
 export type NotificationKind = "error" | "warning" | "success" | "info";
 
+/** A session-only action shared by the toast and history row. */
+export type NotificationAction = { label: string; onClick: () => void };
+
 /**
  * One user-visible outcome of an action: shown once as a toast and kept in
  * the session's history; opening the history marks it read.
@@ -13,6 +16,7 @@ export type Notification = {
   kind: NotificationKind;
   title: string;
   message?: string;
+  action?: NotificationAction;
   /** Wall-clock time the notification was raised (ms since epoch). */
   at: number;
 };
@@ -30,6 +34,7 @@ export type RecordFn = (
   kind: NotificationKind,
   title: string,
   message?: string,
+  action?: NotificationAction,
 ) => void;
 
 export type NotificationHistory = {
@@ -62,12 +67,13 @@ export function useNotificationHistory(): NotificationHistory {
   const [lastReadId, setLastReadId] = useState(0);
   const nextIdRef = useRef(1);
 
-  const record = useCallback<RecordFn>((kind, title, message) => {
+  const record = useCallback<RecordFn>((kind, title, message, action) => {
     const entry: Notification = {
       id: nextIdRef.current++,
       kind,
       title,
       message,
+      ...(action ? { action } : {}),
       at: Date.now(),
     };
     setNotifications((prev) =>

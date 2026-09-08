@@ -254,6 +254,36 @@ beforeEach(() => {
 });
 
 describe("useSkillLibrary refresh", () => {
+  it("offers Re-point only for a known git skill's GitHub-not-found failure", async () => {
+    const gitSkill = { ...skill("s1", "alpha"), source_type: "git" };
+    const otherGit = { ...skill("s2", "beta"), source_type: "git" };
+    const localSkill = skill("s3", "local");
+    const setup = makeDeps({
+      skills: [gitSkill, otherGit, localSkill],
+      refreshReport: {
+        skills: [
+          { skill_id: "s1", skill_name: "alpha", status: { status: "failed", error: { code: "GITHUB_SKILL_NOT_FOUND", url: "https://github.com/old/repo" } } },
+          { skill_id: "s2", skill_name: "beta", status: { status: "failed", error: { code: "OTHER", message: "network failed" } } },
+          { skill_id: "s3", skill_name: "local", status: { status: "failed", error: { code: "GITHUB_SKILL_NOT_FOUND", url: "https://github.com/old/repo" } } },
+          { skill_id: "gone", skill_name: "gone", status: { status: "failed", error: { code: "GITHUB_SKILL_NOT_FOUND", url: "https://github.com/old/repo" } } },
+        ],
+        refreshed: 0, failed: 4, skipped: 0, target_failures: 0,
+      },
+    });
+    const { result } = renderHook(() => useSkillLibrary(setup.deps));
+    await waitFor(() => expect(result.current.managedSkills).toHaveLength(3));
+    await act(async () => { await result.current.handleRefresh(); });
+
+    const entries = vi.mocked(setup.reporter.showActionErrors).mock.calls[0][0];
+    expect(entries).toHaveLength(4);
+    expect(entries[0].action?.label).toBe("gitRepoint.action");
+    expect(entries.slice(1).every((entry) => entry.action === undefined)).toBe(true);
+    expect(result.current.pendingGitRepointSkill).toBeNull();
+    act(() => entries[0].action?.onClick());
+    expect(result.current.pendingGitRepointSkill).toEqual(gitSkill);
+    expect(mockInvoke).not.toHaveBeenCalledWith("repointGitSkillSource", expect.anything(), expect.anything());
+  });
+
   it("issues one backend batch for every skill and never fans out a sync itself", async () => {
     const setup = makeDeps({
       skills: [skill("s1", "alpha"), skill("s2", "beta")],

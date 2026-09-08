@@ -5,6 +5,7 @@ import { invokeTauri } from "../lib/tauri";
 import {
   useNotificationHistory,
   type Notification,
+  type NotificationAction,
   type NotificationKind,
 } from "./useNotificationHistory";
 
@@ -16,7 +17,11 @@ import {
 // lives in the building block (`useNotificationHistory`).
 export type { Notification, NotificationKind };
 
-export type ActionErrorEntry = { title: string; message: string };
+export type ActionErrorEntry = {
+  title: string;
+  message: string;
+  action?: NotificationAction;
+};
 
 /**
  * How long each kind stays on screen. The single owner of toast lifetime:
@@ -34,8 +39,17 @@ const TOAST_DURATION_MS: Record<NotificationKind, number> = {
 };
 
 /** The one place the toast library is called. */
-function showToast(kind: NotificationKind, title: string, message?: string) {
-  const options = { description: message, duration: TOAST_DURATION_MS[kind] };
+function showToast(
+  kind: NotificationKind,
+  title: string,
+  message?: string,
+  action?: NotificationAction,
+) {
+  const options = {
+    description: message,
+    duration: TOAST_DURATION_MS[kind],
+    ...(action ? { action } : {}),
+  };
   switch (kind) {
     case "error":
       // An infinite toast needs an explicit way off the screen.
@@ -297,12 +311,12 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
         visible.length > 1
           ? t("errors.moreCount", { count: visible.length - 1 })
           : "";
-      showToast(kind, head.title, `${head.message}${more}`);
+      showToast(kind, head.title, `${head.message}${more}`, head.action);
       // The history lists newest first, so the batch is recorded last-to-
       // first: its first entry ends up at the top of its block and the
       // entries read top-down in the order they happened.
       for (let i = visible.length - 1; i >= 0; i--) {
-        record(kind, visible[i].title, visible[i].message);
+        record(kind, visible[i].title, visible[i].message, visible[i].action);
       }
     },
     [record, t],

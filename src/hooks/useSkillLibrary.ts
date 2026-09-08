@@ -140,20 +140,39 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     [autoSyncEnabled, setActionMessage, t],
   );
 
+  const handleRepointGitSkill = useCallback((skill: ManagedSkill) => {
+    setPendingGitRepointSkill(skill);
+  }, []);
+
   /** Skills whose bytes could not be acquired (their targets were untouched). */
   const skillFailureEntries = useCallback(
     (report: RefreshReportDto) => {
       const entries: ActionErrorEntry[] = [];
       for (const skill of report.skills) {
         if (skill.status.status !== "failed") continue;
+        const managedSkill =
+          skill.status.error.code === "GITHUB_SKILL_NOT_FOUND"
+            ? managedSkills.find(
+                (managed) =>
+                  managed.id === skill.skill_id && managed.source_type === "git",
+              )
+            : undefined;
         entries.push({
           title: t("errors.updateFailedTitle", { name: skill.skill_name }),
           message: formatError(skill.status.error) ?? "",
+          ...(managedSkill
+            ? {
+                action: {
+                  label: t("gitRepoint.action"),
+                  onClick: () => handleRepointGitSkill(managedSkill),
+                },
+              }
+            : {}),
         });
       }
       return entries;
     },
-    [formatError, t],
+    [formatError, handleRepointGitSkill, managedSkills, t],
   );
 
   /**
@@ -552,10 +571,6 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
       }),
     [runSingleRefresh, t],
   );
-
-  const handleRepointGitSkill = useCallback((skill: ManagedSkill) => {
-    setPendingGitRepointSkill(skill);
-  }, []);
 
   const handleCloseRepointGitSkill = useCallback(() => {
     setPendingGitRepointSkill(null);
