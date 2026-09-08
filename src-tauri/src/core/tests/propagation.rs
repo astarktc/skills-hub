@@ -452,6 +452,77 @@ fn a_project_copy_is_refreshed_and_its_row_settled() {
 }
 
 #[test]
+fn update_supplies_a_real_hash_to_copy_assignments_and_reconcile_keeps_synced() {
+    use crate::core::{installer, project_sync, refresh};
+
+    let mut f = fixture();
+    let source = f.dir.path().join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(
+        source.join("SKILL.md"),
+        "---\nname: skill\n---\nnew upstream\n",
+    )
+    .unwrap();
+    let installed =
+        installer::install_local_skill(&f.paths, &f.store, &source, Some("updated".into()))
+            .unwrap();
+    f.skill_id = installed.skill_id;
+    f.central_path = installed.central_path;
+    let project = tempfile::tempdir().unwrap();
+    let target = seed_project_copy_assignment(&f, project.path());
+    seed_stale_copy(&target);
+    fs::write(source.join("a.txt"), "new bytes").unwrap();
+
+    let report = refresh::refresh_managed_skills(
+        &f.paths,
+        &f.store,
+        refresh::RefreshSelection::Ids(vec![f.skill_id.clone()]),
+        refresh::RefreshPolicy::default(),
+        None,
+        5000,
+        |_| {},
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            report.skills[0].status,
+            refresh::SkillRefreshStatus::Refreshed { .. }
+        ),
+        "{report:?}"
+    );
+    let skill = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    let row = f
+        .store
+        .get_project_skill_assignment("p1", &f.skill_id, "cursor")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.mode, SyncMode::Copy);
+    assert_eq!(
+        row.content_hash,
+        Some(crate::core::content_hash::hash_dir(&f.central_path).unwrap())
+    );
+    assert_eq!(row.content_hash, skill.content_hash);
+    assert_eq!(
+        fs::read_to_string(target.join("a.txt")).unwrap(),
+        "new bytes"
+    );
+    // Listing deliberately skips while another test holds the mutation guard.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let listing = project_sync::list_assignments_with_staleness(&f.store, "p1").unwrap();
+        if listing.reconciled {
+            assert_eq!(listing.assignments[0].status, SyncStatus::Synced);
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "reconcile remained busy"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[test]
 fn a_project_whose_directory_is_gone_is_skipped() {
     let f = fixture();
     let project_dir = tempfile::tempdir().expect("project tempdir");

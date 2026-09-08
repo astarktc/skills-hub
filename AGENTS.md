@@ -146,7 +146,7 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   (`installer_paths`, `resolve_central_repo_path_for_app` in `commands/mod.rs`) — never thread
   `tauri::AppHandle` into `core/`. Sanctioned exceptions: `cache_cleanup.rs`/`temp_cleanup.rs`/
   `skill_store::default_db_path` keep thin `dirs::*` adapters; and
-  `SKILLS_HUB_*` **feature-flag env vars** (`git_fetcher.rs`, `sync_engine.rs`, `install_finalize.rs`) are read
+  `SKILLS_HUB_*` **feature-flag env vars** (`git_fetcher.rs`, `sync_engine.rs`) are read
   where they apply — they tune behaviour, never locate data.
 - Sync uses a triple fallback: symlink → junction (Windows) → copy.
 - **Target fan-out is backend-owned — one batch command per operator action, never a frontend loop.**
