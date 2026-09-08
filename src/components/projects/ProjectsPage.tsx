@@ -2,6 +2,7 @@ import { memo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
+import { describeCommandError } from "../../commandError";
 import { useProjectState } from "./useProjectState";
 import ProjectList from "./ProjectList";
 import AssignmentMatrix from "./AssignmentMatrix";
@@ -11,7 +12,6 @@ import ToolConfigModal from "../shared/ToolConfigModal";
 import RemoveProjectModal from "./RemoveProjectModal";
 import type { IgnoreUpdateOptions } from "./types";
 import type {
-  FormatErrorFn,
   NotifyErrorFn,
   NotifyFn,
 } from "../../hooks/useStatusReporter";
@@ -21,14 +21,11 @@ type ProjectsPageProps = {
   notify: NotifyFn;
   /** The reporter's command-failure entry point: `notifyError(err)`. */
   notifyError: NotifyErrorFn;
-  /** The reporter's formatter, for failures folded into one message. */
-  formatError: FormatErrorFn;
 };
 
 const ProjectsPage = ({
   notify,
   notifyError,
-  formatError,
 }: ProjectsPageProps) => {
   const { t } = useTranslation();
   const state = useProjectState();
@@ -132,7 +129,7 @@ const ProjectsPage = ({
           const details = result.failed
             .map(
               (f) =>
-                `${f.tool}: ${formatError(f.error) ?? f.error.code}`,
+                `${f.tool}: ${describeCommandError(f.error, t) ?? f.error.code}`,
             )
             .join(", ");
           notify(
@@ -146,7 +143,7 @@ const ProjectsPage = ({
         notifyError(err);
       }
     },
-    [formatError, notify, notifyError, state, t],
+    [notify, notifyError, state, t],
   );
 
   const handleConfigureToolsFromToolbar = useCallback(async () => {

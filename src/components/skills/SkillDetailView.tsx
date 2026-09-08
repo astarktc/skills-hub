@@ -20,10 +20,8 @@ import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import type { TFunction } from "i18next";
 import type { InvokeTauri } from "../../lib/tauri";
-import type {
-  FormatErrorFn,
-  NotifyFn,
-} from "../../hooks/useStatusReporter";
+import { describeCommandError } from "../../commandError";
+import type { NotifyFn } from "../../hooks/useStatusReporter";
 import type { ManagedSkill, SkillFileEntry } from "./types";
 import {
   formatRelativeTime,
@@ -39,8 +37,6 @@ type SkillDetailViewProps = {
   invokeTauri: InvokeTauri;
   /** The reporter's notification entry point, handed down by the binder. */
   notify: NotifyFn;
-  /** The reporter's error formatter — the one home for command-error copy. */
-  formatError: FormatErrorFn;
   t: TFunction;
   isExplorePreview?: boolean;
   onInstall?: () => void;
@@ -422,7 +418,6 @@ const SkillDetailView = ({
   onBack,
   invokeTauri,
   notify,
-  formatError,
   t,
   isExplorePreview = false,
   onInstall,
@@ -479,7 +474,7 @@ const SkillDetailView = ({
         if (!cancelled) setFileContent(content);
       } catch (err) {
         if (!cancelled) {
-          setFileContent(formatError(err) ?? "");
+          setFileContent(describeCommandError(err, t) ?? "");
         }
       } finally {
         if (!cancelled) setLoadingContent(false);
@@ -489,7 +484,7 @@ const SkillDetailView = ({
     return () => {
       cancelled = true;
     };
-  }, [activeFile, formatError, invokeTauri, skill.central_path]);
+  }, [activeFile, invokeTauri, skill.central_path, t]);
 
   const handleSelectFile = useCallback((path: string) => {
     setActiveFile(path);

@@ -105,7 +105,6 @@ function App() {
     cancelLoading,
     notify,
     notifyError,
-    formatError,
     copyToClipboard,
     notifications,
     unreadCount,
@@ -254,7 +253,6 @@ function App() {
             }
             invokeTauri={invokeTauri}
             notify={notify}
-            formatError={formatError}
             t={t}
             isExplorePreview={activeView === "explore-detail"}
             onInstall={
@@ -324,14 +322,12 @@ function App() {
             githubToken={settings.githubToken}
             onGithubTokenChange={settings.handleGithubTokenChange}
             onBack={handleCloseSettings}
-            formatError={formatError}
             t={t}
           />
         ) : activeView === "projects" ? (
           <ProjectsPage
             notify={notify}
             notifyError={notifyError}
-            formatError={formatError}
           />
         ) : (
           <ExplorePage

@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { Update } from "@tauri-apps/plugin-updater";
-import type { FormatErrorFn } from "../../hooks/useStatusReporter";
+import { describeCommandError } from "../../commandError";
 import type { SettingsBounds } from "./types";
 
 type UpdateStatus =
@@ -35,8 +35,6 @@ type SettingsPageProps = {
   onOpenLogFolder: () => void;
   onGithubTokenChange: (token: string) => void;
   onBack: () => void;
-  /** The reporter's error formatter, handed down by the binder. */
-  formatError: FormatErrorFn;
   t: TFunction;
 };
 
@@ -60,7 +58,6 @@ const SettingsPage = ({
   githubToken,
   onGithubTokenChange,
   onBack,
-  formatError,
   t,
 }: SettingsPageProps) => {
   const [localToken, setLocalToken] = useState(githubToken);
@@ -96,10 +93,10 @@ const SettingsPage = ({
         setUpdateStatus("up-to-date");
       }
     } catch (err) {
-      setUpdateError(formatError(err) ?? "");
+      setUpdateError(describeCommandError(err, t) ?? "");
       setUpdateStatus("error");
     }
-  }, [formatError, isTauri]);
+  }, [isTauri, t]);
 
   const handleInstallUpdate = useCallback(async () => {
     const update = updateRef.current;
@@ -110,10 +107,10 @@ const SettingsPage = ({
       await update.downloadAndInstall();
       setUpdateStatus("done");
     } catch (err) {
-      setUpdateError(formatError(err) ?? "");
+      setUpdateError(describeCommandError(err, t) ?? "");
       setUpdateStatus("error");
     }
-  }, [formatError]);
+  }, [t]);
 
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const versionText = useMemo(() => {
