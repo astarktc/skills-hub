@@ -6,6 +6,38 @@ use crate::core::sync_engine::{
 };
 use crate::core::tool_adapters::adapter_by_key;
 
+#[cfg(unix)]
+#[test]
+fn copy_ignores_internal_symlinks_and_preserves_identity() {
+    use crate::core::{content_hash::hash_dir, global_sync::target_has_same_content};
+
+    let src = tempfile::tempdir().unwrap();
+    let dst = tempfile::tempdir().unwrap();
+    fs::write(src.path().join("a.txt"), b"hello").unwrap();
+    for (name, target) in [
+        ("relative", "a.txt"),
+        ("dangling", "missing"),
+        ("directory", "."),
+    ] {
+        std::os::unix::fs::symlink(target, src.path().join(name)).unwrap();
+    }
+
+    copy_dir_recursive(src.path(), dst.path()).unwrap();
+
+    assert_eq!(fs::read(dst.path().join("a.txt")).unwrap(), b"hello");
+    for name in ["relative", "dangling", "directory"] {
+        assert_eq!(
+            fs::symlink_metadata(dst.path().join(name))
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::NotFound
+        );
+    }
+    assert_eq!(hash_dir(src.path()).unwrap(), hash_dir(dst.path()).unwrap());
+    assert!(target_has_same_content(src.path(), dst.path()));
+    assert!(target_has_same_content(dst.path(), src.path()));
+}
+
 #[test]
 fn copy_dir_recursive_skips_git_dir() {
     let src_dir = tempfile::tempdir().unwrap();

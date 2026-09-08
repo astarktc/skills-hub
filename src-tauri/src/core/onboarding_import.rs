@@ -21,7 +21,10 @@
 //!   policy names them — otherwise a deselected Tool would keep its original
 //!   as an untracked duplicate (a real dir in one Tool with another Tool's
 //!   symlink into it is the common shape). Identity is checked against the
-//!   finalized central copy, and the sync batch rechecks the same-content
+//!   finalized central copy. Internal symlinks are not content: hashing ignores
+//!   both their names and targets, and copying neither preserves nor follows
+//!   them, so they do not make the chosen original diverge from its own copy.
+//!   The sync batch rechecks the same-content
 //!   policy before replacing a target; a stale plan never authorizes a
 //!   force-overwrite. The Tools the policy did not name are reported
 //!   as `forced_tools` so the UI can say why a deselected Tool received a

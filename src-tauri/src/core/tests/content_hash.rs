@@ -2,6 +2,19 @@ use std::fs;
 
 use crate::core::content_hash::hash_dir;
 
+#[cfg(unix)]
+#[test]
+fn internal_symlinks_are_not_content() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("a.txt"), b"hello").unwrap();
+    let expected = hash_dir(dir.path()).unwrap();
+
+    for (name, target) in [("relative", "a.txt"), ("dangling", "missing")] {
+        std::os::unix::fs::symlink(target, dir.path().join(name)).unwrap();
+        assert_eq!(hash_dir(dir.path()).unwrap(), expected);
+    }
+}
+
 #[test]
 fn hash_changes_with_content_and_ignores_git_dir() {
     let dir = tempfile::tempdir().expect("tempdir");

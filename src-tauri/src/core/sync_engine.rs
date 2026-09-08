@@ -226,6 +226,8 @@ fn should_skip_copy(entry: &walkdir::DirEntry) -> bool {
     entry.file_name() == ".git"
 }
 
+/// Copy skill content without `.git` or internal symlinks. Internal links are
+/// neither preserved nor followed: they are not content, matching `hash_dir`.
 pub fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
     let profile = std::env::var("SKILLS_HUB_PROFILE_IO")
         .ok()
@@ -242,6 +244,10 @@ pub fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
     {
         let entry = entry?;
         if should_skip_copy(&entry) {
+            continue;
+        }
+        if entry.file_type().is_symlink() {
+            // Internal links are not content; never copy or follow their targets.
             continue;
         }
         let relative = entry.path().strip_prefix(source)?;

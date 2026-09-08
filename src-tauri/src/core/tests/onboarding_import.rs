@@ -564,6 +564,53 @@ fn auto_sync_on_reports_nothing_beyond_a_policy_naming_every_identical_tool() {
     assert_links_to_central(&f, &link, "alpha");
 }
 
+#[cfg(unix)]
+#[test]
+fn chosen_original_with_internal_symlinks_is_same_content() {
+    for auto_sync in [false, true] {
+        let f = fixture();
+        install_tool(&f, "claude_code");
+        let chosen = seed_skill_dir(&f, "claude_code", "alpha", "same");
+        std::os::unix::fs::symlink("SKILL.md", chosen.join("relative")).unwrap();
+        std::os::unix::fs::symlink("missing", chosen.join("dangling")).unwrap();
+
+        let report = run(
+            &f,
+            &[selection("alpha", &chosen)],
+            ImportPolicy {
+                auto_sync,
+                tools: Some(vec![]),
+            },
+        );
+        let ImportGroupStatus::Imported {
+            originals,
+            forced_tools,
+            ..
+        } = imported(&report, "alpha")
+        else {
+            panic!("alpha should import: {:?}", report);
+        };
+        if auto_sync {
+            assert!(
+                originals.is_empty(),
+                "chosen original must not be KeptDivergent"
+            );
+            assert!(forced_tools.iter().any(|tool| tool == "claude_code"));
+            assert_links_to_central(&f, &chosen, "alpha");
+        } else {
+            assert_eq!(originals.len(), 1);
+            assert_eq!(originals[0].path, chosen);
+            assert!(matches!(originals[0].status, OriginalStatus::Removed));
+            assert!(!chosen.exists());
+        }
+        let central = f.paths.central_dir.join("alpha");
+        assert!(central.join("SKILL.md").is_file());
+        for name in ["relative", "dangling"] {
+            assert!(fs::symlink_metadata(central.join(name)).is_err());
+        }
+    }
+}
+
 #[test]
 fn auto_sync_off_removes_identical_originals() {
     let f = fixture();

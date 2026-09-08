@@ -11,6 +11,9 @@ fn is_ignored(entry: &DirEntry) -> bool {
     IGNORE_NAMES.iter().any(|name| name == &file_name.as_ref())
 }
 
+/// Hash skill content, excluding internal symlinks entirely: neither their names
+/// nor their targets contribute to identity. Links are never followed, matching
+/// `sync_engine::copy_dir_recursive`'s exclusion from copies.
 pub fn hash_dir(path: &Path) -> Result<String> {
     let mut hasher = Sha256::new();
 
@@ -20,7 +23,7 @@ pub fn hash_dir(path: &Path) -> Result<String> {
         .filter_entry(|entry| !is_ignored(entry))
     {
         let entry = entry?;
-        if is_ignored(&entry) {
+        if is_ignored(&entry) || entry.file_type().is_symlink() {
             continue;
         }
 
