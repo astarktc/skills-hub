@@ -142,6 +142,7 @@ export function useExploreState({
           last_sync_at: null,
           status: "",
           invocation_mode: "user-and-model",
+          invocation_override: null,
           targets: [],
           refreshable: true,
           unlocatable: null,

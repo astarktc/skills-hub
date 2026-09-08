@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ManagedSkill,
+  InvocationMode,
   RefreshProgressDto,
   RefreshReportDto,
   RemovalReportDto,
 } from "../components/skills/types";
 import { invokeTauri, isTauri } from "../lib/tauri";
-import { repointDoor, SKIPPED_REASON_KEY } from "../lib/skillPresentation";
+import { INVOCATION_LABEL_KEY, repointDoor, SKIPPED_REASON_KEY } from "../lib/skillPresentation";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type {
   ActionErrorEntry,
@@ -80,6 +81,17 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   const detailSkill = managedSkills.find((skill) => skill.id === detailSkillId) ?? null;
   const openDetail = useCallback((id: string) => setDetailSkillId(id), []);
   const closeDetail = useCallback(() => setDetailSkillId(null), []);
+  const [invocationEditSkillId, setInvocationEditSkillId] = useState<string | null>(null);
+  const invocationEditSkill = managedSkills.find((skill) => skill.id === invocationEditSkillId) ?? null;
+  const openInvocationEdit = useCallback((id: string) => setInvocationEditSkillId(id), []);
+  const closeInvocationEdit = useCallback(() => { if (!loading) setInvocationEditSkillId(null); }, [loading]);
+  const setInvocationOverride = useCallback(async (skillId: string, mode: InvocationMode | null) => {
+    await runAction({ successToast: t("invocationEdit.saved") }, async () => {
+      const updated = await invokeTauri("setSkillInvocationOverride", skillId, mode);
+      setManagedSkills((skills) => skills.map((skill) => skill.id === updated.id ? updated : skill));
+      setInvocationEditSkillId(null);
+    });
+  }, [runAction, t]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [pendingGitRepointSkill, setPendingGitRepointSkill] =
     useState<ManagedSkill | null>(null);
@@ -247,6 +259,20 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     [t],
   );
 
+  const editConflictEntries = useCallback((report: RefreshReportDto): ActionErrorEntry[] =>
+    report.skills.flatMap((skill) => {
+      if (skill.status.status !== "refreshed" || !skill.status.edit_conflict) return [];
+      const conflict = skill.status.edit_conflict;
+      return [{
+        title: t("invocationEdit.warningTitle", { name: skill.skill_name }),
+        message: t("invocationEdit.refreshWarning", {
+          name: skill.skill_name,
+          upstream: t(INVOCATION_LABEL_KEY[conflict.upstream_mode]),
+          override: t(INVOCATION_LABEL_KEY[conflict.override_mode]),
+        }),
+      }];
+    }), [t]);
+
   const handleRefresh = useCallback(async () => {
     if (managedSkills.length === 0) return;
 
@@ -255,6 +281,9 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
         // A batch that finished with failures or skipped skills is a
         // warning, not a success.
         successToast: (report): CompletionToast => {
+          if (editConflictEntries(report).length > 0 && report.failed === 0 && report.skipped === 0) {
+            return { kind: "warning", title: t("invocationEdit.refreshCompletedWithEdits") };
+          }
           if (report.failed === 0 && report.skipped === 0) {
             return t("status.refreshCompleted");
           }
@@ -278,11 +307,12 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           ...skillFailureEntries(report),
           ...targetFailureEntries(report),
         ]);
-        showActionWarnings(skippedEntries(report));
+        showActionWarnings([...skippedEntries(report), ...editConflictEntries(report)]);
         return report;
       },
     );
   }, [
+    editConflictEntries,
     loadManagedSkills,
     managedSkills,
     refreshSkills,
@@ -531,9 +561,10 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
         return action.fail(formatError(failed.status.error));
       }
       showActionErrors(targetFailureEntries(report));
+      showActionWarnings(editConflictEntries(report));
       return undefined;
     },
-    [formatError, showActionErrors, targetFailureEntries],
+    [editConflictEntries, formatError, showActionErrors, showActionWarnings, targetFailureEntries],
   );
 
   /** The single-skill Update, under the copy the caller names. */
@@ -543,8 +574,11 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
       copy: { message: string; success: string },
       requestRefresh?: () => Promise<RefreshReportDto>,
     ) => {
+      let hasEditConflict = false;
       return runAction(
-        { message: copy.message, successToast: copy.success },
+        { message: copy.message, successToast: () => hasEditConflict
+          ? { kind: "warning", title: t("invocationEdit.warningTitle", { name: skill.name }) }
+          : copy.success },
         async (action) => {
           // A single Update is the same batch, of one.
           let report: RefreshReportDto;
@@ -557,11 +591,12 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           }
           // A defined success value distinguishes completion from runAction's
           // undefined result for thrown errors and ActionExit failures.
+          hasEditConflict = editConflictEntries(report).length > 0;
           return settleSingleReport(action, report) ?? true;
         },
       );
     },
-    [loadManagedSkills, refreshSkills, runAction, settleSingleReport],
+    [editConflictEntries, loadManagedSkills, refreshSkills, runAction, settleSingleReport, t],
   );
 
   const handleUpdateManaged = useCallback(
@@ -688,6 +723,11 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
 
   return {
     managedSkills,
+    invocationEditSkillId,
+    invocationEditSkill,
+    openInvocationEdit,
+    closeInvocationEdit,
+    setInvocationOverride,
     detailSkill,
     openDetail,
     closeDetail,

@@ -105,6 +105,29 @@ CREATE INDEX IF NOT EXISTS idx_psa_skill ON project_skill_assignments(skill_id);
 CREATE INDEX IF NOT EXISTS idx_pt_project ON project_tools(project_id);
 "#;
 
+#[derive(Clone, Copy, Debug)]
+pub enum SkillEditKind {
+    InvocationMode,
+}
+
+impl SkillEditKind {
+    pub fn as_key(self) -> &'static str {
+        match self {
+            Self::InvocationMode => "invocation_mode",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SkillEditRecord {
+    pub skill_id: String,
+    pub kind: SkillEditKind,
+    pub value: String,
+    pub base_value: String,
+    pub conflict: bool,
+    pub applied_at: i64,
+}
+
 #[derive(Clone, Debug)]
 pub struct SkillStore {
     db_path: PathBuf,
@@ -405,7 +428,56 @@ impl SkillStore {
                 );",
             )?;
 
+            // Additive schema repair, also run for pre-existing and migrated DBs.
+            tx.execute_batch(
+                "CREATE TABLE IF NOT EXISTS skill_edits (
+                    skill_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    base_value TEXT NOT NULL,
+                    conflict INTEGER NOT NULL DEFAULT 0,
+                    applied_at INTEGER NOT NULL,
+                    PRIMARY KEY (skill_id, kind),
+                    FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE
+                );",
+            )?;
             tx.commit()?;
+            Ok(())
+        })
+    }
+
+    pub fn get_skill_edit(
+        &self,
+        skill_id: &str,
+        kind: SkillEditKind,
+    ) -> Result<Option<SkillEditRecord>> {
+        self.with_conn(|conn| {
+            use rusqlite::OptionalExtension;
+            Ok(conn.query_row(
+                "SELECT value, base_value, conflict, applied_at FROM skill_edits WHERE skill_id = ?1 AND kind = ?2",
+                params![skill_id, kind.as_key()],
+                |row| Ok(SkillEditRecord { skill_id: skill_id.to_string(), kind, value: row.get(0)?, base_value: row.get(1)?, conflict: row.get(2)?, applied_at: row.get(3)? }),
+            ).optional()?)
+        })
+    }
+
+    pub fn upsert_skill_edit(&self, edit: &SkillEditRecord) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO skill_edits (skill_id, kind, value, base_value, conflict, applied_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(skill_id, kind) DO UPDATE SET value=excluded.value, base_value=excluded.base_value, conflict=excluded.conflict, applied_at=excluded.applied_at",
+                params![edit.skill_id, edit.kind.as_key(), edit.value, edit.base_value, edit.conflict, edit.applied_at],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_skill_edit(&self, skill_id: &str, kind: SkillEditKind) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM skill_edits WHERE skill_id = ?1 AND kind = ?2",
+                params![skill_id, kind.as_key()],
+            )?;
             Ok(())
         })
     }

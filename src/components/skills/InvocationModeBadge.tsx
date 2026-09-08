@@ -1,13 +1,17 @@
 import { Bot, EyeOff, User } from "lucide-react";
 import type { TFunction } from "i18next";
-import type { InvocationMode } from "./types";
+import type { InvocationMode, InvocationOverrideDto } from "./types";
+import { INVOCATION_LABEL_KEY, INVOCATION_TOOLTIP_KEY } from "../../lib/skillPresentation";
 
 type InvocationModeBadgeProps = {
   mode: InvocationMode;
+  override: InvocationOverrideDto | null;
+  disabled: boolean;
+  onClick: () => void;
   t: TFunction;
 };
 
-const InvocationModeBadge = ({ mode, t }: InvocationModeBadgeProps) => {
+const InvocationModeBadge = ({ mode, override, disabled, onClick, t }: InvocationModeBadgeProps) => {
   const icon =
     mode === "user-and-model" ? (
       <>
@@ -21,31 +25,23 @@ const InvocationModeBadge = ({ mode, t }: InvocationModeBadgeProps) => {
     ) : (
       <EyeOff size={11} aria-hidden="true" />
     );
-  const labelKey =
-    mode === "user-and-model"
-      ? "invocationMode.userAndModel"
-      : mode === "user-only"
-        ? "invocationMode.userOnly"
-        : mode === "model-only"
-          ? "invocationMode.modelOnly"
-          : "invocationMode.neither";
-  const tooltipKey =
-    mode === "user-and-model"
-      ? "invocationMode.userAndModelTooltip"
-      : mode === "user-only"
-        ? "invocationMode.userOnlyTooltip"
-        : mode === "model-only"
-          ? "invocationMode.modelOnlyTooltip"
-          : "invocationMode.neitherTooltip";
+  const label = t(INVOCATION_LABEL_KEY[mode]);
+  const overrideNote = override
+    ? ` — ${t(override.conflict ? "invocationEdit.conflictTooltip" : "invocationEdit.overrideTooltip", { mode: t(INVOCATION_LABEL_KEY[override.base_mode]) })}`
+    : "";
 
   return (
-    <span
-      className={`invocation-badge ${mode}`}
-      title={`${t(labelKey)} — ${t(tooltipKey)}`}
-      aria-label={t(labelKey)}
+    <button
+      type="button"
+      className={`invocation-badge ${mode}${override ? " overridden" : ""}${override?.conflict ? " conflict" : ""}`}
+      title={`${label} — ${t(INVOCATION_TOOLTIP_KEY[mode])}${overrideNote}`}
+      aria-label={`${label}${override ? ` — ${t("invocationEdit.overridden")}` : ""}`}
+      aria-haspopup="dialog"
+      disabled={disabled}
+      onClick={(event) => { event.stopPropagation(); onClick(); }}
     >
       {icon}
-    </span>
+    </button>
   );
 };
 

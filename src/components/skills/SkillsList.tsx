@@ -23,6 +23,7 @@ type SkillsListProps = {
   onUnsyncSkill: (skillId: string) => void;
   onSyncSkillToAllTools: (skill: ManagedSkill) => void;
   onOpenDetail: (skill: ManagedSkill) => void;
+  onInvocationClick: (skillId: string) => void;
   /** The reporter's clipboard helper, handed down by the binder. */
   copyToClipboard: CopyToClipboardFn;
   t: TFunction;
@@ -45,6 +46,7 @@ const SkillsList = ({
   onUnsyncSkill,
   onSyncSkillToAllTools,
   onOpenDetail,
+  onInvocationClick,
   copyToClipboard,
   t,
 }: SkillsListProps) => {
@@ -71,6 +73,7 @@ const SkillsList = ({
       onUnsync={onUnsyncSkill}
       onSyncToAllTools={onSyncSkillToAllTools}
       onOpenDetail={onOpenDetail}
+      onInvocationClick={onInvocationClick}
       copyToClipboard={copyToClipboard}
       t={t}
     />

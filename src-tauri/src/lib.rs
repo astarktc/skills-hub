@@ -40,6 +40,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::detach_skill_from_source,
             commands::import_onboarding_selection,
             commands::get_managed_skills,
+            commands::set_skill_invocation_override,
             commands::delete_managed_skill,
             commands::unsync_all_skills,
             commands::unsync_skill,

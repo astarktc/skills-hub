@@ -43,6 +43,7 @@ type SkillCardProps = {
   onUnsync: (skillId: string) => void;
   onSyncToAllTools: (skill: ManagedSkill) => void;
   onOpenDetail: (skill: ManagedSkill) => void;
+  onInvocationClick: (skillId: string) => void;
   /** The reporter's clipboard helper, handed down by the list. */
   copyToClipboard: CopyToClipboardFn;
   t: TFunction;
@@ -63,6 +64,7 @@ const SkillCard = ({
   onUnsync,
   onSyncToAllTools,
   onOpenDetail,
+  onInvocationClick,
   copyToClipboard,
   t,
 }: SkillCardProps) => {
@@ -133,7 +135,13 @@ const SkillCard = ({
           >
             {skill.name}
           </button>
-          <InvocationModeBadge mode={skill.invocation_mode} t={t} />
+          <InvocationModeBadge
+            mode={skill.invocation_mode}
+            override={skill.invocation_override}
+            disabled={loading || skill.unlocatable === "central_missing"}
+            onClick={() => onInvocationClick(skill.id)}
+            t={t}
+          />
         </div>
         {skill.description ? (
           <div className="skill-desc">{skill.description}</div>

@@ -61,6 +61,15 @@ export const commands = {
 	 */
 	importOnboardingSelection: (selections: OnboardingSelectionDto[], policy: ImportPolicyDto, onProgress: Channel<ImportProgressDto>) => __TAURI_INVOKE<ImportReportDto>("import_onboarding_selection", { selections, policy, onProgress }),
 	getManagedSkills: () => __TAURI_INVOKE<ManagedSkillDto[]>("get_managed_skills"),
+	setSkillInvocationOverride: (skillId: string, mode: 
+/**  Default: the user can type `/name` and the model can load it on its own. */
+"user-and-model" | 
+/**  `disable-model-invocation: true` — only the user can invoke it. */
+"user-only" | 
+/**  `user-invocable: false` — only the model can invoke it. */
+"model-only" | 
+/**  Both keys restrict invocation — neither the user nor the model can invoke it. */
+"neither" | null) => __TAURI_INVOKE<ManagedSkillDto>("set_skill_invocation_override", { skillId, mode }),
 	deleteManagedSkill: (skillId: string) => __TAURI_INVOKE<null>("delete_managed_skill", { skillId }),
 	unsyncAllSkills: () => __TAURI_INVOKE<RemovalReportDto>("unsync_all_skills"),
 	unsyncSkill: (skillId: string) => __TAURI_INVOKE<RemovalReportDto>("unsync_skill", { skillId }),
@@ -362,6 +371,12 @@ export type IntRange = {
 	max: number,
 };
 
+export type InvocationEditConflict = {
+	base_mode: InvocationMode,
+	upstream_mode: InvocationMode,
+	override_mode: InvocationMode,
+};
+
 /**
  *  Who may invoke a skill, derived from its `SKILL.md` frontmatter.
  * 
@@ -382,6 +397,12 @@ export type InvocationMode =
 "model-only" | 
 /**  Both keys restrict invocation — neither the user nor the model can invoke it. */
 "neither";
+
+export type InvocationOverrideDto = {
+	mode: InvocationMode,
+	base_mode: InvocationMode,
+	conflict: boolean,
+};
 
 export type LocalSkillCandidate = {
 	name: string,
@@ -411,6 +432,7 @@ export type ManagedSkillDto = {
 	 *  frontmatter at list time (not persisted).
 	 */
 	invocation_mode: InvocationMode,
+	invocation_override: InvocationOverrideDto | null,
 	targets: SkillTargetDto[],
 	/**
 	 *  Whether Update / Refresh can re-acquire this skill (backend-owned
@@ -685,7 +707,7 @@ export type SkillRefreshStatusDto = { status: "refreshed"; content_hash: string 
  *  `refreshed`; the targets the re-assert would have created are
  *  unknown, so this counts as one `target_failures`.
  */
-reassert_error: CommandError | null } | { status: "failed"; error: CommandError } | { status: "skipped"; state: UnlocatableState };
+reassert_error: CommandError | null; edit_conflict: InvocationEditConflict | null } | { status: "failed"; error: CommandError } | { status: "skipped"; state: UnlocatableState };
 
 export type SkillTargetDto = {
 	tool: string,

@@ -430,11 +430,47 @@
   font-size: 10px;
   font-weight: 500;
   white-space: nowrap;
-  cursor: help;
+  cursor: pointer;
+  position: relative;
   background: var(--bg-element);
   color: var(--text-tertiary);
   border: 1px solid var(--border-subtle);
 }
+
+.invocation-badge:hover:not(:disabled) {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.invocation-badge:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 3px;
+}
+
+.invocation-badge:disabled { cursor: not-allowed; opacity: 0.6; }
+.invocation-badge.overridden::after {
+  content: "";
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  right: -3px;
+  top: -3px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.invocation-badge.overridden.conflict {
+  background: var(--warning-soft-bg);
+  border-color: var(--warning-soft-border);
+  color: var(--text-primary);
+}
+.invocation-badge.conflict::after { background: var(--warning-soft-border); }
+
+.invocation-edit-options { border: 0; padding: 0; margin: 0; min-width: 0; }
+.invocation-edit-option { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; cursor: pointer; }
+.invocation-edit-option input { margin-top: 4px; flex-shrink: 0; }
+.invocation-edit-option .helper-text { display: block; }
+.invocation-edit-warning { padding: 12px; border: 1px solid var(--warning-soft-border); border-radius: 6px; background: var(--warning-soft-bg); }
 
 .invocation-badge.user-and-model {
   background: var(--bg-element);

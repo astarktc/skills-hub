@@ -17,6 +17,7 @@ import NotificationsModal from "./components/shared/NotificationsModal";
 import AddSkillModal from "./components/skills/modals/AddSkillModal";
 import DeleteModal from "./components/skills/modals/DeleteModal";
 import GitRepointModal from "./components/skills/modals/GitRepointModal";
+import InvocationModeModal from "./components/skills/modals/InvocationModeModal";
 import GitPickModal from "./components/skills/modals/GitPickModal";
 import LocalPickModal from "./components/skills/modals/LocalPickModal";
 import ImportModal from "./components/skills/modals/ImportModal";
@@ -303,6 +304,7 @@ function App() {
               onUnsyncSkill={library.handleUnsyncSkill}
               onSyncSkillToAllTools={library.handleSyncSkillToAllTools}
               onOpenDetail={handleOpenDetail}
+              onInvocationClick={library.openInvocationEdit}
               copyToClipboard={copyToClipboard}
               t={t}
             />
@@ -439,6 +441,19 @@ function App() {
         onSyncAll={handleSyncAllNewTools}
         t={t}
       />
+
+      {library.invocationEditSkill ? (
+        <InvocationModeModal
+          key={library.invocationEditSkill.id}
+          skill={library.invocationEditSkill}
+          loading={loading}
+          onRequestClose={library.closeInvocationEdit}
+          onConfirm={(mode) => {
+            if (library.invocationEditSkill) void library.setInvocationOverride(library.invocationEditSkill.id, mode);
+          }}
+          t={t}
+        />
+      ) : null}
 
       {library.pendingGitRepointSkill ? (
         <GitRepointModal

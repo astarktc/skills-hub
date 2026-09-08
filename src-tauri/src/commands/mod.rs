@@ -688,6 +688,7 @@ pub enum SkillRefreshStatusDto {
         /// `refreshed`; the targets the re-assert would have created are
         /// unknown, so this counts as one `target_failures`.
         reassert_error: Option<CommandError>,
+        edit_conflict: Option<crate::core::skill_edits::InvocationEditConflict>,
     },
     Failed {
         error: CommandError,
@@ -810,6 +811,7 @@ fn to_refresh_report_dto(report: crate::core::refresh::RefreshReport) -> Refresh
                 source_revision,
                 targets,
                 reassert_error,
+                edit_conflict,
             } => {
                 dto.refreshed += 1;
                 let targets: Vec<PropagationTargetDto> = targets
@@ -855,6 +857,7 @@ fn to_refresh_report_dto(report: crate::core::refresh::RefreshReport) -> Refresh
                     })
                     .collect();
                 SkillRefreshStatusDto::Refreshed {
+                    edit_conflict,
                     content_hash,
                     source_revision,
                     targets,
@@ -1211,6 +1214,13 @@ fn to_import_report_dto(report: crate::core::onboarding_import::ImportReport) ->
 }
 
 #[derive(Debug, Serialize, Type)]
+pub struct InvocationOverrideDto {
+    pub mode: InvocationMode,
+    pub base_mode: InvocationMode,
+    pub conflict: bool,
+}
+
+#[derive(Debug, Serialize, Type)]
 pub struct ManagedSkillDto {
     pub id: String,
     pub name: String,
@@ -1229,6 +1239,7 @@ pub struct ManagedSkillDto {
     /// Who may invoke the skill, read from the central copy's `SKILL.md`
     /// frontmatter at list time (not persisted).
     pub invocation_mode: InvocationMode,
+    pub invocation_override: Option<InvocationOverrideDto>,
     pub targets: Vec<SkillTargetDto>,
     /// Whether Update / Refresh can re-acquire this skill (backend-owned
     /// Provenance rule); the UI offers Update only when `true`.
@@ -1264,6 +1275,25 @@ pub fn get_managed_skills(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn set_skill_invocation_override(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    skill_id: String,
+    mode: Option<InvocationMode>,
+) -> Result<ManagedSkillDto, CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = installer_paths(&app, &store)?;
+        crate::core::skill_edits::set_invocation_override(&paths, &store, &skill_id, mode)
+            .map(ManagedSkillDto::from)
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+#[tauri::command]
+#[specta::specta]
 #[allow(non_snake_case)]
 pub async fn delete_managed_skill(
     store: State<'_, SkillStore>,
@@ -1294,6 +1324,7 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
         let ManagedSkillEntry {
             skill,
             invocation_mode,
+            invocation_override,
             targets,
             refreshable,
             unlocatable,
@@ -1312,6 +1343,11 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
             last_sync_at: skill.last_sync_at,
             status: skill.status,
             invocation_mode,
+            invocation_override: invocation_override.map(|edit| InvocationOverrideDto {
+                mode: edit.mode,
+                base_mode: edit.base_mode,
+                conflict: edit.conflict,
+            }),
             targets: targets
                 .into_iter()
                 .map(|target| SkillTargetDto {

@@ -397,7 +397,7 @@ pub(crate) fn parse_skill_md_with_reason(
 /// the permissive value, so a skill with no frontmatter — or with malformed
 /// frontmatter — is [`InvocationMode::UserAndModel`]. Setting both keys is the
 /// documented recipe for hiding a skill from everyone: [`InvocationMode::Neither`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum InvocationMode {
     /// Default: the user can type `/name` and the model can load it on its own.

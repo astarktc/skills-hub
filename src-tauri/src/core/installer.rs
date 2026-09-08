@@ -225,6 +225,7 @@ pub(crate) struct UpdateOutcome {
     pub content_hash: Option<String>,
     pub source_revision: Option<String>,
     pub propagation: PropagationReport,
+    pub edit_conflict: Option<super::skill_edits::InvocationEditConflict>,
 }
 
 /// Re-acquire a Managed skill's bytes from its source into a Staging dir.
@@ -384,7 +385,8 @@ pub(crate) fn finalize_and_propagate_unlocked(
     } = acquired;
     let now = now_ms();
 
-    let updated = finalize_update(store, &record, staged, new_revision.clone())?;
+    let mut updated = finalize_update(store, &record, staged, new_revision.clone())?;
+    let edit_conflict = super::skill_edits::replay_unlocked(store, &mut updated)?;
     let content_hash = updated.content_hash.clone();
 
     let propagation = propagate_unlocked(store, paths, &record.id, content_hash.as_deref(), now)?;
@@ -395,6 +397,7 @@ pub(crate) fn finalize_and_propagate_unlocked(
         content_hash,
         source_revision: new_revision,
         propagation,
+        edit_conflict,
     })
 }
 

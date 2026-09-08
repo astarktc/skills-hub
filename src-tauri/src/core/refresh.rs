@@ -108,6 +108,7 @@ pub enum SkillRefreshStatus {
         source_revision: Option<String>,
         targets: Vec<PropagationOutcome>,
         reassert_error: Option<anyhow::Error>,
+        edit_conflict: Option<super::skill_edits::InvocationEditConflict>,
     },
     /// Acquisition or finalize failed; this skill's targets were left alone.
     Failed { error: anyhow::Error },
@@ -482,6 +483,7 @@ fn apply_one_unlocked(
         source_revision: outcome.source_revision,
         targets,
         reassert_error,
+        edit_conflict: outcome.edit_conflict,
     }
 }
 

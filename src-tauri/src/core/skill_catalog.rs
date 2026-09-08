@@ -29,6 +29,7 @@ pub struct ManagedSkillEntry {
     /// Who may invoke the skill, read from the central copy's `SKILL.md`
     /// frontmatter at list time (not persisted).
     pub invocation_mode: InvocationMode,
+    pub invocation_override: Option<super::skill_edits::InvocationOverride>,
     /// Every global Sync target row of this skill, in store order.
     pub targets: Vec<SkillTargetRecord>,
     /// Whether Refresh / Update can re-acquire this skill — the Provenance
@@ -54,12 +55,14 @@ pub fn managed_skill_catalog(store: &SkillStore) -> Result<Vec<ManagedSkillEntry
             .list_skill_targets(&skill.id)
             .with_context(|| format!("list sync targets for skill {}", skill.id))?;
         let invocation_mode = invocation_mode_for_dir(Path::new(&skill.central_path));
+        let invocation_override = super::skill_edits::invocation_override(store, &skill.id)?;
         let refreshable = is_refreshable(&skill);
         let unlocatable = unlocatable_state(&skill);
         let detachable = is_detachable(&skill);
         entries.push(ManagedSkillEntry {
             skill,
             invocation_mode,
+            invocation_override,
             targets,
             refreshable,
             unlocatable,

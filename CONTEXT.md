@@ -32,6 +32,18 @@ _Avoid_: tool status (that's the DTO carrying a catalog), tool list
 A skill installed through Skills Hub and tracked in its database, eligible for sync fan-out to tools.
 _Avoid_: installed skill (ambiguous with a tool being installed)
 
+**Edit**:
+An operator change layered on a Managed skill's central copy, recorded in `skill_edits` and replayed after every finalize (Update / Refresh / Restore / Re-point); on conflict — upstream changed the same thing — the Edit wins and the row is flagged until the operator re-chooses or clears. V1 kind: invocation mode.
+_Avoid_: fork (reserved for a future whole-copy model), hand edit
+
+**Fork**:
+Reserved for a future whole-copy operator variant of an upstream skill; not built.
+_Avoid_: Edit (the current layered change)
+
+**Update**:
+The operator action that re-acquires one refreshable Managed skill from its source, finalizes, then replays Edits and propagates — a Refresh batch of one. Restore is this same action rebuilding an absent central copy.
+_Avoid_: re-install
+
 **Sync target**:
 One (skill, tool) pair a sync batch attempts; each target resolves to synced, skipped, or failed as report data, never as a command error.
 _Avoid_: sync pair, destination
@@ -73,11 +85,11 @@ A Managed skill the app can no longer find on disk, in one of two states judged 
 _Avoid_: stale row, broken skill, orphan, missing skill (which path is missing is the whole point)
 
 **Re-point**:
-Repairing a Managed skill's source in place while preserving its Sync targets and project assignments, over two provenances: local — choose a skill folder outside every Tool's skills directory, then Update (taking over a Tool's copy is Onboarding import's door); git — paste a full GitHub repository or skill URL, acquire first, and only on acquisition success change the source and Update — the same Update the operator can trigger by hand, auto-sync re-assert included for both provenances, so a Re-point never leaves the skill in a Sync state a plain Update would change. Git Re-point is available even without an Unlocatable skill; its URL accepts HTTP, HTTPS or schemeless `github.com/…`, tree/blob links and a `.git` suffix, but not `owner/repo` shorthand.
+Repairing a Managed skill's source in place while preserving its Sync targets and project assignments, over two provenances: local — choose a skill folder outside every Tool's skills directory, then Update, which replays Edits (taking over a Tool's copy is Onboarding import's door); git — paste a full GitHub repository or skill URL, acquire first, and only on acquisition success change the source and Update — the same Update the operator can trigger by hand, auto-sync re-assert included for both provenances, so a Re-point never leaves the skill in a Sync state a plain Update would change. Git Re-point is available even without an Unlocatable skill; its URL accepts HTTP, HTTPS or schemeless `github.com/…`, tree/blob links and a `.git` suffix, but not `owner/repo` shorthand.
 _Avoid_: re-add, source migration
 
 **Refresh (all)**:
-The operator action that re-acquires every refreshable Managed skill (see Provenance) from its source, finalizes, and propagates (`core/refresh.rs`), as one backend batch; a single skill's Update is a batch of one. An imported skill is not a member — it is neither acquired nor reported, not "skipped". An Unlocatable skill is a member the batch does not dispatch: it is reported skipped with its state, and no Sync target is ever minted for it; naming it explicitly (Update) proceeds instead, which is how Restore rebuilds a missing central copy. Two phases: acquisition runs outside the Mutation guard over a bounded pool (4 workers, progress ticking in completion order), then each skill is finalized and propagated under the guard, taken per skill. With auto-sync on it also re-asserts the auto-sync invariant — every Managed skill is synced to every installed Tool — so targets that never existed are created, not just existing ones refreshed. Per-skill and per-target outcomes are report data. Cancellation stops dispatching new acquisitions and finalizes nothing: once observed, no skill reaches phase two.
+The operator action that re-acquires every refreshable Managed skill (see Provenance) from its source, finalizes, then replays Edits and propagates (`core/refresh.rs`), as one backend batch; a single skill's Update is a batch of one. An imported skill is not a member — it is neither acquired nor reported, not "skipped". An Unlocatable skill is a member the batch does not dispatch: it is reported skipped with its state, and no Sync target is ever minted for it; naming it explicitly (Update) proceeds instead, which is how Restore rebuilds a missing central copy. Two phases: acquisition runs outside the Mutation guard over a bounded pool (4 workers, progress ticking in completion order), then each skill is finalized and propagated under the guard, taken per skill. With auto-sync on it also re-asserts the auto-sync invariant — every Managed skill is synced to every installed Tool — so targets that never existed are created, not just existing ones refreshed. Per-skill and per-target outcomes are report data. Cancellation stops dispatching new acquisitions and finalizes nothing: once observed, no skill reaches phase two.
 _Avoid_: update all, re-deploy
 
 **Artifact removal**:

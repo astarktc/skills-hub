@@ -68,6 +68,7 @@ function skill(id: string, name: string, targets: string[] = []): ManagedSkill {
     last_sync_at: null,
     status: "active",
     invocation_mode: "user-and-model",
+    invocation_override: null,
     targets: targets.map((tool) => ({
       tool,
       mode: "symlink",
@@ -100,6 +101,7 @@ function refreshedReport(names: string[]): RefreshReportDto {
         source_revision: null,
         targets: [],
         reassert_error: null,
+        edit_conflict: null,
       },
     })),
     refreshed: names.length,
@@ -253,6 +255,51 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe("invocation Edits", () => {
+  it("replaces the returned DTO in place and closes without a refetch", async () => {
+    const setup = makeDeps({ skills: [skill("s1", "alpha"), skill("s2", "beta")] });
+    const { result } = await renderLibrary(setup);
+    act(() => result.current.openInvocationEdit("s1"));
+    const updated: ManagedSkill = { ...setup.skills[0], invocation_mode: "user-only", invocation_override: { mode: "user-only", base_mode: "user-and-model", conflict: false } };
+    mockInvoke.mockResolvedValueOnce(updated);
+    await act(async () => { await result.current.setInvocationOverride("s1", "user-only"); });
+    expect(mockInvoke).toHaveBeenLastCalledWith("setSkillInvocationOverride", "s1", "user-only");
+    expect(result.current.managedSkills).toEqual([updated, setup.skills[1]]);
+    expect(result.current.managedSkills[1]).toBe(setup.skills[1]);
+    expect(result.current.invocationEditSkillId).toBeNull();
+    expect(mockInvoke.mock.calls.filter(([command]) => command === "getManagedSkills")).toHaveLength(1);
+  });
+
+  it("keeps the list and modal on failure", async () => {
+    const setup = makeDeps();
+    const { result } = await renderLibrary(setup);
+    act(() => result.current.openInvocationEdit("s1"));
+    mockInvoke.mockRejectedValueOnce({ code: "CENTRAL_PATH_MISSING", path: "/hub/alpha" });
+    await act(async () => { await result.current.setInvocationOverride("s1", null); });
+    expect(result.current.managedSkills).toEqual(setup.skills);
+    expect(result.current.invocationEditSkillId).toBe("s1");
+    expect(setup.reporter.setError).toHaveBeenCalledWith("formatted:CENTRAL_PATH_MISSING");
+  });
+
+  it.each(["refresh", "update"])("shows conflict warning data after %s", async (action) => {
+    const report = refreshedReport(["alpha"]);
+    const status = report.skills[0].status;
+    if (status.status !== "refreshed") throw new Error("fixture");
+    status.edit_conflict = { base_mode: "user-and-model", upstream_mode: "model-only", override_mode: "user-only" };
+    const setup = makeDeps({ refreshReport: report });
+    const { result } = await renderLibrary(setup);
+    await act(async () => {
+      if (action === "refresh") await result.current.handleRefresh();
+      else await result.current.handleRestoreSkill(setup.skills[0]);
+    });
+    expect(setup.reporter.showActionWarnings).toHaveBeenCalledWith([{
+      title: 'invocationEdit.warningTitle {"name":"alpha"}',
+      message: 'invocationEdit.refreshWarning {"name":"alpha","upstream":"invocationMode.modelOnly","override":"invocationMode.userOnly"}',
+    }]);
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(expect.objectContaining({ kind: "warning" }));
+  });
+});
+
 describe("useSkillLibrary refresh", () => {
   it.each(["git", "GitHub"])("offers Re-point only for a known %s skill's GitHub-not-found failure", async (source_type) => {
     const gitSkill = { ...skill("s1", "alpha"), source_type };
@@ -375,6 +422,7 @@ describe("useSkillLibrary refresh", () => {
                 },
               ],
               reassert_error: null,
+              edit_conflict: null,
             },
           },
           {
@@ -435,6 +483,7 @@ describe("useSkillLibrary refresh", () => {
               source_revision: null,
               targets: [],
               reassert_error: { code: "OTHER", message: "store is gone" },
+              edit_conflict: null,
             },
           },
         ],
@@ -472,6 +521,7 @@ describe("useSkillLibrary refresh", () => {
               source_revision: null,
               targets: [],
               reassert_error: null,
+              edit_conflict: null,
             },
           },
           {

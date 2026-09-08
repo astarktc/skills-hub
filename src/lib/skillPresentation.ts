@@ -6,7 +6,21 @@
  * function in.
  */
 
-import type { UnlocatableState } from "../components/skills/types";
+import type { InvocationMode, UnlocatableState } from "../components/skills/types";
+
+export const INVOCATION_MODES = ["user-and-model", "user-only", "model-only", "neither"] as const;
+export const INVOCATION_LABEL_KEY: Record<InvocationMode, string> = {
+  "user-and-model": "invocationMode.userAndModel",
+  "user-only": "invocationMode.userOnly",
+  "model-only": "invocationMode.modelOnly",
+  neither: "invocationMode.neither",
+};
+export const INVOCATION_TOOLTIP_KEY: Record<InvocationMode, string> = {
+  "user-and-model": "invocationMode.userAndModelTooltip",
+  "user-only": "invocationMode.userOnlyTooltip",
+  "model-only": "invocationMode.modelOnlyTooltip",
+  neither: "invocationMode.neitherTooltip",
+};
 
 /** The Managed-skill fields presentation needs. Keeps the module testable. */
 export type SkillPresentationFields = {
