@@ -70,6 +70,7 @@ _Avoid_: source type (that's the stored spelling), origin, "local" for a skill t
 
 **Unlocatable skill**:
 A Managed skill the app can no longer find on disk, in one of two states judged from its recorded paths every time the library is listed and never stored: **source missing** — a local skill (see Provenance) whose folder is gone — or **central missing** — its central copy is gone, so every Tool's link for it is dangling. A skill whose folder and central copy are both gone is source missing, because that repair fixes both. Refresh (all) skips it and says so; a Restore is an Update. Its repairs: **Re-point** (name the folder's new location, then Update from it), **Detach** (it becomes imported — the central copy is its truth from now on, so it is offered only while that copy exists), **Restore** (re-acquire a git or local skill from its source and rebuild the central copy), or Remove.
+Re-point to a local folder requires a skill folder outside every Tool's skills directory — taking over a Tool's copy is Onboarding import's door.
 _Avoid_: stale row, broken skill, orphan, missing skill (which path is missing is the whole point)
 
 **Refresh (all)**:
@@ -94,6 +95,7 @@ _Avoid_: sync mutex, lock, transaction
 
 **Git acquisition**:
 Landing a skill's bytes from a git source in a directory, once, for every flow that needs it (`core/git_acquisition.rs`): given a parsed source and an intent it answers with the bytes, the revision and the strategy used. Two adapters meet at one seam — the GitHub Contents API fast path (fetches the branch SHA first, so the recorded revision is the real commit) and the clone through the git cache (sparse when a subpath is known). A GitHub 404 or 403 is an answer for the operator, raised typed and never retried as a clone; other API failures fall back. Both adapters follow an **upstream in-repo symlink** at acquire time, every time (`core/repo_subpath.rs`): the link's target is resolved against the link's own directory within the repository root, chains are followed to a small bound, and a target that is absolute or leaves the repository is refused typed before anything at it is read. The recorded subpath stays the alias the operator chose — the resolved path is diagnostics only — so a maintainer re-pointing the alias is followed on the next Refresh; on the clone side the cache entry is widened by the target.
+The API fast path follows an upstream link only at the leaf of the subpath; a link on an earlier path component is a typed not-found, never retried as a clone.
 _Avoid_: download, fetch (that's the cache's job), clone (that's one of the two adapters)
 
 **Notification**:

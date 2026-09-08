@@ -139,7 +139,7 @@ function App() {
     setActiveView("myskills");
   }, []);
 
-  // Opening the history is what marks it read (spec Q4).
+  // Opening the history marks it read.
   const handleOpenNotifications = useCallback(() => {
     markAllRead();
     setShowNotifications(true);

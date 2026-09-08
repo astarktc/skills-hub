@@ -30,7 +30,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-// The lifetimes the reporter owns (spec Q5): errors never auto-dismiss,
+// The lifetimes the reporter owns: errors never auto-dismiss,
 // successes flash. Warning/info are asserted in the `notify` block.
 const ERROR_OPTIONS = {
   description: undefined,
@@ -110,7 +110,7 @@ describe("useStatusReporter", () => {
     });
   });
 
-  // The session's notification history (spec Q3/Q4): every notify() both
+  // The session's notification history: every notify() both
   // toasts and records; the ring is bounded; only errors and warnings count
   // as unread until the operator opens the panel.
   describe("notification history", () => {
@@ -222,7 +222,7 @@ describe("useStatusReporter", () => {
     });
   });
 
-  // Copying a path is a courtesy, not an outcome (spec Q10): its success
+  // Copying a path is a courtesy, not an outcome: its success
   // flashes a toast but is never a Notification; only a failure is recorded.
   describe("copyToClipboard", () => {
     const writeText = vi.fn<(text: string) => Promise<void>>();

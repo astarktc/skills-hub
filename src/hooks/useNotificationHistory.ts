@@ -5,8 +5,8 @@ export type NotificationKind = "error" | "warning" | "success" | "info";
 
 /**
  * One user-visible outcome of an action: shown once as a toast and kept in
- * the session's history (spec Q3/Q4). `id` increases monotonically within
- * the session, so "unread" is a watermark on it.
+ * the session's history; opening the history marks it read.
+ * `id` increases monotonically within the session, so "unread" is a watermark on it.
  */
 export type Notification = {
   id: number;

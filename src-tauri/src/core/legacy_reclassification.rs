@@ -94,10 +94,13 @@ fn classify(
     canonical_central: Option<&Path>,
     source: &Path,
 ) -> Option<ImportEvidence> {
-    if let Some(tool) = tool_owning_path(home, source) {
+    // A Tool's skills dir itself names no skill; require a strict descendant.
+    if let Some(tool) =
+        tool_holding_path(home, source).filter(|adapter| source != skills_dir_in(home, adapter))
+    {
         return Some(ImportEvidence {
             rule: Rule::InsideToolDir,
-            found_in_tool: Some(tool),
+            found_in_tool: Some(tool.key()),
         });
     }
     if resolves_into(source, canonical_central) {
@@ -105,14 +108,14 @@ fn classify(
         // outside this `home`); when it does not, there is no history to keep.
         return Some(ImportEvidence {
             rule: Rule::ResolvesIntoCentral,
-            found_in_tool: tool_shaping_path(source),
+            found_in_tool: tool_by_home_shaped_prefix(source),
         });
     }
     // Rule (i) is the whole answer for a path under this home: one that is
     // not inside a Tool's global skills dir is the operator's own, whether or
     // not it exists right now (a removed worktree is not an import).
     if !source.starts_with(home) && !source.exists() {
-        if let Some(tool) = tool_shaping_path(source) {
+        if let Some(tool) = tool_by_home_shaped_prefix(source) {
             return Some(ImportEvidence {
                 rule: Rule::ToolDirShape,
                 found_in_tool: Some(tool),
@@ -133,16 +136,6 @@ fn resolves_into(path: &Path, canonical_central: Option<&Path>) -> bool {
     std::fs::canonicalize(path).is_ok_and(|resolved| resolved.starts_with(central))
 }
 
-/// Rule (i): the Tool whose global skills dir under `home` holds `path` —
-/// the registry's own answer (`tool_adapters::tool_holding_path`, the
-/// inverse of its deletion rule), narrowed to a strict descendant: a source
-/// that *is* a Tool's skills dir names no skill.
-fn tool_owning_path(home: &Path, path: &Path) -> Option<&'static str> {
-    tool_holding_path(home, path)
-        .filter(|adapter| path != skills_dir_in(home, adapter))
-        .map(|adapter| adapter.key())
-}
-
 /// Rule (iii): `path` has the shape of a Tool's *global* skills-dir entry
 /// under some home — its components contain an adapter's relative global
 /// skills dir as a contiguous run followed by exactly one more component
@@ -153,7 +146,7 @@ fn tool_owning_path(home: &Path, path: &Path) -> Option<&'static str> {
 /// run preceded by a project directory is not this rule's business.
 /// Separators are normalised so Windows spellings match. First adapter in
 /// registry order wins when Tools share a directory.
-fn tool_shaping_path(path: &Path) -> Option<&'static str> {
+fn tool_by_home_shaped_prefix(path: &Path) -> Option<&'static str> {
     let normalised = path.to_string_lossy().replace('\\', "/");
     let components: Vec<&str> = normalised.split('/').filter(|c| !c.is_empty()).collect();
     default_tool_adapters()
