@@ -8,6 +8,51 @@ use crate::core::sync_engine::remove_path_any;
 use error::GitCloneFailureKind;
 
 #[test]
+fn acquisition_skips_cross_the_wire_and_count_as_skipped_not_failed() {
+    use crate::core::{
+        refresh::{RefreshReport, SkillRefreshOutcome},
+        skill_update::UpdateSkip,
+    };
+    for (reason, wire) in [
+        (UpdateSkip::SkillGone, "skill_gone"),
+        (UpdateSkip::StaleAcquisition, "stale_acquisition"),
+    ] {
+        let dto = to_refresh_report_dto(RefreshReport {
+            skills: vec![SkillRefreshOutcome {
+                skill_id: "s1".into(),
+                skill_name: "alpha".into(),
+                status: SkillRefreshStatus::SkippedAcquisition { reason },
+            }],
+        });
+        assert_eq!(
+            (dto.skipped, dto.failed, dto.refreshed, dto.target_failures),
+            (1, 0, 0, 0)
+        );
+        assert_eq!(
+            serde_json::to_value(&dto.skills[0].status).unwrap(),
+            serde_json::json!({ "status": "skipped_acquisition", "reason": wire })
+        );
+    }
+}
+
+#[test]
+fn shared_edit_update_target_mapper_preserves_typed_failure() {
+    let dto = to_propagation_target_dto(crate::core::propagation::PropagationOutcome {
+        scope: PropagationScope::Global {
+            tool: "cursor".into(),
+        },
+        status: PropagationStatus::Failed {
+            error: anyhow::anyhow!(SignalError::CentralPathMissing {
+                path: "central".into()
+            }),
+        },
+    });
+    assert!(
+        matches!(dto.status, PropagationStatusDto::Failed { error: CommandError::CentralPathMissing { path } } if path == "central")
+    );
+}
+
+#[test]
 fn git_repoint_refusals_cross_the_wire_as_typed_errors() {
     for (signal, expected) in [
         (

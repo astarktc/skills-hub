@@ -99,16 +99,7 @@ pub fn repoint_and_update(
         cancel,
         now,
         on_progress,
-        &|_, _| {
-            Ok(super::skill_update::UpdateRequest {
-                expected: record.clone(),
-                record: record.clone(),
-                bytes: super::skill_update::UpdateBytes::LocalFolder {
-                    path: new_source.to_path_buf(),
-                },
-                repoint: true,
-            })
-        },
+        &|_, _| super::skill_update::UpdateRequest::local(record.clone(), new_source, true),
     )
 }
 
@@ -133,11 +124,7 @@ fn validated_local_repoint(
             tool: holder.key().to_string(),
         });
     }
-    let updated = SkillRecord {
-        source_ref: Some(new_source.to_string_lossy().to_string()),
-        ..record
-    };
-    Ok(updated)
+    Ok(record)
 }
 
 /// Detach a `local` skill from its source folder: it becomes `imported` —

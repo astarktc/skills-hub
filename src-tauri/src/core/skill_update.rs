@@ -28,7 +28,7 @@ pub(crate) enum UpdateBytes {
         revision: Option<String>,
     },
     LocalFolder {
-        path: PathBuf,
+        staged: StagingDir,
     },
     EditInPlace {
         clear: bool,
@@ -46,6 +46,42 @@ pub(crate) struct UpdateRequest {
     pub record: SkillRecord,
     pub bytes: UpdateBytes,
     pub repoint: bool,
+}
+
+impl UpdateRequest {
+    /// Local byte adapter: stage outside the guard, just like git acquisition.
+    /// A Re-point proposal is only persisted by apply after staging succeeds.
+    pub(crate) fn local(record: SkillRecord, source: &Path, repoint: bool) -> Result<Self> {
+        if !source.exists() {
+            anyhow::bail!(SignalError::SourcePathMissing {
+                path: source.to_string_lossy().into_owned()
+            });
+        }
+        let central = Path::new(&record.central_path);
+        let restore = !central.exists();
+        let parent = central.parent().context("invalid central path")?;
+        ensure_central_repo(parent)?;
+        let staged = StagingDir::new_in(parent);
+        copy_dir_recursive(source, staged.path())?;
+        let expected = record.clone();
+        let mut record = record;
+        if repoint {
+            record.source_ref = Some(source.to_string_lossy().into_owned());
+        }
+        Ok(Self {
+            expected,
+            record,
+            repoint,
+            bytes: if restore {
+                UpdateBytes::RestoreRebuild {
+                    staged,
+                    revision: None,
+                }
+            } else {
+                UpdateBytes::LocalFolder { staged }
+            },
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,15 +141,7 @@ pub(crate) fn apply_unlocked(
             let (staged, revision) = match bytes {
                 UpdateBytes::GitAcquired { staged, revision }
                 | UpdateBytes::RestoreRebuild { staged, revision } => (staged, revision),
-                UpdateBytes::LocalFolder { path } => {
-                    let parent = Path::new(&current.central_path)
-                        .parent()
-                        .context("invalid central path")?;
-                    ensure_central_repo(parent)?;
-                    let staged = StagingDir::new_in(parent);
-                    copy_dir_recursive(&path, staged.path())?;
-                    (staged, None)
-                }
+                UpdateBytes::LocalFolder { staged } => (staged, None),
                 UpdateBytes::EditInPlace { .. } => unreachable!(),
             };
             finalize_update(store, &current, staged, revision, |updated| {
@@ -162,6 +190,11 @@ pub(crate) fn acquire_update(
         anyhow::bail!(not_refreshable(&record));
     }
 
+    if Provenance::parse(&record.source_type) == Some(Provenance::Local) {
+        let source = PathBuf::from(record.source_ref.as_ref().context("missing local source")?);
+        return UpdateRequest::local(record, &source, false);
+    }
+
     let central_path = PathBuf::from(record.central_path.clone());
     let restore = !central_path.exists();
     let central_parent = central_path
@@ -176,7 +209,7 @@ pub(crate) fn acquire_update(
     let staged = StagingDir::new_in(&central_parent);
     let staging_dir = staged.path().to_path_buf();
 
-    let mut new_revision: Option<String> = None;
+    let new_revision;
 
     match Provenance::parse(&record.source_type) {
         Some(Provenance::Git) => {
@@ -229,34 +262,14 @@ pub(crate) fn acquire_update(
             // resolved path into the record, including legacy backfills.
             record.source_subpath = acquired.resolved_subpath.filter(|subpath| subpath != ".");
         }
-        Some(Provenance::Local) => {
-            let source = record
-                .source_ref
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("missing source_ref for local skill"))?;
-            let source_path = PathBuf::from(source);
-            if !source_path.exists() {
-                anyhow::bail!(SignalError::SourcePathMissing {
-                    path: source_path.to_string_lossy().into_owned()
-                });
-            }
-            if restore {
-                copy_dir_recursive(&source_path, &staging_dir)
-                    .with_context(|| format!("copy {:?} -> {:?}", source_path, staging_dir))?;
-            }
-        }
-        // Excluded by the predicate above; restated so the match is total.
-        Some(Provenance::Imported) | None => anyhow::bail!(not_refreshable(&record)),
+        // Local returned above; imported/unknown were refused by admission.
+        _ => anyhow::bail!(not_refreshable(&record)),
     }
 
     let bytes = if restore {
         UpdateBytes::RestoreRebuild {
             staged,
             revision: new_revision,
-        }
-    } else if Provenance::parse(&record.source_type) == Some(Provenance::Local) {
-        UpdateBytes::LocalFolder {
-            path: PathBuf::from(record.source_ref.as_ref().context("missing local source")?),
         }
     } else {
         UpdateBytes::GitAcquired {

@@ -251,7 +251,7 @@ fn every_byte_adapter_settles_and_reports_propagation() {
             "local" => {
                 let path = PathBuf::from(record.source_ref.as_ref().unwrap());
                 fs::write(path.join("SKILL.md"), "new local").unwrap();
-                request.bytes = UpdateBytes::LocalFolder { path };
+                request = UpdateRequest::local(record.clone(), &path, false).unwrap();
             }
             "edit" => {
                 fs::write(Path::new(&record.central_path).join("SKILL.md"), "new edit").unwrap();
@@ -297,6 +297,32 @@ fn every_byte_adapter_settles_and_reports_propagation() {
 }
 
 #[test]
+fn local_bytes_are_acquired_before_apply_and_do_not_follow_later_source_edits() {
+    let (_dir, paths, store, record) = fixture();
+    let source = Path::new(record.source_ref.as_ref().unwrap());
+    let acquired = acquire_update(
+        &paths,
+        &store,
+        &record.id,
+        None,
+        &StubApi::serving("unused"),
+        0,
+        None,
+    )
+    .unwrap();
+    let expected = fs::read(source.join("SKILL.md")).unwrap();
+    fs::write(source.join("SKILL.md"), "changed after acquisition").unwrap();
+    let outcome =
+        crate::core::mutation_guard::serialized(|| apply_unlocked(&paths, &store, acquired))
+            .unwrap();
+    assert!(matches!(outcome, ApplyOutcome::Updated(_)));
+    assert_eq!(
+        fs::read(Path::new(&record.central_path).join("SKILL.md")).unwrap(),
+        expected
+    );
+}
+
+#[test]
 fn admission_discards_staging_for_deleted_or_changed_sources() {
     for change in ["gone", "ref", "subpath", "type"] {
         let (_dir, paths, store, record) = fixture();
@@ -335,7 +361,7 @@ fn admission_discards_staging_for_deleted_or_changed_sources() {
 #[test]
 fn failed_local_repoint_preserves_source_and_old_bytes() {
     use crate::core::refresh::{RefreshPhase, RefreshPolicy, SkillRefreshStatus};
-    for fault in ["copy", "settle"] {
+    for fault in ["staging", "settle"] {
         let (dir, paths, store, record) = fixture();
         let source = dir.path().join("replacement");
         fs::create_dir(&source).unwrap();
@@ -363,8 +389,17 @@ fn failed_local_repoint_preserves_source_and_old_bytes() {
             None,
             1234,
             |progress| {
-                if fault == "copy" && progress.phase == RefreshPhase::Applying {
-                    fs::remove_dir_all(&source).unwrap();
+                if fault == "staging" && progress.phase == RefreshPhase::Applying {
+                    for entry in fs::read_dir(&paths.central_dir).unwrap() {
+                        let entry = entry.unwrap();
+                        if entry
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with(".skills-hub-staging-")
+                        {
+                            fs::remove_dir_all(entry.path()).unwrap();
+                        }
+                    }
                 }
             },
         )
@@ -403,8 +438,20 @@ fn admission_preserves_current_non_source_fields() {
 }
 
 #[test]
-fn restore_rebuilds_the_central_copy_and_its_dangling_link() {
-    let (_dir, paths, store, record) = fixture();
+fn git_restore_rebuilds_the_central_copy_and_its_dangling_link() {
+    let (_dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+    let installed = crate::core::installer::install_git_skill_from_selection_with(
+        &paths,
+        &store,
+        "https://github.com/owner/repo/tree/main/skills/a",
+        "skills/a",
+        None,
+        None,
+        &StubApi::serving("first"),
+    )
+    .unwrap();
+    let record = store.get_skill_by_id(&installed.skill_id).unwrap().unwrap();
     let adapter = crate::core::tool_adapters::adapter_by_key("claude_code").unwrap();
     fs::create_dir_all(paths.home.join(adapter.relative_detect_dir)).unwrap();
     let target = paths.home.join("linked");
@@ -442,6 +489,7 @@ fn restore_rebuilds_the_central_copy_and_its_dangling_link() {
         panic!("restore skipped")
     };
     assert_eq!(outcome.propagation.targets.len(), 1);
+    assert_eq!(outcome.source_revision.as_deref(), Some("next"));
     assert!(target.join("SKILL.md").is_file());
     assert_eq!(
         store
