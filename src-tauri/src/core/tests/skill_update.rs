@@ -333,6 +333,59 @@ fn admission_discards_staging_for_deleted_or_changed_sources() {
 }
 
 #[test]
+fn failed_local_repoint_preserves_source_and_old_bytes() {
+    use crate::core::refresh::{RefreshPhase, RefreshPolicy, SkillRefreshStatus};
+    for fault in ["copy", "settle"] {
+        let (dir, paths, store, record) = fixture();
+        let source = dir.path().join("replacement");
+        fs::create_dir(&source).unwrap();
+        fs::write(
+            source.join("SKILL.md"),
+            "---\nname: alpha\n---\nreplacement\n",
+        )
+        .unwrap();
+        let before = fs::read(Path::new(&record.central_path).join("SKILL.md")).unwrap();
+        let conn = rusqlite::Connection::open(store.db_path()).unwrap();
+        if fault == "settle" {
+            conn.execute_batch(
+                "CREATE TRIGGER fail_repoint BEFORE INSERT ON skills
+                WHEN NEW.source_ref != (SELECT source_ref FROM skills WHERE id = NEW.id)
+                BEGIN SELECT RAISE(ABORT, 'test failed repoint'); END;",
+            )
+            .unwrap();
+        }
+        let report = crate::core::unlocatable::repoint_and_update(
+            &paths,
+            &store,
+            &record.id,
+            &source,
+            RefreshPolicy::default(),
+            None,
+            1234,
+            |progress| {
+                if fault == "copy" && progress.phase == RefreshPhase::Applying {
+                    fs::remove_dir_all(&source).unwrap();
+                }
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(report.skills[0].status, SkillRefreshStatus::Failed { .. }),
+            "{report:?}"
+        );
+        assert_eq!(
+            format!("{:?}", store.get_skill_by_id(&record.id).unwrap().unwrap()),
+            format!("{record:?}")
+        );
+        assert_eq!(
+            fs::read(Path::new(&record.central_path).join("SKILL.md")).unwrap(),
+            before
+        );
+        assert!(store.list_skill_targets(&record.id).unwrap().is_empty());
+    }
+}
+
+#[test]
 fn admission_preserves_current_non_source_fields() {
     let (_dir, paths, store, record) = fixture();
     let request = staged_request(&paths, &record);
