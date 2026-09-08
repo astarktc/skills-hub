@@ -216,7 +216,9 @@ detail: string } | { code: "SYMLINK_ESCAPES_REPO";
 /**  Repo-relative path of the symlink that was refused. */
 subpath: string; 
 /**  The link's raw target (absolute, or climbing out of the repository). */
-target: string } | { code: "NOT_REFRESHABLE"; 
+target: string } | { code: "SYMLINK_CHAIN_TOO_DEEP"; 
+/**  Repo-relative path where the upstream chain exceeded the hop bound. */
+subpath: string } | { code: "NOT_REFRESHABLE"; 
 /**  The Managed skill that has no external source (imported provenance). */
 name: string } | { code: "LOCAL_SOURCE_INSIDE_TOOL_DIR"; 
 /**  The refused folder (inside a Tool's global skills directory). */

@@ -194,6 +194,15 @@ describe("describeCommandError", () => {
     );
   });
 
+  it("shows the bounded chain's subpath for SYMLINK_CHAIN_TOO_DEEP", () => {
+    expect(
+      describeCommandError(
+        { code: "SYMLINK_CHAIN_TOO_DEEP", subpath: "skills/alias-9" },
+        t,
+      ),
+    ).toBe("errors.symlinkChainTooDeep\n\nskills/alias-9");
+  });
+
   it("names the skill for NOT_REFRESHABLE", () => {
     expect(
       describeCommandError({ code: "NOT_REFRESHABLE", name: "taken-over" }, t),

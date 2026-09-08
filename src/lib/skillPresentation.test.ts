@@ -10,6 +10,10 @@ import {
   sourceKind,
   toolLabel,
   unlocatableRepairs,
+  UNLOCATABLE_STATE_KEY,
+  UNLOCATABLE_TOOLTIP_KEY,
+  UNLOCATABLE_REPAIR_KEY,
+  SKIPPED_REASON_KEY,
   type ImportVariantFields,
   type SkillPresentationFields,
 } from "./skillPresentation";
@@ -28,6 +32,28 @@ const skill = (
 // A translator that makes the key and its interpolation visible.
 const t = (key: string, opts?: Record<string, unknown>) =>
   opts ? `${key}(${JSON.stringify(opts)})` : key;
+
+describe("unlocatable translation maps", () => {
+  it("maps wire states and repairs to presentation keys", () => {
+    expect(UNLOCATABLE_STATE_KEY).toEqual({
+      source_missing: "unlocatable.sourceMissing",
+      central_missing: "unlocatable.centralMissing",
+    });
+    expect(UNLOCATABLE_TOOLTIP_KEY).toEqual({
+      source_missing: "unlocatable.sourceMissingTooltip",
+      central_missing: "unlocatable.centralMissingTooltip",
+    });
+    expect(UNLOCATABLE_REPAIR_KEY).toEqual({
+      repoint: "unlocatable.repoint",
+      detach: "unlocatable.detach",
+      restore: "unlocatable.restore",
+    });
+    expect(SKIPPED_REASON_KEY).toEqual({
+      source_missing: "errors.refreshSkippedSourceMissing",
+      central_missing: "errors.refreshSkippedCentralMissing",
+    });
+  });
+});
 
 describe("sourceKind", () => {
   it("reads git from the source type", () => {

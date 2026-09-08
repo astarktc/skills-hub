@@ -35,6 +35,7 @@ const COMMAND_ERROR_CODE_MAP = {
   SUBPATH_MISSING: true,
   REVEAL_LOG_FAILED: true,
   SYMLINK_ESCAPES_REPO: true,
+  SYMLINK_CHAIN_TOO_DEEP: true,
   NOT_REFRESHABLE: true,
   LOCAL_SOURCE_INSIDE_TOOL_DIR: true,
   OTHER: true,
@@ -151,6 +152,8 @@ export function describeCommandError(
         subpath: e.subpath,
         target: e.target,
       });
+    case "SYMLINK_CHAIN_TOO_DEEP":
+      return withDetail(t("errors.symlinkChainTooDeep"), e.subpath);
     case "NOT_REFRESHABLE":
       return t("errors.notRefreshable", { name: e.name });
     case "LOCAL_SOURCE_INSIDE_TOOL_DIR":

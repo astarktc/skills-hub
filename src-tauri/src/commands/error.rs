@@ -124,6 +124,10 @@ pub enum CommandError {
         /// The link's raw target (absolute, or climbing out of the repository).
         target: String,
     },
+    SymlinkChainTooDeep {
+        /// Repo-relative path where the upstream chain exceeded the hop bound.
+        subpath: String,
+    },
     NotRefreshable {
         /// The Managed skill that has no external source (imported provenance).
         name: String,
@@ -258,6 +262,9 @@ impl From<SignalError> for CommandError {
             SignalError::RevealLogFailed { detail } => CommandError::RevealLogFailed { detail },
             SignalError::SymlinkEscapesRepo { subpath, target } => {
                 CommandError::SymlinkEscapesRepo { subpath, target }
+            }
+            SignalError::SymlinkChainTooDeep { subpath } => {
+                CommandError::SymlinkChainTooDeep { subpath }
             }
             SignalError::NotRefreshable { name } => CommandError::NotRefreshable { name },
             SignalError::LocalSourceInsideToolDir { path, tool } => {

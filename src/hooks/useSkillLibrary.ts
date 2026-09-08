@@ -4,9 +4,9 @@ import type {
   RefreshProgressDto,
   RefreshReportDto,
   RemovalReportDto,
-  UnlocatableState,
 } from "../components/skills/types";
 import { invokeTauri, isTauri } from "../lib/tauri";
+import { SKIPPED_REASON_KEY } from "../lib/skillPresentation";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type {
   ActionErrorEntry,
@@ -15,12 +15,6 @@ import type {
   StatusReporter,
   TranslateFn,
 } from "./useStatusReporter";
-
-/** The panel row's message for a skill Refresh (all) skipped, by state. */
-const SKIPPED_REASON_KEY: Record<UnlocatableState, string> = {
-  source_missing: "errors.refreshSkippedSourceMissing",
-  central_missing: "errors.refreshSkippedCentralMissing",
-};
 
 /** The `{skill_id, name, source_path}` batch item for a managed skill. */
 const toSyncItem = (skill: ManagedSkill) => ({

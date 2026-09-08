@@ -21,6 +21,9 @@ import {
   skillSourceLabel,
   sourceKind,
   unlocatableRepairs,
+  UNLOCATABLE_STATE_KEY,
+  UNLOCATABLE_TOOLTIP_KEY,
+  UNLOCATABLE_REPAIR_KEY,
   type UnlocatableRepair,
 } from "../../lib/skillPresentation";
 
@@ -92,7 +95,7 @@ const SkillCard = ({
   };
   const repairs = unlocatableRepairs(skill).map((repair) => ({
     key: repair,
-    label: t(`unlocatable.${repair}`),
+    label: t(UNLOCATABLE_REPAIR_KEY[repair]),
     onClick: repairHandlers[repair],
   }));
 
@@ -187,11 +190,11 @@ const SkillCard = ({
           <div
             className="skill-unlocatable"
             role="status"
-            title={t(`unlocatable.${unlocatable}Tooltip`)}
+            title={t(UNLOCATABLE_TOOLTIP_KEY[unlocatable])}
           >
             <span className="unlocatable-badge">
               <AlertTriangle size={12} aria-hidden="true" />
-              {t(`unlocatable.${unlocatable}`)}
+              {t(UNLOCATABLE_STATE_KEY[unlocatable])}
             </span>
             {repairs.map((repair) => (
               <button

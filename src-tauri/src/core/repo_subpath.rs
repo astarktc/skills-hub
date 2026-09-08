@@ -6,7 +6,7 @@
 //! subpath" is. One link resolver ([`LinkChain`]) serves both acquisition
 //! adapters (the sparse clone and the GitHub Contents API), so an upstream
 //! that publishes a skill as an in-repo symlink is followed by one bounded
-//! rule with one typed refusal, wherever the bytes come from.
+//! rule with typed refusals, wherever the bytes come from.
 
 use std::path::Path;
 
@@ -66,15 +66,15 @@ impl LinkChain {
     /// Refuses, typed ([`SignalError::SymlinkEscapesRepo`]), a target that is
     /// absolute, contains a backslash (only `/` separates here, so a `\` in
     /// a segment would be a traversal once joined on Windows), or resolves
-    /// to or above the repository root; refuses, plain, the hop past the
-    /// bound. The resolved path is logged as diagnostics — a
-    /// caller records the alias it was asked for, never this.
+    /// to or above the repository root; refuses the hop past the bound with
+    /// [`SignalError::SymlinkChainTooDeep`]. The resolved path is logged as
+    /// diagnostics — a caller records the alias it was asked for, never this.
     pub(crate) fn follow(&mut self, link_subpath: &str, target: &str) -> Result<String> {
         self.hops += 1;
         if self.hops > MAX_LINK_DEPTH {
-            anyhow::bail!(
-                "symlink chain at {link_subpath} exceeds {MAX_LINK_DEPTH} links (target: {target})"
-            );
+            anyhow::bail!(SignalError::SymlinkChainTooDeep {
+                subpath: link_subpath.to_string(),
+            });
         }
         let refused = || SignalError::SymlinkEscapesRepo {
             subpath: link_subpath.to_string(),
@@ -269,10 +269,11 @@ mod tests {
         let err = chain
             .follow("l8", "l9")
             .expect_err("the hop past the bound is refused");
-        assert!(
-            err.downcast_ref::<SignalError>().is_none(),
-            "a too-deep chain is not the escape condition: {err:#}"
+        assert_eq!(
+            err.downcast_ref::<SignalError>(),
+            Some(&SignalError::SymlinkChainTooDeep {
+                subpath: "l8".to_string(),
+            })
         );
-        assert!(format!("{err:#}").contains("l8"), "names the link: {err:#}");
     }
 }

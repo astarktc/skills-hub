@@ -75,6 +75,9 @@ pub enum SignalError {
     /// to follow it. Nothing at the target is read. Owned by
     /// `repo_subpath::LinkChain`.
     SymlinkEscapesRepo { subpath: String, target: String },
+    /// An upstream symlink chain exceeded acquisition's hop bound at this
+    /// repo-relative subpath. Owned by `repo_subpath::LinkChain`.
+    SymlinkChainTooDeep { subpath: String },
     /// An Update was asked of a skill that has no external source to
     /// re-acquire from (`imported` provenance: the central copy is its
     /// truth). Owned by `core::provenance::is_refreshable`.
@@ -149,6 +152,12 @@ impl fmt::Display for SignalError {
                 write!(
                     f,
                     "symlink at {subpath} escapes the repository (target: {target})"
+                )
+            }
+            SignalError::SymlinkChainTooDeep { subpath } => {
+                write!(
+                    f,
+                    "symlink chain exceeds the acquisition depth bound at {subpath}"
                 )
             }
             SignalError::NotRefreshable { name } => {

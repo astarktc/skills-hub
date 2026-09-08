@@ -6,6 +6,8 @@
  * function in.
  */
 
+import type { UnlocatableState } from "../components/skills/types";
+
 /** The Managed-skill fields presentation needs. Keeps the module testable. */
 export type SkillPresentationFields = {
   source_type: string;
@@ -233,13 +235,36 @@ export function defaultImportVariantPath(group: {
 
 /** The Unlocatable-skill fields the repair rule reads (all backend-owned). */
 export type UnlocatableRepairFields = {
-  unlocatable: "source_missing" | "central_missing" | null;
+  unlocatable: UnlocatableState | null;
   refreshable: boolean;
   detachable: boolean;
 };
 
 /** One repair the card offers an Unlocatable skill; Remove is always there. */
 export type UnlocatableRepair = "repoint" | "detach" | "restore";
+
+/** Wire states and repairs meet the i18n catalog only in these maps. */
+export const UNLOCATABLE_STATE_KEY = {
+  source_missing: "unlocatable.sourceMissing",
+  central_missing: "unlocatable.centralMissing",
+} satisfies Record<UnlocatableState, string>;
+
+export const UNLOCATABLE_TOOLTIP_KEY = {
+  source_missing: "unlocatable.sourceMissingTooltip",
+  central_missing: "unlocatable.centralMissingTooltip",
+} satisfies Record<UnlocatableState, string>;
+
+export const UNLOCATABLE_REPAIR_KEY = {
+  repoint: "unlocatable.repoint",
+  detach: "unlocatable.detach",
+  restore: "unlocatable.restore",
+} satisfies Record<UnlocatableRepair, string>;
+
+/** The panel row's message for a skill Refresh (all) skipped, by state. */
+export const SKIPPED_REASON_KEY = {
+  source_missing: "errors.refreshSkippedSourceMissing",
+  central_missing: "errors.refreshSkippedCentralMissing",
+} satisfies Record<UnlocatableState, string>;
 
 /**
  * Which repairs an Unlocatable skill is offered, in display order. The

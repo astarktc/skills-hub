@@ -180,11 +180,11 @@ export const resources = {
           "Imported from {{tool}}. The copy in Skills Hub is the source of truth — there is nothing to update from.",
       },
       unlocatable: {
-        source_missing: "Source folder missing",
-        source_missingTooltip:
+        sourceMissing: "Source folder missing",
+        sourceMissingTooltip:
           "The folder this skill is updated from is gone. Re-point it at the folder's new location, detach it (the copy in Skills Hub becomes the source of truth), or remove it.",
-        central_missing: "Central copy missing",
-        central_missingTooltip:
+        centralMissing: "Central copy missing",
+        centralMissingTooltip:
           "The copy in Skills Hub's library is gone, so every tool's link to it is dangling. Restore it from its source, or remove it.",
         repoint: "Re-point",
         detach: "Detach",
@@ -302,6 +302,8 @@ export const resources = {
         revealLogFailed: "Could not open the log folder.",
         symlinkEscapesRepo:
           "Refused to follow the symlink at {{subpath}} in the repository: its target ({{target}}) points outside the repository.",
+        symlinkChainTooDeep:
+          "Could not acquire this skill: its repository symlink chain is too deep or contains a cycle. Ask the repository maintainer to shorten or fix the chain:",
         notRefreshable:
           '"{{name}}" is managed here: it was imported from a tool and has no source to update from.',
         localSourceInsideToolDir:
@@ -734,11 +736,11 @@ export const resources = {
           "导入自 {{tool}}。Skills Hub 中的副本即为来源，没有可供更新的内容。",
       },
       unlocatable: {
-        source_missing: "源目录缺失",
-        source_missingTooltip:
+        sourceMissing: "源目录缺失",
+        sourceMissingTooltip:
           "该 Skill 用于更新的目录已不存在。可将其重新指向目录的新位置、分离（Skills Hub 中的副本成为来源），或移除。",
-        central_missing: "中央副本缺失",
-        central_missingTooltip:
+        centralMissing: "中央副本缺失",
+        centralMissingTooltip:
           "Skills Hub 库中的副本已不存在，所有工具指向它的链接均已失效。可从来源恢复，或移除。",
         repoint: "重新指向",
         detach: "分离",
@@ -843,6 +845,8 @@ export const resources = {
         revealLogFailed: "无法打开日志文件夹。",
         symlinkEscapesRepo:
           "已拒绝跟随仓库中 {{subpath}} 处的符号链接：其目标（{{target}}）指向仓库之外。",
+        symlinkChainTooDeep:
+          "无法获取该 Skill：仓库中的符号链接链过深或存在循环。请联系仓库维护者缩短或修复链接链：",
         notRefreshable:
           "“{{name}}” 由 Skills Hub 管理：它是从工具目录导入的，没有可供更新的来源。",
         localSourceInsideToolDir:

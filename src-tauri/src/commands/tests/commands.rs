@@ -133,6 +133,23 @@ fn from_anyhow_recovers_symlink_escapes_repo_through_context() {
 }
 
 #[test]
+fn symlink_chain_too_deep_serializes_its_subpath_through_context() {
+    let err = anyhow::Error::new(SignalError::SymlinkChainTooDeep {
+        subpath: "skills/alias-9".to_string(),
+    })
+    .context("acquire skill");
+
+    let json = serde_json::to_value(CommandError::from_anyhow(err)).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "code": "SYMLINK_CHAIN_TOO_DEEP",
+            "subpath": "skills/alias-9",
+        })
+    );
+}
+
+#[test]
 fn from_anyhow_recovers_global_sync_errors() {
     let err = anyhow::Error::new(GlobalSyncError::ToolNotWritable {
         tool_display_name: "Cursor".to_string(),
