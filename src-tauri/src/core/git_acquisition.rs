@@ -220,8 +220,9 @@ pub fn acquire(req: &AcquireRequest, api: &dyn GithubApi) -> Result<Acquired> {
     check_cancelled(req.cancel)?;
 
     let source = resolve_tree_source(req.source, req.stored_subpath, api);
-    // An explicit URL root (including a branch consuming the whole tree path)
-    // is a selection, not an invitation to discover a nested skill by name.
+    // An explicit URL root (e.g. /blob/main/SKILL.md) is a selection,
+    // not an invitation to discover a nested skill by name. A branch consuming
+    // the whole tree path resolves to None, so name discovery still runs.
     let intent = match req.intent {
         SkillIntent::NamedSkill(_) | SkillIntent::NamedSkillOrWholeRepo(_)
             if source.subpath.as_deref() == Some(".") =>
@@ -309,12 +310,9 @@ pub(crate) fn resolve_tree_source(
         .max_by_key(|branch| branch.len());
     if let Some(branch) = branch {
         resolved.branch = Some(branch.clone());
-        resolved.subpath = Some(
-            tree_path
-                .strip_prefix(&format!("{branch}/"))
-                .unwrap_or(".")
-                .to_string(),
-        );
+        resolved.subpath = tree_path
+            .strip_prefix(&format!("{branch}/"))
+            .map(str::to_string);
     } else {
         log::debug!("[acquire] no matching branch for {tree_path}; keeping first-segment split");
     }

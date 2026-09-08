@@ -414,6 +414,62 @@ fn stored_suffix_resolves_without_discovery_and_requires_a_segment_boundary() {
 }
 
 #[test]
+fn slash_branch_without_subpath_still_discovers_named_skill() {
+    let repo = two_skill_repo();
+    git(&["branch", "feature/x"], repo.path());
+    let mut source =
+        super::parse_full_github_url("https://github.com/owner/repo/tree/feature/x").unwrap();
+    source.clone_url = repo.path().to_string_lossy().into_owned();
+    let api = StubApi {
+        refs: vec!["feature/x".into()],
+        ..Default::default()
+    };
+    let resolved = super::resolve_tree_source(&source, None, &api);
+    assert_eq!(resolved.branch.as_deref(), Some("feature/x"));
+    assert_eq!(resolved.subpath, None);
+    for intent in [
+        SkillIntent::NamedSkill(Some("beta")),
+        SkillIntent::NamedSkillOrWholeRepo("beta"),
+    ] {
+        let (_f, cache, dest) = Fixture::new();
+        let acquired = acquire(&request(&source, intent, &dest, &cache), &api).unwrap();
+        assert_eq!(acquired.resolved_subpath.as_deref(), Some("skills/beta"));
+        assert!(fs::read_to_string(dest.join("SKILL.md"))
+            .unwrap()
+            .contains("name: beta"));
+    }
+}
+
+#[test]
+fn explicit_blob_root_does_not_discover_nested_named_skill() {
+    let repo = two_skill_repo();
+    let mut source =
+        super::parse_full_github_url("https://github.com/owner/repo/blob/main/SKILL.md").unwrap();
+    source.clone_url = repo.path().to_string_lossy().into_owned();
+    let api = StubApi::default();
+    assert_eq!(
+        super::resolve_tree_source(&source, None, &api)
+            .subpath
+            .as_deref(),
+        Some(".")
+    );
+    let (_f, cache, dest) = Fixture::new();
+    let acquired = acquire(
+        &request(
+            &source,
+            SkillIntent::NamedSkill(Some("beta")),
+            &dest,
+            &cache,
+        ),
+        &api,
+    )
+    .unwrap();
+    assert_eq!(acquired.resolved_subpath, None);
+    assert!(dest.join("skills/alpha/SKILL.md").is_file());
+    assert!(dest.join("skills/beta/SKILL.md").is_file());
+}
+
+#[test]
 fn single_segment_branch_has_no_discovery() {
     let source = super::parse_full_github_url("https://github.com/owner/repo/tree/main").unwrap();
     let api = StubApi::default();
