@@ -286,6 +286,48 @@ pub fn parse_github_repo(clone_url: &str) -> Option<(String, String)> {
     Some((parts[0].to_string(), parts[1].to_string()))
 }
 
+/// Discover branch names for an ambiguous GitHub tree URL. Acquisition owns
+/// the best-effort policy; HTTP failures retain the same classification as SHA lookup.
+pub fn fetch_matching_refs(
+    owner: &str,
+    repo: &str,
+    prefix: &str,
+    token: Option<&str>,
+) -> Result<Vec<String>> {
+    let url =
+        format!("https://api.github.com/repos/{owner}/{repo}/git/matching-refs/heads/{prefix}");
+    matching_refs_at(&url, token)
+}
+
+fn matching_refs_at(url: &str, token: Option<&str>) -> Result<Vec<String>> {
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .context("build HTTP client")?;
+    let mut req = client
+        .get(url)
+        .header("User-Agent", "skills-hub")
+        .header("Accept", "application/vnd.github.v3+json");
+    if let Some(token) = token {
+        req = req.header("Authorization", format!("Bearer {token}"));
+    }
+    let resp = req
+        .send()
+        .with_context(|| format!("request matching refs: {url}"))?;
+    let resp = check_github_response(resp, url)?;
+    #[derive(serde::Deserialize)]
+    struct BranchRef {
+        r#ref: String,
+    }
+    let refs: Vec<BranchRef> = resp
+        .json()
+        .with_context(|| format!("parse matching refs: {url}"))?;
+    Ok(refs
+        .into_iter()
+        .filter_map(|entry| entry.r#ref.strip_prefix("refs/heads/").map(str::to_string))
+        .collect())
+}
+
 /// Fetch the HEAD commit SHA for a branch without cloning.
 /// Uses GitHub API: GET /repos/{owner}/{repo}/commits/{branch}
 /// Returns the 40-char hex SHA string.
@@ -332,6 +374,43 @@ pub fn fetch_branch_sha(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn matching_refs_uses_auth_and_extracts_only_heads() {
+        let mut server = mockito::Server::new();
+        let mock = server.mock("GET", "/repos/o/r/git/matching-refs/heads/feature")
+            .match_header("authorization", "Bearer test-token")
+            .match_header("user-agent", "skills-hub")
+            .match_header("accept", "application/vnd.github.v3+json")
+            .with_status(200)
+            .with_body(r#"[{"ref":"refs/heads/feature"},{"ref":"refs/heads/feature/x"},{"ref":"refs/tags/feature"}]"#)
+            .expect(1).create();
+        let refs = matching_refs_at(
+            &format!("{}/repos/o/r/git/matching-refs/heads/feature", server.url()),
+            Some("test-token"),
+        )
+        .unwrap();
+        assert_eq!(refs, ["feature", "feature/x"]);
+        mock.assert();
+    }
+
+    #[test]
+    fn matching_refs_preserves_http_error_classification() {
+        let mut server = mockito::Server::new();
+        for status in [403, 404, 500] {
+            let mock = server
+                .mock("GET", "/refs")
+                .with_status(status)
+                .expect(1)
+                .create();
+            let err = matching_refs_at(&format!("{}/refs", server.url()), None).unwrap_err();
+            assert_eq!(
+                err.downcast_ref::<GithubApiError>().unwrap().status,
+                status as u16
+            );
+            mock.assert();
+        }
+    }
 
     #[test]
     fn parse_github_repo_extracts_owner_and_repo() {

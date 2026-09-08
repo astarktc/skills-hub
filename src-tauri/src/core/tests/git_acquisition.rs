@@ -204,6 +204,8 @@ fn local_source(repo: &Path) -> GitSource {
 #[derive(Default)]
 struct StubApi<'a> {
     sha: String,
+    refs: Vec<String>,
+    refs_error: Option<GithubApiError>,
     /// Failure raised instead of serving the branch SHA.
     sha_error: Option<GithubApiError>,
     /// Failure raised instead of serving the directory download.
@@ -258,6 +260,16 @@ impl StubApi<'_> {
 }
 
 impl GithubApi for StubApi<'_> {
+    fn matching_refs(&self, repo: &GithubRepo, prefix: &str) -> anyhow::Result<Vec<String>> {
+        self.calls
+            .borrow_mut()
+            .push(format!("refs:{}/{}@{}", repo.owner, repo.repo, prefix));
+        if let Some(err) = &self.refs_error {
+            return Err(anyhow::Error::new(err.clone()));
+        }
+        Ok(self.refs.clone())
+    }
+
     fn branch_sha(&self, coords: &GithubCoords) -> anyhow::Result<String> {
         self.calls.borrow_mut().push(format!(
             "sha:{}/{}@{}",
@@ -336,12 +348,168 @@ fn request<'a>(
     AcquireRequest {
         source,
         intent,
+        stored_subpath: None,
         dest,
         cache_dir,
         ttl_ms: FRESH_TTL_MS,
         cancel: None,
         allow_fast_path: true,
     }
+}
+
+#[test]
+fn ambiguous_tree_uses_longest_segment_bounded_branch() {
+    let source =
+        super::parse_full_github_url("https://github.com/owner/repo/tree/feature/x/skills/foo")
+            .unwrap();
+    for refs in [
+        vec!["feature", "feature/x", "feature/x/skill"],
+        vec!["feature/x", "feature"],
+    ] {
+        let api = StubApi {
+            refs: refs.into_iter().map(str::to_string).collect(),
+            ..Default::default()
+        };
+        let resolved = super::resolve_tree_source(&source, None, &api);
+        assert_eq!(resolved.branch.as_deref(), Some("feature/x"));
+        assert_eq!(resolved.subpath.as_deref(), Some("skills/foo"));
+        assert_eq!(api.calls(), ["refs:owner/repo@feature"]);
+    }
+}
+
+#[test]
+fn ambiguous_tree_discovery_failures_keep_parser_split() {
+    let source =
+        super::parse_full_github_url("https://github.com/owner/repo/tree/feature/x/skills/foo")
+            .unwrap();
+    for status in [None, Some(403), Some(404), Some(500)] {
+        let api = StubApi {
+            refs_error: status.map(|status| GithubApiError {
+                status,
+                reset_minutes: None,
+                url: "stub".into(),
+            }),
+            ..Default::default()
+        };
+        let resolved = super::resolve_tree_source(&source, None, &api);
+        assert_eq!(resolved.branch, source.branch);
+        assert_eq!(resolved.subpath, source.subpath);
+        assert_eq!(api.calls().len(), 1);
+    }
+}
+
+#[test]
+fn stored_suffix_resolves_without_discovery_and_requires_a_segment_boundary() {
+    let source =
+        super::parse_full_github_url("https://github.com/owner/repo/tree/feature/x/skills/foo")
+            .unwrap();
+    let api = StubApi::default();
+    let resolved = super::resolve_tree_source(&source, Some("skills/foo"), &api);
+    assert_eq!(resolved.branch.as_deref(), Some("feature/x"));
+    assert_eq!(resolved.subpath.as_deref(), Some("skills/foo"));
+    assert!(api.calls().is_empty());
+    let resolved = super::resolve_tree_source(&source, Some("kills/foo"), &api);
+    assert_eq!(resolved.branch, source.branch);
+    assert_eq!(api.calls().len(), 1);
+}
+
+#[test]
+fn single_segment_branch_has_no_discovery() {
+    let source = super::parse_full_github_url("https://github.com/owner/repo/tree/main").unwrap();
+    let api = StubApi::default();
+    let resolved = super::resolve_tree_source(&source, None, &api);
+    assert_eq!(resolved.branch, source.branch);
+    assert!(api.calls().is_empty());
+}
+
+#[test]
+fn resolved_branch_and_subpath_reach_both_acquisition_adapters() {
+    let repo = fixture_repo(&[("skills/foo/SKILL.md", "---\nname: foo\n---\n")]);
+    git(&["branch", "feature/x"], repo.path());
+    for clone in [false, true] {
+        let (_f, cache, dest) = Fixture::new();
+        let mut source =
+            super::parse_full_github_url("https://github.com/owner/repo/tree/feature/x/skills/foo")
+                .unwrap();
+        source.clone_url = repo.path().to_string_lossy().into_owned();
+        let api = StubApi {
+            refs: vec!["feature".into(), "feature/x".into()],
+            download_error: clone.then(|| GithubApiError {
+                status: 500,
+                reset_minutes: None,
+                url: "stub".into(),
+            }),
+            ..StubApi::serving("sha")
+        };
+        let acquired = acquire(
+            &request(&source, SkillIntent::NamedSkill(None), &dest, &cache),
+            &api,
+        )
+        .unwrap();
+        assert_eq!(acquired.resolved_subpath.as_deref(), Some("skills/foo"));
+        assert!(dest.join("SKILL.md").is_file());
+        assert_eq!(
+            api.calls(),
+            [
+                "refs:owner/repo@feature",
+                "sha:owner/repo@feature/x",
+                "download:skills/foo"
+            ]
+        );
+        assert_eq!(
+            acquired.strategy,
+            if clone {
+                AcquireStrategy::GitClone { sparse: true }
+            } else {
+                AcquireStrategy::GithubApi
+            }
+        );
+    }
+}
+
+#[test]
+fn explicit_selection_is_not_rewritten_even_when_it_equals_the_parsed_url_path() {
+    let (_f, cache, dest) = Fixture::new();
+    let source =
+        super::parse_full_github_url("https://github.com/owner/repo/tree/feature/x/skills/foo")
+            .unwrap();
+    let api = StubApi {
+        refs: vec!["feature/x".into()],
+        ..StubApi::serving("sha")
+    };
+    let acquired = acquire(
+        &request(&source, SkillIntent::Subpath("x/skills/foo"), &dest, &cache),
+        &api,
+    )
+    .unwrap();
+    assert_eq!(acquired.resolved_subpath.as_deref(), Some("x/skills/foo"));
+    assert_eq!(
+        api.calls(),
+        [
+            "refs:owner/repo@feature",
+            "sha:owner/repo@feature/x",
+            "download:x/skills/foo"
+        ]
+    );
+}
+
+#[test]
+fn stored_subpath_request_skips_discovery_but_uses_resolved_branch() {
+    let (_f, cache, dest) = Fixture::new();
+    let source =
+        super::parse_full_github_url("https://github.com/owner/repo/tree/feature/x/skills/foo")
+            .unwrap();
+    let api = StubApi::serving("sha");
+    let req = AcquireRequest {
+        stored_subpath: Some("skills/foo"),
+        ..request(&source, SkillIntent::Subpath("skills/foo"), &dest, &cache)
+    };
+    let acquired = acquire(&req, &api).unwrap();
+    assert_eq!(acquired.resolved_subpath.as_deref(), Some("skills/foo"));
+    assert_eq!(
+        api.calls(),
+        ["sha:owner/repo@feature/x", "download:skills/foo"]
+    );
 }
 
 fn git_cache_root_exists(cache_dir: &Path) -> bool {

@@ -25,6 +25,14 @@ use crate::core::unlocatable::UnlocatableState;
 struct RepointApi;
 
 impl crate::core::git_acquisition::GithubApi for RepointApi {
+    fn matching_refs(
+        &self,
+        _: &crate::core::git_acquisition::GithubRepo,
+        _: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        Ok(vec!["main".into(), "feature/x".into()])
+    }
+
     fn branch_sha(&self, _: &crate::core::git_acquisition::GithubCoords) -> anyhow::Result<String> {
         Ok("new-sha".into())
     }
@@ -42,6 +50,35 @@ impl crate::core::git_acquisition::GithubApi for RepointApi {
         )?;
         Ok(())
     }
+}
+
+#[test]
+fn git_repoint_slash_branch_persists_resolved_path_and_original_url() {
+    let f = git_repoint_fixture();
+    let url = "https://github.com/owner/repo/tree/feature/x/skills/alpha";
+    let report = super::repoint_git_skill_with(
+        &f.paths,
+        &f.store,
+        &f.skill_id,
+        url,
+        RefreshPolicy::default(),
+        None,
+        3000,
+        &RepointApi,
+    )
+    .unwrap();
+    assert!(matches!(
+        report.skills[0].status,
+        SkillRefreshStatus::Refreshed { .. }
+    ));
+    let record = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    assert_eq!(record.source_ref.as_deref(), Some(url));
+    assert_eq!(record.source_subpath.as_deref(), Some("skills/alpha"));
+    assert!(
+        fs::read_to_string(Path::new(&record.central_path).join("SKILL.md"))
+            .unwrap()
+            .contains(url)
+    );
 }
 
 #[test]
@@ -249,6 +286,14 @@ fn git_repoint_honours_auto_sync_reassert_policy() {
 
 struct EmptyRepointApi;
 impl crate::core::git_acquisition::GithubApi for EmptyRepointApi {
+    fn matching_refs(
+        &self,
+        repo: &crate::core::git_acquisition::GithubRepo,
+        prefix: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        RepointApi.matching_refs(repo, prefix)
+    }
+
     fn branch_sha(&self, _: &crate::core::git_acquisition::GithubCoords) -> anyhow::Result<String> {
         Ok("sha".into())
     }
@@ -294,6 +339,14 @@ fn git_repoint_non_skill_directory_never_replaces_a_working_skill() {
 
 struct MissingRepointApi;
 impl crate::core::git_acquisition::GithubApi for MissingRepointApi {
+    fn matching_refs(
+        &self,
+        repo: &crate::core::git_acquisition::GithubRepo,
+        prefix: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        RepointApi.matching_refs(repo, prefix)
+    }
+
     fn branch_sha(&self, _: &crate::core::git_acquisition::GithubCoords) -> anyhow::Result<String> {
         Ok("sha".into())
     }

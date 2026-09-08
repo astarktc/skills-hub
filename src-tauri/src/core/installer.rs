@@ -308,29 +308,21 @@ pub(crate) fn acquire_managed_skill_update_from(
                 .map(|(_, source)| source.clone())
                 .unwrap_or_else(|| parse_github_url(repo_url));
 
-            // Prefer the stored source_subpath (from install time) over the one
-            // the URL names. A legacy record has neither: the acquisition module
-            // matches the skill's name against the repo and reports what it took,
-            // which is the subpath backfilled below.
-            let known_subpath = if source_override.is_some() {
-                source.subpath.clone()
+            // Stored paths are explicit selections. URL paths stay on the source
+            // so acquisition can correct their branch boundary before using them.
+            let intent = if source_override.is_some() {
+                SkillIntent::NamedSkill(Some(&record.name))
+            } else if let Some(subpath) = record.source_subpath.as_deref() {
+                SkillIntent::Subpath(subpath)
             } else {
-                record
-                    .source_subpath
-                    .clone()
-                    .or_else(|| source.subpath.clone())
-            };
-            let skill_name = record.name.clone();
-            let intent = match &known_subpath {
-                Some(subpath) => SkillIntent::Subpath(subpath),
-                None if source_override.is_some() => SkillIntent::NamedSkill(Some(&skill_name)),
-                None => SkillIntent::NamedSkillOrWholeRepo(&skill_name),
+                SkillIntent::NamedSkillOrWholeRepo(&record.name)
             };
 
             let acquired = acquire(
                 &AcquireRequest {
                     source: &source,
                     intent,
+                    stored_subpath: record.source_subpath.as_deref(),
                     dest: &staging_dir,
                     cache_dir: &paths.cache_dir,
                     ttl_ms,
@@ -344,17 +336,10 @@ pub(crate) fn acquire_managed_skill_update_from(
             if let Some((url, _)) = source_override {
                 ensure_installable_skill_dir(&staging_dir)?;
                 record.source_ref = Some(url.to_string());
-                record.source_subpath = known_subpath
-                    .or(acquired.resolved_subpath)
-                    .filter(|subpath| subpath != ".");
-            } else if known_subpath.is_none() {
-                if let Some(resolved) = acquired.resolved_subpath {
-                    // Backfill source_subpath for future updates (carried into the
-                    // refreshed record by finalize_update as well).
-                    record.source_subpath = Some(resolved);
-                    let _ = store.upsert_skill(&record);
-                }
             }
+            // Acquisition owns the branch/path split. Finalize carries this
+            // resolved path into the record, including legacy backfills.
+            record.source_subpath = acquired.resolved_subpath.filter(|subpath| subpath != ".");
         }
         Some(Provenance::Local) => {
             let source = record
@@ -460,7 +445,11 @@ pub fn list_git_skills(
     repo_url: &str,
     target_name: Option<&str>,
 ) -> Result<GitSkillListing> {
-    let parsed = parse_github_url(repo_url);
+    let parsed = super::git_acquisition::resolve_tree_source(
+        &parse_github_url(repo_url),
+        None,
+        &HttpGithubApi::new(super::settings::github_token(store)?),
+    );
     let (repo_dir, _rev) = fetch_through_cache(
         &paths.cache_dir,
         &FetchRequest {
@@ -581,6 +570,7 @@ pub(crate) fn install_git_skill_from_selection_with(
         &AcquireRequest {
             source: &source,
             intent: SkillIntent::Subpath(subpath),
+            stored_subpath: None,
             dest: staged.path(),
             cache_dir: &paths.cache_dir,
             ttl_ms: super::settings::git_cache_ttl_ms(store),
@@ -592,11 +582,7 @@ pub(crate) fn install_git_skill_from_selection_with(
     // The selection has to be a skill, whichever adapter delivered it.
     ensure_installable_skill_dir(staged.path())?;
 
-    let source_subpath = if subpath == "." {
-        None
-    } else {
-        Some(subpath.to_string())
-    };
+    let source_subpath = acquired.resolved_subpath.filter(|subpath| subpath != ".");
     finalize_install(
         store,
         central_dir,
@@ -700,6 +686,7 @@ pub fn clone_for_explore_preview(
         &AcquireRequest {
             source: &source,
             intent: SkillIntent::NamedSkill(skill_name),
+            stored_subpath: None,
             dest: &explore_skill_dir,
             cache_dir: &paths.cache_dir,
             ttl_ms: super::settings::git_cache_ttl_ms(store),

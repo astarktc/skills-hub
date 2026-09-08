@@ -48,7 +48,8 @@ use super::errors::SignalError;
 use super::git_cache::{fetch_through_cache, FetchRequest};
 use super::git_fetcher::symlink_on_path;
 use super::github_download::{
-    download_github_directory, fetch_branch_sha, parse_github_repo, GithubApiError,
+    download_github_directory, fetch_branch_sha, fetch_matching_refs, parse_github_repo,
+    GithubApiError,
 };
 use super::repo_subpath::{normalize_subpath, require_plain_subpath, LinkChain};
 use super::skill_discovery::{discover_skills, DiscoveredSkill};
@@ -103,6 +104,9 @@ pub enum AcquireStrategy {
 pub struct AcquireRequest<'a> {
     pub source: &'a GitSource,
     pub intent: SkillIntent<'a>,
+    /// Previously recorded subpath: a suffix of the URL path fixes its branch split.
+    /// This is a resolution hint, not an override of the requested skill.
+    pub stored_subpath: Option<&'a str>,
     /// Directory the skill's bytes are written into (created as needed).
     pub dest: &'a Path,
     /// App cache root; the git clone cache lives under it.
@@ -150,6 +154,8 @@ impl GithubCoords {
 /// [`HttpGithubApi`] in production, a scripted stub in tests — which is why no
 /// acquisition test needs the network.
 pub trait GithubApi {
+    /// Branch names matching the first segment of an ambiguous tree URL.
+    fn matching_refs(&self, repo: &GithubRepo, prefix: &str) -> Result<Vec<String>>;
     /// HEAD commit SHA of `coords.branch`.
     fn branch_sha(&self, coords: &GithubCoords) -> Result<String>;
     /// Download `coords.subpath` into `dest`.
@@ -174,6 +180,10 @@ impl HttpGithubApi {
 }
 
 impl GithubApi for HttpGithubApi {
+    fn matching_refs(&self, repo: &GithubRepo, prefix: &str) -> Result<Vec<String>> {
+        fetch_matching_refs(&repo.owner, &repo.repo, prefix, self.token.as_deref())
+    }
+
     fn branch_sha(&self, coords: &GithubCoords) -> Result<String> {
         fetch_branch_sha(
             &coords.owner,
@@ -209,6 +219,25 @@ impl GithubApi for HttpGithubApi {
 pub fn acquire(req: &AcquireRequest, api: &dyn GithubApi) -> Result<Acquired> {
     check_cancelled(req.cancel)?;
 
+    let source = resolve_tree_source(req.source, req.stored_subpath, api);
+    // An explicit URL root (including a branch consuming the whole tree path)
+    // is a selection, not an invitation to discover a nested skill by name.
+    let intent = match req.intent {
+        SkillIntent::NamedSkill(_) | SkillIntent::NamedSkillOrWholeRepo(_)
+            if source.subpath.as_deref() == Some(".") =>
+        {
+            SkillIntent::Subpath(".")
+        }
+        intent => intent,
+    };
+    let resolved_req = AcquireRequest {
+        source: &source,
+        intent,
+        ..*req
+    };
+    let req = &resolved_req;
+    check_cancelled(req.cancel)?;
+
     // The subpath both adapters key on: the intent's when it names one, else
     // the one the source URL carried. `"."` is the repo root, not a subpath.
     let known_subpath = match req.intent {
@@ -237,6 +266,59 @@ pub fn acquire(req: &AcquireRequest, api: &dyn GithubApi) -> Result<Acquired> {
     }
 
     clone_path(req, known_subpath).map(|acquired| report(acquired, req))
+}
+
+/// Disambiguate the parser's first-segment split without changing its grammar.
+/// Discovery is best-effort: only the actual byte-acquisition stages may raise
+/// GitHub not-found/rate-limit signals.
+pub(crate) fn resolve_tree_source(
+    source: &GitSource,
+    stored_subpath: Option<&str>,
+    api: &dyn GithubApi,
+) -> GitSource {
+    let mut resolved = source.clone();
+    let (Some(repo), Some(first), Some(rest)) = (&source.api, &source.branch, &source.subpath)
+    else {
+        return resolved;
+    };
+    if rest.is_empty() || rest == "." {
+        return resolved;
+    }
+    let tree_path = format!("{first}/{rest}");
+    if let Some(subpath) = stored_subpath.filter(|path| !path.is_empty() && *path != ".") {
+        let branch = tree_path.strip_suffix(&format!("/{subpath}"));
+        if let Some(branch) = branch.filter(|branch| !branch.is_empty()) {
+            resolved.branch = Some(branch.to_string());
+            resolved.subpath = Some(subpath.to_string());
+            return resolved;
+        }
+    }
+    let refs = match api.matching_refs(repo, first) {
+        Ok(refs) => refs,
+        Err(err) => {
+            log::debug!("[acquire] branch discovery failed; keeping first-segment split: {err:#}");
+            return resolved;
+        }
+    };
+    let branch = refs
+        .iter()
+        .filter(|branch| {
+            !branch.is_empty()
+                && (tree_path == **branch || tree_path.starts_with(&format!("{branch}/")))
+        })
+        .max_by_key(|branch| branch.len());
+    if let Some(branch) = branch {
+        resolved.branch = Some(branch.clone());
+        resolved.subpath = Some(
+            tree_path
+                .strip_prefix(&format!("{branch}/"))
+                .unwrap_or(".")
+                .to_string(),
+        );
+    } else {
+        log::debug!("[acquire] no matching branch for {tree_path}; keeping first-segment split");
+    }
+    resolved
 }
 
 /// One log line per acquisition, naming the adapter that served it.

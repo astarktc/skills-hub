@@ -1082,6 +1082,14 @@ impl StubApi {
 }
 
 impl crate::core::git_acquisition::GithubApi for StubApi {
+    fn matching_refs(
+        &self,
+        _: &crate::core::git_acquisition::GithubRepo,
+        _: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        Ok(vec!["main".into(), "feature/x".into()])
+    }
+
     fn branch_sha(
         &self,
         _coords: &crate::core::git_acquisition::GithubCoords,
@@ -1134,6 +1142,38 @@ fn install_from_selection_uses_the_fast_path_and_records_the_commit_sha() {
         !paths.cache_dir.join("skills-hub-git-cache").exists(),
         "a served fast path must not clone"
     );
+}
+
+#[test]
+fn slash_branch_install_and_update_keep_url_and_resolved_subpath() {
+    let (_dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+    let url = "https://github.com/owner/repo/tree/feature/x/skills/a";
+    let installed = super::install_git_skill_from_selection_with(
+        &paths,
+        &store,
+        url,
+        "skills/a",
+        None,
+        None,
+        &StubApi::serving("first"),
+    )
+    .unwrap();
+    let record = store.get_skill_by_id(&installed.skill_id).unwrap().unwrap();
+    assert_eq!(record.source_ref.as_deref(), Some(url));
+    assert_eq!(record.source_subpath.as_deref(), Some("skills/a"));
+    let acquired = super::acquire_managed_skill_update_with(
+        &paths,
+        &store,
+        &installed.skill_id,
+        None,
+        &StubApi::serving("next"),
+        0,
+    )
+    .unwrap();
+    assert_eq!(acquired.record.source_ref.as_deref(), Some(url));
+    assert_eq!(acquired.record.source_subpath.as_deref(), Some("skills/a"));
+    assert_eq!(acquired.new_revision.as_deref(), Some("next"));
 }
 
 /// The two GitHub conditions reach the operator from install, not only from
