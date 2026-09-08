@@ -411,6 +411,26 @@ pub enum InvocationMode {
     Neither,
 }
 
+impl InvocationMode {
+    const KEYS: [(Self, &'static str); 4] = [
+        (Self::UserAndModel, "user-and-model"),
+        (Self::UserOnly, "user-only"),
+        (Self::ModelOnly, "model-only"),
+        (Self::Neither, "neither"),
+    ];
+
+    pub fn as_key(self) -> &'static str {
+        Self::KEYS.iter().find(|(mode, _)| *mode == self).unwrap().1
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::KEYS
+            .iter()
+            .find(|(_, value)| *value == key)
+            .map(|(mode, _)| *mode)
+    }
+}
+
 /// Invocation mode of the skill installed at `dir` (its `SKILL.md` is read
 /// fresh). An unreadable or absent `SKILL.md` yields the default mode.
 pub fn invocation_mode_for_dir(dir: &Path) -> InvocationMode {

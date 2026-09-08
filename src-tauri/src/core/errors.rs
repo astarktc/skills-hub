@@ -72,6 +72,8 @@ pub enum SignalError {
     /// A Managed skill's central copy is not there, so nothing can be
     /// updated or moved from it.
     CentralPathMissing { path: String },
+    /// Reading or atomically replacing the skill manifest failed.
+    SkillManifestIo { path: String, detail: String },
     /// The requested repo-relative subpath is not in the fetched repository.
     /// Carries the subpath the caller asked for, never a cache-internal
     /// absolute path.
@@ -160,6 +162,9 @@ impl fmt::Display for SignalError {
             }
             SignalError::CentralPathMissing { path } => {
                 write!(f, "central path is missing: {path}")
+            }
+            SignalError::SkillManifestIo { path, detail } => {
+                write!(f, "skill manifest I/O failed: {path}: {detail}")
             }
             SignalError::SubpathMissing { subpath } => {
                 write!(f, "subpath is not in the repository: {subpath}")

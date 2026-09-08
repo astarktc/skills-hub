@@ -49,27 +49,38 @@ pub struct ManagedSkillEntry {
 /// targets and invocation mode.
 pub fn managed_skill_catalog(store: &SkillStore) -> Result<Vec<ManagedSkillEntry>> {
     let skills = store.list_skills().context("list managed skills")?;
-    let mut entries = Vec::with_capacity(skills.len());
-    for skill in skills {
-        let targets = store
-            .list_skill_targets(&skill.id)
-            .with_context(|| format!("list sync targets for skill {}", skill.id))?;
-        let invocation_mode = invocation_mode_for_dir(Path::new(&skill.central_path));
-        let invocation_override = super::skill_edits::invocation_override(store, &skill.id)?;
-        let refreshable = is_refreshable(&skill);
-        let unlocatable = unlocatable_state(&skill);
-        let detachable = is_detachable(&skill);
-        entries.push(ManagedSkillEntry {
-            skill,
-            invocation_mode,
-            invocation_override,
-            targets,
-            refreshable,
-            unlocatable,
-            detachable,
-        });
-    }
-    Ok(entries)
+    skills
+        .into_iter()
+        .map(|skill| build_entry(store, skill))
+        .collect()
+}
+
+/// Resolve only the requested skill; Save must not scan the library under the guard.
+pub fn managed_skill_entry(store: &SkillStore, id: &str) -> Result<Option<ManagedSkillEntry>> {
+    store
+        .get_skill_by_id(id)?
+        .map(|skill| build_entry(store, skill))
+        .transpose()
+}
+
+fn build_entry(store: &SkillStore, skill: SkillRecord) -> Result<ManagedSkillEntry> {
+    let targets = store
+        .list_skill_targets(&skill.id)
+        .with_context(|| format!("list sync targets for skill {}", skill.id))?;
+    let invocation_mode = invocation_mode_for_dir(Path::new(&skill.central_path));
+    let invocation_override = super::skill_edits::invocation_override(store, &skill.id)?;
+    let refreshable = is_refreshable(&skill);
+    let unlocatable = unlocatable_state(&skill);
+    let detachable = is_detachable(&skill);
+    Ok(ManagedSkillEntry {
+        skill,
+        invocation_mode,
+        invocation_override,
+        targets,
+        refreshable,
+        unlocatable,
+        detachable,
+    })
 }
 
 #[cfg(test)]

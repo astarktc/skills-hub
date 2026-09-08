@@ -574,10 +574,9 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
       copy: { message: string; success: string },
       requestRefresh?: () => Promise<RefreshReportDto>,
     ) => {
-      let hasEditConflict = false;
       return runAction(
-        { message: copy.message, successToast: () => hasEditConflict
-          ? { kind: "warning", title: t("invocationEdit.warningTitle", { name: skill.name }) }
+        { message: copy.message, successToast: (report: RefreshReportDto) => editConflictEntries(report).length > 0
+          ? { kind: "warning", title: t("invocationEdit.updateCompletedWithConflict", { name: skill.name }) }
           : copy.success },
         async (action) => {
           // A single Update is the same batch, of one.
@@ -591,8 +590,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           }
           // A defined success value distinguishes completion from runAction's
           // undefined result for thrown errors and ActionExit failures.
-          hasEditConflict = editConflictEntries(report).length > 0;
-          return settleSingleReport(action, report) ?? true;
+          return settleSingleReport(action, report) ?? report;
         },
       );
     },
@@ -647,7 +645,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           reassert_auto_sync: autoSyncEnabled,
         }),
       );
-      if (completed === true) setPendingGitRepointSkill(null);
+      if (completed !== undefined) setPendingGitRepointSkill(null);
     },
     [autoSyncEnabled, pendingGitRepointSkill, runSingleRefresh, t],
   );

@@ -221,7 +221,7 @@ url: string } | { code: "INVALID_GITHUB_URL"; url: string } | { code: "GIT_REPOI
 /**  `"<path>: <io error>"` diagnostics per failed removal target. */
 failures: string[] } | { code: "PATH_OUTSIDE_TOOL_DIRS"; 
 /**  The refused path (not inside any Tool's skills directory). */
-path: string } | { code: "SOURCE_PATH_MISSING"; 
+path: string } | { code: "SKILL_MANIFEST_IO"; path: string; detail: string } | { code: "SOURCE_PATH_MISSING"; 
 /**  The external source folder that is not there. */
 path: string } | { code: "CENTRAL_PATH_MISSING"; 
 /**  The Managed skill's central copy that is not there. */
@@ -398,7 +398,7 @@ export type InvocationMode =
 /**  Both keys restrict invocation — neither the user nor the model can invoke it. */
 "neither";
 
-export type InvocationOverrideDto = {
+export type InvocationOverride = {
 	mode: InvocationMode,
 	base_mode: InvocationMode,
 	conflict: boolean,
@@ -432,7 +432,7 @@ export type ManagedSkillDto = {
 	 *  frontmatter at list time (not persisted).
 	 */
 	invocation_mode: InvocationMode,
-	invocation_override: InvocationOverrideDto | null,
+	invocation_override: InvocationOverride | null,
 	targets: SkillTargetDto[],
 	/**
 	 *  Whether Update / Refresh can re-acquire this skill (backend-owned

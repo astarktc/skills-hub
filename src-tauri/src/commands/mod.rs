@@ -1214,13 +1214,6 @@ fn to_import_report_dto(report: crate::core::onboarding_import::ImportReport) ->
 }
 
 #[derive(Debug, Serialize, Type)]
-pub struct InvocationOverrideDto {
-    pub mode: InvocationMode,
-    pub base_mode: InvocationMode,
-    pub conflict: bool,
-}
-
-#[derive(Debug, Serialize, Type)]
 pub struct ManagedSkillDto {
     pub id: String,
     pub name: String,
@@ -1239,7 +1232,7 @@ pub struct ManagedSkillDto {
     /// Who may invoke the skill, read from the central copy's `SKILL.md`
     /// frontmatter at list time (not persisted).
     pub invocation_mode: InvocationMode,
-    pub invocation_override: Option<InvocationOverrideDto>,
+    pub invocation_override: Option<crate::core::skill_edits::InvocationOverride>,
     pub targets: Vec<SkillTargetDto>,
     /// Whether Update / Refresh can re-acquire this skill (backend-owned
     /// Provenance rule); the UI offers Update only when `true`.
@@ -1343,11 +1336,7 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
             last_sync_at: skill.last_sync_at,
             status: skill.status,
             invocation_mode,
-            invocation_override: invocation_override.map(|edit| InvocationOverrideDto {
-                mode: edit.mode,
-                base_mode: edit.base_mode,
-                conflict: edit.conflict,
-            }),
+            invocation_override,
             targets: targets
                 .into_iter()
                 .map(|target| SkillTargetDto {

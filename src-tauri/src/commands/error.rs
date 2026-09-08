@@ -114,6 +114,10 @@ pub enum CommandError {
         /// The refused path (not inside any Tool's skills directory).
         path: String,
     },
+    SkillManifestIo {
+        path: String,
+        detail: String,
+    },
     SourcePathMissing {
         /// The external source folder that is not there.
         path: String,
@@ -290,6 +294,9 @@ impl From<SignalError> for CommandError {
                 CommandError::DeleteCleanupFailed { failures }
             }
             SignalError::PathOutsideToolDirs { path } => CommandError::PathOutsideToolDirs { path },
+            SignalError::SkillManifestIo { path, detail } => {
+                CommandError::SkillManifestIo { path, detail }
+            }
             SignalError::SourcePathMissing { path } => CommandError::SourcePathMissing { path },
             SignalError::CentralPathMissing { path } => CommandError::CentralPathMissing { path },
             SignalError::SubpathMissing { subpath } => CommandError::SubpathMissing { subpath },

@@ -296,7 +296,12 @@ describe("invocation Edits", () => {
       title: 'invocationEdit.warningTitle {"name":"alpha"}',
       message: 'invocationEdit.refreshWarning {"name":"alpha","upstream":"invocationMode.modelOnly","override":"invocationMode.userOnly"}',
     }]);
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(expect.objectContaining({ kind: "warning" }));
+    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "warning",
+      title: action === "refresh"
+        ? "invocationEdit.refreshCompletedWithEdits"
+        : 'invocationEdit.updateCompletedWithConflict {"name":"alpha"}',
+    }));
   });
 });
 

@@ -142,6 +142,11 @@ describe("describeCommandError", () => {
     );
   });
 
+  it("names the manifest path and preserves I/O diagnostics", () => {
+    expect(describeCommandError({ code: "SKILL_MANIFEST_IO", path: "/skill/SKILL.md", detail: "Permission denied" }, t))
+      .toBe('errors.skillManifestIo {"path":"/skill/SKILL.md"}\n\nPermission denied');
+  });
+
   it("names the refused path for PATH_OUTSIDE_TOOL_DIRS", () => {
     expect(
       describeCommandError(

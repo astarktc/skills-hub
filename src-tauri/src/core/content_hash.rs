@@ -9,6 +9,7 @@ const IGNORE_NAMES: [&str; 4] = [".git", ".DS_Store", "Thumbs.db", ".gitignore"]
 fn is_ignored(entry: &DirEntry) -> bool {
     let file_name = entry.file_name().to_string_lossy();
     IGNORE_NAMES.iter().any(|name| name == &file_name.as_ref())
+        || file_name.starts_with(".skills-hub-manifest-")
 }
 
 /// Hash skill content, excluding internal symlinks entirely: neither their names

@@ -1,12 +1,39 @@
 //! Byte-preserving edits to the two invocation frontmatter keys.
-use std::path::Path;
+use std::{io::Write, path::Path};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use super::skill_discovery::{parse_invocation_mode, InvocationMode};
 
-const KEYS: [&str; 2] = ["disable-model-invocation:", "user-invocable:"];
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Key {
+    DisableModelInvocation,
+    UserInvocable,
+}
+
+impl Key {
+    const ALL: [Self; 2] = [Self::DisableModelInvocation, Self::UserInvocable];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::DisableModelInvocation => "disable-model-invocation:",
+            Self::UserInvocable => "user-invocable:",
+        }
+    }
+
+    fn value(self, mode: InvocationMode) -> bool {
+        match self {
+            Self::DisableModelInvocation => {
+                matches!(mode, InvocationMode::UserOnly | InvocationMode::Neither)
+            }
+            Self::UserInvocable => matches!(
+                mode,
+                InvocationMode::UserAndModel | InvocationMode::UserOnly
+            ),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InvocationLines {
@@ -32,11 +59,10 @@ impl InvocationLines {
         parse_invocation_mode(&text)
     }
 
-    fn line(&self, key: usize) -> Option<&str> {
-        if key == 0 {
-            self.disable_model_invocation.as_deref()
-        } else {
-            self.user_invocable.as_deref()
+    fn line(&self, key: Key) -> Option<&str> {
+        match key {
+            Key::DisableModelInvocation => self.disable_model_invocation.as_deref(),
+            Key::UserInvocable => self.user_invocable.as_deref(),
         }
     }
 }
@@ -53,8 +79,10 @@ fn header_end(lines: &[&str]) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
-fn key_index(line: &str) -> Option<usize> {
-    KEYS.iter().position(|key| line.starts_with(key))
+fn line_key(line: &str) -> Option<Key> {
+    Key::ALL
+        .into_iter()
+        .find(|key| line.starts_with(key.label()))
 }
 
 fn ending(line: &str) -> &str {
@@ -70,61 +98,63 @@ fn ending(line: &str) -> &str {
 pub fn read_invocation_lines(text: &str) -> InvocationLines {
     let lines: Vec<_> = text.split_inclusive('\n').collect();
     let end = header_end(&lines);
-    let mut found: [Option<String>; 2] = [None, None];
-    let mut repeated_lines = Vec::new();
+    let mut base = InvocationLines {
+        disable_model_invocation: None,
+        user_invocable: None,
+        had_frontmatter: end.is_some(),
+        repeated_lines: Vec::new(),
+    };
     if let Some(end) = end {
         for (i, line) in lines.iter().enumerate().take(end).skip(1) {
-            if let Some(key) = key_index(line) {
-                if found[key].is_some() {
-                    repeated_lines.push((i, (*line).to_string()));
+            if let Some(key) = line_key(line) {
+                let slot = match key {
+                    Key::DisableModelInvocation => &mut base.disable_model_invocation,
+                    Key::UserInvocable => &mut base.user_invocable,
+                };
+                if slot.is_some() {
+                    base.repeated_lines.push((i, (*line).to_string()));
                 } else {
-                    found[key] = Some((*line).to_string());
+                    *slot = Some((*line).to_string());
                 }
             }
         }
     }
-    InvocationLines {
-        disable_model_invocation: found[0].take(),
-        user_invocable: found[1].take(),
-        had_frontmatter: end.is_some(),
-        repeated_lines,
-    }
+    base
 }
 
 pub fn write_invocation_mode(text: &str, mode: InvocationMode) -> String {
     if parse_invocation_mode(text) == mode {
         return text.to_string();
     }
-    let values = [
-        matches!(mode, InvocationMode::UserOnly | InvocationMode::Neither),
-        matches!(
-            mode,
-            InvocationMode::UserAndModel | InvocationMode::UserOnly
-        ),
-    ];
     let lines: Vec<_> = text.split_inclusive('\n').collect();
     let Some(end) = header_end(&lines) else {
         return format!(
             "---\ndisable-model-invocation: {}\nuser-invocable: {}\n---\n{text}",
-            values[0], values[1]
+            Key::DisableModelInvocation.value(mode),
+            Key::UserInvocable.value(mode)
         );
     };
     let mut result = lines[0].to_string();
-    let mut found = [false; 2];
+    let mut found = Vec::new();
     for line in &lines[1..end] {
-        if let Some(key) = key_index(line) {
-            found[key] = true;
-            result.push_str(&format!("{} {}{}", KEYS[key], values[key], ending(line)));
+        if let Some(key) = line_key(line) {
+            found.push(key);
+            result.push_str(&format!(
+                "{} {}{}",
+                key.label(),
+                key.value(mode),
+                ending(line)
+            ));
         } else {
             result.push_str(line);
         }
     }
-    for key in 0..2 {
-        if !found[key] {
+    for key in Key::ALL {
+        if !found.contains(&key) {
             result.push_str(&format!(
                 "{} {}{}",
-                KEYS[key],
-                values[key],
+                key.label(),
+                key.value(mode),
                 ending(lines[0])
             ));
         }
@@ -138,16 +168,16 @@ pub fn restore_invocation_lines(text: &str, base: &InvocationLines) -> String {
     let Some(end) = header_end(&lines) else {
         return text.to_string();
     };
-    if !base.had_frontmatter {
+    if !base.had_frontmatter && lines[1..end].iter().all(|line| line_key(line).is_some()) {
         return lines[end + 1..].concat();
     }
     let mut result = lines[0].to_string();
-    let mut found = [false; 2];
+    let mut found = Vec::new();
     for (i, line) in lines.iter().enumerate().take(end).skip(1) {
-        if let Some(key) = key_index(line) {
-            if !found[key] {
+        if let Some(key) = line_key(line) {
+            if !found.contains(&key) {
                 result.push_str(base.line(key).unwrap_or(""));
-                found[key] = true;
+                found.push(key);
             } else if let Some((_, original)) =
                 base.repeated_lines.iter().find(|(pos, _)| *pos == i)
             {
@@ -163,12 +193,46 @@ pub fn restore_invocation_lines(text: &str, base: &InvocationLines) -> String {
 
 /// Thin filesystem adapter; callers own mutation serialization and settlement.
 pub fn apply_to_file(path: &Path, edit: impl FnOnce(&str) -> String) -> Result<()> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let text = read_manifest(path)?;
     let edited = edit(&text);
     if edited != text {
-        std::fs::write(path, edited).with_context(|| format!("write {}", path.display()))?;
+        let temp_path =
+            path.with_file_name(format!(".skills-hub-manifest-{}", uuid::Uuid::new_v4()));
+        let mut temp = manifest_io(
+            path,
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp_path),
+        )?;
+        let result = (|| -> std::io::Result<()> {
+            temp.set_permissions(std::fs::metadata(path)?.permissions())?;
+            temp.write_all(edited.as_bytes())?;
+            temp.sync_all()?;
+            drop(temp);
+            std::fs::rename(&temp_path, path)
+        })();
+        if result.is_err() {
+            // A crash can leave this hidden sibling; discovery and hashing ignore it.
+            let _ = std::fs::remove_file(&temp_path);
+        }
+        manifest_io(path, result)?;
     }
     Ok(())
+}
+
+fn manifest_io<T>(path: &Path, result: std::io::Result<T>) -> Result<T> {
+    result.map_err(|error| {
+        let signal = super::errors::SignalError::SkillManifestIo {
+            path: path.to_string_lossy().into_owned(),
+            detail: error.to_string(),
+        };
+        anyhow::Error::new(error).context(signal)
+    })
+}
+
+pub(crate) fn read_manifest(path: &Path) -> Result<String> {
+    manifest_io(path, std::fs::read_to_string(path))
 }
 
 #[cfg(test)]

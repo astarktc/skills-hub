@@ -1,4 +1,6 @@
 //! Edits layered on the central copy, replayed before Propagation.
+//! The edit row is the source of truth; bytes follow it. Persist a set/replay
+//! before writing bytes. Clear restores bytes before deleting the row.
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -12,7 +14,7 @@ use super::{
     installer::InstallerPaths,
     mutation_guard,
     propagation::{propagate_unlocked, PropagationStatus},
-    skill_catalog::{managed_skill_catalog, ManagedSkillEntry},
+    skill_catalog::{managed_skill_entry, ManagedSkillEntry},
     skill_discovery::{find_skill_md, InvocationMode},
     skill_store::{SkillEditKind, SkillEditRecord, SkillRecord, SkillStore},
 };
@@ -32,8 +34,7 @@ pub struct InvocationEditConflict {
 }
 
 fn edit_mode(edit: &SkillEditRecord) -> Result<InvocationMode> {
-    serde_json::from_value(serde_json::Value::String(edit.value.clone()))
-        .context("read invocation edit mode")
+    InvocationMode::from_key(&edit.value).context("read invocation edit mode")
 }
 
 fn base_lines(edit: &SkillEditRecord) -> Result<InvocationLines> {
@@ -96,22 +97,19 @@ pub fn set_invocation_override(
                 let base_value = match existing {
                     Some(edit) => edit.base_value,
                     None => serde_json::to_string(&frontmatter_edit::read_invocation_lines(
-                        &std::fs::read_to_string(&path)?,
+                        &frontmatter_edit::read_manifest(&path)?,
                     ))?,
                 };
-                frontmatter_edit::apply_to_file(&path, |text| {
-                    frontmatter_edit::write_invocation_mode(text, mode)
-                })?;
                 store.upsert_skill_edit(&SkillEditRecord {
                     skill_id: skill_id.into(),
                     kind: SkillEditKind::InvocationMode,
-                    value: serde_json::to_value(mode)?
-                        .as_str()
-                        .context("invocation mode must be a string")?
-                        .to_string(),
+                    value: mode.as_key().into(),
                     base_value,
                     conflict: false,
                     applied_at: now_ms(),
+                })?;
+                frontmatter_edit::apply_to_file(&path, |text| {
+                    frontmatter_edit::write_invocation_mode(text, mode)
                 })?;
             }
             None => {
@@ -140,10 +138,7 @@ pub fn set_invocation_override(
                 );
             }
         }
-        managed_skill_catalog(store)?
-            .into_iter()
-            .find(|entry| entry.skill.id == skill_id)
-            .context("edited skill missing from catalog")
+        managed_skill_entry(store, skill_id)?.context("edited skill missing from catalog")
     })
 }
 
@@ -156,23 +151,24 @@ pub(crate) fn replay_unlocked(
         return Ok(None);
     };
     let path = manifest(record)?;
-    let upstream = frontmatter_edit::read_invocation_lines(&std::fs::read_to_string(&path)?);
+    let upstream =
+        frontmatter_edit::read_invocation_lines(&frontmatter_edit::read_manifest(&path)?);
     let base_mode = base_lines(&edit)?.mode();
     let upstream_mode = upstream.mode();
     let override_mode = edit_mode(&edit)?;
     // An unresolved conflict remains flagged across later unchanged Updates.
     edit.conflict |= upstream_mode != base_mode;
-    let conflict = edit.conflict.then_some(InvocationEditConflict {
+    let conflict = (upstream_mode != base_mode).then_some(InvocationEditConflict {
         base_mode,
         upstream_mode,
         override_mode,
     });
     edit.base_value = serde_json::to_string(&upstream)?;
     edit.applied_at = now_ms();
+    store.upsert_skill_edit(&edit)?;
     frontmatter_edit::apply_to_file(&path, |text| {
         frontmatter_edit::write_invocation_mode(text, override_mode)
     })?;
-    store.upsert_skill_edit(&edit)?;
     record_hash(store, record)?;
     Ok(conflict)
 }

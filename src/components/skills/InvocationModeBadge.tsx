@@ -1,11 +1,11 @@
 import { Bot, EyeOff, User } from "lucide-react";
 import type { TFunction } from "i18next";
-import type { InvocationMode, InvocationOverrideDto } from "./types";
+import type { InvocationMode, InvocationOverride } from "./types";
 import { INVOCATION_LABEL_KEY, INVOCATION_TOOLTIP_KEY } from "../../lib/skillPresentation";
 
 type InvocationModeBadgeProps = {
   mode: InvocationMode;
-  override: InvocationOverrideDto | null;
+  override: InvocationOverride | null;
   disabled: boolean;
   onClick: () => void;
   t: TFunction;

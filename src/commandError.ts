@@ -33,6 +33,7 @@ const COMMAND_ERROR_CODE_MAP = {
   GIT_REPOINT_REQUIRES_GIT: true,
   DELETE_CLEANUP_FAILED: true,
   PATH_OUTSIDE_TOOL_DIRS: true,
+  SKILL_MANIFEST_IO: true,
   SOURCE_PATH_MISSING: true,
   CENTRAL_PATH_MISSING: true,
   SUBPATH_MISSING: true,
@@ -153,6 +154,8 @@ export function describeCommandError(
       return t("errors.deleteCleanupFailed") + "\n- " + e.failures.join("\n- ");
     case "PATH_OUTSIDE_TOOL_DIRS":
       return t("errors.pathOutsideToolDirs", { path: e.path });
+    case "SKILL_MANIFEST_IO":
+      return withDetail(t("errors.skillManifestIo", { path: e.path }), e.detail);
     case "SOURCE_PATH_MISSING":
       return withDetail(t("errors.sourcePathMissing"), e.path);
     case "CENTRAL_PATH_MISSING":

@@ -106,10 +106,17 @@ fn update_replays_and_clear_restores_current_upstream_bytes_and_hash() {
     assert!(matches!(
         f.update().skills[0].status,
         SkillRefreshStatus::Refreshed {
-            edit_conflict: Some(_),
+            edit_conflict: None,
             ..
         }
     ));
+    assert!(
+        f.store
+            .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
+            .unwrap()
+            .unwrap()
+            .conflict
+    );
     let entry = f.set(None).unwrap();
     assert!(entry.invocation_override.is_none());
     assert_eq!(f.text(), upstream);
@@ -241,6 +248,87 @@ fn set_propagates_to_copy_fallback_target() {
         .unwrap()
         .file_type()
         .is_symlink());
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_manifest_write_keeps_base_and_replay_heals_bytes() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new();
+    let permissions = fs::metadata(&f.central).unwrap().permissions();
+    fs::set_permissions(&f.central, fs::Permissions::from_mode(0o555)).unwrap();
+    let result = f.set(Some(InvocationMode::UserOnly));
+    fs::set_permissions(&f.central, permissions).unwrap();
+    let error = result.unwrap_err();
+    assert!(error.downcast_ref::<std::io::Error>().is_some());
+    assert!(matches!(
+        error.downcast_ref::<SignalError>(),
+        Some(SignalError::SkillManifestIo { .. })
+    ));
+    assert_eq!(f.text(), UPSTREAM);
+    assert_eq!(fs::read_dir(&f.central).unwrap().count(), 1);
+    let edit = f
+        .store
+        .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        edit.base_value,
+        serde_json::to_string(&frontmatter_edit::read_invocation_lines(UPSTREAM)).unwrap()
+    );
+    let mut record = f.store.get_skill_by_id(&f.id).unwrap().unwrap();
+    mutation_guard::serialized(|| replay_unlocked(&f.store, &mut record)).unwrap();
+    assert_eq!(
+        frontmatter_edit::read_invocation_lines(&f.text()).mode(),
+        InvocationMode::UserOnly
+    );
+    f.set(None).unwrap();
+    assert_eq!(f.text(), UPSTREAM);
+}
+
+#[test]
+fn failed_edit_upserts_leave_set_and_replay_bytes_untouched() {
+    let f = Fixture::new();
+    // Persistent SQLite triggers affect the store's per-operation connections;
+    // PRAGMA query_only on this connection would not.
+    let conn = rusqlite::Connection::open(f.store.db_path()).unwrap();
+    conn.execute_batch("CREATE TRIGGER fail_edit BEFORE INSERT ON skill_edits BEGIN SELECT RAISE(FAIL, 'test edit upsert failure'); END;").unwrap();
+    assert!(f.set(Some(InvocationMode::UserOnly)).is_err());
+    assert_eq!(f.text(), UPSTREAM);
+    assert!(f
+        .store
+        .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
+        .unwrap()
+        .is_none());
+    conn.execute_batch("DROP TRIGGER fail_edit;").unwrap();
+    f.set(Some(InvocationMode::UserOnly)).unwrap();
+    conn.execute_batch("CREATE TRIGGER fail_edit BEFORE INSERT ON skill_edits BEGIN SELECT RAISE(FAIL, 'test edit upsert failure'); END;").unwrap();
+    fs::write(f.central.join("SKILL.md"), UPSTREAM).unwrap();
+    let mut record = f.store.get_skill_by_id(&f.id).unwrap().unwrap();
+    assert!(mutation_guard::serialized(|| replay_unlocked(&f.store, &mut record)).is_err());
+    assert_eq!(f.text(), UPSTREAM);
+}
+
+#[test]
+fn invalid_utf8_is_typed_for_set_and_replay() {
+    let f = Fixture::new();
+    f.set(Some(InvocationMode::UserOnly)).unwrap();
+    fs::write(f.central.join("SKILL.md"), [0xff]).unwrap();
+    let mut record = f.store.get_skill_by_id(&f.id).unwrap().unwrap();
+    for error in [
+        f.set(Some(InvocationMode::Neither)).unwrap_err(),
+        mutation_guard::serialized(|| replay_unlocked(&f.store, &mut record)).unwrap_err(),
+    ] {
+        assert!(error.downcast_ref::<std::io::Error>().is_some());
+        assert!(matches!(
+            error.downcast_ref::<SignalError>(),
+            Some(SignalError::SkillManifestIo { .. })
+        ));
+        assert!(matches!(
+            crate::commands::error::CommandError::from_anyhow(error),
+            crate::commands::error::CommandError::SkillManifestIo { .. }
+        ));
+    }
 }
 
 #[test]

@@ -46,6 +46,7 @@ export const resources = {
         save: "Save",
         saved: "Invocation setting saved",
         warningTitle: "{{name}}: invocation Edit conflict",
+        updateCompletedWithConflict: "{{name}} updated — invocation Edit conflict needs review",
         refreshWarning: "{{name}}: upstream changed its invocation mode to {{upstream}}; your override ({{override}}) is kept.",
         refreshCompletedWithEdits: "Refresh complete — invocation Edit conflicts need review",
       },
@@ -325,6 +326,7 @@ export const resources = {
           "The update failed and the incomplete copy at {{central}} could not be removed. No previous-copy backup is available; check this path before retrying.",
         pathOutsideToolDirs:
           "Refused to delete {{path}}: it is not inside a known tool skills directory.",
+        skillManifestIo: "Could not read or save the skill manifest at {{path}}.",
         sourcePathMissing:
           "The skill's source folder is missing. It may have been moved or deleted:",
         centralPathMissing:
@@ -638,6 +640,7 @@ export const resources = {
         save: "保存",
         saved: "调用设置已保存",
         warningTitle: "{{name}}：调用模式编辑冲突",
+        updateCompletedWithConflict: "{{name}} 已更新 — 请检查调用模式编辑冲突",
         refreshWarning: "{{name}}：上游将调用模式改为{{upstream}}；已保留你的覆盖设置（{{override}}）。",
         refreshCompletedWithEdits: "刷新完成 — 请检查调用模式编辑冲突",
       },
@@ -903,6 +906,7 @@ export const resources = {
           "更新失败，且无法移除 {{central}} 处的不完整副本。没有可用的原副本备份，请检查该路径后再重试。",
         pathOutsideToolDirs:
           "已拒绝删除 {{path}}：该路径不在已知的工具 Skills 目录内。",
+        skillManifestIo: "无法读取或保存 {{path}} 处的 Skill 清单。",
         sourcePathMissing: "该 Skill 的来源文件夹不存在，可能已被移动或删除：",
         centralPathMissing:
           "该 Skill 在 Skills Hub 库中的中央副本不存在：",
