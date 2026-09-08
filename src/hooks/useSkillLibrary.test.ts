@@ -1088,6 +1088,25 @@ describe("useSkillLibrary per-tool toggle", () => {
   });
 });
 
+describe("useSkillLibrary detail selection", () => {
+  it("derives the current row, clears when gone, and supports closing", async () => {
+    const setup = makeDeps();
+    const { result } = await renderLibrary(setup);
+    act(() => result.current.openDetail("s1"));
+    expect(result.current.detailSkill).toEqual(setup.skills[0]);
+    const updated = { ...setup.skills[0], description: "updated" };
+    mockInvoke.mockResolvedValue([updated]);
+    await act(async () => { await result.current.loadManagedSkills(); });
+    expect(result.current.detailSkill).toEqual(updated);
+    act(() => result.current.closeDetail());
+    expect(result.current.detailSkill).toBeNull();
+    act(() => result.current.openDetail("s1"));
+    mockInvoke.mockResolvedValue([]);
+    await act(async () => { await result.current.loadManagedSkills(); });
+    expect(result.current.detailSkill).toBeNull();
+  });
+});
+
 describe("useSkillLibrary name collisions", () => {
   it("isSkillNameTaken matches case-insensitively", async () => {
     const setup = makeDeps({ skills: [skill("s1", "Alpha")] });

@@ -61,7 +61,7 @@ function App() {
     | "projects"
     | "explore-detail"
   >("myskills");
-  const [detailSkill, setDetailSkill] = useState<ManagedSkill | null>(null);
+  const [exploreDetailSkill, setExploreDetailSkill] = useState<ManagedSkill | null>(null);
   const [showNotifications, setShowNotifications] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "updated" | "added">("name");
@@ -83,7 +83,7 @@ function App() {
   const library = useSkillLibrary({ t, reporter, sync });
 
   const openExploreDetail = useCallback((skill: ManagedSkill) => {
-    setDetailSkill(skill);
+    setExploreDetailSkill(skill);
     setActiveView("explore-detail");
   }, []);
 
@@ -150,6 +150,9 @@ function App() {
   }, []);
 
   const { loadFeaturedSkills, loadHiddenSkills } = explore;
+  const { openDetail, closeDetail } = library;
+  const detailSkill = activeView === "explore-detail"
+    ? exploreDetailSkill : library.detailSkill;
   const handleViewChange = useCallback(
     (view: "myskills" | "explore" | "projects") => {
       setActiveView(view);
@@ -158,24 +161,24 @@ function App() {
         loadHiddenSkills();
       }
       if (view === "myskills") {
-        setDetailSkill(null);
+        closeDetail();
       }
     },
-    [loadFeaturedSkills, loadHiddenSkills],
+    [closeDetail, loadFeaturedSkills, loadHiddenSkills],
   );
 
   const handleOpenDetail = useCallback((skill: ManagedSkill) => {
-    setDetailSkill(skill);
+    openDetail(skill.id);
     setActiveView("detail");
-  }, []);
+  }, [openDetail]);
 
   const handleBackToList = useCallback(() => {
-    setDetailSkill(null);
+    closeDetail();
     setActiveView("myskills");
-  }, []);
+  }, [closeDetail]);
 
   const handleBackToExplore = useCallback(() => {
-    setDetailSkill(null);
+    setExploreDetailSkill(null);
     setActiveView("explore");
   }, []);
 
@@ -184,7 +187,7 @@ function App() {
     if (!detailSkill?.source_ref) return;
     const sourceUrl = detailSkill.source_ref;
     handleExploreInstall(sourceUrl);
-    setDetailSkill(null);
+    setExploreDetailSkill(null);
     setActiveView("explore");
   }, [detailSkill, handleExploreInstall]);
 
@@ -246,9 +249,7 @@ function App() {
         {(activeView === "detail" || activeView === "explore-detail") &&
         detailSkill ? (
           <SkillDetailView
-            skill={activeView === "detail"
-              ? library.managedSkills.find((skill) => skill.id === detailSkill.id) ?? detailSkill
-              : detailSkill}
+            skill={detailSkill}
             onRepoint={library.handleRepointGitSkill}
             actionLoading={loading}
             onBack={

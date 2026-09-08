@@ -76,6 +76,10 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   useEffect(() => {
     managedSkillsRef.current = managedSkills;
   }, [managedSkills]);
+  const [detailSkillId, setDetailSkillId] = useState<string | null>(null);
+  const detailSkill = managedSkills.find((skill) => skill.id === detailSkillId) ?? null;
+  const openDetail = useCallback((id: string) => setDetailSkillId(id), []);
+  const closeDetail = useCallback(() => setDetailSkillId(null), []);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [pendingGitRepointSkill, setPendingGitRepointSkill] =
     useState<ManagedSkill | null>(null);
@@ -684,6 +688,9 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
 
   return {
     managedSkills,
+    detailSkill,
+    openDetail,
+    closeDetail,
     pendingDeleteId,
     pendingDeleteSkill,
     pendingGitRepointSkill,
