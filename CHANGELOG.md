@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.6] - 2026-09-08
+
+Updates that cannot half-succeed, git skills on branches with slashes in their name, a repair that leaves nothing behind, and an invocation badge on every skill.
+
+### Added
+
+- **Every skill card shows who can invoke it.** The invocation badge is now icon-only and always present: a person and a robot for the default (both), a person for user-only, a robot for model-only, a crossed eye for neither. Hover for the name and the explanation.
+- **Branch names containing `/`.** A GitHub URL such as `…/tree/feature/x/skills/foo` is resolved against the repository's branches (longest match wins) instead of being split at the first slash; Refresh, Update and Re-point reuse the recorded path and make no extra request.
+
+### Changed
+
+- **Update, Restore and Re-point replace the library copy atomically.** The previous copy is kept aside until the new bytes and the record are both written; if either step fails the old copy is restored. If that restore itself fails, the error names the retained backup so it can be recovered by hand.
+- **Re-point honours auto-sync like Update does**: with auto-sync on, a re-pointed skill is also synced to any installed tool it was missing from. Recorded in the glossary under *Re-point*.
+- **Symlinks inside a skill folder are not content**: they are neither copied nor hashed, so a copy of a skill compares equal to its original. Onboarding import no longer reports such an original as divergent from its own copy.
+- **Warning toasts can be closed**, and the *Re-point* dialog stays open when the URL is rejected so it can be corrected.
+
+### Fixed
+
+- **A "skill not found" panel action for a skill deleted since** now says the skill is no longer in the library instead of opening a dialog that fails.
+- **Re-point of a skill moved deeper in a repository** (e.g. `foo` → `skills/foo`) no longer mis-reads the branch.
+- **A URL whose branch consumes the whole path** (`…/tree/feature/x`) still discovers the skill by name, like `…/tree/main`.
+- **The detail view of a skill removed underneath it** falls back to the library instead of an empty page.
+
 ## [1.2.5] - 2026-09-08
 
 A skill whose upstream repository moved it is repaired in place instead of removed and re-added, and a skill published under several per-tool aliases previews and installs as the one skill it is.
