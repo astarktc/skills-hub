@@ -49,6 +49,10 @@ pub enum SignalError {
     /// A GitHub-hosted skill path could not be found (404). `url` is the
     /// human-checkable tree URL the frontend can surface.
     GithubSkillNotFound { url: String },
+    /// Re-point requires a full GitHub repository or tree URL.
+    InvalidGithubUrl { url: String },
+    /// Git Re-point cannot change a skill's provenance.
+    GitRepointRequiresGit { name: String },
     /// Some Sync-target artifacts could not be removed, so the skill and the
     /// rows describing them were kept for a retry (ADR-0002). Each entry is
     /// `"<path>: <io error>"` diagnostics.
@@ -129,6 +133,10 @@ impl fmt::Display for SignalError {
             SignalError::GitTimeout { detail } => write!(f, "git operation timed out: {detail}"),
             SignalError::GithubSkillNotFound { url } => {
                 write!(f, "skill not found on GitHub: {url}")
+            }
+            SignalError::InvalidGithubUrl { url } => write!(f, "invalid GitHub URL: {url}"),
+            SignalError::GitRepointRequiresGit { name } => {
+                write!(f, "git Re-point requires git provenance: {name}")
             }
             SignalError::DeleteCleanupFailed { failures } => {
                 write!(f, "artifact removal failed for: {}", failures.join(", "))

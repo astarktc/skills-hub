@@ -252,6 +252,21 @@ pub(crate) fn acquire_managed_skill_update_with(
     api: &dyn GithubApi,
     ttl_ms: i64,
 ) -> Result<AcquiredUpdate> {
+    acquire_managed_skill_update_from(paths, store, skill_id, cancel, api, ttl_ms, None)
+}
+
+/// Update's acquisition adapter with an optional, validated git source override.
+/// The overridden record stays in memory until the normal finalize step succeeds.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn acquire_managed_skill_update_from(
+    paths: &InstallerPaths,
+    store: &SkillStore,
+    skill_id: &str,
+    cancel: Option<&CancelToken>,
+    api: &dyn GithubApi,
+    ttl_ms: i64,
+    source_override: Option<(&str, &super::git_acquisition::GitSource)>,
+) -> Result<AcquiredUpdate> {
     let mut record = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
         anyhow::anyhow!(SignalError::NotFound {
             kind: "skill".to_string(),
@@ -289,19 +304,26 @@ pub(crate) fn acquire_managed_skill_update_with(
                 .source_ref
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("missing source_ref for git skill"))?;
-            let source = parse_github_url(repo_url);
+            let source = source_override
+                .map(|(_, source)| source.clone())
+                .unwrap_or_else(|| parse_github_url(repo_url));
 
             // Prefer the stored source_subpath (from install time) over the one
             // the URL names. A legacy record has neither: the acquisition module
             // matches the skill's name against the repo and reports what it took,
             // which is the subpath backfilled below.
-            let known_subpath = record
-                .source_subpath
-                .clone()
-                .or_else(|| source.subpath.clone());
+            let known_subpath = if source_override.is_some() {
+                source.subpath.clone()
+            } else {
+                record
+                    .source_subpath
+                    .clone()
+                    .or_else(|| source.subpath.clone())
+            };
             let skill_name = record.name.clone();
             let intent = match &known_subpath {
                 Some(subpath) => SkillIntent::Subpath(subpath),
+                None if source_override.is_some() => SkillIntent::NamedSkill(Some(&skill_name)),
                 None => SkillIntent::NamedSkillOrWholeRepo(&skill_name),
             };
 
@@ -319,7 +341,11 @@ pub(crate) fn acquire_managed_skill_update_with(
             )?;
             new_revision = Some(acquired.revision);
 
-            if known_subpath.is_none() {
+            if let Some((url, _)) = source_override {
+                ensure_installable_skill_dir(&staging_dir)?;
+                record.source_ref = Some(url.to_string());
+                record.source_subpath = known_subpath.or(acquired.resolved_subpath);
+            } else if known_subpath.is_none() {
                 if let Some(resolved) = acquired.resolved_subpath {
                     // Backfill source_subpath for future updates (carried into the
                     // refreshed record by finalize_update as well).

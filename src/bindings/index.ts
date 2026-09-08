@@ -42,6 +42,11 @@ export const commands = {
 	 */
 	repointLocalSkillSource: (skillId: string, newPath: string) => __TAURI_INVOKE<RefreshReportDto>("repoint_local_skill_source", { skillId, newPath }),
 	/**
+	 *  Re-point a git skill only after acquiring from its new source; the normal
+	 *  single-Update report includes every existing Propagation target.
+	 */
+	repointGitSkillSource: (skillId: string, newUrl: string) => __TAURI_INVOKE<RefreshReportDto>("repoint_git_skill_source", { skillId, newUrl }),
+	/**
 	 *  Detach a `local` skill from its vanished source folder: it becomes
 	 *  `imported` — the central copy is its truth from now on (ADR-0003).
 	 *  Store-only; no Sync target changes.
@@ -200,7 +205,7 @@ reason: string } | { code: "CANCELLED" } | { code: "RATE_LIMITED";
 /**  Rounded-up minutes until the limit resets; 0 = unknown. */
 resetMinutes: number } | { code: "GIT_CLONE_FAILED"; kind: GitCloneFailureKind; detail: string } | { code: "GITHUB_SKILL_NOT_FOUND"; 
 /**  Human-checkable GitHub tree URL for the missing skill path. */
-url: string } | { code: "DELETE_CLEANUP_FAILED"; 
+url: string } | { code: "INVALID_GITHUB_URL"; url: string } | { code: "GIT_REPOINT_REQUIRES_GIT"; name: string } | { code: "DELETE_CLEANUP_FAILED"; 
 /**  `"<path>: <io error>"` diagnostics per failed removal target. */
 failures: string[] } | { code: "PATH_OUTSIDE_TOOL_DIRS"; 
 /**  The refused path (not inside any Tool's skills directory). */

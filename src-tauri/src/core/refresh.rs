@@ -174,6 +174,103 @@ pub fn refresh_managed_skills(
     )
 }
 
+/// Repair a git source through the same single-Update acquire/apply pipeline.
+/// The new source is carried only in the acquired record, never written first.
+pub fn repoint_git_skill(
+    paths: &InstallerPaths,
+    store: &SkillStore,
+    skill_id: &str,
+    new_url: &str,
+    cancel: Option<&CancelToken>,
+    now: i64,
+) -> Result<RefreshReport> {
+    let token = super::settings::github_token(store).unwrap_or_default();
+    repoint_git_skill_with(
+        paths,
+        store,
+        skill_id,
+        new_url,
+        cancel,
+        now,
+        &HttpGithubApi::new(token),
+    )
+}
+
+pub(crate) fn repoint_git_skill_with(
+    paths: &InstallerPaths,
+    store: &SkillStore,
+    skill_id: &str,
+    new_url: &str,
+    cancel: Option<&CancelToken>,
+    now: i64,
+    api: &(dyn super::git_acquisition::GithubApi + Sync),
+) -> Result<RefreshReport> {
+    let record = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
+        anyhow::anyhow!(SignalError::NotFound {
+            kind: "skill".into(),
+            id: skill_id.into(),
+        })
+    })?;
+    if record.source_type != "git" {
+        anyhow::bail!(SignalError::GitRepointRequiresGit { name: record.name });
+    }
+    let new_url = new_url.trim();
+    let source = parse_repoint_source(new_url)?;
+    let ttl_ms = super::settings::git_cache_ttl_ms(store);
+    refresh_managed_skills_with(
+        paths,
+        store,
+        RefreshSelection::Ids(vec![skill_id.to_string()]),
+        RefreshPolicy::default(),
+        cancel,
+        now,
+        |_| {},
+        &|id, cancel| {
+            super::installer::acquire_managed_skill_update_from(
+                paths,
+                store,
+                id,
+                cancel,
+                api,
+                ttl_ms,
+                Some((new_url, &source)),
+            )
+        },
+    )
+}
+
+/// Re-point accepts full repository/tree URLs, not the Add flow's shorthand
+/// or arbitrary git remotes. Reject malformed paths before any network I/O.
+fn parse_repoint_source(input: &str) -> Result<super::git_acquisition::GitSource> {
+    let invalid = || anyhow::anyhow!(SignalError::InvalidGithubUrl { url: input.into() });
+    let rest = input
+        .strip_prefix("https://github.com/")
+        .ok_or_else(invalid)?;
+    let parts: Vec<_> = rest.trim_end_matches('/').split('/').collect();
+    if parts.len() < 2
+        || (parts.len() != 2 && (parts.len() < 4 || parts[2] != "tree"))
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || *part == "." || *part == "..")
+        || input
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || matches!(c, '?' | '#' | '\\' | '%'))
+        || parts[..2].iter().any(|part| {
+            !part
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
+        })
+        || parts[1].trim_end_matches(".git").is_empty()
+    {
+        return Err(invalid());
+    }
+    let source = super::git_acquisition::parse_github_url(input);
+    if source.api.is_none() {
+        return Err(invalid());
+    }
+    Ok(source)
+}
+
 /// [`refresh_managed_skills`] with acquisition injected, so the pool's
 /// concurrency, ordering and cancellation behaviour are testable without the
 /// network (and without real latency being the only signal).

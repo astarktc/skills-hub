@@ -919,6 +919,38 @@ pub async fn repoint_local_skill_source(
     .map_err(CommandError::from_anyhow)
 }
 
+/// Re-point a git skill only after acquiring from its new source; the normal
+/// single-Update report includes every existing Propagation target.
+#[tauri::command]
+#[specta::specta]
+#[allow(non_snake_case)]
+pub async fn repoint_git_skill_source(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    cancel: State<'_, Arc<CancelToken>>,
+    skillId: String,
+    newUrl: String,
+) -> Result<RefreshReportDto, CommandError> {
+    let store = store.inner().clone();
+    let cancel = cancel.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        cancel.reset();
+        let paths = installer_paths(&app, &store)?;
+        let report = crate::core::refresh::repoint_git_skill(
+            &paths,
+            &store,
+            &skillId,
+            &newUrl,
+            Some(&cancel),
+            now_ms(),
+        )?;
+        Ok::<_, anyhow::Error>(to_refresh_report_dto(report))
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
 /// Detach a `local` skill from its vanished source folder: it becomes
 /// `imported` — the central copy is its truth from now on (ADR-0003).
 /// Store-only; no Sync target changes.

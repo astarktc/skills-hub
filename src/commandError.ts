@@ -28,6 +28,8 @@ const COMMAND_ERROR_CODE_MAP = {
   RATE_LIMITED: true,
   GIT_CLONE_FAILED: true,
   GITHUB_SKILL_NOT_FOUND: true,
+  INVALID_GITHUB_URL: true,
+  GIT_REPOINT_REQUIRES_GIT: true,
   DELETE_CLEANUP_FAILED: true,
   PATH_OUTSIDE_TOOL_DIRS: true,
   SOURCE_PATH_MISSING: true,
@@ -135,6 +137,10 @@ export function describeCommandError(
       );
     case "GITHUB_SKILL_NOT_FOUND":
       return t("errors.githubSkillNotFound", { url: e.url });
+    case "INVALID_GITHUB_URL":
+      return t("errors.invalidGithubUrl", { url: e.url });
+    case "GIT_REPOINT_REQUIRES_GIT":
+      return t("errors.gitRepointRequiresGit", { name: e.name });
     case "DELETE_CLEANUP_FAILED":
       return t("errors.deleteCleanupFailed") + "\n- " + e.failures.join("\n- ");
     case "PATH_OUTSIDE_TOOL_DIRS":

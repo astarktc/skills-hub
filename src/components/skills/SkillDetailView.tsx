@@ -40,6 +40,8 @@ type SkillDetailViewProps = {
   t: TFunction;
   isExplorePreview?: boolean;
   onInstall?: () => void;
+  onRepoint?: (skill: ManagedSkill) => void;
+  actionLoading?: boolean;
 };
 
 type TreeNode = {
@@ -421,6 +423,8 @@ const SkillDetailView = ({
   t,
   isExplorePreview = false,
   onInstall,
+  onRepoint,
+  actionLoading = false,
 }: SkillDetailViewProps) => {
   const [files, setFiles] = useState<SkillFileEntry[]>([]);
   const [activeFile, setActiveFile] = useState<string | null>(null);
@@ -458,7 +462,7 @@ const SkillDetailView = ({
     return () => {
       cancelled = true;
     };
-  }, [invokeTauri, notify, skill.central_path, t]);
+  }, [invokeTauri, notify, skill.central_path, skill.updated_at, t]);
 
   useEffect(() => {
     if (!activeFile) return;
@@ -484,7 +488,7 @@ const SkillDetailView = ({
     return () => {
       cancelled = true;
     };
-  }, [activeFile, invokeTauri, skill.central_path, t]);
+  }, [activeFile, invokeTauri, skill.central_path, skill.updated_at, t]);
 
   const handleSelectFile = useCallback((path: string) => {
     setActiveFile(path);
@@ -524,6 +528,16 @@ const SkillDetailView = ({
             <ArrowLeft size={16} />
             {t("detail.back")}
           </button>
+          {!isExplorePreview && skill.source_type === "git" && onRepoint ? (
+            <button
+              className="btn btn-secondary"
+              type="button"
+              disabled={actionLoading}
+              onClick={() => onRepoint(skill)}
+            >
+              {t("gitRepoint.action")}
+            </button>
+          ) : null}
           {isExplorePreview && onInstall && (
             <button
               className="detail-install-btn"

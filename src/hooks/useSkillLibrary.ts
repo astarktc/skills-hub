@@ -72,6 +72,8 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
 
   const [managedSkills, setManagedSkills] = useState<ManagedSkill[]>([]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [pendingGitRepointSkill, setPendingGitRepointSkill] =
+    useState<ManagedSkill | null>(null);
 
   const loadManagedSkills = useCallback(async () => {
     try {
@@ -497,13 +499,23 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
 
   /** The single-skill Update, under the copy the caller names. */
   const runSingleRefresh = useCallback(
-    async (skill: ManagedSkill, copy: { message: string; success: string }) => {
+    async (
+      skill: ManagedSkill,
+      copy: { message: string; success: string },
+      requestRefresh?: () => Promise<RefreshReportDto>,
+    ) => {
       await runAction(
         { message: copy.message, successToast: copy.success },
         async (action) => {
           // A single Update is the same batch, of one.
-          const report = await refreshSkills([skill.id]);
-          await loadManagedSkills();
+          let report: RefreshReportDto;
+          try {
+            report = await (requestRefresh
+              ? requestRefresh()
+              : refreshSkills([skill.id]));
+          } finally {
+            await loadManagedSkills();
+          }
           return settleSingleReport(action, report);
         },
       );
@@ -541,13 +553,43 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     [runSingleRefresh, t],
   );
 
+  const handleRepointGitSkill = useCallback((skill: ManagedSkill) => {
+    setPendingGitRepointSkill(skill);
+  }, []);
+
+  const handleCloseRepointGitSkill = useCallback(() => {
+    setPendingGitRepointSkill(null);
+  }, []);
+
+  const handleConfirmRepointGitSkill = useCallback(
+    async (url: string) => {
+      const skill = pendingGitRepointSkill;
+      if (!skill) return;
+      setPendingGitRepointSkill(null);
+      await runSingleRefresh(
+        skill,
+        {
+          message: t("actions.repointing", { name: skill.name }),
+          success: t("status.repointed", { name: skill.name }),
+        },
+        () => invokeTauri("repointGitSkillSource", skill.id, url.trim()),
+      );
+    },
+    [pendingGitRepointSkill, runSingleRefresh, t],
+  );
+
   /**
-   * Re-point a `local` skill whose folder is gone: pick its new location,
+   * Re-point by provenance: git opens the URL Modal; local picks a folder.
+   * For a `local` skill whose folder is gone, pick its new location,
    * then the backend rewrites the source and runs the Update from it. A
    * cancelled picker is not an action at all.
    */
   const handleRepointSkill = useCallback(
     async (skill: ManagedSkill) => {
+      if (skill.source_type === "git") {
+        handleRepointGitSkill(skill);
+        return;
+      }
       let newPath: string;
       try {
         const { open } = await import("@tauri-apps/plugin-dialog");
@@ -578,7 +620,10 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
         },
       );
     },
-    [formatError, loadManagedSkills, runAction, setError, settleSingleReport, t],
+    [
+      formatError, handleRepointGitSkill, loadManagedSkills, runAction,
+      setError, settleSingleReport, t,
+    ],
   );
 
   /**
@@ -605,6 +650,10 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     managedSkills,
     pendingDeleteId,
     pendingDeleteSkill,
+    pendingGitRepointSkill,
+    handleRepointGitSkill,
+    handleCloseRepointGitSkill,
+    handleConfirmRepointGitSkill,
     loadManagedSkills,
     isSkillNameTaken,
     handleRefresh,

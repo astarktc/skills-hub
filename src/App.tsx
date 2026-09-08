@@ -16,6 +16,7 @@ import Modal from "./components/shared/Modal";
 import NotificationsModal from "./components/shared/NotificationsModal";
 import AddSkillModal from "./components/skills/modals/AddSkillModal";
 import DeleteModal from "./components/skills/modals/DeleteModal";
+import GitRepointModal from "./components/skills/modals/GitRepointModal";
 import GitPickModal from "./components/skills/modals/GitPickModal";
 import LocalPickModal from "./components/skills/modals/LocalPickModal";
 import ImportModal from "./components/skills/modals/ImportModal";
@@ -245,7 +246,11 @@ function App() {
         {(activeView === "detail" || activeView === "explore-detail") &&
         detailSkill ? (
           <SkillDetailView
-            skill={detailSkill}
+            skill={activeView === "detail"
+              ? library.managedSkills.find((skill) => skill.id === detailSkill.id) ?? detailSkill
+              : detailSkill}
+            onRepoint={library.handleRepointGitSkill}
+            actionLoading={loading}
             onBack={
               activeView === "explore-detail"
                 ? handleBackToExplore
@@ -433,6 +438,17 @@ function App() {
         onSyncAll={handleSyncAllNewTools}
         t={t}
       />
+
+      {library.pendingGitRepointSkill ? (
+        <GitRepointModal
+          key={library.pendingGitRepointSkill.id}
+          skillName={library.pendingGitRepointSkill.name}
+          loading={loading}
+          onRequestClose={library.handleCloseRepointGitSkill}
+          onConfirm={library.handleConfirmRepointGitSkill}
+          t={t}
+        />
+      ) : null}
 
       <DeleteModal
         open={Boolean(library.pendingDeleteId)}

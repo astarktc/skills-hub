@@ -22,6 +22,421 @@ use crate::core::skill_store::SkillStore;
 use crate::core::tool_adapters::adapter_by_key;
 use crate::core::unlocatable::UnlocatableState;
 
+struct RepointApi;
+
+impl crate::core::git_acquisition::GithubApi for RepointApi {
+    fn branch_sha(&self, _: &crate::core::git_acquisition::GithubCoords) -> anyhow::Result<String> {
+        Ok("new-sha".into())
+    }
+
+    fn download_directory(
+        &self,
+        coords: &crate::core::git_acquisition::GithubCoords,
+        dest: &Path,
+        _: Option<&CancelToken>,
+    ) -> anyhow::Result<()> {
+        fs::create_dir_all(dest)?;
+        fs::write(
+            dest.join("SKILL.md"),
+            format!("---\nname: alpha\n---\nnew bytes\n{}", coords.tree_url()),
+        )?;
+        Ok(())
+    }
+}
+
+#[test]
+fn git_repoint_acquires_before_rewriting_and_rebuilds_central() {
+    let f = fixture();
+    let tool = adapter_by_key("claude_code").unwrap();
+    fs::create_dir_all(f.paths.home.join(tool.relative_detect_dir)).unwrap();
+    refresh(
+        &f,
+        RefreshPolicy {
+            reassert_auto_sync: true,
+        },
+    );
+    let mut original = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    original.source_type = "git".into();
+    original.source_ref = Some("https://github.com/owner/repo/tree/main/old".into());
+    original.source_subpath = Some("old".into());
+    f.store.upsert_skill(&original).unwrap();
+    fs::remove_dir_all(&original.central_path).unwrap();
+    let url = "https://github.com/owner/repo/tree/main/new";
+    let report = super::repoint_git_skill_with(
+        &f.paths,
+        &f.store,
+        &f.skill_id,
+        url,
+        None,
+        3000,
+        &RepointApi,
+    )
+    .unwrap();
+    assert!(matches!(
+        report.skills[0].status,
+        SkillRefreshStatus::Refreshed { .. }
+    ));
+    let after = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    assert_eq!(after.id, original.id);
+    assert_eq!(after.source_ref.as_deref(), Some(url));
+    assert_eq!(after.source_subpath.as_deref(), Some("new"));
+    assert_eq!(after.source_revision.as_deref(), Some("new-sha"));
+    let SkillRefreshStatus::Refreshed { targets, .. } = &report.skills[0].status else {
+        unreachable!()
+    };
+    assert_eq!(targets.len(), 1);
+    assert!(
+        matches!(&targets[0].scope, PropagationScope::Global { tool } if tool == "claude_code")
+    );
+    assert!(f
+        .paths
+        .home
+        .join(tool.relative_skills_dir)
+        .join("alpha/SKILL.md")
+        .is_file());
+    assert!(
+        fs::read_to_string(Path::new(&after.central_path).join("SKILL.md"))
+            .unwrap()
+            .ends_with(url)
+    );
+}
+
+#[test]
+fn git_repoint_refuses_non_git_without_changing_the_record() {
+    let f = fixture();
+    let before = format!("{:?}", f.store.get_skill_by_id(&f.skill_id).unwrap());
+    let error = super::repoint_git_skill_with(
+        &f.paths,
+        &f.store,
+        &f.skill_id,
+        "https://github.com/owner/repo/tree/main/new",
+        None,
+        3000,
+        &RepointApi,
+    )
+    .unwrap_err();
+    assert!(error.downcast_ref::<SignalError>().is_some());
+    assert_eq!(
+        format!("{:?}", f.store.get_skill_by_id(&f.skill_id).unwrap()),
+        before
+    );
+}
+
+#[test]
+fn git_repoint_rejects_malformed_url_before_acquisition() {
+    let f = fixture();
+    let mut record = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    record.source_type = "git".into();
+    f.store.upsert_skill(&record).unwrap();
+    let result = super::repoint_git_skill_with(
+        &f.paths,
+        &f.store,
+        &f.skill_id,
+        "owner/repo/tree/main/new",
+        None,
+        3000,
+        &RepointApi,
+    );
+    assert!(matches!(
+        result.unwrap_err().downcast_ref::<SignalError>(),
+        Some(SignalError::InvalidGithubUrl { .. })
+    ));
+}
+
+fn git_repoint_fixture() -> Fixture {
+    let f = fixture();
+    let mut record = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    record.source_type = "git".into();
+    record.source_ref = Some("https://github.com/owner/repo/tree/main/old".into());
+    record.source_subpath = Some("old".into());
+    f.store.upsert_skill(&record).unwrap();
+    f
+}
+
+struct EmptyRepointApi;
+impl crate::core::git_acquisition::GithubApi for EmptyRepointApi {
+    fn branch_sha(&self, _: &crate::core::git_acquisition::GithubCoords) -> anyhow::Result<String> {
+        Ok("sha".into())
+    }
+    fn download_directory(
+        &self,
+        _: &crate::core::git_acquisition::GithubCoords,
+        dest: &Path,
+        _: Option<&CancelToken>,
+    ) -> anyhow::Result<()> {
+        fs::create_dir_all(dest)?;
+        fs::write(dest.join("README.md"), "not a skill")?;
+        Ok(())
+    }
+}
+
+#[test]
+fn git_repoint_non_skill_directory_never_replaces_a_working_skill() {
+    let f = git_repoint_fixture();
+    let before = format!("{:?}", f.store.get_skill_by_id(&f.skill_id).unwrap());
+    let report = super::repoint_git_skill_with(
+        &f.paths,
+        &f.store,
+        &f.skill_id,
+        "https://github.com/owner/repo/tree/main/docs",
+        None,
+        3000,
+        &EmptyRepointApi,
+    )
+    .unwrap();
+    let SkillRefreshStatus::Failed { error } = &report.skills[0].status else {
+        panic!("{report:?}")
+    };
+    assert!(matches!(
+        error.downcast_ref::<SignalError>(),
+        Some(SignalError::SkillInvalid { .. })
+    ));
+    assert_eq!(
+        format!("{:?}", f.store.get_skill_by_id(&f.skill_id).unwrap()),
+        before
+    );
+}
+
+struct MissingRepointApi;
+impl crate::core::git_acquisition::GithubApi for MissingRepointApi {
+    fn branch_sha(&self, _: &crate::core::git_acquisition::GithubCoords) -> anyhow::Result<String> {
+        Ok("sha".into())
+    }
+    fn download_directory(
+        &self,
+        _: &crate::core::git_acquisition::GithubCoords,
+        _: &Path,
+        _: Option<&CancelToken>,
+    ) -> anyhow::Result<()> {
+        Err(crate::core::github_download::GithubApiError {
+            status: 404,
+            reset_minutes: None,
+            url: "https://api.github.com/repos/other/repo/contents/missing".into(),
+        }
+        .into())
+    }
+}
+
+#[test]
+fn git_repoint_404_preserves_every_record_field_and_central_bytes() {
+    let f = git_repoint_fixture();
+    let before = format!("{:?}", f.store.get_skill_by_id(&f.skill_id).unwrap());
+    let report = super::repoint_git_skill_with(
+        &f.paths,
+        &f.store,
+        &f.skill_id,
+        "https://github.com/other/repo/tree/main/missing",
+        None,
+        3000,
+        &MissingRepointApi,
+    )
+    .unwrap();
+    let SkillRefreshStatus::Failed { error } = &report.skills[0].status else {
+        panic!("{report:?}")
+    };
+    assert!(matches!(
+        error.downcast_ref::<SignalError>(),
+        Some(SignalError::GithubSkillNotFound { .. })
+    ));
+    assert_eq!(
+        format!("{:?}", f.store.get_skill_by_id(&f.skill_id).unwrap()),
+        before
+    );
+    let record = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    assert_eq!(
+        fs::read_to_string(Path::new(&record.central_path).join("a.txt")).unwrap(),
+        "v1"
+    );
+}
+
+#[test]
+fn git_repoint_to_another_repo_propagates_every_existing_scope() {
+    use crate::core::skill_store::{
+        ProjectRecord, ProjectSkillAssignmentRecord, SkillTargetRecord,
+    };
+    use crate::core::sync_status::{SyncMode, SyncStatus};
+    let f = git_repoint_fixture();
+    let tool = adapter_by_key("claude_code").unwrap();
+    fs::create_dir_all(f.paths.home.join(tool.relative_detect_dir)).unwrap();
+    let target = f.paths.home.join(tool.relative_skills_dir).join("alpha");
+    f.store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "global".into(),
+            skill_id: f.skill_id.clone(),
+            tool: tool.key().into(),
+            target_path: target.to_string_lossy().into(),
+            mode: SyncMode::Copy,
+            status: SyncStatus::Synced,
+            last_error: None,
+            synced_at: Some(1),
+        })
+        .unwrap();
+    let project = f.paths.home.join("project");
+    fs::create_dir_all(&project).unwrap();
+    f.store
+        .register_project(&ProjectRecord {
+            id: "project".into(),
+            path: project.to_string_lossy().into(),
+            created_at: 1,
+            updated_at: 1,
+        })
+        .unwrap();
+    f.store
+        .add_project_skill_assignment(&ProjectSkillAssignmentRecord {
+            id: "assignment".into(),
+            project_id: "project".into(),
+            skill_id: f.skill_id.clone(),
+            skill_name: "alpha".into(),
+            tool: tool.key().into(),
+            mode: SyncMode::Copy,
+            status: SyncStatus::Synced,
+            last_error: None,
+            synced_at: Some(1),
+            content_hash: None,
+            created_at: 1,
+        })
+        .unwrap();
+    let url = "https://github.com/new-owner/new-repo/tree/develop/new-skill";
+    let report = super::repoint_git_skill_with(
+        &f.paths,
+        &f.store,
+        &f.skill_id,
+        url,
+        None,
+        3000,
+        &RepointApi,
+    )
+    .unwrap();
+    let SkillRefreshStatus::Refreshed { targets, .. } = &report.skills[0].status else {
+        panic!("{report:?}")
+    };
+    assert_eq!(targets.len(), 2);
+    assert!(targets
+        .iter()
+        .all(|target| !matches!(target.status, PropagationStatus::Failed { .. })));
+    assert!(targets
+        .iter()
+        .any(|target| matches!(target.scope, PropagationScope::Global { .. })));
+    assert!(targets
+        .iter()
+        .any(|target| matches!(target.scope, PropagationScope::Project { .. })));
+    assert!(fs::read_to_string(target.join("SKILL.md"))
+        .unwrap()
+        .ends_with(url));
+    let record = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    assert_eq!(record.source_ref.as_deref(), Some(url));
+    assert_eq!(record.source_subpath.as_deref(), Some("new-skill"));
+}
+
+/// Seed a real local clone under the replacement URL's cache identity, so
+/// repository-name resolution exercises acquisition without external networking.
+fn seed_repoint_repository(f: &Fixture, matching_name: bool) {
+    use crate::core::git_cache::{
+        fetch_through_cache, repo_cache_key, CacheKeyInputs, FetchRequest,
+    };
+    let repo = fixture_repo();
+    if matching_name {
+        fs::write(
+            repo.path().join("skills/a/SKILL.md"),
+            "---\nname: alpha\n---\nnew bytes",
+        )
+        .unwrap();
+    } else {
+        fs::rename(
+            repo.path().join("skills/a"),
+            repo.path().join("skills/unrelated"),
+        )
+        .unwrap();
+    }
+    fs::create_dir_all(repo.path().join("skills/b")).unwrap();
+    fs::write(
+        repo.path().join("skills/b/SKILL.md"),
+        "---\nname: beta\n---\n",
+    )
+    .unwrap();
+    git(&["add", "-A"], repo.path());
+    git(&["commit", "-q", "-m", "two skills"], repo.path());
+    let url = repo.path().to_string_lossy();
+    let (cached, _) = fetch_through_cache(
+        &f.paths.cache_dir,
+        &FetchRequest {
+            clone_url: &url,
+            branch: None,
+            subpath: None,
+            ttl_ms: 3600000,
+            cancel: None,
+        },
+    )
+    .unwrap();
+    let key = repo_cache_key(&CacheKeyInputs {
+        clone_url: "https://github.com/new/repo.git",
+        branch: None,
+    });
+    fs::rename(&cached, cached.parent().unwrap().join(key)).unwrap();
+}
+
+#[test]
+fn git_repoint_repo_url_resolves_by_the_existing_skill_name() {
+    let f = git_repoint_fixture();
+    seed_repoint_repository(&f, true);
+    let report = super::repoint_git_skill_with(
+        &f.paths,
+        &f.store,
+        &f.skill_id,
+        "https://github.com/new/repo",
+        None,
+        3000,
+        &RepointApi,
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            report.skills[0].status,
+            SkillRefreshStatus::Refreshed { .. }
+        ),
+        "{report:?}"
+    );
+    let record = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    assert_eq!(
+        record.source_ref.as_deref(),
+        Some("https://github.com/new/repo")
+    );
+    assert_eq!(record.source_subpath.as_deref(), Some("skills/a"));
+    assert!(
+        fs::read_to_string(Path::new(&record.central_path).join("SKILL.md"))
+            .unwrap()
+            .contains("new bytes")
+    );
+}
+
+#[test]
+fn git_repoint_ambiguous_repo_preserves_the_record_byte_for_byte() {
+    let f = git_repoint_fixture();
+    seed_repoint_repository(&f, false);
+    let before = format!("{:?}", f.store.get_skill_by_id(&f.skill_id).unwrap());
+    let report = super::repoint_git_skill_with(
+        &f.paths,
+        &f.store,
+        &f.skill_id,
+        "https://github.com/new/repo",
+        None,
+        3000,
+        &RepointApi,
+    )
+    .unwrap();
+    let SkillRefreshStatus::Failed { error } = &report.skills[0].status else {
+        panic!("{report:?}")
+    };
+    assert_eq!(
+        error.downcast_ref::<SignalError>(),
+        Some(&SignalError::MultiSkills)
+    );
+    assert_eq!(
+        format!("{:?}", f.store.get_skill_by_id(&f.skill_id).unwrap()),
+        before
+    );
+}
+
 struct Fixture {
     _dir: tempfile::TempDir,
     paths: InstallerPaths,

@@ -173,6 +173,14 @@ export const resources = {
       },
       update: "Update",
       remove: "Remove",
+      gitRepoint: {
+        action: "Re-point",
+        title: "Re-point {{name}}",
+        confirm: "Re-point and Update",
+        urlLabel: "New GitHub URL",
+        urlPlaceholder: "https://github.com/owner/repo/tree/main/skills/name",
+        help: "Paste a repository or skill folder URL. Your source changes only after acquisition succeeds; existing sync targets and project assignments are preserved.",
+      },
       provenance: {
         managedHere: "Managed here",
         importedFrom: "Imported from {{tool}}",
@@ -288,7 +296,9 @@ export const resources = {
         gitCloneExecFailed:
           "Running the system git command failed (stopped without falling back to the built-in git, to avoid hangs). Please check your git installation, network, or proxy.",
         githubSkillNotFound:
-          "Skill not found on GitHub (it may have been deleted or the path changed). Please check: {{url}}",
+          "Skill not found on GitHub (it may have been deleted or the path changed). Please check: {{url}}. If it moved, use Re-point on the skill to paste its new GitHub URL.",
+        invalidGithubUrl: "Enter a full GitHub repository or tree URL (https://github.com/owner/repo/tree/branch/path): {{url}}",
+        gitRepointRequiresGit: "{{name}} is not a git skill. Only git skills can be re-pointed to a GitHub URL.",
         deleteCleanupFailed:
           "Some artifacts could not be removed, so what describes them was kept — you can retry:",
         pathOutsideToolDirs:
@@ -729,6 +739,14 @@ export const resources = {
       },
       update: "更新",
       remove: "移除",
+      gitRepoint: {
+        action: "重新指向",
+        title: "重新指向 {{name}}",
+        confirm: "重新指向并更新",
+        urlLabel: "新的 GitHub URL",
+        urlPlaceholder: "https://github.com/owner/repo/tree/main/skills/name",
+        help: "粘贴仓库或 Skill 文件夹 URL。仅在成功获取后更改来源；已有同步目标和项目分配将被保留。",
+      },
       provenance: {
         managedHere: "由此管理",
         importedFrom: "导入自 {{tool}}",
@@ -833,7 +851,9 @@ export const resources = {
         gitCloneExecFailed:
           "git 命令执行失败（为避免卡死，已停止并不再回退到内置 git）。请检查系统 git/网络/代理。",
         githubSkillNotFound:
-          "在 GitHub 上未找到该 Skill（可能已被删除或路径已变更）。请检查：{{url}}",
+          "在 GitHub 上未找到该 Skill（可能已被删除或路径已变更）。请检查：{{url}}。如果已移动，请使用该 Skill 的“重新指向”操作，粘贴新的 GitHub URL。",
+        invalidGithubUrl: "请输入完整的 GitHub 仓库或目录 URL（https://github.com/owner/repo/tree/branch/path）：{{url}}",
+        gitRepointRequiresGit: "{{name}} 不是 git Skill。只有 git Skill 才能重新指向 GitHub URL。",
         deleteCleanupFailed:
           "部分产物无法移除，相关记录已保留，你可以重试：",
         pathOutsideToolDirs:

@@ -5,6 +5,7 @@ import {
   Copy,
   Folder,
   Link,
+  MapPin,
   RefreshCw,
   Trash2,
   Unlink,
@@ -272,6 +273,18 @@ const SkillCard = ({
             aria-label={t("update")}
           >
             <RefreshCw size={16} />
+          </button>
+        ) : null}
+        {kind === "git" ? (
+          <button
+            className="card-btn secondary-action"
+            type="button"
+            onClick={() => onRepoint(skill)}
+            disabled={loading}
+            aria-label={t("gitRepoint.action")}
+            title={t("gitRepoint.action")}
+          >
+            <MapPin size={16} />
           </button>
         ) : null}
         <button

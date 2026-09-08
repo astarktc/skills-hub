@@ -94,6 +94,12 @@ pub enum CommandError {
         /// Human-checkable GitHub tree URL for the missing skill path.
         url: String,
     },
+    InvalidGithubUrl {
+        url: String,
+    },
+    GitRepointRequiresGit {
+        name: String,
+    },
     DeleteCleanupFailed {
         /// `"<path>: <io error>"` diagnostics per failed removal target.
         failures: Vec<String>,
@@ -252,6 +258,10 @@ impl From<SignalError> for CommandError {
                 detail,
             },
             SignalError::GithubSkillNotFound { url } => CommandError::GithubSkillNotFound { url },
+            SignalError::InvalidGithubUrl { url } => CommandError::InvalidGithubUrl { url },
+            SignalError::GitRepointRequiresGit { name } => {
+                CommandError::GitRepointRequiresGit { name }
+            }
             SignalError::DeleteCleanupFailed { failures } => {
                 CommandError::DeleteCleanupFailed { failures }
             }
