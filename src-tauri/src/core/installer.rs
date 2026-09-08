@@ -385,8 +385,10 @@ pub(crate) fn finalize_and_propagate_unlocked(
     } = acquired;
     let now = now_ms();
 
-    let mut updated = finalize_update(store, &record, staged, new_revision.clone())?;
-    let edit_conflict = super::skill_edits::replay_unlocked(store, &mut updated)?;
+    let (updated, edit_conflict) =
+        finalize_update(store, &record, staged, new_revision.clone(), |updated| {
+            super::skill_edits::replay_unlocked(store, updated)
+        })?;
     let content_hash = updated.content_hash.clone();
 
     let propagation = propagate_unlocked(store, paths, &record.id, content_hash.as_deref(), now)?;

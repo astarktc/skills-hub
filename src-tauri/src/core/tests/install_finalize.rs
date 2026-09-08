@@ -1,12 +1,19 @@
 use std::fs;
 use std::path::Path;
 
-use super::{
-    ensure_name_available, finalize_install, finalize_update, NameIntent, SkillProvenance,
-    StagingDir,
-};
+use super::{ensure_name_available, finalize_install, NameIntent, SkillProvenance, StagingDir};
 use crate::core::errors::SignalError;
 use crate::core::skill_store::SkillStore;
+
+// Existing finalize tests exercise the no-Edit settlement path.
+fn finalize_update(
+    store: &SkillStore,
+    record: &super::SkillRecord,
+    staged: StagingDir,
+    revision: Option<String>,
+) -> anyhow::Result<super::SkillRecord> {
+    super::finalize_update(store, record, staged, revision, |_| Ok(())).map(|(record, ())| record)
+}
 
 fn make_store() -> (tempfile::TempDir, SkillStore) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -505,6 +512,89 @@ fn finalize_update_restores_old_bytes_when_upsert_fails() {
 
     assert!(format!("{err:#}").contains("test upsert failure"));
     assert_old_skill(central.path(), &store, &before);
+    assert_eq!(central_entries(central.path()), vec!["s"]);
+}
+
+#[test]
+fn finalize_step_failure_restores_persisted_row_even_if_input_and_settlement_changed_it() {
+    let (_db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    let before = install_before_update(central.path(), &store);
+    let mut acquired = before.clone();
+    acquired.source_ref = Some("https://github.com/new/source".into());
+    let err = super::finalize_update(
+        &store,
+        &acquired,
+        stage_skill(central.path(), "---\nname: s\ndescription: new\n---\n"),
+        Some("rev2".into()),
+        |updated| -> anyhow::Result<()> {
+            updated.content_hash = Some("half-settled".into());
+            store.upsert_skill(updated)?;
+            anyhow::bail!("settlement failed")
+        },
+    )
+    .unwrap_err();
+    assert!(format!("{err:#}").contains("settlement failed"));
+    assert_old_skill(central.path(), &store, &before);
+    assert_eq!(central_entries(central.path()), vec!["s"]);
+}
+
+#[test]
+fn finalize_step_failed_rollback_keeps_and_names_backup() {
+    let (_db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    let before = install_before_update(central.path(), &store);
+    let err = super::finalize_update(
+        &store,
+        &before,
+        stage_skill(central.path(), "---\nname: s\ndescription: new\n---\n"),
+        None,
+        |updated| -> anyhow::Result<()> {
+            fs::remove_dir_all(&updated.central_path)?;
+            fs::write(&updated.central_path, "obstruction")?;
+            anyhow::bail!("settlement failed")
+        },
+    )
+    .unwrap_err();
+    let Some(SignalError::FinalizeRollbackFailed {
+        backup: Some(backup),
+        ..
+    }) = err.downcast_ref::<SignalError>()
+    else {
+        panic!("{err:#}");
+    };
+    assert!(format!("{err:#}").contains(backup));
+    assert_eq!(fs::read(Path::new(backup).join("a.txt")).unwrap(), b"data");
+    assert_eq!(central_entries(central.path()).len(), 2);
+    assert_eq!(
+        format!("{:?}", store.get_skill_by_id(&before.id).unwrap().unwrap()),
+        format!("{before:?}")
+    );
+}
+
+#[test]
+fn finalize_step_names_a_skill_row_restore_double_fault() {
+    let (db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    let before = install_before_update(central.path(), &store);
+    let err = super::finalize_update(
+        &store,
+        &before,
+        stage_skill(central.path(), "---\nname: s\n---\n"),
+        None,
+        |_| -> anyhow::Result<()> {
+            reject_skill_writes(&db.path().join("test.db"));
+            anyhow::bail!("settlement failed")
+        },
+    )
+    .unwrap_err();
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("restore pre-finalize skill row"),
+        "{message}"
+    );
+    assert!(message.contains("test upsert failure"), "{message}");
+    assert_eq!(err.root_cause().to_string(), "settlement failed");
     assert_eq!(central_entries(central.path()), vec!["s"]);
 }
 

@@ -142,7 +142,9 @@ pub fn set_invocation_override(
     })
 }
 
-/// The caller has finalized upstream bytes and holds the Mutation guard.
+/// The caller holds the Mutation guard and retains finalize's backup until
+/// replay succeeds. Restore the Edit snapshot on failure; finalize restores
+/// the central bytes and the pre-finalize skill row.
 pub(crate) fn replay_unlocked(
     store: &SkillStore,
     record: &mut SkillRecord,
@@ -150,6 +152,7 @@ pub(crate) fn replay_unlocked(
     let Some(mut edit) = store.get_skill_edit(&record.id, SkillEditKind::InvocationMode)? else {
         return Ok(None);
     };
+    let snapshot = edit.clone();
     let path = manifest(record)?;
     let upstream =
         frontmatter_edit::read_invocation_lines(&frontmatter_edit::read_manifest(&path)?);
@@ -166,11 +169,22 @@ pub(crate) fn replay_unlocked(
     });
     edit.base_value = serde_json::to_string(&upstream)?;
     edit.applied_at = now_ms();
-    store.upsert_skill_edit(&edit)?;
-    frontmatter_edit::apply_to_file(&path, |text| {
-        frontmatter_edit::write_invocation_mode(text, override_mode)
-    })?;
-    record_hash(store, record)?;
+    let applied = (|| {
+        store.upsert_skill_edit(&edit)?;
+        frontmatter_edit::apply_to_file(&path, |text| {
+            frontmatter_edit::write_invocation_mode(text, override_mode)
+        })?;
+        record_hash(store, record)
+    })();
+    if let Err(err) = applied {
+        return Err(match store.upsert_skill_edit(&snapshot) {
+            Ok(()) => err,
+            Err(restore_err) => err.context(format!(
+                "restore pre-replay Edit row {} failed: {restore_err:#}",
+                record.id
+            )),
+        });
+    }
     Ok(conflict)
 }
 

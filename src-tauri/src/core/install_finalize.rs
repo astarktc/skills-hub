@@ -260,21 +260,30 @@ pub fn finalize_install(
 /// Replace a managed skill's content with the staged bytes and refresh its
 /// record (identity, name, provenance, and timestamps other than `updated_at`
 /// are preserved; `revision` overrides the stored one when known). Returns
-/// the upserted record.
+/// the settled record and the step's result.
 ///
 /// A central copy that is already gone is not a failure: the staged bytes
 /// simply land at the recorded path — that is how Restore rebuilds an
 /// Unlocatable skill's central copy.
 ///
-/// Keep the previous bytes beside the destination until the row is committed.
-/// Failures roll back the bytes; a failed rollback keeps the backup for manual
-/// recovery and names it in the error. This is failure-atomic, not crash-atomic.
-pub fn finalize_update(
+/// Keep the previous bytes beside the destination until the row and step are
+/// settled. Failures restore bytes and the previous row; a failed byte rollback
+/// retains and names the backup. This is failure-atomic, not crash-atomic.
+///
+/// Settle derived state while the previous bytes are still recoverable. The
+/// step owns rollback of its auxiliary rows; finalize owns bytes and the skill
+/// row. Snapshot the persisted row before landing: acquisition may have
+/// overridden provenance in its input record (Re-point).
+pub fn finalize_update<T>(
     store: &SkillStore,
     record: &SkillRecord,
     staged: StagingDir,
     revision: Option<String>,
-) -> Result<SkillRecord> {
+    settle: impl FnOnce(&mut SkillRecord) -> Result<T>,
+) -> Result<(SkillRecord, T)> {
+    let previous = store
+        .get_skill_by_id(&record.id)?
+        .context("skill missing before finalize")?;
     let central_path = PathBuf::from(&record.central_path);
     let backup = move_old_central_aside(&central_path)?;
     if let Err(err) = staged.move_into(&central_path) {
@@ -284,7 +293,7 @@ pub fn finalize_update(
     let now = now_ms();
     let content_hash = compute_content_hash(&central_path);
     let (_, description) = read_skill_md_meta(&central_path);
-    let updated = SkillRecord {
+    let mut updated = SkillRecord {
         description: description.or_else(|| record.description.clone()),
         source_revision: revision.or_else(|| record.source_revision.clone()),
         content_hash,
@@ -296,6 +305,19 @@ pub fn finalize_update(
     if let Err(err) = store.upsert_skill(&updated) {
         return Err(rollback_update(&central_path, backup.as_deref(), err));
     }
+    let settled = match settle(&mut updated) {
+        Ok(settled) => settled,
+        Err(err) => {
+            let err = rollback_update(&central_path, backup.as_deref(), err);
+            return Err(match store.upsert_skill(&previous) {
+                Ok(()) => err,
+                Err(restore_err) => err.context(format!(
+                    "restore pre-finalize skill row {} failed: {restore_err:#}",
+                    record.id
+                )),
+            });
+        }
+    };
     if let Some(backup) = backup {
         if let Err(err) = std::fs::remove_dir_all(&backup) {
             // Bytes and row already agree: cleanup must not turn success into failure.
@@ -306,7 +328,7 @@ pub fn finalize_update(
             );
         }
     }
-    Ok(updated)
+    Ok((updated, settled))
 }
 
 fn move_old_central_aside(central: &Path) -> Result<Option<PathBuf>> {

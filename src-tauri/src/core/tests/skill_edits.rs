@@ -359,6 +359,109 @@ fn failed_edit_upserts_leave_set_and_replay_bytes_untouched() {
 }
 
 #[test]
+fn failed_update_replay_restores_bytes_skill_and_edit_then_retry_succeeds() {
+    for fault in ["edit", "hash"] {
+        let f = Fixture::new();
+        f.set(Some(InvocationMode::UserOnly)).unwrap();
+        let before = f.store.get_skill_by_id(&f.id).unwrap().unwrap();
+        let edit = f
+            .store
+            .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
+            .unwrap()
+            .unwrap();
+        let old_bytes = f.text();
+        let upstream = "---\nname: alpha\nuser-invocable: false\n---\nnew body\n";
+        fs::write(f.source.join("SKILL.md"), upstream).unwrap();
+        let conn = rusqlite::Connection::open(f.store.db_path()).unwrap();
+        if fault == "edit" {
+            conn.execute_batch("CREATE TRIGGER fail_replay BEFORE INSERT ON skill_edits
+                WHEN NEW.base_value != (SELECT base_value FROM skill_edits WHERE skill_id = NEW.skill_id)
+                BEGIN SELECT RAISE(ABORT, 'test replay edit failure'); END;").unwrap();
+        } else {
+            // Finalize's upstream hash is admitted; replay's post-Edit hash is
+            // rejected, after the Edit row and manifest have both changed.
+            let replayed =
+                frontmatter_edit::write_invocation_mode(upstream, InvocationMode::UserOnly);
+            let expected = tempfile::tempdir().unwrap();
+            fs::write(expected.path().join("SKILL.md"), replayed).unwrap();
+            let hash = hash_dir(expected.path()).unwrap();
+            conn.execute_batch(&format!(
+                "CREATE TRIGGER fail_replay BEFORE INSERT ON skills
+                WHEN NEW.content_hash = '{hash}'
+                BEGIN SELECT RAISE(ABORT, 'test replay hash failure'); END;"
+            ))
+            .unwrap();
+        }
+        let report = f.update();
+        assert!(
+            matches!(report.skills[0].status, SkillRefreshStatus::Failed { .. }),
+            "{report:?}"
+        );
+        assert_eq!(f.text(), old_bytes);
+        assert_eq!(
+            format!("{:?}", f.store.get_skill_by_id(&f.id).unwrap().unwrap()),
+            format!("{before:?}")
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                f.store
+                    .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
+                    .unwrap()
+                    .unwrap()
+            ),
+            format!("{edit:?}")
+        );
+        assert!(fs::read_dir(&f.paths.central_dir).unwrap().all(|e| !e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".skills-hub-old-")));
+        conn.execute_batch("DROP TRIGGER fail_replay;").unwrap();
+        let report = f.update();
+        assert!(
+            matches!(
+                report.skills[0].status,
+                SkillRefreshStatus::Refreshed {
+                    edit_conflict: Some(_),
+                    ..
+                }
+            ),
+            "{report:?}"
+        );
+        assert_eq!(
+            f.text(),
+            frontmatter_edit::write_invocation_mode(upstream, InvocationMode::UserOnly)
+        );
+        assert_eq!(
+            f.store
+                .get_skill_by_id(&f.id)
+                .unwrap()
+                .unwrap()
+                .content_hash,
+            Some(hash_dir(&f.central).unwrap())
+        );
+        assert!(fs::read_dir(&f.paths.central_dir).unwrap().all(|e| !e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".skills-hub-old-")));
+    }
+}
+
+#[test]
+fn replay_names_an_edit_snapshot_restore_failure() {
+    let f = Fixture::new();
+    f.set(Some(InvocationMode::UserOnly)).unwrap();
+    let conn = rusqlite::Connection::open(f.store.db_path()).unwrap();
+    conn.execute_batch("CREATE TRIGGER fail_edit BEFORE INSERT ON skill_edits BEGIN SELECT RAISE(ABORT, 'test double fault'); END;").unwrap();
+    let mut record = f.store.get_skill_by_id(&f.id).unwrap().unwrap();
+    let err = mutation_guard::serialized(|| replay_unlocked(&f.store, &mut record)).unwrap_err();
+    assert!(format!("{err:#}").contains("restore pre-replay Edit row"));
+    assert!(format!("{err:#}").contains("test double fault"));
+}
+
+#[test]
 fn invalid_utf8_is_typed_for_set_and_replay() {
     let f = Fixture::new();
     f.set(Some(InvocationMode::UserOnly)).unwrap();
