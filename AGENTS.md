@@ -240,7 +240,14 @@ provider we use. Model routing within Pi:
 - **Fable** models → the Anthropic provider (`anthropic/claude-fable-*`).
 - **Opus** models → the Cortex provider (`cortex/claude-opus-*`), unless the operator explicitly asks
   for Anthropic.
-- **GPT-5.6** models → `cortex-responses/openai-gpt-5.6-*`.
+- **GPT-6 Astra** → `openai-codex/gpt-6-astra` (the OpenAI seat on review panels and the default for
+  implementation children; requires a live `openai-codex` login in Pi). **GPT-5.6 Sol** is retired for
+  reviews.
+- **GPT-5.6** models (other uses) → `cortex-responses/openai-gpt-5.6-*`.
+
+Children read AGENTS.md's Workflow step 1 literally and stop for confirmation: **pre-approve it in the
+brief** ("state your approach and continue"). Tell them `.scratch/` is gitignored and never to `git add -f`
+it.
 
 Do not reach for the `claudeAgent` (Claude Code) or `codex` provider instances for these models.
 
