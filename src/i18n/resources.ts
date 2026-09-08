@@ -21,6 +21,9 @@ export const resources = {
         "Have a Git URL or local path? Click <b>Manual</b> to add directly",
       moreTools: "+{{count}} more",
       invocationMode: {
+        userAndModel: "User & model",
+        userAndModelTooltip:
+          "Both you (via /skill-name) and the AI agent can invoke this skill — the default.",
         userOnly: "User only",
         modelOnly: "Model only",
         neither: "Not invocable",
@@ -591,6 +594,9 @@ export const resources = {
       manualAddHint: "有 Git URL 或本地路径？点击<b>手动添加</b>直接导入",
       moreTools: "+{{count}} 个",
       invocationMode: {
+        userAndModel: "用户与模型",
+        userAndModelTooltip:
+          "你（通过 /skill-name）和 AI 智能体都可以调用该 Skill，这是默认设置。",
         userOnly: "仅用户",
         modelOnly: "仅模型",
         neither: "无法调用",

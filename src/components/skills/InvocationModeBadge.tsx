@@ -7,41 +7,44 @@ type InvocationModeBadgeProps = {
   t: TFunction;
 };
 
-// The default mode (both the user and the model may invoke a skill) is the
-// overwhelming majority, so it renders nothing: the badge only appears when a
-// skill's frontmatter restricts who can invoke it.
 const InvocationModeBadge = ({ mode, t }: InvocationModeBadgeProps) => {
-  if (mode === "user-and-model") return null;
-
   const icon =
-    mode === "user-only" ? (
-      <User size={11} />
+    mode === "user-and-model" ? (
+      <>
+        <User size={11} aria-hidden="true" />
+        <Bot size={11} aria-hidden="true" />
+      </>
+    ) : mode === "user-only" ? (
+      <User size={11} aria-hidden="true" />
     ) : mode === "model-only" ? (
-      <Bot size={11} />
+      <Bot size={11} aria-hidden="true" />
     ) : (
-      <EyeOff size={11} />
+      <EyeOff size={11} aria-hidden="true" />
     );
   const labelKey =
-    mode === "user-only"
-      ? "invocationMode.userOnly"
-      : mode === "model-only"
-        ? "invocationMode.modelOnly"
-        : "invocationMode.neither";
+    mode === "user-and-model"
+      ? "invocationMode.userAndModel"
+      : mode === "user-only"
+        ? "invocationMode.userOnly"
+        : mode === "model-only"
+          ? "invocationMode.modelOnly"
+          : "invocationMode.neither";
   const tooltipKey =
-    mode === "user-only"
-      ? "invocationMode.userOnlyTooltip"
-      : mode === "model-only"
-        ? "invocationMode.modelOnlyTooltip"
-        : "invocationMode.neitherTooltip";
+    mode === "user-and-model"
+      ? "invocationMode.userAndModelTooltip"
+      : mode === "user-only"
+        ? "invocationMode.userOnlyTooltip"
+        : mode === "model-only"
+          ? "invocationMode.modelOnlyTooltip"
+          : "invocationMode.neitherTooltip";
 
   return (
     <span
       className={`invocation-badge ${mode}`}
-      title={t(tooltipKey)}
-      aria-label={t(tooltipKey)}
+      title={`${t(labelKey)} — ${t(tooltipKey)}`}
+      aria-label={t(labelKey)}
     >
-      <span aria-hidden="true">{icon}</span>
-      {t(labelKey)}
+      {icon}
     </span>
   );
 };

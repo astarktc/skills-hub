@@ -417,14 +417,14 @@
   gap: 10px;
 }
 
-/* Invocation-mode badge: only rendered for skills whose SKILL.md frontmatter
-   restricts who may invoke them (the default mode renders no badge). */
+/* Icon-only invocation-mode badge; the default mode stays quiet. */
 .invocation-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  flex-shrink: 0;
+  gap: 3px;
   height: 18px;
-  padding: 0 6px;
+  padding: 0 4px;
   border-radius: 4px;
   font-family: var(--font-ui);
   font-size: 10px;
@@ -434,6 +434,12 @@
   background: var(--bg-element);
   color: var(--text-tertiary);
   border: 1px solid var(--border-subtle);
+}
+
+.invocation-badge.user-and-model {
+  background: var(--bg-element);
+  border-color: var(--border-subtle);
+  color: var(--text-tertiary);
 }
 
 .invocation-badge.user-only {
