@@ -388,11 +388,31 @@ fn rollback_rename_failure_names_and_preserves_backup() {
     let err = super::rollback_update(path, Some(&backup), anyhow::anyhow!("move failed"));
 
     assert_eq!(err.root_cause().to_string(), "move failed");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::FinalizeRollbackFailed {
+            central: path.to_string_lossy().into_owned(),
+            backup: Some(backup.to_string_lossy().into_owned()),
+        })
+    );
     let message = format!("{err:#}");
     assert!(message.contains("restore old central dir"), "{message}");
     assert!(message.contains(backup.to_str().unwrap()), "{message}");
     assert_eq!(fs::read(backup.join("a.txt")).unwrap(), b"data");
     assert!(!path.exists());
+    let wire = crate::commands::error::CommandError::from_anyhow(err);
+    let crate::commands::error::CommandError::FinalizeRollbackFailed {
+        central,
+        backup: retained,
+        detail,
+    } = wire
+    else {
+        panic!("expected typed recovery error");
+    };
+    assert_eq!(central, path.to_string_lossy());
+    assert_eq!(retained.as_deref(), backup.to_str());
+    assert!(detail.contains("move failed"));
+    assert!(detail.contains("restore old central dir"));
 }
 
 /// A failed fallback copy must not leave a partial directory at the skill's

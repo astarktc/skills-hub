@@ -25,6 +25,11 @@ pub enum SignalError {
     MultiSkills,
     /// A skill directory with this name already exists in the central repo.
     SkillExists { name: String },
+    /// Update recovery failed; any backup still holds the previous central bytes.
+    FinalizeRollbackFailed {
+        central: String,
+        backup: Option<String>,
+    },
     /// A project with this path is already registered.
     DuplicateProject { path: String },
     /// The project/skill/tool assignment already exists.
@@ -113,6 +118,12 @@ impl fmt::Display for SignalError {
             }
             SignalError::SkillExists { name } => {
                 write!(f, "skill already installed in central repo: {name}")
+            }
+            SignalError::FinalizeRollbackFailed { central, backup } => {
+                write!(
+                    f,
+                    "finalize rollback failed: central={central}, backup={backup:?}"
+                )
             }
             SignalError::DuplicateProject { path } => {
                 write!(f, "project already registered: {path}")

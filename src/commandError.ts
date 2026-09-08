@@ -19,6 +19,7 @@ const COMMAND_ERROR_CODE_MAP = {
   SKILL_INVALID: true,
   MULTI_SKILLS: true,
   SKILL_EXISTS: true,
+  FINALIZE_ROLLBACK_FAILED: true,
   DUPLICATE_PROJECT: true,
   ASSIGNMENT_EXISTS: true,
   NOT_FOUND: true,
@@ -110,6 +111,13 @@ export function describeCommandError(
       return t("errors.multiSkillsRepo");
     case "SKILL_EXISTS":
       return t("errors.skillExistsInHubNamed", { name: e.name });
+    case "FINALIZE_ROLLBACK_FAILED":
+      return withDetail(
+        e.backup !== null
+          ? t("errors.finalizeRollbackFailed", { central: e.central, backup: e.backup })
+          : t("errors.finalizeRollbackFailedNoBackup", { central: e.central }),
+        e.detail,
+      );
     case "DUPLICATE_PROJECT":
       return t("projects.duplicateError") + (e.path ? `: ${e.path}` : "");
     case "ASSIGNMENT_EXISTS":

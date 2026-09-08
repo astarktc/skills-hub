@@ -60,6 +60,12 @@ pub enum CommandError {
         /// Name of the skill directory already present in the central repo.
         name: String,
     },
+    FinalizeRollbackFailed {
+        central: String,
+        backup: Option<String>,
+        /// Original failure and rollback error chain, diagnostics only.
+        detail: String,
+    },
     DuplicateProject {
         path: String,
     },
@@ -162,8 +168,19 @@ impl CommandError {
     /// are recovered by downcast, GitHub clone failures are classified by
     /// heuristic, and everything else becomes `Other` with the full chain.
     pub fn from_anyhow(err: anyhow::Error) -> Self {
+        let rollback_detail = matches!(
+            err.downcast_ref::<SignalError>(),
+            Some(SignalError::FinalizeRollbackFailed { .. })
+        )
+        .then(|| format!("{err:#}"));
         let err = match err.downcast::<SignalError>() {
-            Ok(signal) => return CommandError::from(signal),
+            Ok(signal) => {
+                let mut command = CommandError::from(signal);
+                if let CommandError::FinalizeRollbackFailed { detail, .. } = &mut command {
+                    *detail = rollback_detail.unwrap_or_default();
+                }
+                return command;
+            }
             Err(err) => err,
         };
         let err = match err.downcast::<GlobalSyncError>() {
@@ -236,6 +253,13 @@ impl From<SignalError> for CommandError {
             SignalError::SkillInvalid { reason } => CommandError::SkillInvalid { reason },
             SignalError::MultiSkills => CommandError::MultiSkills,
             SignalError::SkillExists { name } => CommandError::SkillExists { name },
+            SignalError::FinalizeRollbackFailed { central, backup } => {
+                CommandError::FinalizeRollbackFailed {
+                    central,
+                    backup,
+                    detail: String::new(),
+                }
+            }
             SignalError::DuplicateProject { path } => CommandError::DuplicateProject { path },
             SignalError::AssignmentExists {
                 project,

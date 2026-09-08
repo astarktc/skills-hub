@@ -304,6 +304,10 @@ export const resources = {
         gitRepointRequiresGit: "{{name}} is not a git skill. Only git skills can be re-pointed to a GitHub URL.",
         deleteCleanupFailed:
           "Some artifacts could not be removed, so what describes them was kept — you can retry:",
+        finalizeRollbackFailed:
+          "The update failed and the previous copy could not be restored to {{central}}. The previous files are retained at {{backup}} for manual recovery.",
+        finalizeRollbackFailedNoBackup:
+          "The update failed and the incomplete copy at {{central}} could not be removed. No previous-copy backup is available; check this path before retrying.",
         pathOutsideToolDirs:
           "Refused to delete {{path}}: it is not inside a known tool skills directory.",
         sourcePathMissing:
@@ -863,6 +867,10 @@ export const resources = {
         gitRepointRequiresGit: "{{name}} 不是 git Skill。只有 git Skill 才能重新指向 GitHub URL。",
         deleteCleanupFailed:
           "部分产物无法移除，相关记录已保留，你可以重试：",
+        finalizeRollbackFailed:
+          "更新失败，且无法将原副本恢复到 {{central}}。原文件已保留在 {{backup}}，请手动恢复。",
+        finalizeRollbackFailedNoBackup:
+          "更新失败，且无法移除 {{central}} 处的不完整副本。没有可用的原副本备份，请检查该路径后再重试。",
         pathOutsideToolDirs:
           "已拒绝删除 {{path}}：该路径不在已知的工具 Skills 目录内。",
         sourcePathMissing: "该 Skill 的来源文件夹不存在，可能已被移动或删除：",

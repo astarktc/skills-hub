@@ -346,16 +346,12 @@ fn rollback_update(
     })();
     match rollback {
         Ok(()) => original,
-        Err(err) => original.context(match backup {
-            Some(backup) => format!(
-                "rollback to {:?} failed: {:#}; old bytes retained at {:?} for manual recovery",
-                central, err, backup
-            ),
-            None => format!(
-                "rollback to missing central dir {:?} failed: {:#}",
-                central, err
-            ),
-        }),
+        Err(err) => original.context(format!("rollback: {err:#}")).context(
+            SignalError::FinalizeRollbackFailed {
+                central: central.to_string_lossy().into_owned(),
+                backup: backup.map(|path| path.to_string_lossy().into_owned()),
+            },
+        ),
     }
 }
 

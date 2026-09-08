@@ -131,6 +131,17 @@ describe("describeCommandError", () => {
     ).toBe("errors.deleteCleanupFailed\n- /a: denied\n- /b: busy");
   });
 
+  it("localizes rollback recovery paths and keeps diagnostics separate", () => {
+    const error = { code: "FINALIZE_ROLLBACK_FAILED", central: "/central", backup: "/backup", detail: "move failed" };
+    expect(toCommandError(error)).toBe(error);
+    expect(describeCommandError(error, t)).toBe(
+      'errors.finalizeRollbackFailed {"central":"/central","backup":"/backup"}\n\nmove failed',
+    );
+    expect(describeCommandError({ ...error, backup: null }, t)).toBe(
+      'errors.finalizeRollbackFailedNoBackup {"central":"/central"}\n\nmove failed',
+    );
+  });
+
   it("names the refused path for PATH_OUTSIDE_TOOL_DIRS", () => {
     expect(
       describeCommandError(
