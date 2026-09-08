@@ -434,20 +434,7 @@ fn rollback_update(
     backup: Option<&Path>,
     original: anyhow::Error,
 ) -> anyhow::Error {
-    let rollback = (|| -> Result<()> {
-        // move_into normally removes a failed partial copy, but cleanup can fail.
-        // Retry before restoring so old bytes never merge with partial new bytes.
-        match std::fs::remove_dir_all(central) {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err).context("remove replacement central dir"),
-        }
-        if let Some(backup) = backup {
-            std::fs::rename(backup, central).context("restore old central dir")?;
-        }
-        Ok(())
-    })();
-    match rollback {
+    match roll_back_update(central, backup) {
         Ok(()) => original,
         Err(err) => original.context(format!("rollback: {err:#}")).context(
             SignalError::FinalizeRollbackFailed {
@@ -456,6 +443,21 @@ fn rollback_update(
             },
         ),
     }
+}
+
+/// Remove partial replacement bytes and restore the previous central copy.
+fn roll_back_update(central: &Path, backup: Option<&Path>) -> Result<()> {
+    // move_into normally removes a failed partial copy, but cleanup can fail.
+    // Retry before restoring so old bytes never merge with partial new bytes.
+    match std::fs::remove_dir_all(central) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err).context("remove replacement central dir"),
+    }
+    if let Some(backup) = backup {
+        std::fs::rename(backup, central).context("restore old central dir")?;
+    }
+    Ok(())
 }
 
 /// `(name, description)` from the directory's SKILL.md frontmatter, if any.
