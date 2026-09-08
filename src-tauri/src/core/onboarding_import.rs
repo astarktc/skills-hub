@@ -20,10 +20,10 @@
 //!   (the chosen variant's own Tool always among them), whether or not the
 //!   policy names them — otherwise a deselected Tool would keep its original
 //!   as an untracked duplicate (a real dir in one Tool with another Tool's
-//!   symlink into it is the common shape). Each identical Tool carries a
-//!   force-overwrite override — that copy's bytes *are* the import source
-//!   and already live in the central repo, so replacing it in place with
-//!   the Sync target is safe. The Tools the policy did not name are reported
+//!   symlink into it is the common shape). Identity is checked against the
+//!   finalized central copy, and the sync batch rechecks the same-content
+//!   policy before replacing a target; a stale plan never authorizes a
+//!   force-overwrite. The Tools the policy did not name are reported
 //!   as `forced_tools` so the UI can say why a deselected Tool received a
 //!   link. A divergent sibling is neither force-included nor overwritten:
 //!   it is left in place and reported, exactly as on the auto-sync-off path.
@@ -44,7 +44,7 @@ use anyhow::Result;
 
 use super::errors::SignalError;
 use super::global_sync::{
-    sync_skills_to_tools_unlocked, target_has_same_content, BatchOverride, BatchPolicy, BatchSkill,
+    sync_skills_to_tools_unlocked, target_has_same_content, BatchPolicy, BatchSkill,
     BatchTargetOutcome,
 };
 use super::installer::{install_imported_skill, InstallerPaths};
@@ -248,7 +248,7 @@ fn apply_one_unlocked(
     };
 
     let (targets, forced_tools, originals) = if policy.auto_sync {
-        sync_imported_unlocked(paths, store, &installed, group, selection, policy, now)
+        sync_imported_unlocked(paths, store, &installed, group, policy, now)
     } else {
         (
             Vec::new(),
@@ -280,9 +280,9 @@ fn apply_one_unlocked(
 /// Auto-sync on: fan the freshly imported skill out to the requested Tools
 /// and every Tool holding a variant byte-identical to the chosen one. The
 /// target set is `policy.tools ∪ {identical variants' Tools}`: each of those
-/// Tools is synced and force-overwritten — its original *is* the source, and
-/// its bytes are already in the central repo — so a deselected Tool never
-/// keeps an untracked duplicate. A variant whose fingerprint differs is not
+/// Tools is synced using the same-content policy — never a force-overwrite —
+/// so a deselected Tool does not keep an untracked identical duplicate.
+/// A variant whose current content differs from the finalized central copy is not
 /// touched: it is reported `KeptDivergent`, as the auto-sync-off path
 /// reports it. Returns the outcomes, the Tools included beyond the policy,
 /// and the divergent originals.
@@ -296,7 +296,6 @@ fn sync_imported_unlocked(
     store: &SkillStore,
     installed: &super::installer::InstallResult,
     group: &OnboardingGroup,
-    selection: &ImportSelection,
     policy: &ImportPolicy,
     now: i64,
 ) -> (Vec<BatchTargetOutcome>, Vec<String>, Vec<OriginalOutcome>) {
@@ -304,11 +303,10 @@ fn sync_imported_unlocked(
         .tools
         .clone()
         .unwrap_or_else(|| installed_keys(&global_tool_entries(&paths.home)));
-    let chosen = chosen_variant(group, selection);
     let mut identical_tools: Vec<String> = Vec::new();
     let mut originals: Vec<OriginalOutcome> = Vec::new();
     for variant in &group.variants {
-        if is_identical_to_chosen(variant, chosen) {
+        if target_has_same_content(&installed.central_path, &variant.path) {
             if !identical_tools.contains(&variant.tool) {
                 identical_tools.push(variant.tool.clone());
             }
@@ -326,14 +324,6 @@ fn sync_imported_unlocked(
         .cloned()
         .collect();
     tools.extend(forced_tools.iter().cloned());
-    let overrides = identical_tools
-        .into_iter()
-        .map(|tool_key| BatchOverride {
-            skill_id: installed.skill_id.clone(),
-            tool_key,
-            overwrite: true,
-        })
-        .collect();
     let skills = [BatchSkill {
         skill_id: installed.skill_id.clone(),
         skill_name: installed.name.clone(),
@@ -342,7 +332,7 @@ fn sync_imported_unlocked(
     let batch_policy = BatchPolicy {
         overwrite: false,
         overwrite_if_same_content: true,
-        overrides,
+        overrides: Vec::new(),
     };
     let targets = sync_skills_to_tools_unlocked(
         &paths.home,
@@ -356,10 +346,6 @@ fn sync_imported_unlocked(
     (targets, forced_tools, originals)
 }
 
-/// Whether a group variant holds the chosen variant's bytes: the chosen
-/// path itself always does; any other variant does when both fingerprints
-/// are known and equal. A variant whose fingerprint could not be taken is
-/// never assumed identical.
 /// The group's variant the selection chose. `admit` proved it is one of
 /// them; `None` is unreachable after admission and is passed through as
 /// "unknown", never as an empty Tool.
@@ -371,14 +357,6 @@ fn chosen_variant<'a>(
         .variants
         .iter()
         .find(|variant| variant.path == selection.chosen_path)
-}
-
-fn is_identical_to_chosen(variant: &OnboardingVariant, chosen: Option<&OnboardingVariant>) -> bool {
-    let Some(chosen) = chosen else {
-        return false;
-    };
-    variant.path == chosen.path
-        || (chosen.fingerprint.is_some() && variant.fingerprint == chosen.fingerprint)
 }
 
 /// Auto-sync off: remove one original, but only when it is byte-identical to

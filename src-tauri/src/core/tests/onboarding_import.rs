@@ -460,6 +460,66 @@ fn auto_sync_on_leaves_a_divergent_sibling_in_place_and_reports_it() {
 }
 
 #[test]
+fn auto_sync_on_keeps_a_sibling_that_diverged_after_planning() {
+    let f = fixture();
+    install_tool(&f, "pi");
+    install_tool(&f, "cursor");
+    let chosen = seed_skill_dir(&f, "pi", "alpha", "chosen");
+    let sibling = seed_skill_dir(&f, "cursor", "alpha", "chosen");
+    let chosen_bytes = fs::read(chosen.join("SKILL.md")).expect("read chosen");
+    let changed_bytes = "---\nname: alpha\n---\nchanged after planning\n";
+
+    let report = import_onboarding_selection(
+        &f.paths,
+        &f.store,
+        &[selection("alpha", &chosen)],
+        &ImportPolicy {
+            auto_sync: true,
+            tools: Some(vec!["cursor".to_string()]),
+        },
+        5000,
+        |progress| {
+            if progress.phase == ImportPhase::Applying {
+                fs::write(sibling.join("SKILL.md"), changed_bytes).expect("external edit");
+            }
+        },
+    )
+    .expect("import");
+
+    assert_eq!(
+        fs::read_to_string(sibling.join("SKILL.md")).expect("read sibling"),
+        changed_bytes,
+        "a stale fingerprint must not authorize overwriting an external edit"
+    );
+    assert_eq!(
+        fs::read(f.paths.central_dir.join("alpha/SKILL.md")).expect("read central"),
+        chosen_bytes,
+        "central retains the chosen bytes"
+    );
+    assert_links_to_central(&f, &chosen, "alpha");
+    let ImportGroupStatus::Imported {
+        originals,
+        forced_tools,
+        targets,
+        ..
+    } = imported(&report, "alpha")
+    else {
+        panic!("alpha should import: {:?}", report);
+    };
+    assert_eq!(*forced_tools, vec!["pi".to_string()]);
+    assert_eq!(originals.len(), 1);
+    assert_eq!(originals[0].path, sibling);
+    assert!(matches!(originals[0].status, OriginalStatus::KeptDivergent));
+    assert!(targets.iter().any(|target| {
+        target.tool_key == "cursor"
+            && matches!(
+                target.status,
+                crate::core::global_sync::BatchTargetStatus::Failed { .. }
+            )
+    }));
+}
+
+#[test]
 fn auto_sync_on_reports_nothing_beyond_a_policy_naming_every_identical_tool() {
     let f = fixture();
     install_tool(&f, "pi");
