@@ -717,7 +717,7 @@ export type SkillRefreshStatusDto = { status: "refreshed"; content_hash: string 
  *  `refreshed`; the targets the re-assert would have created are
  *  unknown, so this counts as one `target_failures`.
  */
-reassert_error: CommandError | null; edit_conflict: InvocationEditConflict | null } | { status: "failed"; error: CommandError } | { status: "skipped"; state: UnlocatableState };
+reassert_error: CommandError | null; edit_conflict: InvocationEditConflict | null } | { status: "failed"; error: CommandError } | { status: "skipped"; state: UnlocatableState } | { status: "skipped_acquisition"; reason: UpdateSkipDto };
 
 export type SkillTargetDto = {
 	tool: string,
@@ -815,4 +815,6 @@ export type UnlocatableState =
 "source_missing" | 
 /**  The central copy is not there. */
 "central_missing";
+
+export type UpdateSkipDto = "skill_gone" | "stale_acquisition";
 

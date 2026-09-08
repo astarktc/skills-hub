@@ -40,16 +40,16 @@ use super::git_acquisition::HttpGithubApi;
 use super::global_sync::{
     sync_skills_to_tools_unlocked, BatchPolicy, BatchSkill, BatchTargetStatus,
 };
-use super::installer::{
-    acquire_managed_skill_update_with, finalize_and_propagate_unlocked, AcquiredUpdate,
-    InstallerPaths,
-};
+use super::installer::InstallerPaths;
 use super::mutation_guard;
 use super::propagation::{
     PropagationOutcome, PropagationScope, PropagationSkip, PropagationStatus,
 };
 use super::provenance::{refresh_eligibility, Provenance, RefreshEligibility};
 use super::skill_store::SkillStore;
+use super::skill_update::{
+    acquire_update, apply_unlocked, ApplyOutcome, UpdateRequest, UpdateSkip,
+};
 use super::tool_adapters::{global_tool_entries, installed_keys};
 use super::unlocatable::UnlocatableState;
 
@@ -81,7 +81,7 @@ const ACQUIRE_POOL_SIZE: usize = 4;
 
 /// One skill's acquisition, as the pool sees it. `Sync` because every worker
 /// calls the same `&dyn Fn`.
-type AcquireFn<'a> = dyn Fn(&str, Option<&CancelToken>) -> Result<AcquiredUpdate> + Sync + 'a;
+type AcquireFn<'a> = dyn Fn(&str, Option<&CancelToken>) -> Result<UpdateRequest> + Sync + 'a;
 
 /// Progress tick emitted per per-skill step of each phase.
 ///
@@ -118,6 +118,8 @@ pub enum SkillRefreshStatus {
     /// step, which answers with the typed condition (or, for a missing
     /// central copy, rebuilds it: that is Restore).
     Skipped { state: UnlocatableState },
+    /// Acquired bytes were discarded at admission; no target was touched.
+    SkippedAcquisition { reason: UpdateSkip },
 }
 
 #[derive(Debug)]
@@ -163,13 +165,14 @@ pub fn refresh_managed_skills(
         &|skill_id, cancel| {
             // One adapter per acquisition: `GithubApi` carries no `Send`
             // bound, so nothing is shared between workers.
-            acquire_managed_skill_update_with(
+            acquire_update(
                 paths,
                 store,
                 skill_id,
                 cancel,
                 &HttpGithubApi::new(token.clone()),
                 ttl_ms,
+                None,
             )
         },
     )
@@ -233,7 +236,7 @@ pub(crate) fn repoint_git_skill_with(
         now,
         |_| {},
         &|id, cancel| {
-            super::installer::acquire_managed_skill_update_from(
+            acquire_update(
                 paths,
                 store,
                 id,
@@ -299,7 +302,7 @@ pub(crate) fn refresh_managed_skills_with(
         return Ok(report);
     }
 
-    let acquired: Vec<(String, String, Result<AcquiredUpdate>)> = selected
+    let acquired: Vec<(String, String, Result<UpdateRequest>)> = selected
         .into_iter()
         .zip(results)
         .map(|((skill_id, skill_name), result)| {
@@ -356,15 +359,15 @@ fn acquire_all(
     cancel: Option<&CancelToken>,
     acquire: &AcquireFn,
     mut on_done: impl FnMut(usize, &str),
-) -> (Vec<Option<Result<AcquiredUpdate>>>, bool) {
+) -> (Vec<Option<Result<UpdateRequest>>>, bool) {
     let total = selected.len();
-    let mut slots: Vec<Option<Result<AcquiredUpdate>>> = (0..total).map(|_| None).collect();
+    let mut slots: Vec<Option<Result<UpdateRequest>>> = (0..total).map(|_| None).collect();
     if total == 0 {
         return (slots, is_cancelled(cancel));
     }
 
     let next: Mutex<usize> = Mutex::new(0);
-    let (tx, rx) = mpsc::channel::<(usize, Result<AcquiredUpdate>)>();
+    let (tx, rx) = mpsc::channel::<(usize, Result<UpdateRequest>)>();
     let mut done = 0usize;
 
     std::thread::scope(|scope| {
@@ -456,12 +459,15 @@ fn select_skills(store: &SkillStore, selection: &RefreshSelection) -> Result<Sel
 fn apply_one_unlocked(
     paths: &InstallerPaths,
     store: &SkillStore,
-    update: AcquiredUpdate,
+    update: UpdateRequest,
     policy: RefreshPolicy,
     now: i64,
 ) -> SkillRefreshStatus {
-    let outcome = match finalize_and_propagate_unlocked(paths, store, update) {
-        Ok(outcome) => outcome,
+    let outcome = match apply_unlocked(paths, store, update) {
+        Ok(ApplyOutcome::Updated(outcome)) => outcome,
+        Ok(ApplyOutcome::Skipped { reason }) => {
+            return SkillRefreshStatus::SkippedAcquisition { reason }
+        }
         Err(error) => return SkillRefreshStatus::Failed { error },
     };
     let targets = outcome.propagation.targets;

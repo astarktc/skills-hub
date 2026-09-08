@@ -13,10 +13,11 @@ use super::{
     frontmatter_edit::{self, InvocationLines},
     installer::InstallerPaths,
     mutation_guard,
-    propagation::{propagate_unlocked, PropagationStatus},
+    propagation::PropagationStatus,
     skill_catalog::{managed_skill_entry, ManagedSkillEntry},
     skill_discovery::{find_skill_md, InvocationMode},
     skill_store::{SkillEditKind, SkillEditRecord, SkillRecord, SkillStore},
+    skill_update::{self, ApplyOutcome, UpdateBytes, UpdateRequest},
 };
 
 #[derive(Clone, Debug, Serialize, specta::Type)]
@@ -83,7 +84,7 @@ pub fn set_invocation_override(
     mode: Option<InvocationMode>,
 ) -> Result<ManagedSkillEntry> {
     mutation_guard::serialized(|| {
-        let mut record = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
+        let record = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
             anyhow::anyhow!(SignalError::NotFound {
                 kind: "skill".into(),
                 id: skill_id.into()
@@ -121,9 +122,20 @@ pub fn set_invocation_override(
                 }
             }
         }
-        record_hash(store, &mut record)?;
-        let report = propagate_unlocked(store, paths, skill_id, now_ms())?;
-        for target in report.targets {
+        let outcome = skill_update::apply_unlocked(
+            paths,
+            store,
+            UpdateRequest {
+                expected: record.clone(),
+                record,
+                bytes: UpdateBytes::EditInPlace,
+                repoint: false,
+            },
+        )?;
+        let ApplyOutcome::Updated(outcome) = outcome else {
+            anyhow::bail!("edited skill changed under guard")
+        };
+        for target in outcome.propagation.targets {
             if let PropagationStatus::Failed { error } = target.status {
                 log::warn!(
                     "invocation edit propagation {skill_id} {:?}: {error:#}",
@@ -162,13 +174,7 @@ pub(crate) fn replay_unlocked(
     });
     edit.base_value = serde_json::to_string(&upstream)?;
     edit.applied_at = now_ms();
-    let applied = (|| {
-        store.upsert_skill_edit(&edit)?;
-        frontmatter_edit::apply_to_file(&path, |text| {
-            frontmatter_edit::write_invocation_mode(text, override_mode)
-        })?;
-        record_hash(store, record)
-    })();
+    let applied = apply_replay(store, record, &edit, &path, override_mode);
     if let Err(err) = applied {
         return Err(match store.upsert_skill_edit(&snapshot) {
             Ok(()) => err,
@@ -179,6 +185,20 @@ pub(crate) fn replay_unlocked(
         });
     }
     Ok(conflict)
+}
+
+fn apply_replay(
+    store: &SkillStore,
+    record: &mut SkillRecord,
+    edit: &SkillEditRecord,
+    path: &Path,
+    mode: InvocationMode,
+) -> Result<()> {
+    store.upsert_skill_edit(edit)?;
+    frontmatter_edit::apply_to_file(path, |text| {
+        frontmatter_edit::write_invocation_mode(text, mode)
+    })?;
+    record_hash(store, record)
 }
 
 #[cfg(test)]

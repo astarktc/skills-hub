@@ -675,6 +675,13 @@ pub struct PropagationTargetDto {
     pub status: PropagationStatusDto,
 }
 
+#[derive(Debug, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateSkipDto {
+    SkillGone,
+    StaleAcquisition,
+}
+
 /// Per-skill result of a Refresh batch. A skill whose bytes could not be
 /// acquired is `failed` — its Sync targets were left alone. A skill the
 /// app cannot locate is `skipped` with its state — nothing was touched.
@@ -696,6 +703,9 @@ pub enum SkillRefreshStatusDto {
     },
     Skipped {
         state: UnlocatableState,
+    },
+    SkippedAcquisition {
+        reason: UpdateSkipDto,
     },
 }
 
@@ -872,6 +882,19 @@ fn to_refresh_report_dto(report: crate::core::refresh::RefreshReport) -> Refresh
                 dto.failed += 1;
                 SkillRefreshStatusDto::Failed {
                     error: CommandError::from_anyhow(error),
+                }
+            }
+            SkillRefreshStatus::SkippedAcquisition { reason } => {
+                dto.skipped += 1;
+                SkillRefreshStatusDto::SkippedAcquisition {
+                    reason: match reason {
+                        crate::core::skill_update::UpdateSkip::SkillGone => {
+                            UpdateSkipDto::SkillGone
+                        }
+                        crate::core::skill_update::UpdateSkip::StaleAcquisition => {
+                            UpdateSkipDto::StaleAcquisition
+                        }
+                    },
                 }
             }
             SkillRefreshStatus::Skipped { state } => {

@@ -35,9 +35,14 @@ pub mod skill_files;
 pub mod skill_lock;
 pub mod skill_matching;
 pub mod skill_store;
+pub mod skill_update;
 pub mod skills_search;
 pub mod sync_engine;
 pub mod sync_status;
 pub mod temp_cleanup;
 pub mod tool_adapters;
 pub mod unlocatable;
+
+#[cfg(test)]
+#[path = "tests/git_stub.rs"]
+pub(crate) mod test_git_api;

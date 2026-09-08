@@ -158,8 +158,10 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   - sync → `sync_skills_to_tools` (`core/global_sync.rs`): installedness filtering, shared-dir dedupe,
     overwrite policy (batch default + per-(skill,tool) overrides), DB record fan-out.
   - Update / Refresh (all) → `refresh_managed_skills` (`core/refresh.rs`): acquire every skill (bounded
-    pool of 4, std threads), then finalize + propagate each under the guard, plus the
-    `reassert_auto_sync` policy. A single Update is a batch of one.
+    pool of 4, std threads), then `skill_update::apply_unlocked` admits and settles each under the
+    guard (finalize + Edit replay + Propagation), plus the `reassert_auto_sync` policy. A single
+    Update is a batch of one. `core/skill_update.rs` owns the git/local/Edit/Restore byte adapters;
+    stale acquisitions are discarded as skipped report data, never retried in-batch.
   - Onboarding import → `import_onboarding_selection` (`core/onboarding_import.rs`): admit, finalize,
     then sync through the global sync batch (auto-sync on — a first sync, not Propagation) or remove
     byte-identical originals (auto-sync off), per group.

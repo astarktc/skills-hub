@@ -454,7 +454,7 @@ fn rollback_update(
     backup: Option<&Path>,
     original: anyhow::Error,
 ) -> anyhow::Error {
-    match roll_back_update(central, backup) {
+    match restore_central_bytes(central, backup) {
         Ok(()) => original,
         Err(err) => original.context(format!("rollback: {err:#}")).context(
             SignalError::FinalizeRollbackFailed {
@@ -466,7 +466,7 @@ fn rollback_update(
 }
 
 /// Remove partial replacement bytes and restore the previous central copy.
-fn roll_back_update(central: &Path, backup: Option<&Path>) -> Result<()> {
+fn restore_central_bytes(central: &Path, backup: Option<&Path>) -> Result<()> {
     // move_into normally removes a failed partial copy, but cleanup can fail.
     // Retry before restoring so old bytes never merge with partial new bytes.
     match std::fs::remove_dir_all(central) {

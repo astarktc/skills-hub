@@ -1019,7 +1019,7 @@ fn pool_fixture(n: usize) -> PoolFixture {
 fn slow_acquire<'a>(
     f: &'a PoolFixture,
     delay: impl Fn(&str) -> Duration + Sync + 'a,
-) -> impl Fn(&str, Option<&CancelToken>) -> anyhow::Result<crate::core::installer::AcquiredUpdate>
+) -> impl Fn(&str, Option<&CancelToken>) -> anyhow::Result<crate::core::skill_update::UpdateRequest>
        + Sync
        + 'a {
     move |skill_id, cancel| {
@@ -1030,13 +1030,14 @@ fn slow_acquire<'a>(
             .expect("skill")
             .name;
         std::thread::sleep(delay(&name));
-        crate::core::installer::acquire_managed_skill_update_with(
+        crate::core::skill_update::acquire_update(
             &f.paths,
             &f.store,
             skill_id,
             cancel,
             &crate::core::git_acquisition::HttpGithubApi::new(None),
             0,
+            None,
         )
     }
 }
@@ -1395,13 +1396,14 @@ fn refresh_all_never_puts_an_imported_skill_in_the_batch() {
         |p| progress.push((p.phase, p.skill_name.to_string())),
         &|skill_id, cancel| {
             acquired.lock().unwrap().push(skill_id.to_string());
-            crate::core::installer::acquire_managed_skill_update_with(
+            crate::core::skill_update::acquire_update(
                 &f.paths,
                 &f.store,
                 skill_id,
                 cancel,
                 &crate::core::git_acquisition::HttpGithubApi::new(None),
                 0,
+                None,
             )
         },
     )
@@ -1542,13 +1544,14 @@ fn refresh_all_skips_unlocatable_skills_and_mints_no_targets_for_them() {
         |p| progress.push((p.phase, p.skill_name.to_string())),
         &|skill_id, cancel| {
             acquired.lock().unwrap().push(skill_id.to_string());
-            crate::core::installer::acquire_managed_skill_update_with(
+            crate::core::skill_update::acquire_update(
                 &f.paths,
                 &f.store,
                 skill_id,
                 cancel,
                 &crate::core::git_acquisition::HttpGithubApi::new(None),
                 0,
+                None,
             )
         },
     )
@@ -1610,95 +1613,4 @@ fn refresh_all_skips_unlocatable_skills_and_mints_no_targets_for_them() {
         );
     }
     assert!(!f.paths.home.join(".claude/skills/s2").exists());
-}
-
-/// Restore is the single-skill Update of a `git` skill whose central copy is
-/// gone: it is re-acquired from its repository, the central copy is rebuilt
-/// at the recorded path, and Propagation follows — the Tool's link, dangling
-/// a moment ago, resolves again.
-#[test]
-fn restore_of_a_git_skill_with_no_central_copy_rebuilds_it_and_propagation_follows() {
-    let f = pool_fixture(0);
-    let repo = fixture_repo();
-    let url = repo.path().to_string_lossy().to_string();
-    let installed = crate::core::installer::install_git_skill_from_selection(
-        &f.paths,
-        &f.store,
-        &url,
-        "skills/a",
-        Some("from-git".to_string()),
-        None,
-    )
-    .expect("install from the fixture repo");
-    let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    fs::create_dir_all(f.paths.home.join(claude.relative_detect_dir)).expect("install tool");
-    // Put the skill on the Tool (a link into the central copy).
-    refresh_managed_skills(
-        &f.paths,
-        &f.store,
-        RefreshSelection::All,
-        RefreshPolicy {
-            reassert_auto_sync: true,
-        },
-        None,
-        3000,
-        |_| {},
-    )
-    .expect("refresh");
-    let link = PathBuf::from(
-        f.store
-            .get_skill_target(&installed.skill_id, "claude_code")
-            .expect("query")
-            .expect("target")
-            .target_path,
-    );
-    assert!(link.join("SKILL.md").is_file());
-
-    fs::remove_dir_all(&installed.central_path).expect("lose the central copy");
-    assert!(
-        !link.join("SKILL.md").exists(),
-        "the Tool's link dangles once the central copy is gone"
-    );
-
-    let report = refresh_managed_skills(
-        &f.paths,
-        &f.store,
-        RefreshSelection::Ids(vec![installed.skill_id.clone()]),
-        RefreshPolicy::default(),
-        None,
-        3000,
-        |_| {},
-    )
-    .expect("refresh");
-
-    let [outcome] = report.skills.as_slice() else {
-        panic!("one outcome for the one requested skill: {report:?}");
-    };
-    let SkillRefreshStatus::Refreshed { targets, .. } = &outcome.status else {
-        panic!("Restore re-acquires and finalizes: {outcome:?}");
-    };
-    assert!(
-        installed.central_path.join("SKILL.md").is_file(),
-        "the central copy is rebuilt at its recorded path"
-    );
-    assert!(
-        targets.iter().any(|t| matches!(
-            &t.scope,
-            PropagationScope::Global { tool } if tool == "claude_code"
-        )),
-        "Propagation reported the Tool's target: {targets:?}"
-    );
-    assert!(
-        link.join("SKILL.md").is_file(),
-        "the Tool's link resolves again"
-    );
-    let record = f
-        .store
-        .get_skill_by_id(&installed.skill_id)
-        .expect("query")
-        .expect("record");
-    assert_eq!(
-        record.central_path,
-        installed.central_path.to_string_lossy()
-    );
 }

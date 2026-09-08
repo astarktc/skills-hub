@@ -386,6 +386,8 @@ export const resources = {
         reassertFailedTitle:
           "Could not check which tools still need {{name}}",
         refreshSkippedTitle: "Skipped: {{name}}",
+        refreshSkippedSkillGone: "This skill was removed while its update was being acquired.",
+        refreshSkippedStaleAcquisition: "Its source changed during acquisition. Run Update again to use the current source.",
         refreshSkippedSourceMissing:
           "Its source folder is missing. Re-point, detach or remove it from its card.",
         refreshSkippedCentralMissing:
@@ -957,6 +959,8 @@ export const resources = {
         importCleanupFailedTitle: "无法删除原始副本：{{name}} -> {{tool}}",
         reassertFailedTitle: "无法确认哪些工具仍需要 {{name}}",
         refreshSkippedTitle: "已跳过：{{name}}",
+        refreshSkippedSkillGone: "获取更新期间，此 Skill 已被移除。",
+        refreshSkippedStaleAcquisition: "获取更新期间，其来源已更改。请再次更新以使用当前来源。" ,
         refreshSkippedSourceMissing:
           "其源目录缺失。请在卡片上重新指向、分离或移除。",
         refreshSkippedCentralMissing:

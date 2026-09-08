@@ -5,7 +5,6 @@ use anyhow::{Context, Result};
 
 use super::cancel_token::CancelToken;
 use super::central_repo::ensure_central_repo;
-use super::clock::now_ms;
 use super::errors::SignalError;
 use super::git_acquisition::{
     acquire, parse_github_url, AcquireRequest, GithubApi, HttpGithubApi, SkillIntent,
@@ -13,11 +12,8 @@ use super::git_acquisition::{
 use super::git_cache::{explore_preview_key, fetch_through_cache, FetchRequest};
 pub use super::install_finalize::InstallResult;
 use super::install_finalize::{
-    ensure_name_available, finalize_install, finalize_update, NameIntent, SkillProvenance,
-    StagingDir,
+    ensure_name_available, finalize_install, NameIntent, SkillProvenance, StagingDir,
 };
-use super::propagation::{propagate_unlocked, PropagationReport};
-use super::provenance::{is_refreshable, Provenance};
 use super::skill_discovery::{
     discover_skills, find_skill_md, is_skill_dir, parse_skill_md, parse_skill_md_with_reason,
     require_skill_md, DiscoveredSkill,
@@ -134,14 +130,6 @@ fn install_from_dir(
     )
 }
 
-/// The typed condition for an Update of a skill that has no external source
-/// (`provenance::is_refreshable` said no).
-fn not_refreshable(record: &super::skill_store::SkillRecord) -> SignalError {
-    SignalError::NotRefreshable {
-        name: record.name.clone(),
-    }
-}
-
 /// The typed condition for an Add → local folder pointed at a Tool's own
 /// copy (`tool_adapters::tool_holding_path` said which Tool).
 fn local_source_inside_tool_dir(path: &Path, holder: &ToolAdapter) -> SignalError {
@@ -205,202 +193,6 @@ fn ensure_installable_skill_dir(p: &Path) -> Result<()> {
             reason: "missing_skill_md".to_string(),
         });
     }
-}
-
-/// One Managed skill's freshly acquired bytes, waiting to be finalized.
-///
-/// Produced by [`acquire_managed_skill_update`] outside the mutation guard
-/// and consumed by [`finalize_and_propagate_unlocked`] inside it: the two
-/// phases of an update (and of the Refresh (all) batch) meet here.
-pub(crate) struct AcquiredUpdate {
-    pub record: super::skill_store::SkillRecord,
-    pub staged: StagingDir,
-    pub new_revision: Option<String>,
-}
-
-/// What one finalized-and-propagated skill update produced.
-pub(crate) struct UpdateOutcome {
-    pub skill_id: String,
-    pub name: String,
-    pub content_hash: Option<String>,
-    pub source_revision: Option<String>,
-    pub propagation: PropagationReport,
-    pub edit_conflict: Option<super::skill_edits::InvocationEditConflict>,
-}
-
-/// Re-acquire a Managed skill's bytes from its source into a Staging dir.
-///
-/// Acquisition (git clone / local copy) runs **outside** the mutation guard:
-/// it touches no Sync target and can be slow. Only finalize + Propagation,
-/// which do, run inside it (see [`finalize_and_propagate_unlocked`]).
-/// One self-contained result per skill, which is what lets the Refresh batch
-/// run this over a bounded parallel pool (`core::refresh`).
-///
-/// The git side is one call into `core::git_acquisition`: the fast path, the
-/// clone fallback, sparse fetching, cancellation and the legacy subpath
-/// backfill all live there. This adapter only picks the destination and
-/// records what came back.
-///
-/// The GitHub adapter and the git-cache freshness window are **parameters**,
-/// not per-skill settings reads: the Refresh batch resolves both once and
-/// hands every pool worker its own adapter (`GithubApi` carries no `Send`
-/// bound).
-pub(crate) fn acquire_managed_skill_update_with(
-    paths: &InstallerPaths,
-    store: &SkillStore,
-    skill_id: &str,
-    cancel: Option<&CancelToken>,
-    api: &dyn GithubApi,
-    ttl_ms: i64,
-) -> Result<AcquiredUpdate> {
-    acquire_managed_skill_update_from(paths, store, skill_id, cancel, api, ttl_ms, None)
-}
-
-/// Update's acquisition adapter with an optional, validated git source override.
-/// The overridden record stays in memory until the normal finalize step succeeds.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn acquire_managed_skill_update_from(
-    paths: &InstallerPaths,
-    store: &SkillStore,
-    skill_id: &str,
-    cancel: Option<&CancelToken>,
-    api: &dyn GithubApi,
-    ttl_ms: i64,
-    source_override: Option<(&str, &super::git_acquisition::GitSource)>,
-) -> Result<AcquiredUpdate> {
-    let mut record = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
-        anyhow::anyhow!(SignalError::NotFound {
-            kind: "skill".to_string(),
-            id: skill_id.to_string(),
-        })
-    })?;
-
-    // The Provenance rule: a skill with no external source has nothing to
-    // acquire, whatever the state of its central copy. The central copy's
-    // own presence is deliberately *not* checked: a `git`/`local` skill
-    // whose central copy is gone is exactly what Restore re-acquires, and
-    // finalize rebuilds it at the recorded path.
-    if !is_refreshable(&record) {
-        anyhow::bail!(not_refreshable(&record));
-    }
-
-    let central_path = PathBuf::from(record.central_path.clone());
-    let central_parent = central_path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("invalid central path"))?
-        .to_path_buf();
-    // The central repo itself may be gone too (a Restore after the whole
-    // library folder was lost); the staging dir needs its parent.
-    ensure_central_repo(&central_parent)?;
-
-    // Build new content in a sibling staging dir; finalize swaps it in.
-    let staged = StagingDir::new_in(&central_parent);
-    let staging_dir = staged.path().to_path_buf();
-
-    let mut new_revision: Option<String> = None;
-
-    match Provenance::parse(&record.source_type) {
-        Some(Provenance::Git) => {
-            let repo_url = record
-                .source_ref
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("missing source_ref for git skill"))?;
-            let source = source_override
-                .map(|(_, source)| source.clone())
-                .unwrap_or_else(|| parse_github_url(repo_url));
-
-            // Stored paths are explicit selections. URL paths stay on the source
-            // so acquisition can correct their branch boundary before using them.
-            let intent = if source_override.is_some() {
-                SkillIntent::NamedSkill(Some(&record.name))
-            } else if let Some(subpath) = record.source_subpath.as_deref() {
-                SkillIntent::Subpath(subpath)
-            } else {
-                SkillIntent::NamedSkillOrWholeRepo(&record.name)
-            };
-
-            let acquired = acquire(
-                &AcquireRequest {
-                    source: &source,
-                    intent,
-                    stored_subpath: if source_override.is_some() {
-                        None
-                    } else {
-                        record.source_subpath.as_deref()
-                    },
-                    dest: &staging_dir,
-                    cache_dir: &paths.cache_dir,
-                    ttl_ms,
-                    cancel,
-                    allow_fast_path: true,
-                },
-                api,
-            )?;
-            new_revision = Some(acquired.revision);
-
-            if let Some((url, _)) = source_override {
-                ensure_installable_skill_dir(&staging_dir)?;
-                record.source_ref = Some(url.to_string());
-            }
-            // Acquisition owns the branch/path split. Finalize carries this
-            // resolved path into the record, including legacy backfills.
-            record.source_subpath = acquired.resolved_subpath.filter(|subpath| subpath != ".");
-        }
-        Some(Provenance::Local) => {
-            let source = record
-                .source_ref
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("missing source_ref for local skill"))?;
-            let source_path = PathBuf::from(source);
-            if !source_path.exists() {
-                anyhow::bail!(source_path_missing(&source_path));
-            }
-            copy_dir_recursive(&source_path, &staging_dir)
-                .with_context(|| format!("copy {:?} -> {:?}", source_path, staging_dir))?;
-        }
-        // Excluded by the predicate above; restated so the match is total.
-        Some(Provenance::Imported) | None => anyhow::bail!(not_refreshable(&record)),
-    }
-
-    Ok(AcquiredUpdate {
-        record,
-        staged,
-        new_revision,
-    })
-}
-
-/// Unlocked internal seam: finalize the Staging dir into the central copy,
-/// then hand every Sync target to Propagation. The caller holds the mutation
-/// guard. There is no target loop here — bringing targets into line is one
-/// rule and it lives in `core::propagation`.
-pub(crate) fn finalize_and_propagate_unlocked(
-    paths: &InstallerPaths,
-    store: &SkillStore,
-    acquired: AcquiredUpdate,
-) -> Result<UpdateOutcome> {
-    let AcquiredUpdate {
-        record,
-        staged,
-        new_revision,
-    } = acquired;
-    let now = now_ms();
-
-    let (updated, edit_conflict) =
-        finalize_update(store, &record, staged, new_revision.clone(), |updated| {
-            super::skill_edits::replay_unlocked(store, updated)
-        })?;
-    let content_hash = updated.content_hash.clone();
-
-    let propagation = propagate_unlocked(store, paths, &record.id, now)?;
-
-    Ok(UpdateOutcome {
-        skill_id: record.id,
-        name: record.name,
-        content_hash,
-        source_revision: new_revision,
-        propagation,
-        edit_conflict,
-    })
 }
 
 #[derive(Clone, Debug, serde::Serialize, specta::Type)]

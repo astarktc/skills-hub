@@ -41,7 +41,7 @@ Reserved for a future whole-copy operator variant of an upstream skill; not buil
 _Avoid_: Edit (the current layered change)
 
 **Update**:
-The operator action that re-acquires one refreshable Managed skill from its source, finalizes (replaying Edits inside finalize's window) and propagates — a Refresh batch of one. Restore is this same action rebuilding an absent central copy.
+The operator action that re-acquires one refreshable Managed skill from its source, finalizes (replaying Edits inside finalize's window) and propagates — a Refresh batch of one. The Update module (`core/skill_update.rs`) settles four byte adapters — git-acquired Staging dir, local folder, Edit-in-place, and Restore-rebuild — re-admitting acquisition against the current skill and source before landing anything; Restore rebuilds an absent central copy.
 _Avoid_: re-install
 
 **Content identity**:
