@@ -7,7 +7,7 @@ import type {
 } from "../bindings";
 import { describeCommandError } from "../commandError";
 import type { ActionErrorEntry, TranslateFn } from "../hooks/useStatusReporter";
-import { INVOCATION_LABEL_KEY, SKIPPED_REASON_KEY } from "./skillPresentation";
+import { ACQUISITION_SKIP_KEY, INVOCATION_LABEL_KEY, SKIPPED_REASON_KEY } from "./skillPresentation";
 
 /** Declarative actions survive list replacement; only the hook resolves the id. */
 export type OutcomeEntry = Omit<ActionErrorEntry, "action"> & {
@@ -77,6 +77,11 @@ export function refreshOutcome(
       out.warnings.push({
         title: t("errors.refreshSkippedTitle", { name: skill.skill_name }),
         message: t(SKIPPED_REASON_KEY[status.state]),
+      });
+    } else if (status.status === "skipped_acquisition") {
+      out.warnings.push({
+        title: t("errors.refreshSkippedTitle", { name: skill.skill_name }),
+        message: t(ACQUISITION_SKIP_KEY[status.reason]),
       });
     } else {
       for (const target of status.targets) {

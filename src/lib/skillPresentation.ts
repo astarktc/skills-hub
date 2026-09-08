@@ -6,7 +6,7 @@
  * function in.
  */
 
-import type { InvocationMode, UnlocatableState } from "../components/skills/types";
+import type { InvocationMode, UnlocatableState, UpdateSkipDto } from "../components/skills/types";
 
 export const INVOCATION_MODES = ["user-and-model", "user-only", "model-only", "neither"] as const;
 export const INVOCATION_LABEL_KEY: Record<InvocationMode, string> = {
@@ -262,6 +262,12 @@ export const UNLOCATABLE_STATE_KEY = {
   source_missing: "unlocatable.sourceMissing",
   central_missing: "unlocatable.centralMissing",
 } satisfies Record<UnlocatableState, string>;
+
+/** The panel row's message for an Update whose acquired result was not admitted. */
+export const ACQUISITION_SKIP_KEY = {
+  skill_gone: "errors.refreshSkippedSkillGone",
+  stale_acquisition: "errors.refreshSkippedStaleAcquisition",
+} satisfies Record<UpdateSkipDto, string>;
 
 export const UNLOCATABLE_TOOLTIP_KEY = {
   source_missing: "unlocatable.sourceMissingTooltip",
