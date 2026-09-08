@@ -253,6 +253,9 @@ export const resources = {
       globalToolConfigDesc:
         "Select which AI tools skills are synced to when deploying. Installed tools are pre-selected.",
       toolConfigDetectedOnly: "Show detected tools only",
+      toolNotDetected: "not detected",
+      toolNotDetectedTooltip:
+        "{{tool}} is not detected on this machine; this skill still has a sync target for it. Click to remove it.",
       globalToolConfigScanSelectedOnly:
         "Only scan for existing skills within selected tools",
       globalToolConfigConfirm: "Save Tools",
@@ -845,6 +848,9 @@ export const resources = {
       globalToolConfigDesc:
         "选择部署 Skills 时同步到哪些 AI 工具。已安装的工具会默认选中。",
       toolConfigDetectedOnly: "仅显示已检测到的工具",
+      toolNotDetected: "未检测到",
+      toolNotDetectedTooltip:
+        "本机未检测到 {{tool}}，但该 Skill 仍存在指向它的同步目标。点击可移除。",
       globalToolConfigScanSelectedOnly: "仅在所选工具中扫描已有 Skills",
       globalToolConfigConfirm: "保存工具",
       later: "稍后",

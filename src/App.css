@@ -646,6 +646,25 @@
   background: var(--bg-element-hover);
 }
 
+/* A Sync target row whose Tool detection no longer sees: muted, but it keeps
+   its unsync affordance so the orphan is removable one tool at a time. */
+.tool-pill.undetected {
+  background: var(--bg-element);
+  color: var(--text-tertiary);
+  border-style: dashed;
+  border-color: var(--border-strong);
+}
+
+.tool-pill.undetected:hover {
+  color: var(--text-secondary);
+  border-color: var(--text-tertiary);
+}
+
+.tool-pill.undetected .status-badge {
+  background: var(--text-tertiary);
+  box-shadow: none;
+}
+
 .tool-pill.disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -3161,6 +3180,11 @@
 .pick-item-badge {
   font-size: 11px;
   color: var(--status-success);
+}
+
+/* A selected tool detection no longer sees: visible so it can be unticked. */
+.pick-item-badge.muted {
+  color: var(--text-tertiary);
 }
 
 .pick-item-subtitle {
