@@ -281,7 +281,7 @@ describe("useSkillLibrary refresh", () => {
     expect(result.current.pendingGitRepointSkill).toBeNull();
     act(() => entries[0].action?.onClick());
     expect(result.current.pendingGitRepointSkill).toEqual(gitSkill);
-    expect(mockInvoke).not.toHaveBeenCalledWith("repointGitSkillSource", expect.anything(), expect.anything());
+    expect(mockInvoke.mock.calls.map(([command]) => command)).not.toContain("repointGitSkillSource");
   });
 
   it("issues one backend batch for every skill and never fans out a sync itself", async () => {
@@ -497,15 +497,17 @@ describe("useSkillLibrary refresh", () => {
 });
 
 describe("useSkillLibrary unlocatable skill actions", () => {
-  it.each(["git", "GitHub"])("%s Re-point opens a Modal, submits the new URL and reloads", async (source_type) => {
-    const setup = makeDeps();
+  it.each([
+    ["git", true], ["git", false], ["GitHub", true], ["GitHub", false],
+  ] as const)("%s Re-point passes auto-sync=%s, submits the new URL and reloads", async (source_type, autoSyncEnabled) => {
+    const setup = makeDeps({ autoSyncEnabled });
     const gitSkill = { ...setup.skills[0], source_type };
     const { result } = await renderLibrary(setup);
     await act(async () => { await result.current.handleRepointSkill(gitSkill); });
     expect(result.current.pendingGitRepointSkill).toEqual(gitSkill);
-    expect(mockInvoke).not.toHaveBeenCalledWith("repointGitSkillSource", expect.anything(), expect.anything());
+    expect(mockInvoke.mock.calls.map(([command]) => command)).not.toContain("repointGitSkillSource");
     await act(async () => { await result.current.handleConfirmRepointGitSkill("https://github.com/new/repo/tree/main/skill"); });
-    expect(mockInvoke).toHaveBeenCalledWith("repointGitSkillSource", "s1", "https://github.com/new/repo/tree/main/skill");
+    expect(mockInvoke).toHaveBeenCalledWith("repointGitSkillSource", "s1", "https://github.com/new/repo/tree/main/skill", { reassert_auto_sync: autoSyncEnabled });
     expect(result.current.pendingGitRepointSkill).toBeNull();
     expect(mockInvoke.mock.calls.at(-1)?.[0]).toBe("getManagedSkills");
     expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith('status.repointed {"name":"alpha"}');
@@ -545,8 +547,8 @@ describe("useSkillLibrary unlocatable skill actions", () => {
     expect(mockInvoke.mock.calls.at(-1)?.[0]).toBe("getManagedSkills");
   });
 
-  it("Re-point picks a folder, re-points through the backend and reloads", async () => {
-    const setup = makeDeps();
+  it.each([true, false])("local Re-point passes auto-sync=%s, picks a folder and reloads", async (autoSyncEnabled) => {
+    const setup = makeDeps({ autoSyncEnabled });
     pickFolder.mockResolvedValue("/new/place/alpha");
     const { result } = await renderLibrary(setup);
 
@@ -561,6 +563,7 @@ describe("useSkillLibrary unlocatable skill actions", () => {
       "repointLocalSkillSource",
       "s1",
       "/new/place/alpha",
+      { reassert_auto_sync: autoSyncEnabled },
     );
     const calls = mockInvoke.mock.calls.map(([command]) => command);
     expect(calls.indexOf("getManagedSkills", 1)).toBeGreaterThan(
@@ -582,6 +585,7 @@ describe("useSkillLibrary unlocatable skill actions", () => {
 
     expect(mockInvoke).not.toHaveBeenCalledWith(
       "repointLocalSkillSource",
+      expect.anything(),
       expect.anything(),
       expect.anything(),
     );

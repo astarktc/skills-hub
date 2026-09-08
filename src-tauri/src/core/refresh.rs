@@ -174,13 +174,15 @@ pub fn refresh_managed_skills(
     )
 }
 
-/// Repair a git source through the same single-Update acquire/apply pipeline.
+/// Repair a git source through the same single-Update acquire/apply pipeline,
+/// including the caller's auto-sync reassert policy.
 /// The new source is carried only in the acquired record, never written first.
 pub fn repoint_git_skill(
     paths: &InstallerPaths,
     store: &SkillStore,
     skill_id: &str,
     new_url: &str,
+    policy: RefreshPolicy,
     cancel: Option<&CancelToken>,
     now: i64,
 ) -> Result<RefreshReport> {
@@ -190,17 +192,21 @@ pub fn repoint_git_skill(
         store,
         skill_id,
         new_url,
+        policy,
         cancel,
         now,
         &HttpGithubApi::new(token),
     )
 }
 
+/// Injectable acquisition seam for Re-point with the same Update policy.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn repoint_git_skill_with(
     paths: &InstallerPaths,
     store: &SkillStore,
     skill_id: &str,
     new_url: &str,
+    policy: RefreshPolicy,
     cancel: Option<&CancelToken>,
     now: i64,
     api: &(dyn super::git_acquisition::GithubApi + Sync),
@@ -221,7 +227,7 @@ pub(crate) fn repoint_git_skill_with(
         paths,
         store,
         RefreshSelection::Ids(vec![skill_id.to_string()]),
-        RefreshPolicy::default(),
+        policy,
         cancel,
         now,
         |_| {},

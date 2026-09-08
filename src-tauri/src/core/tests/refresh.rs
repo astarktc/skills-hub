@@ -67,6 +67,7 @@ fn git_repoint_acquires_before_rewriting_and_rebuilds_central() {
         &f.store,
         &f.skill_id,
         url,
+        RefreshPolicy::default(),
         None,
         3000,
         &RepointApi,
@@ -115,6 +116,7 @@ fn git_repoint_accepts_add_flow_github_skill_links() {
             &f.store,
             &f.skill_id,
             url,
+            RefreshPolicy::default(),
             None,
             3000,
             &RepointApi,
@@ -144,6 +146,7 @@ fn git_repoint_refuses_non_git_without_changing_the_record() {
         &f.store,
         &f.skill_id,
         "https://github.com/owner/repo/tree/main/new",
+        RefreshPolicy::default(),
         None,
         3000,
         &RepointApi,
@@ -181,6 +184,7 @@ fn git_repoint_rejects_malformed_url_before_acquisition() {
             &f.store,
             &f.skill_id,
             url,
+            RefreshPolicy::default(),
             None,
             3000,
             &RepointApi,
@@ -203,6 +207,44 @@ fn git_repoint_fixture() -> Fixture {
     record.source_subpath = Some("old".into());
     f.store.upsert_skill(&record).unwrap();
     f
+}
+
+#[test]
+fn git_repoint_honours_auto_sync_reassert_policy() {
+    for reassert_auto_sync in [false, true] {
+        let f = git_repoint_fixture();
+        let tool = adapter_by_key("claude_code").unwrap();
+        fs::create_dir_all(f.paths.home.join(tool.relative_detect_dir)).unwrap();
+        assert!(f.store.list_skill_targets(&f.skill_id).unwrap().is_empty());
+        let report = super::repoint_git_skill_with(
+            &f.paths,
+            &f.store,
+            &f.skill_id,
+            "https://github.com/owner/repo/tree/main/new",
+            RefreshPolicy { reassert_auto_sync },
+            None,
+            3000,
+            &RepointApi,
+        )
+        .unwrap();
+        assert!(matches!(
+            report.skills[0].status,
+            SkillRefreshStatus::Refreshed {
+                reassert_error: None,
+                ..
+            }
+        ));
+        let targets = f.store.list_skill_targets(&f.skill_id).unwrap();
+        assert_eq!(targets.len(), usize::from(reassert_auto_sync));
+        assert_eq!(
+            f.paths
+                .home
+                .join(tool.relative_skills_dir)
+                .join("alpha/SKILL.md")
+                .is_file(),
+            reassert_auto_sync
+        );
+    }
 }
 
 struct EmptyRepointApi;
@@ -231,6 +273,7 @@ fn git_repoint_non_skill_directory_never_replaces_a_working_skill() {
         &f.store,
         &f.skill_id,
         "https://github.com/owner/repo/tree/main/docs",
+        RefreshPolicy::default(),
         None,
         3000,
         &EmptyRepointApi,
@@ -278,6 +321,7 @@ fn git_repoint_404_preserves_every_record_field_and_central_bytes() {
         &f.store,
         &f.skill_id,
         "https://github.com/other/repo/tree/main/missing",
+        RefreshPolicy::default(),
         None,
         3000,
         &MissingRepointApi,
@@ -354,6 +398,7 @@ fn git_repoint_to_another_repo_propagates_every_existing_scope() {
         &f.store,
         &f.skill_id,
         url,
+        RefreshPolicy::default(),
         None,
         3000,
         &RepointApi,
@@ -462,6 +507,7 @@ fn git_repoint_root_manifest_stores_no_subpath() {
         &f.store,
         &f.skill_id,
         "https://github.com/new/repo/blob/main/SKILL.md",
+        RefreshPolicy::default(),
         None,
         3000,
         &RepointApi,
@@ -498,6 +544,7 @@ fn git_repoint_repo_url_resolves_by_the_existing_skill_name() {
             &f.store,
             &f.skill_id,
             url,
+            RefreshPolicy::default(),
             None,
             3000,
             &RepointApi,
@@ -531,6 +578,7 @@ fn git_repoint_ambiguous_repo_preserves_the_record_byte_for_byte() {
         &f.store,
         &f.skill_id,
         "https://github.com/new/repo",
+        RefreshPolicy::default(),
         None,
         3000,
         &RepointApi,

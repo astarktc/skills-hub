@@ -71,18 +71,21 @@ pub fn unlocatable_state(record: &SkillRecord) -> Option<UnlocatableState> {
 /// validates one (present, holds a `SKILL.md`, not inside a Tool's skills
 /// directory) and recorded as the new `source_ref`; then the single-skill
 /// Update (the Refresh batch of one, which takes the Mutation guard itself)
-/// lands the folder's bytes in the central copy and propagates. The
+/// lands the folder's bytes in the central copy, propagates, and honours
+/// the caller's auto-sync reassert policy. The
 /// Update's outcome is report data, exactly as for Update; a refused folder
 /// changes nothing and runs no Update.
 ///
 /// Only a `local` skill has a folder to re-point; any other provenance is a
 /// caller error, never an operator condition (the card offers Re-point for
 /// `source_missing` alone).
+#[allow(clippy::too_many_arguments)]
 pub fn repoint_and_update(
     paths: &InstallerPaths,
     store: &SkillStore,
     skill_id: &str,
     new_source: &Path,
+    policy: RefreshPolicy,
     cancel: Option<&CancelToken>,
     now: i64,
     on_progress: impl FnMut(RefreshProgress),
@@ -92,7 +95,7 @@ pub fn repoint_and_update(
         paths,
         store,
         RefreshSelection::Ids(vec![skill_id.to_string()]),
-        RefreshPolicy::default(),
+        policy,
         cancel,
         now,
         on_progress,

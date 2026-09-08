@@ -66,10 +66,49 @@ fn repoint(f: &Fixture, new_source: &std::path::Path) -> anyhow::Result<RefreshR
         &f.store,
         &f.skill_id,
         new_source,
+        RefreshPolicy::default(),
         None,
         3000,
         |_| {},
     )
+}
+
+#[test]
+fn local_repoint_honours_auto_sync_reassert_policy() {
+    for reassert_auto_sync in [false, true] {
+        let (f, new) = fixture_with_moved_source();
+        let tool = crate::core::tool_adapters::adapter_by_key("claude_code").unwrap();
+        fs::create_dir_all(f.paths.home.join(tool.relative_detect_dir)).unwrap();
+        assert!(f.store.list_skill_targets(&f.skill_id).unwrap().is_empty());
+        let report = repoint_and_update(
+            &f.paths,
+            &f.store,
+            &f.skill_id,
+            &new,
+            RefreshPolicy { reassert_auto_sync },
+            None,
+            3000,
+            |_| {},
+        )
+        .unwrap();
+        assert!(matches!(
+            report.skills[0].status,
+            SkillRefreshStatus::Refreshed {
+                reassert_error: None,
+                ..
+            }
+        ));
+        let targets = f.store.list_skill_targets(&f.skill_id).unwrap();
+        assert_eq!(targets.len(), usize::from(reassert_auto_sync));
+        assert_eq!(
+            f.paths
+                .home
+                .join(tool.relative_skills_dir)
+                .join("alpha/SKILL.md")
+                .is_file(),
+            reassert_auto_sync
+        );
+    }
 }
 
 fn update(f: &Fixture) -> RefreshReport {
@@ -246,6 +285,7 @@ fn only_a_local_skill_can_be_repointed_or_detached() {
         &f.store,
         &imported.skill_id,
         &new,
+        RefreshPolicy::default(),
         None,
         3000,
         |_| {}

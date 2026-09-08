@@ -587,10 +587,12 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           message: t("actions.repointing", { name: skill.name }),
           success: t("status.repointed", { name: skill.name }),
         },
-        () => invokeTauri("repointGitSkillSource", skill.id, url.trim()),
+        () => invokeTauri("repointGitSkillSource", skill.id, url.trim(), {
+          reassert_auto_sync: autoSyncEnabled,
+        }),
       );
     },
-    [pendingGitRepointSkill, runSingleRefresh, t],
+    [autoSyncEnabled, pendingGitRepointSkill, runSingleRefresh, t],
   );
 
   /**
@@ -629,6 +631,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
             "repointLocalSkillSource",
             skill.id,
             newPath,
+            { reassert_auto_sync: autoSyncEnabled },
           );
           await loadManagedSkills();
           return settleSingleReport(action, report);
@@ -636,7 +639,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
       );
     },
     [
-      formatError, handleRepointGitSkill, loadManagedSkills, runAction,
+      autoSyncEnabled, formatError, handleRepointGitSkill, loadManagedSkills, runAction,
       setError, settleSingleReport, t,
     ],
   );

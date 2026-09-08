@@ -38,14 +38,15 @@ export const commands = {
 	/**
 	 *  Re-point a `local` skill whose source folder is gone at the folder's new
 	 *  location and update from it (see **Unlocatable skill** in `CONTEXT.md`).
-	 *  The Update's outcome is report data, exactly as for Update.
+	 *  Honours the Update auto-sync reassert policy; its outcome is report data.
 	 */
-	repointLocalSkillSource: (skillId: string, newPath: string) => __TAURI_INVOKE<RefreshReportDto>("repoint_local_skill_source", { skillId, newPath }),
+	repointLocalSkillSource: (skillId: string, newPath: string, policy: RefreshPolicyDto) => __TAURI_INVOKE<RefreshReportDto>("repoint_local_skill_source", { skillId, newPath, policy }),
 	/**
 	 *  Re-point a git skill only after acquiring from its new source; the normal
-	 *  single-Update report includes every existing Propagation target.
+	 *  single-Update policy includes auto-sync reassert, and its report includes
+	 *  every existing Propagation target and any newly asserted targets.
 	 */
-	repointGitSkillSource: (skillId: string, newUrl: string) => __TAURI_INVOKE<RefreshReportDto>("repoint_git_skill_source", { skillId, newUrl }),
+	repointGitSkillSource: (skillId: string, newUrl: string, policy: RefreshPolicyDto) => __TAURI_INVOKE<RefreshReportDto>("repoint_git_skill_source", { skillId, newUrl, policy }),
 	/**
 	 *  Detach a `local` skill from its vanished source folder: it becomes
 	 *  `imported` — the central copy is its truth from now on (ADR-0003).

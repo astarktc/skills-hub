@@ -886,7 +886,7 @@ fn to_refresh_report_dto(report: crate::core::refresh::RefreshReport) -> Refresh
 
 /// Re-point a `local` skill whose source folder is gone at the folder's new
 /// location and update from it (see **Unlocatable skill** in `CONTEXT.md`).
-/// The Update's outcome is report data, exactly as for Update.
+/// Honours the Update auto-sync reassert policy; its outcome is report data.
 #[tauri::command]
 #[specta::specta]
 #[allow(non_snake_case)]
@@ -896,6 +896,7 @@ pub async fn repoint_local_skill_source(
     cancel: State<'_, Arc<CancelToken>>,
     skillId: String,
     newPath: String,
+    policy: RefreshPolicyDto,
 ) -> Result<RefreshReportDto, CommandError> {
     let store = store.inner().clone();
     let cancel = cancel.inner().clone();
@@ -908,6 +909,9 @@ pub async fn repoint_local_skill_source(
             &store,
             &skillId,
             &new_source,
+            crate::core::refresh::RefreshPolicy {
+                reassert_auto_sync: policy.reassert_auto_sync,
+            },
             Some(&cancel),
             now_ms(),
             |_| {},
@@ -920,7 +924,8 @@ pub async fn repoint_local_skill_source(
 }
 
 /// Re-point a git skill only after acquiring from its new source; the normal
-/// single-Update report includes every existing Propagation target.
+/// single-Update policy includes auto-sync reassert, and its report includes
+/// every existing Propagation target and any newly asserted targets.
 #[tauri::command]
 #[specta::specta]
 #[allow(non_snake_case)]
@@ -930,6 +935,7 @@ pub async fn repoint_git_skill_source(
     cancel: State<'_, Arc<CancelToken>>,
     skillId: String,
     newUrl: String,
+    policy: RefreshPolicyDto,
 ) -> Result<RefreshReportDto, CommandError> {
     let store = store.inner().clone();
     let cancel = cancel.inner().clone();
@@ -941,6 +947,9 @@ pub async fn repoint_git_skill_source(
             &store,
             &skillId,
             &newUrl,
+            crate::core::refresh::RefreshPolicy {
+                reassert_auto_sync: policy.reassert_auto_sync,
+            },
             Some(&cancel),
             now_ms(),
         )?;
