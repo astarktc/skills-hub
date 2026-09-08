@@ -53,6 +53,65 @@ impl crate::core::git_acquisition::GithubApi for RepointApi {
 }
 
 #[test]
+fn git_repoint_does_not_use_old_subpath_suffix_for_new_url() {
+    use crate::core::git_acquisition::{GithubApi, GithubCoords, GithubRepo};
+
+    #[derive(Default)]
+    struct RecordingApi(Mutex<Vec<(String, String)>>);
+    impl GithubApi for RecordingApi {
+        fn matching_refs(&self, repo: &GithubRepo, prefix: &str) -> anyhow::Result<Vec<String>> {
+            RepointApi.matching_refs(repo, prefix)
+        }
+        fn branch_sha(&self, coords: &GithubCoords) -> anyhow::Result<String> {
+            self.0
+                .lock()
+                .unwrap()
+                .push((coords.branch.clone(), coords.subpath.clone()));
+            RepointApi.branch_sha(coords)
+        }
+        fn download_directory(
+            &self,
+            coords: &GithubCoords,
+            dest: &Path,
+            cancel: Option<&CancelToken>,
+        ) -> anyhow::Result<()> {
+            self.0
+                .lock()
+                .unwrap()
+                .push((coords.branch.clone(), coords.subpath.clone()));
+            RepointApi.download_directory(coords, dest, cancel)
+        }
+    }
+
+    let f = git_repoint_fixture();
+    let api = RecordingApi::default();
+    let report = super::repoint_git_skill_with(
+        &f.paths,
+        &f.store,
+        &f.skill_id,
+        "https://github.com/owner/repo/tree/main/skills/old",
+        RefreshPolicy::default(),
+        None,
+        3000,
+        &api,
+    )
+    .unwrap();
+    assert!(matches!(
+        report.skills[0].status,
+        SkillRefreshStatus::Refreshed { .. }
+    ));
+    assert_eq!(
+        *api.0.lock().unwrap(),
+        vec![
+            ("main".into(), "skills/old".into()),
+            ("main".into(), "skills/old".into()),
+        ]
+    );
+    let record = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    assert_eq!(record.source_subpath.as_deref(), Some("skills/old"));
+}
+
+#[test]
 fn git_repoint_slash_branch_persists_resolved_path_and_original_url() {
     let f = git_repoint_fixture();
     let url = "https://github.com/owner/repo/tree/feature/x/skills/alpha";

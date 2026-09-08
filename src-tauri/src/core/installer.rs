@@ -322,7 +322,11 @@ pub(crate) fn acquire_managed_skill_update_from(
                 &AcquireRequest {
                     source: &source,
                     intent,
-                    stored_subpath: record.source_subpath.as_deref(),
+                    stored_subpath: if source_override.is_some() {
+                        None
+                    } else {
+                        record.source_subpath.as_deref()
+                    },
                     dest: &staging_dir,
                     cache_dir: &paths.cache_dir,
                     ttl_ms,
