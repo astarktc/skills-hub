@@ -216,6 +216,185 @@ fn finalize_update_swaps_content_and_preserves_identity() {
     );
 }
 
+fn install_before_update(central: &Path, store: &SkillStore) -> super::SkillRecord {
+    let installed = finalize_install(
+        store,
+        central,
+        stage_skill(central, "---\nname: s\ndescription: old\n---\n"),
+        NameIntent::UserProvided("s".to_string()),
+        SkillProvenance::git("https://github.com/o/r", None, Some("rev1".to_string())),
+    )
+    .unwrap();
+    store.get_skill_by_id(&installed.skill_id).unwrap().unwrap()
+}
+
+fn assert_old_skill(central: &Path, store: &SkillStore, before: &super::SkillRecord) {
+    assert_eq!(fs::read(central.join("s/a.txt")).unwrap(), b"data");
+    assert_eq!(
+        fs::read_to_string(central.join("s/SKILL.md")).unwrap(),
+        "---\nname: s\ndescription: old\n---\n"
+    );
+    // SkillRecord has no PartialEq; compare every field, including timestamps.
+    assert_eq!(
+        format!("{:?}", store.get_skill_by_id(&before.id).unwrap().unwrap()),
+        format!("{before:?}")
+    );
+}
+
+fn reject_skill_writes(db: &Path) {
+    rusqlite::Connection::open(db)
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER reject_skill_write BEFORE INSERT ON skills
+             BEGIN SELECT RAISE(ABORT, 'test upsert failure'); END;",
+        )
+        .unwrap();
+}
+
+#[test]
+fn finalize_update_restores_old_bytes_when_upsert_fails() {
+    let (db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    let before = install_before_update(central.path(), &store);
+    let staged = stage_skill(central.path(), "---\nname: s\ndescription: new\n---\n");
+    reject_skill_writes(&db.path().join("test.db"));
+
+    let err = finalize_update(&store, &before, staged, Some("rev2".to_string())).unwrap_err();
+
+    assert!(format!("{err:#}").contains("test upsert failure"));
+    assert_old_skill(central.path(), &store, &before);
+    assert_eq!(central_entries(central.path()), vec!["s"]);
+}
+
+#[test]
+fn finalize_update_restores_old_bytes_when_staging_is_missing() {
+    let (_db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    let before = install_before_update(central.path(), &store);
+    // Rename and fallback copy both fail, after the old bytes were moved aside.
+    let staged = StagingDir::new_in(central.path());
+
+    let err = finalize_update(&store, &before, staged, None).unwrap_err();
+
+    assert!(format!("{err:#}").contains("fallback copy"));
+    assert_old_skill(central.path(), &store, &before);
+    assert_eq!(central_entries(central.path()), vec!["s"]);
+}
+
+#[test]
+fn finalize_update_failed_restore_leaves_central_missing() {
+    let (db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    let before = install_before_update(central.path(), &store);
+    fs::remove_dir_all(&before.central_path).unwrap();
+    let staged = stage_skill(central.path(), "---\nname: s\ndescription: new\n---\n");
+    reject_skill_writes(&db.path().join("test.db"));
+
+    let err = finalize_update(&store, &before, staged, None).unwrap_err();
+
+    assert!(format!("{err:#}").contains("test upsert failure"));
+    assert!(central_entries(central.path()).is_empty());
+    assert_eq!(
+        format!("{:?}", store.get_skill_by_id(&before.id).unwrap().unwrap()),
+        format!("{before:?}")
+    );
+}
+
+#[test]
+fn finalize_update_restores_missing_central_on_success() {
+    let (_db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    let before = install_before_update(central.path(), &store);
+    fs::remove_dir_all(&before.central_path).unwrap();
+    let staged = stage_skill(central.path(), "---\nname: s\ndescription: restored\n---\n");
+
+    let updated = finalize_update(&store, &before, staged, None).unwrap();
+
+    assert_eq!(updated.description.as_deref(), Some("restored"));
+    assert_eq!(central_entries(central.path()), vec!["s"]);
+    assert_eq!(fs::read(central.path().join("s/a.txt")).unwrap(), b"data");
+}
+
+#[test]
+fn rollback_cleanup_failure_retains_backup_and_original_error() {
+    let (_db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    let before = install_before_update(central.path(), &store);
+    let path = Path::new(&before.central_path);
+    let backup = super::move_old_central_aside(path).unwrap().unwrap();
+    // A non-directory replacement cannot be cleaned by remove_dir_all.
+    fs::write(path, b"obstruction").unwrap();
+
+    let err = super::rollback_update(path, Some(&backup), anyhow::anyhow!("original failure"));
+
+    assert_eq!(err.root_cause().to_string(), "original failure");
+    assert!(format!("{err:#}").contains(backup.to_str().unwrap()));
+    assert_eq!(fs::read(backup.join("a.txt")).unwrap(), b"data");
+    assert_eq!(fs::read(path).unwrap(), b"obstruction");
+    // Recovery siblings are hidden from the ordinary root/recursive scan ladder.
+    assert!(crate::core::skill_discovery::discover_skills(central.path()).is_empty());
+}
+
+#[cfg(unix)]
+struct RestorePermissions(std::path::PathBuf, fs::Permissions);
+
+#[cfg(unix)]
+impl Drop for RestorePermissions {
+    fn drop(&mut self) {
+        fs::set_permissions(&self.0, self.1.clone()).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn finalize_update_readonly_parent_keeps_old_bytes_and_row() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    let before = install_before_update(central.path(), &store);
+    // Stage elsewhere so Drop can clean up even while the central parent is locked.
+    let staging_root = tempfile::tempdir().unwrap();
+    let staged = stage_skill(staging_root.path(), "---\nname: s\n---\n");
+    let _permissions = RestorePermissions(
+        central.path().to_path_buf(),
+        fs::metadata(central.path()).unwrap().permissions(),
+    );
+    fs::set_permissions(central.path(), fs::Permissions::from_mode(0o555)).unwrap();
+
+    // The parent also forbids rename-aside: fail before touching the old bytes.
+    finalize_update(&store, &before, staged, None).expect_err("parent is read-only");
+
+    assert_old_skill(central.path(), &store, &before);
+    assert_eq!(central_entries(central.path()), vec!["s"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn rollback_rename_failure_names_and_preserves_backup() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    let before = install_before_update(central.path(), &store);
+    let path = Path::new(&before.central_path);
+    let backup = super::move_old_central_aside(path).unwrap().unwrap();
+    let _permissions = RestorePermissions(
+        central.path().to_path_buf(),
+        fs::metadata(central.path()).unwrap().permissions(),
+    );
+    fs::set_permissions(central.path(), fs::Permissions::from_mode(0o555)).unwrap();
+
+    let err = super::rollback_update(path, Some(&backup), anyhow::anyhow!("move failed"));
+
+    assert_eq!(err.root_cause().to_string(), "move failed");
+    let message = format!("{err:#}");
+    assert!(message.contains("restore old central dir"), "{message}");
+    assert!(message.contains(backup.to_str().unwrap()), "{message}");
+    assert_eq!(fs::read(backup.join("a.txt")).unwrap(), b"data");
+    assert!(!path.exists());
+}
+
 /// A failed fallback copy must not leave a partial directory at the skill's
 /// final name inside the central repo: `Drop` only cleans the staging path, so
 /// `move_into` removes `dest` itself before propagating. A leftover would read

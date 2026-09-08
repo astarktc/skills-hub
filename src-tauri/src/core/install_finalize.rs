@@ -256,6 +256,10 @@ pub fn finalize_install(
 /// A central copy that is already gone is not a failure: the staged bytes
 /// simply land at the recorded path — that is how Restore rebuilds an
 /// Unlocatable skill's central copy.
+///
+/// Keep the previous bytes beside the destination until the row is committed.
+/// Failures roll back the bytes; a failed rollback keeps the backup for manual
+/// recovery and names it in the error. This is failure-atomic, not crash-atomic.
 pub fn finalize_update(
     store: &SkillStore,
     record: &SkillRecord,
@@ -263,15 +267,10 @@ pub fn finalize_update(
     revision: Option<String>,
 ) -> Result<SkillRecord> {
     let central_path = PathBuf::from(&record.central_path);
-    match std::fs::remove_dir_all(&central_path) {
-        Ok(()) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => {
-            return Err(err)
-                .with_context(|| format!("failed to remove old central dir {:?}", central_path))
-        }
+    let backup = move_old_central_aside(&central_path)?;
+    if let Err(err) = staged.move_into(&central_path) {
+        return Err(rollback_update(&central_path, backup.as_deref(), err));
     }
-    staged.move_into(&central_path)?;
 
     let now = now_ms();
     let content_hash = compute_content_hash(&central_path);
@@ -285,8 +284,79 @@ pub fn finalize_update(
         status: "ok".to_string(),
         ..record.clone()
     };
-    store.upsert_skill(&updated)?;
+    if let Err(err) = store.upsert_skill(&updated) {
+        return Err(rollback_update(&central_path, backup.as_deref(), err));
+    }
+    if let Some(backup) = backup {
+        if let Err(err) = std::fs::remove_dir_all(&backup) {
+            // Bytes and row already agree: cleanup must not turn success into failure.
+            log::warn!(
+                "[install] failed to remove old central backup {:?}: {}",
+                backup,
+                err
+            );
+        }
+    }
     Ok(updated)
+}
+
+fn move_old_central_aside(central: &Path) -> Result<Option<PathBuf>> {
+    match std::fs::symlink_metadata(central) {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).with_context(|| format!("inspect central dir {:?}", central)),
+    }
+    // A hidden UUID sibling stays outside ordinary skill discovery, unlike
+    // `<name>.old-<timestamp>`. Check even UUID collisions (including dangling
+    // symlinks), so no existing skill/recovery directory can be overwritten.
+    // Finalize runs under the caller's mutation guard, like staging/install.
+    let backup = loop {
+        let candidate = central.with_file_name(format!(".skills-hub-old-{}", Uuid::new_v4()));
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(_) => continue,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => break candidate,
+            Err(err) => {
+                return Err(err).with_context(|| format!("inspect backup path {:?}", candidate))
+            }
+        }
+    };
+    std::fs::rename(central, &backup)
+        .with_context(|| format!("move old central dir {:?} aside to {:?}", central, backup))?;
+    Ok(Some(backup))
+}
+
+/// Preserve the original failure as the error's source, even if recovery fails.
+fn rollback_update(
+    central: &Path,
+    backup: Option<&Path>,
+    original: anyhow::Error,
+) -> anyhow::Error {
+    let rollback = (|| -> Result<()> {
+        // move_into normally removes a failed partial copy, but cleanup can fail.
+        // Retry before restoring so old bytes never merge with partial new bytes.
+        match std::fs::remove_dir_all(central) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err).context("remove replacement central dir"),
+        }
+        if let Some(backup) = backup {
+            std::fs::rename(backup, central).context("restore old central dir")?;
+        }
+        Ok(())
+    })();
+    match rollback {
+        Ok(()) => original,
+        Err(err) => original.context(match backup {
+            Some(backup) => format!(
+                "rollback to {:?} failed: {:#}; old bytes retained at {:?} for manual recovery",
+                central, err, backup
+            ),
+            None => format!(
+                "rollback to missing central dir {:?} failed: {:#}",
+                central, err
+            ),
+        }),
+    }
 }
 
 /// `(name, description)` from the directory's SKILL.md frontmatter, if any.
