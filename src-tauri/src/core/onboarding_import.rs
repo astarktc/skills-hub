@@ -56,7 +56,7 @@ use super::onboarding::{build_onboarding_plan, OnboardingGroup, OnboardingVarian
 use super::skill_discovery::require_skill_md;
 use super::skill_store::SkillStore;
 use super::sync_engine::remove_path_any;
-use super::tool_adapters::{ensure_path_within_tool_dirs, global_tool_entries, installed_keys};
+use super::tool_adapters::ensure_path_within_tool_dirs;
 
 /// One name-group the operator chose to import, as the frontend states it.
 #[derive(Clone, Debug)]
@@ -307,10 +307,16 @@ fn sync_imported_unlocked(
     // not raw detection — the same rule the Refresh re-assert and the sync
     // fan-out follow (`settings::effective_global_tool_targets`). Detection is
     // only the fallback for a never-configured install.
+    // A settings read that fails must fail **closed**: falling back to raw
+    // detection here would write to every detected Tool — the exact defect
+    // this rule exists to prevent — on an error path the operator never sees.
+    // Writing nowhere is recoverable; writing everywhere is what they
+    // reported as a bug.
     let mut tools = match policy.tools.clone() {
         Some(selected) => selected,
-        None => super::settings::effective_global_tool_targets(store, &paths.home)
-            .unwrap_or_else(|_| installed_keys(&global_tool_entries(&paths.home))),
+        None => {
+            super::settings::effective_global_tool_targets(store, &paths.home).unwrap_or_default()
+        }
     };
     let mut identical_tools: Vec<String> = Vec::new();
     let mut originals: Vec<OriginalOutcome> = Vec::new();

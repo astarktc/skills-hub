@@ -220,12 +220,25 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   // recorded selection, or detection when they never configured one) — never
   // to every detected tool.
   const handleSyncSkillToAllTools = useCallback(async (skill: ManagedSkill) => {
-    if (!effectiveSyncTargetIds.length) return;
+    // Zero work is reported, never silent: an operator who selected no tools
+    // clicked a deploy button and must learn why nothing happened.
+    if (!effectiveSyncTargetIds.length) {
+      notify("warning", t("noSyncTargets"));
+      return;
+    }
     await runAction({}, async () => {
       const report = await syncSkillsToTools([toSyncItem(skill)], effectiveSyncTargetIds);
       return applyOutcome(syncOutcome(report, { ...foldContext, action: "bulk" }));
     });
-  }, [applyOutcome, effectiveSyncTargetIds, foldContext, runAction, syncSkillsToTools]);
+  }, [
+    applyOutcome,
+    effectiveSyncTargetIds,
+    foldContext,
+    notify,
+    runAction,
+    syncSkillsToTools,
+    t,
+  ]);
 
   const syncAllManagedToTools = useCallback(async (toolIds: string[]) => {
     if (!autoSyncEnabled || !managedSkills.length || !toolIds.length) return;

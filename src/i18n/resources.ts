@@ -247,7 +247,7 @@ export const resources = {
         "Running file/network operations. First fetch may take a while depending on network; subsequent installs use cache and are faster.",
       newToolsTitle: "New tools detected",
       newToolsBody:
-        "We detected newly installed tools: {{tools}}. Sync managed skills now?",
+        "We detected newly installed tools: {{tools}}. Sync managed skills to the ones you have selected?",
       configureTools: "Configure Tools",
       globalToolConfigTitle: "Configure Tools",
       globalToolConfigDesc:
@@ -525,7 +525,9 @@ export const resources = {
         "Nothing was removed — no deployment could be located for this request",
       unsyncSkill: "Uninstall from tool directories",
       unsyncSkillTooltip: "Remove this skill from all tool directories",
-      syncSkillTooltip: "Deploy this skill to all installed tools",
+      syncSkillTooltip: "Deploy this skill to your selected tools",
+      noSyncTargets:
+        "No tools are selected, so this skill was not deployed anywhere. Choose tools under Configure Tools.",
       projects: {
         addProject: "Add Project",
         emptyTitle: "No projects registered",
@@ -844,7 +846,8 @@ export const resources = {
       processingTipLong:
         "正在执行文件/网络操作，首次获取耗时取决于网络状况，后续安装使用缓存会更快。",
       newToolsTitle: "检测到新安装的工具",
-      newToolsBody: "已检测到新工具：{{tools}}，是否立即同步托管 Skills？",
+      newToolsBody:
+        "已检测到新工具：{{tools}}，是否将托管 Skills 同步到你已选择的工具？",
       configureTools: "配置工具",
       globalToolConfigTitle: "配置工具",
       globalToolConfigDesc:
@@ -1101,7 +1104,9 @@ export const resources = {
       unsyncNothingPlanned: "未移除任何内容 — 未能定位到本次请求对应的部署",
       unsyncSkill: "从工具目录中卸载",
       unsyncSkillTooltip: "从所有工具目录中移除该 Skill",
-      syncSkillTooltip: "将该 Skill 部署到所有已安装的工具",
+      syncSkillTooltip: "将该 Skill 部署到你已选择的工具",
+      noSyncTargets:
+        "未选择任何工具，因此该 Skill 未部署到任何位置。请在“配置工具”中选择工具。",
       projects: {
         addProject: "添加项目",
         emptyTitle: "尚未注册任何项目",

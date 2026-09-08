@@ -211,14 +211,21 @@ function App() {
       effectiveSyncTargetIds.includes(id),
     );
     setShowNewToolsModal(false);
-    if (targets.length === 0) return;
+    // Zero work is reported, never silent: every newly detected tool sat
+    // outside the operator's selection, so nothing was deployed.
+    if (targets.length === 0) {
+      notify("warning", t("noSyncTargets"));
+      return;
+    }
     enableTargetsFor(targets);
     void syncAllManagedToTools(targets);
   }, [
     effectiveSyncTargetIds,
     enableTargetsFor,
+    notify,
     relevantNewlyInstalled,
     setShowNewToolsModal,
+    t,
     syncAllManagedToTools,
   ]);
 

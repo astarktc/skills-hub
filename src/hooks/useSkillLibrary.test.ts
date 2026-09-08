@@ -430,6 +430,11 @@ describe("cancellation and non-report actions", () => {
     });
 
     expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
+    // Zero work is reported, never silent.
+    expect(setup.reporter.notify).toHaveBeenCalledWith(
+      "warning",
+      "noSyncTargets",
+    );
   });
 });
 
