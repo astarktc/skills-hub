@@ -24,12 +24,13 @@ export type ActionErrorEntry = {
 };
 
 /**
- * How long each kind stays on screen. The single owner of toast lifetime:
- * an error stays until the operator closes it (it is the only record of a
- * failed install/refresh), a warning lingers long enough to read, a success
- * or info just confirms. No other module passes a `duration` to the toast
- * library and the app-level `<Toaster>` sets none (it only sets how many
- * toasts stay visible at once).
+ * The single owner of toast lifetime: errors stay until closed; warnings
+ * allow 5 s of reading time; success/info briefly confirm for 2 s. Sonner
+ * pauses finite timers while the toaster is hovered/interacting or the
+ * document is hidden, so these are not wall-clock deadlines. Errors and
+ * warnings have close buttons so longer-lived outcomes can be dismissed
+ * without waiting for a timer. Notifications also remain in session history.
+ * No other module passes a `duration`, including the app-level `<Toaster>`.
  */
 const TOAST_DURATION_MS: Record<NotificationKind, number> = {
   error: Infinity,
@@ -56,7 +57,7 @@ function showToast(
       toast.error(title, { ...options, closeButton: true });
       break;
     case "warning":
-      toast.warning(title, options);
+      toast.warning(title, { ...options, closeButton: true });
       break;
     case "success":
       toast.success(title, options);

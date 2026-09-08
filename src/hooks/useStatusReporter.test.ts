@@ -70,7 +70,7 @@ describe("useStatusReporter", () => {
       });
     });
 
-    it("a warning lingers 5 s", () => {
+    it("a warning can be closed even while its 5 s timer is paused", () => {
       const { result } = renderHook(() => useStatusReporter(t));
 
       act(() => {
@@ -80,6 +80,7 @@ describe("useStatusReporter", () => {
       expect(toast.warning).toHaveBeenCalledWith("Skipped", {
         description: "already present",
         duration: 5000,
+        closeButton: true,
       });
     });
 
@@ -383,6 +384,7 @@ describe("useStatusReporter", () => {
     expect(toast.warning).toHaveBeenCalledWith("skill-a", {
       description: 'a skipped' + 'errors.moreCount {"count":1}',
       duration: 5000,
+      closeButton: true,
     });
     expect(toast.error).not.toHaveBeenCalled();
     expect(
@@ -558,7 +560,7 @@ describe("useStatusReporter runAction", () => {
 
   // A batch that completed with failures is a warning, not a success: it
   // lingers and counts as unread.
-  it("a successToast may downgrade a completed batch to a warning", async () => {
+  it("a completed batch warning remains closable alongside its persistent error toast", async () => {
     const { result } = renderHook(() => useStatusReporter(t));
 
     await act(async () => {
@@ -569,18 +571,28 @@ describe("useStatusReporter runAction", () => {
               ? { kind: "warning", title: `${failed} failed` }
               : "all refreshed",
         },
-        async () => 2,
+        async () => {
+          result.current.showActionErrors([
+            { title: "skill-a", message: "refresh failed" },
+          ]);
+          return 2;
+        },
       );
     });
 
+    expect(toast.error).toHaveBeenCalledWith("skill-a", {
+      ...ERROR_OPTIONS,
+      description: "refresh failed",
+    });
     await waitFor(() =>
       expect(toast.warning).toHaveBeenCalledWith("2 failed", {
         description: undefined,
         duration: 5000,
+        closeButton: true,
       }),
     );
     expect(toast.success).not.toHaveBeenCalled();
-    expect(result.current.unreadCount).toBe(1);
+    expect(result.current.unreadCount).toBe(2);
   });
 
   it("without a successToast, completes silently", async () => {
