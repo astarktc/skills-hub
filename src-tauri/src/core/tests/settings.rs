@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
 use crate::core::settings::{
-    apply_setting, featured_skills_cache, git_cache_cleanup_days, git_cache_ttl_secs, github_token,
-    load_settings, record_installed_tools, resolve_central_repo_path, set_featured_skills_cache,
-    ui_zoom_level, SettingUpdate, DEFAULT_AUTO_SYNC_ENABLED, DEFAULT_GIT_CACHE_CLEANUP_DAYS,
-    DEFAULT_GIT_CACHE_TTL_SECS, DEFAULT_SCAN_SELECTED_TOOLS_ONLY, DEFAULT_UI_ZOOM_LEVEL,
-    GIT_CACHE_CLEANUP_DAYS_RANGE, GIT_CACHE_TTL_SECS_RANGE, UI_ZOOM_LEVEL_RANGE,
+    apply_setting, effective_global_tool_targets, featured_skills_cache, git_cache_cleanup_days,
+    git_cache_ttl_secs, github_token, load_settings, record_installed_tools,
+    resolve_central_repo_path, set_featured_skills_cache, ui_zoom_level, SettingUpdate,
+    DEFAULT_AUTO_SYNC_ENABLED, DEFAULT_GIT_CACHE_CLEANUP_DAYS, DEFAULT_GIT_CACHE_TTL_SECS,
+    DEFAULT_SCAN_SELECTED_TOOLS_ONLY, DEFAULT_UI_ZOOM_LEVEL, GIT_CACHE_CLEANUP_DAYS_RANGE,
+    GIT_CACHE_TTL_SECS_RANGE, UI_ZOOM_LEVEL_RANGE,
 };
 use crate::core::skill_store::{SkillRecord, SkillStore};
 
@@ -204,6 +205,60 @@ fn global_selected_tools_parses_json_and_defaults_to_unconfigured() {
             "raw {stored:?}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Effective global sync target set: intent beats detection
+// ---------------------------------------------------------------------------
+
+/// Fake a Tool installation by creating its detect dir under `home`.
+fn install_tool(home: &std::path::Path, key: &str) {
+    let adapter =
+        crate::core::tool_adapters::adapter_by_key(key).unwrap_or_else(|| panic!("adapter {key}"));
+    std::fs::create_dir_all(home.join(adapter.relative_detect_dir)).expect("install tool");
+}
+
+#[test]
+fn effective_global_tool_targets_prefers_the_recorded_selection_over_detection() {
+    let (dir, store) = make_store();
+    let home = dir.path().join("home");
+    install_tool(&home, "claude_code");
+    install_tool(&home, "codex");
+
+    // Never configured: detection is the fallback.
+    assert_eq!(
+        effective_global_tool_targets(&store, &home).unwrap(),
+        vec!["claude_code".to_string(), "codex".to_string()]
+    );
+
+    // A selection is taken verbatim, even when it names an installed Tool the
+    // operator deselected.
+    raw(&store, "global_selected_tools_v1", r#"["claude_code"]"#);
+    assert_eq!(
+        effective_global_tool_targets(&store, &home).unwrap(),
+        vec!["claude_code".to_string()]
+    );
+
+    // An empty selection means "sync nowhere" — never a fallback to detection.
+    raw(&store, "global_selected_tools_v1", "[]");
+    assert!(effective_global_tool_targets(&store, &home)
+        .unwrap()
+        .is_empty());
+
+    // A selected-but-uninstalled key survives: the set is never intersected
+    // with detection, so downstream can report it as a stale-selection skip.
+    raw(&store, "global_selected_tools_v1", r#"["cursor","codex"]"#);
+    assert_eq!(
+        effective_global_tool_targets(&store, &home).unwrap(),
+        vec!["cursor".to_string(), "codex".to_string()]
+    );
+
+    // A malformed stored value is "never configured", hence detection again.
+    raw(&store, "global_selected_tools_v1", "not json");
+    assert_eq!(
+        effective_global_tool_targets(&store, &home).unwrap(),
+        vec!["claude_code".to_string(), "codex".to_string()]
+    );
 }
 
 #[test]

@@ -877,6 +877,89 @@ fn reassert_auto_sync_creates_a_target_the_skill_was_never_on() {
     assert!(PathBuf::from(&row.target_path).exists());
 }
 
+/// Intent beats detection: with a recorded selection narrower than detection,
+/// the re-assert writes the selection only — an installed-but-unselected Tool
+/// never receives the skill.
+#[test]
+fn reassert_auto_sync_writes_the_recorded_selection_not_every_installed_tool() {
+    let f = fixture();
+    for key in ["claude_code", "codex"] {
+        let adapter = adapter_by_key(key).expect("adapter");
+        fs::create_dir_all(f.paths.home.join(adapter.relative_detect_dir)).expect("install tool");
+    }
+    f.store
+        .set_setting("global_selected_tools_v1", r#"["claude_code"]"#)
+        .expect("record the selection");
+
+    refresh(
+        &f,
+        RefreshPolicy {
+            reassert_auto_sync: true,
+        },
+    );
+
+    assert!(
+        f.store
+            .get_skill_target(&f.skill_id, "claude_code")
+            .expect("query")
+            .is_some(),
+        "the selected Tool gets the skill"
+    );
+    assert!(
+        f.store
+            .get_skill_target(&f.skill_id, "codex")
+            .expect("query")
+            .is_none(),
+        "an installed but unselected Tool is not a sync target"
+    );
+    assert!(!f.paths.home.join(".codex/skills/alpha").exists());
+}
+
+/// A stale selection stays visible: a selected Tool that is not installed is
+/// reported as a skip rather than filtered out of the set silently.
+#[test]
+fn reassert_auto_sync_reports_a_selected_but_uninstalled_tool_as_a_skip() {
+    let f = fixture();
+    let claude = adapter_by_key("claude_code").expect("claude_code adapter");
+    fs::create_dir_all(f.paths.home.join(claude.relative_detect_dir)).expect("install tool");
+    f.store
+        .set_setting("global_selected_tools_v1", r#"["claude_code","cursor"]"#)
+        .expect("record the selection");
+
+    let report = refresh(
+        &f,
+        RefreshPolicy {
+            reassert_auto_sync: true,
+        },
+    );
+
+    let targets = match &report.skills[0].status {
+        SkillRefreshStatus::Refreshed { targets, .. } => targets,
+        other => panic!("expected Refreshed, got {other:?}"),
+    };
+    let cursor = targets
+        .iter()
+        .find(|o| matches!(&o.scope, PropagationScope::Global { tool } if tool == "cursor"))
+        .expect("the uninstalled selection entry is reported, not dropped");
+    assert!(
+        matches!(
+            &cursor.status,
+            PropagationStatus::Skipped {
+                reason: crate::core::propagation::PropagationSkip::ToolNotInstalled { tool }
+            } if tool == "cursor"
+        ),
+        "got {:?}",
+        cursor.status
+    );
+    assert!(
+        f.store
+            .get_skill_target(&f.skill_id, "cursor")
+            .expect("query")
+            .is_none(),
+        "a skipped target creates no row"
+    );
+}
+
 #[test]
 fn without_the_reassert_policy_a_missing_target_stays_missing() {
     let f = fixture();

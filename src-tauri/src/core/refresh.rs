@@ -19,8 +19,10 @@
 //!    listings and other mutations are not blocked for the whole run.
 //!
 //! With [`RefreshPolicy::reassert_auto_sync`] the apply phase also re-asserts
-//! the auto-sync invariant — every Managed skill is synced to every installed
-//! Tool — so a Tool the skill was never on gets it now.
+//! the auto-sync invariant — every Managed skill is synced to every Tool in
+//! the effective global target set ([`super::settings::effective_global_tool_targets`]:
+//! the operator's recorded selection, or every detected Tool when they never
+//! configured one) — so a Tool the skill was never on gets it now.
 //!
 //! Everything is report data: a skill that fails acquisition is reported and
 //! excluded from phase two (and from the re-assert); a Sync target that fails
@@ -50,7 +52,6 @@ use super::skill_store::SkillStore;
 use super::skill_update::{
     acquire_update, apply_unlocked, ApplyOutcome, UpdateRequest, UpdateSkip,
 };
-use super::tool_adapters::{global_tool_entries, installed_keys};
 use super::unlocatable::UnlocatableState;
 
 /// Which Managed skills to refresh.
@@ -62,8 +63,9 @@ pub enum RefreshSelection {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RefreshPolicy {
-    /// Also sync each refreshed skill to installed Tools it is not on yet —
-    /// the auto-sync invariant, re-asserted. Off leaves the target set alone.
+    /// Also sync each refreshed skill to the effective global target Tools it
+    /// is not on yet — the auto-sync invariant, re-asserted. Off leaves the
+    /// target set alone.
     pub reassert_auto_sync: bool,
 }
 
@@ -509,11 +511,14 @@ pub(crate) fn merge_reassert(
     }
 }
 
-/// The auto-sync invariant, re-asserted for one skill: sync it to every
-/// installed Tool it has no target row for. Existing targets were already
-/// brought into line by Propagation, so they are not touched again here;
-/// a directory that is in the way without a row is reported, not clobbered
-/// (`overwrite_if_same_content`).
+/// The auto-sync invariant, re-asserted for one skill: sync it to every Tool
+/// in the effective global target set it has no target row for. That set is
+/// the operator's recorded selection when they configured one — detection is
+/// only the fallback — and it is not intersected with detection, so a
+/// selected-but-uninstalled Tool is reported as a skip rather than dropped.
+/// Existing targets were already brought into line by Propagation, so they are
+/// not touched again here; a directory that is in the way without a row is
+/// reported, not clobbered (`overwrite_if_same_content`).
 fn reassert_auto_sync_unlocked(
     paths: &InstallerPaths,
     store: &SkillStore,
@@ -533,7 +538,7 @@ fn reassert_auto_sync_unlocked(
             PropagationScope::Project { .. } => None,
         })
         .collect();
-    let missing: Vec<String> = installed_keys(&global_tool_entries(&paths.home))
+    let missing: Vec<String> = super::settings::effective_global_tool_targets(store, &paths.home)?
         .into_iter()
         .filter(|key| !existing.contains(&key.as_str()))
         .collect();
