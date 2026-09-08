@@ -263,6 +263,16 @@ fn finalize_update_sweeps_only_aged_backup_siblings() {
             age_backup(path);
         }
     }
+    // Every skill's central dir shares this parent, so the sweep is
+    // library-wide by construction: another skill's fresh backup (left by a
+    // failed cleanup a moment ago) is exactly what must survive.
+    let other_skill = central.path().join("t");
+    fs::create_dir_all(&other_skill).unwrap();
+    fs::write(other_skill.join("a.txt"), b"data").unwrap();
+    age_backup(&other_skill);
+    let others_backup = super::move_old_central_aside(&other_skill)
+        .unwrap()
+        .unwrap();
 
     finalize_update(
         &store,
@@ -279,6 +289,40 @@ fn finalize_update_sweeps_only_aged_backup_siblings() {
         other.join("recovery.txt").exists(),
         "a different central parent is not swept"
     );
+    assert_eq!(
+        fs::read(others_backup.join("a.txt")).unwrap(),
+        b"data",
+        "another skill's fresh backup survives a library-wide sweep"
+    );
+}
+
+#[test]
+fn a_backup_of_a_week_old_skill_is_dated_from_its_creation_not_its_content() {
+    let (_db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    let before = install_before_update(central.path(), &store);
+    // The skill was last updated long ago: rename alone would carry that
+    // mtime onto the backup and make it sweep-eligible immediately.
+    age_backup(Path::new(&before.central_path));
+
+    let lingering = super::move_old_central_aside(Path::new(&before.central_path))
+        .unwrap()
+        .unwrap();
+    let age = std::time::SystemTime::now()
+        .duration_since(fs::metadata(&lingering).unwrap().modified().unwrap())
+        .unwrap();
+    assert!(age.as_secs() < 60, "backup mtime is stamped at creation");
+
+    // A later Update of any skill runs the sweep: the fresh backup survives.
+    fs::create_dir_all(&before.central_path).unwrap();
+    finalize_update(
+        &store,
+        &before,
+        stage_skill(central.path(), "---\nname: s\n---\n"),
+        None,
+    )
+    .unwrap();
+    assert_eq!(fs::read(lingering.join("a.txt")).unwrap(), b"data");
 }
 
 #[cfg(unix)]

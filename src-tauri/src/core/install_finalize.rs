@@ -332,7 +332,35 @@ fn move_old_central_aside(central: &Path) -> Result<Option<PathBuf>> {
     };
     std::fs::rename(central, &backup)
         .with_context(|| format!("move old central dir {:?} aside to {:?}", central, backup))?;
+    stamp_backup_created(&backup);
     Ok(Some(backup))
+}
+
+/// `rename` preserves the directory's mtime, which would date the backup from
+/// the skill's last content change rather than from now — and the sweep's
+/// recovery window is measured from creation. Best-effort: a backup that
+/// cannot be stamped keeps its old mtime and may be swept early; that is
+/// logged, never a finalize failure.
+fn stamp_backup_created(backup: &Path) {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_BACKUP_SEMANTICS opens a directory handle; FILE_WRITE_ATTRIBUTES
+        // grants SetFileTime without requesting directory-content writes.
+        options.custom_flags(0x02000000).access_mode(0x100);
+    }
+    let stamped = options
+        .open(backup)
+        .and_then(|file| file.set_modified(std::time::SystemTime::now()));
+    if let Err(err) = stamped {
+        log::warn!(
+            "[install] could not stamp backup {:?} creation time: {}",
+            backup,
+            err
+        );
+    }
 }
 
 /// Best-effort, parent-local recovery cleanup; inspect links themselves, never
