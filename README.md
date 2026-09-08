@@ -33,7 +33,7 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 
 | tool key | Display name | skills dir (relative to `~`) | detect dir (relative to `~`) |
 | --- | --- | --- | --- |
-| `agents_skills` | .agents/skills (9 tools) | `.agents/skills` | `.agents` |
+| `agents_skills` | .agents/skills | `.agents/skills` | `.agents` |
 | `cursor` | Cursor | `.cursor/skills` | `.cursor` |
 | `claude_code` | Claude Code | `.claude/skills` | `.claude` |
 | `codex` | Codex | `.codex/skills` | `.codex` |
@@ -78,6 +78,13 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `windsurf` | Windsurf | `.codeium/windsurf/skills` | `.codeium/windsurf` |
 | `moltbot` | MoltBot | `.moltbot/skills` | `.moltbot` |
 | `hermes-agent` | Hermes Agent | `.hermes/skills` | `.hermes` |
+
+`agents_skills` is scope-dependent. **Globally** it is a plain, independently selectable target: it
+manages `~/.agents/skills` and nothing else — Cursor still reads `~/.cursor/skills`, Codex still reads
+`~/.codex/skills`, so those tools keep their own rows in the global list. **In a project** it is an
+aggregate shown as `.agents/skills (9 tools)`: one folder, `<project>/.agents/skills`, that nine tools
+(Cursor, Codex, OpenCode, Antigravity, Amp, Kimi Code CLI, Cline, Gemini CLI, GitHub Copilot) all read,
+so those nine have no separate project row.
 
 ## Development
 

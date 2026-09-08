@@ -31,19 +31,24 @@ pub struct ToolCatalogEntry {
     pub constituents: Vec<&'static str>,
 }
 
-/// Global-scope catalog: every real tool (virtual groups are project-only),
-/// grouped by shared global skills dir.
+/// Global-scope catalog: every registry entry, grouped by shared global
+/// skills dir.
+///
+/// A virtual group is listed here **alongside** its constituents: globally it
+/// absorbs nothing (Cursor reads `~/.cursor/skills`, Codex `~/.codex/skills`),
+/// it is simply one more directory some tools also read. So it carries no
+/// constituent roster — the roster renders exactly when ticking this box
+/// covers those tools — its label is the plain `display_name`, and its
+/// installedness is its own detect dir like any other entry.
 pub fn global_tool_entries(home: &Path) -> Vec<ToolCatalogEntry> {
     TOOL_ADAPTERS
         .iter()
-        .filter(|adapter| !adapter.is_virtual_group())
         .map(|adapter| ToolCatalogEntry {
             key: adapter.key(),
             label: adapter.display_name,
             installed: is_installed_in(home, adapter),
             shared_with: adapters_sharing_skills_dir(adapter)
                 .into_iter()
-                .filter(|a| !a.is_virtual_group())
                 .map(ToolAdapter::key)
                 .collect(),
             constituents: vec![],
@@ -75,7 +80,7 @@ pub fn project_tool_entries(home: &Path) -> Vec<ToolCatalogEntry> {
             };
             ToolCatalogEntry {
                 key: adapter.key(),
-                label: adapter.display_name,
+                label: adapter.project_display_name(),
                 installed,
                 shared_with: listed
                     .iter()
