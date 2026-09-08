@@ -249,6 +249,8 @@ export type StatusReporter = {
    * A batch's failures as error Notifications: one toast on screen (the
    * first entry, "+N more"), every entry its own history row. Entries with
    * an empty message are silenced failures (e.g. cancelled) and dropped.
+   * The toast carries only the head entry's action; every entry's action
+   * remains available in the notification panel.
    */
   showActionErrors: (errors: ActionErrorEntry[]) => void;
   /**
@@ -302,6 +304,8 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
 
   // One batch rule for both kinds: one toast (head + "+N more"), every
   // entry its own history row, so the N behind the suffix stay readable.
+  // Only the head entry's action goes on the toast; every entry's action
+  // lives in the notification panel.
   const showActionBatch = useCallback(
     (kind: "error" | "warning", entries: ActionErrorEntry[]) => {
       // Entries with an empty message are silenced failures (e.g. cancelled).
