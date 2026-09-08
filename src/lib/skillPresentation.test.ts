@@ -6,6 +6,7 @@ import {
   groupSkillsByRepo,
   importedSourceLine,
   repoInfo,
+  repointDoor,
   skillSourceLabel,
   sourceKind,
   toolLabel,
@@ -52,6 +53,15 @@ describe("unlocatable translation maps", () => {
       source_missing: "errors.refreshSkippedSourceMissing",
       central_missing: "errors.refreshSkippedCentralMissing",
     });
+  });
+});
+
+describe("repointDoor", () => {
+  it.each([
+    ["git", "git"], ["GitHub", "git"], ["GIT", "git"],
+    ["local", "local"], ["imported", "local"], ["unknown", "local"],
+  ] as const)("routes %s provenance to the %s door", (source_type, door) => {
+    expect(repointDoor({ source_type })).toBe(door);
   });
 });
 

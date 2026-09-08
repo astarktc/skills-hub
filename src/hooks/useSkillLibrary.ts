@@ -6,7 +6,7 @@ import type {
   RemovalReportDto,
 } from "../components/skills/types";
 import { invokeTauri, isTauri } from "../lib/tauri";
-import { SKIPPED_REASON_KEY, sourceKind } from "../lib/skillPresentation";
+import { repointDoor, SKIPPED_REASON_KEY, sourceKind } from "../lib/skillPresentation";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type {
   ActionErrorEntry,
@@ -625,7 +625,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
    */
   const handleRepointSkill = useCallback(
     async (skill: ManagedSkill) => {
-      if (sourceKind(skill) === "git") {
+      if (repointDoor(skill) === "git") {
         handleRepointGitSkill(skill);
         return;
       }

@@ -55,6 +55,13 @@ export function sourceKind(
   return type.includes("git") ? "git" : "local";
 }
 
+/** The input door for Re-point: a repository URL or a local folder. */
+export function repointDoor(
+  skill: Pick<SkillPresentationFields, "source_type">,
+): "git" | "local" {
+  return sourceKind(skill) === "git" ? "git" : "local";
+}
+
 /**
  * The label a Tool is shown under, from its registry key: the `tools.*`
  * catalog entry, or the key itself for a Tool the catalog does not name.
