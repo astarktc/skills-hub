@@ -86,8 +86,9 @@ pub enum SkillIntent<'a> {
     NamedSkill(Option<&'a str>),
     /// The lenient sibling of [`SkillIntent::NamedSkill`], for the legacy
     /// record whose `source_subpath` was never stored: a name that resolves
-    /// backfills the subpath, and one that does not takes the whole repo
-    /// rather than failing an update that used to work.
+    /// backfills the subpath. Without a match, a lone nested skill wins when
+    /// the root is not a skill; otherwise take the whole repo rather than
+    /// failing an update that used to work.
     NamedSkillOrWholeRepo(&'a str),
 }
 
@@ -515,10 +516,13 @@ fn resolve_subpath(
         return Ok(Some(candidate.subpath.clone()));
     }
 
-    // One nested skill that no name picked out: it is the skill — unless the
-    // root is a skill too, in which case the repo is what an unnamed intent
-    // asked for.
+    // A lone nested skill wins without a root rival. With both present, a
+    // strict unmatched name is ambiguous; unnamed and lenient intents keep
+    // the root.
     if let [only] = candidates.as_slice() {
+        if root.is_some() && matches!(intent, SkillIntent::NamedSkill(Some(_))) {
+            return Err(anyhow::anyhow!(SignalError::MultiSkills));
+        }
         return Ok(if root.is_some() {
             None
         } else {
@@ -568,6 +572,41 @@ fn check_cancelled(cancel: Option<&CancelToken>) -> Result<()> {
 // ---------------------------------------------------------------------------
 // Parsing operator input into a [`GitSource`]
 // ---------------------------------------------------------------------------
+
+/// The full-URL policy for Re-point: use the shared parser, but refuse
+/// shorthand, arbitrary remotes and malformed paths before acquisition.
+pub fn parse_full_github_url(input: &str) -> Result<GitSource> {
+    let invalid = || anyhow::anyhow!(SignalError::InvalidGithubUrl { url: input.into() });
+    let input = input.trim().trim_end_matches('/');
+    let source = parse_github_url(input);
+    let repo = source.api.as_ref().ok_or_else(invalid)?;
+    let full_path = input
+        .strip_prefix("https://github.com/")
+        .or_else(|| input.strip_prefix("http://github.com/"))
+        .or_else(|| input.strip_prefix("github.com/"))
+        .ok_or_else(invalid)?;
+    let plain_coordinates = [&repo.owner, &repo.repo].iter().all(|part| {
+        !part.is_empty()
+            && *part != "."
+            && *part != ".."
+            && part
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
+    });
+    let plain_segments = full_path
+        .split('/')
+        .all(|part| !part.is_empty() && part != "." && part != "..");
+    let plain_characters = !input
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control() || matches!(c, '?' | '#' | '\\' | '%'));
+    // Extra path components must have been understood by the shared parser,
+    // rather than silently discarded by its arbitrary-remote fallback.
+    let parsed_path = full_path.split('/').count() == 2 || source.branch.is_some();
+    if !plain_coordinates || !plain_segments || !plain_characters || !parsed_path {
+        return Err(invalid());
+    }
+    Ok(source)
+}
 
 /// Parse operator input into a [`GitSource`].
 ///

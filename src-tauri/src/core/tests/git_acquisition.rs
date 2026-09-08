@@ -944,16 +944,65 @@ fn a_lone_nested_skill_is_the_skill_named_or_not() {
     let source = local_source(repo.path());
     let api = StubApi::serving("unused");
 
-    for name in [Some("alpha"), None] {
+    for intent in [
+        SkillIntent::NamedSkill(Some("alpha")),
+        SkillIntent::NamedSkill(None),
+        SkillIntent::NamedSkill(Some("does-not-match")),
+        SkillIntent::NamedSkillOrWholeRepo("does-not-match"),
+    ] {
         let (_fx, cache_dir, dest) = Fixture::new();
-        let acquired = acquire(
-            &request(&source, SkillIntent::NamedSkill(name), &dest, &cache_dir),
-            &api,
-        )
-        .expect("the nested skill acquires");
+        let acquired = acquire(&request(&source, intent, &dest, &cache_dir), &api)
+            .expect("the nested skill acquires");
         assert_eq!(acquired.resolved_subpath.as_deref(), Some("skills/a"));
         assert!(dest.join("SKILL.md").exists());
         assert!(!dest.join("README.md").exists());
+    }
+}
+
+#[test]
+fn a_strict_unmatched_name_cannot_choose_between_root_and_nested_skill() {
+    let repo = fixture_repo(&[
+        ("SKILL.md", "---\nname: root\n---\n"),
+        ("skills/nested/SKILL.md", "---\nname: nested\n---\n"),
+    ]);
+    let source = local_source(repo.path());
+    let (_fx, cache_dir, dest) = Fixture::new();
+    let api = StubApi::serving("unused");
+    let error = acquire(
+        &request(
+            &source,
+            SkillIntent::NamedSkill(Some("does-not-match")),
+            &dest,
+            &cache_dir,
+        ),
+        &api,
+    )
+    .expect_err("root and nested are ambiguous for a strict unmatched name");
+    assert_eq!(
+        error.downcast_ref::<SignalError>(),
+        Some(&SignalError::MultiSkills)
+    );
+}
+
+#[test]
+fn unnamed_and_lenient_intents_keep_the_root_with_one_nested_skill() {
+    let repo = fixture_repo(&[
+        ("SKILL.md", "---\nname: root\n---\n"),
+        ("skills/nested/SKILL.md", "---\nname: nested\n---\n"),
+    ]);
+    let source = local_source(repo.path());
+    let api = StubApi::serving("unused");
+    for intent in [
+        SkillIntent::NamedSkill(None),
+        SkillIntent::NamedSkillOrWholeRepo("does-not-match"),
+    ] {
+        let (_fx, cache_dir, dest) = Fixture::new();
+        let acquired = acquire(&request(&source, intent, &dest, &cache_dir), &api).unwrap();
+        assert_eq!(acquired.resolved_subpath, None);
+        assert_eq!(
+            fs::read_to_string(dest.join("SKILL.md")).unwrap(),
+            "---\nname: root\n---\n"
+        );
     }
 }
 

@@ -102,6 +102,40 @@ fn git_repoint_acquires_before_rewriting_and_rebuilds_central() {
 }
 
 #[test]
+fn git_repoint_accepts_add_flow_github_skill_links() {
+    for url in [
+        "https://github.com/owner/repo/blob/main/skills/foo/SKILL.md",
+        "http://github.com/owner/repo/tree/main/skills/foo",
+        "github.com/owner/repo/tree/main/skills/foo",
+        "https://github.com/owner/repo.git/tree/main/skills/foo/",
+    ] {
+        let f = git_repoint_fixture();
+        let report = super::repoint_git_skill_with(
+            &f.paths,
+            &f.store,
+            &f.skill_id,
+            url,
+            None,
+            3000,
+            &RepointApi,
+        )
+        .unwrap_or_else(|err| panic!("{url}: {err:#}"));
+        assert!(matches!(
+            report.skills[0].status,
+            SkillRefreshStatus::Refreshed { .. }
+        ));
+        let after = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+        assert_eq!(after.source_ref.as_deref(), Some(url));
+        assert_eq!(after.source_subpath.as_deref(), Some("skills/foo"));
+        assert!(
+            fs::read_to_string(Path::new(&after.central_path).join("SKILL.md"))
+                .unwrap()
+                .ends_with("https://github.com/owner/repo/tree/main/skills/foo")
+        );
+    }
+}
+
+#[test]
 fn git_repoint_refuses_non_git_without_changing_the_record() {
     let f = fixture();
     let before = format!("{:?}", f.store.get_skill_by_id(&f.skill_id).unwrap());
@@ -128,19 +162,37 @@ fn git_repoint_rejects_malformed_url_before_acquisition() {
     let mut record = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
     record.source_type = "git".into();
     f.store.upsert_skill(&record).unwrap();
-    let result = super::repoint_git_skill_with(
-        &f.paths,
-        &f.store,
-        &f.skill_id,
+    for url in [
+        "owner/repo",
         "owner/repo/tree/main/new",
-        None,
-        3000,
-        &RepointApi,
-    );
-    assert!(matches!(
-        result.unwrap_err().downcast_ref::<SignalError>(),
-        Some(SignalError::InvalidGithubUrl { .. })
-    ));
+        "https://example.com/owner/repo",
+        "https://github.com/owner/repo/tree",
+        "https://github.com/owner/repo/issues",
+        "https://github.com/owner/repo/tree/main/../secret",
+        "https://github.com/owner/repo/tree/main//skill",
+        "https://github.com/owner/repo/tree/main/skill?raw=1",
+        "https://github.com/owner/repo/tree/main/skill#heading",
+        "https://github.com/owner/repo/tree/main/%2e%2e",
+        "https://github.com/owner/repo/tree/main/a b",
+        "https://github.com/owner/.git",
+    ] {
+        let result = super::repoint_git_skill_with(
+            &f.paths,
+            &f.store,
+            &f.skill_id,
+            url,
+            None,
+            3000,
+            &RepointApi,
+        );
+        assert!(
+            matches!(
+                result.unwrap_err().downcast_ref::<SignalError>(),
+                Some(SignalError::InvalidGithubUrl { .. })
+            ),
+            "{url}"
+        );
+    }
 }
 
 fn git_repoint_fixture() -> Fixture {
@@ -376,14 +428,40 @@ fn seed_repoint_repository(f: &Fixture, matching_name: bool) {
 }
 
 #[test]
-fn git_repoint_repo_url_resolves_by_the_existing_skill_name() {
+fn git_repoint_root_manifest_stores_no_subpath() {
+    use crate::core::git_cache::{
+        fetch_through_cache, repo_cache_key, CacheKeyInputs, FetchRequest,
+    };
     let f = git_repoint_fixture();
-    seed_repoint_repository(&f, true);
+    let repo = fixture_repo();
+    fs::write(
+        repo.path().join("SKILL.md"),
+        "---\nname: alpha\n---\nroot bytes",
+    )
+    .unwrap();
+    git(&["add", "-A"], repo.path());
+    git(&["commit", "-q", "-m", "root skill"], repo.path());
+    let (cached, _) = fetch_through_cache(
+        &f.paths.cache_dir,
+        &FetchRequest {
+            clone_url: &repo.path().to_string_lossy(),
+            branch: Some("main"),
+            subpath: None,
+            ttl_ms: 3600000,
+            cancel: None,
+        },
+    )
+    .unwrap();
+    let key = repo_cache_key(&CacheKeyInputs {
+        clone_url: "https://github.com/new/repo.git",
+        branch: Some("main"),
+    });
+    fs::rename(&cached, cached.parent().unwrap().join(key)).unwrap();
     let report = super::repoint_git_skill_with(
         &f.paths,
         &f.store,
         &f.skill_id,
-        "https://github.com/new/repo",
+        "https://github.com/new/repo/blob/main/SKILL.md",
         None,
         3000,
         &RepointApi,
@@ -396,17 +474,51 @@ fn git_repoint_repo_url_resolves_by_the_existing_skill_name() {
         ),
         "{report:?}"
     );
-    let record = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
-    assert_eq!(
-        record.source_ref.as_deref(),
-        Some("https://github.com/new/repo")
-    );
-    assert_eq!(record.source_subpath.as_deref(), Some("skills/a"));
+    let after = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    assert_eq!(after.source_subpath, None);
     assert!(
-        fs::read_to_string(Path::new(&record.central_path).join("SKILL.md"))
+        fs::read_to_string(Path::new(&after.central_path).join("SKILL.md"))
             .unwrap()
-            .contains("new bytes")
+            .ends_with("root bytes")
     );
+}
+
+#[test]
+fn git_repoint_repo_url_resolves_by_the_existing_skill_name() {
+    let f = git_repoint_fixture();
+    seed_repoint_repository(&f, true);
+    for url in [
+        "https://github.com/new/repo",
+        "http://github.com/new/repo",
+        "github.com/new/repo",
+        "https://github.com/new/repo.git",
+    ] {
+        let report = super::repoint_git_skill_with(
+            &f.paths,
+            &f.store,
+            &f.skill_id,
+            url,
+            None,
+            3000,
+            &RepointApi,
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                report.skills[0].status,
+                SkillRefreshStatus::Refreshed { .. }
+            ),
+            "{report:?}"
+        );
+        let record = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+        assert_eq!(record.source_ref.as_deref(), Some(url));
+        assert_eq!(record.source_subpath.as_deref(), Some("skills/a"));
+        assert!(
+            fs::read_to_string(Path::new(&record.central_path).join("SKILL.md"))
+                .unwrap()
+                .contains("new bytes")
+        );
+    }
 }
 
 #[test]

@@ -188,7 +188,9 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   kind, repo label/href, repo grouping, the My Skills search/sort fold and the relative-time formatter
   (`relative.*` is the only i18n family for it); `src/lib/persistedPreference.ts` +
   `src/lib/preferences.ts` own persisted view preferences (the literal storage keys are a compat
-  contract with existing users). Components import pure functions (presentation, `describeCommandError`); the props App passes carry state — `notify`, `runAction`, data, actions — never a function that is only an import with an argument pre-bound.
+  contract with existing users). Components import pure functions (presentation, `describeCommandError`);
+  the props App passes carry state — `notify`, `runAction`, data, actions — never a function that is
+  only an import with an argument pre-bound.
 
 ## Do not
 

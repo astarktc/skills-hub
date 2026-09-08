@@ -6,7 +6,7 @@ import type {
   RemovalReportDto,
 } from "../components/skills/types";
 import { invokeTauri, isTauri } from "../lib/tauri";
-import { SKIPPED_REASON_KEY } from "../lib/skillPresentation";
+import { SKIPPED_REASON_KEY, sourceKind } from "../lib/skillPresentation";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type {
   ActionErrorEntry,
@@ -154,7 +154,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           skill.status.error.code === "GITHUB_SKILL_NOT_FOUND"
             ? managedSkills.find(
                 (managed) =>
-                  managed.id === skill.skill_id && managed.source_type === "git",
+                  managed.id === skill.skill_id && sourceKind(managed) === "git",
               )
             : undefined;
         entries.push({
@@ -601,7 +601,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
    */
   const handleRepointSkill = useCallback(
     async (skill: ManagedSkill) => {
-      if (skill.source_type === "git") {
+      if (sourceKind(skill) === "git") {
         handleRepointGitSkill(skill);
         return;
       }

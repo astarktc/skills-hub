@@ -254,8 +254,8 @@ beforeEach(() => {
 });
 
 describe("useSkillLibrary refresh", () => {
-  it("offers Re-point only for a known git skill's GitHub-not-found failure", async () => {
-    const gitSkill = { ...skill("s1", "alpha"), source_type: "git" };
+  it.each(["git", "GitHub"])("offers Re-point only for a known %s skill's GitHub-not-found failure", async (source_type) => {
+    const gitSkill = { ...skill("s1", "alpha"), source_type };
     const otherGit = { ...skill("s2", "beta"), source_type: "git" };
     const localSkill = skill("s3", "local");
     const setup = makeDeps({
@@ -497,11 +497,11 @@ describe("useSkillLibrary refresh", () => {
 });
 
 describe("useSkillLibrary unlocatable skill actions", () => {
-  it("git Re-point opens a Modal, submits the new URL and reloads", async () => {
+  it.each(["git", "GitHub"])("%s Re-point opens a Modal, submits the new URL and reloads", async (source_type) => {
     const setup = makeDeps();
-    const gitSkill = { ...setup.skills[0], source_type: "git" };
+    const gitSkill = { ...setup.skills[0], source_type };
     const { result } = await renderLibrary(setup);
-    act(() => result.current.handleRepointGitSkill(gitSkill));
+    await act(async () => { await result.current.handleRepointSkill(gitSkill); });
     expect(result.current.pendingGitRepointSkill).toEqual(gitSkill);
     expect(mockInvoke).not.toHaveBeenCalledWith("repointGitSkillSource", expect.anything(), expect.anything());
     await act(async () => { await result.current.handleConfirmRepointGitSkill("https://github.com/new/repo/tree/main/skill"); });

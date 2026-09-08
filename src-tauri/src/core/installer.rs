@@ -344,7 +344,9 @@ pub(crate) fn acquire_managed_skill_update_from(
             if let Some((url, _)) = source_override {
                 ensure_installable_skill_dir(&staging_dir)?;
                 record.source_ref = Some(url.to_string());
-                record.source_subpath = known_subpath.or(acquired.resolved_subpath);
+                record.source_subpath = known_subpath
+                    .or(acquired.resolved_subpath)
+                    .filter(|subpath| subpath != ".");
             } else if known_subpath.is_none() {
                 if let Some(resolved) = acquired.resolved_subpath {
                     // Backfill source_subpath for future updates (carried into the

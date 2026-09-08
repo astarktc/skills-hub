@@ -48,7 +48,7 @@ use super::mutation_guard;
 use super::propagation::{
     PropagationOutcome, PropagationScope, PropagationSkip, PropagationStatus,
 };
-use super::provenance::{refresh_eligibility, RefreshEligibility};
+use super::provenance::{refresh_eligibility, Provenance, RefreshEligibility};
 use super::skill_store::SkillStore;
 use super::tool_adapters::{global_tool_entries, installed_keys};
 use super::unlocatable::UnlocatableState;
@@ -211,11 +211,11 @@ pub(crate) fn repoint_git_skill_with(
             id: skill_id.into(),
         })
     })?;
-    if record.source_type != "git" {
+    if Provenance::parse(&record.source_type) != Some(Provenance::Git) {
         anyhow::bail!(SignalError::GitRepointRequiresGit { name: record.name });
     }
     let new_url = new_url.trim();
-    let source = parse_repoint_source(new_url)?;
+    let source = super::git_acquisition::parse_full_github_url(new_url)?;
     let ttl_ms = super::settings::git_cache_ttl_ms(store);
     refresh_managed_skills_with(
         paths,
@@ -237,38 +237,6 @@ pub(crate) fn repoint_git_skill_with(
             )
         },
     )
-}
-
-/// Re-point accepts full repository/tree URLs, not the Add flow's shorthand
-/// or arbitrary git remotes. Reject malformed paths before any network I/O.
-fn parse_repoint_source(input: &str) -> Result<super::git_acquisition::GitSource> {
-    let invalid = || anyhow::anyhow!(SignalError::InvalidGithubUrl { url: input.into() });
-    let rest = input
-        .strip_prefix("https://github.com/")
-        .ok_or_else(invalid)?;
-    let parts: Vec<_> = rest.trim_end_matches('/').split('/').collect();
-    if parts.len() < 2
-        || (parts.len() != 2 && (parts.len() < 4 || parts[2] != "tree"))
-        || parts
-            .iter()
-            .any(|part| part.is_empty() || *part == "." || *part == "..")
-        || input
-            .chars()
-            .any(|c| c.is_whitespace() || c.is_control() || matches!(c, '?' | '#' | '\\' | '%'))
-        || parts[..2].iter().any(|part| {
-            !part
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
-        })
-        || parts[1].trim_end_matches(".git").is_empty()
-    {
-        return Err(invalid());
-    }
-    let source = super::git_acquisition::parse_github_url(input);
-    if source.api.is_none() {
-        return Err(invalid());
-    }
-    Ok(source)
 }
 
 /// [`refresh_managed_skills`] with acquisition injected, so the pool's

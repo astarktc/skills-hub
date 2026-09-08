@@ -159,7 +159,7 @@ export function describeCommandError(
         target: e.target,
       });
     case "SYMLINK_CHAIN_TOO_DEEP":
-      return withDetail(t("errors.symlinkChainTooDeep"), e.subpath);
+      return t("errors.symlinkChainTooDeep", { subpath: e.subpath });
     case "NOT_REFRESHABLE":
       return t("errors.notRefreshable", { name: e.name });
     case "LOCAL_SOURCE_INSIDE_TOOL_DIR":

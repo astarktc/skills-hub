@@ -313,7 +313,7 @@ export const resources = {
         symlinkEscapesRepo:
           "Refused to follow the symlink at {{subpath}} in the repository: its target ({{target}}) points outside the repository.",
         symlinkChainTooDeep:
-          "Could not acquire this skill: its repository symlink chain is too deep or contains a cycle. Ask the repository maintainer to shorten or fix the chain:",
+          "Could not acquire this skill: the repository symlink chain at {{subpath}} is too deep or contains a cycle. Ask the repository maintainer to shorten or fix the chain.",
         notRefreshable:
           '"{{name}}" is managed here: it was imported from a tool and has no source to update from.',
         localSourceInsideToolDir:
@@ -866,7 +866,7 @@ export const resources = {
         symlinkEscapesRepo:
           "已拒绝跟随仓库中 {{subpath}} 处的符号链接：其目标（{{target}}）指向仓库之外。",
         symlinkChainTooDeep:
-          "无法获取该 Skill：仓库中的符号链接链过深或存在循环。请联系仓库维护者缩短或修复链接链：",
+          "无法获取该 Skill：仓库中 {{subpath}} 处的符号链接链过深或存在循环。请联系仓库维护者缩短或修复链接链。",
         notRefreshable:
           "“{{name}}” 由 Skills Hub 管理：它是从工具目录导入的，没有可供更新的来源。",
         localSourceInsideToolDir:

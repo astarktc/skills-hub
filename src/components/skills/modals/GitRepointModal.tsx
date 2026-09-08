@@ -41,7 +41,8 @@ export default function GitRepointModal({
           <input
             id={`${id}-url`}
             className="input"
-            type="url"
+            type="text"
+            inputMode="url"
             required
             value={url}
             onChange={(event) => setUrl(event.target.value)}
