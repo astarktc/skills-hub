@@ -14,6 +14,7 @@ fn is_ignored(entry: &DirEntry) -> bool {
 /// Hash skill content, excluding internal symlinks entirely: neither their names
 /// nor their targets contribute to identity. Links are never followed, matching
 /// `sync_engine::copy_dir_recursive`'s exclusion from copies.
+/// A skill consisting only of symlinks hashes as empty.
 pub fn hash_dir(path: &Path) -> Result<String> {
     let mut hasher = Sha256::new();
 

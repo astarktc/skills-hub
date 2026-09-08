@@ -123,14 +123,17 @@ pub fn discover_skills(root: &Path) -> Vec<DiscoveredSkill> {
         dirs.push(root.to_path_buf());
     }
 
-    // 2) Known scan bases: every child directory is a candidate, except a
-    //    child that is itself a scan base (`skills/.curated` under `skills`).
+    // 2) Known scan bases: every non-hidden child directory is a candidate,
+    //    except a child that is itself a scan base (`skills/.curated` under `skills`).
     let scan_bases: Vec<PathBuf> = SKILL_SCAN_BASES.iter().map(|b| root.join(b)).collect();
     for base in &scan_bases {
         if let Ok(rd) = std::fs::read_dir(base) {
             for entry in rd.flatten() {
                 let p = entry.path();
-                if p.is_dir() && !scan_bases.contains(&p) {
+                if p.is_dir()
+                    && !is_hidden_dir_name(&entry.file_name().to_string_lossy())
+                    && !scan_bases.contains(&p)
+                {
                     dirs.push(p);
                 }
             }

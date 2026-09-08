@@ -195,6 +195,10 @@ pub fn ensure_name_available(central_dir: &Path, name: &str) -> Result<PathBuf> 
 
 /// Materialize a staged skill as a new managed skill: resolve the final name,
 /// move the bytes into the central repo, and record it.
+///
+/// Known gap: an upsert failure after `move_into` leaves untracked bytes under
+/// the final name, so the next Add of that name hits `SkillExists`. New-install
+/// cleanup is a separate change; the update rollback below does not cover it.
 pub fn finalize_install(
     store: &SkillStore,
     central_dir: &Path,

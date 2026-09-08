@@ -333,6 +333,12 @@ fn rollback_cleanup_failure_retains_backup_and_original_error() {
     assert_eq!(fs::read(path).unwrap(), b"obstruction");
     // Recovery siblings are hidden from the ordinary root/recursive scan ladder.
     assert!(crate::core::skill_discovery::discover_skills(central.path()).is_empty());
+    // The same backup must be excluded when central sits under a known scan base.
+    let root = tempfile::tempdir().unwrap();
+    let scan_base = root.path().join("skills");
+    fs::create_dir(&scan_base).unwrap();
+    fs::rename(&backup, scan_base.join(backup.file_name().unwrap())).unwrap();
+    assert!(crate::core::skill_discovery::discover_skills(root.path()).is_empty());
 }
 
 #[cfg(unix)]
