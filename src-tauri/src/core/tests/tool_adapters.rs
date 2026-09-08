@@ -113,6 +113,7 @@ fn scan_tool_dir_skips_codex_system_and_includes_symlink_dir() {
     let tool = ToolAdapter {
         id: ToolId::Codex,
         display_name: "Codex",
+        group_label: None,
         relative_skills_dir: "ignored",
         relative_detect_dir: "ignored",
         project_relative_skills_dir: "ignored",
@@ -145,6 +146,7 @@ fn scan_tool_dir_skips_app_support_path() {
     let tool = ToolAdapter {
         id: ToolId::Cursor,
         display_name: "Cursor",
+        group_label: None,
         relative_skills_dir: "ignored",
         relative_detect_dir: "ignored",
         project_relative_skills_dir: "ignored",
@@ -156,67 +158,79 @@ fn scan_tool_dir_skips_app_support_path() {
     assert!(out.is_empty());
 }
 
-/// Every Tool's project-scope dir, as a table: the registry is the only
-/// source, so this pins the mapping against accidental edits.
+/// Every Tool's project-scope dir and project-scope label override, as a
+/// table: the registry is the only source, so this pins the mapping against
+/// accidental edits. Only the virtual-group entry may carry a `group_label`
+/// (a per-scope fact: globally it absorbs nothing).
 #[test]
 fn project_relative_skills_dir_for_every_tool() {
-    let expected: &[(&str, &str)] = &[
-        ("agents_skills", ".agents/skills"),
-        ("cursor", ".agents/skills"),
-        ("claude_code", ".claude/skills"),
-        ("codex", ".agents/skills"),
-        ("opencode", ".agents/skills"),
-        ("antigravity", ".agents/skills"),
-        ("amp", ".agents/skills"),
-        ("kimi_cli", ".agents/skills"),
-        ("augment", ".augment/skills"),
-        ("openclaw", "skills"),
-        ("copaw", ".copaw/skill_pool"),
-        ("cline", ".agents/skills"),
-        ("codebuddy", ".codebuddy/skills"),
-        ("command_code", ".commandcode/skills"),
-        ("continue", ".continue/skills"),
-        ("crush", ".crush/skills"),
-        ("junie", ".junie/skills"),
-        ("iflow_cli", ".iflow/skills"),
-        ("kiro_cli", ".kiro/skills"),
-        ("kode", ".kode/skills"),
-        ("mcpjam", ".mcpjam/skills"),
-        ("mistral_vibe", ".vibe/skills"),
-        ("mux", ".mux/skills"),
-        ("openclaude", ".openclaude/skills"),
-        ("openhands", ".openhands/skills"),
-        ("pi", ".pi/skills"),
-        ("qoder", ".qoder/skills"),
-        ("qoderwork", ".qoderwork/skills"),
-        ("qwen_code", ".qwen/skills"),
-        ("trae", ".trae/skills"),
-        ("trae_cn", ".trae/skills"),
-        ("zencoder", ".zencoder/skills"),
-        ("neovate", ".neovate/skills"),
-        ("pochi", ".pochi/skills"),
-        ("adal", ".adal/skills"),
-        ("kilo_code", ".kilocode/skills"),
-        ("roo_code", ".roo/skills"),
-        ("goose", ".goose/skills"),
-        ("gemini_cli", ".agents/skills"),
-        ("github_copilot", ".agents/skills"),
-        ("clawdbot", ".clawdbot/skills"),
-        ("droid", ".factory/skills"),
-        ("windsurf", ".windsurf/skills"),
-        ("moltbot", ".moltbot/skills"),
-        ("hermes-agent", ".hermes/skills"),
+    let expected: &[(&str, &str, Option<&str>)] = &[
+        (
+            "agents_skills",
+            ".agents/skills",
+            Some(".agents/skills (9 tools)"),
+        ),
+        ("cursor", ".agents/skills", None),
+        ("claude_code", ".claude/skills", None),
+        ("codex", ".agents/skills", None),
+        ("opencode", ".agents/skills", None),
+        ("antigravity", ".agents/skills", None),
+        ("amp", ".agents/skills", None),
+        ("kimi_cli", ".agents/skills", None),
+        ("augment", ".augment/skills", None),
+        ("openclaw", "skills", None),
+        ("copaw", ".copaw/skill_pool", None),
+        ("cline", ".agents/skills", None),
+        ("codebuddy", ".codebuddy/skills", None),
+        ("command_code", ".commandcode/skills", None),
+        ("continue", ".continue/skills", None),
+        ("crush", ".crush/skills", None),
+        ("junie", ".junie/skills", None),
+        ("iflow_cli", ".iflow/skills", None),
+        ("kiro_cli", ".kiro/skills", None),
+        ("kode", ".kode/skills", None),
+        ("mcpjam", ".mcpjam/skills", None),
+        ("mistral_vibe", ".vibe/skills", None),
+        ("mux", ".mux/skills", None),
+        ("openclaude", ".openclaude/skills", None),
+        ("openhands", ".openhands/skills", None),
+        ("pi", ".pi/skills", None),
+        ("qoder", ".qoder/skills", None),
+        ("qoderwork", ".qoderwork/skills", None),
+        ("qwen_code", ".qwen/skills", None),
+        ("trae", ".trae/skills", None),
+        ("trae_cn", ".trae/skills", None),
+        ("zencoder", ".zencoder/skills", None),
+        ("neovate", ".neovate/skills", None),
+        ("pochi", ".pochi/skills", None),
+        ("adal", ".adal/skills", None),
+        ("kilo_code", ".kilocode/skills", None),
+        ("roo_code", ".roo/skills", None),
+        ("goose", ".goose/skills", None),
+        ("gemini_cli", ".agents/skills", None),
+        ("github_copilot", ".agents/skills", None),
+        ("clawdbot", ".clawdbot/skills", None),
+        ("droid", ".factory/skills", None),
+        ("windsurf", ".windsurf/skills", None),
+        ("moltbot", ".moltbot/skills", None),
+        ("hermes-agent", ".hermes/skills", None),
     ];
     assert_eq!(
         expected.len(),
         default_tool_adapters().len(),
         "table must cover every registered tool"
     );
-    for (key, dir) in expected {
+    for (key, dir, group_label) in expected {
         let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {key}"));
         assert_eq!(
             adapter.project_relative_skills_dir, *dir,
             "project dir for {key}"
+        );
+        assert_eq!(adapter.group_label, *group_label, "group label for {key}");
+        assert_eq!(
+            adapter.project_display_name(),
+            group_label.unwrap_or(adapter.display_name),
+            "project label for {key}"
         );
     }
 }
@@ -242,14 +256,21 @@ fn agents_standard_group_has_nine_constituents_and_one_entry() {
     );
     for a in constituents_of(VirtualGroup::AgentsStandard) {
         assert_eq!(a.project_relative_skills_dir, ".agents/skills");
-        assert!(!a.is_virtual_group());
+        assert!(a.as_virtual_group().is_none());
     }
     let entries: Vec<&ToolAdapter> = default_tool_adapters()
         .iter()
-        .filter(|a| a.is_virtual_group())
+        .filter(|a| a.as_virtual_group().is_some())
         .collect();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].id, ToolId::AgentsStandard);
+    // The project-scope label advertises the roster it absorbs; the
+    // scope-independent name does not.
+    assert_eq!(entries[0].display_name, ".agents/skills");
+    assert_eq!(
+        entries[0].project_display_name(),
+        format!(".agents/skills ({} tools)", members.len())
+    );
     assert_eq!(
         entries[0].group, None,
         "a group entry is not its own member"
