@@ -195,10 +195,6 @@ pub fn ensure_name_available(central_dir: &Path, name: &str) -> Result<PathBuf> 
 
 /// Materialize a staged skill as a new managed skill: resolve the final name,
 /// move the bytes into the central repo, and record it.
-///
-/// Known gap: an upsert failure after `move_into` leaves untracked bytes under
-/// the final name, so the next Add of that name hits `SkillExists`. New-install
-/// cleanup is a separate change; the update rollback below does not cover it.
 pub fn finalize_install(
     store: &SkillStore,
     central_dir: &Path,
@@ -242,7 +238,16 @@ pub fn finalize_install(
         status: "ok".to_string(),
         imported_from_tool: provenance.imported_from_tool,
     };
-    store.upsert_skill(&record)?;
+    if let Err(err) = store.upsert_skill(&record) {
+        return Err(match std::fs::remove_dir_all(&central_path) {
+            Ok(()) => err,
+            Err(cleanup_err) if cleanup_err.kind() == std::io::ErrorKind::NotFound => err,
+            Err(cleanup_err) => err.context(format!(
+                "failed to remove untracked install retained at {:?}: {}",
+                central_path, cleanup_err
+            )),
+        });
+    }
 
     Ok(InstallResult {
         skill_id: record.id,

@@ -373,6 +373,70 @@ fn reject_skill_writes(db: &Path) {
 }
 
 #[test]
+fn finalize_install_failed_upsert_releases_name_for_next_add() {
+    let (db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    reject_skill_writes(&db.path().join("test.db"));
+    let install = || {
+        finalize_install(
+            &store,
+            central.path(),
+            stage_skill(central.path(), "---\nname: s\n---\n"),
+            NameIntent::UserProvided("s".to_string()),
+            SkillProvenance::git("https://github.com/o/r", None, None),
+        )
+    };
+
+    let err = install().unwrap_err();
+    assert!(format!("{err:#}").contains("test upsert failure"));
+    assert!(!central.path().join("s").exists());
+    assert!(store.list_skills().unwrap().is_empty());
+    rusqlite::Connection::open(db.path().join("test.db"))
+        .unwrap()
+        .execute_batch("DROP TRIGGER reject_skill_write;")
+        .unwrap();
+
+    let installed = install().unwrap();
+    assert_eq!(installed.name, "s");
+    assert!(installed.central_path.join("SKILL.md").exists());
+    assert_eq!(store.list_skills().unwrap().len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn finalize_install_failed_cleanup_names_retained_path_and_preserves_upsert_error() {
+    use std::os::unix::fs::PermissionsExt;
+    let (db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    reject_skill_writes(&db.path().join("test.db"));
+    let staged = stage_skill(central.path(), "---\nname: s\n---\n");
+    let path = central.path().join("s");
+    let _permissions = RestorePermissions(
+        path.clone(),
+        fs::metadata(staged.path()).unwrap().permissions(),
+    );
+    fs::set_permissions(staged.path(), fs::Permissions::from_mode(0o555)).unwrap();
+
+    let err = finalize_install(
+        &store,
+        central.path(),
+        staged,
+        NameIntent::UserProvided("s".to_string()),
+        SkillProvenance::git("https://github.com/o/r", None, None),
+    )
+    .unwrap_err();
+
+    assert!(err
+        .downcast_ref::<rusqlite::Error>()
+        .unwrap()
+        .to_string()
+        .contains("test upsert failure"));
+    assert!(format!("{err:#}").contains(path.to_str().unwrap()));
+    assert!(path.join("SKILL.md").exists());
+    assert!(store.list_skills().unwrap().is_empty());
+}
+
+#[test]
 fn finalize_update_restores_old_bytes_when_upsert_fails() {
     let (db, store) = make_store();
     let central = tempfile::tempdir().unwrap();
