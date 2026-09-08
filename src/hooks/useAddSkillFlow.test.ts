@@ -6,7 +6,7 @@
 // seam; sync and library worlds enter as mocked dependency interfaces.
 
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   CandidateMatch,
   GitSkillCandidate,
@@ -16,6 +16,7 @@ import type {
   LocalSkillCandidate,
   OnboardingPlan,
 } from "../components/skills/types";
+import * as folds from "../lib/reportOutcome";
 import { describeCommandError } from "../commandError";
 import type { AddSkillFlowDeps } from "./useAddSkillFlow";
 
@@ -166,7 +167,6 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
     // cursor is deselected, goose is selected but not installed → the
     // deploy set must intersect down to just claude.
     isInstalled: (id: string) => id === "claude" || id === "cursor",
-    syncFailureEntries: vi.fn(() => []),
     syncSkillsToTools: vi.fn().mockResolvedValue({
       results: [],
       synced: 0,
@@ -261,8 +261,8 @@ describe("useAddSkillFlow git flow", () => {
       ["claude"],
       { overwriteIfSameContent: true },
     );
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
-      "status.gitSkillCreated",
+    expect(setup.reporter.notify).toHaveBeenCalledWith(
+      "success", "status.gitSkillCreated", undefined,
     );
   });
 
@@ -651,61 +651,8 @@ describe("useAddSkillFlow import flow", () => {
     ]);
     // goose is selected but not installed; cursor installed but deselected.
     expect(policy).toEqual({ auto_sync: true, tools: ["claude"] });
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith({
-      title: "status.importCompleted",
-    });
-    expect(setup.reporter.showActionErrors).not.toHaveBeenCalled();
-    expect(result.current.showImportModal).toBe(false);
-  });
-
-  it("says on the success toast, one line per Tool, which Tools were synced beyond the policy", async () => {
-    // cursor and goose are deselected in the auto-sync selection, but each
-    // held a variant byte-identical to the chosen one: the backend
-    // force-included both and reports so. Not an error — the modal closes
-    // and the toast explains each link.
-    stubImportBackend(
-      [() => Promise.resolve(PLAN)],
-      report(
-        importedGroup({
-          targets: [
-            {
-              skill_id: "imported-id",
-              skill_name: "alpha",
-              tool: "claude",
-              status: { status: "synced", mode_used: "symlink" },
-            },
-            {
-              skill_id: "imported-id",
-              skill_name: "alpha",
-              tool: "cursor",
-              status: { status: "synced", mode_used: "symlink" },
-            },
-            {
-              skill_id: "imported-id",
-              skill_name: "alpha",
-              tool: "goose",
-              status: { status: "synced", mode_used: "symlink" },
-            },
-          ],
-          forced_tools: ["cursor", "goose"],
-        }),
-      ),
-    );
-    const setup = makeDeps();
-
-    const result = await runImport(setup);
-
-    // The explanation is the toast's message, never folded into its
-    // title: a title collapses newlines, the message renders as lines. A
-    // Tool without a label (goose here) is named by its key.
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith({
-      title: "status.importCompleted",
-      message: [
-        'status.importSourceToolForced {"name":"alpha","tool":"CURSOR"}',
-        'status.importSourceToolForced {"name":"alpha","tool":"goose"}',
-      ].join("\n"),
-    });
-    expect(setup.reporter.showActionErrors).not.toHaveBeenCalled();
+    expect(setup.reporter.notify).toHaveBeenCalledWith("success", "status.importCompleted", undefined);
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([]);
     expect(result.current.showImportModal).toBe(false);
   });
 
@@ -781,122 +728,62 @@ describe("useAddSkillFlow import flow", () => {
 
     // Every selected group imported, so the action completed: success toast
     // fires and the modal closes...
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith({
-      title: "status.importCompleted",
-    });
+    expect(setup.reporter.notify).toHaveBeenCalledWith("success", "status.importCompleted", undefined);
     expect(result.current.showImportModal).toBe(false);
     // ...while the reload failure is surfaced on its own, not as an import
     // failure.
     expect(setup.reporter.setError).toHaveBeenCalledWith("plan reload boom");
-    expect(setup.reporter.showActionErrors).not.toHaveBeenCalled();
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([]);
   });
 
-  it("renders a failed sync target from the report as a collected error", async () => {
-    stubImportBackend(
-      [() => Promise.resolve(PLAN)],
-      report(
-        importedGroup({
-          targets: [
-            {
-              skill_id: "imported-id",
-              skill_name: "alpha",
-              tool: "claude",
-              status: {
-                status: "failed",
-                error: { code: "TARGET_EXISTS", path: "/target/alpha" },
-              },
-            },
-          ],
-        }),
-      ),
-    );
+  it.each([false, true])("applies import fold completion=%s and publishes its entries", async (complete) => {
+    stubImportBackend([() => Promise.resolve(PLAN)]);
     const setup = makeDeps();
-
+    const outcome: folds.Outcome = { toast: { kind: "warning", message: "fold toast" }, errors: [{ title: "error", message: "detail" }], warnings: [{ title: "warning", message: "detail" }], completion: { reload: complete, closeModal: complete, conflict: false } };
+    const spy = vi.spyOn(folds, "importOutcome").mockReturnValue(outcome);
     const result = await runImport(setup);
-
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
-      {
-        title: 'errors.syncFailedTitle {"name":"alpha","tool":"CLAUDE"}',
-        message: 'errors.syncTargetExistsMessage {"path":"/target/alpha"}',
-      },
-    ]);
-    expect(result.current.showImportModal).toBe(true);
-    expect(setup.reporter.setError).not.toHaveBeenCalled();
+    expect(spy).toHaveBeenCalledWith(report(importedGroup()), expect.objectContaining({ t }));
+    expect(setup.library.loadManagedSkills).toHaveBeenCalledTimes(complete ? 1 : 0);
+    expect(result.current.showImportModal).toBe(!complete);
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith(outcome.errors);
+    expect(setup.reporter.showActionWarnings).toHaveBeenCalledWith(outcome.warnings);
+    expect(setup.reporter.notify).toHaveBeenCalledWith("warning", "fold toast", undefined);
   });
+});
+afterEach(() => vi.restoreAllMocks());
 
-  it("renders a kept divergent original and a failed removal from the report", async () => {
-    stubImportBackend(
-      [() => Promise.resolve(PLAN)],
-      report(
-        importedGroup({
-          originals: [
-            {
-              path: "/home/.claude/skills/alpha",
-              tool: "claude",
-              status: { status: "removed" },
-            },
-            {
-              path: "/home/.cursor/skills/alpha",
-              tool: "cursor",
-              status: { status: "kept_divergent" },
-            },
-            {
-              path: "/home/.goose/skills/alpha",
-              tool: "goose",
-              status: {
-                status: "failed",
-                error: { code: "PATH_OUTSIDE_TOOL_DIRS", path: "/elsewhere" },
-              },
-            },
-          ],
-        }),
-      ),
-    );
+it.each(["git", "local"] as const)("%s install applies fold completion instead of assuming success", async (source) => {
+  for (const complete of [false, true]) {
+    stubBackend({ gitCandidates: [gitCandidate("alpha", "alpha")], localCandidates: [{ name: "alpha", subpath: "alpha", description: null, valid: true, reason: null }] });
     const setup = makeDeps();
-    setup.sync.autoSyncEnabled = false;
-
-    const result = await runImport(setup);
-
-    // A removed original is silent; the kept copy and the failure are not.
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
-      {
-        title:
-          'errors.importKeptDivergentTitle {"name":"alpha","tool":"CURSOR"}',
-        message:
-          'errors.importKeptDivergentMessage {"path":"/home/.cursor/skills/alpha"}',
-      },
-      {
-        title:
-          'errors.importCleanupFailedTitle {"name":"alpha","tool":"goose"}',
-        message: "formatted:[object Object]",
-      },
-    ]);
-    expect(result.current.showImportModal).toBe(true);
-  });
-
-  it("renders a group the backend refused as an import failure", async () => {
-    stubImportBackend(
-      [() => Promise.resolve(PLAN)],
-      report({
-        status: "failed",
-        error: { code: "SKILL_INVALID", reason: "missing_skill_md" },
-      }),
-    );
-    const setup = makeDeps();
-
-    const result = await runImport(setup);
-
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
-      {
-        title: 'errors.importFailedTitle {"name":"alpha"}',
-        message: "formatted:[object Object]",
-      },
-    ]);
-    expect(result.current.showImportModal).toBe(true);
-    // The batch summary is a warning carrying the counts, not "completed".
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith({
-      kind: "warning",
-      title: 'status.importPartial {"imported":0,"failed":1}',
+    const outcome: folds.Outcome = { toast: { kind: "warning", message: "install fold" }, errors: [{ title: "error", message: "detail" }], warnings: [], completion: { reload: complete, closeModal: complete, conflict: false } };
+    const spy = vi.spyOn(folds, "installOutcome").mockReturnValue(outcome);
+    const { result, unmount } = renderHook(() => useAddSkillFlow(setup.deps));
+    act(() => {
+      result.current.handleOpenAdd();
+      result.current.setAddModalTab(source);
+      result.current.setGitUrl("https://github.com/x/y");
+      result.current.setLocalPath("/source");
     });
-  });
+    await act(async () => { await result.current.handleCreate(); });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(setup.library.loadManagedSkills).toHaveBeenCalledTimes(complete ? 1 : 0);
+    expect(result.current.showAddModal).toBe(!complete);
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith(outcome.errors);
+    expect(setup.reporter.notify).toHaveBeenCalledWith("warning", "install fold", undefined);
+    unmount(); spy.mockRestore();
+  }
+});
+
+it("an installed skill still completes when the deployment command throws", async () => {
+  stubBackend({ gitCandidates: [gitCandidate("alpha", "alpha")] });
+  const setup = makeDeps();
+  setup.sync.syncSkillsToTools.mockRejectedValue(new Error("deploy failed"));
+  const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+  act(() => { result.current.handleOpenAdd(); result.current.setGitUrl("https://github.com/x/y"); });
+  await act(async () => { await result.current.handleCreate(); });
+  expect(result.current.showAddModal).toBe(false);
+  expect(setup.library.loadManagedSkills).toHaveBeenCalledTimes(1);
+  expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([{ title: t("errors.unsyncedTitle", { name: "installed-skill" }), message: "deploy failed" }]);
+  expect(setup.reporter.notify).toHaveBeenCalledWith("warning", "partialFailure", undefined);
 });

@@ -13,7 +13,6 @@ import {
   type SharedDirTool,
 } from "./useSharedDirConfirmation";
 import type {
-  ActionErrorEntry,
   StatusReporter,
   TranslateFn,
 } from "./useStatusReporter";
@@ -232,36 +231,6 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
     [setActionMessage, t, toolLabelById],
   );
 
-  // Failed targets as showActionErrors entries. Skips (tool absent, dir
-  // unwritable) stay silent by default — bulk flows ignore them — but flows
-  // that target user-selected tools surface not-writable skips.
-  const syncFailureEntries = useCallback(
-    (
-      report: BatchSyncReportDto,
-      opts?: { includeNotWritableSkips?: boolean },
-    ) => {
-      const entries: ActionErrorEntry[] = [];
-      for (const result of report.results) {
-        const status = result.status;
-        if (status.status === "synced") continue;
-        const surface =
-          status.status === "failed" ||
-          ((opts?.includeNotWritableSkips ?? false) &&
-            status.error.code === "TOOL_NOT_WRITABLE");
-        if (!surface) continue;
-        entries.push({
-          title: t("errors.syncFailedTitle", {
-            name: result.skill_name,
-            tool: toolLabelById[result.tool] ?? result.tool,
-          }),
-          message: formatError(status.error) ?? "",
-        });
-      }
-      return entries;
-    },
-    [formatError, t, toolLabelById],
-  );
-
   const handleAutoSyncToggle = useCallback(
     async (enabled: boolean) => {
       try {
@@ -374,7 +343,6 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
     relevantNewlyInstalled,
     newlyInstalledToolsText,
     syncSkillsToTools,
-    syncFailureEntries,
     handleAutoSyncToggle,
     handleOpenToolConfig,
     handleCloseToolConfig,

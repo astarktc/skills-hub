@@ -5,7 +5,8 @@
 // enter as mocked dependency interfaces.
 
 import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as folds from "../lib/reportOutcome";
 import type { InstallResultDto } from "../components/skills/types";
 import {
   useCandidatePick,
@@ -69,8 +70,8 @@ function makeDeps(overrides?: { takenNames?: string[]; loading?: boolean }) {
     },
   );
   const deploy = vi.fn<
-    (created: InstallResultDto) => Promise<{ title: string; message: string }[]>
-  >(async () => []);
+    (created: InstallResultDto) => Promise<folds.InstallDeployment>
+  >(async () => ({ status: "disabled" }));
   const afterBatch = vi.fn(async () => {});
   const deps: CandidatePickDeps = {
     t,
@@ -79,7 +80,8 @@ function makeDeps(overrides?: { takenNames?: string[]; loading?: boolean }) {
       runAction: runAction as CandidatePickDeps["reporter"]["runAction"],
       setActionMessage: vi.fn(),
       setError,
-      formatError,
+      notify: vi.fn(),
+      showActionWarnings: vi.fn(),
       showActionErrors,
     },
     isSkillNameTaken: (name) => taken.has(name),
@@ -302,7 +304,7 @@ describe("useCandidatePick validation", () => {
 
 describe("useCandidatePick batch install", () => {
   it("installs each selected candidate with its context, deploys, resets and finishes", async () => {
-    const { deps, deploy, afterBatch, setSuccessToastMessage, showActionErrors } =
+    const { deps, deploy, afterBatch, showActionErrors } =
       makeDeps();
     const { source, installOne, resetForm } = makeSource({
       customName: " custom ",
@@ -326,9 +328,9 @@ describe("useCandidatePick batch install", () => {
     expect(deploy).toHaveBeenCalledWith(installed("alpha"));
     expect(resetForm).toHaveBeenCalled();
     expect(afterBatch).toHaveBeenCalled();
-    expect(showActionErrors).not.toHaveBeenCalled();
-    expect(setSuccessToastMessage).toHaveBeenCalledWith(
-      "status.selectedSkillsInstalled",
+    expect(showActionErrors).toHaveBeenCalledWith([]);
+    expect(deps.reporter.notify).toHaveBeenCalledWith(
+      "success", "status.selectedSkillsInstalled", undefined,
     );
     expect(result.current.visible).toBe(false);
     expect(result.current.candidates).toEqual([]);
@@ -357,7 +359,8 @@ describe("useCandidatePick batch install", () => {
   });
 
   it("collects per-candidate install and deploy failures without aborting the batch", async () => {
-    const { deps, deploy, showActionErrors, setError } = makeDeps();
+    const { deps, deploy, setError } = makeDeps();
+    const fold = vi.spyOn(folds, "installOutcome");
     const { source, installOne } = makeSource();
     installOne.mockImplementation(async (_ctx, c) => {
       if (c.name === "beta") throw new Error("clone failed");
@@ -365,8 +368,8 @@ describe("useCandidatePick batch install", () => {
     });
     deploy.mockImplementation(async (created) =>
       created.name === "gamma"
-        ? [{ title: "unsynced gamma", message: "no targets" }]
-        : [],
+        ? { status: "no-targets" }
+        : { status: "disabled" },
     );
     const { result } = renderHook(() => useCandidatePick(source, deps));
     act(() =>
@@ -380,15 +383,27 @@ describe("useCandidatePick batch install", () => {
     await act(() => result.current.install());
 
     expect(installOne).toHaveBeenCalledTimes(3);
-    expect(showActionErrors).toHaveBeenCalledWith([
-      {
-        title: 'errors.importFailedTitle {"name":"beta"}',
-        message: "clone failed",
-      },
-      { title: "unsynced gamma", message: "no targets" },
-    ]);
+    expect(fold.mock.calls[0][0].map((item) => item.status)).toEqual(["installed", "failed", "installed"]);
+    expect(deps.reporter.showActionErrors).toHaveBeenCalledWith(fold.mock.results[0].value.errors);
     // Per-candidate failures are report data, not an action failure.
     expect(setError).not.toHaveBeenCalled();
     expect(result.current.visible).toBe(false);
   });
+});
+
+afterEach(() => vi.restoreAllMocks());
+it.each([false, true])("picker executes fold completion=%s and publishes its outcome", async (complete) => {
+  const { deps, afterBatch } = makeDeps();
+  const { source, resetForm } = makeSource();
+  const outcome: folds.Outcome = { toast: { kind: "warning", message: "fold" }, errors: [{ title: "error", message: "detail" }], warnings: [], completion: { reload: complete, closeModal: complete, conflict: false } };
+  const fold = vi.spyOn(folds, "installOutcome").mockReturnValue(outcome);
+  const { result } = renderHook(() => useCandidatePick(source, deps));
+  act(() => result.current.open("/base", [cand("alpha", "alpha")]));
+  await act(async () => { await result.current.install(); });
+  expect(fold).toHaveBeenCalledTimes(1);
+  expect(afterBatch).toHaveBeenCalledWith(outcome.completion);
+  expect(resetForm).toHaveBeenCalledTimes(complete ? 1 : 0);
+  expect(result.current.visible).toBe(!complete);
+  expect(deps.reporter.showActionErrors).toHaveBeenCalledWith(outcome.errors);
+  expect(deps.reporter.notify).toHaveBeenCalledWith("warning", "fold", undefined);
 });

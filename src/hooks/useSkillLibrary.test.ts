@@ -4,7 +4,7 @@
 // wires, so these tests exercise the hook the way the app does.
 
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BatchSyncReportDto,
   ManagedSkill,
@@ -34,6 +34,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 
 import { invokeTauri, type CommandName } from "../lib/tauri";
+import * as folds from "../lib/reportOutcome";
 import { useSkillLibrary } from "./useSkillLibrary";
 import {
   ActionExit,
@@ -223,11 +224,6 @@ function makeDeps(overrides?: {
     requestSharedDirConfirmation: vi.fn(
       () => Promise.resolve(overrides?.sharedDirConfirmation ?? true) as Promise<boolean>,
     ),
-    syncFailureEntries: vi.fn((report: BatchSyncReportDto) =>
-      report.results
-        .filter((r) => r.status.status === "failed")
-        .map((r) => ({ title: r.skill_name, message: "sync failed" })),
-    ),
     syncSkillsToTools: vi
       .fn()
       .mockResolvedValue(overrides?.syncReport ?? EMPTY_REPORT),
@@ -281,61 +277,9 @@ describe("invocation Edits", () => {
     expect(setup.reporter.setError).toHaveBeenCalledWith("formatted:CENTRAL_PATH_MISSING");
   });
 
-  it.each(["refresh", "update"])("shows conflict warning data after %s", async (action) => {
-    const report = refreshedReport(["alpha"]);
-    const status = report.skills[0].status;
-    if (status.status !== "refreshed") throw new Error("fixture");
-    status.edit_conflict = { base_mode: "user-and-model", upstream_mode: "model-only", override_mode: "user-only" };
-    const setup = makeDeps({ refreshReport: report });
-    const { result } = await renderLibrary(setup);
-    await act(async () => {
-      if (action === "refresh") await result.current.handleRefresh();
-      else await result.current.handleRestoreSkill(setup.skills[0]);
-    });
-    expect(setup.reporter.showActionWarnings).toHaveBeenCalledWith([{
-      title: 'invocationEdit.warningTitle {"name":"alpha"}',
-      message: 'invocationEdit.refreshWarning {"name":"alpha","upstream":"invocationMode.modelOnly","override":"invocationMode.userOnly"}',
-    }]);
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(expect.objectContaining({
-      kind: "warning",
-      title: action === "refresh"
-        ? "invocationEdit.refreshCompletedWithEdits"
-        : 'invocationEdit.updateCompletedWithConflict {"name":"alpha"}',
-    }));
-  });
 });
 
-describe("useSkillLibrary refresh", () => {
-  it.each(["git", "GitHub"])("offers Re-point only for a known %s skill's GitHub-not-found failure", async (source_type) => {
-    const gitSkill = { ...skill("s1", "alpha"), source_type };
-    const otherGit = { ...skill("s2", "beta"), source_type: "git" };
-    const localSkill = skill("s3", "local");
-    const setup = makeDeps({
-      skills: [gitSkill, otherGit, localSkill],
-      refreshReport: {
-        skills: [
-          { skill_id: "s1", skill_name: "alpha", status: { status: "failed", error: { code: "GITHUB_SKILL_NOT_FOUND", url: "https://github.com/old/repo" } } },
-          { skill_id: "s2", skill_name: "beta", status: { status: "failed", error: { code: "OTHER", message: "network failed" } } },
-          { skill_id: "s3", skill_name: "local", status: { status: "failed", error: { code: "GITHUB_SKILL_NOT_FOUND", url: "https://github.com/old/repo" } } },
-          { skill_id: "gone", skill_name: "gone", status: { status: "failed", error: { code: "GITHUB_SKILL_NOT_FOUND", url: "https://github.com/old/repo" } } },
-        ],
-        refreshed: 0, failed: 4, skipped: 0, target_failures: 0,
-      },
-    });
-    const { result } = renderHook(() => useSkillLibrary(setup.deps));
-    await waitFor(() => expect(result.current.managedSkills).toHaveLength(3));
-    await act(async () => { await result.current.handleRefresh(); });
-
-    const entries = vi.mocked(setup.reporter.showActionErrors).mock.calls[0][0];
-    expect(entries).toHaveLength(4);
-    expect(entries[0].action?.label).toBe("gitRepoint.action");
-    expect(entries.slice(1).every((entry) => entry.action === undefined)).toBe(true);
-    expect(result.current.pendingGitRepointSkill).toBeNull();
-    act(() => entries[0].action?.onClick());
-    expect(result.current.pendingGitRepointSkill).toEqual(gitSkill);
-    expect(mockInvoke.mock.calls.map(([command]) => command)).not.toContain("repointGitSkillSource");
-  });
-
+describe("repair notification actions", () => {
   it("warns instead of opening a stale Re-point action after deletion", async () => {
     const gitSkill = { ...skill("s1", "alpha"), source_type: "git" };
     const setup = makeDeps({
@@ -359,254 +303,9 @@ describe("useSkillLibrary refresh", () => {
     expect(result.current.pendingGitRepointSkill).toBeNull();
   });
 
-  it("issues one backend batch for every skill and never fans out a sync itself", async () => {
-    const setup = makeDeps({
-      skills: [skill("s1", "alpha"), skill("s2", "beta")],
-    });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      await result.current.handleRefresh();
-    });
-
-    const refreshCalls = mockInvoke.mock.calls.filter(
-      ([command]) => command === "refreshManagedSkills",
-    );
-    expect(refreshCalls).toHaveLength(1);
-    const [, skillIds, policy] = refreshCalls[0];
-    expect(skillIds).toBeNull(); // null = every Managed skill
-    expect(policy).toEqual({ reassert_auto_sync: true });
-    expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
-    // The whole pass ran as one action (the loading surface wraps it).
-    expect(setup.reporter.runAction).toHaveBeenCalledTimes(1);
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
-      "status.refreshCompleted",
-    );
-  });
-
-  it("passes the auto-sync setting as the re-assert policy", async () => {
-    const setup = makeDeps({ autoSyncEnabled: false });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      await result.current.handleRefresh();
-    });
-
-    const [, , policy] = mockInvoke.mock.calls.find(
-      ([command]) => command === "refreshManagedSkills",
-    )!;
-    expect(policy).toEqual({ reassert_auto_sync: false });
-  });
-
-  it("renders per-skill failures and per-target failures from the one report", async () => {
-    const setup = makeDeps({
-      skills: [skill("s1", "alpha"), skill("s2", "beta")],
-      refreshReport: {
-        skills: [
-          {
-            skill_id: "s1",
-            skill_name: "alpha",
-            status: {
-              status: "refreshed",
-              content_hash: null,
-              source_revision: null,
-              targets: [
-                {
-                  scope: { scope: "global", tool: "cursor" },
-                  status: {
-                    status: "failed",
-                    error: { code: "OTHER", message: "boom" },
-                  },
-                },
-                {
-                  scope: { scope: "global", tool: "claude" },
-                  status: {
-                    status: "skipped",
-                    reason: { reason: "link_follows_source" },
-                  },
-                },
-              ],
-              reassert_error: null,
-              edit_conflict: null,
-            },
-          },
-          {
-            skill_id: "s2",
-            skill_name: "beta",
-            status: {
-              status: "failed",
-              error: {
-                code: "GIT_CLONE_FAILED",
-                kind: "unknown",
-                detail: "boom",
-              },
-            },
-          },
-        ],
-        refreshed: 1,
-        failed: 1,
-        skipped: 0,
-        target_failures: 1,
-      },
-    });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      await result.current.handleRefresh();
-    });
-
-    // Skips are not failures and stay silent.
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledTimes(1);
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
-      {
-        title: 'errors.updateFailedTitle {"name":"beta"}',
-        message: "formatted:GIT_CLONE_FAILED",
-      },
-      {
-        title: 'errors.propagationFailedTitle {"name":"alpha","tool":"CURSOR"}',
-        message: "formatted:OTHER",
-      },
-    ]);
-    // A batch that finished with failures is a warning (lingers, unread),
-    // not a success.
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith({
-      kind: "warning",
-      title: 'status.refreshSummary {"refreshed":1,"failed":1}',
-    });
-  });
-
-  it("reports a failed auto-sync re-assert even though the skill refreshed", async () => {
-    const setup = makeDeps({
-      refreshReport: {
-        skills: [
-          {
-            skill_id: "s1",
-            skill_name: "alpha",
-            status: {
-              status: "refreshed",
-              content_hash: null,
-              source_revision: null,
-              targets: [],
-              reassert_error: { code: "OTHER", message: "store is gone" },
-              edit_conflict: null,
-            },
-          },
-        ],
-        refreshed: 1,
-        failed: 0,
-        skipped: 0,
-        target_failures: 1,
-      },
-    });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      await result.current.handleRefresh();
-    });
-
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
-      {
-        title: 'errors.reassertFailedTitle {"name":"alpha"}',
-        message: "formatted:OTHER",
-      },
-    ]);
-  });
-
-  it("reports skipped Unlocatable skills as a warning summary with one entry per skill", async () => {
-    const setup = makeDeps({
-      skills: [skill("s1", "alpha"), skill("s2", "beta"), skill("s3", "gamma")],
-      refreshReport: {
-        skills: [
-          {
-            skill_id: "s1",
-            skill_name: "alpha",
-            status: {
-              status: "refreshed",
-              content_hash: null,
-              source_revision: null,
-              targets: [],
-              reassert_error: null,
-              edit_conflict: null,
-            },
-          },
-          {
-            skill_id: "s2",
-            skill_name: "beta",
-            status: { status: "skipped", state: "source_missing" },
-          },
-          {
-            skill_id: "s3",
-            skill_name: "gamma",
-            status: { status: "skipped", state: "central_missing" },
-          },
-        ],
-        refreshed: 1,
-        failed: 0,
-        skipped: 2,
-        target_failures: 0,
-      },
-    });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      await result.current.handleRefresh();
-    });
-
-    // Skips are not failures: nothing goes through the error batch...
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([]);
-    // ...but each skipped skill is its own warning row in the panel.
-    expect(setup.reporter.showActionWarnings).toHaveBeenCalledWith([
-      {
-        title: 'errors.refreshSkippedTitle {"name":"beta"}',
-        message: "errors.refreshSkippedSourceMissing",
-      },
-      {
-        title: 'errors.refreshSkippedTitle {"name":"gamma"}',
-        message: "errors.refreshSkippedCentralMissing",
-      },
-    ]);
-    // The summary is a warning that counts the skipped.
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith({
-      kind: "warning",
-      title:
-        'status.refreshSummarySkipped {"refreshed":1,"failed":0,"skipped":2}',
-    });
-  });
 });
 
-describe("useSkillLibrary unlocatable skill actions", () => {
-  it.each([
-    ["git", true], ["git", false], ["GitHub", true], ["GitHub", false],
-  ] as const)("%s Re-point passes auto-sync=%s, submits the new URL and reloads", async (source_type, autoSyncEnabled) => {
-    const setup = makeDeps({ autoSyncEnabled });
-    const gitSkill = { ...setup.skills[0], source_type };
-    const { result } = await renderLibrary(setup);
-    await act(async () => { await result.current.handleRepointSkill(gitSkill); });
-    expect(result.current.pendingGitRepointSkill).toEqual(gitSkill);
-    expect(mockInvoke.mock.calls.map(([command]) => command)).not.toContain("repointGitSkillSource");
-    await act(async () => { await result.current.handleConfirmRepointGitSkill("https://github.com/new/repo/tree/main/skill"); });
-    expect(mockInvoke).toHaveBeenCalledWith("repointGitSkillSource", "s1", "https://github.com/new/repo/tree/main/skill", { reassert_auto_sync: autoSyncEnabled });
-    expect(result.current.pendingGitRepointSkill).toBeNull();
-    expect(mockInvoke.mock.calls.at(-1)?.[0]).toBe("getManagedSkills");
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith('status.repointed {"name":"alpha"}');
-  });
-
-  it("keeps git Re-point open until the request succeeds", async () => {
-    const setup = makeDeps();
-    const { result } = await renderLibrary(setup);
-    const gitSkill = { ...setup.skills[0], source_type: "git" };
-    act(() => result.current.handleRepointGitSkill(gitSkill));
-    let resolve!: (report: RefreshReportDto) => void;
-    const response = new Promise<RefreshReportDto>((done) => { resolve = done; });
-    mockInvoke.mockImplementation((command) => command === "repointGitSkillSource"
-      ? response : Promise.resolve(setup.skills));
-    let pending!: Promise<void>;
-    act(() => { pending = result.current.handleConfirmRepointGitSkill("https://github.com/new/repo"); });
-    expect(result.current.pendingGitRepointSkill).toEqual(gitSkill);
-    await act(async () => { resolve(refreshedReport(["alpha"])); await pending; });
-    expect(result.current.pendingGitRepointSkill).toBeNull();
-  });
-
+describe("cancellation and non-report actions", () => {
   it("cancelling git Re-point performs no invoke or action", async () => {
     const setup = makeDeps();
     const { result } = await renderLibrary(setup);
@@ -617,56 +316,6 @@ describe("useSkillLibrary unlocatable skill actions", () => {
     expect(result.current.pendingGitRepointSkill).toBeNull();
     expect(mockInvoke).not.toHaveBeenCalled();
     expect(setup.reporter.runAction).not.toHaveBeenCalled();
-  });
-
-  it.each(["refused", "acquisition failed"])("git Re-point %s surfaces the error and reloads", async (failure) => {
-    const setup = makeDeps();
-    mockInvoke.mockImplementation((command) => {
-      if (command === "repointGitSkillSource") {
-        if (failure === "refused") return Promise.reject({ code: "GIT_REPOINT_REQUIRES_GIT", name: "alpha" });
-        return Promise.resolve({
-          skills: [{ skill_id: "s1", skill_name: "alpha", status: {
-            status: "failed", error: { code: "GITHUB_SKILL_NOT_FOUND", url: "https://github.com/new/repo" },
-          } }], refreshed: 0, failed: 1, skipped: 0, target_failures: 0,
-        } satisfies RefreshReportDto);
-      }
-      return Promise.resolve(setup.skills);
-    });
-    const { result } = await renderLibrary(setup);
-    act(() => result.current.handleRepointGitSkill({ ...setup.skills[0], source_type: "git" }));
-    await act(async () => { await result.current.handleConfirmRepointGitSkill("https://github.com/new/repo"); });
-    expect(result.current.pendingGitRepointSkill).toEqual({ ...setup.skills[0], source_type: "git" });
-    expect(setup.reporter.setError).toHaveBeenCalledWith(failure === "refused"
-      ? "formatted:GIT_REPOINT_REQUIRES_GIT" : "formatted:GITHUB_SKILL_NOT_FOUND");
-    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
-    expect(mockInvoke.mock.calls.at(-1)?.[0]).toBe("getManagedSkills");
-  });
-
-  it.each([true, false])("local Re-point passes auto-sync=%s, picks a folder and reloads", async (autoSyncEnabled) => {
-    const setup = makeDeps({ autoSyncEnabled });
-    pickFolder.mockResolvedValue("/new/place/alpha");
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      await result.current.handleRepointSkill(setup.skills[0]);
-    });
-
-    expect(pickFolder).toHaveBeenCalledWith(
-      expect.objectContaining({ directory: true, multiple: false }),
-    );
-    expect(mockInvoke).toHaveBeenCalledWith(
-      "repointLocalSkillSource",
-      "s1",
-      "/new/place/alpha",
-      { reassert_auto_sync: autoSyncEnabled },
-    );
-    const calls = mockInvoke.mock.calls.map(([command]) => command);
-    expect(calls.indexOf("getManagedSkills", 1)).toBeGreaterThan(
-      calls.indexOf("repointLocalSkillSource"),
-    );
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
-      'status.repointed {"name":"alpha"}',
-    );
   });
 
   it("Re-point does nothing when the folder picker is cancelled", async () => {
@@ -685,67 +334,6 @@ describe("useSkillLibrary unlocatable skill actions", () => {
       expect.anything(),
     );
     expect(setup.reporter.runAction).not.toHaveBeenCalled();
-  });
-
-  it("Re-point surfaces a refused folder as the action's failure", async () => {
-    const setup = makeDeps();
-    pickFolder.mockResolvedValue("/home/u/.claude/skills/alpha");
-    mockInvoke.mockImplementation((command) => {
-      if (command === "repointLocalSkillSource") {
-        return Promise.reject({
-          code: "LOCAL_SOURCE_INSIDE_TOOL_DIR",
-          path: "/home/u/.claude/skills/alpha",
-          tool: "claude_code",
-        });
-      }
-      return Promise.resolve(setup.skills);
-    });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      await result.current.handleRepointSkill(setup.skills[0]);
-    });
-
-    expect(setup.reporter.setError).toHaveBeenCalledWith(
-      "formatted:LOCAL_SOURCE_INSIDE_TOOL_DIR",
-    );
-    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
-  });
-
-  it("Re-point surfaces the Update's own failure from the report", async () => {
-    const setup = makeDeps();
-    pickFolder.mockResolvedValue("/new/place/alpha");
-    mockInvoke.mockImplementation((command) => {
-      if (command === "repointLocalSkillSource") {
-        return Promise.resolve({
-          skills: [
-            {
-              skill_id: "s1",
-              skill_name: "alpha",
-              status: {
-                status: "failed",
-                error: { code: "SKILL_INVALID", reason: "missing_skill_md" },
-              },
-            },
-          ],
-          refreshed: 0,
-          failed: 1,
-          skipped: 0,
-          target_failures: 0,
-        } satisfies RefreshReportDto);
-      }
-      return Promise.resolve(setup.skills);
-    });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      await result.current.handleRepointSkill(setup.skills[0]);
-    });
-
-    expect(setup.reporter.setError).toHaveBeenCalledWith(
-      "formatted:SKILL_INVALID",
-    );
-    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
   });
 
   it("Detach hands the skill to the backend and reloads", async () => {
@@ -780,331 +368,6 @@ describe("useSkillLibrary unlocatable skill actions", () => {
     });
 
     expect(setup.reporter.setError).toHaveBeenCalledWith("formatted:NOT_FOUND");
-    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
-  });
-
-  it("Restore is the single-skill Update with its own copy", async () => {
-    const setup = makeDeps();
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      await result.current.handleRestoreSkill(setup.skills[0]);
-    });
-
-    expect(mockInvoke).toHaveBeenCalledWith(
-      "refreshManagedSkills",
-      ["s1"],
-      { reassert_auto_sync: true },
-      expect.anything(),
-    );
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
-      'status.restored {"name":"alpha"}',
-    );
-  });
-
-  it("Restore surfaces the skill's own failure from the report", async () => {
-    const setup = makeDeps({
-      refreshReport: {
-        skills: [
-          {
-            skill_id: "s1",
-            skill_name: "alpha",
-            status: {
-              status: "failed",
-              error: { code: "SOURCE_PATH_MISSING", path: "/old/alpha" },
-            },
-          },
-        ],
-        refreshed: 0,
-        failed: 1,
-        skipped: 0,
-        target_failures: 0,
-      },
-    });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      await result.current.handleRestoreSkill(setup.skills[0]);
-    });
-
-    expect(setup.reporter.setError).toHaveBeenCalledWith(
-      "formatted:SOURCE_PATH_MISSING",
-    );
-    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
-  });
-});
-
-describe("useSkillLibrary single update", () => {
-  it("is the same batch, of one", async () => {
-    const setup = makeDeps();
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      result.current.handleUpdateSkill(setup.skills[0]);
-    });
-
-    await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith(
-        "refreshManagedSkills",
-        ["s1"],
-        { reassert_auto_sync: true },
-        expect.anything(),
-      ),
-    );
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
-      'status.updated {"name":"alpha"}',
-    );
-  });
-
-  it("surfaces the skill's own failure from the report", async () => {
-    const setup = makeDeps({
-      refreshReport: {
-        skills: [
-          {
-            skill_id: "s1",
-            skill_name: "alpha",
-            status: {
-              status: "failed",
-              error: {
-                code: "GIT_CLONE_FAILED",
-                kind: "unknown",
-                detail: "boom",
-              },
-            },
-          },
-        ],
-        refreshed: 0,
-        failed: 1,
-        skipped: 0,
-        target_failures: 0,
-      },
-    });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      result.current.handleUpdateSkill(setup.skills[0]);
-    });
-
-    await waitFor(() =>
-      expect(setup.reporter.setError).toHaveBeenCalledWith(
-        "formatted:GIT_CLONE_FAILED",
-      ),
-    );
-    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
-  });
-});
-
-describe("useSkillLibrary unsync", () => {
-  it("reports how many deployments were removed", async () => {
-    const setup = makeDeps({
-      removalReport: removedReport(["claude", "cursor"]),
-    });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      await result.current.handleUnsyncAll();
-    });
-
-    expect(mockInvoke).toHaveBeenCalledWith("unsyncAllSkills");
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
-      'unsyncAllComplete {"count":2}',
-    );
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([]);
-  });
-
-  it("surfaces every path it could not remove instead of a silent count", async () => {
-    const setup = makeDeps({
-      removalReport: {
-        targets: [
-          {
-            scope: { scope: "global" },
-            tool: "claude",
-            path: "/tools/claude/alpha",
-            status: { status: "removed" },
-          },
-          {
-            scope: { scope: "global" },
-            tool: "cursor",
-            path: "/tools/cursor/alpha",
-            status: {
-              status: "failed",
-              error: { code: "OTHER", message: "permission denied" },
-            },
-          },
-        ],
-        removed: 1,
-        failed: 1,
-      },
-    });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      await result.current.handleUnsyncAll();
-    });
-
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith({
-      kind: "warning",
-      title: 'unsyncPartial {"count":1,"failed":1}',
-    });
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
-      {
-        title: 'errors.unsyncFailedTitle {"tool":"CURSOR"}',
-        message: "formatted:OTHER",
-      },
-    ]);
-  });
-
-  it("unsyncing one skill reports its failed targets too", async () => {
-    const setup = makeDeps({
-      removalReport: {
-        targets: [
-          {
-            scope: { scope: "global" },
-            tool: "claude",
-            path: "/tools/claude/alpha",
-            status: {
-              status: "failed",
-              error: { code: "OTHER", message: "busy" },
-            },
-          },
-        ],
-        removed: 0,
-        failed: 1,
-      },
-    });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      await result.current.handleUnsyncSkill("s1");
-    });
-
-    expect(mockInvoke).toHaveBeenCalledWith("unsyncSkill", "s1");
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
-      {
-        title: 'errors.unsyncFailedTitle {"tool":"CLAUDE"}',
-        message: "formatted:OTHER",
-      },
-    ]);
-  });
-});
-
-describe("useSkillLibrary per-tool toggle", () => {
-  it("an unsynced tool syncs with overwrite-if-same-content", async () => {
-    const setup = makeDeps({
-      syncReport: {
-        results: [
-          {
-            skill_id: "s1",
-            skill_name: "alpha",
-            tool: "cursor",
-            status: { status: "synced", mode_used: "copy" },
-          },
-        ],
-        synced: 1,
-        skipped: 0,
-        failed: 0,
-      },
-    });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      result.current.handleToggleToolForSkill(setup.skills[0], "cursor");
-    });
-
-    await waitFor(() =>
-      expect(setup.sync.syncSkillsToTools).toHaveBeenCalledWith(
-        [{ skill_id: "s1", name: "alpha", source_path: "/hub/alpha" }],
-        ["cursor"],
-        { overwriteIfSameContent: true },
-      ),
-    );
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
-      "status.syncEnabled",
-    );
-  });
-
-  it("a synced tool unsyncs instead", async () => {
-    const setup = makeDeps({ skills: [skill("s1", "alpha", ["claude"])] });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      result.current.handleToggleToolForSkill(setup.skills[0], "claude");
-    });
-
-    await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith(
-        "unsyncSkillFromTool",
-        "s1",
-        "claude",
-      ),
-    );
-    expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
-    expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
-      "status.syncDisabled",
-    );
-  });
-
-  it("a failed unsync toggle fails the action instead of reporting success", async () => {
-    const setup = makeDeps({
-      skills: [skill("s1", "alpha", ["claude"])],
-      removalReport: {
-        targets: [
-          {
-            scope: { scope: "global" },
-            tool: "claude",
-            path: "/tools/claude/alpha",
-            status: {
-              status: "failed",
-              error: { code: "OTHER", message: "permission denied" },
-            },
-          },
-        ],
-        removed: 0,
-        failed: 1,
-      },
-    });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      result.current.handleToggleToolForSkill(setup.skills[0], "claude");
-    });
-
-    await waitFor(() =>
-      expect(setup.reporter.setError).toHaveBeenCalledWith("formatted:OTHER"),
-    );
-    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
-  });
-
-  it("a single toggle surfaces TARGET_EXISTS with the conflicting path", async () => {
-    const setup = makeDeps({
-      syncReport: {
-        results: [
-          {
-            skill_id: "s1",
-            skill_name: "alpha",
-            tool: "cursor",
-            status: {
-              status: "skipped",
-              error: { code: "TARGET_EXISTS", path: "/tools/cursor/alpha" },
-            },
-          },
-        ],
-        synced: 0,
-        skipped: 1,
-        failed: 0,
-      },
-    });
-    const { result } = await renderLibrary(setup);
-
-    await act(async () => {
-      result.current.handleToggleToolForSkill(setup.skills[0], "cursor");
-    });
-
-    await waitFor(() =>
-      expect(setup.reporter.setError).toHaveBeenCalledWith(
-        'errors.targetExistsDetail {"path":"/tools/cursor/alpha"}',
-      ),
-    );
     expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
   });
 
@@ -1170,5 +433,106 @@ describe("useSkillLibrary name collisions", () => {
     expect(result.current.isSkillNameTaken("alpha")).toBe(true);
     expect(result.current.isSkillNameTaken("ALPHA")).toBe(true);
     expect(result.current.isSkillNameTaken("beta")).toBe(false);
+  });
+});
+
+afterEach(() => vi.restoreAllMocks());
+
+// Presentation is table-tested through the pure module. Here a deliberately
+// synthetic outcome proves that each caller obeys the fold, not DTO fields.
+describe("invoke → fold → completion", () => {
+  it.each([
+    ["Update", "refreshOutcome", "refreshManagedSkills"],
+    ["Restore", "refreshOutcome", "refreshManagedSkills"],
+    ["git Re-point", "refreshOutcome", "repointGitSkillSource"],
+    ["local Re-point", "refreshOutcome", "repointLocalSkillSource"],
+    ["Refresh-all", "refreshOutcome", "refreshManagedSkills"],
+    ["unsync-all", "removalOutcome", "unsyncAllSkills"],
+    ["unsync", "removalOutcome", "unsyncSkill"],
+    ["delete", "deleteOutcome", "deleteManagedSkill"],
+    ["sync-to-all", "syncOutcome", null],
+    ["auto-sync", "syncOutcome", null],
+    ["toggle-on", "syncOutcome", null],
+    ["toggle-off", "removalOutcome", "unsyncSkillFromTool"],
+  ] as const)("%s applies the returned outcome (including refusal to reload/close)", async (action, fold, command) => {
+    for (const complete of [false, true]) {
+      const setup = makeDeps({ skills: [skill("s1", "alpha", action === "toggle-off" ? ["claude"] : [])] });
+      const outcome: folds.Outcome = {
+        toast: { kind: "warning", message: "fold toast", detail: "detail" },
+        errors: [{ title: "fold error", message: "error detail" }],
+        warnings: [{ title: "fold warning", message: "warning detail" }],
+        completion: { reload: complete, closeModal: complete, conflict: true },
+      };
+      const spy = vi.spyOn(folds, fold).mockReturnValue(outcome);
+      const { result, unmount } = await renderLibrary(setup);
+      pickFolder.mockResolvedValue("/new/alpha");
+      act(() => {
+        result.current.handleDeletePrompt("s1");
+        result.current.handleRepointGitSkill(setup.skills[0]);
+      });
+      mockInvoke.mockClear();
+      await act(async () => {
+        const lib = result.current;
+        const row = setup.skills[0];
+        switch (action) {
+          case "Update": lib.handleUpdateSkill(row); break;
+          case "Restore": await lib.handleRestoreSkill(row); break;
+          case "git Re-point": await lib.handleConfirmRepointGitSkill(" https://github.com/new/repo "); break;
+          case "local Re-point": await lib.handleRepointSkill(row); break;
+          case "Refresh-all": await lib.handleRefresh(); break;
+          case "unsync-all": await lib.handleUnsyncAll(); break;
+          case "unsync": await lib.handleUnsyncSkill(row.id); break;
+          case "delete": await lib.handleDeleteManaged(row); break;
+          case "sync-to-all": await lib.handleSyncSkillToAllTools(row); break;
+          case "auto-sync": await lib.syncAllManagedToTools(["claude"]); break;
+          default: await lib.handleToggleToolForSkill(row, "claude");
+        }
+      });
+      await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+      if (command) expect(mockInvoke.mock.calls.map(([cmd]) => cmd)).toContain(command);
+      else expect(setup.sync.syncSkillsToTools).toHaveBeenCalledTimes(1);
+      expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "getManagedSkills")).toHaveLength(complete ? 1 : 0);
+      expect(setup.reporter.showActionErrors).toHaveBeenCalledWith(outcome.errors);
+      expect(setup.reporter.showActionWarnings).toHaveBeenCalledWith(outcome.warnings);
+      expect(setup.reporter.notify).toHaveBeenCalledWith("warning", "fold toast", "detail");
+      if (action === "delete") expect(result.current.pendingDeleteId).toBe(complete ? null : "s1");
+      if (action === "git Re-point") expect(result.current.pendingGitRepointSkill).toEqual(complete ? null : setup.skills[0]);
+      unmount();
+      spy.mockRestore();
+    }
+  });
+
+  it.each(["Update", "Restore", "git", "local"])("%s reloads after a thrown request without closing the repair modal", async (action) => {
+    const setup = makeDeps();
+    const { result } = await renderLibrary(setup);
+    act(() => result.current.handleRepointGitSkill(setup.skills[0]));
+    pickFolder.mockResolvedValue("/new/alpha");
+    mockInvoke.mockImplementation((cmd) => cmd === "getManagedSkills" ? Promise.resolve(setup.skills) : Promise.reject({ code: "OTHER", message: "request failed" }));
+    mockInvoke.mockClear();
+    await act(async () => {
+      if (action === "Update") result.current.handleUpdateSkill(setup.skills[0]);
+      else if (action === "Restore") await result.current.handleRestoreSkill(setup.skills[0]);
+      else if (action === "git") await result.current.handleConfirmRepointGitSkill("https://github.com/new/repo");
+      else await result.current.handleRepointSkill(setup.skills[0]);
+    });
+    await waitFor(() => expect(setup.reporter.setError).toHaveBeenCalledWith("formatted:OTHER"));
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "getManagedSkills")).toHaveLength(1);
+    expect(result.current.pendingGitRepointSkill).toEqual(setup.skills[0]);
+  });
+
+  it("resolves a notification id against a replaced row at click time", async () => {
+    const setup = makeDeps();
+    vi.spyOn(folds, "refreshOutcome").mockReturnValue({
+      toast: null, warnings: [], completion: { reload: false, closeModal: false, conflict: false },
+      errors: [{ title: "repair", message: "missing", action: { label: "repoint", skillId: "s1", skillName: "alpha" } }],
+    });
+    const { result } = await renderLibrary(setup);
+    await act(async () => { await result.current.handleRefresh(); });
+    const click = vi.mocked(setup.reporter.showActionErrors).mock.calls[0][0][0].action!.onClick;
+    const updated = { ...setup.skills[0], source_ref: "new source" };
+    mockInvoke.mockResolvedValue([updated]);
+    await act(async () => { await result.current.loadManagedSkills(); });
+    act(() => click());
+    expect(result.current.pendingGitRepointSkill).toEqual(updated);
   });
 });

@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
+import { installOutcome, type InstallDeployment, type InstallSettlement, type Outcome } from "../lib/reportOutcome";
 import type { InstallResultDto } from "../components/skills/types";
 import type {
-  ActionErrorEntry,
   StatusReporter,
   TranslateFn,
 } from "./useStatusReporter";
@@ -40,14 +40,16 @@ export type CandidatePickDeps = {
     | "runAction"
     | "setActionMessage"
     | "setError"
-    | "formatError"
+    | "notify"
+    | "showActionWarnings"
     | "showActionErrors"
   >;
   isSkillNameTaken: (name: string) => boolean;
-  /** The install→deploy tail for one installed skill; failures to collect. */
-  deploy: (created: InstallResultDto) => Promise<ActionErrorEntry[]>;
+  toolLabelById?: Readonly<Record<string, string>>;
+  /** The install→deploy tail returns data, including whole-command failure. */
+  deploy: (created: InstallResultDto) => Promise<InstallDeployment>;
   /** Runs once after every batch (close the add modal, reload the library). */
-  afterBatch: () => Promise<void>;
+  afterBatch: (completion: Outcome["completion"]) => Promise<void>;
 };
 
 export type CandidatePick<C extends PickCandidate, Ctx> = {
@@ -114,13 +116,14 @@ export function useCandidatePick<C extends PickCandidate, Ctx>(
   source: CandidatePickSource<C, Ctx>,
   deps: CandidatePickDeps,
 ): CandidatePick<C, Ctx> {
-  const { t, reporter, isSkillNameTaken, deploy, afterBatch } = deps;
+  const { t, reporter, isSkillNameTaken, deploy, afterBatch, toolLabelById } = deps;
   const {
     loading,
     runAction,
     setActionMessage,
     setError,
-    formatError,
+    notify,
+    showActionWarnings,
     showActionErrors,
   } = reporter;
   const { selectable = () => true } = source;
@@ -191,9 +194,9 @@ export function useCandidatePick<C extends PickCandidate, Ctx>(
     }
     const name = picked.length === 1 && customName ? customName : null;
     await runAction(
-      { successToast: t("status.selectedSkillsInstalled") },
+      {},
       async () => {
-        const collectedErrors: ActionErrorEntry[] = [];
+        const settlements: InstallSettlement[] = [];
         for (const [i, candidate] of picked.entries()) {
           setActionMessage(
             t("actions.importStep", {
@@ -208,18 +211,20 @@ export function useCandidatePick<C extends PickCandidate, Ctx>(
               candidate,
               name,
             );
-            collectedErrors.push(...(await deploy(created)));
+            settlements.push({ status: "installed", name: candidate.name, result: created, deployment: await deploy(created) });
           } catch (err) {
-            collectedErrors.push({
-              title: t("errors.importFailedTitle", { name: candidate.name }),
-              message: formatError(err) ?? "",
-            });
+            settlements.push({ status: "failed", name: candidate.name, error: err });
           }
         }
-        reset();
-        source.resetForm();
-        await afterBatch();
-        if (collectedErrors.length > 0) showActionErrors(collectedErrors);
+        const outcome = installOutcome(settlements, { t, toolLabelById, source: "selection" });
+        if (outcome.completion.closeModal) {
+          reset();
+          source.resetForm();
+        }
+        await afterBatch(outcome.completion);
+        showActionErrors(outcome.errors);
+        showActionWarnings(outcome.warnings);
+        if (outcome.toast) notify(outcome.toast.kind, outcome.toast.message, outcome.toast.detail);
       },
     );
     // `selectable` is an adapter constant, not render state (see `open`).
@@ -228,7 +233,8 @@ export function useCandidatePick<C extends PickCandidate, Ctx>(
     afterBatch,
     candidates,
     deploy,
-    formatError,
+    notify,
+    showActionWarnings,
     isSkillNameTaken,
     listing,
     reset,
@@ -239,6 +245,7 @@ export function useCandidatePick<C extends PickCandidate, Ctx>(
     showActionErrors,
     source,
     t,
+    toolLabelById,
   ]);
 
   return {

@@ -1,18 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   ManagedSkill,
   InvocationMode,
   RefreshProgressDto,
   RefreshReportDto,
-  RemovalReportDto,
 } from "../components/skills/types";
+import {
+  deleteOutcome,
+  refreshOutcome,
+  removalOutcome,
+  syncOutcome,
+  type Outcome,
+} from "../lib/reportOutcome";
 import { invokeTauri, isTauri } from "../lib/tauri";
-import { INVOCATION_LABEL_KEY, sourceKind, SKIPPED_REASON_KEY } from "../lib/skillPresentation";
+import { sourceKind } from "../lib/skillPresentation";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type {
   ActionErrorEntry,
-  ActionHandle,
-  CompletionToast,
   StatusReporter,
   TranslateFn,
 } from "./useStatusReporter";
@@ -32,7 +36,6 @@ export type SkillLibraryDeps = {
     | "autoSyncEnabled"
     | "installedToolIds"
     | "requestSharedDirConfirmation"
-    | "syncFailureEntries"
     | "syncSkillsToTools"
     | "toolLabelById"
     | "tools"
@@ -66,17 +69,12 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     autoSyncEnabled,
     installedToolIds,
     requestSharedDirConfirmation,
-    syncFailureEntries,
     syncSkillsToTools,
     toolLabelById,
     tools,
   } = sync;
 
   const [managedSkills, setManagedSkills] = useState<ManagedSkill[]>([]);
-  const managedSkillsRef = useRef(managedSkills);
-  useEffect(() => {
-    managedSkillsRef.current = managedSkills;
-  }, [managedSkills]);
   const [detailSkillId, setDetailSkillId] = useState<string | null>(null);
   const detailSkill = managedSkills.find((skill) => skill.id === detailSkillId) ?? null;
   const openDetail = useCallback((id: string) => setDetailSkillId(id), []);
@@ -93,8 +91,11 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     });
   }, [runAction, t]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [pendingGitRepointSkill, setPendingGitRepointSkill] =
-    useState<ManagedSkill | null>(null);
+  const [gitRepointSelection, setGitRepointSelection] =
+    useState<{ skillId: string; name: string } | null>(null);
+  const pendingGitRepointSkill = managedSkills.find(
+    (skill) => skill.id === gitRepointSelection?.skillId,
+  ) ?? null;
 
   const loadManagedSkills = useCallback(async () => {
     try {
@@ -162,307 +163,84 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   );
 
   const handleRepointGitSkill = useCallback((skill: ManagedSkill) => {
-    setPendingGitRepointSkill(skill);
+    setGitRepointSelection({ skillId: skill.id, name: skill.name });
   }, []);
 
-  /** Skills whose bytes could not be acquired (their targets were untouched). */
-  const skillFailureEntries = useCallback(
-    (report: RefreshReportDto) => {
-      const entries: ActionErrorEntry[] = [];
-      for (const skill of report.skills) {
-        if (skill.status.status !== "failed") continue;
-        const managedSkill =
-          skill.status.error.code === "GITHUB_SKILL_NOT_FOUND"
-            ? managedSkills.find(
-                (managed) =>
-                  managed.id === skill.skill_id && sourceKind(managed) === "git",
-              )
-            : undefined;
-        const skillId = skill.skill_id;
-        const name = skill.skill_name;
-        entries.push({
-          title: t("errors.updateFailedTitle", { name: skill.skill_name }),
-          message: formatError(skill.status.error) ?? "",
-          ...(managedSkill
-            ? {
-                action: {
-                  label: t("gitRepoint.action"),
-                  onClick: () => {
-                    const current = managedSkillsRef.current.find(
-                      (managed) => managed.id === skillId,
-                    );
-                    if (!current) {
-                      notify("warning", t("errors.skillGone", { name }));
-                      return;
-                    }
-                    handleRepointGitSkill(current);
-                  },
-                },
-              }
-            : {}),
-        });
-      }
-      return entries;
-    },
-    [formatError, handleRepointGitSkill, managedSkills, notify, t],
-  );
+  // Both the modal and historical notification actions select by id. A click
+  // resolves against this render's list, not the list that produced the report.
+  const repointSkillGone = gitRepointSelection !== null && pendingGitRepointSkill === null;
+  useEffect(() => {
+    if (repointSkillGone && gitRepointSelection) {
+      notify("warning", t("errors.skillGone", { name: gitRepointSelection.name }));
+    }
+  }, [gitRepointSelection, notify, repointSkillGone, t]);
 
-  /**
-   * Sync targets Propagation could not bring into line, plus a failed
-   * auto-sync re-assert (its targets never got planned at all). Skips stay
-   * silent.
-   */
-  const targetFailureEntries = useCallback(
-    (report: RefreshReportDto) => {
-      const entries: ActionErrorEntry[] = [];
-      for (const skill of report.skills) {
-        if (skill.status.status !== "refreshed") continue;
-        for (const target of skill.status.targets) {
-          if (target.status.status !== "failed") continue;
-          const tool = target.scope.tool;
-          entries.push({
-            title: t("errors.propagationFailedTitle", {
-              name: skill.skill_name,
-              tool: toolLabelById[tool] ?? tool,
-            }),
-            message: formatError(target.status.error) ?? "",
-          });
-        }
-        if (skill.status.reassert_error) {
-          entries.push({
-            title: t("errors.reassertFailedTitle", { name: skill.skill_name }),
-            message: formatError(skill.status.reassert_error) ?? "",
-          });
-        }
-      }
-      return entries;
-    },
-    [formatError, t, toolLabelById],
-  );
+  const foldContext = useMemo(() => ({
+    t, toolLabelById,
+    canRepoint: (id: string) => managedSkills.some((skill) => skill.id === id && sourceKind(skill) === "git"),
+  }), [managedSkills, t, toolLabelById]);
 
-  /**
-   * Unlocatable skills Refresh (all) did not dispatch: not failures (nothing
-   * was attempted), but each one is worth a row in the panel — with why.
-   */
-  const skippedEntries = useCallback(
-    (report: RefreshReportDto) => {
-      const entries: ActionErrorEntry[] = [];
-      for (const skill of report.skills) {
-        if (skill.status.status !== "skipped") continue;
-        entries.push({
-          title: t("errors.refreshSkippedTitle", { name: skill.skill_name }),
-          message: t(SKIPPED_REASON_KEY[skill.status.state]),
-        });
-      }
-      return entries;
-    },
-    [t],
-  );
-
-  const editConflictEntries = useCallback((report: RefreshReportDto): ActionErrorEntry[] =>
-    report.skills.flatMap((skill) => {
-      if (skill.status.status !== "refreshed" || !skill.status.edit_conflict) return [];
-      const conflict = skill.status.edit_conflict;
-      return [{
-        title: t("invocationEdit.warningTitle", { name: skill.skill_name }),
-        message: t("invocationEdit.refreshWarning", {
-          name: skill.skill_name,
-          upstream: t(INVOCATION_LABEL_KEY[conflict.upstream_mode]),
-          override: t(INVOCATION_LABEL_KEY[conflict.override_mode]),
-        }),
-      }];
-    }), [t]);
+  const applyOutcome = useCallback(async (outcome: Outcome) => {
+    const entries = (items: Outcome["errors"]): ActionErrorEntry[] => items.map(({ action, ...entry }) => ({
+      ...entry,
+      ...(action ? { action: { label: action.label, onClick: () => setGitRepointSelection({ skillId: action.skillId, name: action.skillName }) } } : {}),
+    }));
+    if (outcome.completion.reload) await loadManagedSkills();
+    showActionErrors(entries(outcome.errors));
+    showActionWarnings(entries(outcome.warnings));
+    if (outcome.toast) notify(outcome.toast.kind, outcome.toast.message, outcome.toast.detail);
+    return outcome.completion;
+  }, [loadManagedSkills, notify, showActionErrors, showActionWarnings]);
 
   const handleRefresh = useCallback(async () => {
     if (managedSkills.length === 0) return;
-
-    await runAction<RefreshReportDto>(
-      {
-        // A batch that finished with failures or skipped skills is a
-        // warning, not a success.
-        successToast: (report): CompletionToast => {
-          if (editConflictEntries(report).length > 0 && report.failed === 0 && report.skipped === 0) {
-            return { kind: "warning", title: t("invocationEdit.refreshCompletedWithEdits") };
-          }
-          if (report.failed === 0 && report.skipped === 0) {
-            return t("status.refreshCompleted");
-          }
-          const counts = { refreshed: report.refreshed, failed: report.failed };
-          return {
-            kind: "warning",
-            title:
-              report.skipped > 0
-                ? t("status.refreshSummarySkipped", {
-                    ...counts,
-                    skipped: report.skipped,
-                  })
-                : t("status.refreshSummary", counts),
-          };
-        },
-      },
-      async () => {
-        const report = await refreshSkills(null);
-        await loadManagedSkills();
-        showActionErrors([
-          ...skillFailureEntries(report),
-          ...targetFailureEntries(report),
-        ]);
-        showActionWarnings([...skippedEntries(report), ...editConflictEntries(report)]);
-        return report;
-      },
-    );
-  }, [
-    editConflictEntries,
-    loadManagedSkills,
-    managedSkills,
-    refreshSkills,
-    runAction,
-    showActionErrors,
-    showActionWarnings,
-    skillFailureEntries,
-    skippedEntries,
-    t,
-    targetFailureEntries,
-  ]);
-
-  /**
-   * Artifacts the backend could not remove. Their rows were kept with sync
-   * status `error` (ADR-0002), so the failure stays visible in the list too.
-   */
-  const removalFailureEntries = useCallback(
-    (report: RemovalReportDto) => {
-      const entries: ActionErrorEntry[] = [];
-      for (const target of report.targets) {
-        if (target.status.status !== "failed") continue;
-        entries.push({
-          title: t("errors.unsyncFailedTitle", {
-            tool: toolLabelById[target.tool] ?? target.tool,
-          }),
-          message: formatError(target.status.error) ?? "",
-        });
-      }
-      return entries;
-    },
-    [formatError, t, toolLabelById],
-  );
-
-  const removalToast = useCallback(
-    (report: RemovalReportDto): CompletionToast =>
-      report.failed === 0
-        ? t("unsyncAllComplete", { count: report.removed })
-        : {
-            kind: "warning",
-            title: t("unsyncPartial", {
-              count: report.removed,
-              failed: report.failed,
-            }),
-          },
-    [t],
-  );
+    await runAction({}, async () => {
+      const report = await refreshSkills(null);
+      return applyOutcome(refreshOutcome(report, foldContext));
+    });
+  }, [applyOutcome, foldContext, managedSkills.length, refreshSkills, runAction]);
 
   const handleUnsyncAll = useCallback(async () => {
-    await runAction({ successToast: removalToast }, async () => {
+    await runAction({}, async () => {
       const report = await invokeTauri("unsyncAllSkills");
-      await loadManagedSkills();
-      showActionErrors(removalFailureEntries(report));
-      return report;
+      return applyOutcome(removalOutcome(report, { ...foldContext, action: "all" }));
     });
-  }, [
-    loadManagedSkills,
-    removalFailureEntries,
-    removalToast,
-    runAction,
-    showActionErrors,
-  ]);
+  }, [applyOutcome, foldContext, runAction]);
 
-  const handleUnsyncSkill = useCallback(
-    async (skillId: string) => {
-      try {
-        const report = await invokeTauri("unsyncSkill", skillId);
-        await loadManagedSkills();
-        showActionErrors(removalFailureEntries(report));
-      } catch (err) {
-        setError(formatError(err));
-      }
-    },
-    [
-      formatError,
-      loadManagedSkills,
-      removalFailureEntries,
-      setError,
-      showActionErrors,
-    ],
-  );
+  const handleUnsyncSkill = useCallback(async (skillId: string) => {
+    try {
+      const report = await invokeTauri("unsyncSkill", skillId);
+      await applyOutcome(removalOutcome(report, { ...foldContext, action: "skill" }));
+    } catch (err) {
+      setError(formatError(err));
+    }
+  }, [applyOutcome, foldContext, formatError, setError]);
 
-  const handleSyncSkillToAllTools = useCallback(
-    async (skill: ManagedSkill) => {
-      if (installedToolIds.length === 0) return;
+  const handleSyncSkillToAllTools = useCallback(async (skill: ManagedSkill) => {
+    if (!installedToolIds.length) return;
+    await runAction({}, async () => {
+      const report = await syncSkillsToTools([toSyncItem(skill)], installedToolIds);
+      return applyOutcome(syncOutcome(report, { ...foldContext, action: "bulk" }));
+    });
+  }, [applyOutcome, foldContext, installedToolIds, runAction, syncSkillsToTools]);
 
-      await runAction({ successToast: t("status.syncCompleted") }, async () => {
-        const report = await syncSkillsToTools(
-          [toSyncItem(skill)],
-          installedToolIds,
-        );
-        showActionErrors(syncFailureEntries(report));
-        await loadManagedSkills();
-      });
-    },
-    [
-      installedToolIds,
-      loadManagedSkills,
-      runAction,
-      showActionErrors,
-      syncFailureEntries,
-      syncSkillsToTools,
-      t,
-    ],
-  );
-
-  const syncAllManagedToTools = useCallback(
-    async (toolIds: string[]) => {
-      if (!autoSyncEnabled) return;
-      if (managedSkills.length === 0) return;
-      if (toolIds.length === 0) return;
-
-      await runAction({ successToast: t("status.syncCompleted") }, async () => {
-        const report = await syncSkillsToTools(
-          managedSkills.map(toSyncItem),
-          toolIds,
-          { overwriteIfSameContent: true },
-        );
-        const collectedErrors = syncFailureEntries(report);
-        await loadManagedSkills();
-        if (collectedErrors.length > 0) showActionErrors(collectedErrors);
-      });
-    },
-    [
-      autoSyncEnabled,
-      loadManagedSkills,
-      managedSkills,
-      runAction,
-      showActionErrors,
-      syncFailureEntries,
-      syncSkillsToTools,
-      t,
-    ],
-  );
-
-  const handleDeleteManaged = useCallback(
-    async (skill: ManagedSkill) => {
-      await runAction(
-        {
-          message: t("actions.removing", { name: skill.name }),
-          successToast: t("status.skillRemoved"),
-        },
-        async () => {
-          await invokeTauri("deleteManagedSkill", skill.id);
-          await loadManagedSkills();
-          setPendingDeleteId(null);
-        },
+  const syncAllManagedToTools = useCallback(async (toolIds: string[]) => {
+    if (!autoSyncEnabled || !managedSkills.length || !toolIds.length) return;
+    await runAction({}, async () => {
+      const report = await syncSkillsToTools(
+        managedSkills.map(toSyncItem), toolIds, { overwriteIfSameContent: true },
       );
-    },
-    [loadManagedSkills, runAction, t],
-  );
+      return applyOutcome(syncOutcome(report, { ...foldContext, action: "bulk" }));
+    });
+  }, [applyOutcome, autoSyncEnabled, foldContext, managedSkills, runAction, syncSkillsToTools]);
+
+  const handleDeleteManaged = useCallback(async (skill: ManagedSkill) => {
+    await runAction({ message: t("actions.removing", { name: skill.name }) }, async () => {
+      const result = await invokeTauri("deleteManagedSkill", skill.id);
+      const completion = await applyOutcome(deleteOutcome(result, foldContext));
+      if (completion.closeModal) setPendingDeleteId(null);
+    });
+  }, [applyOutcome, foldContext, runAction, t]);
 
   const handleDeletePrompt = useCallback((skillId: string) => {
     setPendingDeleteId(skillId);
@@ -484,55 +262,21 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           message: synced
             ? t("actions.unsyncing", { name: skill.name, tool: toolLabel })
             : t("actions.syncing", { name: skill.name, tool: toolLabel }),
-          successToast: synced
-            ? t("status.syncDisabled")
-            : t("status.syncEnabled"),
         },
-        async (action) => {
+        async () => {
           if (synced) {
-            const report = await invokeTauri(
-              "unsyncSkillFromTool",
-              skill.id,
-              toolId,
-            );
-            const failed = report.targets.find(
-              (target) => target.status.status === "failed",
-            );
-            if (failed && failed.status.status === "failed") {
-              // An explicit single toggle surfaces the failure instead of
-              // reporting success over an artifact that is still on disk.
-              return action.fail(formatError(failed.status.error));
-            }
+            const report = await invokeTauri("unsyncSkillFromTool", skill.id, toolId);
+            await applyOutcome(removalOutcome(report, { ...foldContext, action: "toggle" }));
           } else {
             const report = await syncSkillsToTools(
-              [toSyncItem(skill)],
-              [toolId],
-              { overwriteIfSameContent: true },
+              [toSyncItem(skill)], [toolId], { overwriteIfSameContent: true },
             );
-            const status = report.results[0]?.status;
-            if (status && status.status !== "synced") {
-              // An explicit single toggle surfaces every non-success,
-              // including skips a bulk flow would ignore.
-              return action.fail(
-                status.error.code === "TARGET_EXISTS"
-                  ? t("errors.targetExistsDetail", { path: status.error.path })
-                  : formatError(status.error),
-              );
-            }
+            await applyOutcome(syncOutcome(report, { ...foldContext, action: "toggle" }));
           }
-          await loadManagedSkills();
         },
       );
     },
-    [
-      formatError,
-      loading,
-      loadManagedSkills,
-      runAction,
-      syncSkillsToTools,
-      t,
-      tools,
-    ],
+    [applyOutcome, foldContext, loading, runAction, syncSkillsToTools, t, tools],
   );
 
   const handleToggleToolForSkill = useCallback(
@@ -547,55 +291,21 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     [loading, requestSharedDirConfirmation, runToggleToolForSkill],
   );
 
-  /**
-   * Render a single-skill batch report inside an action: the skill's own
-   * failure fails the action, target failures are batched. Shared by
-   * Update, Restore and Re-point (all three end in the same batch of one).
-   */
-  const settleSingleReport = useCallback(
-    (action: ActionHandle, report: RefreshReportDto) => {
-      const failed = report.skills.find(
-        (entry) => entry.status.status === "failed",
-      );
-      if (failed && failed.status.status === "failed") {
-        return action.fail(formatError(failed.status.error));
-      }
-      showActionErrors(targetFailureEntries(report));
-      showActionWarnings(editConflictEntries(report));
-      return undefined;
-    },
-    [editConflictEntries, formatError, showActionErrors, showActionWarnings, targetFailureEntries],
-  );
-
-  /** The single-skill Update, under the copy the caller names. */
-  const runSingleRefresh = useCallback(
-    async (
-      skill: ManagedSkill,
-      copy: { message: string; success: string },
-      requestRefresh?: () => Promise<RefreshReportDto>,
-    ) => {
-      return runAction(
-        { message: copy.message, successToast: (report: RefreshReportDto) => editConflictEntries(report).length > 0
-          ? { kind: "warning", title: t("invocationEdit.updateCompletedWithConflict", { name: skill.name }) }
-          : copy.success },
-        async (action) => {
-          // A single Update is the same batch, of one.
-          let report: RefreshReportDto;
-          try {
-            report = await (requestRefresh
-              ? requestRefresh()
-              : refreshSkills([skill.id]));
-          } finally {
-            await loadManagedSkills();
-          }
-          // A defined success value distinguishes completion from runAction's
-          // undefined result for thrown errors and ActionExit failures.
-          return settleSingleReport(action, report) ?? report;
-        },
-      );
-    },
-    [editConflictEntries, loadManagedSkills, refreshSkills, runAction, settleSingleReport, t],
-  );
+  /** Thrown requests also reload: Update, Restore and both repairs agree. */
+  const runSingleRefresh = useCallback(async (
+    skill: ManagedSkill,
+    copy: { message: string; success: string },
+    requestRefresh?: () => Promise<RefreshReportDto>,
+  ) => runAction({ message: copy.message }, async () => {
+    let report: RefreshReportDto;
+    try {
+      report = await (requestRefresh ? requestRefresh() : refreshSkills([skill.id]));
+    } catch (error) {
+      await loadManagedSkills();
+      throw error;
+    }
+    return applyOutcome(refreshOutcome(report, { ...foldContext, single: { name: skill.name, success: copy.success } }));
+  }), [applyOutcome, foldContext, loadManagedSkills, refreshSkills, runAction]);
 
   const handleUpdateManaged = useCallback(
     (skill: ManagedSkill) =>
@@ -628,7 +338,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   );
 
   const handleCloseRepointGitSkill = useCallback(() => {
-    setPendingGitRepointSkill(null);
+    setGitRepointSelection(null);
   }, []);
 
   const handleConfirmRepointGitSkill = useCallback(
@@ -645,7 +355,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           reassert_auto_sync: autoSyncEnabled,
         }),
       );
-      if (completed !== undefined) setPendingGitRepointSkill(null);
+      if (completed?.closeModal) setGitRepointSelection(null);
     },
     [autoSyncEnabled, pendingGitRepointSkill, runSingleRefresh, t],
   );
@@ -676,27 +386,12 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
         setError(formatError(err));
         return;
       }
-      await runAction(
-        {
-          message: t("actions.repointing", { name: skill.name }),
-          successToast: t("status.repointed", { name: skill.name }),
-        },
-        async (action) => {
-          const report = await invokeTauri(
-            "repointLocalSkillSource",
-            skill.id,
-            newPath,
-            { reassert_auto_sync: autoSyncEnabled },
-          );
-          await loadManagedSkills();
-          return settleSingleReport(action, report);
-        },
-      );
+      await runSingleRefresh(skill, {
+        message: t("actions.repointing", { name: skill.name }),
+        success: t("status.repointed", { name: skill.name }),
+      }, () => invokeTauri("repointLocalSkillSource", skill.id, newPath, { reassert_auto_sync: autoSyncEnabled }));
     },
-    [
-      autoSyncEnabled, formatError, handleRepointGitSkill, loadManagedSkills, runAction,
-      setError, settleSingleReport, t,
-    ],
+    [autoSyncEnabled, formatError, handleRepointGitSkill, runSingleRefresh, setError, t],
   );
 
   /**

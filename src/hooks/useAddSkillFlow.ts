@@ -2,21 +2,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   GitSkillCandidate,
   ImportProgressDto,
-  ImportReportDto,
   InstallResultDto,
   LocalSkillCandidate,
   OnboardingPlan,
   OnboardingSelectionDto,
 } from "../components/skills/types";
 
+import { importOutcome, installOutcome, type InstallDeployment, type Outcome, type PlainEntry } from "../lib/reportOutcome";
 import { defaultImportVariantPath } from "../lib/skillPresentation";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import { useCandidatePick } from "./useCandidatePick";
 import type { SkillLibrary } from "./useSkillLibrary";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type {
-  ActionErrorEntry,
-  CompletionToast,
   StatusReporter,
   TranslateFn,
 } from "./useStatusReporter";
@@ -35,7 +33,6 @@ export type AddSkillFlowDeps = {
     SyncOrchestration,
     | "autoSyncEnabled"
     | "isInstalled"
-    | "syncFailureEntries"
     | "syncSkillsToTools"
     | "syncTargets"
     | "targetAllInstalled"
@@ -58,6 +55,8 @@ export function useAddSkillFlow({
 }: AddSkillFlowDeps) {
   const {
     loading,
+    notify,
+    showActionWarnings,
     runAction,
     setActionMessage,
     setError,
@@ -67,7 +66,6 @@ export function useAddSkillFlow({
   const {
     autoSyncEnabled,
     isInstalled,
-    syncFailureEntries,
     syncSkillsToTools,
     syncTargets,
     targetAllInstalled,
@@ -103,46 +101,21 @@ export function useAddSkillFlow({
     [isInstalled, syncTargets, tools],
   );
 
-  /**
-   * Canonical install→deploy tail: after a skill is installed, auto-sync it
-   * to the user-selected installed targets (when auto-sync is on) and return
-   * the failure entries to surface. When no targets are selected+installed,
-   * `noTargets: "set-error"` reports it immediately via setError (single
-   * installs) while `noTargets: "collect"` returns it as an error entry
-   * (batch installs).
-   */
+  /** Acquisition already succeeded: even a thrown deploy cannot undo it. */
   const deployNewSkill = useCallback(
-    async (
-      created: InstallResultDto,
-      opts: { noTargets: "set-error" | "collect" },
-    ): Promise<{ title: string; message: string }[]> => {
-      if (!autoSyncEnabled) return [];
+    async (created: InstallResultDto): Promise<InstallDeployment> => {
+      if (!autoSyncEnabled) return { status: "disabled" };
       const selectedInstalledIds = getSelectedInstalledIds();
-      if (selectedInstalledIds.length === 0) {
-        const message = t("errors.noSyncTargets");
-        if (opts.noTargets === "set-error") {
-          setError(message);
-          return [];
-        }
-        return [
-          { title: t("errors.unsyncedTitle", { name: created.name }), message },
-        ];
+      if (!selectedInstalledIds.length) return { status: "no-targets" };
+      try {
+        return { status: "reported", report: await syncSkillsToTools(
+          [toSyncItem(created)], selectedInstalledIds, { overwriteIfSameContent: true },
+        ) };
+      } catch (error) {
+        return { status: "failed", error };
       }
-      const report = await syncSkillsToTools(
-        [toSyncItem(created)],
-        selectedInstalledIds,
-        { overwriteIfSameContent: true },
-      );
-      return syncFailureEntries(report, { includeNotWritableSkips: true });
     },
-    [
-      autoSyncEnabled,
-      getSelectedInstalledIds,
-      setError,
-      syncFailureEntries,
-      syncSkillsToTools,
-      t,
-    ],
+    [autoSyncEnabled, getSelectedInstalledIds, syncSkillsToTools],
   );
 
   /**
@@ -163,17 +136,17 @@ export function useAddSkillFlow({
   );
 
   /** After any install (single or batch): the add modal is done, the library has changed. */
-  const finishInstall = useCallback(async () => {
-    setShowAddModal(false);
-    await refreshWithoutFailingAction(loadManagedSkills);
+  const finishInstall = useCallback(async (completion: Outcome["completion"]) => {
+    if (completion.closeModal) setShowAddModal(false);
+    if (completion.reload) await refreshWithoutFailingAction(loadManagedSkills);
   }, [loadManagedSkills, refreshWithoutFailingAction]);
 
   const pickDeps = {
     t,
     reporter,
     isSkillNameTaken,
-    deploy: (created: InstallResultDto) =>
-      deployNewSkill(created, { noTargets: "collect" }),
+    deploy: deployNewSkill,
+    toolLabelById,
     afterBatch: finishInstall,
   };
 
@@ -320,99 +293,11 @@ export function useAddSkillFlow({
     [plan],
   );
 
-  /**
-   * The import report, rendered: a group that failed, a Sync target that
-   * failed, and an original the backend kept or could not remove each become
-   * one error entry. Successful groups and deliberate `removed` originals
-   * stay silent.
-   */
-  const importReportEntries = useCallback(
-    (report: ImportReportDto) => {
-      const entries: ActionErrorEntry[] = [];
-      for (const group of report.groups) {
-        const name = group.group_name;
-        if (group.status.status === "failed") {
-          entries.push({
-            title: t("errors.importFailedTitle", { name }),
-            message: formatError(group.status.error) ?? "",
-          });
-          continue;
-        }
-        for (const target of group.status.targets) {
-          if (target.status.status === "synced") continue;
-          const tool = toolLabelById[target.tool] ?? target.tool;
-          entries.push({
-            title: t("errors.syncFailedTitle", { name, tool }),
-            message:
-              target.status.error.code === "TARGET_EXISTS"
-                ? t("errors.syncTargetExistsMessage", {
-                    path: target.status.error.path,
-                  })
-                : (formatError(target.status.error) ?? ""),
-          });
-        }
-        for (const original of group.status.originals) {
-          const tool = toolLabelById[original.tool] ?? original.tool;
-          if (original.status.status === "kept_divergent") {
-            // Not a failure: the copy differs, so it was deliberately left
-            // alone — the operator decides what to do with it.
-            entries.push({
-              title: t("errors.importKeptDivergentTitle", { name, tool }),
-              message: t("errors.importKeptDivergentMessage", {
-                path: original.path,
-              }),
-            });
-          } else if (original.status.status === "failed") {
-            entries.push({
-              title: t("errors.importCleanupFailedTitle", { name, tool }),
-              message: formatError(original.status.error) ?? "",
-            });
-          }
-        }
-      }
-      return entries;
-    },
-    [formatError, t, toolLabelById],
-  );
-
-  /**
-   * The completion toast for an import: the completion line as the title
-   * (a warning carrying the counts when any group failed) and, as the
-   * message, one line per Tool the backend synced beyond the auto-sync
-   * policy (it held a variant byte-identical to the chosen one, so its
-   * original was overwritten in place rather than left as an untracked
-   * duplicate). Not an error — the operator is told why each deselected
-   * Tool received a link, on lines that stay readable.
-   */
-  const importSuccessToast = useCallback(
-    (report: ImportReportDto): CompletionToast => {
-      const forcedLines: string[] = [];
-      for (const group of report.groups) {
-        if (group.status.status !== "imported") continue;
-        for (const forced of group.status.forced_tools) {
-          forcedLines.push(
-            t("status.importSourceToolForced", {
-              name: group.group_name,
-              tool: toolLabelById[forced] ?? forced,
-            }),
-          );
-        }
-      }
-      const message =
-        forcedLines.length > 0 ? forcedLines.join("\n") : undefined;
-      return report.failed > 0
-        ? {
-            kind: "warning",
-            title: t("status.importPartial", {
-              imported: report.imported,
-              failed: report.failed,
-            }),
-            message,
-          }
-        : { title: t("status.importCompleted"), message };
-    },
-    [t, toolLabelById],
-  );
+  const publishOutcome = (outcome: Outcome<PlainEntry>) => {
+    showActionErrors(outcome.errors);
+    showActionWarnings(outcome.warnings);
+    if (outcome.toast) notify(outcome.toast.kind, outcome.toast.message, outcome.toast.detail);
+  };
 
   /**
    * Import is one backend call: the selections plus the auto-sync policy.
@@ -424,7 +309,7 @@ export function useAddSkillFlow({
    */
   const handleImport = async () => {
     if (!plan) return;
-    await runAction({ successToast: importSuccessToast }, async () => {
+    await runAction({}, async () => {
       const selections: OnboardingSelectionDto[] = [];
       for (const group of plan.groups) {
         if (!selected[group.name]) continue;
@@ -463,18 +348,13 @@ export function useAddSkillFlow({
         },
         onProgress,
       );
-      const collectedErrors = importReportEntries(report);
-
-      await refreshWithoutFailingAction(async () => {
+      const outcome = importOutcome(report, { t, toolLabelById });
+      if (outcome.completion.reload) await refreshWithoutFailingAction(async () => {
         await loadManagedSkills();
         await fetchPlan();
       });
-      if (collectedErrors.length > 0) {
-        showActionErrors(collectedErrors);
-      } else {
-        setShowImportModal(false);
-      }
-      return report;
+      if (outcome.completion.closeModal) setShowImportModal(false);
+      publishOutcome(outcome);
     });
   };
 
@@ -486,7 +366,6 @@ export function useAddSkillFlow({
     await runAction(
       {
         message: t("actions.creatingLocalSkill"),
-        successToast: t("status.localSkillCreated"),
       },
       async (action) => {
         const basePath = localPath.trim();
@@ -510,13 +389,12 @@ export function useAddSkillFlow({
           candidates[0].subpath,
           localName.trim() || null,
         );
-        const deployErrors = await deployNewSkill(created, {
-          noTargets: "set-error",
-        });
-        if (deployErrors.length > 0) showActionErrors(deployErrors);
+        const deployment = await deployNewSkill(created);
+        const outcome = installOutcome([{ name: created.name, status: "installed", result: created, deployment }], { t, toolLabelById, source: "local" });
+        publishOutcome(outcome);
         setLocalPath("");
         setLocalName("");
-        await finishInstall();
+        await finishInstall(outcome.completion);
       },
     );
   };
@@ -529,7 +407,6 @@ export function useAddSkillFlow({
     await runAction(
       {
         message: t("actions.creatingGitSkill"),
-        successToast: t("status.gitSkillCreated"),
       },
       async (action) => {
         const url = gitUrl.trim();
@@ -584,13 +461,12 @@ export function useAddSkillFlow({
           gitName.trim() || null,
           chosen.resolution ?? null,
         );
-        const deployErrors = await deployNewSkill(created, {
-          noTargets: "set-error",
-        });
-        if (deployErrors.length > 0) showActionErrors(deployErrors);
+        const deployment = await deployNewSkill(created);
+        const outcome = installOutcome([{ name: created.name, status: "installed", result: created, deployment }], { t, toolLabelById, source: "git" });
+        publishOutcome(outcome);
         setGitUrl("");
         setGitName("");
-        await finishInstall();
+        await finishInstall(outcome.completion);
       },
     );
   };
