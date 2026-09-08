@@ -149,6 +149,9 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   `SKILLS_HUB_*` **feature-flag env vars** (`git_fetcher.rs`, `sync_engine.rs`) are read
   where they apply — they tune behaviour, never locate data.
 - Sync uses a triple fallback: symlink → junction (Windows) → copy.
+- **Content identity** lives in `core/content_identity.rs`: finalize/Edit record it; Propagation,
+  reconcile and same-content checks read the stored identity, backfilled by the module when absent.
+  Unmanaged onboarding candidates use its directory read; hashing stays private to the module.
 - **Target fan-out is backend-owned — one batch command per operator action, never a frontend loop.**
   Each streams progress over a Tauri `Channel` and answers with a report whose per-target
   failures/skips are **report data**, not command errors:

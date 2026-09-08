@@ -44,6 +44,10 @@ _Avoid_: Edit (the current layered change)
 The operator action that re-acquires one refreshable Managed skill from its source, finalizes (replaying Edits inside finalize's window) and propagates — a Refresh batch of one. Restore is this same action rebuilding an absent central copy.
 _Avoid_: re-install
 
+**Content identity**:
+The hash that says whether a copy still matches its central copy; computed at finalize/Edit, read from the row everywhere else, and backfilled by the Content identity module when absent.
+_Avoid_: content hash (the column), checksum
+
 **Sync target**:
 One (skill, tool) pair a sync batch attempts; each target resolves to synced, skipped, or failed as report data, never as a command error.
 _Avoid_: sync pair, destination
