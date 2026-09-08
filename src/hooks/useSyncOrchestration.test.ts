@@ -209,6 +209,60 @@ describe("useSyncOrchestration target defaulting", () => {
   });
 });
 
+// Mirrors the backend rule (settings::effective_global_tool_targets):
+// the recorded selection wins, detection is only the never-configured
+// fallback, and the set is never intersected with detection.
+describe("useSyncOrchestration effective sync targets", () => {
+  it("falls back to the installed tools when no selection was ever saved", async () => {
+    stubBackend();
+    const { result } = renderSync();
+
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+    expect(result.current.effectiveSyncTargetIds).toEqual([
+      "claude",
+      "pi",
+      "cursor",
+    ]);
+  });
+
+  it("takes the saved selection verbatim, keeping an uninstalled entry", async () => {
+    stubBackend({
+      config: {
+        global_selected_tools: ["cursor", "goose"],
+        scan_selected_tools_only: true,
+      },
+    });
+    const { result } = renderSync();
+
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+    // goose is not installed and survives: the backend reports it as a skip,
+    // which is the operator's only signal that the selection is stale.
+    expect(result.current.effectiveSyncTargetIds).toEqual(["cursor", "goose"]);
+  });
+
+  it("an empty saved selection means sync nowhere, never a fallback", async () => {
+    stubBackend({
+      config: { global_selected_tools: [], scan_selected_tools_only: true },
+    });
+    const { result } = renderSync();
+
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+    expect(result.current.effectiveSyncTargetIds).toEqual([]);
+  });
+
+  it("follows the selection saved through the tool config modal", async () => {
+    stubBackend();
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+
+    await act(async () => {
+      await result.current.handleToolConfigConfirm(["claude"]);
+    });
+
+    expect(result.current.effectiveSyncTargetIds).toEqual(["claude"]);
+  });
+});
+
 describe("useSyncOrchestration shared-dir groups", () => {
   it("toggling a shared-dir tool toggles its whole group after confirm", async () => {
     stubBackend();

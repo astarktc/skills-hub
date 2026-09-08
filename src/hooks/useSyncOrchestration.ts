@@ -131,6 +131,20 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
     [tools, installedToolIds],
   );
 
+  /**
+   * The tools a global sync writes to. Mirrors the backend rule
+   * (`settings::effective_global_tool_targets`) exactly: the operator's
+   * recorded selection when they configured one — including an empty one,
+   * which means "sync nowhere" — otherwise every detected tool. Detection is
+   * a fallback for a never-configured install, never an override of intent,
+   * and the set is not intersected with detection: a selected-but-uninstalled
+   * tool stays in it so the backend reports it as a skip.
+   */
+  const effectiveSyncTargetIds = useMemo(
+    () => globalSelectedTools ?? installedToolIds,
+    [globalSelectedTools, installedToolIds],
+  );
+
   const relevantNewlyInstalled = useMemo(() => {
     if (!toolStatus) return [] as string[];
     return filterRelevantNewlyInstalled(
@@ -333,6 +347,7 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
     installedToolIds,
     isInstalled,
     installedTools,
+    effectiveSyncTargetIds,
     globalSelectedTools,
     scanSelectedToolsOnly,
     syncTargets,

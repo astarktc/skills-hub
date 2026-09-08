@@ -34,7 +34,7 @@ export type SkillLibraryDeps = {
   sync: Pick<
     SyncOrchestration,
     | "autoSyncEnabled"
-    | "installedToolIds"
+    | "effectiveSyncTargetIds"
     | "requestSharedDirConfirmation"
     | "syncSkillsToTools"
     | "toolLabelById"
@@ -67,7 +67,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   } = reporter;
   const {
     autoSyncEnabled,
-    installedToolIds,
+    effectiveSyncTargetIds,
     requestSharedDirConfirmation,
     syncSkillsToTools,
     toolLabelById,
@@ -216,13 +216,16 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     }
   }, [applyOutcome, foldContext, formatError, setError]);
 
+  // The link button deploys to the operator's effective target set (their
+  // recorded selection, or detection when they never configured one) — never
+  // to every detected tool.
   const handleSyncSkillToAllTools = useCallback(async (skill: ManagedSkill) => {
-    if (!installedToolIds.length) return;
+    if (!effectiveSyncTargetIds.length) return;
     await runAction({}, async () => {
-      const report = await syncSkillsToTools([toSyncItem(skill)], installedToolIds);
+      const report = await syncSkillsToTools([toSyncItem(skill)], effectiveSyncTargetIds);
       return applyOutcome(syncOutcome(report, { ...foldContext, action: "bulk" }));
     });
-  }, [applyOutcome, foldContext, installedToolIds, runAction, syncSkillsToTools]);
+  }, [applyOutcome, effectiveSyncTargetIds, foldContext, runAction, syncSkillsToTools]);
 
   const syncAllManagedToTools = useCallback(async (toolIds: string[]) => {
     if (!autoSyncEnabled || !managedSkills.length || !toolIds.length) return;
