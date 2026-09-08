@@ -153,16 +153,23 @@ fn propagate_global_rows(
     now: i64,
     report: &mut PropagationReport,
 ) -> Result<()> {
-    let rows = store.list_skill_targets(skill_id)?;
+    let rows: Vec<_> = store
+        .list_skill_targets(skill_id)?
+        .into_iter()
+        .map(|row| {
+            let adapter = adapter_by_key(&row.tool);
+            (row, adapter)
+        })
+        .collect();
     let mut handled: Vec<String> = Vec::new();
 
-    for row in &rows {
+    for (row, adapter) in &rows {
         if handled.contains(&row.tool) {
             continue;
         }
         handled.push(row.tool.clone());
 
-        let Some(adapter) = adapter_by_key(&row.tool) else {
+        let Some(adapter) = *adapter else {
             report.targets.push(skipped_global(
                 &row.tool,
                 PropagationSkip::UnknownTool {
@@ -185,8 +192,8 @@ fn propagate_global_rows(
             .collect();
         let group: Vec<(&SkillTargetRecord, &'static ToolAdapter)> = rows
             .iter()
-            .filter(|r| r.tool == row.tool || sharing.contains(&r.tool.as_str()))
-            .filter_map(|r| adapter_by_key(&r.tool).map(|a| (r, a)))
+            .filter(|(r, _)| r.tool == row.tool || sharing.contains(&r.tool.as_str()))
+            .filter_map(|(r, a)| a.map(|a| (r, a)))
             .collect();
         for (member, _) in &group {
             if !handled.contains(&member.tool) {

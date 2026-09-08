@@ -113,7 +113,12 @@ pub(crate) fn sync_assignment_target(
     let target = resolve_assignment_artifact(ctx.project_path, ctx.adapter, assignment, || {
         Ok(Some(ctx.skill.name.clone()))
     })?
-    .expect("a live skill name always locates the artifact");
+    .ok_or_else(|| {
+        anyhow::anyhow!(SignalError::NotFound {
+            kind: "skill".to_string(),
+            id: assignment.skill_id.clone(),
+        })
+    })?;
 
     let outcome =
         sync_engine::sync_dir_for_tool_with_overwrite(ctx.adapter, source, &target, ctx.overwrite)?;
