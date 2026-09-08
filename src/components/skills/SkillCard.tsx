@@ -14,23 +14,29 @@ import { SiGithub } from "@icons-pack/react-simple-icons";
 import type { TFunction } from "i18next";
 import type { CopyToClipboardFn } from "../../hooks/useStatusReporter";
 import InvocationModeBadge from "./InvocationModeBadge";
-import type { ManagedSkill, ToolOption } from "./types";
+import type { ManagedSkill, SkillTargetDto, ToolOption } from "./types";
 import {
   formatRelativeTime,
   importedSourceLine,
   repoInfo,
   skillSourceLabel,
+  skillToolChips,
   sourceKind,
   unlocatableRepairs,
   UNLOCATABLE_STATE_KEY,
   UNLOCATABLE_TOOLTIP_KEY,
   UNLOCATABLE_REPAIR_KEY,
+  type SkillToolChip,
   type UnlocatableRepair,
 } from "../../lib/skillPresentation";
+
+type SyncedChip = SkillToolChip & { target: SkillTargetDto };
 
 type SkillCardProps = {
   skill: ManagedSkill;
   installedTools: ToolOption[];
+  /** Every registry tool, detected or not — labels the skill's orphaned rows. */
+  allTools: ToolOption[];
   loading: boolean;
   onUpdate: (skill: ManagedSkill) => void;
   /** Unlocatable-skill repairs (see the badge row); Remove is `onDelete`. */
@@ -53,6 +59,7 @@ const MAX_VISIBLE_BADGES = 5;
 const SkillCard = ({
   skill,
   installedTools,
+  allTools,
   loading,
   onUpdate,
   onRepoint,
@@ -102,18 +109,14 @@ const SkillCard = ({
     onClick: repairHandlers[repair],
   }));
 
-  // Split tools into synced and remaining for badge display
-  const syncedTools: { tool: ToolOption; target: (typeof skill.targets)[0] }[] =
-    [];
-  const unsyncedTools: ToolOption[] = [];
-  for (const tool of installedTools) {
-    const target = skill.targets.find((tgt) => tgt.tool === tool.id);
-    if (target) {
-      syncedTools.push({ tool, target });
-    } else {
-      unsyncedTools.push(tool);
-    }
-  }
+  // Chips are the union of the rows this skill has and the installed tools,
+  // so a target for an undetected Tool stays reachable (it renders muted and
+  // keeps its unsync affordance) instead of being invisible.
+  const chips = skillToolChips(skill.targets, installedTools, allTools);
+  const syncedTools = chips.filter(
+    (chip): chip is SyncedChip => chip.target !== null,
+  );
+  const unsyncedTools = chips.filter((chip) => chip.target === null);
 
   const [expanded, setExpanded] = useState(false);
   const needsCollapse = syncedTools.length > MAX_VISIBLE_BADGES;
@@ -229,22 +232,31 @@ const SkillCard = ({
         <div
           className={`tool-matrix${!expanded && needsCollapse ? " collapsed" : ""}`}
         >
-          {visibleSynced.map(({ tool, target }) => {
-            const isError = target.status === "error";
+          {visibleSynced.map((chip) => {
+            const isError = chip.target.status === "error";
             return (
               <button
-                key={`${skill.id}-${tool.id}`}
+                key={`${skill.id}-${chip.id}`}
                 type="button"
-                className={`tool-pill active${isError ? " error" : ""}`}
+                className={`tool-pill active${isError ? " error" : ""}${
+                  chip.detected ? "" : " undetected"
+                }`}
                 title={
-                  isError
-                    ? t("syncTarget.errorTitle", { tool: tool.label })
-                    : `${tool.label} (${target.mode ?? t("unknown")})`
+                  !chip.detected
+                    ? t("toolNotDetectedTooltip", { tool: chip.label })
+                    : isError
+                      ? t("syncTarget.errorTitle", { tool: chip.label })
+                      : `${chip.label} (${chip.target.mode ?? t("unknown")})`
                 }
-                onClick={() => void onToggleTool(skill, tool.id)}
+                onClick={() => void onToggleTool(skill, chip.id)}
               >
                 <span className="status-badge" />
-                {tool.label}
+                {chip.label}
+                {chip.detected ? null : (
+                  <span className="pick-item-badge muted">
+                    ({t("toolNotDetected")})
+                  </span>
+                )}
               </button>
             );
           })}
@@ -258,15 +270,15 @@ const SkillCard = ({
             </button>
           ) : null}
           {expanded &&
-            unsyncedTools.map((tool) => (
+            unsyncedTools.map((chip) => (
               <button
-                key={`${skill.id}-${tool.id}`}
+                key={`${skill.id}-${chip.id}`}
                 type="button"
                 className="tool-pill inactive"
-                title={tool.label}
-                onClick={() => void onToggleTool(skill, tool.id)}
+                title={chip.label}
+                onClick={() => void onToggleTool(skill, chip.id)}
               >
-                {tool.label}
+                {chip.label}
               </button>
             ))}
         </div>

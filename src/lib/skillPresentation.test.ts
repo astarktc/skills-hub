@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { SkillTargetDto } from "../components/skills/types";
 import {
   defaultImportVariantPath,
   filterAndSortSkills,
@@ -9,7 +10,9 @@ import {
   skillSourceLabel,
   sourceKind,
   toolLabel,
+  skillToolChips,
   unlocatableRepairs,
+  visibleToolChoices,
   UNLOCATABLE_STATE_KEY,
   UNLOCATABLE_TOOLTIP_KEY,
   UNLOCATABLE_REPAIR_KEY,
@@ -422,5 +425,106 @@ describe("importedSourceLine", () => {
     const line = importedSourceLine({ imported_from_tool: null }, t);
     expect(line.tool).toBe("unknown");
     expect(line.importedFrom).toBe('provenance.importedFrom({"tool":"unknown"})');
+  });
+});
+
+describe("skillToolChips", () => {
+  const target = (tool: string): SkillTargetDto => ({
+    tool,
+    mode: "symlink",
+    status: "synced",
+    target_path: `/tools/${tool}/skill`,
+    synced_at: 1,
+  });
+  const allTools = [
+    { id: "claude_code", label: "Claude Code" },
+    { id: "cursor", label: "Cursor" },
+    { id: "pi", label: "Pi" },
+  ];
+  const installed = [
+    { id: "claude_code", label: "Claude Code" },
+    { id: "pi", label: "Pi" },
+  ];
+
+  it("renders a row-only tool as an undetected chip keeping its target", () => {
+    const chips = skillToolChips([target("cursor")], [], allTools);
+    expect(chips).toEqual([
+      {
+        id: "cursor",
+        label: "Cursor",
+        target: target("cursor"),
+        detected: false,
+      },
+    ]);
+  });
+
+  it("renders an installed-only tool as a detected chip with no target", () => {
+    const chips = skillToolChips([], installed, allTools);
+    expect(chips.map((c) => [c.id, c.detected, c.target])).toEqual([
+      ["claude_code", true, null],
+      ["pi", true, null],
+    ]);
+  });
+
+  it("renders a tool that is both installed and synced exactly once", () => {
+    const chips = skillToolChips([target("pi")], installed, allTools);
+    expect(chips).toHaveLength(2);
+    expect(chips[1]).toEqual({
+      id: "pi",
+      label: "Pi",
+      target: target("pi"),
+      detected: true,
+    });
+  });
+
+  it("renders nothing when the skill has no row and nothing is installed", () => {
+    expect(skillToolChips([], [], allTools)).toEqual([]);
+  });
+
+  it("labels a row whose tool the registry no longer knows by its key", () => {
+    const chips = skillToolChips([target("gone_tool")], [], allTools);
+    expect(chips[0].label).toBe("gone_tool");
+    expect(chips[0].detected).toBe(false);
+  });
+
+  it("keeps installed tools first, undetected rows after", () => {
+    const chips = skillToolChips(
+      [target("cursor"), target("claude_code")],
+      installed,
+      allTools,
+    );
+    expect(chips.map((c) => c.id)).toEqual(["claude_code", "pi", "cursor"]);
+  });
+});
+
+describe("visibleToolChoices", () => {
+  const allTools = [{ key: "claude_code" }, { key: "cursor" }, { key: "pi" }];
+
+  it("shows every tool when the filter is off", () => {
+    expect(
+      visibleToolChoices(allTools, ["pi"], new Set(), false),
+    ).toHaveLength(3);
+  });
+
+  it("shows detected tools when the filter is on", () => {
+    expect(
+      visibleToolChoices(allTools, ["pi"], new Set(), true).map((t) => t.key),
+    ).toEqual(["pi"]);
+  });
+
+  it("keeps a selected-but-undetected tool visible so it can be unticked", () => {
+    expect(
+      visibleToolChoices(allTools, ["pi"], new Set(["cursor"]), true).map(
+        (t) => t.key,
+      ),
+    ).toEqual(["cursor", "pi"]);
+  });
+
+  it("hides an undetected tool that is not selected", () => {
+    expect(
+      visibleToolChoices(allTools, ["pi"], new Set(["pi"]), true).map(
+        (t) => t.key,
+      ),
+    ).toEqual(["pi"]);
   });
 });

@@ -2,6 +2,7 @@ import { memo, useState } from "react";
 import type { TFunction } from "i18next";
 import Modal from "./Modal";
 import type { ToolStatusDto } from "../skills/types";
+import { visibleToolChoices } from "../../lib/skillPresentation";
 
 function buildInitialSelection(
   toolStatus: ToolStatusDto | null,
@@ -70,9 +71,16 @@ const ToolConfigModalInner = ({
 
   const allTools = toolStatus?.tools ?? [];
   const installed = toolStatus?.installed ?? [];
-  const tools = detectedOnly
-    ? allTools.filter((tool) => installed.includes(tool.key))
-    : allTools;
+  // A tool the operator has already selected renders whatever the filter
+  // says: the filter hides undetected tools the operator has no relationship
+  // with, never their own state. An invisible selected entry could not be
+  // unticked yet was re-persisted on every save.
+  const tools = visibleToolChoices(
+    allTools,
+    installed,
+    selectedTools,
+    detectedOnly,
+  );
 
   const handleToggle = (key: string) => {
     setSelectedTools((prev) => {
@@ -137,10 +145,15 @@ const ToolConfigModalInner = ({
                 onChange={() => handleToggle(tool.key)}
               />
               <span>{tool.label}</span>
-              {installed.includes(tool.key) && (
+              {installed.includes(tool.key) ? (
                 <span className="pick-item-badge">
                   {" "}
                   ({t("status.installed")})
+                </span>
+              ) : (
+                <span className="pick-item-badge muted">
+                  {" "}
+                  ({t("toolNotDetected")})
                 </span>
               )}
             </label>

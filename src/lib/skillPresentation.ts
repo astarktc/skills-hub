@@ -6,7 +6,13 @@
  * function in.
  */
 
-import type { InvocationMode, UnlocatableState, UpdateSkipDto } from "../components/skills/types";
+import type {
+  InvocationMode,
+  SkillTargetDto,
+  ToolOption,
+  UnlocatableState,
+  UpdateSkipDto,
+} from "../components/skills/types";
 
 export const INVOCATION_MODES = ["user-and-model", "user-only", "model-only", "neither"] as const;
 export const INVOCATION_LABEL_KEY: Record<InvocationMode, string> = {
@@ -303,6 +309,74 @@ export function unlocatableRepairs(
     return ["restore"];
   }
   return [];
+}
+
+/**
+ * One tool chip on a skill card: a Tool the card must offer the operator,
+ * with the target row it has (if any) and whether detection still sees the
+ * Tool.
+ */
+export type SkillToolChip = {
+  id: string;
+  label: string;
+  /** The skill's Sync target row for this Tool, or null when not synced. */
+  target: SkillTargetDto | null;
+  /** False when detection no longer sees the Tool (an orphaned row). */
+  detected: boolean;
+};
+
+/**
+ * Which tool chips a skill card renders: the union of the target rows the
+ * skill actually has and the installed tools (the "not synced here yet"
+ * affordance). Detection filters what is *offered*, never what the skill
+ * already has — a row for an undetected Tool would otherwise be invisible
+ * and unreachable. Installed tools keep their registry order; undetected
+ * target-bearing tools follow. A row naming a Tool absent from `allTools`
+ * still renders, labelled by its key.
+ */
+export function skillToolChips(
+  targets: SkillTargetDto[],
+  installedTools: ToolOption[],
+  allTools: ToolOption[],
+): SkillToolChip[] {
+  const targetByTool = new Map(targets.map((target) => [target.tool, target]));
+  const chips: SkillToolChip[] = installedTools.map((tool) => ({
+    id: tool.id,
+    label: tool.label,
+    target: targetByTool.get(tool.id) ?? null,
+    detected: true,
+  }));
+  const seen = new Set(chips.map((chip) => chip.id));
+  const labelById = new Map(allTools.map((tool) => [tool.id, tool.label]));
+  for (const target of targets) {
+    if (seen.has(target.tool)) continue;
+    seen.add(target.tool);
+    chips.push({
+      id: target.tool,
+      label: labelById.get(target.tool) ?? target.tool,
+      target,
+      detected: false,
+    });
+  }
+  return chips;
+}
+
+/**
+ * Which tools a Tool-selection list renders: every tool when the operator is
+ * not filtering, otherwise the detected ones plus any tool the saved
+ * selection already carries. A selected-but-undetected tool stays visible so
+ * it can be unticked instead of being silently re-persisted.
+ */
+export function visibleToolChoices<T extends { key: string }>(
+  allTools: T[],
+  installed: string[],
+  selected: ReadonlySet<string>,
+  detectedOnly: boolean,
+): T[] {
+  if (!detectedOnly) return allTools;
+  return allTools.filter(
+    (tool) => installed.includes(tool.key) || selected.has(tool.key),
+  );
 }
 
 /**
