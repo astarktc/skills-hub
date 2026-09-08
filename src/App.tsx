@@ -195,15 +195,27 @@ function App() {
 
   // "Sync all to the new tools" spans two worlds — enable the targets (sync)
   // and push every managed skill (library) — so the binder composes it.
-  const { relevantNewlyInstalled, enableTargetsFor, setShowNewToolsModal } =
-    sync;
+  const {
+    relevantNewlyInstalled,
+    effectiveSyncTargetIds,
+    enableTargetsFor,
+    setShowNewToolsModal,
+  } = sync;
   const { syncAllManagedToTools } = library;
   const handleSyncAllNewTools = useCallback(() => {
     if (relevantNewlyInstalled.length === 0) return;
-    enableTargetsFor(relevantNewlyInstalled);
+    // A sync target set is the operator's recorded selection, not detection —
+    // a newly detected tool outside it is announced but never written to.
+    // (The `scan_selected_tools_only` scan setting must not gate a sync.)
+    const targets = relevantNewlyInstalled.filter((id) =>
+      effectiveSyncTargetIds.includes(id),
+    );
     setShowNewToolsModal(false);
-    void syncAllManagedToTools(relevantNewlyInstalled);
+    if (targets.length === 0) return;
+    enableTargetsFor(targets);
+    void syncAllManagedToTools(targets);
   }, [
+    effectiveSyncTargetIds,
     enableTargetsFor,
     relevantNewlyInstalled,
     setShowNewToolsModal,

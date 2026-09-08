@@ -129,7 +129,7 @@ function removedReport(tools: string[]): RemovalReportDto {
 function makeDeps(overrides?: {
   skills?: ManagedSkill[];
   autoSyncEnabled?: boolean;
-  installedToolIds?: string[];
+  effectiveSyncTargetIds?: string[];
   sharedDirConfirmation?: boolean | Promise<boolean>;
   syncReport?: BatchSyncReportDto;
   refreshReport?: RefreshReportDto;
@@ -217,7 +217,7 @@ function makeDeps(overrides?: {
 
   const sync = {
     autoSyncEnabled: overrides?.autoSyncEnabled ?? true,
-    installedToolIds: overrides?.installedToolIds ?? ["claude", "cursor"],
+    effectiveSyncTargetIds: overrides?.effectiveSyncTargetIds ?? ["claude", "cursor"],
     // The shared-dir confirmation seam: its own decision/label arithmetic
     // is tested in useSharedDirConfirmation.test.ts; here it is a stub that
     // answers with the given verdict.
@@ -402,6 +402,33 @@ describe("cancellation and non-report actions", () => {
     expect(setup.sync.requestSharedDirConfirmation).toHaveBeenCalledWith(
       "claude",
     );
+    expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
+  });
+
+  // Intent beats detection: the link button writes to the effective target
+  // set (the operator's recorded selection), never to every detected tool.
+  it("deploys the link button to the effective target set, not every detected tool", async () => {
+    const setup = makeDeps({ effectiveSyncTargetIds: ["claude", "pi"] });
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleSyncSkillToAllTools(setup.skills[0]);
+    });
+
+    expect(setup.sync.syncSkillsToTools).toHaveBeenCalledWith(
+      [{ skill_id: "s1", name: "alpha", source_path: "/hub/alpha" }],
+      ["claude", "pi"],
+    );
+  });
+
+  it("deploys nowhere when the effective target set is empty", async () => {
+    const setup = makeDeps({ effectiveSyncTargetIds: [] });
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleSyncSkillToAllTools(setup.skills[0]);
+    });
+
     expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
   });
 });

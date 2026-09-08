@@ -18,6 +18,7 @@ use specta::Type;
 
 use super::central_repo::{ensure_central_repo, move_central_repo};
 use super::skill_store::SkillStore;
+use super::tool_adapters::{global_tool_entries, installed_keys};
 
 /// Storage keys — spelled here and nowhere else.
 mod keys {
@@ -236,6 +237,24 @@ pub fn ui_zoom_level(store: &SkillStore) -> f64 {
         .and_then(|raw| raw.trim().parse::<f64>().ok())
         .filter(|v| UI_ZOOM_LEVEL_RANGE.contains(*v))
         .unwrap_or(DEFAULT_UI_ZOOM_LEVEL)
+}
+
+/// The tools a global sync writes to: the operator's recorded selection when
+/// they have configured one, otherwise every detected tool. Detection is a
+/// fallback for a never-configured install, never an override of intent.
+///
+/// An empty selection is a selection — `Some(vec![])` means "sync nowhere",
+/// deliberately distinct from `None`. The set is **not** intersected with
+/// detection either: a selected-but-uninstalled key stays in it and is
+/// reported downstream as a skip (`GlobalSyncError::ToolNotInstalled`), which
+/// is the operator's only signal that their selection has gone stale.
+pub fn effective_global_tool_targets(store: &SkillStore, home: &Path) -> Result<Vec<String>> {
+    Ok(
+        match read_string_list(store, keys::GLOBAL_SELECTED_TOOLS)? {
+            Some(selected) => selected,
+            None => installed_keys(&global_tool_entries(home)),
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------
