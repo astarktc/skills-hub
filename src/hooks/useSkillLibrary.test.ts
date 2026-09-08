@@ -284,6 +284,29 @@ describe("useSkillLibrary refresh", () => {
     expect(mockInvoke.mock.calls.map(([command]) => command)).not.toContain("repointGitSkillSource");
   });
 
+  it("warns instead of opening a stale Re-point action after deletion", async () => {
+    const gitSkill = { ...skill("s1", "alpha"), source_type: "git" };
+    const setup = makeDeps({
+      skills: [gitSkill],
+      refreshReport: {
+        skills: [{ skill_id: "s1", skill_name: "alpha", status: {
+          status: "failed", error: { code: "GITHUB_SKILL_NOT_FOUND", url: "https://github.com/old/repo" },
+        } }],
+        refreshed: 0, failed: 1, skipped: 0, target_failures: 0,
+      },
+    });
+    const { result } = await renderLibrary(setup);
+    await act(async () => { await result.current.handleRefresh(); });
+    const action = vi.mocked(setup.reporter.showActionErrors).mock.calls[0][0][0].action!;
+    mockInvoke.mockResolvedValue([]);
+    await act(async () => { await result.current.handleDeleteManaged(gitSkill); });
+    act(() => action.onClick());
+    expect(setup.reporter.notify).toHaveBeenCalledWith(
+      "warning", 'errors.skillGone {"name":"alpha"}',
+    );
+    expect(result.current.pendingGitRepointSkill).toBeNull();
+  });
+
   it("issues one backend batch for every skill and never fans out a sync itself", async () => {
     const setup = makeDeps({
       skills: [skill("s1", "alpha"), skill("s2", "beta")],

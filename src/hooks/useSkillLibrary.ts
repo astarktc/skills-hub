@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ManagedSkill,
   RefreshProgressDto,
@@ -53,6 +53,7 @@ export type SkillLibraryDeps = {
 export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   const {
     loading,
+    notify,
     runAction,
     setActionMessage,
     setError,
@@ -71,6 +72,10 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   } = sync;
 
   const [managedSkills, setManagedSkills] = useState<ManagedSkill[]>([]);
+  const managedSkillsRef = useRef(managedSkills);
+  useEffect(() => {
+    managedSkillsRef.current = managedSkills;
+  }, [managedSkills]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [pendingGitRepointSkill, setPendingGitRepointSkill] =
     useState<ManagedSkill | null>(null);
@@ -157,6 +162,8 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
                   managed.id === skill.skill_id && sourceKind(managed) === "git",
               )
             : undefined;
+        const skillId = skill.skill_id;
+        const name = skill.skill_name;
         entries.push({
           title: t("errors.updateFailedTitle", { name: skill.skill_name }),
           message: formatError(skill.status.error) ?? "",
@@ -164,7 +171,16 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
             ? {
                 action: {
                   label: t("gitRepoint.action"),
-                  onClick: () => handleRepointGitSkill(managedSkill),
+                  onClick: () => {
+                    const current = managedSkillsRef.current.find(
+                      (managed) => managed.id === skillId,
+                    );
+                    if (!current) {
+                      notify("warning", t("errors.skillGone", { name }));
+                      return;
+                    }
+                    handleRepointGitSkill(current);
+                  },
                 },
               }
             : {}),
@@ -172,7 +188,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
       }
       return entries;
     },
-    [formatError, handleRepointGitSkill, managedSkills, t],
+    [formatError, handleRepointGitSkill, managedSkills, notify, t],
   );
 
   /**

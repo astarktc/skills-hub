@@ -342,6 +342,7 @@ export const resources = {
           "You can uncheck this tool or clean the folder first, then retry.",
         importFailedTitle: "Import failed: {{name}}",
         updateFailedTitle: "Update failed: {{name}}",
+        skillGone: "{{name}} is no longer in your library",
         propagationFailedTitle:
           "Could not update the synced copy: {{name}} -> {{tool}}",
         unsyncedTitle: "Not synced: {{name}}",
@@ -893,6 +894,7 @@ export const resources = {
           "目标目录已存在同名 Skill：{{path}}。为安全起见未覆盖。\n你可以：取消勾选该工具，或先手动清理该目录后重试。",
         importFailedTitle: "导入失败：{{name}}",
         updateFailedTitle: "更新失败：{{name}}",
+        skillGone: "{{name}} 已不在你的技能库中",
         propagationFailedTitle: "已同步副本更新失败：{{name}} -> {{tool}}",
         unsyncedTitle: "未同步：{{name}}",
         moreCount: "（另有{{count}}个）",
