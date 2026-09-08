@@ -27,7 +27,6 @@ import {
   formatRelativeTime,
   importedSourceLine,
   repoInfo,
-  repointDoor,
   sourceKind,
 } from "../../lib/skillPresentation";
 
@@ -529,7 +528,7 @@ const SkillDetailView = ({
             <ArrowLeft size={16} />
             {t("detail.back")}
           </button>
-          {!isExplorePreview && repointDoor(skill) === "git" && onRepoint ? (
+          {!isExplorePreview && sourceKind(skill) === "git" && onRepoint ? (
             <button
               className="btn btn-secondary"
               type="button"

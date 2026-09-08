@@ -19,7 +19,6 @@ import {
   formatRelativeTime,
   importedSourceLine,
   repoInfo,
-  repointDoor,
   skillSourceLabel,
   sourceKind,
   unlocatableRepairs,
@@ -284,7 +283,7 @@ const SkillCard = ({
             <RefreshCw size={16} />
           </button>
         ) : null}
-        {repointDoor(skill) === "git" ? (
+        {sourceKind(skill) === "git" ? (
           <button
             className="card-btn secondary-action"
             type="button"
