@@ -406,6 +406,15 @@ pub struct GitSkillCandidate {
     pub name: String,
     pub description: Option<String>,
     pub subpath: String,
+    #[serde(default)]
+    pub resolution: Option<GitSourceResolution>,
+}
+
+/// The listing's branch/path decision, including an explicit default-branch choice.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct GitSourceResolution {
+    pub branch: Option<String>,
+    pub subpath: Option<String>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, specta::Type)]
@@ -424,6 +433,7 @@ fn git_candidate(c: DiscoveredSkill) -> GitSkillCandidate {
         name: c.name,
         description: c.description,
         subpath: c.subpath,
+        resolution: None,
     }
 }
 
@@ -452,28 +462,58 @@ pub fn list_git_skills(
     repo_url: &str,
     target_name: Option<&str>,
 ) -> Result<GitSkillListing> {
-    let (parsed, _) = super::git_acquisition::resolve_tree_source(
-        &parse_github_url(repo_url),
-        None,
+    list_git_skills_with(
+        repo_url,
+        target_name,
         &HttpGithubApi::new(super::settings::github_token_or_none(store)),
-    );
-    let (repo_dir, _rev) = fetch_through_cache(
-        &paths.cache_dir,
-        &FetchRequest {
-            clone_url: &parsed.clone_url,
-            branch: parsed.branch.as_deref(),
-            subpath: None,
-            ttl_ms: super::settings::git_cache_ttl_ms(store),
-            cancel: None,
+        |parsed| {
+            fetch_through_cache(
+                &paths.cache_dir,
+                &FetchRequest {
+                    clone_url: &parsed.clone_url,
+                    branch: parsed.branch.as_deref(),
+                    subpath: None,
+                    ttl_ms: super::settings::git_cache_ttl_ms(store),
+                    cancel: None,
+                },
+            )
+            .map(|(dir, _revision)| dir)
         },
-    )?;
+    )
+}
 
-    let candidates = git_candidates_in(&repo_dir, parsed.subpath.as_deref());
+fn list_git_skills_with(
+    repo_url: &str,
+    target_name: Option<&str>,
+    api: &dyn GithubApi,
+    checkout: impl FnOnce(&super::git_acquisition::GitSource) -> Result<PathBuf>,
+) -> Result<GitSkillListing> {
+    let (parsed, _) =
+        super::git_acquisition::resolve_tree_source(&parse_github_url(repo_url), None, api);
+    let repo_dir = checkout(&parsed)?;
+
+    let candidates = resolved_git_candidates_in(&repo_dir, &parsed);
     let target_match = target_name.map(|target| match_skill_candidate(target, &candidates).into());
     Ok(GitSkillListing {
         candidates,
         target_match,
     })
+}
+
+fn resolved_git_candidates_in(
+    repo_dir: &Path,
+    source: &super::git_acquisition::GitSource,
+) -> Vec<GitSkillCandidate> {
+    git_candidates_in(repo_dir, source.subpath.as_deref())
+        .into_iter()
+        .map(|mut candidate| {
+            candidate.resolution = Some(GitSourceResolution {
+                branch: source.branch.clone(),
+                subpath: source.subpath.clone(),
+            });
+            candidate
+        })
+        .collect()
 }
 
 /// Git listing over a cloned repo. A folder URL (`subpath`) scopes discovery
@@ -563,7 +603,46 @@ pub(crate) fn install_git_skill_from_selection_with(
     cancel: Option<&CancelToken>,
     api: &dyn GithubApi,
 ) -> Result<InstallResult> {
-    let source = parse_github_url(repo_url);
+    install_git_selection_with(paths, store, repo_url, (subpath, None), name, cancel, api)
+}
+
+/// Install using the listing's exact source decision, without another refs lookup.
+pub fn install_git_skill_from_listing(
+    paths: &InstallerPaths,
+    store: &SkillStore,
+    repo_url: &str,
+    selection: (&str, Option<&GitSourceResolution>),
+    name: Option<String>,
+    cancel: Option<&CancelToken>,
+) -> Result<InstallResult> {
+    if selection.1.is_none() {
+        return install_git_skill_from_selection(paths, store, repo_url, selection.0, name, cancel);
+    }
+    install_git_selection_with(
+        paths,
+        store,
+        repo_url,
+        selection,
+        name,
+        cancel,
+        &HttpGithubApi::new(super::settings::github_token_or_none(store)),
+    )
+}
+
+fn install_git_selection_with(
+    paths: &InstallerPaths,
+    store: &SkillStore,
+    repo_url: &str,
+    (subpath, resolution): (&str, Option<&GitSourceResolution>),
+    name: Option<String>,
+    cancel: Option<&CancelToken>,
+    api: &dyn GithubApi,
+) -> Result<InstallResult> {
+    let mut source = parse_github_url(repo_url);
+    if let Some(resolution) = resolution {
+        source.branch = resolution.branch.clone();
+        source.subpath = resolution.subpath.clone();
+    }
     let name = name_intent(name, || {
         derive_name_from_subpath(&source.clone_url, Some(subpath))
     });
@@ -573,19 +652,26 @@ pub(crate) fn install_git_skill_from_selection_with(
     ensure_name_available(central_dir, name.requested())?;
 
     let staged = StagingDir::new_in(central_dir);
-    let acquired = acquire(
-        &AcquireRequest {
-            source: &source,
-            intent: SkillIntent::Subpath(subpath),
-            stored_subpath: None,
-            dest: staged.path(),
-            cache_dir: &paths.cache_dir,
-            ttl_ms: super::settings::git_cache_ttl_ms(store),
-            cancel,
-            allow_fast_path: true,
-        },
-        api,
-    )?;
+    let request = AcquireRequest {
+        source: &source,
+        intent: SkillIntent::Subpath(subpath),
+        stored_subpath: None,
+        dest: staged.path(),
+        cache_dir: &paths.cache_dir,
+        ttl_ms: super::settings::git_cache_ttl_ms(store),
+        cancel,
+        allow_fast_path: true,
+    };
+    let acquired = if resolution.is_some() {
+        super::git_acquisition::acquire_resolved(
+            &request,
+            source.clone(),
+            super::git_acquisition::TreeSplit::Parser,
+            api,
+        )
+    } else {
+        acquire(&request, api)
+    }?;
     // The selection has to be a skill, whichever adapter delivered it.
     ensure_installable_skill_dir(staged.path())?;
 

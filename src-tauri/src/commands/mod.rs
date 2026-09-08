@@ -22,9 +22,9 @@ use crate::core::global_sync::{
     BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome, BatchTargetStatus,
 };
 use crate::core::installer::{
-    clone_for_explore_preview, install_git_skill_from_selection,
-    install_local_skill_from_selection, list_git_skills, list_local_skills, GitSkillListing,
-    InstallResult, InstallerPaths, LocalSkillCandidate,
+    clone_for_explore_preview, install_git_skill_from_listing, install_local_skill_from_selection,
+    list_git_skills, list_local_skills, GitSkillListing, InstallResult, InstallerPaths,
+    LocalSkillCandidate,
 };
 use crate::core::log_reveal::log_reveal_target;
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
@@ -360,17 +360,18 @@ pub async fn install_git_selection(
     repoUrl: String,
     subpath: String,
     name: Option<String>,
+    resolution: Option<crate::core::installer::GitSourceResolution>,
 ) -> Result<InstallResultDto, CommandError> {
     let store = store.inner().clone();
     let cancel = cancel.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         cancel.reset();
         let paths = installer_paths(&app, &store)?;
-        let result = install_git_skill_from_selection(
+        let result = install_git_skill_from_listing(
             &paths,
             &store,
             &repoUrl,
-            &subpath,
+            (&subpath, resolution.as_ref()),
             name,
             Some(&cancel),
         )?;

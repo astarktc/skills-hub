@@ -247,6 +247,7 @@ describe("useAddSkillFlow git flow", () => {
       "https://github.com/x/y",
       "skills/alpha",
       null,
+      null,
     );
     // goose is selected but not installed; cursor installed but deselected.
     expect(setup.sync.syncSkillsToTools).toHaveBeenCalledWith(
@@ -263,6 +264,17 @@ describe("useAddSkillFlow git flow", () => {
     expect(setup.reporter.setSuccessToastMessage).toHaveBeenCalledWith(
       "status.gitSkillCreated",
     );
+  });
+
+  it("passes the listing's source resolution unchanged to install", async () => {
+    const resolution = { branch: "feature/x", subpath: "skills" };
+    stubBackend({ gitCandidates: [{ ...gitCandidate("alpha", "skills/alpha"), resolution }] });
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    act(() => result.current.setGitUrl("https://github.com/x/y/tree/feature/x/skills"));
+    await act(async () => { await result.current.handleCreate(); });
+    expect(installGitCalls()).toEqual([["installGitSelection",
+      "https://github.com/x/y/tree/feature/x/skills", "skills/alpha", null, resolution]]);
   });
 
   it("multiple candidates open the pick modal with everything preselected", async () => {
@@ -318,6 +330,7 @@ describe("useAddSkillFlow explore auto-select", () => {
         "installGitSelection",
         "https://github.com/x/y",
         "skills/react",
+        null,
         null,
       ),
     );

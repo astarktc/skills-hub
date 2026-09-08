@@ -1151,6 +1151,87 @@ impl crate::core::git_acquisition::GithubApi for StubApi {
     }
 }
 
+struct CountingRefsApi {
+    refs_calls: std::cell::Cell<usize>,
+    inner: StubApi,
+}
+
+impl crate::core::git_acquisition::GithubApi for CountingRefsApi {
+    fn matching_refs(
+        &self,
+        repo: &crate::core::git_acquisition::GithubRepo,
+        prefix: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        self.refs_calls.set(self.refs_calls.get() + 1);
+        // A second lookup disagrees, modelling rate limiting after listing.
+        if self.refs_calls.get() > 1 {
+            return Ok(vec![]);
+        }
+        self.inner.matching_refs(repo, prefix)
+    }
+    fn branch_sha(
+        &self,
+        coords: &crate::core::git_acquisition::GithubCoords,
+    ) -> anyhow::Result<String> {
+        assert_eq!(coords.branch, "feature/x");
+        self.inner.branch_sha(coords)
+    }
+    fn download_directory(
+        &self,
+        coords: &crate::core::git_acquisition::GithubCoords,
+        dest: &Path,
+        cancel: Option<&crate::core::cancel_token::CancelToken>,
+    ) -> anyhow::Result<()> {
+        assert_eq!(coords.subpath, "skills/a");
+        self.inner.download_directory(coords, dest, cancel)
+    }
+}
+
+#[test]
+fn listing_and_install_share_one_refs_resolution_and_old_selection_still_resolves() {
+    for reuse_listing in [true, false] {
+        let (_dir, store) = make_store();
+        let (roots, paths) = make_paths();
+        let checkout = roots.path().join("checkout");
+        fs::create_dir_all(checkout.join("skills/a")).unwrap();
+        fs::write(checkout.join("skills/a/SKILL.md"), "---\nname: a\n---\n").unwrap();
+        let api = CountingRefsApi {
+            refs_calls: std::cell::Cell::new(0),
+            inner: StubApi::serving("listed-revision"),
+        };
+        let url = "https://github.com/owner/repo/tree/feature/x/skills";
+        let listing = super::list_git_skills_with(url, None, &api, |source| {
+            assert_eq!(source.branch.as_deref(), Some("feature/x"));
+            Ok(checkout)
+        })
+        .unwrap();
+        assert_eq!(api.refs_calls.get(), 1);
+        let candidate = &listing.candidates[0];
+        let resolution = if reuse_listing {
+            candidate.resolution.as_ref()
+        } else {
+            // An old caller carries no listing coordinates; its install must resolve.
+            api.refs_calls.set(0);
+            None
+        };
+        let result = super::install_git_selection_with(
+            &paths,
+            &store,
+            url,
+            (&candidate.subpath, resolution),
+            None,
+            None,
+            &api,
+        )
+        .unwrap();
+        assert_eq!(api.refs_calls.get(), 1);
+        let record = store.get_skill_by_id(&result.skill_id).unwrap().unwrap();
+        assert_eq!(record.source_ref.as_deref(), Some(url));
+        assert_eq!(record.source_subpath.as_deref(), Some("skills/a"));
+        assert_eq!(record.source_revision.as_deref(), Some("listed-revision"));
+    }
+}
+
 /// Install-from-selection takes the fast path for a GitHub subpath and
 /// records the real commit SHA — no clone happens at all.
 #[test]

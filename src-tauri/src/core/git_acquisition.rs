@@ -223,7 +223,7 @@ pub fn acquire(req: &AcquireRequest, api: &dyn GithubApi) -> Result<Acquired> {
     acquire_resolved(req, source, split, api)
 }
 
-fn acquire_resolved(
+pub(crate) fn acquire_resolved(
     original_req: &AcquireRequest,
     source: GitSource,
     split: TreeSplit,

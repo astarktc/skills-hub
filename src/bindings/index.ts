@@ -18,7 +18,10 @@ export const commands = {
 	listLocalSkillsCmd: (basePath: string) => __TAURI_INVOKE<LocalSkillCandidate[]>("list_local_skills_cmd", { basePath }),
 	installLocalSelection: (basePath: string, subpath: string, name: string | null) => __TAURI_INVOKE<InstallResultDto>("install_local_selection", { basePath, subpath, name }),
 	listGitSkillsCmd: (repoUrl: string, targetName: string | null) => __TAURI_INVOKE<GitSkillListing>("list_git_skills_cmd", { repoUrl, targetName }),
-	installGitSelection: (repoUrl: string, subpath: string, name: string | null) => __TAURI_INVOKE<InstallResultDto>("install_git_selection", { repoUrl, subpath, name }),
+	installGitSelection: (repoUrl: string, subpath: string, name: string | null, resolution: {
+	branch: string | null,
+	subpath: string | null,
+} | null) => __TAURI_INVOKE<InstallResultDto>("install_git_selection", { repoUrl, subpath, name, resolution }),
 	/**
 	 *  Sync N skills to M tools in one call. The backend owns the whole
 	 *  choreography — installedness filtering, shared-dir dedupe, overwrite
@@ -276,6 +279,7 @@ export type GitSkillCandidate = {
 	name: string,
 	description: string | null,
 	subpath: string,
+	resolution?: GitSourceResolution | null,
 };
 
 /**
@@ -287,6 +291,12 @@ export type GitSkillListing = {
 	candidates: GitSkillCandidate[],
 	/**  `None` when no `target_name` was given. */
 	target_match: CandidateMatch | null,
+};
+
+/**  The listing's branch/path decision, including an explicit default-branch choice. */
+export type GitSourceResolution = {
+	branch: string | null,
+	subpath: string | null,
 };
 
 export type GitignoreStatusDto = {
