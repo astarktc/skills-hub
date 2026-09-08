@@ -77,11 +77,6 @@ pub struct OverwritePolicy {
     pub overwrite_if_same_content: bool,
 }
 
-/// True when `target` exists and hashes identically to `source`.
-pub fn target_has_same_content(source: &Path, target: &Path) -> bool {
-    content_identity::same_content(Source::Directory(source), target)
-}
-
 /// Deterministic single-pair sync: probe writability of `tool_root`, apply
 /// the overwrite policy, sync, and upsert a `SkillTargetRecord` for each
 /// tool in `record_tools`. The batch engine

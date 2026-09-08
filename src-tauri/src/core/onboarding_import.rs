@@ -45,10 +45,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use super::content_identity::{self, Source};
 use super::errors::SignalError;
 use super::global_sync::{
-    sync_skills_to_tools_unlocked, target_has_same_content, BatchPolicy, BatchSkill,
-    BatchTargetOutcome,
+    sync_skills_to_tools_unlocked, BatchPolicy, BatchSkill, BatchTargetOutcome,
 };
 use super::installer::{install_imported_skill, InstallerPaths};
 use super::mutation_guard;
@@ -262,7 +262,8 @@ fn apply_one_unlocked(
                 .map(|variant| {
                     settle_original(
                         &paths.home,
-                        &installed.central_path,
+                        store,
+                        &installed.skill_id,
                         &variant.path,
                         &variant.tool,
                     )
@@ -309,7 +310,13 @@ fn sync_imported_unlocked(
     let mut identical_tools: Vec<String> = Vec::new();
     let mut originals: Vec<OriginalOutcome> = Vec::new();
     for variant in &group.variants {
-        if target_has_same_content(&installed.central_path, &variant.path) {
+        if content_identity::same_content(
+            Source::Managed {
+                store,
+                skill_id: &installed.skill_id,
+            },
+            &variant.path,
+        ) {
             if !identical_tools.contains(&variant.tool) {
                 identical_tools.push(variant.tool.clone());
             }
@@ -365,11 +372,19 @@ fn chosen_variant<'a>(
 /// Auto-sync off: remove one original, but only when it is byte-identical to
 /// the central copy. The registry owns which paths may be deleted at all
 /// ([`ensure_path_within_tool_dirs`]); its refusal is reported, never thrown.
-fn settle_original(home: &Path, central: &Path, path: &Path, tool: &str) -> OriginalOutcome {
+fn settle_original(
+    home: &Path,
+    store: &SkillStore,
+    skill_id: &str,
+    path: &Path,
+    tool: &str,
+) -> OriginalOutcome {
     let status = match ensure_path_within_tool_dirs(home, path) {
         Err(error) => OriginalStatus::Failed { error },
         Ok(()) if path.symlink_metadata().is_err() => OriginalStatus::Removed,
-        Ok(()) if !target_has_same_content(central, path) => OriginalStatus::KeptDivergent,
+        Ok(()) if !content_identity::same_content(Source::Managed { store, skill_id }, path) => {
+            OriginalStatus::KeptDivergent
+        }
         Ok(()) => match remove_path_any(path) {
             Ok(()) => OriginalStatus::Removed,
             Err(error) => OriginalStatus::Failed { error },

@@ -1,4 +1,8 @@
-use std::path::Path;
+use std::{
+    collections::HashSet,
+    path::Path,
+    sync::{Mutex, OnceLock},
+};
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
@@ -47,7 +51,18 @@ pub fn read(source: Source<'_>) -> Option<String> {
     match resolve(source) {
         Ok(hash) => hash,
         Err(error) => {
-            log::warn!("[content identity] identity unavailable: {error:#}");
+            // Reconcile can ask repeatedly while an I/O fault persists. Emit
+            // each diagnostic once rather than flooding the operator's log.
+            static WARNED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+            let detail = format!("{error:#}");
+            let first = WARNED
+                .get_or_init(|| Mutex::new(HashSet::new()))
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .insert(detail.clone());
+            if first {
+                log::warn!("[content identity] identity unavailable: {detail}");
+            }
             None
         }
     }

@@ -12,8 +12,8 @@ use std::path::Path;
 
 use crate::core::global_sync::{
     plan_batch_tool_targets, sync_skill_into_root, sync_skills_to_planned_tools,
-    sync_skills_to_tools, target_has_same_content, BatchOverride, BatchPolicy, BatchSkill,
-    BatchTargetStatus, GlobalSyncError, OverwritePolicy, PlannedToolTarget,
+    sync_skills_to_tools, BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus,
+    GlobalSyncError, OverwritePolicy, PlannedToolTarget,
 };
 use crate::core::skill_store::{SkillRecord, SkillStore};
 use crate::core::tool_adapters::{adapter_by_key, ToolAdapter};
@@ -198,8 +198,11 @@ fn overwrite_if_same_content_only_replaces_identical_targets() {
 
     // Target with identical content: allowed to replace.
     make_skill_dir(&tool_root, "my-skill", "# Same");
-    assert!(target_has_same_content(
-        &source,
+    assert!(crate::core::content_identity::same_content(
+        crate::core::content_identity::Source::Managed {
+            store: &store,
+            skill_id: "skill-1"
+        },
         &tool_root.join("my-skill")
     ));
     sync_skill_into_root(

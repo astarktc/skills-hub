@@ -9,7 +9,7 @@ use crate::core::tool_adapters::adapter_by_key;
 #[cfg(unix)]
 #[test]
 fn copy_ignores_internal_symlinks_and_preserves_identity() {
-    use crate::core::global_sync::target_has_same_content;
+    use crate::core::content_identity::{same_content, Source};
 
     let src = tempfile::tempdir().unwrap();
     let dst = tempfile::tempdir().unwrap();
@@ -33,8 +33,8 @@ fn copy_ignores_internal_symlinks_and_preserves_identity() {
             std::io::ErrorKind::NotFound
         );
     }
-    assert!(target_has_same_content(src.path(), dst.path()));
-    assert!(target_has_same_content(dst.path(), src.path()));
+    assert!(same_content(Source::Directory(src.path()), dst.path()));
+    assert!(same_content(Source::Directory(dst.path()), src.path()));
 }
 
 #[test]
