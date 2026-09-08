@@ -278,28 +278,8 @@ fn acquire_resolved(
                         Some(GithubApiError { status: 404, .. })
                     )
                 {
-                    let (corrected, origin) = resolve_tree_source(original_req.source, None, api);
-                    if origin == TreeSplit::MatchingRefs {
-                        // Only a persisted hint is repaired. An independent explicit
-                        // selection must keep its requested repo-relative path.
-                        let subpath = corrected.subpath.clone();
-                        let intent = match original_req.intent {
-                            SkillIntent::Subpath(path)
-                                if Some(path) == original_req.stored_subpath =>
-                            {
-                                SkillIntent::Subpath(subpath.as_deref().unwrap_or("."))
-                            }
-                            intent => intent,
-                        };
-                        return acquire_resolved(
-                            &AcquireRequest {
-                                intent,
-                                ..*original_req
-                            },
-                            corrected,
-                            origin,
-                            api,
-                        );
+                    if let Some(retry) = retry_stored_hint(original_req, api) {
+                        return retry;
                     }
                 }
                 classify_fast_path_failure(failure, &coords, req.source.branch.is_none())?;
@@ -308,6 +288,29 @@ fn acquire_resolved(
     }
 
     clone_path(req, known_subpath).map(|acquired| report(acquired, req))
+}
+
+/// Re-resolve a missing stored-hint branch and retry only on a discovered split.
+fn retry_stored_hint(req: &AcquireRequest, api: &dyn GithubApi) -> Option<Result<Acquired>> {
+    let (corrected, origin) = resolve_tree_source(req.source, None, api);
+    if origin != TreeSplit::MatchingRefs {
+        return None;
+    }
+    // Only a persisted hint is repaired. An independent explicit selection
+    // must keep its requested repo-relative path.
+    let subpath = corrected.subpath.clone();
+    let intent = match req.intent {
+        SkillIntent::Subpath(path) if Some(path) == req.stored_subpath => {
+            SkillIntent::Subpath(subpath.as_deref().unwrap_or("."))
+        }
+        intent => intent,
+    };
+    Some(acquire_resolved(
+        &AcquireRequest { intent, ..*req },
+        corrected,
+        origin,
+        api,
+    ))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
