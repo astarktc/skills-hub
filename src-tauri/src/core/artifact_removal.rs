@@ -52,7 +52,9 @@ use crate::core::{
     project_sync::resolve_assignment_artifact,
     skill_store::{AssignmentTransition, ProjectRecord, SkillRecord, SkillStore, TargetTransition},
     sync_engine::remove_path_any,
-    tool_adapters::{adapter_by_key, adapters_sharing_skills_dir, is_installed_in},
+    tool_adapters::{
+        adapter_by_key, adapters_sharing_skills_dir, ensure_path_within_tool_dirs, is_installed_in,
+    },
 };
 
 /// What an operator asked to remove. Planning input.
@@ -66,8 +68,10 @@ pub enum RemovalScope {
     /// are untouched. "Uninstall this skill from tool directories".
     SkillGlobal { skill_id: String },
     /// One skill × Tool pair at global scope, expanded across the tool's
-    /// shared skills dir group. Carries the operator's home because it is
-    /// the only scope whose planning depends on Tool installedness; every
+    /// shared skills dir group — or, when the registry can no longer locate
+    /// the Tool, planned as the single row by its own stored path (fenced by
+    /// the registry's deletion rule). Carries the operator's home because it
+    /// is the only scope whose planning depends on Tool installedness; every
     /// other scope resolves its paths from stored rows.
     SkillTool {
         skill_id: String,
@@ -270,11 +274,29 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
             tool_key,
             home,
         } => {
-            let group_keys = global_group_keys(home, tool_key);
-            if let Some(group_keys) = group_keys {
-                for row in store.list_skill_targets(skill_id)? {
-                    if group_keys.iter().any(|k| k == &row.tool) {
-                        builder.push_global(&row);
+            let rows = store.list_skill_targets(skill_id)?;
+            match global_group_keys(home, tool_key) {
+                Some(group_keys) => {
+                    for row in rows {
+                        if group_keys.iter().any(|k| k == &row.tool) {
+                            builder.push_global(&row);
+                        }
+                    }
+                }
+                // The Tool is gone from this machine, so the registry can no
+                // longer locate it — but the row records the path of an
+                // artifact *we* created. Cleaning up after ourselves is not
+                // "touching an uninstalled tool's directory": plan the row
+                // itself, by its own stored path, with no group fan-out
+                // (there is no group left to fan out to). Because that path
+                // is a stored string rather than a registry-derived one, it
+                // is fenced by the registry's deletion rule — a row pointing
+                // outside every Tool skills dir is refused, and refusing
+                // planning keeps every row.
+                None => {
+                    for row in rows.iter().filter(|row| &row.tool == tool_key) {
+                        ensure_path_within_tool_dirs(home, Path::new(&row.target_path))?;
+                        builder.push_global(row);
                     }
                 }
             }
@@ -316,10 +338,11 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
 }
 
 /// The global tool keys one Tool's artifact is shared with: every tool
-/// resolving to the same global skills dir. `None` means "nothing to do" —
-/// no member of the group is installed for this operator, so the artifact is
-/// not ours to touch (an uninstalled tool's directory is left alone). An
-/// unknown key stands for itself: its rows still carry their own paths.
+/// resolving to the same global skills dir. `None` means the registry can no
+/// longer locate the Tool — no member of the group is installed for this
+/// operator — so no path may be *derived* for it; the caller falls back to
+/// the row's own recorded `target_path`. An unknown key stands for itself:
+/// its rows still carry their own paths.
 fn global_group_keys(home: &Path, tool_key: &str) -> Option<Vec<String>> {
     let Some(adapter) = adapter_by_key(tool_key) else {
         return Some(vec![tool_key.to_string()]);

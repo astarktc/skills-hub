@@ -381,6 +381,18 @@ describe("removalOutcome", () => {
       }
     },
   );
+  it("a zero-target report warns instead of claiming an unsync happened", () => {
+    const nothing: RemovalReportDto = { targets: [], removed: 0, failed: 0 };
+    for (const action of ["all", "skill", "toggle"] as const) {
+      const out = removalOutcome(nothing, { ...ctx, action });
+      expect(out.toast).toEqual({
+        kind: "warning",
+        message: "unsyncNothingPlanned",
+      });
+      expect(out.errors).toEqual([]);
+      expect(out.completion.closeModal).toBe(false);
+    }
+  });
   it("delete's null result reloads and closes; command errors are not reports", () => {
     expect(deleteOutcome(null, ctx)).toEqual({
       toast: { kind: "success", message: "status.skillRemoved" },
