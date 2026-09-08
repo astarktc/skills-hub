@@ -30,7 +30,9 @@ pub(crate) enum UpdateBytes {
     LocalFolder {
         path: PathBuf,
     },
-    EditInPlace,
+    EditInPlace {
+        clear: bool,
+    },
     RestoreRebuild {
         staged: StagingDir,
         revision: Option<String>,
@@ -93,7 +95,8 @@ pub(crate) fn apply_unlocked(
     current.source_type = request.record.source_type;
     let now = now_ms();
     let (updated, edit_conflict) = match request.bytes {
-        UpdateBytes::EditInPlace => {
+        UpdateBytes::EditInPlace { clear } => {
+            super::skill_edits::settle_direct_unlocked(store, &current, clear)?;
             current.updated_at = now;
             content_identity::record(store, &mut current)?;
             (current, None)
@@ -111,7 +114,7 @@ pub(crate) fn apply_unlocked(
                     copy_dir_recursive(&path, staged.path())?;
                     (staged, None)
                 }
-                UpdateBytes::EditInPlace => unreachable!(),
+                UpdateBytes::EditInPlace { .. } => unreachable!(),
             };
             finalize_update(store, &current, staged, revision, |updated| {
                 super::skill_edits::replay_unlocked(store, updated)

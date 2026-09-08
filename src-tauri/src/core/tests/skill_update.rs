@@ -255,7 +255,7 @@ fn every_byte_adapter_settles_and_reports_propagation() {
             }
             "edit" => {
                 fs::write(Path::new(&record.central_path).join("SKILL.md"), "new edit").unwrap();
-                request.bytes = UpdateBytes::EditInPlace;
+                request.bytes = UpdateBytes::EditInPlace { clear: false };
             }
             "restore" => {
                 fs::remove_dir_all(&record.central_path).unwrap();

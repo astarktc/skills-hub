@@ -13,7 +13,7 @@ use super::{
     frontmatter_edit::{self, InvocationLines},
     installer::InstallerPaths,
     mutation_guard,
-    propagation::PropagationStatus,
+    propagation::PropagationReport,
     skill_catalog::{managed_skill_entry, ManagedSkillEntry},
     skill_discovery::{find_skill_md, InvocationMode},
     skill_store::{SkillEditKind, SkillEditRecord, SkillRecord, SkillStore},
@@ -72,9 +72,9 @@ fn manifest(record: &SkillRecord) -> Result<PathBuf> {
     })
 }
 
-fn record_hash(store: &SkillStore, record: &mut SkillRecord) -> Result<()> {
-    record.updated_at = now_ms();
-    content_identity::record(store, record)
+pub struct InvocationEditOutcome {
+    pub entry: ManagedSkillEntry,
+    pub propagation: PropagationReport,
 }
 
 pub fn set_invocation_override(
@@ -82,7 +82,7 @@ pub fn set_invocation_override(
     store: &SkillStore,
     skill_id: &str,
     mode: Option<InvocationMode>,
-) -> Result<ManagedSkillEntry> {
+) -> Result<InvocationEditOutcome> {
     mutation_guard::serialized(|| {
         let record = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
             anyhow::anyhow!(SignalError::NotFound {
@@ -92,35 +92,21 @@ pub fn set_invocation_override(
         })?;
         let path = manifest(&record)?;
         let existing = store.get_skill_edit(skill_id, SkillEditKind::InvocationMode)?;
-        match mode {
-            Some(mode) => {
-                let base_value = match existing {
-                    Some(edit) => edit.base_value,
-                    None => serde_json::to_string(&frontmatter_edit::read_invocation_lines(
-                        &frontmatter_edit::read_manifest(&path)?,
-                    ))?,
-                };
-                store.upsert_skill_edit(&SkillEditRecord {
-                    skill_id: skill_id.into(),
-                    kind: SkillEditKind::InvocationMode,
-                    value: mode.as_key().into(),
-                    base_value,
-                    conflict: false,
-                    applied_at: now_ms(),
-                })?;
-                frontmatter_edit::apply_to_file(&path, |text| {
-                    frontmatter_edit::write_invocation_mode(text, mode)
-                })?;
-            }
-            None => {
-                if let Some(edit) = existing {
-                    let base = base_lines(&edit)?;
-                    frontmatter_edit::apply_to_file(&path, |text| {
-                        frontmatter_edit::restore_invocation_lines(text, &base)
-                    })?;
-                    store.delete_skill_edit(skill_id, SkillEditKind::InvocationMode)?;
-                }
-            }
+        if let Some(mode) = mode {
+            let base_value = match existing {
+                Some(edit) => edit.base_value,
+                None => serde_json::to_string(&frontmatter_edit::read_invocation_lines(
+                    &frontmatter_edit::read_manifest(&path)?,
+                ))?,
+            };
+            store.upsert_skill_edit(&SkillEditRecord {
+                skill_id: skill_id.into(),
+                kind: SkillEditKind::InvocationMode,
+                value: mode.as_key().into(),
+                base_value,
+                conflict: false,
+                applied_at: now_ms(),
+            })?;
         }
         let outcome = skill_update::apply_unlocked(
             paths,
@@ -128,23 +114,47 @@ pub fn set_invocation_override(
             UpdateRequest {
                 expected: record.clone(),
                 record,
-                bytes: UpdateBytes::EditInPlace,
+                bytes: UpdateBytes::EditInPlace {
+                    clear: mode.is_none(),
+                },
                 repoint: false,
             },
         )?;
         let ApplyOutcome::Updated(outcome) = outcome else {
             anyhow::bail!("edited skill changed under guard")
         };
-        for target in outcome.propagation.targets {
-            if let PropagationStatus::Failed { error } = target.status {
-                log::warn!(
-                    "invocation edit propagation {skill_id} {:?}: {error:#}",
-                    target.scope
-                );
-            }
-        }
-        managed_skill_entry(store, skill_id)?.context("edited skill missing from catalog")
+        Ok(InvocationEditOutcome {
+            entry: managed_skill_entry(store, skill_id)?
+                .context("edited skill missing from catalog")?,
+            propagation: outcome.propagation,
+        })
     })
+}
+
+/// Direct Edit's byte settlement, called only by Update under the guard.
+/// Apply follows the durable row; clear restores bytes before dropping the row.
+pub(crate) fn settle_direct_unlocked(
+    store: &SkillStore,
+    record: &SkillRecord,
+    clear: bool,
+) -> Result<()> {
+    let path = manifest(record)?;
+    let Some(edit) = store.get_skill_edit(&record.id, SkillEditKind::InvocationMode)? else {
+        return Ok(());
+    };
+    if clear {
+        let base = base_lines(&edit)?;
+        frontmatter_edit::apply_to_file(&path, |text| {
+            frontmatter_edit::restore_invocation_lines(text, &base)
+        })?;
+        store.delete_skill_edit(&record.id, SkillEditKind::InvocationMode)?;
+    } else {
+        let mode = edit_mode(&edit)?;
+        frontmatter_edit::apply_to_file(&path, |text| {
+            frontmatter_edit::write_invocation_mode(text, mode)
+        })?;
+    }
+    Ok(())
 }
 
 /// The caller holds the Mutation guard and retains finalize's backup until
@@ -198,7 +208,8 @@ fn apply_replay(
     frontmatter_edit::apply_to_file(path, |text| {
         frontmatter_edit::write_invocation_mode(text, mode)
     })?;
-    record_hash(store, record)
+    record.updated_at = now_ms();
+    content_identity::record(store, record)
 }
 
 #[cfg(test)]

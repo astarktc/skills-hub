@@ -87,7 +87,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   const closeInvocationEdit = useCallback(() => { if (!loading) setInvocationEditSkillId(null); }, [loading]);
   const setInvocationOverride = useCallback(async (skillId: string, mode: InvocationMode | null) => {
     await runAction({ successToast: t("invocationEdit.saved") }, async () => {
-      const updated = await invokeTauri("setSkillInvocationOverride", skillId, mode);
+      const { entry: updated } = await invokeTauri("setSkillInvocationOverride", skillId, mode);
       setManagedSkills((skills) => skills.map((skill) => skill.id === updated.id ? updated : skill));
       setInvocationEditSkillId(null);
     });

@@ -807,6 +807,39 @@ pub async fn refresh_managed_skills(
     .map_err(CommandError::from_anyhow)
 }
 
+fn to_propagation_target_dto(
+    target: crate::core::propagation::PropagationOutcome,
+) -> PropagationTargetDto {
+    PropagationTargetDto {
+        scope: match target.scope {
+            PropagationScope::Global { tool } => PropagationScopeDto::Global { tool },
+            PropagationScope::Project { project_id, tool } => {
+                PropagationScopeDto::Project { project_id, tool }
+            }
+        },
+        status: match target.status {
+            PropagationStatus::Synced { mode_used } => PropagationStatusDto::Synced { mode_used },
+            PropagationStatus::Skipped { reason } => PropagationStatusDto::Skipped {
+                reason: match reason {
+                    PropagationSkip::LinkFollowsSource => PropagationSkipDto::LinkFollowsSource,
+                    PropagationSkip::ToolNotInstalled { tool } => {
+                        PropagationSkipDto::ToolNotInstalled { tool }
+                    }
+                    PropagationSkip::UnknownTool { tool } => {
+                        PropagationSkipDto::UnknownTool { tool }
+                    }
+                    PropagationSkip::ProjectUnavailable { project_id } => {
+                        PropagationSkipDto::ProjectUnavailable { project_id }
+                    }
+                },
+            },
+            PropagationStatus::Failed { error } => PropagationStatusDto::Failed {
+                error: CommandError::from_anyhow(error),
+            },
+        },
+    }
+}
+
 fn to_refresh_report_dto(report: crate::core::refresh::RefreshReport) -> RefreshReportDto {
     let mut dto = RefreshReportDto {
         skills: Vec::with_capacity(report.skills.len()),
@@ -825,48 +858,12 @@ fn to_refresh_report_dto(report: crate::core::refresh::RefreshReport) -> Refresh
                 edit_conflict,
             } => {
                 dto.refreshed += 1;
-                let targets: Vec<PropagationTargetDto> = targets
-                    .into_iter()
-                    .map(|target| PropagationTargetDto {
-                        scope: match target.scope {
-                            PropagationScope::Global { tool } => {
-                                PropagationScopeDto::Global { tool }
-                            }
-                            PropagationScope::Project { project_id, tool } => {
-                                PropagationScopeDto::Project { project_id, tool }
-                            }
-                        },
-                        status: match target.status {
-                            PropagationStatus::Synced { mode_used } => {
-                                PropagationStatusDto::Synced { mode_used }
-                            }
-                            PropagationStatus::Skipped { reason } => {
-                                PropagationStatusDto::Skipped {
-                                    reason: match reason {
-                                        PropagationSkip::LinkFollowsSource => {
-                                            PropagationSkipDto::LinkFollowsSource
-                                        }
-                                        PropagationSkip::ToolNotInstalled { tool } => {
-                                            PropagationSkipDto::ToolNotInstalled { tool }
-                                        }
-                                        PropagationSkip::UnknownTool { tool } => {
-                                            PropagationSkipDto::UnknownTool { tool }
-                                        }
-                                        PropagationSkip::ProjectUnavailable { project_id } => {
-                                            PropagationSkipDto::ProjectUnavailable { project_id }
-                                        }
-                                    },
-                                }
-                            }
-                            PropagationStatus::Failed { error } => {
-                                dto.target_failures += 1;
-                                PropagationStatusDto::Failed {
-                                    error: CommandError::from_anyhow(error),
-                                }
-                            }
-                        },
-                    })
-                    .collect();
+                let targets: Vec<PropagationTargetDto> =
+                    targets.into_iter().map(to_propagation_target_dto).collect();
+                dto.target_failures += targets
+                    .iter()
+                    .filter(|target| matches!(target.status, PropagationStatusDto::Failed { .. }))
+                    .count() as u32;
                 SkillRefreshStatusDto::Refreshed {
                     edit_conflict,
                     content_hash,
@@ -1290,6 +1287,26 @@ pub fn get_managed_skills(
     Ok(catalog.into_iter().map(ManagedSkillDto::from).collect())
 }
 
+#[derive(Debug, Serialize, Type)]
+pub struct InvocationEditResultDto {
+    pub entry: ManagedSkillDto,
+    pub propagation: Vec<PropagationTargetDto>,
+}
+
+impl From<crate::core::skill_edits::InvocationEditOutcome> for InvocationEditResultDto {
+    fn from(outcome: crate::core::skill_edits::InvocationEditOutcome) -> Self {
+        Self {
+            entry: outcome.entry.into(),
+            propagation: outcome
+                .propagation
+                .targets
+                .into_iter()
+                .map(to_propagation_target_dto)
+                .collect(),
+        }
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn set_skill_invocation_override(
@@ -1297,12 +1314,12 @@ pub async fn set_skill_invocation_override(
     store: State<'_, SkillStore>,
     skill_id: String,
     mode: Option<InvocationMode>,
-) -> Result<ManagedSkillDto, CommandError> {
+) -> Result<InvocationEditResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let paths = installer_paths(&app, &store)?;
         crate::core::skill_edits::set_invocation_override(&paths, &store, &skill_id, mode)
-            .map(ManagedSkillDto::from)
+            .map(InvocationEditResultDto::from)
     })
     .await
     .map_err(CommandError::internal)?

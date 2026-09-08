@@ -261,7 +261,7 @@ describe("invocation Edits", () => {
     const { result } = await renderLibrary(setup);
     act(() => result.current.openInvocationEdit("s1"));
     const updated: ManagedSkill = { ...setup.skills[0], invocation_mode: "user-only", invocation_override: { mode: "user-only", base_mode: "user-and-model", conflict: false } };
-    mockInvoke.mockResolvedValueOnce(updated);
+    mockInvoke.mockResolvedValueOnce({ entry: updated, propagation: [] });
     await act(async () => { await result.current.setInvocationOverride("s1", "user-only"); });
     expect(mockInvoke).toHaveBeenLastCalledWith("setSkillInvocationOverride", "s1", "user-only");
     expect(result.current.managedSkills).toEqual([updated, setup.skills[1]]);

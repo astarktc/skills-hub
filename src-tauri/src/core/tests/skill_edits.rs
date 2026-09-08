@@ -45,6 +45,7 @@ impl Fixture {
     }
     fn set(&self, mode: Option<InvocationMode>) -> Result<ManagedSkillEntry> {
         set_invocation_override(&self.paths, &self.store, &self.id, mode)
+            .map(|outcome| outcome.entry)
     }
     fn update(&self) -> RefreshReport {
         refresh_managed_skills(
@@ -61,6 +62,50 @@ impl Fixture {
     fn text(&self) -> String {
         fs::read_to_string(self.central.join("SKILL.md")).unwrap()
     }
+}
+
+#[test]
+fn edit_returns_a_failed_copy_target_in_its_propagation_report() {
+    let f = Fixture::new();
+    let adapter = crate::core::tool_adapters::adapter_by_key("cursor").unwrap();
+    fs::create_dir_all(f.paths.home.join(adapter.relative_detect_dir)).unwrap();
+    let blocker = f.dir.path().join("blocked");
+    fs::write(&blocker, "not a directory").unwrap();
+    f.store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "blocked-target".into(),
+            skill_id: f.id.clone(),
+            tool: "cursor".into(),
+            target_path: blocker.join("skill").to_string_lossy().into_owned(),
+            mode: SyncMode::Copy,
+            status: SyncStatus::Synced,
+            last_error: None,
+            synced_at: Some(1),
+        })
+        .unwrap();
+    let outcome =
+        set_invocation_override(&f.paths, &f.store, &f.id, Some(InvocationMode::UserOnly)).unwrap();
+    assert_eq!(
+        outcome.entry.invocation_override.unwrap().mode,
+        InvocationMode::UserOnly
+    );
+    assert_eq!(outcome.propagation.targets.len(), 1);
+    assert!(matches!(
+        outcome.propagation.targets[0].status,
+        crate::core::propagation::PropagationStatus::Failed { .. }
+    ));
+    assert_eq!(
+        f.store
+            .get_skill_target(&f.id, "cursor")
+            .unwrap()
+            .unwrap()
+            .status,
+        SyncStatus::Error
+    );
+    assert_eq!(
+        frontmatter_edit::read_invocation_lines(&f.text()).mode(),
+        InvocationMode::UserOnly
+    );
 }
 
 #[test]

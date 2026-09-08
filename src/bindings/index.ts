@@ -72,7 +72,7 @@ export const commands = {
 /**  `user-invocable: false` — only the model can invoke it. */
 "model-only" | 
 /**  Both keys restrict invocation — neither the user nor the model can invoke it. */
-"neither" | null) => __TAURI_INVOKE<ManagedSkillDto>("set_skill_invocation_override", { skillId, mode }),
+"neither" | null) => __TAURI_INVOKE<InvocationEditResultDto>("set_skill_invocation_override", { skillId, mode }),
 	deleteManagedSkill: (skillId: string) => __TAURI_INVOKE<null>("delete_managed_skill", { skillId }),
 	unsyncAllSkills: () => __TAURI_INVOKE<RemovalReportDto>("unsync_all_skills"),
 	unsyncSkill: (skillId: string) => __TAURI_INVOKE<RemovalReportDto>("unsync_skill", { skillId }),
@@ -385,6 +385,11 @@ export type InvocationEditConflict = {
 	base_mode: InvocationMode,
 	upstream_mode: InvocationMode,
 	override_mode: InvocationMode,
+};
+
+export type InvocationEditResultDto = {
+	entry: ManagedSkillDto,
+	propagation: PropagationTargetDto[],
 };
 
 /**
