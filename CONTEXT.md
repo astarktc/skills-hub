@@ -52,6 +52,10 @@ _Avoid_: content hash (the column), checksum
 One (skill, tool) pair a sync batch attempts; each target resolves to synced, skipped, or failed as report data, never as a command error.
 _Avoid_: sync pair, destination
 
+**Effective global target set**:
+The Tools a global sync writes to (`settings::effective_global_tool_targets`, mirrored in the frontend as `effectiveSyncTargetIds`): the operator's recorded selection when they configured one — an empty selection included, which means "sync nowhere" — otherwise every detected Tool. Detection is the fallback for a never-configured install, never an override of intent, and the set is not intersected with detection: a selected-but-uninstalled Tool stays in it and is reported as a skip, which is the operator's only signal that the selection has gone stale.
+_Avoid_: installed tools (as a sync target set), detected tools
+
 **Staging dir**:
 A scratch directory inside the central repo that an install or update flow fills with a skill's bytes before the finalize step moves it into place; discarded automatically if the flow fails first.
 _Avoid_: temp dir, download dir
@@ -93,7 +97,7 @@ Repairing a Managed skill's source in place while preserving its Sync targets an
 _Avoid_: re-add, source migration
 
 **Refresh (all)**:
-The operator action that re-acquires every refreshable Managed skill (see Provenance) from its source, finalizes (replaying Edits inside finalize's window) and propagates (`core/refresh.rs`), as one backend batch; a single skill's Update is a batch of one. An imported skill is not a member — it is neither acquired nor reported, not "skipped". An Unlocatable skill is a member the batch does not dispatch: it is reported skipped with its state, and no Sync target is ever minted for it; naming it explicitly (Update) proceeds instead, which is how Restore rebuilds a missing central copy. Two phases: acquisition runs outside the Mutation guard over a bounded pool (4 workers, progress ticking in completion order), then each skill is finalized and propagated under the guard, taken per skill. With auto-sync on it also re-asserts the auto-sync invariant — every Managed skill is synced to every installed Tool — so targets that never existed are created, not just existing ones refreshed. Per-skill and per-target outcomes are report data. Cancellation stops dispatching new acquisitions and finalizes nothing: once observed, no skill reaches phase two.
+The operator action that re-acquires every refreshable Managed skill (see Provenance) from its source, finalizes (replaying Edits inside finalize's window) and propagates (`core/refresh.rs`), as one backend batch; a single skill's Update is a batch of one. An imported skill is not a member — it is neither acquired nor reported, not "skipped". An Unlocatable skill is a member the batch does not dispatch: it is reported skipped with its state, and no Sync target is ever minted for it; naming it explicitly (Update) proceeds instead, which is how Restore rebuilds a missing central copy. Two phases: acquisition runs outside the Mutation guard over a bounded pool (4 workers, progress ticking in completion order), then each skill is finalized and propagated under the guard, taken per skill. With auto-sync on it also re-asserts the auto-sync invariant — every Managed skill is synced to every Tool in the Effective global target set — so targets that never existed are created, not just existing ones refreshed. Per-skill and per-target outcomes are report data. Cancellation stops dispatching new acquisitions and finalizes nothing: once observed, no skill reaches phase two.
 _Avoid_: update all, re-deploy
 
 **Artifact removal**:
