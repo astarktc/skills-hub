@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-09-08
+
+A skill whose upstream repository moved it is repaired in place instead of removed and re-added, and a skill published under several per-tool aliases previews and installs as the one skill it is.
+
+### Added
+
+- **Re-point a git skill at its new GitHub URL.** When a Refresh reports *Skill not found on GitHub*, the failure row (and its toast) offers **Re-point**; every git skill's card and detail view offer it too. Paste the skill's new `/tree/` or `/blob/` URL — the repository may differ as well as the folder — and the app fetches from it first; only when that succeeds does it change the recorded source and update every synced copy, so the record, its tool links and its project assignments survive a repository reshuffle. A typo, a 404 or an ambiguous repository leaves the skill exactly as it was.
+- **Too deep a chain of upstream symlinks is its own message** instead of an internal error.
+
+### Changed
+
+- **Onboarding import decides "identical copy" against the finished library copy**, at the moment it syncs, rather than from the scan taken earlier. A copy edited between the scan and the import is kept and reported as divergent instead of being overwritten.
+- **Glossary**: *Re-point* is one repair over two provenances (local: pick the folder; git: paste the URL); *Skill discovery* records that symlink aliases of one directory are one candidate; *Git acquisition* records that the API fast path follows an upstream link only at the end of the path.
+
+### Fixed
+
+- **Explore preview of a repository that publishes one skill under several aliases** (e.g. `skills/<name>` plus `.claude/skills/<name>` and `.codex/skills/<name>` symlinks to it) no longer fails with "this repository contains multiple skills": aliases collapse into the real directory, and a repository whose only skill sits in a subfolder previews that skill rather than the repository root.
+- **A project assignment whose skill row could not be located** now reports a typed not-found error instead of crashing the command.
+
 ## [1.2.4] - 2026-09-05
 
 Refresh failures you can act on: skills whose upstream publishes them as symlinks refresh again, skills taken over from a tool no longer pretend to have a source, and what the app cannot locate is shown on the card with the actions that fix it.
