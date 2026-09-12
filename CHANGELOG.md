@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.12] - 2026-09-12
+
+Consistent git source resolution, byte-preserving manifest edits, and single-skill actions that return their finished library state.
+
+### Changed
+
+- **Update, Restore, Re-point and Edit return the full library state with their outcome.** The app applies that state directly instead of making a second read; failed and skipped outcomes also show the backend's current rows. Refresh-all and Delete retain their existing reload behavior.
+- **A git folder that is itself a skill also lists its nested skills**, using the same candidate rule as acquisition. Selecting a result still preserves the listing's resolved branch and repository-relative path.
+
+### Fixed
+
+- **Concurrent Explore previews cannot return partially acquired files.** Each acquisition writes privately; only a completed preview is published, and a slower caller reuses the completed winner. Failed, cancelled and empty acquisitions leave no new cache entry.
+- **Edit target failures are visible.** A saved central Edit that could not propagate to a global or project target reports that failure rather than an unconditional saved toast.
+- **Manifest fences agree between metadata reads, Edit writes and the detail view.** Only complete, unindented `---` lines delimit frontmatter; CRLF and trailing whitespace work, while indented scalar content and delimiter prefixes are not mistaken for fences.
+- **Skipped-refresh summaries no longer say every skip was an unlocatable skill.** The per-skill reason still distinguishes a missing skill from a stale acquisition.
+
+### Internal/architecture
+
+- **Source resolution belongs to Git acquisition.** Stored-record, explicit-selection and by-name intents share private branch-split and repair policy; listing resolutions are reused without a second refs lookup, and repaired sources are persisted only at successful finalize.
+- **One Manifest module owns reads and byte-preserving invocation edits.** Existing saved Edit bases, unrelated bytes, file permissions and failure-atomic replay remain compatible. Rust and frontend fence tests consume one literal corpus.
+
 ## [1.2.6] - 2026-09-08
 
 Updates that cannot half-succeed, git skills on branches with slashes in their name, a repair that leaves nothing behind, and an invocation badge on every skill.

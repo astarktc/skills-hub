@@ -196,11 +196,15 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   (full / sparse union) is entry metadata, a hit needs freshness *and* coverage, and an entry is only
   ever widened, never narrowed (so the Add flow's listing clone serves its install, and two skills of
   one repo share an entry safely under parallel Refresh). `git_acquisition::acquire` is the only way
-  bytes land from a git source (GitHub
-  Contents API fast path when the source has GitHub coordinates and the intent names a subpath — real
-  commit SHA recorded; clone fallback otherwise; GitHub 404/403 raised as typed `SignalError`s, never
-  retried as a clone). Install, the Refresh acquire phase and Explore preview are adapters that only
-  choose a destination.
+  bytes land from a git source: `SkillIntent::{StoredRecord, Selection, ByName}` carries caller intent;
+  `git_acquisition/resolution.rs` privately owns branch splitting, stored-hint repair and assumed-branch
+  policy. Listing uses acquisition's candidate admission and returns `GitSourceResolution` for the selected
+  install to reuse (including deliberate null/default branch). The Contents API fast path records a real
+  commit SHA; clone is the fallback. Content 404/403 and explicit-branch SHA 404 are typed refusals, never
+  clone retries; a stored-hint SHA 404 permits one refs repair, an assumed-main SHA 404 permits default-
+  branch clone fallback. Install, Refresh acquisition and Explore choose destinations. Explore acquires
+  privately and publishes by rename under its short cache lock; a concurrent loser reuses the completed
+  winner and cleans only its own scratch.
 - **Frontend presentation logic is pure and lives once.** `src/lib/skillPresentation.ts` owns source
   kind, repo label/href, repo grouping, the My Skills search/sort fold and the relative-time formatter
   (`relative.*` is the only i18n family for it); `src/lib/persistedPreference.ts` +
