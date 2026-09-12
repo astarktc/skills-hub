@@ -11,7 +11,7 @@ Consistent git source resolution, byte-preserving manifest edits, and single-ski
 ### Changed
 
 - **Update, Restore, Re-point and Edit return the full library state with their outcome.** The app applies that state directly instead of making a second read; failed and skipped outcomes also show the backend's current rows. Refresh-all and Delete retain their existing reload behavior.
-- **A git folder that is itself a skill also lists its nested skills**, using the same candidate rule as acquisition. Selecting a result still preserves the listing's resolved branch and repository-relative path.
+- **A git folder that is itself a skill also lists its nested skills**, using the same candidate rule as acquisition. Add offers the picker instead of automatically installing the folder when there are multiple candidates, and a name-matched Explore install can find a nested skill. Selecting a result still preserves the listing's resolved branch and repository-relative path.
 
 ### Fixed
 
