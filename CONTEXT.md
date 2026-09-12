@@ -32,6 +32,10 @@ _Avoid_: tool status (that's the DTO carrying a catalog), tool list
 A skill installed through Skills Hub and tracked in its database, eligible for sync fan-out to tools.
 _Avoid_: installed skill (ambiguous with a tool being installed)
 
+**Manifest**:
+A skill's `SKILL.md` document: metadata and invocation rules in its frontmatter, followed by the instructions that a Tool reads. An Edit changes the intended fields while preserving unrelated text, formatting and body bytes.
+_Avoid_: config file, skill header
+
 **Edit**:
 An operator change layered on a Managed skill's central copy, recorded in `skill_edits` and replayed inside every finalize's failure-atomic window (Update / Refresh / Restore / Re-point) — a failed replay rolls the central copy, the skill row and the Edit row back together; on conflict — upstream changed the same thing to something other than the Edit's value — the Edit wins and the row is flagged until the operator re-chooses or clears, or until upstream converges to the Edit's value, which clears it (`docs/adr/0004-edits-replay-inside-finalize.md`). V1 kind: invocation mode.
 _Avoid_: fork (reserved for a future whole-copy model), hand edit
@@ -115,6 +119,10 @@ _Avoid_: project state, project snapshot, refresh
 **Mutation guard**:
 The process-wide rule that Sync-target mutations run one at a time (`core/mutation_guard.rs`): each operation entry point wraps its own body in `serialized`, the mutex is private to that module, and internals are unlocked `pub(crate)` seams — so an entry point never calls another entry point. A reader that must not queue behind a mutation uses `try_serialized`; the project listing's reconcile pass does, and reports `reconciled: false` when it skipped.
 _Avoid_: sync mutex, lock, transaction
+
+**Source resolution**:
+Determining the repository, branch and skill subpath meant by a git source, including URLs where a slash could belong to either the branch or the path. A selected listing carries that answer into installation; a repaired recorded source becomes authoritative only when its acquired bytes are successfully finalized.
+_Avoid_: URL splitting, branch guessing
 
 **Git acquisition**:
 Landing a skill's bytes from a git source in a directory, once, for every flow that needs it (`core/git_acquisition.rs`): given a parsed source and an intent it answers with the bytes, the revision and the strategy used. Ambiguous GitHub branch/path boundaries use the recorded subpath suffix first, otherwise the longest matching branch prefix, retaining the first-segment split when discovery fails or finds no match. Two adapters meet at one seam — the GitHub Contents API fast path (fetches the branch SHA first, so the recorded revision is the real commit) and the clone through the git cache (sparse when a subpath is known). A GitHub 404 or 403 is an answer for the operator, raised typed and never retried as a clone; other API failures fall back. Both adapters follow an **upstream in-repo symlink** at acquire time, every time (`core/repo_subpath.rs`): the link's target is resolved against the link's own directory within the repository root, chains are followed to a small bound, and a target that is absolute or leaves the repository is refused typed before anything at it is read. The recorded subpath stays the alias the operator chose — the resolved path is diagnostics only — so a maintainer re-pointing the alias is followed on the next Refresh; on the clone side the cache entry is widened by the target.
