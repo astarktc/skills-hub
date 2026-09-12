@@ -864,6 +864,82 @@ fn existing_shallow_repos_still_work() {
 
 // ── Listing adapters over skill discovery ──
 
+/// Q5: literal full-interface outputs captured before moving candidate policy.
+/// Keep the old output in the implementation report when an intentional delta lands.
+#[test]
+fn listing_interface_characterization() {
+    use serde_json::{json, Value};
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+    let check = |label: &str, url: &str, target: Option<&str>, candidates: Value, matched: Value| {
+        let listing = super::list_git_skills_with(url, target, &StubApi::serving("sha"), |_| {
+            Ok(base.to_path_buf())
+        }).unwrap();
+        let actual = json!({
+            "candidates": listing.candidates.iter().map(|c| json!([
+                c.name, c.description, c.subpath, c.resolution
+            ])).collect::<Vec<_>>(),
+            "target_match": listing.target_match,
+        });
+        println!("Q5 {label}: {actual}");
+        assert_eq!(actual, json!({"candidates": candidates, "target_match": matched}), "{label}");
+    };
+    fs::write(base.join("SKILL.md"), "---\nname: Root\ndescription: root docs\n---\n").unwrap();
+    check("root-only", "owner/repo", None,
+        json!([["Root", "root docs", ".", {"branch":null,"subpath":null}]]), json!(null));
+    fs::create_dir_all(base.join("pack/skills/a")).unwrap();
+    fs::write(base.join("pack/skills/a/SKILL.md"), "---\nname: Alpha\ndescription: child docs\n---\n").unwrap();
+    check("root+nested", "owner/repo", Some("Alpha"), json!([
+        ["Alpha", "child docs", "pack/skills/a", {"branch":null,"subpath":null}],
+        ["Root", "root docs", ".", {"branch":null,"subpath":null}]
+    ]), json!({"kind":"resolved","subpath":"pack/skills/a"}));
+    check("folder-container", "owner/repo/tree/main/pack", Some("Alpha"),
+        json!([["Alpha", "child docs", "pack/skills/a", {"branch":"main","subpath":"pack"}]]),
+        json!({"kind":"resolved","subpath":"pack/skills/a"}));
+    fs::write(base.join("pack/SKILL.md"), "---\nname: Pack\ndescription: pack docs\n---\n").unwrap();
+    check("folder-skill-with-nested", "owner/repo/tree/main/pack", Some("Alpha"),
+        json!([["Pack", "pack docs", "pack", {"branch":"main","subpath":"pack"}]]),
+        json!({"kind":"none"}));
+    check("missing-folder", "owner/repo/tree/main/missing", Some("Alpha"), json!([]), json!({"kind":"none"}));
+    check("slash-branch", "owner/repo/tree/feature/x/pack/skills/a", Some("Alpha"),
+        json!([["Alpha", "child docs", "pack/skills/a", {"branch":"feature/x","subpath":"pack/skills/a"}]]),
+        json!({"kind":"resolved","subpath":"pack/skills/a"}));
+    fs::remove_file(base.join("SKILL.md")).unwrap();
+    fs::remove_dir_all(base.join("pack")).unwrap();
+    fs::create_dir_all(base.join("skills/broken")).unwrap();
+    fs::write(base.join("skills/broken/SKILL.md"), "no frontmatter\n").unwrap();
+    fs::create_dir_all(base.join("skills/missing")).unwrap();
+    fs::create_dir_all(base.join(".claude/skills/optional")).unwrap();
+    fs::write(base.join(".claude/skills/optional/prompt.txt"), "bytes").unwrap();
+    check("malformed-missing-and-claude-exception", "owner/repo", Some("broken"), json!([
+        ["broken", null, "skills/broken", {"branch":null,"subpath":null}],
+        ["optional", null, ".claude/skills/optional", {"branch":null,"subpath":null}]
+    ]), json!({"kind":"resolved","subpath":"skills/broken"}));
+    fs::remove_dir_all(base.join("skills")).unwrap();
+    fs::remove_dir_all(base.join(".claude")).unwrap();
+    for (path, name) in [("skills/a", "Alpha one"), ("skills/b", "Alpha two")] {
+        fs::create_dir_all(base.join(path)).unwrap();
+        fs::write(base.join(path).join("SKILL.md"), format!("---\nname: {name}\n---\n")).unwrap();
+    }
+    check("ambiguous-name", "owner/repo", Some("Alpha"), json!([
+        ["Alpha one", null, "skills/a", {"branch":null,"subpath":null}],
+        ["Alpha two", null, "skills/b", {"branch":null,"subpath":null}]
+    ]), json!({"kind":"ambiguous","subpaths":["skills/a","skills/b"]}));
+    check("unmatched-name", "owner/repo", Some("zzz"), json!([
+        ["Alpha one", null, "skills/a", {"branch":null,"subpath":null}],
+        ["Alpha two", null, "skills/b", {"branch":null,"subpath":null}]
+    ]), json!({"kind":"none"}));
+    #[cfg(unix)] {
+        fs::create_dir_all(base.join(".claude/skills")).unwrap();
+        std::os::unix::fs::symlink("../../skills/a", base.join(".claude/skills/alias")).unwrap();
+        // The real directory, not an alias, remains the candidate identity.
+        check("aliases", "owner/repo", Some("Alpha one"), json!([
+            ["Alpha one", null, "skills/a", {"branch":null,"subpath":null}],
+            ["Alpha two", null, "skills/b", {"branch":null,"subpath":null}]
+        ]), json!({"kind":"resolved","subpath":"skills/a"}));
+    }
+}
+
 /// Git listing policy: anything with skill bytes is offered (a broken SKILL.md
 /// still installs, named after its folder); a dir with no SKILL.md under a
 /// scan base is not; a broken root is named `root-skill`.
