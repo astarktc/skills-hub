@@ -315,6 +315,39 @@ pub fn read_invocation_lines(text: &str) -> InvocationLines {
     base
 }
 
+// Only a persisted base can authorize the pre-upgrade opening-fence spelling.
+// Never scan the body for a block, or relax the closing-fence/scalar rule.
+fn legacy_edit_header_end(lines: &[&str], base: &InvocationLines) -> Option<usize> {
+    if !base.had_frontmatter || lines.first()?.trim() != "---" {
+        return None;
+    }
+    let mut canonical = lines.to_vec();
+    canonical[0] = "---\n";
+    header_end(&canonical)
+}
+
+/// Re-choose an existing Edit without stranding keys written before the strict
+/// opening-fence rule. Replay onto upstream bytes uses the normal writer instead.
+pub(crate) fn write_persisted_invocation_mode(
+    text: &str,
+    mode: InvocationMode,
+    base: &InvocationLines,
+) -> String {
+    let lines: Vec<_> = text.split_inclusive('\n').collect();
+    if header_end(&lines).is_none() {
+        if let Some(end) = legacy_edit_header_end(&lines, base) {
+            // A read-only projection preserves the old writer's same-mode no-op;
+            // the output always retains the actual opening line and body bytes.
+            let canonical = format!("---\n{}", lines[1..].concat());
+            if parse_invocation_mode(&canonical) == mode {
+                return text.to_string();
+            }
+            return write_invocation_header(&lines, end, mode);
+        }
+    }
+    write_invocation_mode(text, mode)
+}
+
 pub fn write_invocation_mode(text: &str, mode: InvocationMode) -> String {
     if parse_invocation_mode(text) == mode {
         return text.to_string();
@@ -327,6 +360,10 @@ pub fn write_invocation_mode(text: &str, mode: InvocationMode) -> String {
             Key::UserInvocable.value(mode)
         );
     };
+    write_invocation_header(&lines, end, mode)
+}
+
+fn write_invocation_header(lines: &[&str], end: usize, mode: InvocationMode) -> String {
     let mut result = lines[0].to_string();
     let mut found = Vec::new();
     for line in &lines[1..end] {
@@ -358,7 +395,7 @@ pub fn write_invocation_mode(text: &str, mode: InvocationMode) -> String {
 
 pub fn restore_invocation_lines(text: &str, base: &InvocationLines) -> String {
     let lines: Vec<_> = text.split_inclusive('\n').collect();
-    let Some(end) = header_end(&lines) else {
+    let Some(end) = header_end(&lines).or_else(|| legacy_edit_header_end(&lines, base)) else {
         return text.to_string();
     };
     if !base.had_frontmatter && lines[1..end].iter().all(|line| line_key(line).is_some()) {

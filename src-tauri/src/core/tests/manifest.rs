@@ -4,13 +4,17 @@ use std::fs;
 #[test]
 fn complete_column_zero_fences_match_presentation_corpus() {
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct Case {
         label: String,
         raw: String,
-        meta: Option<std::collections::HashMap<String, String>>,
+        had_frontmatter: bool,
+        rust_metadata: Option<(String, Option<String>)>,
+        rust_error: Option<String>,
         mode: InvocationMode,
     }
-    // The presentation adapter consumes these same literal inputs/expectations.
+    // Shared inputs, independent literal expectations: a syntactic header need
+    // not have a name, and presentation metadata need not be accepted by Rust.
     let cases: Vec<Case> = serde_json::from_str(include_str!(
         "../../../../src/lib/manifestPresentation.corpus.json"
     ))
@@ -19,11 +23,14 @@ fn complete_column_zero_fences_match_presentation_corpus() {
     let path = dir.path().join("SKILL.md");
     for case in cases {
         fs::write(&path, &case.raw).unwrap();
-        let expected = case
-            .meta
-            .as_ref()
-            .map(|meta| (meta["name"].clone(), meta.get("description").cloned()));
+        let expected = case.rust_metadata;
         assert_eq!(parse_skill_md(&path), expected, "{}", case.label);
+        assert_eq!(
+            parse_skill_md_with_reason(&path).err(),
+            case.rust_error.as_deref(),
+            "{}",
+            case.label
+        );
         assert_eq!(
             parse_invocation_mode(&case.raw),
             case.mode,
@@ -37,7 +44,7 @@ fn complete_column_zero_fences_match_presentation_corpus() {
             case.label
         );
         let base = read_invocation_lines(&case.raw);
-        assert_eq!(base.had_frontmatter, case.meta.is_some(), "{}", case.label);
+        assert_eq!(base.had_frontmatter, case.had_frontmatter, "{}", case.label);
         assert_eq!(base.mode(), case.mode, "{}", case.label);
         assert_eq!(
             write_invocation_mode(&case.raw, case.mode),
@@ -96,6 +103,28 @@ fn complete_column_zero_fences_match_presentation_corpus() {
         assert_eq!(entry.skill.description, expected.and_then(|(_, desc)| desc));
         assert_eq!(entry.invocation_mode, case.mode);
     }
+}
+
+#[test]
+fn persisted_restore_does_not_search_unrelated_body_or_relax_closing_fences() {
+    let base: InvocationLines = serde_json::from_str(
+        r#"{"disable_model_invocation":null,"user_invocable":null,"had_frontmatter":true,"repeated_lines":[]}"#,
+    ).unwrap();
+    for raw in [
+        "Body\n  ---\ndisable-model-invocation: true\n---\n",
+        "  ---suffix\ndisable-model-invocation: true\n---\nBody\n",
+        "  ---\ndisable-model-invocation: true\n  ---\nBody\n",
+        "  ---\ndisable-model-invocation: true\n---suffix\nBody\n",
+        "  ---\ndisable-model-invocation: true\n",
+    ] {
+        assert_eq!(restore_invocation_lines(raw, &base), raw);
+    }
+    // The same old-looking block without persisted header evidence is body.
+    let fresh: InvocationLines = serde_json::from_str(
+        r#"{"disable_model_invocation":null,"user_invocable":null,"had_frontmatter":false,"repeated_lines":[]}"#,
+    ).unwrap();
+    let raw = "  ---\ndisable-model-invocation: true\nuser-invocable: false\n---\nBody\n";
+    assert_eq!(restore_invocation_lines(raw, &fresh), raw);
 }
 
 #[test]

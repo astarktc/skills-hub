@@ -3,6 +3,8 @@ import { parseFrontmatter } from "./manifestPresentation";
 import fenceCorpus from "./manifestPresentation.corpus.json";
 
 describe("manifest presentation", () => {
+  // `meta`/`body` are presentation expectations, independent of the corpus's
+  // Rust header/name validity fields (empty or unnamed headers may differ).
   it.each(fenceCorpus)(
     "complete column-zero fences: $label",
     ({ raw, meta, body }) => {

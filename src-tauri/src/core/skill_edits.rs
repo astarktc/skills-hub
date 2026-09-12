@@ -150,7 +150,10 @@ pub(crate) fn settle_direct_unlocked(
         store.delete_skill_edit(&record.id, SkillEditKind::InvocationMode)?;
     } else {
         let mode = edit_mode(&edit)?;
-        manifest::apply_to_file(&path, |text| manifest::write_invocation_mode(text, mode))?;
+        let base = base_lines(&edit)?;
+        manifest::apply_to_file(&path, |text| {
+            manifest::write_persisted_invocation_mode(text, mode, &base)
+        })?;
     }
     Ok(())
 }

@@ -411,9 +411,22 @@ fn failed_edit_upserts_leave_set_and_replay_bytes_untouched() {
 
 #[test]
 fn failed_update_replay_restores_bytes_skill_and_edit_then_retry_succeeds() {
-    for fault in ["edit", "hash", "invalid_utf8"] {
+    for (legacy, fault) in [
+        (false, "edit"),
+        (false, "hash"),
+        (false, "invalid_utf8"),
+        (true, "edit"),
+        (true, "hash"),
+        (true, "invalid_utf8"),
+    ] {
         let f = Fixture::new();
-        f.set(Some(InvocationMode::UserOnly)).unwrap();
+        let mode = if legacy {
+            seed_legacy_edit(&f);
+            InvocationMode::Neither
+        } else {
+            f.set(Some(InvocationMode::UserOnly)).unwrap();
+            InvocationMode::UserOnly
+        };
         let before = f.store.get_skill_by_id(&f.id).unwrap().unwrap();
         let edit = f
             .store
@@ -431,7 +444,7 @@ fn failed_update_replay_restores_bytes_skill_and_edit_then_retry_succeeds() {
         } else if fault == "hash" {
             // Finalize's upstream hash is admitted; replay's post-Edit hash is
             // rejected, after the Edit row and manifest have both changed.
-            let replayed = manifest::write_invocation_mode(upstream, InvocationMode::UserOnly);
+            let replayed = manifest::write_invocation_mode(upstream, mode);
             let expected = tempfile::tempdir().unwrap();
             fs::write(expected.path().join("SKILL.md"), replayed).unwrap();
             let hash = directory_identity(expected.path()).unwrap();
@@ -487,10 +500,12 @@ fn failed_update_replay_restores_bytes_skill_and_edit_then_retry_succeeds() {
             ),
             "{report:?}"
         );
-        assert_eq!(
-            f.text(),
-            manifest::write_invocation_mode(upstream, InvocationMode::UserOnly)
-        );
+        let replayed = if legacy {
+            "---\nname: alpha\nuser-invocable: false\ndisable-model-invocation: true\n---\nnew body\n"
+        } else {
+            "---\nname: alpha\nuser-invocable: true\ndisable-model-invocation: true\n---\nnew body\n"
+        };
+        assert_eq!(f.text(), replayed);
         assert_eq!(
             f.store
                 .get_skill_by_id(&f.id)
@@ -589,6 +604,206 @@ fn persisted_invocation_base_clears_and_replays_without_a_schema_change() {
     );
     f.set(None).unwrap();
     assert_eq!(f.text(), original);
+}
+
+#[test]
+fn legacy_indented_edit_clear_restores_bytes_before_deleting_row() {
+    let f = Fixture::new();
+    // Literal bytes and JSON from the pre-upgrade writer, not today's parser.
+    let original = "  ---\nname: alpha\n---\nBody\n";
+    let edited =
+        "  ---\nname: alpha\ndisable-model-invocation: true\nuser-invocable: true\n---\nBody\n";
+    let base = r#"{"disable_model_invocation":null,"user_invocable":null,"had_frontmatter":true,"repeated_lines":[]}"#;
+    fs::write(f.central.join("SKILL.md"), edited).unwrap();
+    f.store
+        .upsert_skill_edit(&SkillEditRecord {
+            skill_id: f.id.clone(),
+            kind: SkillEditKind::InvocationMode,
+            value: "user-only".into(),
+            base_value: base.into(),
+            conflict: false,
+            applied_at: 1,
+        })
+        .unwrap();
+    f.set(None).unwrap();
+    assert_eq!(
+        f.text(),
+        original,
+        "clear must restore legacy bytes before forgetting the Edit"
+    );
+    assert!(f
+        .store
+        .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
+        .unwrap()
+        .is_none());
+}
+
+// Captured old-writer layout: every duplicate is replaced in place, with CRLF
+// retained; the base stores the first lines plus absolute duplicate positions.
+const LEGACY_ORIGINAL: &str = "  ---\r\nname: alpha\r\nuser-invocable: 'no'  \r\n# keep\r\nuser-invocable: yes\r\ndisable-model-invocation: false\r\n---\t\r\nBody\r\n---\nlater\n";
+const LEGACY_EDITED: &str = "  ---\r\nname: alpha\r\nuser-invocable: false\r\n# keep\r\nuser-invocable: false\r\ndisable-model-invocation: true\r\n---\t\r\nBody\r\n---\nlater\n";
+const LEGACY_BASE: &str = r#"{"disable_model_invocation":"disable-model-invocation: false\r\n","user_invocable":"user-invocable: 'no'  \r\n","had_frontmatter":true,"repeated_lines":[[4,"user-invocable: yes\r\n"]]}"#;
+
+fn seed_legacy_edit(f: &Fixture) -> SkillEditRecord {
+    let row = SkillEditRecord {
+        skill_id: f.id.clone(),
+        kind: SkillEditKind::InvocationMode,
+        value: "neither".into(),
+        base_value: LEGACY_BASE.into(),
+        conflict: false,
+        applied_at: 1,
+    };
+    fs::write(f.central.join("SKILL.md"), LEGACY_EDITED).unwrap();
+    f.store.upsert_skill_edit(&row).unwrap();
+    let mut record = f.store.get_skill_by_id(&f.id).unwrap().unwrap();
+    content_identity::record(&f.store, &mut record).unwrap();
+    row
+}
+
+#[test]
+fn legacy_indented_edit_rechoose_and_clear_preserve_comments_duplicates_and_crlf() {
+    for (mode, expected) in [
+        (None, LEGACY_EDITED),
+        (Some(InvocationMode::Neither), LEGACY_EDITED),
+        (Some(InvocationMode::UserOnly), "  ---\r\nname: alpha\r\nuser-invocable: true\r\n# keep\r\nuser-invocable: true\r\ndisable-model-invocation: true\r\n---\t\r\nBody\r\n---\nlater\n"),
+        (Some(InvocationMode::UserAndModel), "  ---\r\nname: alpha\r\nuser-invocable: true\r\n# keep\r\nuser-invocable: true\r\ndisable-model-invocation: false\r\n---\t\r\nBody\r\n---\nlater\n"),
+    ] {
+        let f = Fixture::new();
+        seed_legacy_edit(&f);
+        if let Some(mode) = mode {
+            f.set(Some(mode)).unwrap();
+        }
+        assert_eq!(f.text(), expected, "re-choose must not prepend a synthetic header: {mode:?}");
+        let row = f.store.get_skill_edit(&f.id, SkillEditKind::InvocationMode).unwrap().unwrap();
+        assert_eq!(row.base_value, LEGACY_BASE);
+        // Compatibility is not a general metadata/invocation parser policy.
+        assert_eq!(manifest::parse_skill_md_with_reason(&f.central.join("SKILL.md")), Err("invalid_frontmatter"));
+        assert_eq!(manifest::parse_invocation_mode(&f.text()), InvocationMode::UserAndModel);
+        let entry = f.set(None).unwrap();
+        assert_eq!(f.text(), LEGACY_ORIGINAL);
+        assert!(entry.invocation_override.is_none());
+        assert!(f.store.get_skill_edit(&f.id, SkillEditKind::InvocationMode).unwrap().is_none());
+        assert_eq!(entry.skill.content_hash, directory_identity(&f.central));
+    }
+}
+
+#[test]
+fn legacy_indented_edit_update_and_clear_restore_current_upstream_not_legacy_base() {
+    for (upstream, expected, base) in [
+        (
+            "---\r\nname: alpha\r\nuser-invocable: 'yes'  \r\n# current\r\n---\r\nNew body\n",
+            "---\r\nname: alpha\r\nuser-invocable: false\r\n# current\r\ndisable-model-invocation: true\r\n---\r\nNew body\n",
+            r#"{"disable_model_invocation":null,"user_invocable":"user-invocable: 'yes'  \r\n","had_frontmatter":true,"repeated_lines":[]}"#,
+        ),
+        (
+            "  ---\r\nname: alpha\r\nuser-invocable: 'no'\r\n# current\r\n---\r\nNew body\n",
+            "---\ndisable-model-invocation: true\nuser-invocable: false\n---\n  ---\r\nname: alpha\r\nuser-invocable: 'no'\r\n# current\r\n---\r\nNew body\n",
+            r#"{"disable_model_invocation":null,"user_invocable":null,"had_frontmatter":false,"repeated_lines":[]}"#,
+        ),
+    ] {
+        let f = Fixture::new();
+        seed_legacy_edit(&f);
+        fs::write(f.source.join("SKILL.md"), upstream).unwrap();
+        // Repeated Updates must not stack synthetic headers or preserve an old base.
+        for _ in 0..2 {
+            let report = f.update();
+            assert!(matches!(report.skills[0].status, SkillRefreshStatus::Refreshed { edit_conflict: None, .. }), "{report:?}");
+            assert_eq!(f.text(), expected);
+            let row = f.store.get_skill_edit(&f.id, SkillEditKind::InvocationMode).unwrap().unwrap();
+            assert_eq!(serde_json::from_str::<serde_json::Value>(&row.base_value).unwrap(), serde_json::from_str::<serde_json::Value>(base).unwrap());
+        }
+        f.set(None).unwrap();
+        assert_eq!(f.text(), upstream, "clear must restore CURRENT upstream bytes");
+        assert!(f.store.get_skill_edit(&f.id, SkillEditKind::InvocationMode).unwrap().is_none());
+    }
+}
+
+#[test]
+fn fresh_indented_input_is_body_and_new_edit_round_trips_through_canonical_header() {
+    let f = Fixture::new();
+    fs::write(f.central.join("SKILL.md"), LEGACY_ORIGINAL).unwrap();
+    f.set(Some(InvocationMode::Neither)).unwrap();
+    assert_eq!(f.text(), "---\ndisable-model-invocation: true\nuser-invocable: false\n---\n  ---\r\nname: alpha\r\nuser-invocable: 'no'  \r\n# keep\r\nuser-invocable: yes\r\ndisable-model-invocation: false\r\n---\t\r\nBody\r\n---\nlater\n");
+    let row = f
+        .store
+        .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.base_value,
+        r#"{"disable_model_invocation":null,"user_invocable":null,"had_frontmatter":false,"repeated_lines":[]}"#
+    );
+    f.set(Some(InvocationMode::UserOnly)).unwrap();
+    f.set(None).unwrap();
+    assert_eq!(f.text(), LEGACY_ORIGINAL);
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_indented_edit_failed_clear_or_rechoose_retains_base_and_retry_restores_bytes() {
+    use std::os::unix::fs::PermissionsExt;
+    for mode in [None, Some(InvocationMode::UserOnly)] {
+        let f = Fixture::new();
+        seed_legacy_edit(&f);
+        let permissions = fs::metadata(&f.central).unwrap().permissions();
+        fs::set_permissions(&f.central, fs::Permissions::from_mode(0o555)).unwrap();
+        let result = f.set(mode);
+        fs::set_permissions(&f.central, permissions).unwrap();
+        assert!(matches!(
+            crate::commands::error::CommandError::from_anyhow(result.unwrap_err()),
+            crate::commands::error::CommandError::SkillManifestIo { .. }
+        ));
+        assert_eq!(f.text(), LEGACY_EDITED);
+        let row = f
+            .store
+            .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.base_value, LEGACY_BASE);
+        assert_eq!(row.value, mode.unwrap_or(InvocationMode::Neither).as_key());
+        assert_eq!(fs::read_dir(&f.central).unwrap().count(), 1);
+        f.set(mode).unwrap();
+        f.set(None).unwrap();
+        assert_eq!(f.text(), LEGACY_ORIGINAL);
+        assert!(f
+            .store
+            .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
+            .unwrap()
+            .is_none());
+    }
+}
+
+#[test]
+fn legacy_indented_edit_missing_or_invalid_manifest_keeps_row() {
+    for invalid in [false, true] {
+        let f = Fixture::new();
+        let before = seed_legacy_edit(&f);
+        if invalid {
+            fs::write(f.central.join("SKILL.md"), [0xff]).unwrap();
+        } else {
+            fs::remove_file(f.central.join("SKILL.md")).unwrap();
+        }
+        let error = f.set(None).unwrap_err();
+        if invalid {
+            assert!(matches!(
+                error.downcast_ref::<SignalError>(),
+                Some(SignalError::SkillManifestIo { .. })
+            ));
+            assert_eq!(fs::read(f.central.join("SKILL.md")).unwrap(), [0xff]);
+        } else {
+            assert!(matches!(
+                error.downcast_ref::<SignalError>(),
+                Some(SignalError::CentralPathMissing { .. })
+            ));
+            assert!(!f.central.join("SKILL.md").exists());
+        }
+        let row = f
+            .store
+            .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
+            .unwrap()
+            .unwrap();
+        assert_eq!(format!("{row:?}"), format!("{before:?}"));
+    }
 }
 
 #[test]
