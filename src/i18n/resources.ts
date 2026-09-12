@@ -425,7 +425,7 @@ export const resources = {
         refreshCompleted: "All skills refreshed.",
         refreshSummary: "{{refreshed}} skills refreshed, {{failed}} failed.",
         refreshSummarySkipped:
-          "{{refreshed}} skills refreshed, {{failed}} failed, {{skipped}} skipped (could not be located).",
+          "{{refreshed}} skills refreshed, {{failed}} failed, {{skipped}} skipped.",
         toolConfigSaved: "Tool configuration saved.",
         syncDisabled: "Sync disabled.",
         syncEnabled: "Sync enabled.",
@@ -1006,7 +1006,7 @@ export const resources = {
         refreshCompleted: "所有 Skills 已刷新。",
         refreshSummary: "已刷新 {{refreshed}} 个 Skills，{{failed}} 个失败。",
         refreshSummarySkipped:
-          "已刷新 {{refreshed}} 个 Skills，{{failed}} 个失败，{{skipped}} 个已跳过（无法定位）。",
+          "已刷新 {{refreshed}} 个 Skills，{{failed}} 个失败，{{skipped}} 个已跳过。",
         toolConfigSaved: "工具配置已保存。",
         syncDisabled: "已取消同步。",
         syncEnabled: "已同步到工具。",

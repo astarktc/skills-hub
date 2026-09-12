@@ -8,7 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BatchSyncReportDto,
   ManagedSkill,
+  InvocationEditReportDto,
+  SkillMutationResultDto,
   RefreshReportDto,
+  SkillRefreshStatusDto,
   RemovalReportDto,
 } from "../components/skills/types";
 import type { SkillLibraryDeps } from "./useSkillLibrary";
@@ -133,6 +136,8 @@ function makeDeps(overrides?: {
   sharedDirConfirmation?: boolean | Promise<boolean>;
   syncReport?: BatchSyncReportDto;
   refreshReport?: RefreshReportDto;
+  returnedSkills?: ManagedSkill[];
+  editReport?: InvocationEditReportDto;
   removalReport?: RemovalReportDto;
 }) {
   const skills = overrides?.skills ?? [skill("s1", "alpha")];
@@ -143,9 +148,18 @@ function makeDeps(overrides?: {
       case "getManagedSkills":
         return Promise.resolve(skills);
       case "refreshManagedSkills":
+        return Promise.resolve(refreshReport);
+      case "updateManagedSkill":
       case "repointLocalSkillSource":
       case "repointGitSkillSource":
-        return Promise.resolve(refreshReport);
+        return Promise.resolve({ report: refreshReport, skills: overrides?.returnedSkills ?? skills } satisfies SkillMutationResultDto);
+      case "setSkillInvocationOverride":
+        return Promise.resolve({
+          report: overrides?.editReport ?? { skill_id: skills[0].id, skill_name: skills[0].name, propagation: [] },
+          skills: overrides?.returnedSkills ?? skills,
+        });
+      case "deleteManagedSkill":
+        return Promise.resolve(null);
       case "unsyncSkill":
       case "unsyncAllSkills":
       case "unsyncSkillFromTool":
@@ -252,16 +266,16 @@ beforeEach(() => {
 });
 
 describe("invocation Edits", () => {
-  it("replaces the returned DTO in place and closes without a refetch", async () => {
-    const setup = makeDeps({ skills: [skill("s1", "alpha"), skill("s2", "beta")] });
+  it("replaces the whole returned catalog and closes without a refetch", async () => {
+    const setup = makeDeps({ skills: [skill("s1", "alpha"), skill("s2", "beta"), skill("s3", "gone")] });
     const { result } = await renderLibrary(setup);
     act(() => result.current.openInvocationEdit("s1"));
     const updated: ManagedSkill = { ...setup.skills[0], invocation_mode: "user-only", invocation_override: { mode: "user-only", base_mode: "user-and-model", conflict: false } };
-    mockInvoke.mockResolvedValueOnce({ entry: updated, propagation: [] });
+    const unrelated = { ...setup.skills[1], description: "fresh unrelated row" };
+    mockInvoke.mockResolvedValueOnce({ report: { skill_id: "s1", skill_name: "alpha", propagation: [] }, skills: [updated, unrelated] });
     await act(async () => { await result.current.setInvocationOverride("s1", "user-only"); });
     expect(mockInvoke).toHaveBeenLastCalledWith("setSkillInvocationOverride", "s1", "user-only");
-    expect(result.current.managedSkills).toEqual([updated, setup.skills[1]]);
-    expect(result.current.managedSkills[1]).toBe(setup.skills[1]);
+    expect(result.current.managedSkills).toEqual([updated, unrelated]);
     expect(result.current.invocationEditSkillId).toBeNull();
     expect(mockInvoke.mock.calls.filter(([command]) => command === "getManagedSkills")).toHaveLength(1);
   });
@@ -275,8 +289,114 @@ describe("invocation Edits", () => {
     expect(result.current.managedSkills).toEqual(setup.skills);
     expect(result.current.invocationEditSkillId).toBe("s1");
     expect(setup.reporter.setError).toHaveBeenCalledWith("formatted:CENTRAL_PATH_MISSING");
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "getManagedSkills")).toHaveLength(1);
+    expect(setup.reporter.notify).not.toHaveBeenCalled();
+    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
   });
 
+});
+
+describe("single-mutation envelopes", () => {
+  it.each(["Update", "Restore", "git Re-point", "local Re-point", "Edit"] as const)(
+    "%s replaces the full catalog without an action-tail fetch", async (action) => {
+      const initial = [skill("s1", "alpha"), skill("s2", "beta"), skill("s3", "gone")];
+      const catalog = [{ ...initial[1], description: "fresh unrelated row" }, { ...initial[0], description: "settled", source_ref: "new source" }];
+      const setup = makeDeps({ skills: initial, returnedSkills: catalog });
+      const { result } = await renderLibrary(setup);
+      act(() => {
+        result.current.openDetail("s1");
+        result.current.openInvocationEdit("s1");
+        result.current.handleRepointGitSkill(initial[0]);
+      });
+      pickFolder.mockResolvedValue("/new/alpha");
+      mockInvoke.mockClear();
+      await act(async () => {
+        if (action === "Update") result.current.handleUpdateSkill(initial[0]);
+        if (action === "Restore") await result.current.handleRestoreSkill(initial[0]);
+        if (action === "git Re-point") await result.current.handleConfirmRepointGitSkill("https://github.com/new/repo");
+        if (action === "local Re-point") await result.current.handleRepointSkill(initial[0]);
+        if (action === "Edit") await result.current.setInvocationOverride("s1", "user-only");
+      });
+      await waitFor(() => expect(result.current.managedSkills).toEqual(catalog));
+      expect(result.current.detailSkill).toEqual(catalog[1]);
+      expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "getManagedSkills")).toHaveLength(0);
+      expect(setup.reporter.notify).toHaveBeenCalledTimes(1);
+      expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
+    },
+  );
+
+  const settled: Extract<SkillRefreshStatusDto, { status: "refreshed" }> = {
+    status: "refreshed", content_hash: null, source_revision: null,
+    targets: [], reassert_error: null, edit_conflict: null,
+  };
+  const cases: { name: string; status: SkillRefreshStatusDto | null; refreshed: number; failed: number; skipped: number; target_failures: number; close: boolean; errors: number; warning: string | null; toast: string | null }[] = [
+    { name: "acquisition failure", status: { status: "failed", error: { code: "OTHER", message: "acquisition failed" } }, refreshed: 0, failed: 1, skipped: 0, target_failures: 0, close: false, errors: 1, warning: null, toast: null },
+    { name: "target failure", status: { ...settled, targets: [{ scope: { scope: "global", tool: "claude" }, status: { status: "failed", error: { code: "OTHER", message: "target blocked" } } }] }, refreshed: 1, failed: 0, skipped: 0, target_failures: 1, close: true, errors: 1, warning: null, toast: null },
+    { name: "reassert failure", status: { ...settled, reassert_error: { code: "OTHER", message: "reassert blocked" } }, refreshed: 1, failed: 0, skipped: 0, target_failures: 1, close: true, errors: 1, warning: null, toast: null },
+    { name: "Edit conflict", status: { ...settled, edit_conflict: { base_mode: "user-and-model", upstream_mode: "model-only", override_mode: "user-only" } }, refreshed: 1, failed: 0, skipped: 0, target_failures: 0, close: true, errors: 0, warning: 'invocationEdit.refreshWarning {"name":"alpha","upstream":"invocationMode.modelOnly","override":"invocationMode.userOnly"}', toast: 'invocationEdit.updateCompletedWithConflict {"name":"alpha"}' },
+    { name: "skill gone", status: { status: "skipped_acquisition", reason: "skill_gone" }, refreshed: 0, failed: 0, skipped: 1, target_failures: 0, close: false, errors: 0, warning: "errors.refreshSkippedSkillGone", toast: null },
+    { name: "stale acquisition", status: { status: "skipped_acquisition", reason: "stale_acquisition" }, refreshed: 0, failed: 0, skipped: 1, target_failures: 0, close: false, errors: 0, warning: "errors.refreshSkippedStaleAcquisition", toast: null },
+    { name: "empty report", status: null, refreshed: 0, failed: 0, skipped: 0, target_failures: 0, close: false, errors: 0, warning: null, toast: "success" },
+  ];
+  describe.each(["Update", "Restore", "git Re-point", "local Re-point"] as const)("%s returned reports", (action) => {
+    it.each(cases)("$name: apply catalog even without success, retain fold completion", async (scenario) => {
+      const initial = [skill("s1", "alpha"), skill("s2", "beta"), skill("s3", "gone")];
+      const catalog = scenario.name === "skill gone" ? [] : [
+        { ...initial[0], description: "current backend row", source_ref: "/current/source" },
+        { ...initial[1], description: "fresh unrelated row" },
+      ];
+      const setup = makeDeps({ skills: initial, returnedSkills: catalog, refreshReport: {
+        skills: scenario.status ? [{ skill_id: "s1", skill_name: "alpha", status: scenario.status }] : [],
+        refreshed: scenario.refreshed, failed: scenario.failed, skipped: scenario.skipped, target_failures: scenario.target_failures,
+      } });
+      const { result } = await renderLibrary(setup);
+      act(() => { result.current.openDetail("s1"); result.current.handleRepointGitSkill(initial[0]); });
+      pickFolder.mockResolvedValue("/new/alpha");
+      mockInvoke.mockClear();
+      await act(async () => {
+        if (action === "Update") result.current.handleUpdateSkill(initial[0]);
+        if (action === "Restore") await result.current.handleRestoreSkill(initial[0]);
+        if (action === "git Re-point") await result.current.handleConfirmRepointGitSkill("https://github.com/new/repo");
+        if (action === "local Re-point") await result.current.handleRepointSkill(initial[0]);
+      });
+      await waitFor(() => expect(setup.reporter.showActionWarnings).toHaveBeenCalledTimes(1));
+      expect(result.current.managedSkills).toEqual(catalog);
+      expect(result.current.detailSkill).toEqual(catalog[0] ?? null);
+      expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "getManagedSkills")).toHaveLength(0);
+      expect(vi.mocked(setup.reporter.showActionErrors).mock.calls[0][0]).toHaveLength(scenario.errors);
+      const warnings = vi.mocked(setup.reporter.showActionWarnings).mock.calls[0][0];
+      expect(warnings.map((entry) => entry.message)).toEqual(scenario.warning ? [scenario.warning] : []);
+      if (action === "git Re-point" && catalog.length) {
+        expect(result.current.pendingGitRepointSkill).toEqual(scenario.close ? null : catalog[0]);
+      }
+      if (scenario.toast === null && catalog.length) expect(setup.reporter.notify).not.toHaveBeenCalled();
+      if (scenario.toast && scenario.toast !== "success") expect(setup.reporter.notify).toHaveBeenCalledWith("warning", scenario.toast, undefined);
+      expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  it("Edit surfaces global and project propagation failures while retaining central settlement", async () => {
+    const updated = { ...skill("s1", "alpha"), invocation_mode: "user-only" as const };
+    const setup = makeDeps({ returnedSkills: [updated], editReport: {
+      skill_id: "s1", skill_name: "alpha", propagation: [
+        { scope: { scope: "global", tool: "claude" }, status: { status: "failed", error: { code: "OTHER", message: "global blocked" } } },
+        { scope: { scope: "project", tool: "cursor", project_id: "p1" }, status: { status: "failed", error: { code: "OTHER", message: "project blocked" } } },
+      ],
+    } });
+    const { result } = await renderLibrary(setup);
+    act(() => result.current.openInvocationEdit("s1"));
+    mockInvoke.mockClear();
+    await act(async () => { await result.current.setInvocationOverride("s1", "user-only"); });
+    expect(result.current.managedSkills).toEqual([updated]);
+    expect(result.current.invocationEditSkillId).toBeNull();
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
+      { title: 'errors.propagationFailedTitle {"name":"alpha","tool":"CLAUDE"}', message: "global blocked" },
+      { title: 'errors.propagationFailedTitle {"name":"alpha","tool":"CURSOR"}', message: "project blocked" },
+    ]);
+    expect(setup.reporter.notify).not.toHaveBeenCalled();
+    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "getManagedSkills")).toHaveLength(0);
+  });
 });
 
 describe("repair notification actions", () => {
@@ -294,7 +414,7 @@ describe("repair notification actions", () => {
     const { result } = await renderLibrary(setup);
     await act(async () => { await result.current.handleRefresh(); });
     const action = vi.mocked(setup.reporter.showActionErrors).mock.calls[0][0][0].action!;
-    mockInvoke.mockResolvedValue([]);
+    mockInvoke.mockImplementation((cmd) => Promise.resolve(cmd === "deleteManagedSkill" ? null : []));
     await act(async () => { await result.current.handleDeleteManaged(gitSkill); });
     act(() => action.onClick());
     expect(setup.reporter.notify).toHaveBeenCalledWith(
@@ -303,6 +423,40 @@ describe("repair notification actions", () => {
     expect(result.current.pendingGitRepointSkill).toBeNull();
   });
 
+});
+
+describe("unchanged refetch contracts", () => {
+  it.each(["Delete", "Refresh-all"] as const)("%s still reads the catalog after its original wire response", async (action) => {
+    const setup = makeDeps();
+    const { result } = await renderLibrary(setup);
+    act(() => result.current.handleDeletePrompt("s1"));
+    mockInvoke.mockClear();
+    mockInvoke.mockResolvedValueOnce(action === "Delete" ? null : refreshedReport(["alpha"]))
+      .mockResolvedValueOnce([]);
+    await act(async () => {
+      if (action === "Delete") await result.current.handleDeleteManaged(setup.skills[0]);
+      else await result.current.handleRefresh();
+    });
+    expect(mockInvoke.mock.calls.map(([cmd]) => cmd)).toEqual([
+      action === "Delete" ? "deleteManagedSkill" : "refreshManagedSkills", "getManagedSkills",
+    ]);
+    expect(result.current.managedSkills).toEqual([]);
+    if (action === "Delete") expect(result.current.pendingDeleteId).toBeNull();
+  });
+
+  it("Delete cleanup failure preserves the row and confirmation without a response-tail fetch", async () => {
+    const setup = makeDeps();
+    const { result } = await renderLibrary(setup);
+    act(() => result.current.handleDeletePrompt("s1"));
+    mockInvoke.mockClear();
+    mockInvoke.mockRejectedValueOnce({ code: "DELETE_CLEANUP_FAILED" });
+    await act(async () => { await result.current.handleDeleteManaged(setup.skills[0]); });
+    expect(result.current.managedSkills).toEqual(setup.skills);
+    expect(result.current.pendingDeleteId).toBe("s1");
+    expect(mockInvoke.mock.calls.map(([cmd]) => cmd)).toEqual(["deleteManagedSkill"]);
+    expect(setup.reporter.setError).toHaveBeenCalledWith("formatted:DELETE_CLEANUP_FAILED");
+    expect(setup.reporter.notify).not.toHaveBeenCalled();
+  });
 });
 
 describe("cancellation and non-report actions", () => {
@@ -474,11 +628,12 @@ afterEach(() => vi.restoreAllMocks());
 // synthetic outcome proves that each caller obeys the fold, not DTO fields.
 describe("invoke → fold → completion", () => {
   it.each([
-    ["Update", "refreshOutcome", "refreshManagedSkills"],
-    ["Restore", "refreshOutcome", "refreshManagedSkills"],
+    ["Update", "refreshOutcome", "updateManagedSkill"],
+    ["Restore", "refreshOutcome", "updateManagedSkill"],
     ["git Re-point", "refreshOutcome", "repointGitSkillSource"],
     ["local Re-point", "refreshOutcome", "repointLocalSkillSource"],
     ["Refresh-all", "refreshOutcome", "refreshManagedSkills"],
+    ["Edit", "invocationEditOutcome", "setSkillInvocationOverride"],
     ["unsync-all", "removalOutcome", "unsyncAllSkills"],
     ["unsync", "removalOutcome", "unsyncSkill"],
     ["delete", "deleteOutcome", "deleteManagedSkill"],
@@ -501,6 +656,7 @@ describe("invoke → fold → completion", () => {
       act(() => {
         result.current.handleDeletePrompt("s1");
         result.current.handleRepointGitSkill(setup.skills[0]);
+        result.current.openInvocationEdit("s1");
       });
       mockInvoke.mockClear();
       await act(async () => {
@@ -512,6 +668,7 @@ describe("invoke → fold → completion", () => {
           case "git Re-point": await lib.handleConfirmRepointGitSkill(" https://github.com/new/repo "); break;
           case "local Re-point": await lib.handleRepointSkill(row); break;
           case "Refresh-all": await lib.handleRefresh(); break;
+          case "Edit": await lib.setInvocationOverride(row.id, "user-only"); break;
           case "unsync-all": await lib.handleUnsyncAll(); break;
           case "unsync": await lib.handleUnsyncSkill(row.id); break;
           case "delete": await lib.handleDeleteManaged(row); break;
@@ -528,6 +685,7 @@ describe("invoke → fold → completion", () => {
       expect(setup.reporter.showActionWarnings).toHaveBeenCalledWith(outcome.warnings);
       expect(setup.reporter.notify).toHaveBeenCalledWith("warning", "fold toast", "detail");
       if (action === "delete") expect(result.current.pendingDeleteId).toBe(complete ? null : "s1");
+      if (action === "Edit") expect(result.current.invocationEditSkillId).toBe(complete ? null : "s1");
       if (action === "git Re-point") expect(result.current.pendingGitRepointSkill).toEqual(complete ? null : setup.skills[0]);
       unmount();
       spy.mockRestore();
@@ -562,8 +720,8 @@ describe("invoke → fold → completion", () => {
     await act(async () => { await result.current.handleRefresh(); });
     const click = vi.mocked(setup.reporter.showActionErrors).mock.calls[0][0][0].action!.onClick;
     const updated = { ...setup.skills[0], source_ref: "new source" };
-    mockInvoke.mockResolvedValue([updated]);
-    await act(async () => { await result.current.loadManagedSkills(); });
+    mockInvoke.mockResolvedValue({ report: { skill_id: "s1", skill_name: "alpha", propagation: [] }, skills: [updated] });
+    await act(async () => { await result.current.setInvocationOverride("s1", null); });
     act(() => click());
     expect(result.current.pendingGitRepointSkill).toEqual(updated);
   });

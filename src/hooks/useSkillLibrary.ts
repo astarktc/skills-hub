@@ -3,10 +3,11 @@ import type {
   ManagedSkill,
   InvocationMode,
   RefreshProgressDto,
-  RefreshReportDto,
+  SkillMutationResultDto,
 } from "../components/skills/types";
 import {
   deleteOutcome,
+  invocationEditOutcome,
   refreshOutcome,
   removalOutcome,
   syncOutcome,
@@ -48,11 +49,11 @@ export type SkillLibraryDeps = {
  * shared-dir confirmation, unsync). Sync fan-out goes through the sync
  * world's seam, received as a dependency.
  *
- * Update and Refresh (all) are one backend batch each
- * (`refreshManagedSkills`): the backend acquires, finalizes, propagates and
- * — with `reassert_auto_sync` — re-asserts the auto-sync invariant, then
- * hands back one report. This hook renders that report; it never loops a
- * per-skill command and never fans out a sync of its own for a refresh.
+ * Update and Refresh (all) are one backend batch each: the backend acquires,
+ * finalizes, propagates and — with `reassert_auto_sync` — re-asserts the
+ * auto-sync invariant. Single mutations also return the complete catalog;
+ * Refresh-all keeps its refetch. This hook folds reports and never fans out
+ * a sync of its own for a refresh.
  */
 export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   const {
@@ -83,13 +84,6 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   const invocationEditSkill = managedSkills.find((skill) => skill.id === invocationEditSkillId) ?? null;
   const openInvocationEdit = useCallback((id: string) => setInvocationEditSkillId(id), []);
   const closeInvocationEdit = useCallback(() => { if (!loading) setInvocationEditSkillId(null); }, [loading]);
-  const setInvocationOverride = useCallback(async (skillId: string, mode: InvocationMode | null) => {
-    await runAction({ successToast: t("invocationEdit.saved") }, async () => {
-      const { entry: updated } = await invokeTauri("setSkillInvocationOverride", skillId, mode);
-      setManagedSkills((skills) => skills.map((skill) => skill.id === updated.id ? updated : skill));
-      setInvocationEditSkillId(null);
-    });
-  }, [runAction, t]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [gitRepointSelection, setGitRepointSelection] =
     useState<{ skillId: string; name: string } | null>(null);
@@ -131,11 +125,11 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   );
 
   /**
-   * The one Refresh invoke: `skillIds === null` refreshes every Managed
-   * skill. Progress ticks come from the backend, one per phase step.
+   * Update and Refresh-all share progress presentation, not response types.
+   * Progress ticks come from the backend, one per phase step.
    */
-  const refreshSkills = useCallback(
-    async (skillIds: string[] | null): Promise<RefreshReportDto> => {
+  const refreshProgress = useCallback(
+    async () => {
       const { Channel } = await import("@tauri-apps/api/core");
       const onProgress = new Channel<RefreshProgressDto>();
       onProgress.onmessage = (progress) => {
@@ -152,14 +146,9 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           ),
         );
       };
-      return invokeTauri(
-        "refreshManagedSkills",
-        skillIds,
-        { reassert_auto_sync: autoSyncEnabled },
-        onProgress,
-      );
+      return onProgress;
     },
-    [autoSyncEnabled, setActionMessage, t],
+    [setActionMessage, t],
   );
 
   const handleRepointGitSkill = useCallback((skill: ManagedSkill) => {
@@ -192,13 +181,23 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     return outcome.completion;
   }, [loadManagedSkills, notify, showActionErrors, showActionWarnings]);
 
+  const setInvocationOverride = useCallback(async (skillId: string, mode: InvocationMode | null) => {
+    await runAction({}, async () => {
+      const { report, skills } = await invokeTauri("setSkillInvocationOverride", skillId, mode);
+      setManagedSkills(skills);
+      const completion = await applyOutcome(invocationEditOutcome(report, foldContext));
+      if (completion.closeModal) setInvocationEditSkillId(null);
+    });
+  }, [applyOutcome, foldContext, runAction]);
+
   const handleRefresh = useCallback(async () => {
     if (managedSkills.length === 0) return;
     await runAction({}, async () => {
-      const report = await refreshSkills(null);
+      const report = await invokeTauri("refreshManagedSkills", null,
+        { reassert_auto_sync: autoSyncEnabled }, await refreshProgress());
       return applyOutcome(refreshOutcome(report, foldContext));
     });
-  }, [applyOutcome, foldContext, managedSkills.length, refreshSkills, runAction]);
+  }, [applyOutcome, autoSyncEnabled, foldContext, managedSkills.length, refreshProgress, runAction]);
 
   const handleUnsyncAll = useCallback(async () => {
     await runAction({}, async () => {
@@ -311,17 +310,19 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   const runSingleRefresh = useCallback(async (
     skill: ManagedSkill,
     copy: { message: string; success: string },
-    requestRefresh?: () => Promise<RefreshReportDto>,
+    requestRefresh?: () => Promise<SkillMutationResultDto>,
   ) => runAction({ message: copy.message }, async () => {
-    let report: RefreshReportDto;
+    let response: SkillMutationResultDto;
     try {
-      report = await (requestRefresh ? requestRefresh() : refreshSkills([skill.id]));
+      response = await (requestRefresh ? requestRefresh() : invokeTauri("updateManagedSkill", skill.id,
+        { reassert_auto_sync: autoSyncEnabled }, await refreshProgress()));
     } catch (error) {
       await loadManagedSkills();
       throw error;
     }
-    return applyOutcome(refreshOutcome(report, { ...foldContext, single: { name: skill.name, success: copy.success } }));
-  }), [applyOutcome, foldContext, loadManagedSkills, refreshSkills, runAction]);
+    setManagedSkills(response.skills);
+    return applyOutcome(refreshOutcome(response.report, { ...foldContext, single: { name: skill.name, success: copy.success } }));
+  }), [applyOutcome, autoSyncEnabled, foldContext, loadManagedSkills, refreshProgress, runAction]);
 
   const handleUpdateManaged = useCallback(
     (skill: ManagedSkill) =>

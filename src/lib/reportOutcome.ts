@@ -2,6 +2,8 @@ import type {
   BatchSyncReportDto,
   ImportReportDto,
   InstallResultDto,
+  InvocationEditReportDto,
+  PropagationTargetDto,
   RefreshReportDto,
   RemovalReportDto,
 } from "../bindings";
@@ -43,7 +45,8 @@ const errorMessage = (ctx: ReportContext, error: unknown) =>
 /**
  * Update, Restore and BOTH Re-points use the same batch-of-one policy.
  * Conflict > failure (including targets/reassert) > skip > success, without
- * suppressing any detail entries. Every returned report reloads, even failure.
+ * suppressing any detail entries. Batch reports reload; single-mutation
+ * responses already supply the complete catalog, even on failure/skip.
  * Only a fully refreshed batch closes a repair modal; conflicts/target failures
  * do not undo central settlement. Thrown invocation errors are not reports.
  * A batch of one never shows the batch count summary: its failure or skip is
@@ -56,6 +59,7 @@ export function refreshOutcome(
   },
 ): Outcome {
   const out: Outcome = empty();
+  out.completion.reload = !ctx.single;
   const { t } = ctx;
   const targetErrors: OutcomeEntry[] = [];
   for (const skill of report.skills) {
@@ -86,16 +90,7 @@ export function refreshOutcome(
         message: t(ACQUISITION_SKIP_KEY[status.reason]),
       });
     } else {
-      for (const target of status.targets) {
-        if (target.status.status !== "failed") continue;
-        targetErrors.push({
-          title: t("errors.propagationFailedTitle", {
-            name: skill.skill_name,
-            tool: label(ctx, target.scope.tool),
-          }),
-          message: errorMessage(ctx, target.status.error),
-        });
-      }
+      targetErrors.push(...propagationErrors(status.targets, skill.skill_name, ctx));
       if (status.reassert_error)
         targetErrors.push({
           title: t("errors.reassertFailedTitle", { name: skill.skill_name }),
@@ -127,26 +122,51 @@ export function refreshOutcome(
   if (ctx.single && !out.completion.conflict && (failed || skipped)) {
     return out;
   }
+  // Precedence is explicit: conflict > failure > skipped > success.
+  let message: string;
+  if (out.completion.conflict) {
+    message = ctx.single
+      ? t("invocationEdit.updateCompletedWithConflict", { name: ctx.single.name })
+      : t("invocationEdit.refreshCompletedWithEdits");
+  } else if (failed) {
+    message = report.failed > 0 ? t("status.refreshSummary", counts) : t("partialFailure");
+  } else if (skipped) {
+    message = t("status.refreshSummarySkipped", { ...counts, skipped: report.skipped });
+  } else {
+    message = ctx.single?.success ?? t("status.refreshCompleted");
+  }
   out.toast = {
     kind: out.completion.conflict || failed || skipped ? "warning" : "success",
-    message: out.completion.conflict
-      ? ctx.single
-        ? t("invocationEdit.updateCompletedWithConflict", {
-            name: ctx.single.name,
-          })
-        : t("invocationEdit.refreshCompletedWithEdits")
-      : failed
-        ? report.failed > 0
-          ? t("status.refreshSummary", counts)
-          : t("partialFailure")
-        : skipped
-          ? t("status.refreshSummarySkipped", {
-              ...counts,
-              skipped: report.skipped,
-            })
-          : (ctx.single?.success ?? t("status.refreshCompleted")),
+    message,
   };
   return out;
+}
+
+function propagationErrors(
+  targets: PropagationTargetDto[],
+  name: string,
+  ctx: ReportContext,
+): PlainEntry[] {
+  return targets.flatMap((target) => target.status.status === "failed" ? [{
+    title: ctx.t("errors.propagationFailedTitle", { name, tool: label(ctx, target.scope.tool) }),
+    message: errorMessage(ctx, target.status.error),
+  }] : []);
+}
+
+/** Edit has already settled centrally, including a no-op or clear. Expected
+ * propagation skips are silent; failures in either scope are notifications,
+ * not a saved toast. The accompanying catalog replaces the whole library. */
+export function invocationEditOutcome(
+  report: InvocationEditReportDto,
+  ctx: ReportContext,
+): Outcome<PlainEntry> {
+  const errors = propagationErrors(report.propagation, report.skill_name, ctx);
+  return {
+    toast: errors.length ? null : { kind: "success", message: ctx.t("invocationEdit.saved") },
+    errors,
+    warnings: [],
+    completion: { reload: false, closeModal: true, conflict: false },
+  };
 }
 
 export function removalOutcome(

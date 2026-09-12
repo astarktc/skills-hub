@@ -39,17 +39,23 @@ export const commands = {
 	 */
 	refreshManagedSkills: (skillIds: string[] | null, policy: RefreshPolicyDto, onProgress: Channel<RefreshProgressDto>) => __TAURI_INVOKE<RefreshReportDto>("refresh_managed_skills", { skillIds, policy, onProgress }),
 	/**
+	 *  Update / Restore use the existing batch-of-one operation, then read the
+	 *  complete catalog after settlement (including auto-sync reassert). This is
+	 *  a fresh read, not a transaction across acquisition, the database and disk.
+	 */
+	updateManagedSkill: (skillId: string, policy: RefreshPolicyDto, onProgress: Channel<RefreshProgressDto>) => __TAURI_INVOKE<SkillMutationResultDto>("update_managed_skill", { skillId, policy, onProgress }),
+	/**
 	 *  Re-point a `local` skill whose source folder is gone at the folder's new
 	 *  location and update from it (see **Unlocatable skill** in `CONTEXT.md`).
 	 *  Honours the Update auto-sync reassert policy; its outcome is report data.
 	 */
-	repointLocalSkillSource: (skillId: string, newPath: string, policy: RefreshPolicyDto) => __TAURI_INVOKE<RefreshReportDto>("repoint_local_skill_source", { skillId, newPath, policy }),
+	repointLocalSkillSource: (skillId: string, newPath: string, policy: RefreshPolicyDto) => __TAURI_INVOKE<SkillMutationResultDto>("repoint_local_skill_source", { skillId, newPath, policy }),
 	/**
 	 *  Re-point a git skill only after acquiring from its new source; the normal
 	 *  single-Update policy includes auto-sync reassert, and its report includes
 	 *  every existing Propagation target and any newly asserted targets.
 	 */
-	repointGitSkillSource: (skillId: string, newUrl: string, policy: RefreshPolicyDto) => __TAURI_INVOKE<RefreshReportDto>("repoint_git_skill_source", { skillId, newUrl, policy }),
+	repointGitSkillSource: (skillId: string, newUrl: string, policy: RefreshPolicyDto) => __TAURI_INVOKE<SkillMutationResultDto>("repoint_git_skill_source", { skillId, newUrl, policy }),
 	/**
 	 *  Detach a `local` skill from its vanished source folder: it becomes
 	 *  `imported` — the central copy is its truth from now on (ADR-0003).
@@ -387,9 +393,16 @@ export type InvocationEditConflict = {
 	override_mode: InvocationMode,
 };
 
-export type InvocationEditResultDto = {
-	entry: ManagedSkillDto,
+/**  Central Edit has settled; target failures remain report data. */
+export type InvocationEditReportDto = {
+	skill_id: string,
+	skill_name: string,
 	propagation: PropagationTargetDto[],
+};
+
+export type InvocationEditResultDto = {
+	report: InvocationEditReportDto,
+	skills: ManagedSkillDto[],
 };
 
 /**
@@ -703,6 +716,11 @@ export type SettingsBounds = {
 export type SkillFileEntry = {
 	path: string,
 	size: number,
+};
+
+export type SkillMutationResultDto = {
+	report: RefreshReportDto,
+	skills: ManagedSkillDto[],
 };
 
 export type SkillRefreshResultDto = {

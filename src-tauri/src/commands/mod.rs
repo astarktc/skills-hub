@@ -807,6 +807,52 @@ pub async fn refresh_managed_skills(
     .map_err(CommandError::from_anyhow)
 }
 
+/// Update / Restore use the existing batch-of-one operation, then read the
+/// complete catalog after settlement (including auto-sync reassert). This is
+/// a fresh read, not a transaction across acquisition, the database and disk.
+#[tauri::command]
+#[specta::specta]
+pub async fn update_managed_skill(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    cancel: State<'_, Arc<CancelToken>>,
+    skill_id: String,
+    policy: RefreshPolicyDto,
+    on_progress: Channel<RefreshProgressDto>,
+) -> Result<SkillMutationResultDto, CommandError> {
+    let report = refresh_managed_skills(
+        app,
+        store.clone(),
+        cancel,
+        Some(vec![skill_id]),
+        policy,
+        on_progress,
+    )
+    .await?;
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        SkillMutationResultDto::from_report(&store, report)
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+#[derive(Debug, Serialize, Type)]
+pub struct SkillMutationResultDto {
+    pub report: RefreshReportDto,
+    pub skills: Vec<ManagedSkillDto>,
+}
+
+impl SkillMutationResultDto {
+    fn from_report(store: &SkillStore, report: RefreshReportDto) -> anyhow::Result<Self> {
+        Ok(Self {
+            report,
+            skills: managed_skill_dtos(store)?,
+        })
+    }
+}
+
 fn to_propagation_target_dto(
     target: crate::core::propagation::PropagationOutcome,
 ) -> PropagationTargetDto {
@@ -921,7 +967,7 @@ pub async fn repoint_local_skill_source(
     skillId: String,
     newPath: String,
     policy: RefreshPolicyDto,
-) -> Result<RefreshReportDto, CommandError> {
+) -> Result<SkillMutationResultDto, CommandError> {
     let store = store.inner().clone();
     let cancel = cancel.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -940,7 +986,7 @@ pub async fn repoint_local_skill_source(
             now_ms(),
             |_| {},
         )?;
-        Ok::<_, anyhow::Error>(to_refresh_report_dto(report))
+        SkillMutationResultDto::from_report(&store, to_refresh_report_dto(report))
     })
     .await
     .map_err(CommandError::internal)?
@@ -960,7 +1006,7 @@ pub async fn repoint_git_skill_source(
     skillId: String,
     newUrl: String,
     policy: RefreshPolicyDto,
-) -> Result<RefreshReportDto, CommandError> {
+) -> Result<SkillMutationResultDto, CommandError> {
     let store = store.inner().clone();
     let cancel = cancel.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -977,7 +1023,7 @@ pub async fn repoint_git_skill_source(
             Some(&cancel),
             now_ms(),
         )?;
-        Ok::<_, anyhow::Error>(to_refresh_report_dto(report))
+        SkillMutationResultDto::from_report(&store, to_refresh_report_dto(report))
     })
     .await
     .map_err(CommandError::internal)?
@@ -1283,27 +1329,49 @@ pub struct SkillTargetDto {
 pub fn get_managed_skills(
     store: State<'_, SkillStore>,
 ) -> Result<Vec<ManagedSkillDto>, CommandError> {
-    let catalog = managed_skill_catalog(store.inner()).map_err(CommandError::from_anyhow)?;
-    Ok(catalog.into_iter().map(ManagedSkillDto::from).collect())
+    managed_skill_dtos(store.inner()).map_err(CommandError::from_anyhow)
+}
+
+fn managed_skill_dtos(store: &SkillStore) -> anyhow::Result<Vec<ManagedSkillDto>> {
+    Ok(managed_skill_catalog(store)?
+        .into_iter()
+        .map(ManagedSkillDto::from)
+        .collect())
+}
+
+/// Central Edit has settled; target failures remain report data.
+#[derive(Debug, Serialize, Type)]
+pub struct InvocationEditReportDto {
+    pub skill_id: String,
+    pub skill_name: String,
+    pub propagation: Vec<PropagationTargetDto>,
 }
 
 #[derive(Debug, Serialize, Type)]
 pub struct InvocationEditResultDto {
-    pub entry: ManagedSkillDto,
-    pub propagation: Vec<PropagationTargetDto>,
+    pub report: InvocationEditReportDto,
+    pub skills: Vec<ManagedSkillDto>,
 }
 
-impl From<crate::core::skill_edits::InvocationEditOutcome> for InvocationEditResultDto {
-    fn from(outcome: crate::core::skill_edits::InvocationEditOutcome) -> Self {
-        Self {
-            entry: outcome.entry.into(),
-            propagation: outcome
-                .propagation
-                .targets
-                .into_iter()
-                .map(to_propagation_target_dto)
-                .collect(),
-        }
+impl InvocationEditResultDto {
+    fn from_outcome(
+        store: &SkillStore,
+        outcome: crate::core::skill_edits::InvocationEditOutcome,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            report: InvocationEditReportDto {
+                skill_id: outcome.entry.skill.id,
+                skill_name: outcome.entry.skill.name,
+                propagation: outcome
+                    .propagation
+                    .targets
+                    .into_iter()
+                    .map(to_propagation_target_dto)
+                    .collect(),
+            },
+            // Called after the Edit entry point released the Mutation guard.
+            skills: managed_skill_dtos(store)?,
+        })
     }
 }
 
@@ -1318,8 +1386,9 @@ pub async fn set_skill_invocation_override(
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let paths = installer_paths(&app, &store)?;
-        crate::core::skill_edits::set_invocation_override(&paths, &store, &skill_id, mode)
-            .map(InvocationEditResultDto::from)
+        let outcome =
+            crate::core::skill_edits::set_invocation_override(&paths, &store, &skill_id, mode)?;
+        InvocationEditResultDto::from_outcome(&store, outcome)
     })
     .await
     .map_err(CommandError::internal)?
@@ -1590,3 +1659,7 @@ pub async fn get_hidden_explore_skills(
 #[cfg(test)]
 #[path = "tests/commands.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/mutation_results.rs"]
+mod mutation_results;

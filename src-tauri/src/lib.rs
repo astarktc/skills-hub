@@ -35,6 +35,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::sync_skills_to_tools,
             commands::unsync_skill_from_tool,
             commands::refresh_managed_skills,
+            commands::update_managed_skill,
             commands::repoint_local_skill_source,
             commands::repoint_git_skill_source,
             commands::detach_skill_from_source,

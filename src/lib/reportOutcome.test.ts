@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { resources } from "../i18n/resources";
 import type {
   BatchSyncReportDto,
   ImportGroupStatusDto,
   ImportReportDto,
   InstallResultDto,
+  InvocationEditReportDto,
   RefreshReportDto,
   RemovalReportDto,
   SkillRefreshResultDto,
 } from "../bindings";
 import {
   deleteOutcome,
+  invocationEditOutcome,
   importOutcome,
   installOutcome,
   refreshOutcome,
@@ -124,7 +127,7 @@ describe("refreshOutcome: one precedence and completion policy", () => {
       name: "acquisition failure",
       rows: [failed],
       severity: "warning",
-      key: "status.refreshSummary",
+      key: 'status.refreshSummary {"refreshed":0,"failed":1}',
       errors: 1,
       warnings: 0,
       close: false,
@@ -133,7 +136,7 @@ describe("refreshOutcome: one precedence and completion policy", () => {
       name: "skipped",
       rows: [skipped],
       severity: "warning",
-      key: "status.refreshSummarySkipped",
+      key: 'status.refreshSummarySkipped {"refreshed":0,"failed":0,"skipped":1}',
       errors: 0,
       warnings: 1,
       close: false,
@@ -169,7 +172,7 @@ describe("refreshOutcome: one precedence and completion policy", () => {
       name: "acquisition skips are warnings with their own reason",
       rows: [skippedGone, skippedStale],
       severity: "warning",
-      key: "status.refreshSummarySkipped",
+      key: 'status.refreshSummarySkipped {"refreshed":0,"failed":0,"skipped":2}',
       errors: 0,
       warnings: 2,
       close: false,
@@ -178,7 +181,7 @@ describe("refreshOutcome: one precedence and completion policy", () => {
       name: "failed beats skipped",
       rows: [failed, skipped],
       severity: "warning",
-      key: "status.refreshSummary",
+      key: 'status.refreshSummary {"refreshed":0,"failed":1}',
       errors: 1,
       warnings: 1,
       close: false,
@@ -219,24 +222,21 @@ describe("refreshOutcome: one precedence and completion policy", () => {
         single: { name: "git", success: "single success" },
       });
       expect(batch.toast?.kind).toBe(severity);
-      expect(batch.toast?.message).toContain(key);
+      expect(batch.toast?.message).toBe(key);
       expect(batch.errors).toHaveLength(errors);
       expect(batch.warnings).toHaveLength(warnings);
       expect(batch.completion).toEqual({
         reload: true,
         closeModal: close,
-        conflict: rows.some(
-          (s) =>
-            s.status.status === "refreshed" && Boolean(s.status.edit_conflict),
-        ),
+        conflict: key === "invocationEdit.refreshCompletedWithEdits",
       });
-      expect(single.completion).toEqual(batch.completion);
+      expect(single.completion).toEqual({ ...batch.completion, reload: false });
       expect(single.errors).toEqual(batch.errors);
       expect(single.warnings).toEqual(batch.warnings);
       if (batch.completion.conflict) {
         expect(single.toast?.kind).toBe(batch.toast?.kind);
         expect(single.toast?.message).toBe(
-          t("invocationEdit.updateCompletedWithConflict", { name: "git" }),
+          'invocationEdit.updateCompletedWithConflict {"name":"git"}',
         );
       } else if (severity === "success") {
         expect(single.toast).toEqual({ kind: "success", message: "single success" });
@@ -247,6 +247,18 @@ describe("refreshOutcome: one precedence and completion policy", () => {
       expect(JSON.stringify(report)).toBe(before);
     },
   );
+
+  it("acquisition skips preserve both reasons; the batch summary is neutral in both locales", () => {
+    const out = refreshOutcome(refreshReport([skippedGone, skippedStale]), ctx);
+    expect(out.warnings).toEqual([
+      { title: 'errors.refreshSkippedTitle {"name":"gone"}', message: "errors.refreshSkippedSkillGone" },
+      { title: 'errors.refreshSkippedTitle {"name":"stale"}', message: "errors.refreshSkippedStaleAcquisition" },
+    ]);
+    expect(out.completion).toEqual({ reload: true, closeModal: false, conflict: false });
+    expect(out.toast).toEqual({ kind: "warning", message: 'status.refreshSummarySkipped {"refreshed":0,"failed":0,"skipped":2}' });
+    expect(resources.en.translation.status.refreshSummarySkipped).toBe("{{refreshed}} skills refreshed, {{failed}} failed, {{skipped}} skipped.");
+    expect(resources.zh.translation.status.refreshSummarySkipped).toBe("已刷新 {{refreshed}} 个 Skills，{{failed}} 个失败，{{skipped}} 个已跳过。");
+  });
 
   it("returns a repair id, never a callback or captured ManagedSkill", () => {
     const out = refreshOutcome(refreshReport([failed]), ctx);
@@ -328,6 +340,41 @@ describe("refreshOutcome: one precedence and completion policy", () => {
         ctx,
       ).warnings[0].message,
     ).toBe("errors.refreshSkippedCentralMissing");
+  });
+});
+
+describe("invocationEditOutcome", () => {
+  const globalFailure: InvocationEditReportDto["propagation"][number] = {
+    scope: { scope: "global", tool: "claude" },
+    status: { status: "failed", error: { code: "OTHER", message: "global blocked" } },
+  };
+  const projectFailure: InvocationEditReportDto["propagation"][number] = {
+    scope: { scope: "project", project_id: "p1", tool: "unknown" },
+    status: { status: "failed", error: { code: "OTHER", message: "project blocked" } },
+  };
+  it.each([
+    { name: "no targets / no-op", propagation: [], errors: [] },
+    { name: "synced", propagation: [{ scope: { scope: "global", tool: "claude" }, status: { status: "synced", mode_used: "copy" } }], errors: [] },
+    { name: "global failure", propagation: [globalFailure], errors: [{ title: 'errors.propagationFailedTitle {"name":"alpha","tool":"CLAUDE"}', message: "global blocked" }] },
+    { name: "project failure", propagation: [projectFailure], errors: [{ title: 'errors.propagationFailedTitle {"name":"alpha","tool":"unknown"}', message: "project blocked" }] },
+    { name: "both failures", propagation: [globalFailure, projectFailure], errors: [
+      { title: 'errors.propagationFailedTitle {"name":"alpha","tool":"CLAUDE"}', message: "global blocked" },
+      { title: 'errors.propagationFailedTitle {"name":"alpha","tool":"unknown"}', message: "project blocked" },
+    ] },
+    { name: "expected skips", propagation: [
+      { scope: { scope: "global", tool: "claude" }, status: { status: "skipped", reason: { reason: "link_follows_source" } } },
+      { scope: { scope: "global", tool: "absent" }, status: { status: "skipped", reason: { reason: "tool_not_installed", tool: "absent" } } },
+      { scope: { scope: "global", tool: "unknown" }, status: { status: "skipped", reason: { reason: "unknown_tool", tool: "unknown" } } },
+      { scope: { scope: "project", project_id: "p1", tool: "claude" }, status: { status: "skipped", reason: { reason: "project_unavailable", project_id: "p1" } } },
+    ], errors: [] },
+  ] satisfies { name: string; propagation: InvocationEditReportDto["propagation"]; errors: { title: string; message: string }[] }[])("$name: central-settled completion, no unconditional success", ({ propagation, errors }) => {
+    const report: InvocationEditReportDto = { skill_id: "s1", skill_name: "alpha", propagation };
+    const before = JSON.stringify(report);
+    expect(invocationEditOutcome(report, ctx)).toEqual({
+      toast: errors.length ? null : { kind: "success", message: "invocationEdit.saved" },
+      errors, warnings: [], completion: { reload: false, closeModal: true, conflict: false },
+    });
+    expect(JSON.stringify(report)).toBe(before);
   });
 });
 

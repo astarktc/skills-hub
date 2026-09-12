@@ -20,6 +20,7 @@ export type { CandidateMatch } from "../../bindings";
 export type { LocalSkillCandidate } from "../../bindings";
 export type { InstallResultDto } from "../../bindings";
 export type { RefreshReportDto } from "../../bindings";
+export type { SkillMutationResultDto, InvocationEditResultDto, InvocationEditReportDto } from "../../bindings";
 export type { RefreshPolicyDto } from "../../bindings";
 export type { RefreshProgressDto } from "../../bindings";
 export type { SkillRefreshResultDto } from "../../bindings";
