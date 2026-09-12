@@ -2,6 +2,103 @@ use super::*;
 use std::fs;
 
 #[test]
+fn complete_column_zero_fences_match_presentation_corpus() {
+    #[derive(Deserialize)]
+    struct Case {
+        label: String,
+        raw: String,
+        meta: Option<std::collections::HashMap<String, String>>,
+        mode: InvocationMode,
+    }
+    // The presentation adapter consumes these same literal inputs/expectations.
+    let cases: Vec<Case> = serde_json::from_str(include_str!(
+        "../../../../src/lib/manifestPresentation.corpus.json"
+    ))
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("SKILL.md");
+    for case in cases {
+        fs::write(&path, &case.raw).unwrap();
+        let expected = case
+            .meta
+            .as_ref()
+            .map(|meta| (meta["name"].clone(), meta.get("description").cloned()));
+        assert_eq!(parse_skill_md(&path), expected, "{}", case.label);
+        assert_eq!(
+            parse_invocation_mode(&case.raw),
+            case.mode,
+            "{}",
+            case.label
+        );
+        assert_eq!(
+            invocation_mode_for_dir(dir.path()),
+            case.mode,
+            "{}",
+            case.label
+        );
+        let base = read_invocation_lines(&case.raw);
+        assert_eq!(base.had_frontmatter, case.meta.is_some(), "{}", case.label);
+        assert_eq!(base.mode(), case.mode, "{}", case.label);
+        assert_eq!(
+            write_invocation_mode(&case.raw, case.mode),
+            case.raw,
+            "{}",
+            case.label
+        );
+        let edited = write_invocation_mode(&case.raw, InvocationMode::UserOnly);
+        assert_eq!(
+            parse_invocation_mode(&edited),
+            InvocationMode::UserOnly,
+            "{}",
+            case.label
+        );
+        assert_eq!(
+            restore_invocation_lines(&edited, &base),
+            case.raw,
+            "{}",
+            case.label
+        );
+
+        // Real consumers, not a Manifest stub: discovery, finalize and catalog
+        // all agree about the very same bytes (including malformed fences).
+        let candidates = crate::core::skill_discovery::discover_skills(dir.path());
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].validity.is_valid(), expected.is_some());
+        assert_eq!(
+            candidates[0].name,
+            expected.as_ref().map_or("root-skill", |(name, _)| name)
+        );
+        assert_eq!(
+            candidates[0].description,
+            expected.as_ref().and_then(|(_, desc)| desc.clone())
+        );
+        let central = tempfile::tempdir().unwrap();
+        let store = crate::core::skill_store::SkillStore::new(central.path().join("test.db"));
+        store.ensure_schema().unwrap();
+        let staged = crate::core::install_finalize::StagingDir::new_in(central.path());
+        fs::create_dir_all(staged.path()).unwrap();
+        fs::write(staged.path().join("SKILL.md"), &case.raw).unwrap();
+        let installed = crate::core::install_finalize::finalize_install(
+            &store,
+            central.path(),
+            staged,
+            crate::core::install_finalize::NameIntent::Derived("fallback".into()),
+            crate::core::install_finalize::SkillProvenance::imported(None),
+        )
+        .unwrap();
+        let entry = crate::core::skill_catalog::managed_skill_entry(&store, &installed.skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            entry.skill.name,
+            expected.as_ref().map_or("fallback", |(name, _)| name)
+        );
+        assert_eq!(entry.skill.description, expected.and_then(|(_, desc)| desc));
+        assert_eq!(entry.invocation_mode, case.mode);
+    }
+}
+
+#[test]
 fn corpus_round_trips_preserving_unrelated_bytes_and_no_op() {
     let corpus = [
         "",
@@ -94,6 +191,67 @@ fn rename_failure_preserves_bytes_and_cleans_temp() {
         error.downcast_ref::<super::super::errors::SignalError>(),
         Some(super::super::errors::SignalError::SkillManifestIo { .. })
     ));
+}
+
+#[test]
+fn required_reads_are_typed_while_optional_reads_remain_permissive() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("SKILL.md");
+    for shape in ["missing", "invalid_utf8", "directory"] {
+        match shape {
+            "invalid_utf8" => fs::write(&path, [0xff]).unwrap(),
+            "directory" => {
+                fs::remove_file(&path).unwrap();
+                fs::create_dir(&path).unwrap();
+            }
+            _ => {}
+        }
+        assert_eq!(parse_skill_md_with_reason(&path), Err("read_failed"));
+        assert_eq!(parse_skill_md(&path), None);
+        assert_eq!(
+            invocation_mode_for_dir(dir.path()),
+            InvocationMode::UserAndModel
+        );
+        let error = read_manifest(&path).unwrap_err();
+        assert!(error.downcast_ref::<std::io::Error>().is_some());
+        assert!(matches!(
+            crate::commands::error::CommandError::from_anyhow(error),
+            crate::commands::error::CommandError::SkillManifestIo { .. }
+        ));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn file_edits_preserve_permissions_and_same_mode_preserves_file_identity() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("SKILL.md");
+    let original = "---\nname: alpha\nuser-invocable: false  \n---\nBody\n";
+    fs::write(&path, original).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+    let before = fs::metadata(&path).unwrap();
+    apply_to_file(&path, |text| {
+        write_invocation_mode(text, InvocationMode::ModelOnly)
+    })
+    .unwrap();
+    let after = fs::metadata(&path).unwrap();
+    assert_eq!(after.ino(), before.ino());
+    assert_eq!(after.modified().unwrap(), before.modified().unwrap());
+    assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    apply_to_file(&path, |text| {
+        write_invocation_mode(text, InvocationMode::UserOnly)
+    })
+    .unwrap();
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "---\nname: alpha\nuser-invocable: true\ndisable-model-invocation: true\n---\nBody\n"
+    );
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
 }
 
 #[test]

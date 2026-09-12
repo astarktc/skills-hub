@@ -1,0 +1,65 @@
+[
+  {
+    "label": "indented opening is body",
+    "raw": "  ---\nname: alpha\nuser-invocable: false\n---\nBody\n",
+    "meta": null,
+    "body": "  ---\nname: alpha\nuser-invocable: false\n---\nBody\n",
+    "mode": "user-and-model"
+  },
+  {
+    "label": "opening prefix is body",
+    "raw": "---suffix\nname: alpha\nuser-invocable: false\n---\nBody\n",
+    "meta": null,
+    "body": "---suffix\nname: alpha\nuser-invocable: false\n---\nBody\n",
+    "mode": "user-and-model"
+  },
+  {
+    "label": "closing prefix leaves unfinished header as body",
+    "raw": "---\nname: alpha\nuser-invocable: false\n---suffix\nBody\n",
+    "meta": null,
+    "body": "---\nname: alpha\nuser-invocable: false\n---suffix\nBody\n",
+    "mode": "user-and-model"
+  },
+  {
+    "label": "indented closing leaves unfinished header as body",
+    "raw": "---\nname: alpha\nuser-invocable: false\n  ---\nBody\n",
+    "meta": null,
+    "body": "---\nname: alpha\nuser-invocable: false\n  ---\nBody\n",
+    "mode": "user-and-model"
+  },
+  {
+    "label": "complete LF fences tolerate trailing whitespace",
+    "raw": "--- \t\nname: alpha\nuser-invocable: false\n--- \t\n\nBody\n---\nlater\n",
+    "meta": { "name": "alpha", "user-invocable": "false" },
+    "body": "Body\n---\nlater\n",
+    "mode": "model-only"
+  },
+  {
+    "label": "CRLF offsets preserve body bytes and scalar lines",
+    "raw": "---\r\nname: alpha\r\ndescription: |\r\n  before\r\n  ---\r\n  after\r\nuser-invocable: false\r\n---\t\r\n\r\nBody\r\n---\r\nlater\r\n",
+    "meta": { "name": "alpha", "description": "before\n---\nafter", "user-invocable": "false" },
+    "body": "Body\r\n---\r\nlater\r\n",
+    "mode": "model-only"
+  },
+  {
+    "label": "closing prefix before real fence stays in header",
+    "raw": "---\nname: alpha\n---suffix\nuser-invocable: false\n---\nBody\n---\nlater\n",
+    "meta": { "name": "alpha", "user-invocable": "false" },
+    "body": "Body\n---\nlater\n",
+    "mode": "model-only"
+  },
+  {
+    "label": "closing fence at EOF",
+    "raw": "---\nname: alpha\nuser-invocable: false\n---",
+    "meta": { "name": "alpha", "user-invocable": "false" },
+    "body": "",
+    "mode": "model-only"
+  },
+  {
+    "label": "LF scalar fence and mixed body endings",
+    "raw": "---\nname: alpha\ndescription: |\n  before\n  ---\n  after\nuser-invocable: false\n---\nBody\r\n---\nlater\n",
+    "meta": { "name": "alpha", "description": "before\n---\nafter", "user-invocable": "false" },
+    "body": "Body\r\n---\nlater\n",
+    "mode": "model-only"
+  }
+]

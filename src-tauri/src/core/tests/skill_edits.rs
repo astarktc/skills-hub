@@ -411,7 +411,7 @@ fn failed_edit_upserts_leave_set_and_replay_bytes_untouched() {
 
 #[test]
 fn failed_update_replay_restores_bytes_skill_and_edit_then_retry_succeeds() {
-    for fault in ["edit", "hash"] {
+    for fault in ["edit", "hash", "invalid_utf8"] {
         let f = Fixture::new();
         f.set(Some(InvocationMode::UserOnly)).unwrap();
         let before = f.store.get_skill_by_id(&f.id).unwrap().unwrap();
@@ -428,7 +428,7 @@ fn failed_update_replay_restores_bytes_skill_and_edit_then_retry_succeeds() {
             conn.execute_batch("CREATE TRIGGER fail_replay BEFORE INSERT ON skill_edits
                 WHEN NEW.base_value != (SELECT base_value FROM skill_edits WHERE skill_id = NEW.skill_id)
                 BEGIN SELECT RAISE(ABORT, 'test replay edit failure'); END;").unwrap();
-        } else {
+        } else if fault == "hash" {
             // Finalize's upstream hash is admitted; replay's post-Edit hash is
             // rejected, after the Edit row and manifest have both changed.
             let replayed = manifest::write_invocation_mode(upstream, InvocationMode::UserOnly);
@@ -441,6 +441,10 @@ fn failed_update_replay_restores_bytes_skill_and_edit_then_retry_succeeds() {
                 BEGIN SELECT RAISE(ABORT, 'test replay hash failure'); END;"
             ))
             .unwrap();
+        } else {
+            // Optional metadata reads degrade; required replay must fail typed
+            // and restore the entire pre-finalize state, not land invalid bytes.
+            fs::write(f.source.join("SKILL.md"), [0xff]).unwrap();
         }
         let report = f.update();
         assert!(
@@ -467,7 +471,11 @@ fn failed_update_replay_restores_bytes_skill_and_edit_then_retry_succeeds() {
             .file_name()
             .to_string_lossy()
             .starts_with(".skills-hub-old-")));
-        conn.execute_batch("DROP TRIGGER fail_replay;").unwrap();
+        if fault == "invalid_utf8" {
+            fs::write(f.source.join("SKILL.md"), upstream).unwrap();
+        } else {
+            conn.execute_batch("DROP TRIGGER fail_replay;").unwrap();
+        }
         let report = f.update();
         assert!(
             matches!(
@@ -531,6 +539,56 @@ fn invalid_utf8_is_typed_for_set_and_replay() {
             crate::commands::error::CommandError::SkillManifestIo { .. }
         ));
     }
+}
+
+#[test]
+fn persisted_invocation_base_clears_and_replays_without_a_schema_change() {
+    let f = Fixture::new();
+    let original = "---\r\nname: alpha\r\nuser-invocable: 'no'  \r\n# keep\r\nuser-invocable: yes\r\ndisable-model-invocation: false\r\n---\r\nBody\r\n---\n";
+    let edited = "---\r\nname: alpha\r\nuser-invocable: false\r\n# keep\r\nuser-invocable: false\r\ndisable-model-invocation: true\r\n---\r\nBody\r\n---\n";
+    // Literal pre-extraction persisted fields, not serialized from today's type.
+    let base = r#"{"disable_model_invocation":"disable-model-invocation: false\r\n","user_invocable":"user-invocable: 'no'  \r\n","had_frontmatter":true,"repeated_lines":[[4,"user-invocable: yes\r\n"]]}"#;
+    let row = SkillEditRecord {
+        skill_id: f.id.clone(),
+        kind: SkillEditKind::InvocationMode,
+        value: "neither".into(),
+        base_value: base.into(),
+        conflict: false,
+        applied_at: 1,
+    };
+    fs::write(f.central.join("SKILL.md"), edited).unwrap();
+    f.store.upsert_skill_edit(&row).unwrap();
+    assert_eq!(
+        invocation_override(&f.store, &f.id)
+            .unwrap()
+            .unwrap()
+            .base_mode,
+        InvocationMode::UserAndModel
+    );
+    f.set(None).unwrap();
+    assert_eq!(f.text(), original);
+
+    f.store.upsert_skill_edit(&row).unwrap();
+    fs::write(f.source.join("SKILL.md"), original).unwrap();
+    assert!(matches!(
+        f.update().skills[0].status,
+        SkillRefreshStatus::Refreshed {
+            edit_conflict: None,
+            ..
+        }
+    ));
+    assert_eq!(f.text(), edited);
+    let replayed = f
+        .store
+        .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&replayed.base_value).unwrap(),
+        serde_json::from_str::<serde_json::Value>(base).unwrap()
+    );
+    f.set(None).unwrap();
+    assert_eq!(f.text(), original);
 }
 
 #[test]

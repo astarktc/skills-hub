@@ -3,12 +3,14 @@ export function parseFrontmatter(raw: string): {
   meta: Record<string, string> | null;
   body: string;
 } {
-  if (!raw.startsWith("---")) return { meta: null, body: raw };
-  const end = raw.indexOf("\n---", 3);
+  // Match core/manifest.rs: complete column-zero lines, trailing whitespace
+  // allowed. Keep raw offsets so CRLF and later body fences survive untouched.
+  const rawLines = raw.split("\n");
+  if (rawLines[0].trimEnd() !== "---") return { meta: null, body: raw };
+  const end = rawLines.findIndex((line, i) => i > 0 && line.trimEnd() === "---");
   if (end === -1) return { meta: null, body: raw };
-  const block = raw.slice(4, end);
   const entries: Record<string, string> = {};
-  const lines = block.split("\n");
+  const lines = rawLines.slice(1, end).map((line) => line.replace(/\r$/, ""));
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const idx = line.indexOf(":");
@@ -43,6 +45,9 @@ export function parseFrontmatter(raw: string): {
   }
   const keys = Object.keys(entries);
   if (keys.length === 0) return { meta: null, body: raw };
-  const body = raw.slice(end + 4).replace(/^\n+/, "");
+  const bodyStart = rawLines
+    .slice(0, end + 1)
+    .reduce((offset, line) => offset + line.length + 1, 0);
+  const body = raw.slice(bodyStart).replace(/^(?:\r?\n)+/, "");
   return { meta: entries, body };
 }

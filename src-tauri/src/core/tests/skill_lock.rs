@@ -42,6 +42,21 @@ fn parse_valid_lock_file_returns_entries() {
 }
 
 #[test]
+fn optional_lock_read_discards_missing_invalid_utf8_unreadable_and_malformed() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join(".skill-lock.json");
+    assert!(super::parse_lock_file(&path).is_none());
+    fs::write(&path, [0xff]).unwrap();
+    assert!(super::parse_lock_file(&path).is_none());
+    fs::write(&path, "{broken json").unwrap();
+    assert!(super::parse_lock_file(&path).is_none());
+    fs::remove_file(&path).unwrap();
+    // A directory is deterministically unreadable as text, including under root.
+    fs::create_dir(&path).unwrap();
+    assert!(super::parse_lock_file(&path).is_none());
+}
+
+#[test]
 fn parse_lock_file_missing_skills_key_returns_none() {
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join(".skill-lock.json"), r#"{ "version": 3 }"#).unwrap();

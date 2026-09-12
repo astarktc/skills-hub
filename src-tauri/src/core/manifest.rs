@@ -27,9 +27,10 @@ pub(crate) fn find_skill_md(dir: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Find the closing column-zero fence, tolerating only trailing whitespace.
+/// Both fences must be complete column-zero lines; trailing whitespace is okay.
+/// Indented scalar content and `---suffix` are never delimiters.
 fn header_end(lines: &[&str]) -> Option<usize> {
-    if lines.first()?.trim() != "---" {
+    if lines.first()?.trim_end() != "---" {
         return None;
     }
     lines
