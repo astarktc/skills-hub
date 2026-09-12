@@ -155,8 +155,10 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
 - Sync uses a triple fallback: symlink → junction (Windows) → copy.
 - **Manifest** reads and byte-preserving invocation writes live in `core/manifest.rs`; discovery,
   finalize and Edit consume it. Persisted `InvocationLines` fields are a compatibility contract. Fences
-  are complete column-zero `---` lines (trailing whitespace/CRLF allowed); the pure frontend presentation
-  adapter `src/lib/manifestPresentation.ts` uses the same test corpus. Optional lock-file text reads use
+  are complete column-zero `---` lines (trailing whitespace/CRLF allowed); only a persisted Edit base
+  authorizes the former indented opening for clear/re-choose. Fresh reads and upstream replay stay strict.
+  The pure frontend adapter `src/lib/manifestPresentation.ts` uses the same input corpus, with independent
+  header/name-validity and display-metadata expectations. Optional lock-file text reads use
   the shared read adapter, but `skill_lock` retains JSON/provenance policy and permissive failure handling.
 - **Content identity** lives in `core/content_identity.rs`: finalize/Edit record it; Propagation,
   reconcile and same-content checks read the stored identity, backfilled by the module when absent.
