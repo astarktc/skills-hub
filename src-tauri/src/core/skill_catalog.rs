@@ -16,8 +16,8 @@ use anyhow::{Context, Result};
 use std::path::Path;
 
 use crate::core::{
+    manifest::{invocation_mode_for_dir, InvocationMode},
     provenance::is_refreshable,
-    skill_discovery::{invocation_mode_for_dir, InvocationMode},
     skill_store::{SkillRecord, SkillStore, SkillTargetRecord},
     unlocatable::{is_detachable, unlocatable_state, UnlocatableState},
 };

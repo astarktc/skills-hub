@@ -25,9 +25,12 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use super::errors::SignalError;
+// Compatibility exports for existing callers; Manifest is the only implementation.
+pub use super::manifest::InvocationMode;
+pub(crate) use super::manifest::{find_skill_md, parse_skill_md, parse_skill_md_with_reason};
 use super::skill_matching::MatchableSkill;
 
 /// Directories relative to a root that are declared skill homes.
@@ -270,24 +273,6 @@ pub(crate) fn has_skill_md(dir: &Path) -> bool {
     find_skill_md(dir).is_some()
 }
 
-/// Find the actual SKILL.md file path in a directory (case-insensitive).
-/// Returns the real filesystem path preserving original casing.
-pub(crate) fn find_skill_md(dir: &Path) -> Option<PathBuf> {
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for entry in rd.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let name = entry.file_name();
-            if name.to_string_lossy().eq_ignore_ascii_case("skill.md") {
-                return Some(path);
-            }
-        }
-    }
-    None
-}
-
 /// The admission rule for turning a directory into a Managed skill: a source
 /// without a `SKILL.md` is not an installable skill (fixes #8 — directories
 /// that were "discovered" under a tool's skills dir but carry no manifest).
@@ -316,189 +301,6 @@ fn is_claude_skill_dir(p: &Path) -> bool {
         }
     }
     false
-}
-
-/// Find the closing column-zero fence, tolerating only trailing whitespace.
-pub(crate) fn header_end(lines: &[&str]) -> Option<usize> {
-    if lines.first()?.trim() != "---" {
-        return None;
-    }
-    lines
-        .iter()
-        .enumerate()
-        .skip(1)
-        .find(|(_, line)| line.trim_end() == "---")
-        .map(|(i, _)| i)
-}
-
-/// Parse a SKILL.md's frontmatter into `(name, description)`; `None` if unusable.
-pub(crate) fn parse_skill_md(path: &Path) -> Option<(String, Option<String>)> {
-    parse_skill_md_with_reason(path).ok()
-}
-
-/// Parse a SKILL.md's frontmatter, reporting why it is unusable as a stable
-/// token: `read_failed`, `invalid_frontmatter`, or `missing_name`.
-pub(crate) fn parse_skill_md_with_reason(
-    path: &Path,
-) -> Result<(String, Option<String>), &'static str> {
-    let text = std::fs::read_to_string(path).map_err(|_| "read_failed")?;
-    let lines: Vec<&str> = text.lines().collect();
-    let end = header_end(&lines).ok_or("invalid_frontmatter")?;
-    let mut name: Option<String> = None;
-    let mut desc: Option<String> = None;
-    let mut i = 1usize;
-    while i < end {
-        let raw = lines[i];
-        let l = raw.trim();
-        if let Some(v) = l.strip_prefix("name:") {
-            name = Some(clean_frontmatter_value(v));
-        } else if let Some(v) = l.strip_prefix("description:") {
-            let v = v.trim();
-            if v == "|" || v == ">" {
-                let folded = v == ">";
-                let mut block_lines: Vec<String> = Vec::new();
-                while i + 1 < end {
-                    let next = lines[i + 1];
-                    if !next.trim().is_empty() && !next.starts_with(char::is_whitespace) {
-                        break;
-                    }
-                    block_lines.push(next.strip_prefix("  ").unwrap_or(next).to_string());
-                    i += 1;
-                }
-                let value = if folded {
-                    block_lines
-                        .iter()
-                        .map(|line| line.trim())
-                        .filter(|line| !line.is_empty())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                } else {
-                    block_lines.join("\n").trim().to_string()
-                };
-                desc = Some(value);
-            } else {
-                desc = Some(clean_frontmatter_value(v));
-            }
-        }
-        i += 1;
-    }
-    let name = name.ok_or("missing_name")?;
-    Ok((name, desc))
-}
-
-// ── Invocation mode ──
-
-/// Who may invoke a skill, derived from its `SKILL.md` frontmatter.
-///
-/// Two Claude Code frontmatter keys govern this (the agentskills.io
-/// specification does not define them yet):
-/// `disable-model-invocation: true` blocks automatic model invocation, and
-/// `user-invocable: false` hides the skill from the `/` menu. Both default to
-/// the permissive value, so a skill with no frontmatter — or with malformed
-/// frontmatter — is [`InvocationMode::UserAndModel`]. Setting both keys is the
-/// documented recipe for hiding a skill from everyone: [`InvocationMode::Neither`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "kebab-case")]
-pub enum InvocationMode {
-    /// Default: the user can type `/name` and the model can load it on its own.
-    #[default]
-    UserAndModel,
-    /// `disable-model-invocation: true` — only the user can invoke it.
-    UserOnly,
-    /// `user-invocable: false` — only the model can invoke it.
-    ModelOnly,
-    /// Both keys restrict invocation — neither the user nor the model can invoke it.
-    Neither,
-}
-
-impl InvocationMode {
-    const KEYS: [(Self, &'static str); 4] = [
-        (Self::UserAndModel, "user-and-model"),
-        (Self::UserOnly, "user-only"),
-        (Self::ModelOnly, "model-only"),
-        (Self::Neither, "neither"),
-    ];
-
-    pub fn as_key(self) -> &'static str {
-        Self::KEYS.iter().find(|(mode, _)| *mode == self).unwrap().1
-    }
-
-    pub fn from_key(key: &str) -> Option<Self> {
-        Self::KEYS
-            .iter()
-            .find(|(_, value)| *value == key)
-            .map(|(mode, _)| *mode)
-    }
-}
-
-/// Invocation mode of the skill installed at `dir` (its `SKILL.md` is read
-/// fresh). An unreadable or absent `SKILL.md` yields the default mode.
-pub fn invocation_mode_for_dir(dir: &Path) -> InvocationMode {
-    let Some(path) = find_skill_md(dir) else {
-        return InvocationMode::default();
-    };
-    match std::fs::read_to_string(path) {
-        Ok(text) => parse_invocation_mode(&text),
-        Err(_) => InvocationMode::default(),
-    }
-}
-
-/// Map a `SKILL.md`'s raw text to its [`InvocationMode`]. Never fails: any
-/// shape that is not a recognised restriction means the default mode.
-pub fn parse_invocation_mode(text: &str) -> InvocationMode {
-    let lines: Vec<&str> = text.lines().collect();
-    let Some(end) = header_end(&lines) else {
-        return InvocationMode::default();
-    };
-    let mut model_disabled = false;
-    let mut user_invocable = true;
-    for raw in &lines[1..end] {
-        let l = raw.trim();
-        // Indented lines belong to a nested mapping (e.g. `metadata:`), not to
-        // the top-level keys this reads.
-        if raw.starts_with(char::is_whitespace) {
-            continue;
-        }
-        if let Some(v) = l.strip_prefix("disable-model-invocation:") {
-            if let Some(flag) = parse_frontmatter_bool(v) {
-                model_disabled = flag;
-            }
-        } else if let Some(v) = l.strip_prefix("user-invocable:") {
-            if let Some(flag) = parse_frontmatter_bool(v) {
-                user_invocable = flag;
-            }
-        }
-    }
-    match (user_invocable, model_disabled) {
-        (true, false) => InvocationMode::UserAndModel,
-        (true, true) => InvocationMode::UserOnly,
-        (false, false) => InvocationMode::ModelOnly,
-        (false, true) => InvocationMode::Neither,
-    }
-}
-
-/// A frontmatter boolean, accepting the spellings Claude Code accepts
-/// (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`). `None` for anything else,
-/// so a malformed value falls back to the key's default.
-fn parse_frontmatter_bool(value: &str) -> Option<bool> {
-    let value = clean_frontmatter_value(value).to_ascii_lowercase();
-    match value.as_str() {
-        "true" | "yes" | "on" | "1" => Some(true),
-        "false" | "no" | "off" | "0" => Some(false),
-        _ => None,
-    }
-}
-
-fn clean_frontmatter_value(value: &str) -> String {
-    let value = value.trim();
-    if value.len() >= 2
-        && ((value.starts_with('"') && value.ends_with('"'))
-            || (value.starts_with('\'') && value.ends_with('\'')))
-    {
-        value[1..value.len() - 1].to_string()
-    } else {
-        value.to_string()
-    }
 }
 
 /// Description fallback from `.claude-plugin/plugin.json` at the root.

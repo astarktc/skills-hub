@@ -10,12 +10,12 @@ use super::{
     clock::now_ms,
     content_identity,
     errors::SignalError,
-    frontmatter_edit::{self, InvocationLines},
     installer::InstallerPaths,
+    manifest::{self, InvocationLines, InvocationMode},
     mutation_guard,
     propagation::PropagationReport,
     skill_catalog::{managed_skill_entry, ManagedSkillEntry},
-    skill_discovery::{find_skill_md, InvocationMode},
+    skill_discovery::find_skill_md,
     skill_store::{SkillEditKind, SkillEditRecord, SkillRecord, SkillStore},
     skill_update::{self, ApplyOutcome, UpdateBytes, UpdateRequest},
 };
@@ -95,8 +95,8 @@ pub fn set_invocation_override(
         if let Some(mode) = mode {
             let base_value = match existing {
                 Some(edit) => edit.base_value,
-                None => serde_json::to_string(&frontmatter_edit::read_invocation_lines(
-                    &frontmatter_edit::read_manifest(&path)?,
+                None => serde_json::to_string(&manifest::read_invocation_lines(
+                    &manifest::read_manifest(&path)?,
                 ))?,
             };
             store.upsert_skill_edit(&SkillEditRecord {
@@ -144,15 +144,13 @@ pub(crate) fn settle_direct_unlocked(
     };
     if clear {
         let base = base_lines(&edit)?;
-        frontmatter_edit::apply_to_file(&path, |text| {
-            frontmatter_edit::restore_invocation_lines(text, &base)
+        manifest::apply_to_file(&path, |text| {
+            manifest::restore_invocation_lines(text, &base)
         })?;
         store.delete_skill_edit(&record.id, SkillEditKind::InvocationMode)?;
     } else {
         let mode = edit_mode(&edit)?;
-        frontmatter_edit::apply_to_file(&path, |text| {
-            frontmatter_edit::write_invocation_mode(text, mode)
-        })?;
+        manifest::apply_to_file(&path, |text| manifest::write_invocation_mode(text, mode))?;
     }
     Ok(())
 }
@@ -169,8 +167,7 @@ pub(crate) fn replay_unlocked(
     };
     let snapshot = edit.clone();
     let path = manifest(record)?;
-    let upstream =
-        frontmatter_edit::read_invocation_lines(&frontmatter_edit::read_manifest(&path)?);
+    let upstream = manifest::read_invocation_lines(&manifest::read_manifest(&path)?);
     let base_mode = base_lines(&edit)?.mode();
     let upstream_mode = upstream.mode();
     let override_mode = edit_mode(&edit)?;
@@ -205,9 +202,7 @@ fn apply_replay(
     mode: InvocationMode,
 ) -> Result<()> {
     store.upsert_skill_edit(edit)?;
-    frontmatter_edit::apply_to_file(path, |text| {
-        frontmatter_edit::write_invocation_mode(text, mode)
-    })?;
+    manifest::apply_to_file(path, |text| manifest::write_invocation_mode(text, mode))?;
     record.updated_at = now_ms();
     content_identity::record(store, record)
 }

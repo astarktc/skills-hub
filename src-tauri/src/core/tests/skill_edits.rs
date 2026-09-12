@@ -103,7 +103,7 @@ fn edit_returns_a_failed_copy_target_in_its_propagation_report() {
         SyncStatus::Error
     );
     assert_eq!(
-        frontmatter_edit::read_invocation_lines(&f.text()).mode(),
+        manifest::read_invocation_lines(&f.text()).mode(),
         InvocationMode::UserOnly
     );
 }
@@ -120,7 +120,7 @@ fn update_replays_and_clear_restores_current_upstream_bytes_and_hash() {
         }
     ));
     assert_eq!(
-        frontmatter_edit::read_invocation_lines(&f.text()).mode(),
+        manifest::read_invocation_lines(&f.text()).mode(),
         InvocationMode::UserOnly
     );
     assert_ne!(
@@ -148,7 +148,7 @@ fn update_replays_and_clear_restores_current_upstream_bytes_and_hash() {
     assert!(edit.conflict);
     assert_eq!(
         edit.base_value,
-        serde_json::to_string(&frontmatter_edit::read_invocation_lines(upstream)).unwrap()
+        serde_json::to_string(&manifest::read_invocation_lines(upstream)).unwrap()
     );
     // Unchanged upstream still disagrees with the override.
     assert!(matches!(
@@ -183,14 +183,14 @@ fn update_replays_and_clear_restores_current_upstream_bytes_and_hash() {
 fn upstream_convergence_keeps_override_and_clears_conflict() {
     for previous_conflict in [false, true] {
         let f = Fixture::new();
-        let user = frontmatter_edit::write_invocation_mode(UPSTREAM, InvocationMode::UserOnly);
+        let user = manifest::write_invocation_mode(UPSTREAM, InvocationMode::UserOnly);
         fs::write(f.source.join("SKILL.md"), &user).unwrap();
         f.update();
         f.set(Some(InvocationMode::ModelOnly)).unwrap();
         if previous_conflict {
             fs::write(
                 f.source.join("SKILL.md"),
-                frontmatter_edit::write_invocation_mode(UPSTREAM, InvocationMode::Neither),
+                manifest::write_invocation_mode(UPSTREAM, InvocationMode::Neither),
             )
             .unwrap();
             assert!(matches!(
@@ -208,7 +208,7 @@ fn upstream_convergence_keeps_override_and_clears_conflict() {
                     .conflict
             );
         }
-        let model = frontmatter_edit::write_invocation_mode(UPSTREAM, InvocationMode::ModelOnly);
+        let model = manifest::write_invocation_mode(UPSTREAM, InvocationMode::ModelOnly);
         fs::write(f.source.join("SKILL.md"), &model).unwrap();
         assert!(matches!(
             f.update().skills[0].status,
@@ -274,7 +274,7 @@ fn restore_and_repoint_replay_the_edit() {
         SkillRefreshStatus::Refreshed { .. }
     ));
     assert_eq!(
-        frontmatter_edit::read_invocation_lines(&f.text()).mode(),
+        manifest::read_invocation_lines(&f.text()).mode(),
         InvocationMode::Neither
     );
     let new = f.dir.path().join("new");
@@ -295,7 +295,7 @@ fn restore_and_repoint_replay_the_edit() {
         SkillRefreshStatus::Refreshed { .. }
     ));
     assert_eq!(
-        frontmatter_edit::read_invocation_lines(&f.text()).mode(),
+        manifest::read_invocation_lines(&f.text()).mode(),
         InvocationMode::Neither
     );
 }
@@ -374,12 +374,12 @@ fn failed_manifest_write_keeps_base_and_replay_heals_bytes() {
         .unwrap();
     assert_eq!(
         edit.base_value,
-        serde_json::to_string(&frontmatter_edit::read_invocation_lines(UPSTREAM)).unwrap()
+        serde_json::to_string(&manifest::read_invocation_lines(UPSTREAM)).unwrap()
     );
     let mut record = f.store.get_skill_by_id(&f.id).unwrap().unwrap();
     mutation_guard::serialized(|| replay_unlocked(&f.store, &mut record)).unwrap();
     assert_eq!(
-        frontmatter_edit::read_invocation_lines(&f.text()).mode(),
+        manifest::read_invocation_lines(&f.text()).mode(),
         InvocationMode::UserOnly
     );
     f.set(None).unwrap();
@@ -431,8 +431,7 @@ fn failed_update_replay_restores_bytes_skill_and_edit_then_retry_succeeds() {
         } else {
             // Finalize's upstream hash is admitted; replay's post-Edit hash is
             // rejected, after the Edit row and manifest have both changed.
-            let replayed =
-                frontmatter_edit::write_invocation_mode(upstream, InvocationMode::UserOnly);
+            let replayed = manifest::write_invocation_mode(upstream, InvocationMode::UserOnly);
             let expected = tempfile::tempdir().unwrap();
             fs::write(expected.path().join("SKILL.md"), replayed).unwrap();
             let hash = directory_identity(expected.path()).unwrap();
@@ -482,7 +481,7 @@ fn failed_update_replay_restores_bytes_skill_and_edit_then_retry_succeeds() {
         );
         assert_eq!(
             f.text(),
-            frontmatter_edit::write_invocation_mode(upstream, InvocationMode::UserOnly)
+            manifest::write_invocation_mode(upstream, InvocationMode::UserOnly)
         );
         assert_eq!(
             f.store

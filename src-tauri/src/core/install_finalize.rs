@@ -20,8 +20,8 @@ use uuid::Uuid;
 use super::clock::now_ms;
 use super::content_identity;
 use super::errors::SignalError;
+use super::manifest::{find_skill_md, parse_skill_md};
 use super::provenance::Provenance;
-use super::skill_discovery::{find_skill_md, parse_skill_md};
 use super::skill_store::{SkillRecord, SkillStore};
 use super::sync_engine::copy_dir_recursive;
 

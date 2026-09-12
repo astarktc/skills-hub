@@ -27,7 +27,7 @@ struct SkillLockRaw {
 /// Parse a skill lock file and return a map of skill name -> SkillLockEntry.
 /// Returns None if the file is missing, unreadable, or malformed.
 pub fn parse_lock_file(path: &Path) -> Option<HashMap<String, SkillLockEntry>> {
-    let content = std::fs::read_to_string(path).ok()?;
+    let content = super::manifest::read_text(path).ok()?;
     let lock_file: SkillLockFile = serde_json::from_str(&content).ok()?;
     let skills = lock_file.skills?;
     if skills.is_empty() {
