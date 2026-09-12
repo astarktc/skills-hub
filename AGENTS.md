@@ -103,8 +103,12 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   from smaller building-block hooks it owns (e.g. `useAddSkillFlow` instantiates `useCandidatePick`
   twice); those are internal to that world, not a cross-world seam. After a mutation, the **project**
   world applies what the mutation returned — a `ProjectViewDto` fed to `useProjectState::applyView`, no
-  success-path refetch tail, only a failure-path `refreshView`; while the **skills** world re-invokes
-  `getManagedSkills` (`loadManagedSkills`) after refresh, import and delete. Three project mutations cannot
+  success-path refetch tail, only a failure-path `refreshView`. The **skills** world replaces its entire
+  catalog from `{ report, skills }` after Update, Restore, either Re-point and Edit — even when the returned
+  report contains failures/skips. Commands read that catalog after settlement/reassert, outside the guard;
+  a catalog-read failure is a command error, never an empty success. Refresh-all, import and delete retain
+  `getManagedSkills` (`loadManagedSkills`); thrown Update/Restore/Re-point requests also reload, thrown Edit
+  does not. Three project mutations cannot
   answer with a view: `remove_project` returns `Vec<ProjectDto>` (the project is gone),
   `update_project_gitignore` returns `()` (it changes no view row), and `resync_all_projects` returns
   `{ summaries, projects }` spanning every project, so the hook refetches `getProjectView` for the selected
@@ -149,6 +153,11 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   `SKILLS_HUB_*` **feature-flag env vars** (`git_fetcher.rs`, `sync_engine.rs`) are read
   where they apply — they tune behaviour, never locate data.
 - Sync uses a triple fallback: symlink → junction (Windows) → copy.
+- **Manifest** reads and byte-preserving invocation writes live in `core/manifest.rs`; discovery,
+  finalize and Edit consume it. Persisted `InvocationLines` fields are a compatibility contract. Fences
+  are complete column-zero `---` lines (trailing whitespace/CRLF allowed); the pure frontend presentation
+  adapter `src/lib/manifestPresentation.ts` uses the same test corpus. Optional lock-file text reads use
+  the shared read adapter, but `skill_lock` retains JSON/provenance policy and permissive failure handling.
 - **Content identity** lives in `core/content_identity.rs`: finalize/Edit record it; Propagation,
   reconcile and same-content checks read the stored identity, backfilled by the module when absent.
   Unmanaged onboarding candidates use its directory read; hashing stays private to the module.
@@ -160,10 +169,11 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   - Update / Refresh (all) → `refresh_managed_skills` (`core/refresh.rs`): acquire every skill (bounded
     pool of 4, std threads), then `skill_update::apply_unlocked` admits and settles each under the
     guard (finalize + Edit replay + Propagation), plus the `reassert_auto_sync` policy. A single
-    Update is a batch of one. `core/skill_update.rs` owns the git/local/Edit/Restore byte adapters;
-    stale acquisitions are discarded as skipped report data, never retried in-batch. Direct Edit
-    settles through the same Update module and returns `{ entry, propagation }`; target failures
-    remain report data rather than log-only outcomes.
+    Update is a batch of one, reached through `update_managed_skill` for Update/Restore's catalog-bearing
+    response. `core/skill_update.rs` owns the git/local/Edit/Restore byte adapters; stale acquisitions are
+    discarded as skipped report data, never retried in-batch. Direct Edit settles through the same Update
+    module; its core result `{ entry, propagation }` becomes a `{ report, skills }` command response.
+    The Edit fold consumes target failures as report data, never unconditional saved success.
   - Onboarding import → `import_onboarding_selection` (`core/onboarding_import.rs`): admit, finalize,
     then sync through the global sync batch (auto-sync on — a first sync, not Propagation) or remove
     byte-identical originals (auto-sync off), per group.
@@ -196,10 +206,10 @@ A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version 
   (`relative.*` is the only i18n family for it); `src/lib/persistedPreference.ts` +
   `src/lib/preferences.ts` own persisted view preferences (the literal storage keys are a compat
   contract with existing users); `src/lib/reportOutcome.ts` owns turning every backend report (Refresh /
-  Update batch-of-one, removal, global sync, import, install, delete) into an `Outcome` — toast, error and
+  Update batch-of-one, Edit, removal, global sync, import, install, delete) into an `Outcome` — toast, error and
   warning entries, and a `completion` (reload / closeModal / conflict) the hook executes; precedence is
   conflict › failure › skipped › success, actions carry a skill *id* the hook resolves at click time, and
-  no hook reads a report field outside the fold. Components import pure functions (presentation, `describeCommandError`);
+  hooks unpack response envelopes but never interpret nested report fields outside the fold. Components import pure functions (presentation, `describeCommandError`);
   the props App passes carry state — `notify`, `runAction`, data, actions — never a function that is
   only an import with an argument pre-bound.
 
