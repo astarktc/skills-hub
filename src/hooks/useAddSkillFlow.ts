@@ -155,7 +155,7 @@ export function useAddSkillFlow({
     {
       customName: gitName,
       installOne: (repoUrl, candidate, name) =>
-        invokeTauri("installGitSelection", repoUrl, candidate.subpath, name, candidate.resolution ?? null),
+        invokeTauri("installGitSelection", repoUrl, candidate.subpath, name, candidate.resolution),
       resetForm: () => {
         setGitUrl("");
         setGitName("");
@@ -459,7 +459,7 @@ export function useAddSkillFlow({
           url,
           chosen.subpath,
           gitName.trim() || null,
-          chosen.resolution ?? null,
+          chosen.resolution,
         );
         const deployment = await deployNewSkill(created);
         const outcome = installOutcome([{ name: created.name, status: "installed", result: created, deployment }], { t, toolLabelById, source: "git" });

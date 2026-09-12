@@ -6,8 +6,9 @@ use anyhow::{Context, Result};
 use super::cancel_token::CancelToken;
 use super::central_repo::ensure_central_repo;
 use super::errors::SignalError;
+pub use super::git_acquisition::GitSourceResolution;
 use super::git_acquisition::{
-    acquire, parse_github_url, AcquireRequest, GithubApi, HttpGithubApi, SkillIntent,
+    acquire, parse_github_url, AcquireRequest, GitSelection, GithubApi, HttpGithubApi, SkillIntent,
 };
 use super::git_cache::{explore_preview_key, fetch_through_cache, FetchRequest};
 pub use super::install_finalize::InstallResult;
@@ -200,15 +201,7 @@ pub struct GitSkillCandidate {
     pub name: String,
     pub description: Option<String>,
     pub subpath: String,
-    #[serde(default)]
     pub resolution: Option<GitSourceResolution>,
-}
-
-/// The listing's branch/path decision, including an explicit default-branch choice.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type)]
-pub struct GitSourceResolution {
-    pub branch: Option<String>,
-    pub subpath: Option<String>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, specta::Type)]
@@ -222,12 +215,12 @@ pub struct LocalSkillCandidate {
 
 /// Git listing adapter: the git side admits any installable candidate;
 /// validity is not surfaced on this wire shape.
-fn git_candidate(c: DiscoveredSkill) -> GitSkillCandidate {
+fn git_candidate(c: DiscoveredSkill, resolution: &GitSourceResolution) -> GitSkillCandidate {
     GitSkillCandidate {
         name: c.name,
         description: c.description,
         subpath: c.subpath,
-        resolution: None,
+        resolution: Some(resolution.clone()),
     }
 }
 
@@ -282,64 +275,17 @@ fn list_git_skills_with(
     api: &dyn GithubApi,
     checkout: impl FnOnce(&super::git_acquisition::GitSource) -> Result<PathBuf>,
 ) -> Result<GitSkillListing> {
-    let (parsed, _) =
-        super::git_acquisition::resolve_tree_source(&parse_github_url(repo_url), None, api);
-    let repo_dir = checkout(&parsed)?;
-
-    let candidates = resolved_git_candidates_in(&repo_dir, &parsed);
+    let (found, resolution) =
+        super::git_acquisition::list_candidates_with(&parse_github_url(repo_url), api, checkout)?;
+    let candidates: Vec<_> = found
+        .into_iter()
+        .map(|c| git_candidate(c, &resolution))
+        .collect();
     let target_match = target_name.map(|target| match_skill_candidate(target, &candidates).into());
     Ok(GitSkillListing {
         candidates,
         target_match,
     })
-}
-
-fn resolved_git_candidates_in(
-    repo_dir: &Path,
-    source: &super::git_acquisition::GitSource,
-) -> Vec<GitSkillCandidate> {
-    git_candidates_in(repo_dir, source.subpath.as_deref())
-        .into_iter()
-        .map(|mut candidate| {
-            candidate.resolution = Some(GitSourceResolution {
-                branch: source.branch.clone(),
-                subpath: source.subpath.clone(),
-            });
-            candidate
-        })
-        .collect()
-}
-
-/// Git listing over a cloned repo. A folder URL (`subpath`) scopes discovery
-/// to that folder while subpaths stay repo-relative; when the folder is itself
-/// a skill it is the single candidate.
-fn git_candidates_in(repo_dir: &Path, subpath: Option<&str>) -> Vec<GitSkillCandidate> {
-    let scan_root = match subpath {
-        Some(sub) => repo_dir.join(sub),
-        None => repo_dir.to_path_buf(),
-    };
-    if !scan_root.is_dir() {
-        return Vec::new();
-    }
-    let mut found = discover_skills(&scan_root);
-    if subpath.is_some() && found.iter().any(|c| c.subpath == ".") {
-        found.retain(|c| c.subpath == ".");
-    }
-
-    found
-        .into_iter()
-        .filter(|c| c.validity.is_installable())
-        .map(|mut c| {
-            if let Some(prefix) = subpath {
-                c.subpath = if c.subpath == "." {
-                    prefix.to_string()
-                } else {
-                    format!("{}/{}", prefix.trim_end_matches('/'), c.subpath)
-                };
-            }
-            git_candidate(c)
-        })
-        .collect()
 }
 
 /// Local listing adapter: every discovered candidate is shown, with its
@@ -361,12 +307,9 @@ pub fn list_local_skills(base_path: &Path) -> Result<Vec<LocalSkillCandidate>> {
         .collect())
 }
 
-/// Install one selected skill from a git source.
-///
-/// An adapter over `core::git_acquisition`: it chooses the Staging dir as the
-/// destination and hands the acquired revision to finalize. The GitHub API
-/// fast path (with the real commit SHA), the clone fallback, sparse fetching
-/// and cancellation come with the acquisition module.
+/// Legacy null-resolution fixture adapter. Production uses the named
+/// selection door below; this keeps existing cross-module fixtures compatible.
+#[cfg(test)]
 pub fn install_git_skill_from_selection(
     paths: &InstallerPaths,
     store: &SkillStore,
@@ -388,6 +331,7 @@ pub fn install_git_skill_from_selection(
 
 /// [`install_git_skill_from_selection`] with the GitHub adapter injected, so
 /// the install path's fast-path wiring is testable without HTTP.
+#[cfg(test)]
 pub(crate) fn install_git_skill_from_selection_with(
     paths: &InstallerPaths,
     store: &SkillStore,
@@ -397,7 +341,18 @@ pub(crate) fn install_git_skill_from_selection_with(
     cancel: Option<&CancelToken>,
     api: &dyn GithubApi,
 ) -> Result<InstallResult> {
-    install_git_selection_with(paths, store, repo_url, (subpath, None), name, cancel, api)
+    install_git_selection_with(
+        paths,
+        store,
+        repo_url,
+        GitSelection {
+            subpath: Some(subpath),
+            resolution: None,
+        },
+        name,
+        cancel,
+        api,
+    )
 }
 
 /// Install using the listing's exact source decision, without another refs lookup.
@@ -405,13 +360,10 @@ pub fn install_git_skill_from_listing(
     paths: &InstallerPaths,
     store: &SkillStore,
     repo_url: &str,
-    selection: (&str, Option<&GitSourceResolution>),
+    selection: GitSelection,
     name: Option<String>,
     cancel: Option<&CancelToken>,
 ) -> Result<InstallResult> {
-    if selection.1.is_none() {
-        return install_git_skill_from_selection(paths, store, repo_url, selection.0, name, cancel);
-    }
     install_git_selection_with(
         paths,
         store,
@@ -427,16 +379,15 @@ fn install_git_selection_with(
     paths: &InstallerPaths,
     store: &SkillStore,
     repo_url: &str,
-    (subpath, resolution): (&str, Option<&GitSourceResolution>),
+    selection: GitSelection,
     name: Option<String>,
     cancel: Option<&CancelToken>,
     api: &dyn GithubApi,
 ) -> Result<InstallResult> {
-    let mut source = parse_github_url(repo_url);
-    if let Some(resolution) = resolution {
-        source.branch = resolution.branch.clone();
-        source.subpath = resolution.subpath.clone();
-    }
+    let source = parse_github_url(repo_url);
+    let subpath = selection
+        .subpath
+        .context("install requires an explicit selection")?;
     let name = name_intent(name, || {
         derive_name_from_subpath(&source.clone_url, Some(subpath))
     });
@@ -448,24 +399,14 @@ fn install_git_selection_with(
     let staged = StagingDir::new_in(central_dir);
     let request = AcquireRequest {
         source: &source,
-        intent: SkillIntent::Subpath(subpath),
-        stored_subpath: None,
+        intent: SkillIntent::Selection(selection),
         dest: staged.path(),
         cache_dir: &paths.cache_dir,
         ttl_ms: super::settings::git_cache_ttl_ms(store),
         cancel,
         allow_fast_path: true,
     };
-    let acquired = if resolution.is_some() {
-        super::git_acquisition::acquire_resolved(
-            &request,
-            source.clone(),
-            super::git_acquisition::TreeSplit::Parser,
-            api,
-        )
-    } else {
-        acquire(&request, api)
-    }?;
+    let acquired = acquire(&request, api)?;
     // The selection has to be a skill, whichever adapter delivered it.
     ensure_installable_skill_dir(staged.path())?;
 
@@ -512,14 +453,14 @@ pub fn install_local_skill_from_selection(
 }
 
 /// Guards the explore cache (`<central_dir>/.explore-cache`) while a preview
-/// probes it and prepares a destination directory. Its own resource, its own
-/// lock: the git cache is serialised separately inside `core::git_cache`.
+/// probes or publishes a completed preview. Never held across acquisition;
+/// the git cache is serialised separately inside `core::git_cache`.
 static EXPLORE_CACHE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// Acquire a skill into the explore-cache for preview (no DB registration).
 ///
 /// An adapter over `core::git_acquisition`: the only preview-specific logic
-/// is the explore-cache hit check and the destination it prepares.
+/// is cache probing and atomic publication of a privately acquired tree.
 pub fn clone_for_explore_preview(
     paths: &InstallerPaths,
     store: &SkillStore,
@@ -527,62 +468,81 @@ pub fn clone_for_explore_preview(
     skill_name: Option<&str>,
     cancel: Option<&CancelToken>,
 ) -> Result<PathBuf> {
-    let source = parse_github_url(source_url);
-
-    let explore_cache_root = paths.central_dir.join(".explore-cache");
-    std::fs::create_dir_all(&explore_cache_root).with_context(|| {
-        format!(
-            "failed to create explore-cache dir {:?}",
-            explore_cache_root
+    clone_for_explore_preview_with(paths, source_url, skill_name, cancel, |dest| {
+        acquire(
+            &AcquireRequest {
+                source: &parse_github_url(source_url),
+                intent: SkillIntent::ByName(skill_name),
+                dest,
+                cache_dir: &paths.cache_dir,
+                ttl_ms: super::settings::git_cache_ttl_ms(store),
+                cancel,
+                allow_fast_path: true,
+            },
+            &HttpGithubApi::new(super::settings::github_token_or_none(store)),
         )
-    })?;
+        .map(|_| ())
+    })
+}
 
-    let cache_key = explore_preview_key(source_url, skill_name);
-    let explore_skill_dir = explore_cache_root.join(&cache_key);
-
-    // Serialise the explore-cache probe/prepare section against itself so two
-    // previews of the same skill cannot race on the same directory. This is the
-    // explore cache's own lock; the git cache has a separate, private one.
+/// Private acquisition adapter: tests may pause or fail while writing bytes.
+fn clone_for_explore_preview_with(
+    paths: &InstallerPaths,
+    source_url: &str,
+    skill_name: Option<&str>,
+    cancel: Option<&CancelToken>,
+    acquire_to: impl FnOnce(&Path) -> Result<()>,
+) -> Result<PathBuf> {
+    let root = paths.central_dir.join(".explore-cache");
+    std::fs::create_dir_all(&root).with_context(|| format!("create explore cache {root:?}"))?;
+    let public = root.join(explore_preview_key(source_url, skill_name));
+    let lock = EXPLORE_CACHE_LOCK.get_or_init(|| Mutex::new(()));
     {
-        let lock = EXPLORE_CACHE_LOCK.get_or_init(|| Mutex::new(()));
         let _guard = lock.lock().unwrap_or_else(|err| err.into_inner());
-
-        if explore_skill_dir.exists() {
-            let has_content = std::fs::read_dir(&explore_skill_dir)
-                .ok()
-                .map(|rd| {
-                    rd.flatten()
-                        .any(|e| e.file_name().to_string_lossy() != ".git")
-                })
-                .unwrap_or(false);
-            if has_content {
-                return Ok(explore_skill_dir);
-            }
+        if preview_has_content(&public) {
+            return Ok(public);
         }
-
-        // Ensure a clean destination.
-        if explore_skill_dir.exists() {
-            let _ = std::fs::remove_dir_all(&explore_skill_dir);
+    }
+    let check_cancelled = || -> Result<()> {
+        if cancel.is_some_and(|cancel| cancel.is_cancelled()) {
+            anyhow::bail!(SignalError::Cancelled);
         }
-        std::fs::create_dir_all(&explore_skill_dir).with_context(|| {
-            format!("failed to create explore skill dir {:?}", explore_skill_dir)
-        })?;
-    } // _guard dropped — lock released before acquisition
+        Ok(())
+    };
+    check_cancelled()?;
+    // Sibling means rename stays on the same filesystem. RAII cleans failure,
+    // cancellation and losing acquisitions; no public path is used as scratch.
+    let private = StagingDir::new_in(&root);
+    std::fs::create_dir(private.path())?;
+    acquire_to(private.path())?;
+    check_cancelled()?;
+    // An empty checkout is not a preview and must not become a false cache hit.
+    if !preview_has_content(private.path()) {
+        anyhow::bail!(SignalError::SkillInvalid {
+            reason: "missing_skill_md".into()
+        });
+    }
+    {
+        let _guard = lock.lock().unwrap_or_else(|err| err.into_inner());
+        check_cancelled()?;
+        if preview_has_content(&public) {
+            return Ok(public);
+        }
+        // Only a pre-existing empty/.git-only placeholder can be removed.
+        // Completed winners are never replaced, even by a newer acquisition.
+        if public.exists() {
+            std::fs::remove_dir_all(&public)?;
+        }
+        std::fs::rename(private.path(), &public)
+            .with_context(|| format!("publish explore preview {public:?}"))?;
+    }
+    Ok(public)
+}
 
-    acquire(
-        &AcquireRequest {
-            source: &source,
-            intent: SkillIntent::NamedSkill(skill_name),
-            stored_subpath: None,
-            dest: &explore_skill_dir,
-            cache_dir: &paths.cache_dir,
-            ttl_ms: super::settings::git_cache_ttl_ms(store),
-            cancel,
-            allow_fast_path: true,
-        },
-        &HttpGithubApi::new(super::settings::github_token_or_none(store)),
-    )?;
-    Ok(explore_skill_dir)
+fn preview_has_content(path: &Path) -> bool {
+    std::fs::read_dir(path)
+        .ok()
+        .is_some_and(|entries| entries.flatten().any(|entry| entry.file_name() != ".git"))
 }
 
 /// Backfill description for skills that have NULL description in the database.

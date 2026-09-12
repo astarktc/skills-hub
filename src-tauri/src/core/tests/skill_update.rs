@@ -73,7 +73,7 @@ fn stale_split_repair_is_acquire_first_and_persisted_only_by_finalize() {
     store.upsert_skill(&before).unwrap();
     let old_bytes = fs::read(installed.central_path.join("SKILL.md")).unwrap();
     let db = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
-    db.execute_batch("CREATE TRIGGER reject_skill_write BEFORE INSERT ON skills BEGIN SELECT RAISE(ABORT, 'test upsert failure'); END;").unwrap();
+    db.execute_batch("CREATE TRIGGER reject_skill_write BEFORE INSERT ON skills WHEN NEW.source_subpath = 'skills/a' BEGIN SELECT RAISE(ABORT, 'test upsert failure'); END;").unwrap();
     let api = StubApi {
         missing_branch: Some("feature"),
         ..StubApi::serving("next")
@@ -94,8 +94,48 @@ fn stale_split_repair_is_acquire_first_and_persisted_only_by_finalize() {
         fs::read(installed.central_path.join("SKILL.md")).unwrap(),
         old_bytes
     );
+    assert!(
+        crate::core::mutation_guard::serialized(|| apply_unlocked(&paths, &store, acquired))
+            .is_err()
+    );
+    assert_eq!(
+        format!(
+            "{:?}",
+            store.get_skill_by_id(&installed.skill_id).unwrap().unwrap()
+        ),
+        format!("{before:?}")
+    );
+    assert_eq!(
+        fs::read(installed.central_path.join("SKILL.md")).unwrap(),
+        old_bytes
+    );
+    // A repaired SHA followed by a download refusal must preserve the same row/bytes too.
+    let refused = StubApi {
+        missing_branch: Some("feature"),
+        ..StubApi::failing(404)
+    };
+    let error = acquire_update(&paths, &store, &installed.skill_id, None, &refused, 0, None)
+        .err()
+        .unwrap();
+    assert!(matches!(
+        error.downcast_ref::<SignalError>(),
+        Some(SignalError::GithubSkillNotFound { .. })
+    ));
+    assert_eq!(
+        format!(
+            "{:?}",
+            store.get_skill_by_id(&installed.skill_id).unwrap().unwrap()
+        ),
+        format!("{before:?}")
+    );
+    assert_eq!(
+        fs::read(installed.central_path.join("SKILL.md")).unwrap(),
+        old_bytes
+    );
     db.execute_batch("DROP TRIGGER reject_skill_write;")
         .unwrap();
+    let acquired =
+        acquire_update(&paths, &store, &installed.skill_id, None, &api, 0, None).unwrap();
     crate::core::mutation_guard::serialized(|| apply_unlocked(&paths, &store, acquired)).unwrap();
     let after = store.get_skill_by_id(&installed.skill_id).unwrap().unwrap();
     assert_eq!(after.source_subpath.as_deref(), Some("skills/a"));

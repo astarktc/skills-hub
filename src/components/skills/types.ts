@@ -15,6 +15,7 @@ export type { InvocationMode, InvocationOverride } from "../../bindings";
 export type { SyncStatus } from "../../bindings";
 export type { SyncMode } from "../../bindings";
 export type { GitSkillCandidate } from "../../bindings";
+export type { GitSourceResolution } from "../../bindings";
 export type { GitSkillListing } from "../../bindings";
 export type { CandidateMatch } from "../../bindings";
 export type { LocalSkillCandidate } from "../../bindings";

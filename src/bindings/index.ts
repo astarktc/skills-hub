@@ -285,7 +285,7 @@ export type GitSkillCandidate = {
 	name: string,
 	description: string | null,
 	subpath: string,
-	resolution?: GitSourceResolution | null,
+	resolution: GitSourceResolution | null,
 };
 
 /**
@@ -299,7 +299,7 @@ export type GitSkillListing = {
 	target_match: CandidateMatch | null,
 };
 
-/**  The listing's branch/path decision, including an explicit default-branch choice. */
+/**  The listing's branch/path decision, including a deliberate default branch. */
 export type GitSourceResolution = {
 	branch: string | null,
 	subpath: string | null,

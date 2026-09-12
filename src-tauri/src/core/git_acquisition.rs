@@ -76,22 +76,34 @@ pub struct GitSource {
     pub api: Option<GithubRepo>,
 }
 
-/// What the caller wants out of the source.
+/// The listing's branch/path decision, including a deliberate default branch.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct GitSourceResolution {
+    pub branch: Option<String>,
+    pub subpath: Option<String>,
+}
+
+/// An explicit repo-relative selection; absent subpath means list candidates.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GitSelection<'a> {
+    pub subpath: Option<&'a str>,
+    pub resolution: Option<&'a GitSourceResolution>,
+}
+
+/// What the caller wants; all resolution and legacy repair policy stays here.
 #[derive(Clone, Copy, Debug)]
 pub enum SkillIntent<'a> {
-    /// Exactly this repo-relative subpath; `"."` is the repo root.
-    Subpath(&'a str),
-    /// A skill named in a possibly multi-skill repo. A repo holding several
-    /// skills must resolve to exactly one, else [`SignalError::MultiSkills`]
-    /// — the caller has to name the skill precisely.
-    NamedSkill(Option<&'a str>),
-    /// The lenient sibling of [`SkillIntent::NamedSkill`], for the legacy
-    /// record whose `source_subpath` was never stored: a name that resolves
-    /// backfills the subpath. Without a match, a lone nested skill wins when
-    /// the root is not a skill; otherwise take the whole repo rather than
-    /// failing an update that used to work.
-    NamedSkillOrWholeRepo(&'a str),
+    StoredRecord {
+        name: &'a str,
+        subpath: Option<&'a str>,
+    },
+    Selection(GitSelection<'a>),
+    /// Strict name matching for Explore and Re-point.
+    ByName(Option<&'a str>),
 }
+
+mod resolution;
+use resolution::{Intent, Resolved};
 
 /// Which adapter served the bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,9 +116,6 @@ pub enum AcquireStrategy {
 pub struct AcquireRequest<'a> {
     pub source: &'a GitSource,
     pub intent: SkillIntent<'a>,
-    /// Previously recorded subpath: a suffix of the URL path fixes its branch split.
-    /// This is a resolution hint, not an override of the requested skill.
-    pub stored_subpath: Option<&'a str>,
     /// Directory the skill's bytes are written into (created as needed).
     pub dest: &'a Path,
     /// App cache root; the git clone cache lives under it.
@@ -218,176 +227,97 @@ impl GithubApi for HttpGithubApi {
 /// operator must see. See the module doc for the whole policy.
 pub fn acquire(req: &AcquireRequest, api: &dyn GithubApi) -> Result<Acquired> {
     check_cancelled(req.cancel)?;
-
-    let (source, split) = resolve_tree_source(req.source, req.stored_subpath, api);
-    acquire_resolved(req, source, split, api)
+    let resolved = Resolved::new(req.source, req.intent, api);
+    acquire_source(req, &resolved, api)
 }
 
-pub(crate) fn acquire_resolved(
-    original_req: &AcquireRequest,
-    source: GitSource,
-    split: TreeSplit,
+// Adapter helpers see effective coordinates, never the public intent protocol.
+struct ResolvedRequest<'a, 'b> {
+    request: &'a AcquireRequest<'b>,
+    source: &'a GitSource,
+    intent: &'a Intent,
+}
+fn acquire_source(
+    original: &AcquireRequest,
+    resolved: &Resolved,
     api: &dyn GithubApi,
 ) -> Result<Acquired> {
-    let req = original_req;
-    // An explicit URL root (e.g. /blob/main/SKILL.md) is a selection,
-    // not an invitation to discover a nested skill by name. A branch consuming
-    // the whole tree path resolves to None, so name discovery still runs.
-    let intent = match req.intent {
-        SkillIntent::NamedSkill(_) | SkillIntent::NamedSkillOrWholeRepo(_)
-            if source.subpath.as_deref() == Some(".") =>
-        {
-            SkillIntent::Subpath(".")
-        }
-        intent => intent,
+    let req = &ResolvedRequest {
+        request: original,
+        source: &resolved.source,
+        intent: &resolved.intent,
     };
-    let resolved_req = AcquireRequest {
-        source: &source,
-        intent,
-        ..*req
-    };
-    let req = &resolved_req;
-    check_cancelled(req.cancel)?;
-
-    // The subpath both adapters key on: the intent's when it names one, else
-    // the one the source URL carried. `"."` is the repo root, not a subpath.
-    let known_subpath = match req.intent {
-        SkillIntent::Subpath(subpath) => Some(subpath),
-        SkillIntent::NamedSkill(_) | SkillIntent::NamedSkillOrWholeRepo(_) => {
-            req.source.subpath.as_deref()
-        }
-    }
-    .filter(|subpath| !subpath.is_empty() && *subpath != ".");
-    // A subpath names a directory inside the checkout; a traversal is refused
-    // before either adapter joins it onto anything or asks for it.
+    check_cancelled(req.request.cancel)?;
+    let known_subpath = resolved.known_subpath();
     if let Some(subpath) = known_subpath {
         require_plain_subpath(subpath)?;
     }
-
     if let Some(coords) = fast_path_coords(req, known_subpath) {
         match fast_path(&coords, req, api) {
-            Ok(acquired) => return Ok(report(acquired, req)),
+            Ok(acquired) => {
+                check_cancelled(req.request.cancel)?;
+                return Ok(report(acquired, req));
+            }
             Err(failure) => {
-                // Whatever the failure, the partial download is not part of
-                // the answer.
-                let _ = std::fs::remove_dir_all(req.dest);
-                if split == TreeSplit::StoredHint
-                    && failure.stage == FastPathStage::Sha
-                    && matches!(
-                        failure.error.downcast_ref::<GithubApiError>(),
-                        Some(GithubApiError { status: 404, .. })
-                    )
+                let _ = std::fs::remove_dir_all(req.request.dest);
+                if let Some(retry) =
+                    resolved.after_failure(original.source, failure, &coords, api)?
                 {
-                    if let Some(retry) = retry_stored_hint(original_req, api) {
-                        return retry;
-                    }
+                    return acquire_source(original, &retry, api);
                 }
-                classify_fast_path_failure(failure, &coords, req.source.branch.is_none())?;
             }
         }
     }
-
-    clone_path(req, known_subpath).map(|acquired| report(acquired, req))
+    let acquired = clone_path(req, known_subpath)?;
+    check_cancelled(req.request.cancel)?;
+    Ok(report(acquired, req))
 }
 
-/// Re-resolve a missing stored-hint branch and retry only on a discovered split.
-fn retry_stored_hint(req: &AcquireRequest, api: &dyn GithubApi) -> Option<Result<Acquired>> {
-    let (corrected, origin) = resolve_tree_source(req.source, None, api);
-    if origin != TreeSplit::MatchingRefs {
-        return None;
-    }
-    // Only a persisted hint is repaired. An independent explicit selection
-    // must keep its requested repo-relative path.
-    let subpath = corrected.subpath.clone();
-    let intent = match req.intent {
-        SkillIntent::Subpath(path) if Some(path) == req.stored_subpath => {
-            SkillIntent::Subpath(subpath.as_deref().unwrap_or("."))
-        }
-        intent => intent,
-    };
-    Some(acquire_resolved(
-        &AcquireRequest { intent, ..*req },
-        corrected,
-        origin,
-        api,
-    ))
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TreeSplit {
-    Parser,
-    StoredHint,
-    MatchingRefs,
-}
-
-/// Disambiguate the parser's first-segment split without changing its grammar.
-/// Discovery is best-effort: only the actual byte-acquisition stages may raise
-/// GitHub not-found/rate-limit signals.
-pub(crate) fn resolve_tree_source(
+/// Listing uses the same unresolved Selection intent, but needs the full
+/// checkout (not copied skill bytes). The supplied checkout adapter preserves
+/// the listing → install git-cache reuse and permits local fixtures in tests.
+pub(crate) fn list_candidates_with(
     source: &GitSource,
-    stored_subpath: Option<&str>,
     api: &dyn GithubApi,
-) -> (GitSource, TreeSplit) {
-    let mut resolved = source.clone();
-    let (Some(repo), Some(first), Some(rest)) = (&source.api, &source.branch, &source.subpath)
-    else {
-        return (resolved, TreeSplit::Parser);
-    };
-    if rest.is_empty() || rest == "." {
-        return (resolved, TreeSplit::Parser);
+    checkout: impl FnOnce(&GitSource) -> Result<PathBuf>,
+) -> Result<(Vec<DiscoveredSkill>, GitSourceResolution)> {
+    let resolved = Resolved::new(source, SkillIntent::Selection(GitSelection::default()), api);
+    let prefix = resolved.known_subpath();
+    if let Some(prefix) = prefix {
+        require_plain_subpath(prefix)?;
     }
-    let tree_path = format!("{first}/{rest}");
-    if let Some(subpath) = stored_subpath.filter(|path| !path.is_empty() && *path != ".") {
-        let branch = tree_path.strip_suffix(&format!("/{subpath}"));
-        if let Some(branch) = branch.filter(|branch| !branch.is_empty()) {
-            resolved.branch = Some(branch.to_string());
-            resolved.subpath = Some(subpath.to_string());
-            return (resolved, TreeSplit::StoredHint);
+    let repo = checkout(&resolved.source)?;
+    let root = prefix.map_or_else(|| repo.clone(), |path| repo.join(path));
+    let mut candidates = installable_candidates(&root);
+    if let Some(prefix) = prefix {
+        for candidate in &mut candidates {
+            candidate.subpath = if candidate.subpath == "." {
+                prefix.to_string()
+            } else {
+                format!("{prefix}/{}", candidate.subpath)
+            };
         }
     }
-    let refs = match api.matching_refs(repo, first) {
-        Ok(refs) => refs,
-        Err(err) => {
-            log::debug!("[acquire] branch discovery failed; keeping first-segment split: {err:#}");
-            return (resolved, TreeSplit::Parser);
-        }
-    };
-    let branch = refs
-        .iter()
-        .filter(|branch| {
-            !branch.is_empty()
-                && (tree_path == **branch || tree_path.starts_with(&format!("{branch}/")))
-        })
-        .max_by_key(|branch| branch.len());
-    if let Some(branch) = branch {
-        resolved.branch = Some(branch.clone());
-        resolved.subpath = tree_path
-            .strip_prefix(&format!("{branch}/"))
-            .map(str::to_string);
-        (resolved, TreeSplit::MatchingRefs)
-    } else {
-        log::debug!("[acquire] no matching branch for {tree_path}; keeping first-segment split");
-        (resolved, TreeSplit::Parser)
-    }
+    Ok((candidates, resolved.coordinates()))
 }
 
 /// One log line per acquisition, naming the adapter that served it.
-fn report(acquired: Acquired, req: &AcquireRequest) -> Acquired {
+fn report(acquired: Acquired, req: &ResolvedRequest) -> Acquired {
     log::info!(
         "[acquire] {:?} url={} subpath={:?} revision={} dest={:?}",
         acquired.strategy,
         req.source.clone_url,
         acquired.resolved_subpath,
         acquired.revision,
-        req.dest
+        req.request.dest
     );
     acquired
 }
 
 /// The fast path's precondition: allowed by the caller, a GitHub source, and
 /// an intent that names a real subpath.
-fn fast_path_coords(req: &AcquireRequest, known_subpath: Option<&str>) -> Option<GithubCoords> {
-    if !req.allow_fast_path {
+fn fast_path_coords(req: &ResolvedRequest, known_subpath: Option<&str>) -> Option<GithubCoords> {
+    if !req.request.allow_fast_path {
         return None;
     }
     let repo = req.source.api.as_ref()?;
@@ -424,7 +354,7 @@ struct FastPathFailure {
 /// bad branch fails before any bytes land.
 fn fast_path(
     coords: &GithubCoords,
-    req: &AcquireRequest,
+    req: &ResolvedRequest,
     api: &dyn GithubApi,
 ) -> std::result::Result<Acquired, FastPathFailure> {
     log::info!(
@@ -438,7 +368,7 @@ fn fast_path(
         stage: FastPathStage::Sha,
         error,
     })?;
-    api.download_directory(coords, req.dest, req.cancel)
+    api.download_directory(coords, req.request.dest, req.request.cancel)
         .map_err(|error| FastPathFailure {
             stage: FastPathStage::Download,
             error,
@@ -450,70 +380,12 @@ fn fast_path(
     })
 }
 
-/// Decide what a failed fast path means: `Ok(())` to fall back to a clone,
-/// `Err` for the conditions the operator must see.
-///
-/// The HTTP layer classifies the status at the origin ([`GithubApiError`]);
-/// this maps the two codes acquisition owns to typed signals. No string
-/// sniffing, and a typed condition the download already raised (cancellation,
-/// an upstream link refused) is never a "failed strategy" — a clone would
-/// only answer the same.
-///
-/// `branch_assumed` is the one nuance: when the source URL named no branch,
-/// [`fast_path_coords`] guessed `main`, so a 404 on the SHA stage says nothing
-/// about the skill — it is a wrong guess, and the clone knows better.
-fn classify_fast_path_failure(
-    failure: FastPathFailure,
-    coords: &GithubCoords,
-    branch_assumed: bool,
-) -> Result<()> {
-    let FastPathFailure { stage, error: err } = failure;
-    if err.downcast_ref::<SignalError>().is_some() {
-        return Err(err);
-    }
-    match err.downcast_ref::<GithubApiError>() {
-        Some(GithubApiError { status: 404, .. })
-            if stage == FastPathStage::Sha && branch_assumed =>
-        {
-            log::warn!(
-                "[acquire] assumed branch {:?} does not exist in {}/{}, falling back to git clone",
-                coords.branch,
-                coords.owner,
-                coords.repo
-            );
-            Ok(())
-        }
-        Some(GithubApiError { status: 404, .. }) => {
-            anyhow::bail!(SignalError::GithubSkillNotFound {
-                url: coords.tree_url(),
-            })
-        }
-        Some(GithubApiError {
-            status: 403,
-            reset_minutes,
-            ..
-        }) => {
-            // 0 = "no ETA" on the wire.
-            anyhow::bail!(SignalError::RateLimited {
-                reset_minutes: reset_minutes.unwrap_or(0),
-            })
-        }
-        _ => {
-            log::warn!(
-                "[acquire] GitHub API download failed, falling back to git clone: {:#}",
-                err
-            );
-            Ok(())
-        }
-    }
-}
-
 /// Adapter two: the git clone cache. Sparse when a subpath is known, then the
 /// intent decides which directory of the tree is the skill, and upstream
 /// symlinks on the way to it are followed through the cache.
-fn clone_path(req: &AcquireRequest, known_subpath: Option<&str>) -> Result<Acquired> {
+fn clone_path(req: &ResolvedRequest, known_subpath: Option<&str>) -> Result<Acquired> {
     let (mut repo_dir, mut revision) = fetch_repo(req, known_subpath)?;
-    check_cancelled(req.cancel)?;
+    check_cancelled(req.request.cancel)?;
 
     let resolved_subpath = resolve_subpath(&repo_dir, req.intent, known_subpath)?;
     // The directory the bytes are really in: the alias itself unless the
@@ -544,8 +416,8 @@ fn clone_path(req: &AcquireRequest, known_subpath: Option<&str>) -> Result<Acqui
         }
     }
 
-    copy_dir_recursive(&copy_src, req.dest)
-        .with_context(|| format!("copy {:?} -> {:?}", copy_src, req.dest))?;
+    copy_dir_recursive(&copy_src, req.request.dest)
+        .with_context(|| format!("copy {:?} -> {:?}", copy_src, req.request.dest))?;
 
     Ok(Acquired {
         revision,
@@ -558,15 +430,15 @@ fn clone_path(req: &AcquireRequest, known_subpath: Option<&str>) -> Result<Acqui
 
 /// One fetch through the git cache for this request, sparse when `subpath`
 /// names one.
-fn fetch_repo(req: &AcquireRequest, subpath: Option<&str>) -> Result<(PathBuf, String)> {
+fn fetch_repo(req: &ResolvedRequest, subpath: Option<&str>) -> Result<(PathBuf, String)> {
     fetch_through_cache(
-        req.cache_dir,
+        req.request.cache_dir,
         &FetchRequest {
             clone_url: &req.source.clone_url,
             branch: req.source.branch.as_deref(),
             subpath,
-            ttl_ms: req.ttl_ms,
-            cancel: req.cancel,
+            ttl_ms: req.request.ttl_ms,
+            cancel: req.request.cancel,
         },
     )
 }
@@ -583,14 +455,14 @@ fn fetch_repo(req: &AcquireRequest, subpath: Option<&str>) -> Result<(PathBuf, S
 /// last fetch, which is the tree the bytes are copied from. The alias is
 /// never rewritten — the resolved path is diagnostics only.
 fn follow_upstream_links(
-    req: &AcquireRequest,
+    req: &ResolvedRequest,
     repo_dir: &mut PathBuf,
     revision: &mut String,
     alias: &str,
 ) -> Result<String> {
     let mut chain = LinkChain::new();
     let mut subpath = normalize_subpath(alias);
-    while let Some((link, target)) = symlink_on_path(repo_dir, &subpath, req.cancel)? {
+    while let Some((link, target)) = symlink_on_path(repo_dir, &subpath, req.request.cancel)? {
         let rest = subpath
             .strip_prefix(&link)
             .map(|rest| rest.trim_start_matches('/'))
@@ -607,7 +479,7 @@ fn follow_upstream_links(
         let (dir, rev) = fetch_repo(req, Some(&subpath))?;
         *repo_dir = dir;
         *revision = rev;
-        check_cancelled(req.cancel)?;
+        check_cancelled(req.request.cancel)?;
     }
     if subpath != normalize_subpath(alias) {
         log::info!(
@@ -623,7 +495,7 @@ fn follow_upstream_links(
 /// repo-relative directory the intent points at (`None` = the whole repo).
 fn resolve_subpath(
     repo_dir: &Path,
-    intent: SkillIntent,
+    intent: &Intent,
     known_subpath: Option<&str>,
 ) -> Result<Option<String>> {
     if let Some(subpath) = known_subpath {
@@ -631,9 +503,10 @@ fn resolve_subpath(
     }
     let name = match intent {
         // A root subpath is the repo, and there is nothing to match.
-        SkillIntent::Subpath(_) => return Ok(None),
-        SkillIntent::NamedSkill(name) => name,
-        SkillIntent::NamedSkillOrWholeRepo(name) => Some(name),
+        Intent::Subpath(_) => return Ok(None),
+        Intent::ByName(name) => name.as_deref(),
+        Intent::Legacy(name) => Some(name.as_str()),
+        Intent::Listing => anyhow::bail!("listing intent requires the candidate listing seam"),
     };
 
     // A repo without a nested installable skill is the skill (or nothing
@@ -652,7 +525,7 @@ fn resolve_subpath(
     // strict unmatched name is ambiguous; unnamed and lenient intents keep
     // the root.
     if let [only] = candidates.as_slice() {
-        if root.is_some() && matches!(intent, SkillIntent::NamedSkill(Some(_))) {
+        if root.is_some() && matches!(intent, Intent::ByName(Some(_))) {
             return Err(anyhow::anyhow!(SignalError::MultiSkills));
         }
         return Ok(if root.is_some() {
@@ -665,7 +538,7 @@ fn resolve_subpath(
     // Anything short of one unambiguous match among several: the strict
     // intent makes the caller name the skill, the lenient one takes the repo
     // whole.
-    if matches!(intent, SkillIntent::NamedSkillOrWholeRepo(_)) {
+    if matches!(intent, Intent::Legacy(_)) {
         Ok(None)
     } else {
         Err(anyhow::anyhow!(SignalError::MultiSkills))
@@ -676,15 +549,10 @@ fn resolve_subpath(
 /// discovery found that has skill bytes (a `SKILL.md`, even a broken one, or
 /// a `.claude/skills/` child). The root is reported apart from the nested
 /// candidates: it is never one of the "skills in a multi-skill repo".
-pub fn installable_skills_in_repo(
-    repo_dir: &Path,
-) -> (Option<DiscoveredSkill>, Vec<DiscoveredSkill>) {
+fn installable_skills_in_repo(repo_dir: &Path) -> (Option<DiscoveredSkill>, Vec<DiscoveredSkill>) {
     let mut root = None;
     let mut nested = Vec::new();
-    for c in discover_skills(repo_dir) {
-        if !c.validity.is_installable() {
-            continue;
-        }
+    for c in installable_candidates(repo_dir) {
         if c.subpath == "." {
             root = Some(c);
         } else {
@@ -692,6 +560,13 @@ pub fn installable_skills_in_repo(
         }
     }
     (root, nested)
+}
+
+fn installable_candidates(root: &Path) -> Vec<DiscoveredSkill> {
+    discover_skills(root)
+        .into_iter()
+        .filter(|candidate| candidate.validity.is_installable())
+        .collect()
 }
 
 fn check_cancelled(cancel: Option<&CancelToken>) -> Result<()> {

@@ -221,25 +221,19 @@ pub(crate) fn acquire_update(
                 .map(|(_, source)| source.clone())
                 .unwrap_or_else(|| parse_github_url(repo_url));
 
-            // Stored paths are explicit selections. URL paths stay on the source
-            // so acquisition can correct their branch boundary before using them.
             let intent = if source_override.is_some() {
-                SkillIntent::NamedSkill(Some(&record.name))
-            } else if let Some(subpath) = record.source_subpath.as_deref() {
-                SkillIntent::Subpath(subpath)
+                SkillIntent::ByName(Some(&record.name))
             } else {
-                SkillIntent::NamedSkillOrWholeRepo(&record.name)
+                SkillIntent::StoredRecord {
+                    name: &record.name,
+                    subpath: record.source_subpath.as_deref(),
+                }
             };
 
             let acquired = acquire(
                 &AcquireRequest {
                     source: &source,
                     intent,
-                    stored_subpath: if source_override.is_some() {
-                        None
-                    } else {
-                        record.source_subpath.as_deref()
-                    },
                     dest: &staging_dir,
                     cache_dir: &paths.cache_dir,
                     ttl_ms,

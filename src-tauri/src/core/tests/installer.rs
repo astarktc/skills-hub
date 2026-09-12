@@ -854,12 +854,6 @@ fn existing_shallow_repos_still_work() {
     let names: Vec<String> = candidates.iter().map(|c| c.name.clone()).collect();
     assert!(names.contains(&"Skill A".to_string()));
     assert!(names.contains(&"Skill B".to_string()));
-
-    // The multi-skill detection used by install/update sees the same two.
-    let count = crate::core::git_acquisition::installable_skills_in_repo(repo_dir.path())
-        .1
-        .len();
-    assert_eq!(count, 2);
 }
 
 // ── Listing adapters over skill discovery ──
@@ -871,39 +865,92 @@ fn listing_interface_characterization() {
     use serde_json::{json, Value};
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path();
-    let check = |label: &str, url: &str, target: Option<&str>, candidates: Value, matched: Value| {
-        let listing = super::list_git_skills_with(url, target, &StubApi::serving("sha"), |_| {
-            Ok(base.to_path_buf())
-        }).unwrap();
-        let actual = json!({
-            "candidates": listing.candidates.iter().map(|c| json!([
-                c.name, c.description, c.subpath, c.resolution
-            ])).collect::<Vec<_>>(),
-            "target_match": listing.target_match,
-        });
-        println!("Q5 {label}: {actual}");
-        assert_eq!(actual, json!({"candidates": candidates, "target_match": matched}), "{label}");
-    };
-    fs::write(base.join("SKILL.md"), "---\nname: Root\ndescription: root docs\n---\n").unwrap();
-    check("root-only", "owner/repo", None,
-        json!([["Root", "root docs", ".", {"branch":null,"subpath":null}]]), json!(null));
+    let check =
+        |label: &str, url: &str, target: Option<&str>, candidates: Value, matched: Value| {
+            let listing =
+                super::list_git_skills_with(url, target, &StubApi::serving("sha"), |_| {
+                    Ok(base.to_path_buf())
+                })
+                .unwrap();
+            let actual = json!({
+                "candidates": listing.candidates.iter().map(|c| json!([
+                    c.name, c.description, c.subpath, c.resolution
+                ])).collect::<Vec<_>>(),
+                "target_match": listing.target_match,
+            });
+            println!("Q5 {label}: {actual}");
+            assert_eq!(
+                actual,
+                json!({"candidates": candidates, "target_match": matched}),
+                "{label}"
+            );
+        };
+    fs::write(
+        base.join("SKILL.md"),
+        "---\nname: Root\ndescription: root docs\n---\n",
+    )
+    .unwrap();
+    check(
+        "root-only",
+        "owner/repo",
+        None,
+        json!([["Root", "root docs", ".", {"branch":null,"subpath":null}]]),
+        json!(null),
+    );
     fs::create_dir_all(base.join("pack/skills/a")).unwrap();
-    fs::write(base.join("pack/skills/a/SKILL.md"), "---\nname: Alpha\ndescription: child docs\n---\n").unwrap();
-    check("root+nested", "owner/repo", Some("Alpha"), json!([
-        ["Alpha", "child docs", "pack/skills/a", {"branch":null,"subpath":null}],
-        ["Root", "root docs", ".", {"branch":null,"subpath":null}]
-    ]), json!({"kind":"resolved","subpath":"pack/skills/a"}));
-    check("folder-container", "owner/repo/tree/main/pack", Some("Alpha"),
+    fs::write(
+        base.join("pack/skills/a/SKILL.md"),
+        "---\nname: Alpha\ndescription: child docs\n---\n",
+    )
+    .unwrap();
+    check(
+        "root+nested",
+        "owner/repo",
+        Some("Alpha"),
+        json!([
+            ["Alpha", "child docs", "pack/skills/a", {"branch":null,"subpath":null}],
+            ["Root", "root docs", ".", {"branch":null,"subpath":null}]
+        ]),
+        json!({"kind":"resolved","subpath":"pack/skills/a"}),
+    );
+    check(
+        "folder-container",
+        "owner/repo/tree/main/pack",
+        Some("Alpha"),
         json!([["Alpha", "child docs", "pack/skills/a", {"branch":"main","subpath":"pack"}]]),
-        json!({"kind":"resolved","subpath":"pack/skills/a"}));
-    fs::write(base.join("pack/SKILL.md"), "---\nname: Pack\ndescription: pack docs\n---\n").unwrap();
-    check("folder-skill-with-nested", "owner/repo/tree/main/pack", Some("Alpha"),
-        json!([["Pack", "pack docs", "pack", {"branch":"main","subpath":"pack"}]]),
-        json!({"kind":"none"}));
-    check("missing-folder", "owner/repo/tree/main/missing", Some("Alpha"), json!([]), json!({"kind":"none"}));
-    check("slash-branch", "owner/repo/tree/feature/x/pack/skills/a", Some("Alpha"),
+        json!({"kind":"resolved","subpath":"pack/skills/a"}),
+    );
+    fs::write(
+        base.join("pack/SKILL.md"),
+        "---\nname: Pack\ndescription: pack docs\n---\n",
+    )
+    .unwrap();
+    // Q5 intentional delta: acquisition admits the root AND nested skills.
+    // Old literal: [["Pack", "pack docs", "pack", {"branch":"main","subpath":"pack"}]], match none.
+    check(
+        "folder-skill-with-nested",
+        "owner/repo/tree/main/pack",
+        Some("Alpha"),
+        json!([
+            ["Alpha", "child docs", "pack/skills/a", {"branch":"main","subpath":"pack"}],
+            ["Pack", "pack docs", "pack", {"branch":"main","subpath":"pack"}]
+        ]),
+        json!({"kind":"resolved","subpath":"pack/skills/a"}),
+    );
+    check(
+        "missing-folder",
+        "owner/repo/tree/main/missing",
+        Some("Alpha"),
+        json!([]),
+        json!({"kind":"none"}),
+    );
+    check(
+        "slash-branch",
+        "owner/repo/tree/feature/x/pack/skills/a",
+        Some("Alpha"),
         json!([["Alpha", "child docs", "pack/skills/a", {"branch":"feature/x","subpath":"pack/skills/a"}]]),
-        json!({"kind":"resolved","subpath":"pack/skills/a"}));
+        json!({"kind":"resolved","subpath":"pack/skills/a"}),
+    );
     fs::remove_file(base.join("SKILL.md")).unwrap();
     fs::remove_dir_all(base.join("pack")).unwrap();
     fs::create_dir_all(base.join("skills/broken")).unwrap();
@@ -911,32 +958,61 @@ fn listing_interface_characterization() {
     fs::create_dir_all(base.join("skills/missing")).unwrap();
     fs::create_dir_all(base.join(".claude/skills/optional")).unwrap();
     fs::write(base.join(".claude/skills/optional/prompt.txt"), "bytes").unwrap();
-    check("malformed-missing-and-claude-exception", "owner/repo", Some("broken"), json!([
-        ["broken", null, "skills/broken", {"branch":null,"subpath":null}],
-        ["optional", null, ".claude/skills/optional", {"branch":null,"subpath":null}]
-    ]), json!({"kind":"resolved","subpath":"skills/broken"}));
+    check(
+        "malformed-missing-and-claude-exception",
+        "owner/repo",
+        Some("broken"),
+        json!([
+            ["broken", null, "skills/broken", {"branch":null,"subpath":null}],
+            ["optional", null, ".claude/skills/optional", {"branch":null,"subpath":null}]
+        ]),
+        json!({"kind":"resolved","subpath":"skills/broken"}),
+    );
     fs::remove_dir_all(base.join("skills")).unwrap();
     fs::remove_dir_all(base.join(".claude")).unwrap();
     for (path, name) in [("skills/a", "Alpha one"), ("skills/b", "Alpha two")] {
         fs::create_dir_all(base.join(path)).unwrap();
-        fs::write(base.join(path).join("SKILL.md"), format!("---\nname: {name}\n---\n")).unwrap();
+        fs::write(
+            base.join(path).join("SKILL.md"),
+            format!("---\nname: {name}\n---\n"),
+        )
+        .unwrap();
     }
-    check("ambiguous-name", "owner/repo", Some("Alpha"), json!([
-        ["Alpha one", null, "skills/a", {"branch":null,"subpath":null}],
-        ["Alpha two", null, "skills/b", {"branch":null,"subpath":null}]
-    ]), json!({"kind":"ambiguous","subpaths":["skills/a","skills/b"]}));
-    check("unmatched-name", "owner/repo", Some("zzz"), json!([
-        ["Alpha one", null, "skills/a", {"branch":null,"subpath":null}],
-        ["Alpha two", null, "skills/b", {"branch":null,"subpath":null}]
-    ]), json!({"kind":"none"}));
-    #[cfg(unix)] {
+    check(
+        "ambiguous-name",
+        "owner/repo",
+        Some("Alpha"),
+        json!([
+            ["Alpha one", null, "skills/a", {"branch":null,"subpath":null}],
+            ["Alpha two", null, "skills/b", {"branch":null,"subpath":null}]
+        ]),
+        json!({"kind":"ambiguous","subpaths":["skills/a","skills/b"]}),
+    );
+    check(
+        "unmatched-name",
+        "owner/repo",
+        Some("zzz"),
+        json!([
+            ["Alpha one", null, "skills/a", {"branch":null,"subpath":null}],
+            ["Alpha two", null, "skills/b", {"branch":null,"subpath":null}]
+        ]),
+        json!({"kind":"none"}),
+    );
+    #[cfg(unix)]
+    {
         fs::create_dir_all(base.join(".claude/skills")).unwrap();
         std::os::unix::fs::symlink("../../skills/a", base.join(".claude/skills/alias")).unwrap();
         // The real directory, not an alias, remains the candidate identity.
-        check("aliases", "owner/repo", Some("Alpha one"), json!([
-            ["Alpha one", null, "skills/a", {"branch":null,"subpath":null}],
-            ["Alpha two", null, "skills/b", {"branch":null,"subpath":null}]
-        ]), json!({"kind":"resolved","subpath":"skills/a"}));
+        check(
+            "aliases",
+            "owner/repo",
+            Some("Alpha one"),
+            json!([
+                ["Alpha one", null, "skills/a", {"branch":null,"subpath":null}],
+                ["Alpha two", null, "skills/b", {"branch":null,"subpath":null}]
+            ]),
+            json!({"kind":"resolved","subpath":"skills/a"}),
+        );
     }
 }
 
@@ -958,7 +1034,11 @@ fn git_candidates_admit_installable_only_and_carry_no_validity() {
     .unwrap();
     fs::create_dir_all(base.join("skills/empty")).unwrap();
 
-    let list = super::git_candidates_in(base, None);
+    let list = super::list_git_skills_with("owner/repo", None, &StubApi::serving("sha"), |_| {
+        Ok(base.to_path_buf())
+    })
+    .unwrap()
+    .candidates;
     let pairs: Vec<(&str, &str)> = list
         .iter()
         .map(|c| (c.name.as_str(), c.subpath.as_str()))
@@ -991,7 +1071,14 @@ fn git_candidates_for_folder_url_are_scoped_and_repo_relative() {
     .unwrap();
 
     // Folder that is a container: only its skills, with repo-relative subpaths.
-    let list = super::git_candidates_in(base, Some("pack"));
+    let list = super::list_git_skills_with(
+        "owner/repo/tree/main/pack",
+        None,
+        &StubApi::serving("sha"),
+        |_| Ok(base.to_path_buf()),
+    )
+    .unwrap()
+    .candidates;
     let pairs: Vec<(&str, &str)> = list
         .iter()
         .map(|c| (c.name.as_str(), c.subpath.as_str()))
@@ -999,7 +1086,14 @@ fn git_candidates_for_folder_url_are_scoped_and_repo_relative() {
     assert_eq!(pairs, vec![("Inside", "pack/skills/inside")]);
 
     // Folder that is itself a skill: the single candidate.
-    let list = super::git_candidates_in(base, Some("pack/skills/inside"));
+    let list = super::list_git_skills_with(
+        "owner/repo/tree/main/pack/skills/inside",
+        None,
+        &StubApi::serving("sha"),
+        |_| Ok(base.to_path_buf()),
+    )
+    .unwrap()
+    .candidates;
     let pairs: Vec<(&str, &str)> = list
         .iter()
         .map(|c| (c.name.as_str(), c.subpath.as_str()))
@@ -1007,7 +1101,15 @@ fn git_candidates_for_folder_url_are_scoped_and_repo_relative() {
     assert_eq!(pairs, vec![("Inside", "pack/skills/inside")]);
 
     // Missing folder: nothing.
-    assert!(super::git_candidates_in(base, Some("nope")).is_empty());
+    assert!(super::list_git_skills_with(
+        "owner/repo/tree/main/nope",
+        None,
+        &StubApi::serving("sha"),
+        |_| Ok(base.to_path_buf())
+    )
+    .unwrap()
+    .candidates
+    .is_empty());
 }
 
 /// Local listing policy: every candidate is shown with validity, the root
@@ -1125,6 +1227,169 @@ fn explore_preview_cache_miss_does_not_deadlock() {
     );
 }
 
+/// Two acquisitions can overlap, but only a completed tree is public. The
+/// second finishes first; the first must reuse it, never replace its bytes.
+#[test]
+fn explore_preview_concurrent_callers_publish_only_a_complete_winner() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let (_roots, paths) = make_paths();
+    let url = "https://example.invalid/concurrent";
+    let public = paths
+        .central_dir
+        .join(".explore-cache")
+        .join(crate::core::git_cache::explore_preview_key(url, None));
+    let (events, observed) = mpsc::channel();
+    let (release_first, wait_first) = mpsc::channel();
+    let (release_second, wait_second) = mpsc::channel();
+    let run = |id: &str, release: mpsc::Receiver<()>, events: mpsc::Sender<(bool, PathBuf)>| {
+        let out = super::clone_for_explore_preview_with(&paths, url, None, None, |dest| {
+            fs::create_dir_all(dest)?;
+            fs::write(dest.join("first.txt"), id)?;
+            events.send((false, dest.to_path_buf())).unwrap();
+            release
+                .recv_timeout(Duration::from_secs(30))
+                .expect("release acquisition");
+            fs::write(dest.join("last.txt"), id)?;
+            Ok(())
+        })
+        .unwrap();
+        // Capture completeness at RETURN, not after the other worker finishes.
+        let bytes = (
+            fs::read(out.join("first.txt")).ok(),
+            fs::read(out.join("last.txt")).ok(),
+        );
+        events.send((true, out.clone())).unwrap();
+        (out, bytes)
+    };
+    let (first, second, first_phase, second_phase, unpublished) = std::thread::scope(|scope| {
+        let a = scope.spawn(|| run("first", wait_first, events.clone()));
+        let first_phase = observed.recv_timeout(Duration::from_secs(30)).unwrap();
+        let b = scope.spawn(|| run("second", wait_second, events.clone()));
+        // On the old source this is already a return of the first's partial tree.
+        let second_phase = observed.recv_timeout(Duration::from_secs(30)).unwrap();
+        let unpublished = !public.exists();
+        let _ = release_second.send(());
+        if !second_phase.0 {
+            assert!(observed.recv_timeout(Duration::from_secs(30)).unwrap().0);
+        }
+        release_first.send(()).unwrap();
+        (
+            a.join().unwrap(),
+            b.join().unwrap(),
+            first_phase,
+            second_phase,
+            unpublished,
+        )
+    });
+    assert!(!first_phase.0);
+    assert!(
+        !second_phase.0,
+        "second caller returned an in-progress preview"
+    );
+    assert!(
+        unpublished,
+        "partial bytes were published before acquisition completed"
+    );
+    assert_ne!(
+        first_phase.1, second_phase.1,
+        "acquisitions must have private destinations"
+    );
+    assert_eq!(first.0, public);
+    assert_eq!(second.0, public);
+    let complete = (Some(b"second".to_vec()), Some(b"second".to_vec()));
+    assert_eq!(first.1, complete);
+    assert_eq!(second.1, complete);
+    assert_eq!(fs::read(public.join("first.txt")).unwrap(), b"second");
+    assert_eq!(fs::read(public.join("last.txt")).unwrap(), b"second");
+    assert_eq!(
+        fs::read_dir(public.parent().unwrap()).unwrap().count(),
+        1,
+        "private loser was not cleaned"
+    );
+}
+
+#[test]
+fn explore_preview_empty_acquisition_is_not_published() {
+    let (_roots, paths) = make_paths();
+    let error = super::clone_for_explore_preview_with(
+        &paths,
+        "https://example.invalid/empty",
+        None,
+        None,
+        |_| Ok(()),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<SignalError>(),
+        Some(&SignalError::SkillInvalid {
+            reason: "missing_skill_md".into()
+        })
+    );
+    assert_eq!(
+        fs::read_dir(paths.central_dir.join(".explore-cache"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn explore_preview_failed_acquisition_never_becomes_a_hit() {
+    let (_roots, paths) = make_paths();
+    let url = "https://example.invalid/error";
+    let failed = super::clone_for_explore_preview_with(&paths, url, None, None, |dest| {
+        fs::create_dir_all(dest)?;
+        fs::write(dest.join("partial.txt"), "partial")?;
+        anyhow::bail!("injected acquisition failure")
+    });
+    assert!(failed.is_err());
+    let root = paths.central_dir.join(".explore-cache");
+    assert_eq!(
+        fs::read_dir(&root).unwrap().count(),
+        0,
+        "failure left a public or private partial tree"
+    );
+    let out = super::clone_for_explore_preview_with(&paths, url, None, None, |dest| {
+        fs::write(dest.join("complete.txt"), "complete")?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(out.join("complete.txt").is_file());
+    assert!(!out.join("partial.txt").exists());
+}
+
+#[test]
+fn explore_preview_cancelled_acquisition_never_becomes_a_hit() {
+    let (_roots, paths) = make_paths();
+    let url = "https://example.invalid/cancel";
+    let cancel = crate::core::cancel_token::CancelToken::new();
+    let failed = super::clone_for_explore_preview_with(&paths, url, None, Some(&cancel), |dest| {
+        fs::create_dir_all(dest)?;
+        fs::write(dest.join("partial.txt"), "partial")?;
+        cancel.cancel();
+        // Even an adapter returning success after cancellation cannot publish.
+        Ok(())
+    });
+    assert_eq!(
+        failed.unwrap_err().downcast_ref::<SignalError>(),
+        Some(&SignalError::Cancelled)
+    );
+    assert_eq!(
+        fs::read_dir(paths.central_dir.join(".explore-cache"))
+            .unwrap()
+            .count(),
+        0
+    );
+    cancel.reset();
+    let out = super::clone_for_explore_preview_with(&paths, url, None, Some(&cancel), |dest| {
+        fs::write(dest.join("complete.txt"), "complete")?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(out.join("complete.txt").is_file());
+}
+
 #[test]
 fn settings_read_failure_does_not_block_listing_install_or_preview() {
     let (dir, store) = make_store();
@@ -1226,7 +1491,10 @@ fn listing_and_install_share_one_refs_resolution_and_old_selection_still_resolve
             &paths,
             &store,
             url,
-            (&candidate.subpath, resolution),
+            super::GitSelection {
+                subpath: Some(&candidate.subpath),
+                resolution,
+            },
             None,
             None,
             &api,

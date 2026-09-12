@@ -11,6 +11,7 @@ import type {
   CandidateMatch,
   GitSkillCandidate,
   GitSkillListing,
+  GitSourceResolution,
   ImportGroupStatusDto,
   ImportReportDto,
   LocalSkillCandidate,
@@ -63,7 +64,7 @@ const EMPTY_PLAN = {
 };
 
 function gitCandidate(name: string, subpath: string): GitSkillCandidate {
-  return { name, description: null, subpath };
+  return { name, description: null, subpath, resolution: null };
 }
 
 function stubBackend(overrides?: {
@@ -266,8 +267,11 @@ describe("useAddSkillFlow git flow", () => {
     );
   });
 
-  it("passes the listing's source resolution unchanged to install", async () => {
-    const resolution = { branch: "feature/x", subpath: "skills" };
+  it.each<GitSourceResolution | null>([
+    { branch: "feature/x", subpath: "skills" },
+    { branch: null, subpath: null },
+    null,
+  ])("passes the listing's source resolution unchanged to direct install: %j", async (resolution) => {
     stubBackend({ gitCandidates: [{ ...gitCandidate("alpha", "skills/alpha"), resolution }] });
     const setup = makeDeps();
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
@@ -275,6 +279,26 @@ describe("useAddSkillFlow git flow", () => {
     await act(async () => { await result.current.handleCreate(); });
     expect(installGitCalls()).toEqual([["installGitSelection",
       "https://github.com/x/y/tree/feature/x/skills", "skills/alpha", null, resolution]]);
+  });
+
+  it.each<GitSourceResolution | null>([
+    { branch: "feature/x", subpath: "skills" },
+    { branch: null, subpath: null },
+    null,
+  ])("passes the listing's source resolution unchanged through the picker: %j", async (resolution) => {
+    stubBackend({ gitCandidates: [
+      { ...gitCandidate("alpha", "skills/alpha"), resolution },
+      { ...gitCandidate("beta", "skills/beta"), resolution },
+    ] });
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    act(() => result.current.setGitUrl("https://github.com/x/y/tree/feature/x/skills"));
+    await act(async () => { await result.current.handleCreate(); });
+    await act(async () => { await result.current.git.install(); });
+    expect(installGitCalls()).toEqual([
+      ["installGitSelection", "https://github.com/x/y/tree/feature/x/skills", "skills/alpha", null, resolution],
+      ["installGitSelection", "https://github.com/x/y/tree/feature/x/skills", "skills/beta", null, resolution],
+    ]);
   });
 
   it("multiple candidates open the pick modal with everything preselected", async () => {

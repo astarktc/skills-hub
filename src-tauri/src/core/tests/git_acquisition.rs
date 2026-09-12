@@ -358,7 +358,6 @@ fn request<'a>(
     AcquireRequest {
         source,
         intent,
-        stored_subpath: None,
         dest,
         cache_dir,
         ttl_ms: FRESH_TTL_MS,
@@ -380,7 +379,9 @@ fn ambiguous_tree_uses_longest_segment_bounded_branch() {
             refs: refs.into_iter().map(str::to_string).collect(),
             ..Default::default()
         };
-        let (resolved, _) = super::resolve_tree_source(&source, None, &api);
+        let dir = tempfile::tempdir().unwrap();
+        let (_, resolved) =
+            super::list_candidates_with(&source, &api, |_| Ok(dir.path().to_path_buf())).unwrap();
         assert_eq!(resolved.branch.as_deref(), Some("feature/x"));
         assert_eq!(resolved.subpath.as_deref(), Some("skills/foo"));
         assert_eq!(api.calls(), ["refs:owner/repo@feature"]);
@@ -401,7 +402,9 @@ fn ambiguous_tree_discovery_failures_keep_parser_split() {
             }),
             ..Default::default()
         };
-        let (resolved, _) = super::resolve_tree_source(&source, None, &api);
+        let dir = tempfile::tempdir().unwrap();
+        let (_, resolved) =
+            super::list_candidates_with(&source, &api, |_| Ok(dir.path().to_path_buf())).unwrap();
         assert_eq!(resolved.branch, source.branch);
         assert_eq!(resolved.subpath, source.subpath);
         assert_eq!(api.calls().len(), 1);
@@ -413,14 +416,35 @@ fn stored_suffix_resolves_without_discovery_and_requires_a_segment_boundary() {
     let source =
         super::parse_full_github_url("https://github.com/owner/repo/tree/feature/x/skills/foo")
             .unwrap();
-    let api = StubApi::default();
-    let (resolved, _) = super::resolve_tree_source(&source, Some("skills/foo"), &api);
-    assert_eq!(resolved.branch.as_deref(), Some("feature/x"));
-    assert_eq!(resolved.subpath.as_deref(), Some("skills/foo"));
-    assert!(api.calls().is_empty());
-    let (resolved, _) = super::resolve_tree_source(&source, Some("kills/foo"), &api);
-    assert_eq!(resolved.branch, source.branch);
-    assert_eq!(api.calls().len(), 1);
+    for (suffix, expected_branch, refs) in [
+        ("skills/foo", "feature/x", false),
+        ("kills/foo", "feature", true),
+    ] {
+        let api = StubApi::serving("sha");
+        let (_f, cache, dest) = Fixture::new();
+        let acquired = acquire(
+            &request(
+                &source,
+                SkillIntent::StoredRecord {
+                    name: "foo",
+                    subpath: Some(suffix),
+                },
+                &dest,
+                &cache,
+            ),
+            &api,
+        )
+        .unwrap();
+        assert_eq!(acquired.resolved_subpath.as_deref(), Some(suffix));
+        assert_eq!(
+            api.calls().iter().any(|call| call.starts_with("refs:")),
+            refs
+        );
+        assert!(api
+            .calls()
+            .contains(&format!("sha:owner/repo@{expected_branch}")));
+        assert!(dest.join("SKILL.md").is_file());
+    }
 }
 
 #[test]
@@ -434,12 +458,17 @@ fn slash_branch_without_subpath_still_discovers_named_skill() {
         refs: vec!["feature/x".into()],
         ..Default::default()
     };
-    let (resolved, _) = super::resolve_tree_source(&source, None, &api);
+    let dir = tempfile::tempdir().unwrap();
+    let (_, resolved) =
+        super::list_candidates_with(&source, &api, |_| Ok(dir.path().to_path_buf())).unwrap();
     assert_eq!(resolved.branch.as_deref(), Some("feature/x"));
     assert_eq!(resolved.subpath, None);
     for intent in [
-        SkillIntent::NamedSkill(Some("beta")),
-        SkillIntent::NamedSkillOrWholeRepo("beta"),
+        SkillIntent::ByName(Some("beta")),
+        SkillIntent::StoredRecord {
+            name: "beta",
+            subpath: None,
+        },
     ] {
         let (_f, cache, dest) = Fixture::new();
         let acquired = acquire(&request(&source, intent, &dest, &cache), &api).unwrap();
@@ -457,21 +486,9 @@ fn explicit_blob_root_does_not_discover_nested_named_skill() {
         super::parse_full_github_url("https://github.com/owner/repo/blob/main/SKILL.md").unwrap();
     source.clone_url = repo.path().to_string_lossy().into_owned();
     let api = StubApi::default();
-    assert_eq!(
-        super::resolve_tree_source(&source, None, &api)
-            .0
-            .subpath
-            .as_deref(),
-        Some(".")
-    );
     let (_f, cache, dest) = Fixture::new();
     let acquired = acquire(
-        &request(
-            &source,
-            SkillIntent::NamedSkill(Some("beta")),
-            &dest,
-            &cache,
-        ),
+        &request(&source, SkillIntent::ByName(Some("beta")), &dest, &cache),
         &api,
     )
     .unwrap();
@@ -484,7 +501,9 @@ fn explicit_blob_root_does_not_discover_nested_named_skill() {
 fn single_segment_branch_has_no_discovery() {
     let source = super::parse_full_github_url("https://github.com/owner/repo/tree/main").unwrap();
     let api = StubApi::default();
-    let (resolved, _) = super::resolve_tree_source(&source, None, &api);
+    let dir = tempfile::tempdir().unwrap();
+    let (_, resolved) =
+        super::list_candidates_with(&source, &api, |_| Ok(dir.path().to_path_buf())).unwrap();
     assert_eq!(resolved.branch, source.branch);
     assert!(api.calls().is_empty());
 }
@@ -509,7 +528,7 @@ fn resolved_branch_and_subpath_reach_both_acquisition_adapters() {
             ..StubApi::serving("sha")
         };
         let acquired = acquire(
-            &request(&source, SkillIntent::NamedSkill(None), &dest, &cache),
+            &request(&source, SkillIntent::ByName(None), &dest, &cache),
             &api,
         )
         .unwrap();
@@ -545,7 +564,15 @@ fn explicit_selection_is_not_rewritten_even_when_it_equals_the_parsed_url_path()
         ..StubApi::serving("sha")
     };
     let acquired = acquire(
-        &request(&source, SkillIntent::Subpath("x/skills/foo"), &dest, &cache),
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("x/skills/foo"),
+                resolution: None,
+            }),
+            &dest,
+            &cache,
+        ),
         &api,
     )
     .unwrap();
@@ -561,16 +588,89 @@ fn explicit_selection_is_not_rewritten_even_when_it_equals_the_parsed_url_path()
 }
 
 #[test]
+fn supplied_default_branch_selection_is_reused_and_can_clone_the_real_default() {
+    let repo = single_skill_repo();
+    let mut source = local_source_with_api(repo.path());
+    source.branch = Some("wrong-parser-branch".into());
+    source.subpath = Some("wrong-parser-path".into());
+    let resolution = super::GitSourceResolution {
+        branch: None,
+        subpath: None,
+    };
+    let api = StubApi::failing_branch(404);
+    let (_f, cache, dest) = Fixture::new();
+    let acquired = acquire(
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("skills/a"),
+                resolution: Some(&resolution),
+            }),
+            &dest,
+            &cache,
+        ),
+        &api,
+    )
+    .unwrap();
+    assert_eq!(api.calls(), ["sha:owner/repo@main"]);
+    assert_eq!(
+        acquired.strategy,
+        AcquireStrategy::GitClone { sparse: true }
+    );
+    assert_eq!(acquired.resolved_subpath.as_deref(), Some("skills/a"));
+    assert!(dest.join("SKILL.md").is_file());
+}
+
+#[test]
+fn supplied_explicit_branch_sha_404_never_repairs_or_clones() {
+    let source = super::parse_github_url("owner/repo/tree/feature/x/skills/foo");
+    let resolution = super::GitSourceResolution {
+        branch: Some("feature".into()),
+        subpath: Some("x/skills/foo".into()),
+    };
+    let api = StubApi {
+        refs: vec!["feature/x".into()],
+        ..StubApi::failing_branch(404)
+    };
+    let (_f, cache, dest) = Fixture::new();
+    let error = acquire(
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("x/skills/foo"),
+                resolution: Some(&resolution),
+            }),
+            &dest,
+            &cache,
+        ),
+        &api,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<SignalError>(),
+        Some(SignalError::GithubSkillNotFound { .. })
+    ));
+    assert_eq!(api.calls(), ["sha:owner/repo@feature"]);
+    assert!(!git_cache_root_exists(&cache));
+    assert!(!dest.exists());
+}
+
+#[test]
 fn stored_subpath_request_skips_discovery_but_uses_resolved_branch() {
     let (_f, cache, dest) = Fixture::new();
     let source =
         super::parse_full_github_url("https://github.com/owner/repo/tree/feature/x/skills/foo")
             .unwrap();
     let api = StubApi::serving("sha");
-    let req = AcquireRequest {
-        stored_subpath: Some("skills/foo"),
-        ..request(&source, SkillIntent::Subpath("skills/foo"), &dest, &cache)
-    };
+    let req = request(
+        &source,
+        SkillIntent::StoredRecord {
+            name: "foo",
+            subpath: Some("skills/foo"),
+        },
+        &dest,
+        &cache,
+    );
     let acquired = acquire(&req, &api).unwrap();
     assert_eq!(acquired.resolved_subpath.as_deref(), Some("skills/foo"));
     assert_eq!(
@@ -590,10 +690,15 @@ fn stale_stored_split_sha_404_retries_refs_and_reports_corrected_subpath() {
         refs: vec!["feature/x".into()],
         ..StubApi::serving("corrected-sha")
     };
-    let req = AcquireRequest {
-        stored_subpath: Some("x/skills/foo"),
-        ..request(&source, SkillIntent::Subpath("x/skills/foo"), &dest, &cache)
-    };
+    let req = request(
+        &source,
+        SkillIntent::StoredRecord {
+            name: "foo",
+            subpath: Some("x/skills/foo"),
+        },
+        &dest,
+        &cache,
+    );
 
     let acquired = acquire(&req, &api).unwrap();
 
@@ -627,10 +732,15 @@ fn stale_stored_split_keeps_typed_not_found_when_refs_fail_or_do_not_match() {
             }),
             ..StubApi::failing_branch(404)
         };
-        let req = AcquireRequest {
-            stored_subpath: Some("x/skills/foo"),
-            ..request(&source, SkillIntent::Subpath("x/skills/foo"), &dest, &cache)
-        };
+        let req = request(
+            &source,
+            SkillIntent::StoredRecord {
+                name: "foo",
+                subpath: Some("x/skills/foo"),
+            },
+            &dest,
+            &cache,
+        );
 
         let err = acquire(&req, &api).unwrap_err();
 
@@ -657,10 +767,15 @@ fn stale_stored_split_retries_sha_only_once() {
         refs: vec!["feature/x".into()],
         ..StubApi::failing_branch(404)
     };
-    let req = AcquireRequest {
-        stored_subpath: Some("x/skills/foo"),
-        ..request(&source, SkillIntent::Subpath("x/skills/foo"), &dest, &cache)
-    };
+    let req = request(
+        &source,
+        SkillIntent::StoredRecord {
+            name: "foo",
+            subpath: Some("x/skills/foo"),
+        },
+        &dest,
+        &cache,
+    );
 
     let err = acquire(&req, &api).unwrap_err();
 
@@ -686,10 +801,15 @@ fn stored_split_download_404_does_not_retry_refs() {
         super::parse_full_github_url("https://github.com/owner/repo/tree/feature/x/skills/foo")
             .unwrap();
     let api = StubApi::failing(404, None);
-    let req = AcquireRequest {
-        stored_subpath: Some("x/skills/foo"),
-        ..request(&source, SkillIntent::Subpath("x/skills/foo"), &dest, &cache)
-    };
+    let req = request(
+        &source,
+        SkillIntent::StoredRecord {
+            name: "foo",
+            subpath: Some("x/skills/foo"),
+        },
+        &dest,
+        &cache,
+    );
 
     let err = acquire(&req, &api).unwrap_err();
 
@@ -722,7 +842,15 @@ fn fast_path_serves_a_subpath_and_records_the_commit_sha() {
     let api = StubApi::serving("abc123def4567890123456789012345678901234");
 
     let acquired = acquire(
-        &request(&source, SkillIntent::Subpath("skills/a"), &dest, &cache_dir),
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("skills/a"),
+                resolution: None,
+            }),
+            &dest,
+            &cache_dir,
+        ),
         &api,
     )
     .expect("fast path acquires");
@@ -757,7 +885,15 @@ fn fast_path_is_skipped_for_the_repo_root() {
     let api = StubApi::serving("deadbeef");
 
     let acquired = acquire(
-        &request(&source, SkillIntent::Subpath("."), &dest, &cache_dir),
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("."),
+                resolution: None,
+            }),
+            &dest,
+            &cache_dir,
+        ),
         &api,
     )
     .expect("clone acquires the root");
@@ -784,7 +920,15 @@ fn fast_path_can_be_disallowed_by_the_caller() {
     let acquired = acquire(
         &AcquireRequest {
             allow_fast_path: false,
-            ..request(&source, SkillIntent::Subpath("skills/a"), &dest, &cache_dir)
+            ..request(
+                &source,
+                SkillIntent::Selection(super::GitSelection {
+                    subpath: Some("skills/a"),
+                    resolution: None,
+                }),
+                &dest,
+                &cache_dir,
+            )
         },
         &api,
     )
@@ -807,7 +951,15 @@ fn a_source_without_github_coordinates_clones() {
     let api = StubApi::serving("deadbeef");
 
     let acquired = acquire(
-        &request(&source, SkillIntent::Subpath("skills/a"), &dest, &cache_dir),
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("skills/a"),
+                resolution: None,
+            }),
+            &dest,
+            &cache_dir,
+        ),
         &api,
     )
     .expect("clone acquires");
@@ -833,7 +985,15 @@ fn an_api_failure_falls_back_to_a_clone() {
     let api = StubApi::failing(502, None);
 
     let acquired = acquire(
-        &request(&source, SkillIntent::Subpath("skills/a"), &dest, &cache_dir),
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("skills/a"),
+                resolution: None,
+            }),
+            &dest,
+            &cache_dir,
+        ),
         &api,
     )
     .expect("the clone fallback acquires");
@@ -862,7 +1022,15 @@ fn an_assumed_branch_that_does_not_exist_falls_back_to_a_clone() {
     let api = StubApi::failing_branch(404);
 
     let acquired = acquire(
-        &request(&source, SkillIntent::Subpath("skills/a"), &dest, &cache_dir),
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("skills/a"),
+                resolution: None,
+            }),
+            &dest,
+            &cache_dir,
+        ),
         &api,
     )
     .expect("the clone fallback acquires");
@@ -893,7 +1061,15 @@ fn a_named_branch_that_does_not_exist_is_typed_not_found() {
     let api = StubApi::failing_branch(404);
 
     let err = acquire(
-        &request(&source, SkillIntent::Subpath("skills/a"), &dest, &cache_dir),
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("skills/a"),
+                resolution: None,
+            }),
+            &dest,
+            &cache_dir,
+        ),
         &api,
     )
     .expect_err("a missing named branch fails");
@@ -923,7 +1099,10 @@ fn a_missing_subpath_on_an_existing_branch_is_typed_not_found() {
     let err = acquire(
         &request(
             &source,
-            SkillIntent::Subpath("skills/missing"),
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("skills/missing"),
+                resolution: None,
+            }),
             &dest,
             &cache_dir,
         ),
@@ -953,7 +1132,15 @@ fn a_rate_limit_is_typed_and_never_falls_back() {
     let api = StubApi::failing(403, Some(7));
 
     let err = acquire(
-        &request(&source, SkillIntent::Subpath("skills/a"), &dest, &cache_dir),
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("skills/a"),
+                resolution: None,
+            }),
+            &dest,
+            &cache_dir,
+        ),
         &api,
     )
     .expect_err("a rate-limited fetch fails");
@@ -974,7 +1161,15 @@ fn a_rate_limit_without_an_eta_reports_zero() {
     let api = StubApi::failing(403, None);
 
     let err = acquire(
-        &request(&source, SkillIntent::Subpath("skills/a"), &dest, &cache_dir),
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("skills/a"),
+                resolution: None,
+            }),
+            &dest,
+            &cache_dir,
+        ),
         &api,
     )
     .expect_err("a rate-limited fetch fails");
@@ -1003,7 +1198,15 @@ fn a_typed_refusal_on_the_fast_path_is_not_retried_as_a_clone() {
     };
 
     let err = acquire(
-        &request(&source, SkillIntent::Subpath("skills/a"), &dest, &cache_dir),
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("skills/a"),
+                resolution: None,
+            }),
+            &dest,
+            &cache_dir,
+        ),
         &api,
     )
     .expect_err("the refusal fails the acquisition");
@@ -1032,7 +1235,15 @@ fn a_pre_cancelled_acquisition_aborts_cleanly() {
     let err = acquire(
         &AcquireRequest {
             cancel: Some(&token),
-            ..request(&source, SkillIntent::Subpath("skills/a"), &dest, &cache_dir)
+            ..request(
+                &source,
+                SkillIntent::Selection(super::GitSelection {
+                    subpath: Some("skills/a"),
+                    resolution: None,
+                }),
+                &dest,
+                &cache_dir,
+            )
         },
         &api,
     )
@@ -1063,7 +1274,15 @@ fn a_cancel_during_the_fast_path_aborts_instead_of_cloning() {
     let err = acquire(
         &AcquireRequest {
             cancel: Some(&token),
-            ..request(&source, SkillIntent::Subpath("skills/a"), &dest, &cache_dir)
+            ..request(
+                &source,
+                SkillIntent::Selection(super::GitSelection {
+                    subpath: Some("skills/a"),
+                    resolution: None,
+                }),
+                &dest,
+                &cache_dir,
+            )
         },
         &api,
     )
@@ -1092,7 +1311,15 @@ fn a_cancelled_clone_acquisition_aborts() {
     let err = acquire(
         &AcquireRequest {
             cancel: Some(&token),
-            ..request(&source, SkillIntent::Subpath("."), &dest, &cache_dir)
+            ..request(
+                &source,
+                SkillIntent::Selection(super::GitSelection {
+                    subpath: Some("."),
+                    resolution: None,
+                }),
+                &dest,
+                &cache_dir,
+            )
         },
         &api,
     )
@@ -1118,7 +1345,15 @@ fn a_subpath_intent_fetches_sparsely() {
     let api = StubApi::serving("unused");
 
     let acquired = acquire(
-        &request(&source, SkillIntent::Subpath("skills/a"), &dest, &cache_dir),
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("skills/a"),
+                resolution: None,
+            }),
+            &dest,
+            &cache_dir,
+        ),
         &api,
     )
     .expect("sparse clone acquires");
@@ -1146,7 +1381,10 @@ fn a_missing_subpath_fails() {
     let err = acquire(
         &request(
             &source,
-            SkillIntent::Subpath("skills/nope"),
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("skills/nope"),
+                resolution: None,
+            }),
             &dest,
             &cache_dir,
         ),
@@ -1184,7 +1422,15 @@ fn a_subpath_with_a_parent_segment_is_refused_before_anything_is_read() {
         r"skills\..\..\outside",
     ] {
         let err = acquire(
-            &request(&source, SkillIntent::Subpath(subpath), &dest, &cache_dir),
+            &request(
+                &source,
+                SkillIntent::Selection(super::GitSelection {
+                    subpath: Some(subpath),
+                    resolution: None,
+                }),
+                &dest,
+                &cache_dir,
+            ),
             &api,
         )
         .expect_err("a traversing subpath is refused");
@@ -1210,7 +1456,7 @@ fn a_named_skill_resolves_its_subpath_in_a_multi_skill_repo() {
     let acquired = acquire(
         &request(
             &source,
-            SkillIntent::NamedSkill(Some("beta")),
+            SkillIntent::ByName(Some("beta")),
             &dest,
             &cache_dir,
         ),
@@ -1235,8 +1481,8 @@ fn a_multi_skill_repo_without_a_usable_name_is_typed() {
     let api = StubApi::serving("unused");
 
     for intent in [
-        SkillIntent::NamedSkill(None),
-        SkillIntent::NamedSkill(Some("gamma")),
+        SkillIntent::ByName(None),
+        SkillIntent::ByName(Some("gamma")),
     ] {
         let err = acquire(&request(&source, intent, &dest, &cache_dir), &api)
             .expect_err("an unnamed multi-skill repo fails");
@@ -1277,7 +1523,7 @@ fn per_tool_symlink_aliases_of_one_skill_do_not_make_its_name_ambiguous() {
     let acquired = acquire(
         &request(
             &source,
-            SkillIntent::NamedSkill(Some("ego-browser")),
+            SkillIntent::ByName(Some("ego-browser")),
             &dest,
             &cache_dir,
         ),
@@ -1305,10 +1551,13 @@ fn a_lone_nested_skill_is_the_skill_named_or_not() {
     let api = StubApi::serving("unused");
 
     for intent in [
-        SkillIntent::NamedSkill(Some("alpha")),
-        SkillIntent::NamedSkill(None),
-        SkillIntent::NamedSkill(Some("does-not-match")),
-        SkillIntent::NamedSkillOrWholeRepo("does-not-match"),
+        SkillIntent::ByName(Some("alpha")),
+        SkillIntent::ByName(None),
+        SkillIntent::ByName(Some("does-not-match")),
+        SkillIntent::StoredRecord {
+            name: "does-not-match",
+            subpath: None,
+        },
     ] {
         let (_fx, cache_dir, dest) = Fixture::new();
         let acquired = acquire(&request(&source, intent, &dest, &cache_dir), &api)
@@ -1331,7 +1580,7 @@ fn a_strict_unmatched_name_cannot_choose_between_root_and_nested_skill() {
     let error = acquire(
         &request(
             &source,
-            SkillIntent::NamedSkill(Some("does-not-match")),
+            SkillIntent::ByName(Some("does-not-match")),
             &dest,
             &cache_dir,
         ),
@@ -1353,8 +1602,11 @@ fn unnamed_and_lenient_intents_keep_the_root_with_one_nested_skill() {
     let source = local_source(repo.path());
     let api = StubApi::serving("unused");
     for intent in [
-        SkillIntent::NamedSkill(None),
-        SkillIntent::NamedSkillOrWholeRepo("does-not-match"),
+        SkillIntent::ByName(None),
+        SkillIntent::StoredRecord {
+            name: "does-not-match",
+            subpath: None,
+        },
     ] {
         let (_fx, cache_dir, dest) = Fixture::new();
         let acquired = acquire(&request(&source, intent, &dest, &cache_dir), &api).unwrap();
@@ -1375,7 +1627,7 @@ fn a_named_intent_on_a_single_skill_repo_takes_the_root() {
     let api = StubApi::serving("unused");
 
     let acquired = acquire(
-        &request(&source, SkillIntent::NamedSkill(None), &dest, &cache_dir),
+        &request(&source, SkillIntent::ByName(None), &dest, &cache_dir),
         &api,
     )
     .expect("the root acquires");
@@ -1396,7 +1648,10 @@ fn the_backfill_intent_resolves_a_name_to_a_subpath() {
     let acquired = acquire(
         &request(
             &source,
-            SkillIntent::NamedSkillOrWholeRepo("alpha"),
+            SkillIntent::StoredRecord {
+                name: "alpha",
+                subpath: None,
+            },
             &dest,
             &cache_dir,
         ),
@@ -1419,7 +1674,10 @@ fn the_backfill_intent_takes_the_whole_repo_when_no_name_matches() {
     let acquired = acquire(
         &request(
             &source,
-            SkillIntent::NamedSkillOrWholeRepo("gamma"),
+            SkillIntent::StoredRecord {
+                name: "gamma",
+                subpath: None,
+            },
             &dest,
             &cache_dir,
         ),
@@ -1444,7 +1702,7 @@ fn a_url_subpath_supplies_a_named_intent() {
     let api = StubApi::serving("cafebabe");
 
     let acquired = acquire(
-        &request(&source, SkillIntent::NamedSkill(None), &dest, &cache_dir),
+        &request(&source, SkillIntent::ByName(None), &dest, &cache_dir),
         &api,
     )
     .expect("the URL subpath acquires");
@@ -1472,7 +1730,10 @@ fn a_subpath_that_is_an_upstream_symlink_acquires_the_targets_content() {
     let acquired = acquire(
         &request(
             &source,
-            SkillIntent::Subpath(BUNDLE_ALIAS),
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some(BUNDLE_ALIAS),
+                resolution: None,
+            }),
             &dest,
             &cache_dir,
         ),
@@ -1505,7 +1766,10 @@ fn a_subpath_that_is_an_upstream_symlink_acquires_the_targets_content() {
     let refreshed = acquire(
         &request(
             &source,
-            SkillIntent::Subpath(BUNDLE_ALIAS),
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some(BUNDLE_ALIAS),
+                resolution: None,
+            }),
             &refresh_dest,
             &cache_dir,
         ),
@@ -1535,7 +1799,10 @@ fn a_symlinked_component_of_the_subpath_is_followed() {
     let acquired = acquire(
         &request(
             &source,
-            SkillIntent::Subpath("plugins/tanstack-all/skills/x"),
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("plugins/tanstack-all/skills/x"),
+                resolution: None,
+            }),
             &dest,
             &cache_dir,
         ),
@@ -1571,7 +1838,10 @@ fn a_chain_of_two_symlinks_resolves() {
     let acquired = acquire(
         &request(
             &source,
-            SkillIntent::Subpath("plugins/all/skills/t"),
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("plugins/all/skills/t"),
+                resolution: None,
+            }),
             &dest,
             &cache_dir,
         ),
@@ -1605,7 +1875,15 @@ fn a_symlink_chain_deeper_than_the_bound_is_refused() {
     let api = StubApi::serving("unused");
 
     let err = acquire(
-        &request(&source, SkillIntent::Subpath("l0"), &dest, &cache_dir),
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("l0"),
+                resolution: None,
+            }),
+            &dest,
+            &cache_dir,
+        ),
         &api,
     )
     .expect_err("a chain past the bound is refused");
@@ -1631,7 +1909,15 @@ fn an_absolute_symlink_target_is_refused_typed_and_never_read() {
     let api = StubApi::serving("unused");
 
     let err = acquire(
-        &request(&source, SkillIntent::Subpath("skills/x"), &dest, &cache_dir),
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("skills/x"),
+                resolution: None,
+            }),
+            &dest,
+            &cache_dir,
+        ),
         &api,
     )
     .expect_err("an absolute target is refused");
@@ -1667,7 +1953,15 @@ fn an_escaping_symlink_target_is_refused_typed_and_never_read() {
     fs::write(planted.join("SKILL.md"), "---\nname: outside\n---\n").expect("write");
 
     let err = acquire(
-        &request(&source, SkillIntent::Subpath("skills/x"), &dest, &cache_dir),
+        &request(
+            &source,
+            SkillIntent::Selection(super::GitSelection {
+                subpath: Some("skills/x"),
+                resolution: None,
+            }),
+            &dest,
+            &cache_dir,
+        ),
         &api,
     )
     .expect_err("an escaping target is refused");
@@ -1708,10 +2002,10 @@ fn parsing_records_github_coordinates() {
     assert!(parsed.api.is_none());
 }
 
-/// The multi-skill view the named intents match against: deep hits count, the
-/// repo root and dirs without skill bytes do not.
+/// Listing exposes the same admitted candidates as acquisition: root and
+/// deep hits count, but directories without skill bytes do not.
 #[test]
-fn installable_skills_in_repo_excludes_root_and_missing_skill_md() {
+fn listing_admits_root_and_nested_but_not_missing_skill_md() {
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path();
     fs::write(base.join("SKILL.md"), "---\nname: Root\n---\n").unwrap();
@@ -1729,9 +2023,12 @@ fn installable_skills_in_repo_excludes_root_and_missing_skill_md() {
         .unwrap();
     }
 
-    let (root, candidates) = super::installable_skills_in_repo(base);
-    assert_eq!(root.map(|c| c.name), Some("Root".to_string()));
+    let (candidates, _) =
+        super::list_candidates_with(&local_source(base), &StubApi::default(), |_| {
+            Ok(base.to_path_buf())
+        })
+        .unwrap();
     let names: Vec<&str> = candidates.iter().map(|c| c.name.as_str()).collect();
-    assert_eq!(names, vec!["API Design", "Tailwind"]);
+    assert_eq!(names, vec!["API Design", "Root", "Tailwind"]);
     assert_eq!(candidates[0].subpath, "plugins/a/skills/api-design");
 }

@@ -360,7 +360,7 @@ pub async fn install_git_selection(
     repoUrl: String,
     subpath: String,
     name: Option<String>,
-    resolution: Option<crate::core::installer::GitSourceResolution>,
+    resolution: Option<crate::core::git_acquisition::GitSourceResolution>,
 ) -> Result<InstallResultDto, CommandError> {
     let store = store.inner().clone();
     let cancel = cancel.inner().clone();
@@ -371,7 +371,10 @@ pub async fn install_git_selection(
             &paths,
             &store,
             &repoUrl,
-            (&subpath, resolution.as_ref()),
+            crate::core::git_acquisition::GitSelection {
+                subpath: Some(&subpath),
+                resolution: resolution.as_ref(),
+            },
             name,
             Some(&cancel),
         )?;
