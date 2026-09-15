@@ -263,26 +263,26 @@ This cost 18 features in v1.1.4 (`5e1f42e` "restore 18 features lost during para
 
 ## Delegation (T3 Code `delegate_task`)
 
-Run child agents on the **Pi harness** by default (`providerInstanceId: "pi"`) — it carries every model
-provider we use. Model routing within Pi:
+Run child agents on the **Pi harness** by default (`providerInstanceId: "pi"`) — it carries every model provider we use. Model routing within Pi:
 
-- **Fable** models → the Anthropic provider (`anthropic/claude-fable-*`).
-- **Opus** models → the Cortex provider (`cortex/claude-opus-*`), unless the operator explicitly asks
-  for Anthropic.
-- **GPT-6 Astra** → `openai-codex/gpt-6-astra` (the OpenAI seat on review panels and the default for
-  implementation children; requires a live `openai-codex` login in Pi). **GPT-5.6 Sol** is retired for
-  reviews.
-- **GPT-5.6** models (other uses) → `cortex-responses/openai-gpt-5.6-*`.
+- **Fable** models → the Anthropic provider (`anthropic/claude-fable-5.1`).
+- **Opus** models → the Anthropic provider (anthropic/claude-opus-5`).
+- **GPT-6 Astra** → `openai-codex/gpt-6-astra` (the OpenAI seat on multi-model review panels and the default for
+  implementation children; requires a live `openai-codex` login in Pi). 
+- **GPT-5.6** models (other uses) → `openai-codex/gpt-5.6-*`. (sol, luna)
+	  	  - gpt-5.6-luna is the cheapest cost model in our catalog, but only use it for very basic or very tightly-scoped tasks. Run Luna with high thinking only.
+
+Although we have a default model choice, always verify with Alex for his model preferences for a given session/set of tickets. Sometime we switch it up depending on 5-hr and weekly usage limits.
+Choose specifically between low, medium, and high thinking for each subagent according to the task.  Ask if unsure.
+Most common choices:`low` & `medium` thinking for routine work (research, scouting, implementation, reviewing small or medium changes), `high` for reviewing large scale work.
+Adversarial review — Use a different model than the implementer. 
+Cortex provider: do not use cortex gateway unless Alex specifically requests it. 
 
 Children read AGENTS.md's Workflow step 1 literally and stop for confirmation: **pre-approve it in the
 brief** ("state your approach and continue"). Tell them `.scratch/` is gitignored and never to `git add -f`
 it.
 
-Do not reach for the `claudeAgent` (Claude Code) or `codex` provider instances for these models.
-
-Launch children with `runtimeMode: "full-access"` (or `inherit`) so they run unattended. Never use
-`approval-required` for delegated work — it gates every child tool call on an operator prompt. Express
-read-only/no-run constraints in the task brief instead.
+Launch children with `runtimeMode: "full-access"` (or `inherit`) so they run unattended. Never use `approval-required` for delegated work — it gates every child tool call on an operator prompt. Express read-only/no-run constraints in the task brief instead.
 
 ## Deeper context (pointers)
 
