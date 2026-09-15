@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review for skills-hub — round 9</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 4 4; }
+      .leak { stroke: #dc2626; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      pre.mermaid { font-size: 12px; }
+      .deep pre.mermaid { background: #f8fafc; border-radius: .5rem; padding: .5rem; color: #0f172a; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+      <header class="space-y-3">
+        <h1 class="font-serif text-4xl">skills-hub — architecture review, round 9</h1>
+        <p class="text-sm text-slate-600">
+          <code>main</code> @ <code>96cd33c</code> (v1.2.8) · panel: Fable 5.1, Opus 5, GPT‑6 Astra (medium) · synthesized by the parent; every Strong finding re-read in source.
+        </p>
+        <div class="flex flex-wrap gap-4 text-xs text-slate-600 items-center">
+          <span class="inline-flex items-center gap-1"><span class="inline-block w-4 h-3 border border-slate-400 bg-white"></span> module</span>
+          <span class="inline-flex items-center gap-1"><svg width="24" height="8"><line x1="0" y1="4" x2="24" y2="4" stroke="#475569" stroke-width="2" class="seam"/></svg> seam</span>
+          <span class="inline-flex items-center gap-1"><svg width="24" height="8"><line x1="0" y1="4" x2="24" y2="4" stroke="#dc2626" stroke-width="2"/></svg> leakage</span>
+          <span class="inline-flex items-center gap-1"><span class="inline-block w-4 h-3 deep border-2 border-slate-900"></span> deep module</span>
+          <span class="ml-auto">seats: <span class="px-1 rounded bg-violet-100">F</span>=Fable <span class="px-1 rounded bg-sky-100">O</span>=Opus <span class="px-1 rounded bg-orange-100">A</span>=Astra</span>
+        </div>
+        <div class="rounded-md border border-red-200 bg-red-50 p-3 text-sm">
+          <strong>Two live defects surfaced, both verified at HEAD:</strong>
+          (1) release builds record <code>content_hash = None</code> at finalize → every copy‑mode project assignment reports <em>Stale</em> after every Update (tests are debug‑only, so blind);
+          (2) <code>finalize_update</code> discards the old central bytes before <code>replay_unlocked</code> runs → a failed Edit replay is a failed Update with bytes already replaced.
+          Both belong to candidates below; neither needs the deepening to be patched first.
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-10">
+
+        <!-- 1 -->
+        <article id="c1" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">1. Content identity has one supplier</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-xs font-semibold">Strong</span>
+              <span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-xs">in-process</span>
+              <span class="px-2 py-0.5 rounded bg-violet-100 text-xs">F1</span><span class="px-2 py-0.5 rounded bg-sky-100 text-xs">O1</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">core/install_finalize.rs:469-486 · core/skill_edits.rs:74-78 · core/project_sync.rs:206-215, 497-512 · core/propagation.rs:350-390 · core/global_sync.rs:80-92 · core/sync_status.rs:161-184 · core/content_hash.rs</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-3">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — five callers, three policies</div>
+              <pre class="mermaid">
+flowchart TB
+  F[finalize: hash only if debug or env] -->|None in release| P[Propagation]
+  P -->|recorded_hash = None| R[assignment row]
+  E[skill_edits::record_hash: always] --> S[(skills.content_hash)]
+  PS[project_sync reconcile: hash + backfill during a READ] --> S
+  PS -->|source Some vs recorded None| ST{{next_status → Stale}}
+  G[global_sync: re-hash both sides, ignore row] -.-> S
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class F,P,R,ST leak
+              </pre>
+            </div>
+            <div class="rounded-lg border-2 border-slate-900 deep p-3 text-slate-100">
+              <div class="text-xs uppercase tracking-wider text-slate-300 mb-2">After — one identity module</div>
+              <pre class="mermaid">
+flowchart TB
+  subgraph ID[content identity]
+    direction TB
+    C[compute once per finalize / edit]
+    W[write the row]
+    Q[answer: hash of this Managed skill]
+  end
+  F[finalize] --> ID
+  E[Edit replay] --> ID
+  P[Propagation] -->|reads| ID
+  PS[reconcile pass] -->|reads| ID
+  G[global sync same-content] -->|reads| ID
+              </pre>
+            </div>
+          </div>
+          <p><strong>Problem.</strong> "What is this skill's hash" is decided at five sites with three rules; the release/debug fork inside one of them makes copy‑mode assignments go Stale after every Update in shipped builds only (Windows without symlink privilege is exactly copy mode). Fable notes the round‑3 closure‑supplier decision fixed the <em>rule</em> and left the <em>supply</em> divergent.</p>
+          <p><strong>Solution.</strong> One module owns computing, storing and answering a Managed skill's content hash; finalize and Edit replay write through it, Propagation / reconcile / same‑content read from it. The perf gate becomes that module's decision (or dies — it predates hashed reconcile).</p>
+          <ul class="list-disc pl-5 text-sm space-y-1">
+            <li>locality: "hash absent" reasoned about once, not five times</li>
+            <li>leverage: Propagation and reconcile stop threading <code>Option&lt;&amp;str&gt;</code></li>
+            <li>test: finalize → propagate → reconcile through one interface with the real supplier</li>
+            <li>test: release policy becomes a value a test can pick</li>
+            <li>deletion test: already effectively deleted — complexity has reappeared at five sites</li>
+          </ul>
+        </article>
+
+        <!-- 2 -->
+        <article id="c2" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">2. Update is one module: acquire → finalize → replay Edits → propagate, atomically</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-xs font-semibold">Strong</span>
+              <span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-xs">in-process</span>
+              <span class="px-2 py-0.5 rounded bg-orange-100 text-xs">A1 A2</span><span class="px-2 py-0.5 rounded bg-violet-100 text-xs">F3</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">core/installer.rs:215-400 · core/install_finalize.rs:292-325 · core/skill_edits.rs:80-177 · core/refresh.rs:181-341 · core/unlocatable.rs:83-133 · core/propagation.rs</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-3">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — the tail runs past its protection</div>
+              <pre class="mermaid">
+sequenceDiagram
+  participant R as Refresh
+  participant I as installer
+  participant Fz as finalize_update
+  participant Ed as skill_edits
+  participant Pr as Propagation
+  R->>I: AcquiredUpdate (record snapshot, taken outside guard)
+  I->>Fz: finalize
+  Fz-->>Fz: move old aside, land bytes, upsert
+  Fz-->>Fz: remove backup  ← recovery gone
+  I->>Ed: replay_unlocked ?
+  Note over Ed: fails → Update "failed", bytes already replaced
+  I->>Pr: propagate
+  Note over Ed,Pr: set_invocation_override re-implements this tail and logs target failures
+              </pre>
+            </div>
+            <div class="rounded-lg border-2 border-slate-900 deep p-3 text-slate-100">
+              <div class="text-xs uppercase tracking-wider text-slate-300 mb-2">After — one apply module, one settlement</div>
+              <pre class="mermaid">
+flowchart TB
+  subgraph U[Update — bring central copy to these bytes and settle targets]
+    direction TB
+    A1[admit acquired result vs current record]
+    A2[land bytes + replay Edits + settle row]
+    A3[release recovery material]
+    A4[Propagation → report]
+    A1 --> A2 --> A3 --> A4
+  end
+  G[git acquire] --> U
+  L[local Re-point] --> U
+  O[source override] --> U
+  E[Edit write] --> U
+              </pre>
+            </div>
+          </div>
+          <p><strong>Problem.</strong> The tail is composed by hand in <code>finalize_and_propagate_unlocked</code>: finalize's atomicity ends before replay (verified), <code>AcquiredUpdate</code> carries a whole record snapshot that nothing re‑admits against the current row after the pool finishes (Delete/Re‑point during acquisition), git Re‑point is atomic while local Re‑point writes <code>source_ref</code> first (verified), and <code>set_invocation_override</code> is a third copy of the tail that <em>logs</em> propagation failures instead of returning report data — the one breach of the fan‑out rule.</p>
+          <p><strong>Solution.</strong> One Update module whose interface is "bring this Managed skill's central copy to these bytes and settle its targets": admission of the acquired result, finalize + Edit replay + row settlement before recovery material is released, then Propagation. Git, local Re‑point, override and the Edit write are adapters choosing what the bytes are. <code>installer.rs</code> goes back to being the Add flows.</p>
+          <ul class="list-disc pl-5 text-sm space-y-1">
+            <li>locality: one atomicity rule, one report shape for every central‑bytes change</li>
+            <li>leverage: Edit V2 adds an adapter, not a fourth tail</li>
+            <li>test: injected edit‑row failure → bytes, base, row and retry checked through one interface</li>
+            <li>test: <code>tests/refresh.rs</code> (1704 l) + <code>tests/installer.rs</code> (1418 l) stop splitting one pipeline by file</li>
+            <li>depends on #1 (the tail's hash step must be honest to test it)</li>
+          </ul>
+        </article>
+
+        <!-- 3 -->
+        <article id="c3" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">3. Git source resolution is one module and the Add listing goes through it</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-xs font-semibold">Strong</span>
+              <span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-xs">ports &amp; adapters</span>
+              <span class="px-2 py-0.5 rounded bg-violet-100 text-xs">F2</span><span class="px-2 py-0.5 rounded bg-sky-100 text-xs">O5</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">core/git_acquisition.rs:219-400, 462-509, 676-692, 707-830 · core/installer.rs:296-352, 449-512, 557-600, 640-702</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-3">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — the split ladder is caller knowledge</div>
+              <div class="space-y-1 text-xs">
+                <div class="border-l-4 border-red-500 bg-white px-2 py-1">installer: pick SkillIntent · suppress hint on override · filter "." · re-validate dir · read ttl+token — ×4 call sites</div>
+                <div class="border-l-4 border-slate-300 bg-white px-2 py-1">parser first-segment split</div>
+                <div class="border-l-4 border-slate-300 bg-white px-2 py-1">resolve_tree_source: hint suffix → matching-refs → parser</div>
+                <div class="border-l-4 border-slate-300 bg-white px-2 py-1">acquire_resolved: S3 repair (fires only if intent == hint)</div>
+                <div class="border-l-4 border-slate-300 bg-white px-2 py-1">fast_path_coords: assume <code>main</code></div>
+                <div class="border-l-4 border-slate-300 bg-white px-2 py-1">classify_fast_path_failure(branch_assumed)</div>
+                <div class="border-l-4 border-red-500 bg-white px-2 py-1">list_git_skills: bypasses acquire — own resolve, own cache call, own candidate rule (git_candidates_in ≠ installable_skills_in_repo)</div>
+              </div>
+            </div>
+            <div class="rounded-lg border-2 border-slate-900 deep p-3 text-slate-100">
+              <div class="text-xs uppercase tracking-wider text-slate-300 mb-2">After — state what you want; one resolved source</div>
+              <div class="border-2 border-slate-400 rounded p-3 space-y-2">
+                <div class="text-xs uppercase tracking-wider">resolution — inside git acquisition</div>
+                <div class="text-xs text-slate-300">parser · hint · refs · assumed-branch · self-heal · candidate rule — one ladder, answers "resolved source + how"</div>
+                <div class="grid grid-cols-3 gap-2 text-xs pt-2">
+                  <div class="border border-slate-500 rounded px-2 py-1 text-center">stored record</div>
+                  <div class="border border-slate-500 rounded px-2 py-1 text-center">operator selection</div>
+                  <div class="border border-slate-500 rounded px-2 py-1 text-center">Add listing</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p><strong>Problem.</strong> Six of the last ~40 fixes edited this ladder across 2–3 files each (<code>93ee36e 6b0ec7d b5e398b 364f1bc f48c001 0779a41</code>). <code>acquire_managed_skill_update_from</code> already needs <code>#[allow(clippy::too_many_arguments)]</code>. Add and Update can disagree about the same repo because the listing has its own candidate rule.</p>
+          <p><strong>Solution.</strong> Callers state intent (a stored record, an operator selection, a name); resolution owns the split ladder and the candidate rule and answers once. The listing becomes a third adapter over that answer.</p>
+          <ul class="list-disc pl-5 text-sm space-y-1">
+            <li>locality: branch/subpath story stops being half in <code>git_acquisition</code>, half in <code>installer</code></li>
+            <li>leverage: seven-arg acquire collapses; the listing gets the scripted <code>GithubApi</code> for free</li>
+            <li>hygiene lane H1 (double <code>matching-refs</code>) and H7 (extract S3 block) are symptoms of this; H1 ships now, this is the cure</li>
+          </ul>
+        </article>
+
+        <!-- 4 -->
+        <article id="c4" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">4. Report → outcome is a pure fold, owned once in <code>src/lib</code></h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-xs font-semibold">Strong</span>
+              <span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-xs">in-process</span>
+              <span class="px-2 py-0.5 rounded bg-sky-100 text-xs">O2</span><span class="px-2 py-0.5 rounded bg-violet-100 text-xs">F5</span><span class="px-2 py-0.5 rounded bg-orange-100 text-xs">A3</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">src/hooks/useSkillLibrary.ts:76-79, 168-330, 555-600, 659-703 · useAddSkillFlow.ts:331, 388 · useCandidatePick.ts:196-222 · useSyncOrchestration.ts (syncFailureEntries)</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-3">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — nine folds inside stateful hooks (mass diagram)</div>
+              <div class="flex gap-6 items-end h-64 justify-center">
+                <div class="flex flex-col items-center gap-1"><div class="w-24 h-44 border border-slate-400 bg-white text-[10px] p-1 leading-tight">skillFailureEntries · targetFailureEntries · skippedEntries · editConflictEntries · removalFailureEntries · removalToast · settleSingleReport · handleRefresh toast · add-flow twins</div><div class="text-xs uppercase tracking-wider">interface</div></div>
+                <div class="flex flex-col items-center gap-1"><div class="w-24 h-48 border border-slate-400 bg-white"></div><div class="text-xs uppercase tracking-wider">implementation</div></div>
+              </div>
+              <p class="text-xs text-red-700 mt-2">Impurity leaked: <code>managedSkillsRef</code> exists only because a fold captured a list that moved under an in‑flight notification (<code>70651c8</code>). Local Re‑point and Update already disagree on conflict/reload precedence.</p>
+            </div>
+            <div class="rounded-lg border-2 border-slate-900 deep p-3 text-slate-100">
+              <div class="text-xs uppercase tracking-wider text-slate-300 mb-2">After — one fold, hook applies</div>
+              <div class="flex gap-6 items-end h-64 justify-center">
+                <div class="flex flex-col items-center gap-1"><div class="w-24 h-10 border border-slate-400 bg-slate-800 text-[10px] p-1">(report, labels) → outcome</div><div class="text-xs uppercase tracking-wider">interface</div></div>
+                <div class="flex flex-col items-center gap-1"><div class="w-24 h-52 border border-slate-400 bg-slate-800 text-[10px] p-1 leading-tight">precedence conflict › failed › skipped · toast severity · entries · completion eligibility (close modal? reload?) · action = skill id, resolved at click time</div><div class="text-xs uppercase tracking-wider">implementation</div></div>
+              </div>
+            </div>
+          </div>
+          <p><strong>Problem.</strong> ~200 lines of pure <code>ReportDto → {toast, errors, warnings}</code> live as <code>useCallback</code>s testable only through a 1174‑line hook test; the rule has already forked between Update, Refresh (all) and local Re‑point. Astra adds the completion‑policy half: which outcomes close the modal, which reload, and that the Edit command's target failures never reach this fold at all (see #2).</p>
+          <p><strong>Solution.</strong> One pure module beside <code>skillPresentation.ts</code> folds a report (batch or batch‑of‑one) into toast + entries + completion decision; hooks invoke, apply, and resolve the action's skill id at click time. Every world hook calls it.</p>
+          <ul class="list-disc pl-5 text-sm space-y-1">
+            <li>test: table tests over report shapes, no <code>renderHook</code></li>
+            <li>locality: one precedence rule; the Re‑point divergence closes by construction</li>
+            <li>leverage: four report shapes × N call sites collapse</li>
+            <li>independent of the backend candidates — parallel lane</li>
+          </ul>
+        </article>
+
+        <!-- 5 -->
+        <article id="c5" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">5. The SKILL.md manifest is parsed once</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-xs font-semibold">Worth exploring</span>
+              <span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-xs">in-process</span>
+              <span class="px-2 py-0.5 rounded bg-violet-100 text-xs">F4</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">core/skill_discovery.rs:322-490 · core/frontmatter_edit.rs:49-125 · core/install_finalize.rs:462 · core/skill_lock.rs</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-3">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — three line-walkers</div>
+              <pre class="mermaid">
+flowchart LR
+  M[(SKILL.md)] --> P1[parse_skill_md_with_reason]
+  M --> P2[parse_invocation_mode]
+  M --> P3[frontmatter_edit::header_end]
+  IL[InvocationLines::mode] -->|rebuilds a fake doc| P2
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class IL leak
+              </pre>
+            </div>
+            <div class="rounded-lg border-2 border-slate-900 deep p-3 text-slate-100">
+              <div class="text-xs uppercase tracking-wider text-slate-300 mb-2">After — one structured header</div>
+              <pre class="mermaid">
+flowchart LR
+  M[(SKILL.md)] --> H[manifest: keys + line spans + raw bytes]
+  H --> D[discovery reads]
+  H --> Fz[finalize reads]
+  H --> E[Edit: byte-preserving key write]
+  H --> L[skill-lock enrichment]
+              </pre>
+            </div>
+          </div>
+          <p><strong>Problem.</strong> <code>InvocationLines::mode()</code> reconstructs a synthetic document to learn its own mode — the tell of a missing shared representation. Hygiene H5 (block‑scalar fence) unifies the fence rule now; every future key (Edit V2) re‑pays the rest.</p>
+          <p><strong>Solution.</strong> One manifest module parses once into a structured header and offers reads plus byte‑preserving key writes; the three parsers become readers.</p>
+          <ul class="list-disc pl-5 text-sm space-y-1"><li>locality for every future frontmatter key</li><li>test: one parser surface instead of three</li><li>natural prerequisite for Edit V2</li></ul>
+        </article>
+
+        <!-- 6 -->
+        <article id="c6" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">6. The skills world applies what a mutation returns, like the projects world</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-xs font-semibold">Worth exploring</span>
+              <span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-xs">in-process</span>
+              <span class="px-2 py-0.5 rounded bg-sky-100 text-xs">O4</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">src/hooks/useSkillLibrary.ts (30-member return; loadManagedSkills at 11 sites) · useAddSkillFlow.ts:168, 469 · useSettingsState.ts:209</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-3">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — refetch the world</div>
+              <pre class="mermaid">
+sequenceDiagram
+  participant H as useSkillLibrary
+  participant B as backend
+  H->>B: mutation
+  B-->>H: report
+  H->>B: getManagedSkills (whole library)
+  B-->>H: list replaced under in-flight notifications
+  Note over H: try/finally ordering hazards — 3 other hooks import the refetch
+              </pre>
+            </div>
+            <div class="rounded-lg border-2 border-slate-900 deep p-3 text-slate-100">
+              <div class="text-xs uppercase tracking-wider text-slate-300 mb-2">After — apply what came back</div>
+              <pre class="mermaid">
+sequenceDiagram
+  participant H as useSkillLibrary
+  participant B as backend
+  H->>B: mutation
+  B-->>H: report + affected skill(s)
+  H->>H: apply (splice), refetch only on failure / delete / Refresh-all
+              </pre>
+            </div>
+          </div>
+          <p><strong>Problem.</strong> AGENTS.md documents the asymmetry; <code>setSkillInvocationOverride</code> already follows the project rule, so it is now inconsistent <em>within</em> the module. The ref‑vs‑state hazard in #4 is a direct consequence.</p>
+          <p><strong>Solution.</strong> Skills mutations answer with the affected skill(s); the hook applies; the exported refetch tail shrinks to the honest exceptions.</p>
+          <ul class="list-disc pl-5 text-sm space-y-1"><li>locality: one apply rule per world</li><li>interface shrinks: <code>loadManagedSkills</code> stops being a cross-hook export</li><li>best done with #4 — same hook</li></ul>
+        </article>
+
+        <!-- 7 -->
+        <article id="c7" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">7. Fan-out reports cross the wire themselves</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-xs font-semibold">Worth exploring</span>
+              <span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-xs">in-process</span>
+              <span class="px-2 py-0.5 rounded bg-sky-100 text-xs">O3</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">commands/mod.rs:527-545, 586-618, 799-885, 1160+ · 45 *Dto types</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-3">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — every report twice, plus a mapper that computes</div>
+              <div class="space-y-1 text-xs">
+                <div class="h-10 border-l-4 border-slate-300 bg-white px-2 flex items-center">core report enum (PropagationStatus, RemovalTargetStatus, SkillRefreshStatus, …)</div>
+                <div class="h-10 border-l-4 border-red-500 bg-white px-2 flex items-center">to_*_report_dto: ~85-line total match <em>and</em> counts refreshed/failed/skipped here</div>
+                <div class="h-10 border-l-4 border-slate-300 bg-white px-2 flex items-center">…Dto mirror enum with identical variants</div>
+                <div class="h-10 border-l-4 border-slate-300 bg-white px-2 flex items-center">generated TS</div>
+              </div>
+            </div>
+            <div class="rounded-lg border-2 border-slate-900 deep p-3 text-slate-100">
+              <div class="text-xs uppercase tracking-wider text-slate-300 mb-2">After — one type, counters are the report's own answer</div>
+              <div class="space-y-1 text-xs">
+                <div class="h-20 border-l-4 border-emerald-400 bg-slate-800 px-2 flex items-center">core report derives <code>specta::Type</code>; per-target failure is a typed value classified where raised; <code>from_anyhow</code> only for whole-command failures</div>
+                <div class="h-10 border-l-4 border-slate-500 bg-slate-800 px-2 flex items-center">generated TS</div>
+              </div>
+            </div>
+          </div>
+          <div class="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">Touches ADR‑0001's <em>timing</em> (classification by downcast at the command seam → at the point of failure), not its contract. Reopen only if this candidate is picked; the friction is transcription pain, not a bug source.</div>
+          <ul class="list-disc pl-5 text-sm space-y-1"><li>leverage: one type per report instead of two plus a mapper</li><li>locality: fan-out counting happens where fan-out happens</li><li><code>removal_report_dto_classifies_…</code> test exists only to test the mirror</li></ul>
+        </article>
+
+        <!-- 8 -->
+        <article id="c8" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">8. Explore preview owns publication</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded bg-slate-200 text-slate-700 text-xs font-semibold">Speculative</span>
+              <span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-xs">in-process</span>
+              <span class="px-2 py-0.5 rounded bg-orange-100 text-xs">A4</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">core/installer.rs:640-702 · core/git_acquisition.rs:544-545 · src/hooks/useExploreState.ts:121-149</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-3"><div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before</div>
+              <pre class="mermaid">
+flowchart LR
+  P[probe: any non-.git entry = hit] --> G[guard ends]
+  G --> A[acquire writes INTO published dir]
+  A -.partial / overlapping.-> F[frontend reads path]
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class A,F leak
+              </pre></div>
+            <div class="rounded-lg border-2 border-slate-900 deep p-3 text-slate-100"><div class="text-xs uppercase tracking-wider text-slate-300 mb-2">After</div>
+              <pre class="mermaid">
+flowchart LR
+  subgraph PV[preview]
+    A[private acquire] --> C[complete → publish]
+    C --> D[dispose failed attempts]
+  end
+  PV -->|a returned path means complete content| F[frontend]
+              </pre></div>
+          </div>
+          <p><strong>Problem.</strong> Overlap and partial‑copy cases are static risks, not observed failures; a small interface with no depth behind it. Astra rated Worth exploring; downgraded here because nothing has paid for it yet.</p>
+          <ul class="list-disc pl-5 text-sm space-y-1"><li>interface gains a real invariant</li><li>test: injected acquisition adapter, no network</li><li>do after #3, which touches the same adapter</li></ul>
+        </article>
+
+        <!-- 9 -->
+        <article id="c9" class="rounded-xl border border-slate-200 bg-white p-6 space-y-3">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">9. Screen state (view + modals) has one owner</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded bg-slate-200 text-slate-700 text-xs font-semibold">Speculative</span>
+              <span class="px-2 py-0.5 rounded bg-sky-100 text-xs">O6</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">src/App.tsx:57-85, 150-170 · useSkillLibrary.ts:78-98, 339-345, 565-600 · useSyncOrchestration.ts</p>
+          <p class="text-sm"><strong>Problem.</strong> "Which surface over which id" is split across App, the library hook and sync orchestration; four fixes in 40 commits landed at the split (<code>6bd05b7 3190623 cf47020 7b760ec</code>). <code>effectiveView</code> (v1.2.8) removed the sharpest edge, so this is a shape complaint. Only alongside #4/#6.</p>
+        </article>
+
+      </section>
+
+      <section id="not-deepen" class="rounded-xl border border-slate-200 bg-white p-6 space-y-2">
+        <h2 class="font-serif text-2xl">Seams that earn their keep (all three seats agree)</h2>
+        <ul class="list-disc pl-5 text-sm space-y-1">
+          <li><code>mutation_guard</code> — as deep as a lock gets; the entry‑point/unlocked‑seam discipline is the point.</li>
+          <li><code>git_acquisition::acquire(request, api)</code> + the <code>GithubApi</code> trait and <code>AcquireFn</code> — two real adapters each; #3 deepens the <em>callers</em>, not it.</li>
+          <li><code>git_cache::fetch_through_cache</code> per‑key coordination.</li>
+          <li><code>artifact_removal</code> — scopes in, report out, one presence rule; ADR‑0002 stands. Keep it distinct from Propagation.</li>
+          <li><code>tool_adapters</code> registry — wide by nature; narrowing it reintroduces name special‑casing.</li>
+          <li><code>SkillStore</code> — 41 methods, but deleting it scatters SQL across a dozen modules.</li>
+          <li><code>invokeTauri</code> + generated bindings + <code>describeCommandError</code> (ADR‑0001) — one deep interface end to end.</li>
+        </ul>
+      </section>
+
+      <section id="top-recommendation" class="rounded-xl border-2 border-emerald-600 bg-emerald-50 p-8 space-y-3">
+        <h2 class="font-serif text-3xl">Top recommendation</h2>
+        <p class="text-lg"><a href="#c1" class="underline">#1 Content identity has one supplier</a>, then <a href="#c2" class="underline">#2 Update is one module</a>.</p>
+        <p class="text-sm">#1 is small, two seats found it independently, and it is a verified shipped‑build defect the suite cannot see. #2 is where the second verified defect lives (replay after recovery is discarded) and where Fable, Astra and half of Opus converge; #1 is its prerequisite because the tail's hash step must be honest before the tail can be tested through one interface. <a href="#c4" class="underline">#4</a> is the frontend lane that runs in parallel without touching a shared file. <a href="#c3" class="underline">#3</a> is the next backend round: the ladder where the last three rounds spent their fix budget.</p>
+        <p class="text-sm"><strong>Patch‑now option:</strong> both defects can be fixed in v1.2.9 without the deepening — drop the debug/env gate (or read the row) at finalize; and either replay Edits before the backup is released or make a replay failure non‑fatal‑with‑conflict — then deepen in round 10 with a green baseline.</p>
+      </section>
+    </main>
+  </body>
+</html>

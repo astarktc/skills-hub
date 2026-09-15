@@ -60,5 +60,9 @@ vendor/
 .cache/
 tmp/
 docs/conversation-logs/
-.scratch/
+# .scratch/ is the tracked issue tracker; only walk evidence stays out of history
+.scratch/**/evidence/
+.scratch/**/worktrees/
+.scratch/**/*.log
+.scratch/**/*.diff
 .pi-subagents/

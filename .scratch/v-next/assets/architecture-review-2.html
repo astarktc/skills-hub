@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review #2 for skills-hub</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 4 4; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .chip { font-size: 0.65rem; letter-spacing: 0.05em; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+      <header class="space-y-3">
+        <h1 class="text-3xl font-serif font-bold">Architecture review #2 — Skills Hub</h1>
+        <p class="text-sm text-slate-600">
+          Repo <span class="font-mono">skills-hub</span> @ <span class="font-mono">943f85c</span> · 2026-08-30 ·
+          3-model blind panel (Claude&nbsp;Fable&nbsp;5 · Cortex&nbsp;Opus&nbsp;5 · GPT-5.6&nbsp;Sol, high reasoning), every finding below re-verified against the code by the orchestrator.
+          25 raw panel findings → 11 deduplicated candidates. <strong>Zero hallucinated claims.</strong>
+        </p>
+        <div class="flex gap-4 text-xs text-slate-500 items-center flex-wrap">
+          <span><span class="inline-block w-3 h-3 border border-slate-500 bg-white align-middle"></span> module</span>
+          <span><span class="inline-block w-6 border-t-2 border-dashed border-slate-400 align-middle"></span> seam</span>
+          <span><span class="inline-block w-6 border-t-2 border-red-600 align-middle"></span> leakage</span>
+          <span><span class="inline-block w-3 h-3 bg-slate-900 align-middle"></span> deep module</span>
+          <span class="ml-2">Provenance chips: <span class="chip uppercase bg-slate-200 rounded px-1.5 py-0.5">F</span>=Fable <span class="chip uppercase bg-slate-200 rounded px-1.5 py-0.5">O</span>=Opus <span class="chip uppercase bg-slate-200 rounded px-1.5 py-0.5">S</span>=Sol</span>
+        </div>
+        <div class="rounded-md bg-indigo-50 border border-indigo-200 p-3 text-sm text-indigo-900">
+          Cross-check with the 2026-08-29 scan: the panel — blind to that scan — independently re-derived every remaining fog item
+          (installer unification: all&nbsp;3 panelists · "skill already exists" prose: F · Tool identity ritual: all&nbsp;3), and surfaced one
+          <strong>live defect</strong> nobody had found (candidate&nbsp;1).
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-10">
+
+        <!-- ============ 1 ============ -->
+        <article id="c1" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="text-xl font-serif font-semibold">1 · Make the wrong path family unrepresentable <span class="text-red-600 text-sm font-sans align-middle">— fixes a live defect</span></h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="chip uppercase tracking-wider bg-emerald-100 text-emerald-800 rounded px-2 py-1 font-semibold">Strong</span>
+              <span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">O</span><span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">S</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">core/project_sync.rs · core/project_ops.rs:138,191,203 · commands/mod.rs:1019</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-3">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-1">Before</p>
+              <pre class="mermaid">
+flowchart TB
+  RT["resolve_project_sync_target(path, dir: &amp;str, name)"]
+  W["project_sync writes<br/>project mapping ✓"] --> RT
+  I["installer.rs:939 ✓"] --> RT
+  C["project_ops cleanup ×3<br/>GLOBAL mapping ✗"] --> RT
+  H["commands/mod.rs:1019<br/>hand-joined, bypasses helper"]
+  C -.-> ORPH["orphans left on disk:<br/>Cursor · Pi · Goose · Augment · Windsurf…"]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  class C,ORPH,H leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-3">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-1">After</p>
+              <pre class="mermaid">
+flowchart TB
+  RT2["resolve_project_sync_target(path, &amp;ToolAdapter, name)<br/>chooses the project mapping <b>inside</b>"]
+  W2[project_sync] --> RT2
+  I2[installer] --> RT2
+  C2[project_ops cleanup] --> RT2
+  H2[delete_managed_skill] --> RT2
+  classDef deepc fill:#0f172a,color:#fff,stroke:#0f172a;
+  class RT2 deepc
+              </pre>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem:</strong> the interface takes a bare <span class="font-mono">&amp;str</span> dir, so every caller chooses between the global and project mappings — and cleanup chooses wrong at three verified sites, deleting paths project sync never wrote.</p>
+          <p class="text-sm"><strong>Solution:</strong> the interface takes the adapter; the scope decision moves inside; the <span class="font-mono">&amp;str</span> parameter is deleted.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside grid md:grid-cols-2 gap-x-4">
+            <li>Fixes verified orphan-on-disk defect</li>
+            <li>Locality: scope decision made once</li>
+            <li>Leverage: six call sites shrink</li>
+            <li>One per-tool test pins all callers</li>
+          </ul>
+          <div class="rounded bg-amber-50 border border-amber-200 p-2 text-xs text-amber-900">Same bug class <span class="font-mono">core/gitignore.rs:4-8</span> documents as already-fixed for patterns — third recurrence of this trap (ticket 01's bonus fix was the second). The interface, not the callers, is the problem.</div>
+        </article>
+
+        <!-- ============ 2 ============ -->
+        <article id="c2" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="text-xl font-serif font-semibold">2 · Give core an environment seam <span class="text-slate-500 text-sm font-sans align-middle">— the enabler</span></h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="chip uppercase tracking-wider bg-emerald-100 text-emerald-800 rounded px-2 py-1 font-semibold">Strong</span>
+              <span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">F</span><span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">O</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">core/tool_adapters/mod.rs:537,542 · core/installer.rs (10 AppHandle params) · core/onboarding.rs:45,66,70 · commands/mod.rs:286 (expand_home_path)</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">Before — core reaches up for its environment</p>
+              <div class="space-y-1 text-xs">
+                <div class="h-9 border-l-4 border-red-600 bg-red-50 flex items-center px-3 font-mono">tool_adapters → dirs::home_dir() inline ×2</div>
+                <div class="h-9 border-l-4 border-red-600 bg-red-50 flex items-center px-3 font-mono">installer → AppHandle&lt;R&gt; through 10 interfaces</div>
+                <div class="h-9 border-l-4 border-red-600 bg-red-50 flex items-center px-3 font-mono">onboarding → re-implements the joins by hand</div>
+                <div class="h-9 border-l-4 border-red-600 bg-red-50 flex items-center px-3 font-mono">core ← expand_home_path injected FROM commands</div>
+                <p class="pt-2 text-slate-500">⇒ 16 mock_app() in tests · plan_batch_tool_targets, sync_skills_to_tools, both tool-status assemblers: <strong>untestable</strong></p>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">After — environment resolved once at the command seam</p>
+              <div class="space-y-1 text-xs">
+                <div class="h-9 bg-slate-100 flex items-center px-3 font-mono">commands: resolve home + cache_dir once</div>
+                <div class="h-1 border-t-2 border-dashed border-slate-400"></div>
+                <div class="h-9 deep text-white flex items-center px-3 font-mono">core: fn(home: &amp;Path, …) — tauri-free, tempdir-testable</div>
+                <p class="pt-2 text-slate-500">precedent already in-repo: <span class="font-mono">onboarding.rs:40→56</span>, <span class="font-mono">cache_cleanup.rs:56-65</span> — copy it verbatim</p>
+              </div>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem:</strong> core creates its dependencies (<span class="font-mono">dirs::home_dir()</span>, <span class="font-mono">AppHandle</span>) instead of accepting them, so the modules composed on top are untestable and one test fake has already diverged from production.</p>
+          <p class="text-sm"><strong>Solution:</strong> home-root and cache-dir become parameters; thin production wrappers keep behaviour; <span class="font-mono">expand_home_path</span> moves into core and the injected closure dies.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside grid md:grid-cols-2 gap-x-4">
+            <li>Deletes 16 mock_app() constructions</li>
+            <li>Unlocks tests for candidates 3–5</li>
+            <li>Leverage: one seam, five consumers</li>
+            <li>Divergent test fake gets deleted</li>
+          </ul>
+        </article>
+
+        <!-- ============ 3 ============ -->
+        <article id="c3" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="text-xl font-serif font-semibold">3 · One installer finalize module <span class="text-slate-500 text-sm font-sans align-middle">— unanimous</span></h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="chip uppercase tracking-wider bg-emerald-100 text-emerald-800 rounded px-2 py-1 font-semibold">Strong</span>
+              <span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">F</span><span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">O</span><span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">S</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">core/installer.rs (1,951 lines — largest, least-refactored module) · core/errors.rs · src/commandError.ts:65-77</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">Before — four flows, four copies of the tail</p>
+              <div class="grid grid-cols-4 gap-1 text-[10px] font-mono">
+                <div class="border border-slate-300 rounded p-1 text-center">local<br/>install</div>
+                <div class="border border-slate-300 rounded p-1 text-center">git<br/>install</div>
+                <div class="border border-slate-300 rounded p-1 text-center">git<br/>selection</div>
+                <div class="border border-slate-300 rounded p-1 text-center">update<br/>:869</div>
+                <div class="col-span-4 grid grid-cols-4 gap-1 mt-1">
+                  <div class="bg-red-50 border border-red-300 rounded p-1 text-center text-red-700">collision bail :61<br/>rename · SkillRecord :90</div>
+                  <div class="bg-red-50 border border-red-300 rounded p-1 text-center text-red-700">collision bail :147<br/>rename :159 · :187</div>
+                  <div class="bg-red-50 border border-red-300 rounded p-1 text-center text-red-700">collision bail :1324<br/>rename :1348 · :1379</div>
+                  <div class="bg-red-50 border border-red-300 rounded p-1 text-center text-red-700">record rebuild<br/>:869</div>
+                </div>
+              </div>
+              <p class="text-xs text-slate-500 mt-2">copies verified drifted: description re-read sits outside the exists-guard in one flow, inside it in another. Collision crosses the wire as prose; frontend regex-parses the Debug-formatted path.</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">After — thin adapters over one deep module</p>
+              <div class="grid grid-cols-4 gap-1 text-[10px] font-mono">
+                <div class="border border-slate-300 rounded p-1 text-center">stage:<br/>local copy</div>
+                <div class="border border-slate-300 rounded p-1 text-center">stage:<br/>git fetch</div>
+                <div class="border border-slate-300 rounded p-1 text-center">stage:<br/>selection</div>
+                <div class="border border-slate-300 rounded p-1 text-center">stage:<br/>update swap</div>
+              </div>
+              <div class="deep text-white rounded p-2 mt-1 text-[11px] font-mono text-center">finalize_install(central_dir, staged, provenance) → InstallResult<br/><span class="text-slate-400">collision (typed SkillExists{name}) · SKILL.md rename · hash · record · upsert</span></div>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem:</strong> "materialise a skill into the central repo" is a real domain operation with no module — the deletion test says these four copies were never separate things.</p>
+          <p class="text-sm"><strong>Solution:</strong> one finalize module owning collision/rename/hash/record; four flows shrink to their genuinely distinct staging halves; <span class="font-mono">SignalError::SkillExists</span> replaces the prose (ADR-0001's own recipe), deleting the frontend sniff.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside grid md:grid-cols-2 gap-x-4">
+            <li>Locality: record shape = one edit, not four</li>
+            <li>Closes the last known prose error</li>
+            <li>The interface becomes the test surface</li>
+            <li>Absorbs update-propagation cleanup (F7)</li>
+          </ul>
+          <div class="rounded bg-amber-50 border border-amber-200 p-2 text-xs text-amber-900"><strong>Rider (panel split):</strong> the GitHub HTTP module has the typed status in hand (<span class="font-mono">github_download.rs:140</span>) and discards it into prose; installer.rs:1695-1707 sniffs "404"/"403" back out. Opus: fix at origin (typed status error — mock-server tests already exist). Fable: current sniff is a documented boundary heuristic honouring ADR-0001. Verified facts support Opus; cheap to fold into this campaign. Decide during grilling.</div>
+        </article>
+
+        <!-- ============ 4 ============ -->
+        <article id="c4" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="text-xl font-serif font-semibold">4 · Move skill deletion &amp; project fan-out into core</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="chip uppercase tracking-wider bg-emerald-100 text-emerald-800 rounded px-2 py-1 font-semibold">Strong</span>
+              <span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">O</span><span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">S</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">commands/mod.rs:986-1053 (delete_managed_skill) · commands/projects.rs:346-413 (bulk_assign) · :417-456 (update_project_gitignore)</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-3">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-1">Before</p>
+              <pre class="mermaid">
+flowchart TB
+  subgraph CMD["commands/ — 'wiring only' per AGENTS.md"]
+    D["delete_managed_skill<br/>60 lines of cross-world logic"]
+    B["bulk_assign_skill<br/>fan-out + failure isolation"]
+    G["update_project_gitignore<br/>lookup + derive + write"]
+  end
+  D -.only test surface: a running app.-> X["∅ zero tests"]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  class D,B,G,X leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-3">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-1">After</p>
+              <pre class="mermaid">
+flowchart TB
+  subgraph CMD2["commands/ — 3-line DTO wrappers"]
+    D2[delete_managed_skill] ~~~ B2[bulk_assign_skill]
+  end
+  subgraph CORE["core/ — plan/execute, the global_sync shape"]
+    R["skill_removal::remove(store, id) → report"]
+    A["project_sync::assign_to_tools(...) → per-target status"]
+  end
+  D2 --> R
+  B2 --> A
+  R --> T["table tests, temp dirs"]
+  A --> T
+  classDef deepc fill:#0f172a,color:#fff,stroke:#0f172a;
+  class R,A deepc
+              </pre>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem:</strong> the app's most destructive operations live behind an IPC command interface with no test surface at all — the deletion test would just push the choreography onto another caller.</p>
+          <p class="text-sm"><strong>Solution:</strong> mirror the repo's own best module (<span class="font-mono">global_sync</span>'s plan/execute split) — the precedent (<span class="font-mono">project_ops::*_with_cleanup</span>) already exists one file over.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside grid md:grid-cols-2 gap-x-4">
+            <li>Restores the documented invariant</li>
+            <li>Destructive ops finally get tests</li>
+            <li>Deletion re-uses candidate 1's resolver</li>
+            <li>Leverage: one engine, three assign paths</li>
+          </ul>
+        </article>
+
+        <!-- ============ 5 ============ -->
+        <article id="c5" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="text-xl font-serif font-semibold">5 · Deepen the Tool catalog <span class="text-slate-500 text-sm font-sans align-middle">— unanimous</span></h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="chip uppercase tracking-wider bg-emerald-100 text-emerald-800 rounded px-2 py-1 font-semibold">Strong</span>
+              <span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">F</span><span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">O</span><span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">S</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">core/tool_adapters/mod.rs · commands/mod.rs:68-207 · sync_engine.rs:159 · installer.rs:898,921</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">Before — one Tool's facts, five homes</p>
+              <div class="space-y-1 text-xs font-mono">
+                <div class="border border-slate-300 rounded px-2 py-1">① ToolAdapter literal (44 entries)</div>
+                <div class="border border-slate-300 rounded px-2 py-1">② project dir — separate match on ToolId :482</div>
+                <div class="border border-red-300 bg-red-50 rounded px-2 py-1 text-red-700">③ virtual group — 9 string keys :6</div>
+                <div class="border border-red-300 bg-red-50 rounded px-2 py-1 text-red-700">④ catalog assembly ×2 in commands, 0 tests, "agents_skills" literal ×3, hidden side effect in a getter</div>
+                <div class="border border-red-300 bg-red-50 rounded px-2 py-1 text-red-700">⑤ Cursor copy rule — strings in sync_engine + re-derived twice in installer</div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">After — one record per Tool, catalog behind the interface</p>
+              <div class="deep text-white rounded p-3 text-xs font-mono space-y-1">
+                <div>ToolAdapter { …, project_skills_dir, group: Option&lt;VirtualGroup&gt;, supports_symlink: bool }</div>
+                <div class="text-slate-400">compiler-enforced completeness — adding a Tool = one literal + README row</div>
+                <div class="border-t border-slate-600 pt-1">global_tool_entries(home) · project_tool_entries()</div>
+                <div class="text-slate-400">shared_with / constituents / installedness resolved inside; commands become DTO maps; explicit record_installed_tools; 3 dead fns deleted</div>
+              </div>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem:</strong> CONTEXT.md says the Virtual group is backend-owned — it is owned by the wrong tier, behind an untestable command interface, and the Tool's own facts take a five-place parallel-update ritual.</p>
+          <p class="text-sm"><strong>Solution:</strong> every per-Tool fact moves onto the struct literal (incl. a <span class="font-mono">supports_symlink</span> capability replacing three string-typed Cursor checks); catalog assembly moves into the module.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside grid md:grid-cols-2 gap-x-4">
+            <li>Adding a Tool: 5 edits → 1 literal</li>
+            <li>Cursor do-not becomes compiler-checked</li>
+            <li>Catalog testable via candidate 2's seam</li>
+            <li>Deletes dead interface (3 fns)</li>
+          </ul>
+          <div class="rounded bg-amber-50 border border-amber-200 p-2 text-xs text-amber-900">Touches the AGENTS.md "New AI tool adapter" invariant — replaces it with a <em>smaller</em> one; update the invariant text in the same pass.</div>
+        </article>
+
+        <!-- ============ 6 ============ -->
+        <article id="c6" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="text-xl font-serif font-semibold">6 · Type the sync-status lifecycle</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="chip uppercase tracking-wider bg-emerald-100 text-emerald-800 rounded px-2 py-1 font-semibold">Strong</span>
+              <span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">O</span><span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">S</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">skill_store.rs:858 (6-param stringly setter, 9 callers) · project_sync.rs · project_ops.rs · bindings/*.ts (status: string) · AssignmentMatrix.tsx:419</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-3">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-1">Before — the state machine nobody owns</p>
+              <pre class="mermaid">
+flowchart LR
+  P[project_sync<br/>writes 5 literals] --> DB[(status: String)]
+  I[installer<br/>writes 2] --> DB
+  DB --> AGG["skill_store aggregate<br/>string match"]
+  DB --> PO["project_ops<br/>'synced' | 'stale'"]
+  DB --> FE["frontend: status → CSS class"]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  class P,I,AGG,PO,FE leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-3">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-1">After — ADR-0001's move, applied to the second stringly wire field</p>
+              <pre class="mermaid">
+flowchart LR
+  M["SyncStatus enum + ts-rs union<br/>next_status(observation) — pure<br/>reconcile() applies transitions"]
+  M --> DB2[(serialize at the store seam)]
+  M --> FE2["frontend: exhaustive union,<br/>satisfies-guard like CommandError"]
+  classDef deepc fill:#0f172a,color:#fff,stroke:#0f172a;
+  class M deepc
+              </pre>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem:</strong> transitions written by four modules, aggregated by string match in a fifth, re-derived by the frontend — the decision half is fused to DB writes, so the D-04/D-07 rules have no pure function to test.</p>
+          <p class="text-sm"><strong>Solution:</strong> one typed status module; the plan/execute split project_sync's staleness loop never got.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside grid md:grid-cols-2 gap-x-4">
+            <li>State machine becomes one table test</li>
+            <li>Frontend exhaustiveness for free</li>
+            <li>Kills candidate 4's status literals too</li>
+            <li>Migration: parse legacy strings at seam</li>
+          </ul>
+        </article>
+
+        <!-- ============ 7 ============ -->
+        <article id="c7" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="text-xl font-serif font-semibold">7 · One skill-discovery module</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="chip uppercase tracking-wider bg-amber-100 text-amber-800 rounded px-2 py-1 font-semibold">Worth exploring</span>
+              <span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">F</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">core/installer.rs — list_git_skills :996 · list_local_skills :1108 · +1 more sort/dedup tail :1037 (verified: three copies, not two)</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-4 text-xs font-mono space-y-1">
+              <p class="text-xs uppercase tracking-wider text-slate-400 font-sans mb-1">Before</p>
+              <div class="border border-red-300 bg-red-50 rounded px-2 py-1 text-red-700">git scan: root SKILL.md → bases → marketplace → recurse(5) → sort+dedup</div>
+              <div class="border border-red-300 bg-red-50 rounded px-2 py-1 text-red-700">local scan: same ladder, drifted (re-parses marketplace; tracks validity)</div>
+              <div class="border border-slate-300 rounded px-2 py-1">~20 private helpers :393-723 — a de-facto module with no interface</div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4 text-xs space-y-1">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-1">After</p>
+              <div class="deep text-white rounded p-2 font-mono">discover_skills(root) → Vec&lt;DiscoveredSkill&gt;</div>
+              <div class="text-slate-500">git / local / update-rescan = three thin adapters mapping to their DTOs; validity an explicit adapter decision, not an accident</div>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem:</strong> one concept, three hand-rolled copies with drifted details — two real adapters already exist, so the seam is real, just unbuilt.</p>
+          <p class="text-sm"><strong>Solution:</strong> pure fixture-tree → candidate-list module inside the candidate-3 campaign (same file, same session ideally).</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside grid md:grid-cols-2 gap-x-4">
+            <li>Scan-strategy changes land once</li>
+            <li>Testable without git or install flows</li>
+          </ul>
+        </article>
+
+        <!-- ============ 8 ============ -->
+        <article id="c8" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="text-xl font-serif font-semibold">8 · A settings policy module</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="chip uppercase tracking-wider bg-amber-100 text-amber-800 rounded px-2 py-1 font-semibold">Worth exploring</span>
+              <span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">O</span><span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">S</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">skill_store.rs:271 (get/set_setting) · commands/mod.rs (14 of 57 commands) · cache_cleanup.rs:14-17 vs useSettingsState.ts:173,193 · lib.rs:44</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">Before — interface as wide as the implementation</p>
+              <div class="flex gap-3 items-end h-40">
+                <div class="flex flex-col justify-end items-center gap-1">
+                  <div class="w-20 h-32 bg-red-100 border border-red-400 rounded flex items-center justify-center text-[10px] text-red-700 text-center">14 commands<br/>+ 9 effects<br/>+ dup'd clamps<br/>3650 / 3600</div>
+                  <span class="text-[10px] uppercase tracking-wider text-slate-400">interface</span>
+                </div>
+                <div class="flex flex-col justify-end items-center gap-1">
+                  <div class="w-20 h-36 bg-slate-100 border border-slate-400 rounded flex items-center justify-center text-[10px] text-center">parse + default<br/>+ clamp,<br/>re-implemented<br/>per caller</div>
+                  <span class="text-[10px] uppercase tracking-wider text-slate-400">implementation</span>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">After</p>
+              <div class="flex gap-3 items-end h-40">
+                <div class="flex flex-col justify-end items-center gap-1">
+                  <div class="w-20 h-10 bg-emerald-100 border border-emerald-500 rounded flex items-center justify-center text-[10px] text-center">2 commands<br/>1 mount load</div>
+                  <span class="text-[10px] uppercase tracking-wider text-slate-400">interface</span>
+                </div>
+                <div class="flex flex-col justify-end items-center gap-1">
+                  <div class="w-20 h-36 deep rounded flex items-center justify-center text-[10px] text-white text-center">core/settings.rs<br/>typed keys ·<br/>parse · default ·<br/>bound — once</div>
+                  <span class="text-[10px] uppercase tracking-wider text-slate-400">implementation</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem:</strong> the maximally generic string get/set pushes every setting's semantics onto its callers — ~25% of all registered commands are two-line pass-throughs, and the clamp bounds are retyped as literals in TypeScript.</p>
+          <p class="text-sm"><strong>Solution:</strong> typed settings module over the store; bounds ship in the DTO. (Sol rated this lower than Opus; mechanical but wide-touch — hence Worth exploring.)</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside grid md:grid-cols-2 gap-x-4">
+            <li>Adding a setting: 7 edits → 1 enum arm</li>
+            <li>Validation written once, obeyed twice</li>
+          </ul>
+        </article>
+
+        <!-- ============ 9 ============ -->
+        <article id="c9" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="text-xl font-serif font-semibold">9 · Give StatusReporter the action lifecycle</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="chip uppercase tracking-wider bg-amber-100 text-amber-800 rounded px-2 py-1 font-semibold">Worth exploring</span>
+              <span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">F</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">src/hooks/useStatusReporter.ts:19-38 · 13× setLoadingStartAt(Date.now()) across useSkillLibrary / useAddSkillFlow / useExploreState</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-4 text-xs">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">Before — 5 raw setters, choreography copied 13×</p>
+              <pre class="font-mono text-[10px] leading-4 text-red-700 bg-red-50 border border-red-200 rounded p-2">setLoading(true);
+setLoadingStartAt(Date.now());
+setError(null);
+setActionMessage(t("…"));
+try { … } catch (e) { setError(formatError(e)); }
+finally { setLoading(false); setLoadingStartAt(null); }</pre>
+              <p class="text-slate-500 mt-1">the ordering constraint is part of the interface — and it's unwritten; early-return paths must hand-unwind it</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4 text-xs">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-2">After — one deep method owns begin/success/error/finally</p>
+              <pre class="font-mono text-[10px] leading-4 text-white deep rounded p-2">await reporter.runAction(
+  { message, successToast },
+  async () => { … });</pre>
+              <p class="text-slate-500 mt-1">raw setters demoted to internal seams; the invariant tested once through the reporter's own interface</p>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem:</strong> behaviour per unit of interface learned is near zero — the definition of shallow; the reset invariant lives in N copies.</p>
+          <p class="text-sm"><strong>Solution:</strong> one <span class="font-mono">runAction</span>; every handler loses 8–10 lines of ceremony; new handlers can't forget the reset.</p>
+        </article>
+
+        <!-- ============ 10 ============ -->
+        <article id="c10" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="text-xl font-serif font-semibold">10 · Add-flow: one candidate-pick module, backend-owned matching</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="chip uppercase tracking-wider bg-amber-100 text-amber-800 rounded px-2 py-1 font-semibold">Worth exploring</span>
+              <span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">F</span><span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">O</span><span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">S</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">useAddSkillFlow.ts (841 lines, 43-member interface, complexity 95) · installer.rs:802,1776 (matching dialects)</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-3">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-1">Before</p>
+              <pre class="mermaid">
+flowchart TB
+  subgraph HOOK["useAddSkillFlow — mirrored pair"]
+    G["git pick: 7 members<br/>no within-selection dup check ✗"]
+    L["local pick: 7 members<br/>dup check ✓ (verified divergence)"]
+  end
+  M1["matching dialect: frontend ×2"] ~~~ M2["matching dialect: backend ×2<br/>(first-match vs unique-match)"]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  class G,M1,M2 leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-3">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-1">After</p>
+              <pre class="mermaid">
+flowchart TB
+  CP["useCandidatePick(source)<br/>candidates · selection · validate · install"]
+  GA["git source adapter"] --> CP
+  LA["local source adapter"] --> CP
+  BM["core: match_skill_candidate(target, candidates)<br/>one definition, table-tested"]
+  classDef deepc fill:#0f172a,color:#fff,stroke:#0f172a;
+  class CP,BM deepc
+              </pre>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem:</strong> two structurally identical sub-flows with verified divergent validation (the mirror's signature failure), and four sites in two tiers each speaking their own name-matching dialect — Explore-install and later update can resolve the same skill differently.</p>
+          <p class="text-sm"><strong>Solution:</strong> one pick module, two source adapters (the seam is real — two adapters exist); the backend becomes the single owner of matching. Sequence after candidates 3 and 9 shrink the hook first.</p>
+        </article>
+
+        <!-- ============ 11 ============ -->
+        <article id="c11" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="text-xl font-serif font-semibold">11 · Let the backend own the gitignore ordering</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="chip uppercase tracking-wider bg-amber-100 text-amber-800 rounded px-2 py-1 font-semibold">Worth exploring</span>
+              <span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">O</span><span class="chip uppercase bg-slate-200 rounded px-1.5 py-1">S</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">ProjectsPage.tsx:25-96 (pendingGitignoreRef + raw invoke ×2) · EditProjectModal.tsx:5 · commands/projects.rs:439</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-3">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-1">Before</p>
+              <pre class="mermaid">
+sequenceDiagram
+  participant Page as ProjectsPage (useRef!)
+  participant BE as backend
+  Page->>Page: stash gitignore intent in ref
+  Page->>BE: persist tools
+  Page->>BE: raw invoke(update_project_gitignore)
+  Note over Page,BE: ordering rule enforced in the least<br/>testable tier, past the invokeTauri seam
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-3">
+              <p class="text-xs uppercase tracking-wider text-slate-400 mb-1">After</p>
+              <pre class="mermaid">
+sequenceDiagram
+  participant Hook as useProjectState
+  participant BE as backend (core)
+  Hook->>BE: configure_tools(tools, gitignore_intent)
+  BE->>BE: persist, then derive patterns — ordered in one place
+  Note over Hook,BE: ref, replay, and both raw invoke sites deleted;<br/>projects world back on the tested seam
+              </pre>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem:</strong> a backend ordering constraint ("patterns derive from persisted tools") is enforced by a React ref behind a raw <span class="font-mono">invoke</span> no test can reach.</p>
+          <p class="text-sm"><strong>Solution:</strong> the command takes the intended tool set (or an intent), and core sequences both writes. Pairs naturally with candidate 4's projects work.</p>
+        </article>
+
+      </section>
+
+      <!-- ============ TOP RECOMMENDATION ============ -->
+      <section id="top-recommendation" class="rounded-xl border-2 border-emerald-600 bg-white p-8 space-y-4">
+        <h2 class="text-2xl font-serif font-bold">Top recommendation: <a href="#c1" class="text-emerald-700 underline">1</a> + <a href="#c2" class="text-emerald-700 underline">2</a> as the opening wave, then the <a href="#c3" class="text-emerald-700 underline">installer campaign (3</a>, absorbing <a href="#c7" class="text-emerald-700 underline">7</a> and the riders)</h2>
+        <p class="text-sm text-slate-700 max-w-3xl">
+          Candidate 1 is the cheapest change in the report and fixes a verified live defect — one parameter type swap makes the recurring path-family trap unrepresentable.
+          Candidate 2 is the enabler: nearly everything else (tool status, batch planning, the deletion module, the catalog) stays untestable until core stops reading
+          <span class="font-mono">$HOME</span> and carrying <span class="font-mono">AppHandle</span>; the fix has an in-repo precedent to copy verbatim. With that seam in place,
+          candidate 3 is the highest-leverage prize — the only tier the epic never touched, unanimous across all three panelists, and the single move that closes the last
+          ADR-0001 prose gap while absorbing two standing fog items. Candidates 4–6 then follow in any order, each on its own newly testable ground.
+        </p>
+        <p class="text-xs text-slate-500">Panel notes: Opus 5 deepest and most systemic (top pick agrees with this sequencing); Fable 5 owned the installer/frontend territory and found the matching + Cursor-string drift; Sol independently confirmed the live defect and the projects-world shallowness. All verified claims held; the two open judgment calls (GitHub typed status; settings scope) are flagged on their cards for grilling.</p>
+      </section>
+
+    </main>
+  </body>
+</html>
