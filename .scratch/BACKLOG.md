@@ -4,7 +4,7 @@ Read this first every session, then the newest note in `.scratch/handoffs/`. An 
 commit that closes it (or that opens the effort/ticket which absorbs it — say which). Every item keeps its
 source pointer. Procedure and status vocabulary: `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#31**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#32**.
 
 ## Now — evidence of unfinished work is strong
 
@@ -63,6 +63,11 @@ Numbers are stable: never renumber; retire by deleting the line (history keeps i
 - **#20 Repoint historical evidence/doc links.** `docs/releases/**` cite deleted files (`docs/system-design*.md`,
   `docs/requirements/skills-aggregation-repo.md`, `ExploreCard.tsx`, `SettingsModal.tsx`); archived round-10 reports cite
   removed `worktrees/…` lanes (evidence now under `archive/round10/evidence/<lane>/`). Source: sweep 2026-09-15 Part 2D.
+
+- **#31 Harden the four GitHub workflows.** zizmor/semgrep on `ci.yml` (2026-09-15): actions referenced by mutable tags
+  (`actions/checkout@v4`, `setup-node@v4`, `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`) — pin to commit
+  SHAs; add top-level `permissions: contents: read`; `persist-credentials: false` on checkout. Same pattern in
+  `release.yml`, `auto-tag.yml`, `update-featured-skills.yml`. Source: `lens_diagnostics` on `.github/workflows/ci.yml`.
 
 ## Parked — needs a product decision before it is work
 
