@@ -317,7 +317,7 @@ read-only/no-run constraints in the task brief instead.
 ### Issue tracker
 
 Issues live as local markdown files under `.scratch/<effort>/`, tracked in git. **Start every session by reading
-`.scratch/BACKLOG.md`, then the newest note in `.scratch/handoffs/`.** Read `docs/agents/issue-tracker.md`
+`.scratch/BACKLOG.md`, then the newest note (by filename date) in `.scratch/handoffs/`.** Read `docs/agents/issue-tracker.md`
 § Lifecycle before declaring an effort finished, archiving anything under `.scratch/`, or adding an item that belongs
 to no effort.
 
