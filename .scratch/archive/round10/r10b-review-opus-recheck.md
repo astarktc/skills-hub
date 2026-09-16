@@ -1,6 +1,6 @@
 # Wave B v1.2.12 — focused re-review of accepted review fixes (single seat, Opus 5)
 
-Target: `/Users/alexstark/Projects/skills-hub`, main checkout, HEAD **`23458bb6ff29c1a3bb453a623904cb85fe80dfa8`** (verified by `git rev-parse`), working tree clean at review time (so the parent's final `cargo test` left no binding drift). Original integrated review HEAD `960e5d5`, wave base `a824caf4`.
+Target: `~/Projects/skills-hub`, main checkout, HEAD **`23458bb6ff29c1a3bb453a623904cb85fe80dfa8`** (verified by `git rev-parse`), working tree clean at review time (so the parent's final `cargo test` left no binding drift). Original integrated review HEAD `960e5d5`, wave base `a824caf4`.
 
 `git diff 960e5d5...HEAD` = **8 files, +364/−19**: `src-tauri/src/core/manifest.rs`, `core/skill_edits.rs`, `core/tests/manifest.rs`, `core/tests/skill_edits.rs`, `src/lib/manifestPresentation.corpus.json`, `src/lib/manifestPresentation.test.ts`, plus `AGENTS.md` and `CHANGELOG.md`. That matches the claim "original reviewed code unchanged outside the six fix files + two docs" — verified, not assumed. Commits: `3d3a2dd` (changelog), `c1ff64c` (fix), `23458bb` (invariant).
 
@@ -62,7 +62,7 @@ Sensitivity evidence read to completion (not re-run): `source-reversal-red.log` 
 
 Parent's final logs at the main checkout, written after the HEAD commit (`23458bb` 04:49:57; logs 04:51) and read to completion:
 - `.scratch/round10/final-version.log` — "Version OK (1.2.12)".
-- `.scratch/round10/final-check.log` — `RUN v4.1.11 /Users/alexstark/Projects/skills-hub`; eslint → vitest **15 files / 347 tests passed** → typescript-7 `tsc -b` + vite build → `cargo fmt --all --check` → `clippy --all-targets --all-features -D warnings` → `cargo test` **640 passed / 0 failed**.
+- `.scratch/round10/final-check.log` — `RUN v4.1.11 ~/Projects/skills-hub`; eslint → vitest **15 files / 347 tests passed** → typescript-7 `tsc -b` + vite build → `cargo fmt --all --check` → `clippy --all-targets --all-features -D warnings` → `cargo test` **640 passed / 0 failed**.
 - `.scratch/round10/final-cargo-all.log` — `cargo test --all` **640 passed / 0 failed**.
 - Working tree clean afterwards ⇒ no `src/bindings/index.ts` drift.
 The child's own gate (`evidence/review-fixes/final-*.log`, same 347/640) ran in the worktree on byte-identical source, per the SHA-256 match above.

@@ -1,6 +1,6 @@
 # Round-10 wave-A review — 3-seat panel (Fable, Opus, Astra)
 
-Repo: `/Users/alexstark/Projects/skills-hub` (main checkout, branch `main` — READ ONLY; do not edit, commit, run mutating commands, or launch the app; `cargo test --all`/`npm test`/`npm run build` are fine to confirm something). Do not search outside this directory (cloud-synced folders). Do not run `npm run tauri:dev`. Do not `git add` anything; `.scratch/` is gitignored. AGENTS.md Workflow step 1 does not apply to a review — start immediately. Write your report incrementally.
+Repo: `~/Projects/skills-hub` (main checkout, branch `main` — READ ONLY; do not edit, commit, run mutating commands, or launch the app; `cargo test --all`/`npm test`/`npm run build` are fine to confirm something). Do not search outside this directory (cloud-synced folders). Do not run `npm run tauri:dev`. Do not `git add` anything; `.scratch/` is gitignored. AGENTS.md Workflow step 1 does not apply to a review — start immediately. Write your report incrementally.
 
 ## What to review
 - Fixed point: `7a7c519` (v1.2.9). HEAD = `git rev-parse HEAD` (9 commits: 7 backend, 1 frontend, 1 integration fix). Diff: `git diff 7a7c519...HEAD`.
@@ -21,4 +21,4 @@ Missing/partial requirements, scope creep, implemented-but-wrong — quote the t
 - Worktree safety: `git diff 7a7c519..HEAD -- src-tauri/src src/` — no unintended reverts of v1.2.9 D1/D2/H-items.
 
 ## Output
-Write to `/Users/alexstark/Projects/skills-hub/.scratch/round10/r10a-review-<seat>.md` (seat = fable | opus | astra) AND return it as the final message. `## Standards`, `## Spec`, `## Summary` with **Blocking** (must fix before release: standard breach, spec miss, data-safety bug, operator-visible regression) vs **Follow-up**. Verify every Blocking at HEAD. Concrete; no generic advice.
+Write to `~/Projects/skills-hub/.scratch/round10/r10a-review-<seat>.md` (seat = fable | opus | astra) AND return it as the final message. `## Standards`, `## Spec`, `## Summary` with **Blocking** (must fix before release: standard breach, spec miss, data-safety bug, operator-visible regression) vs **Follow-up**. Verify every Blocking at HEAD. Concrete; no generic advice.

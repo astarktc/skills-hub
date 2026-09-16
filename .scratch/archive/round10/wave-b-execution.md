@@ -10,7 +10,7 @@ After cleanup, parent reran full definition-of-done and explicit cargo --all on 
 
 ## Historical execution
 
-User approved ticketing → full implementation → review/fix cycle end to end. Wave B only; malformed selection, C3/C4 and wave C excluded. Model routing for today: Pi Astra high (B1 xhigh); independent Anthropic Opus 5 high review, no Fable. Base `a824caf45fffb0bd5c38318ba10b2ffa0ca11c62` (main fast-forward from 6221942 contained only featured-skills.json). Main checkout `/Users/alexstark/Projects/skills-hub`.
+User approved ticketing → full implementation → review/fix cycle end to end. Wave B only; malformed selection, C3/C4 and wave C excluded. Model routing for today: Pi Astra high (B1 xhigh); independent Anthropic Opus 5 high review, no Fable. Base `a824caf45fffb0bd5c38318ba10b2ffa0ca11c62` (main fast-forward from 6221942 contained only featured-skills.json). Main checkout `~/Projects/skills-hub`.
 
 ## Tickets and evidence
 

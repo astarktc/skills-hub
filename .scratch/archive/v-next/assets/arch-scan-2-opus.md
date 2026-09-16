@@ -1,6 +1,6 @@
 # Skills Hub — architectural friction scan (deepening opportunities)
 
-Repo: `/Users/alexstark/Projects/skills-hub` · HEAD at scan time: **`943f85c`** ("chore: translate
+Repo: `~/Projects/skills-hub` · HEAD at scan time: **`943f85c`** ("chore: translate
 remaining Chinese comments…"), the tail of a large refactoring epic (`ee4f826`…`943f85c`, v-next
 tickets 01–18: commands/core seam restored, tagged `CommandError`, one batch sync fan-out, App.tsx
 carved into per-world hooks, ts-rs DTOs, hook-level vitest). Read-only scan; no files in the repo

@@ -1,6 +1,6 @@
 # Skills Hub — Architectural Friction Scan (read-only)
 
-Scanned: `/Users/alexstark/Projects/skills-hub` (Tauri 2 + React 19). No files edited.
+Scanned: `~/Projects/skills-hub` (Tauri 2 + React 19). No files edited.
 All terms per the deep-module vocabulary (module / interface / depth / seam / adapter / leverage / locality / deletion test).
 
 ---

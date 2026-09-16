@@ -4,7 +4,7 @@
 
 Implemented end to end and committed in the authorized isolated checkout only.
 
-- Checkout: `/Users/alexstark/Projects/skills-hub/.scratch/round10/worktrees/manifest`
+- Checkout: `~/Projects/skills-hub/.scratch/round10/worktrees/manifest`
 - Branch: `r10b/manifest`
 - Base: `a824caf45fffb0bd5c38318ba10b2ffa0ca11c62`
 - HEAD: `6adab087f313413a767358527c38d069d0b3fb1d`
@@ -66,7 +66,7 @@ The first commit preserves the original Rust/TS grammar. The second isolates the
 All log paths below are under this checkout's `.scratch/round10/evidence/`. Every shell command began by changing into the authorized checkout. The test commands were:
 
 ```sh
-cd /Users/alexstark/Projects/skills-hub/.scratch/round10/worktrees/manifest
+cd ~/Projects/skills-hub/.scratch/round10/worktrees/manifest
 CARGO_BUILD_JOBS=4 cargo test --manifest-path src-tauri/Cargo.toml core::frontmatter_edit::tests
 CARGO_BUILD_JOBS=4 cargo test --manifest-path src-tauri/Cargo.toml core::manifest::tests
 CARGO_BUILD_JOBS=4 cargo test --manifest-path src-tauri/Cargo.toml replaces_top_level_lines_in_place_and_appends_only_missing_keys
@@ -93,7 +93,7 @@ After added regressions: Manifest 15, lock 10, Edit 14 passed (`11-regression-*.
 Final commands (all exit 0):
 
 ```sh
-cd /Users/alexstark/Projects/skills-hub/.scratch/round10/worktrees/manifest
+cd ~/Projects/skills-hub/.scratch/round10/worktrees/manifest
 CARGO_BUILD_JOBS=4 cargo fmt --manifest-path src-tauri/Cargo.toml --all
 CARGO_BUILD_JOBS=4 cargo test --manifest-path src-tauri/Cargo.toml --all
 CARGO_BUILD_JOBS=4 npm run version:check && CARGO_BUILD_JOBS=4 npm run check

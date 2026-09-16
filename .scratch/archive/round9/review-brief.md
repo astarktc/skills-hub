@@ -1,6 +1,6 @@
 # Round-9 review — v1.2.9 hygiene + defect patches (single reviewer: Fable)
 
-Repo: `/Users/alexstark/Projects/skills-hub` (main checkout, branch `main` — READ ONLY; do not edit, commit, run mutating npm/cargo commands, or launch the app; `cargo test --all`/`npm test`/`npm run build` are fine to confirm something). Do not search outside this directory (cloud-synced folders). Do not run `npm run tauri:dev`. Do not `git add` anything; `.scratch/` is gitignored. AGENTS.md Workflow step 1 does not apply to a review — start immediately. Write your report incrementally.
+Repo: `~/Projects/skills-hub` (main checkout, branch `main` — READ ONLY; do not edit, commit, run mutating npm/cargo commands, or launch the app; `cargo test --all`/`npm test`/`npm run build` are fine to confirm something). Do not search outside this directory (cloud-synced folders). Do not run `npm run tauri:dev`. Do not `git add` anything; `.scratch/` is gitignored. AGENTS.md Workflow step 1 does not apply to a review — start immediately. Write your report incrementally.
 
 ## What to review
 - Fixed point: `96cd33c` (v1.2.8). HEAD = `0acafd7` (release: v1.2.9, unpublished). Diff: `git diff 96cd33c...HEAD`; 10 commits: 7 hygiene (H1–H7), 2 defect patches (D1, D2), 1 version bump.
@@ -21,4 +21,4 @@ Missing/partial requirements, scope creep, implemented-but-wrong — quote the t
 - Worktree safety: `git diff 96cd33c..HEAD -- src-tauri/src src/` shows no unintended reverts of v1.2.7/v1.2.8 code.
 
 ## Output
-Write to `/Users/alexstark/Projects/skills-hub/.scratch/round9/r9-review-fable.md` AND return it as the final message. `## Standards`, `## Spec`, `## Summary` with **Blocking** (must fix before v1.2.9 ships) vs **Follow-up**. Verify every Blocking at HEAD. Concrete; no generic advice.
+Write to `~/Projects/skills-hub/.scratch/round9/r9-review-fable.md` AND return it as the final message. `## Standards`, `## Spec`, `## Summary` with **Blocking** (must fix before v1.2.9 ships) vs **Follow-up**. Verify every Blocking at HEAD. Concrete; no generic advice.

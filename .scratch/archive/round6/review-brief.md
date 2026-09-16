@@ -1,6 +1,6 @@
 # Round-6 review — brief (one child per model; both axes in one brief)
 
-Repo: /Users/alexstark/Projects/skills-hub (main checkout — READ ONLY; do not edit, commit, run npm/cargo mutating commands, or launch the app; `cargo test`/`npm test`/`npm run build` are fine to confirm something). Do not search outside this directory (cloud-synced folders). Do not run `npm run tauri:dev` (it mutates the operator's real skill library). Do not `git add` anything; `.scratch/` is gitignored on purpose. AGENTS.md Workflow step 1 does not apply to a review — start immediately.
+Repo: ~/Projects/skills-hub (main checkout — READ ONLY; do not edit, commit, run npm/cargo mutating commands, or launch the app; `cargo test`/`npm test`/`npm run build` are fine to confirm something). Do not search outside this directory (cloud-synced folders). Do not run `npm run tauri:dev` (it mutates the operator's real skill library). Do not `git add` anything; `.scratch/` is gitignored on purpose. AGENTS.md Workflow step 1 does not apply to a review — start immediately.
 
 ## What to review
 - Fixed point: `95b7893` (v1.2.5 + toast fix + Re-point policy). HEAD = `6b0ec7d`. Diff: `git diff 95b7893...HEAD`; commits: `git log 95b7893..HEAD --oneline` (9 commits, 4 lanes merged fast-forward after rebase).
@@ -23,4 +23,4 @@ Areas worth particular scrutiny (not exhaustive):
 - Worktree safety: 4 lanes merged; confirm nothing from `95b7893` was reverted (`git diff 95b7893..HEAD -- src-tauri/src src/` should show only the intended additions).
 
 ## Output
-Write your report to `/Users/alexstark/Projects/skills-hub/.scratch/round6/r6-review-<model>.md` (`<model>` = `fable`, `opus` or `astra` — you will be told which) AND return it as your final message. Structure: `## Standards`, `## Spec`, `## Summary` — the summary splits findings into **Blocking** (must fix before v1.2.6 ships: a documented-standard breach, a spec requirement missing/wrong, or a data-safety bug) vs **Follow-up**. Every finding names file(s) and quotes the hunk or the spec line. Verify every Blocking at HEAD before writing it (`git log -S` if you suspect it is inherited). Be concrete; no generic advice.
+Write your report to `~/Projects/skills-hub/.scratch/round6/r6-review-<model>.md` (`<model>` = `fable`, `opus` or `astra` — you will be told which) AND return it as your final message. Structure: `## Standards`, `## Spec`, `## Summary` — the summary splits findings into **Blocking** (must fix before v1.2.6 ships: a documented-standard breach, a spec requirement missing/wrong, or a data-safety bug) vs **Follow-up**. Every finding names file(s) and quotes the hunk or the spec line. Verify every Blocking at HEAD before writing it (`git log -S` if you suspect it is inherited). Be concrete; no generic advice.

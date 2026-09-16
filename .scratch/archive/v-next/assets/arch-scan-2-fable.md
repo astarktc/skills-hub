@@ -1,6 +1,6 @@
 # Skills Hub — architectural friction scan (independent review, panel member 2)
 
-Repo: `/Users/alexstark/Projects/skills-hub` @ HEAD `943f85c` ("chore: translate remaining Chinese comments and test assertion messages to English").
+Repo: `~/Projects/skills-hub` @ HEAD `943f85c` ("chore: translate remaining Chinese comments and test assertion messages to English").
 Recent history is dominated by a refactoring epic (v-next tickets 01–16: `ee4f826` commands/core seam, `ac3395c` tagged CommandError, `8484538` backend batch sync, `fc89d1f`/`bb77d83` App.tsx carve into world hooks, `be9a74c` hook tests, `de649b6` downcast-not-prose fixes). The scan weights what that epic touched — and probes what it left behind, which turns out to be mostly `core/installer.rs` (1,951 lines, the largest module in the repo) and the two tool-status commands.
 
 ## Map of the territory

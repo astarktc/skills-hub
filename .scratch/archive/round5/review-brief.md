@@ -1,6 +1,6 @@
 # Round-5 review — brief (one child per model; both axes in one brief)
 
-Repo: /Users/alexstark/Projects/skills-hub (main checkout — READ ONLY; do not edit, commit, run npm/cargo mutating commands, or launch the app; `cargo test`/`npm test`/`npm run build` are fine if you want to confirm something). Do not search outside this directory (cloud-synced folders). Do not run `npm run tauri:dev` (it mutates the operator's real skill library). Do not `git add` anything; `.scratch/` is gitignored on purpose.
+Repo: ~/Projects/skills-hub (main checkout — READ ONLY; do not edit, commit, run npm/cargo mutating commands, or launch the app; `cargo test`/`npm test`/`npm run build` are fine if you want to confirm something). Do not search outside this directory (cloud-synced folders). Do not run `npm run tauri:dev` (it mutates the operator's real skill library). Do not `git add` anything; `.scratch/` is gitignored on purpose.
 
 ## What to review
 - Fixed point: `6cd91cf` (v1.2.4 + the ego-lite discovery fix, which is *also* in scope — review it too: `git show 6cd91cf`). HEAD = `378a473`.
@@ -25,4 +25,4 @@ Areas worth particular scrutiny this round (not exhaustive):
 - `project_sync` `expect` → typed `NotFound`: is `NotFound { kind: "skill" }` the right kind for "artifact path could not be resolved"?
 
 ## Output
-Write your report to `/Users/alexstark/Projects/skills-hub/.scratch/round5/r5-review-<model>.md` (where `<model>` is `fable`, `opus` or `sol` — you will be told which) AND return it as your final message. Structure: `## Standards`, `## Spec`, `## Summary` — the summary splits findings into **Blocking** (must fix before v1.2.5 ships: a documented-standard breach, a spec requirement missing/wrong, or a data-safety bug) vs **Follow-up** (everything else). Every finding names file(s) and quotes the hunk or the spec line. Be concrete; no generic advice.
+Write your report to `~/Projects/skills-hub/.scratch/round5/r5-review-<model>.md` (where `<model>` is `fable`, `opus` or `sol` — you will be told which) AND return it as your final message. Structure: `## Standards`, `## Spec`, `## Summary` — the summary splits findings into **Blocking** (must fix before v1.2.5 ships: a documented-standard breach, a spec requirement missing/wrong, or a data-safety bug) vs **Follow-up** (everything else). Every finding names file(s) and quotes the hunk or the spec line. Be concrete; no generic advice.

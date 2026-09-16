@@ -1,6 +1,6 @@
 # Round-8 review — v1.2.8 safety slice (single reviewer: Fable)
 
-Repo: `/Users/alexstark/Projects/skills-hub` (main checkout, branch `main` — READ ONLY; do not edit, commit, run mutating npm/cargo commands, or launch the app; `cargo test --all`/`npm test`/`npm run build` are fine to confirm something). Do not search outside this directory (cloud-synced folders). Do not run `npm run tauri:dev`. Do not `git add` anything; `.scratch/` is gitignored. AGENTS.md Workflow step 1 does not apply to a review — start immediately. Write your report incrementally.
+Repo: `~/Projects/skills-hub` (main checkout, branch `main` — READ ONLY; do not edit, commit, run mutating npm/cargo commands, or launch the app; `cargo test --all`/`npm test`/`npm run build` are fine to confirm something). Do not search outside this directory (cloud-synced folders). Do not run `npm run tauri:dev`. Do not `git add` anything; `.scratch/` is gitignored. AGENTS.md Workflow step 1 does not apply to a review — start immediately. Write your report incrementally.
 
 ## What to review
 - Fixed point: `51dcae6` (v1.2.7). HEAD = `3190623`. Diff: `git diff 51dcae6...HEAD`; 5 commits, two lanes merged fast-forward (Rust lane 4 commits, frontend lane 1).
@@ -21,4 +21,4 @@ Missing/partial requirements, scope creep, implemented-but-wrong — quote the t
 - Worktree safety: `git diff 51dcae6..HEAD -- src-tauri/src src/` shows no unintended reverts of v1.2.7 (Edit V1) code.
 
 ## Output
-Write to `/Users/alexstark/Projects/skills-hub/.scratch/round8/r8-review-fable.md` AND return it as the final message. `## Standards`, `## Spec`, `## Summary` with **Blocking** (must fix before v1.2.8: standard breach, spec miss, data-safety bug) vs **Follow-up**. Verify every Blocking at HEAD. Concrete; no generic advice.
+Write to `~/Projects/skills-hub/.scratch/round8/r8-review-fable.md` AND return it as the final message. `## Standards`, `## Spec`, `## Summary` with **Blocking** (must fix before v1.2.8: standard breach, spec miss, data-safety bug) vs **Follow-up**. Verify every Blocking at HEAD. Concrete; no generic advice.

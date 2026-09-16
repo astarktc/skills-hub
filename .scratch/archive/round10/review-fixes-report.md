@@ -3,7 +3,7 @@
 ## Result and integration handoff
 
 - Commit: **`a25f38ea925d6686fd153f591568cdcfd8bf0d20`** — `fix(manifest): preserve pre-upgrade indented-header edits`.
-- Checkout: `/Users/alexstark/Projects/skills-hub/.scratch/round10/worktrees/review-fixes`.
+- Checkout: `~/Projects/skills-hub/.scratch/round10/worktrees/review-fixes`.
 - Branch: `r10b/review-fixes`; sole parent/base: `960e5d5bf6a300424761eda3bfc9ff64adf82418`.
 - Six scoped files; +359 / -16. Tracked working tree clean after commit. Report/evidence are ignored, not committed.
 - SPEC1 and STANDARDS4 reproduced and fixed. No new product decision needed; no ticket factual correction beyond accepting the parent's escalation of SPEC1 from follow-up to required fix.
@@ -48,12 +48,12 @@ Tests use real temporary stores/files and `set_invocation_override` plus Refresh
 ## Actual red/green and sensitivity evidence
 
 Evidence directory (absolute):
-`/Users/alexstark/Projects/skills-hub/.scratch/round10/worktrees/review-fixes/.scratch/round10/evidence/`
+`~/Projects/skills-hub/.scratch/round10/worktrees/review-fixes/.scratch/round10/evidence/`
 
-Every shell invocation began with `cd /Users/alexstark/Projects/skills-hub/.scratch/round10/worktrees/review-fixes`; Cargo used `CARGO_BUILD_JOBS=4`. Rust commands below used:
+Every shell invocation began with `cd ~/Projects/skills-hub/.scratch/round10/worktrees/review-fixes`; Cargo used `CARGO_BUILD_JOBS=4`. Rust commands below used:
 
 ```bash
-CARGO_BUILD_JOBS=4 cargo test --manifest-path /Users/alexstark/Projects/skills-hub/.scratch/round10/worktrees/review-fixes/src-tauri/Cargo.toml <filter> -- --nocapture
+CARGO_BUILD_JOBS=4 cargo test --manifest-path ~/Projects/skills-hub/.scratch/round10/worktrees/review-fixes/src-tauri/Cargo.toml <filter> -- --nocapture
 ```
 
 | Log | Filter / actual state | Observed result |
@@ -77,8 +77,8 @@ All completed successfully on the exact committed source. No skipped or ignored 
 | --- | --- | --- |
 | Cargo command above, filter `manifest` | 22 passed (substring includes Manifest consumers), 0 failed/ignored | `final-manifest-green.log` |
 | Cargo command above, filter `skill_edits` | 20 passed, 0 failed/ignored | `final-edit-green.log` |
-| `bun run test -- /Users/alexstark/Projects/skills-hub/.scratch/round10/worktrees/review-fixes/src/lib/manifestPresentation.test.ts` | 1 file / 14 tests passed | `final-ts-corpus-green.log` |
-| `CARGO_BUILD_JOBS=4 cargo test --manifest-path /Users/alexstark/Projects/skills-hub/.scratch/round10/worktrees/review-fixes/src-tauri/Cargo.toml --all` | 640 passed, 0 failed/ignored; main and doc-tests green | `final-cargo-all.log` |
+| `bun run test -- ~/Projects/skills-hub/.scratch/round10/worktrees/review-fixes/src/lib/manifestPresentation.test.ts` | 1 file / 14 tests passed | `final-ts-corpus-green.log` |
+| `CARGO_BUILD_JOBS=4 cargo test --manifest-path ~/Projects/skills-hub/.scratch/round10/worktrees/review-fixes/src-tauri/Cargo.toml --all` | 640 passed, 0 failed/ignored; main and doc-tests green | `final-cargo-all.log` |
 | `npm run version:check && npm run check` (exported `CARGO_BUILD_JOBS=4`; separate redirected logs joined by `&&`) | Version OK 1.2.12; lint; 15 frontend files / 347 tests; explicit TypeScript-7 build + Vite; Rust fmt; Clippy all-targets/all-features with `-D warnings`; 640 Rust tests — all pass | `final-version.log`, `final-check.log` |
 | `git diff --check`, staged `git diff --cached --check` | Clean | command output in task timeline |
 

@@ -17,7 +17,7 @@ Initial single-seat review: `.scratch/round10/r10b-review-opus.md`, exact HEAD 9
 
 ## Fix lane
 
-- Checkout `/Users/alexstark/Projects/skills-hub/.scratch/round10/worktrees/review-fixes`, branch `r10b/review-fixes`, base 960e5d5, sole writer Astra high. node_modules/target isolated APFS clones; Cargo jobs4.
+- Checkout `~/Projects/skills-hub/.scratch/round10/worktrees/review-fixes`, branch `r10b/review-fixes`, base 960e5d5, sole writer Astra high. node_modules/target isolated APFS clones; Cargo jobs4.
 - Task suffix `r10b-fix-legacy-edit-960e5d5-v1` under common execution-board task prefix. Async running.
 - Claims Manifest implementation/tests, narrow Edit compatibility wiring/tests, shared TS corpus/tests. No git resolution/envelopes/sync/AGENTS/CONTEXT/changelog/version changes. Own branch commit permitted; parent integration/publication authority.
 - Required original-red/final-green/source-reversal proof, clear + re-choose→clear + replay→clear, fresh invalid-header strict behavior, unchanged rollback/typed failures, full gates.

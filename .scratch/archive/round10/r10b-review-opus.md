@@ -1,6 +1,6 @@
 # Wave B v1.2.12 — independent review (single seat, Opus 5, replacing Fable under Q11)
 
-Target: `/Users/alexstark/Projects/skills-hub`, main checkout, HEAD `960e5d5bf6a300424761eda3bfc9ff64adf82418` (verified), baseline `a824caf45fffb0bd5c38318ba10b2ffa0ca11c62`. `git diff a824caf4...HEAD` = 45 files, +3238/−1453 (non-empty, verified). Commit list matches the brief (8 commits, characterization `da7ee8c` precedes resolution `5a6414e`; Manifest extraction `5af637a` precedes fence fix `1ae02dd`). Working tree clean at review time — no binding drift after the parent's integrated `cargo test`. Read-only: no build/test/generator was run by this seat; LSP probe restricted to TypeScript to avoid contending with the parent's cargo gate.
+Target: `~/Projects/skills-hub`, main checkout, HEAD `960e5d5bf6a300424761eda3bfc9ff64adf82418` (verified), baseline `a824caf45fffb0bd5c38318ba10b2ffa0ca11c62`. `git diff a824caf4...HEAD` = 45 files, +3238/−1453 (non-empty, verified). Commit list matches the brief (8 commits, characterization `da7ee8c` precedes resolution `5a6414e`; Manifest extraction `5af637a` precedes fence fix `1ae02dd`). Working tree clean at review time — no binding drift after the parent's integrated `cargo test`. Read-only: no build/test/generator was run by this seat; LSP probe restricted to TypeScript to avoid contending with the parent's cargo gate.
 
 ## Standards
 

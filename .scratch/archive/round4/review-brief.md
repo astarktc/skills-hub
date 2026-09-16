@@ -1,6 +1,6 @@
 # Round-4 review — brief (one child per model; both axes in one brief)
 
-Repo: /Users/alexstark/Projects/skills-hub (main checkout — READ ONLY; do not edit, commit, run npm/cargo mutating commands, or launch the app; `cargo test`/`npm test`/`npm run build` are fine if you want to confirm something). Do not search outside this directory (cloud-synced folders). Do not run `npm run tauri:dev` (it mutates the operator's real skill library).
+Repo: ~/Projects/skills-hub (main checkout — READ ONLY; do not edit, commit, run npm/cargo mutating commands, or launch the app; `cargo test`/`npm test`/`npm run build` are fine if you want to confirm something). Do not search outside this directory (cloud-synced folders). Do not run `npm run tauri:dev` (it mutates the operator's real skill library).
 
 ## What to review
 - Fixed point: `f057190` (v1.2.3). HEAD = `7fcec94`.
