@@ -24,8 +24,8 @@ cd src-tauri && cargo test <filter> -- --nocapture   # show println!/dbg! output
 compiler and can disagree with the build — always type-check via `npm run build`.
 
 `npm run rust:test` runs `cargo test`; CI (`.github/workflows/ci.yml`) runs `cargo test --all` (includes all
-workspace targets). Prefer `--all` locally when touching Rust to match the gate. CI was disabled by hand from
-2026-04-09 to 2026-09-15; BACKLOG #01 tracks its first green run — until then the local gate is the only proven one.
+workspace targets). Prefer `--all` locally when touching Rust to match the gate. CI runs the web job on Node 22
+(jsdom 30 needs it); `release.yml` still builds on Node 20 and never runs vitest.
 
 ## Definition of done
 

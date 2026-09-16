@@ -8,10 +8,6 @@ Numbers are stable: never renumber; retire by deleting the line (history keeps i
 
 ## Now — evidence of unfinished work is strong
 
-- **#01 CI Rust job on Linux: make it green.** `ci.yml` was re-enabled 2026-09-15 (disabled by hand 2026-04-09 after two
-  `cargo test --all` failures on `ubuntu-latest`; logs expired). First run lands on the next push to `main`. If red:
-  read the failing test, fix or scope the Rust job to macOS, then keep AGENTS.md's "CI enforces…" sentences true.
-  Source: `gh api …/workflows/257467736` (`state=disabled_manually`, `updated=2026-04-09`); this session's log.
 - **#02 Wave C — one report representation across the wire + ADR-0001 amendment.** Round-10 decision Q8 deferred #7
   to wave C; the four report DTOs are still separate (`commands/mod.rs` BatchSyncReportDto / RemovalReportDto /
   RefreshReportDto / ImportReportDto). Source: `archive/round10/decisions.md` Q8; research `archive/round9/panel/opus.md:84–109`.
@@ -42,7 +38,7 @@ Numbers are stable: never renumber; retire by deleting the line (history keeps i
   commit history; do not fabricate. Source: `archive/round10/wave-b-review-disposition.md:16`.
 - **#10 Release-mode regression for content identity in CI.** `update_supplies_a_real_hash_to_copy_assignments_and_reconcile_keeps_synced`
   (`tests/propagation.rs:473`) exists, but no `--release` run anywhere and its 30 s `try_serialized` poll remains.
-  Depends on #01. Source: `archive/round7/backlog.md` #15.
+  Source: `archive/round7/backlog.md` #15.
 - **#11 Local listing validity vs installability.** `skill_discovery.rs` admits `is_claude_skill_dir` without a manifest
   (lines 125, 241, 292) while the install path requires one; align the `valid` rule. Source: `archive/v-next/issues/26:38`, `35:39`.
 
