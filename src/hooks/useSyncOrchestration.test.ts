@@ -82,6 +82,7 @@ function appSettings(overrides?: Partial<AppSettings>): AppSettings {
     github_token: "",
     auto_sync_enabled: true,
     global_selected_tools: null,
+    global_selected_tools_corrupt: false,
     scan_selected_tools_only: true,
     ui_zoom_level: 1,
     bounds: {
@@ -95,7 +96,12 @@ function appSettings(overrides?: Partial<AppSettings>): AppSettings {
 
 function stubBackend(overrides?: {
   config?: Partial<
-    Pick<AppSettings, "global_selected_tools" | "scan_selected_tools_only">
+    Pick<
+      AppSettings,
+      | "global_selected_tools"
+      | "global_selected_tools_corrupt"
+      | "scan_selected_tools_only"
+    >
   >;
   status?: Partial<ToolStatusDto>;
   syncReport?: BatchSyncReportDto;
@@ -124,6 +130,7 @@ function stubBackend(overrides?: {
 function makeReporter(): Pick<
   StatusReporter,
   | "loading"
+  | "notify"
   | "setActionMessage"
   | "setError"
   | "setSuccessToastMessage"
@@ -131,6 +138,7 @@ function makeReporter(): Pick<
 > {
   return {
     loading: false,
+    notify: vi.fn(),
     setActionMessage: vi.fn(),
     setError: vi.fn(),
     setSuccessToastMessage: vi.fn(),
@@ -183,6 +191,35 @@ describe("useSyncOrchestration target defaulting", () => {
         goose: false,
       }),
     );
+  });
+
+  it("warns once at startup when the saved selection is corrupt, and defaults like unconfigured", async () => {
+    // The backend reads a corrupt row as `null` for display and flags it;
+    // syncs will refuse with SETTING_CORRUPT until the operator re-saves.
+    stubBackend({
+      config: { global_selected_tools: null, global_selected_tools_corrupt: true },
+    });
+    const reporter = makeReporter();
+    const { result } = renderSync(reporter);
+
+    await waitFor(() =>
+      expect(result.current.syncTargets).toEqual({
+        claude: true,
+        pi: true,
+        cursor: true,
+        goose: false,
+      }),
+    );
+    expect(reporter.notify).toHaveBeenCalledTimes(1);
+    expect(reporter.notify).toHaveBeenCalledWith("warning", "errors.settingCorruptStartup");
+  });
+
+  it("stays quiet at startup when the saved selection reads cleanly", async () => {
+    stubBackend({ config: { global_selected_tools: ["cursor"] } });
+    const reporter = makeReporter();
+    const { result } = renderSync(reporter);
+    await waitFor(() => expect(result.current.globalSelectedTools).toEqual(["cursor"]));
+    expect(reporter.notify).not.toHaveBeenCalled();
   });
 
   it("scan-selected-only hides newly installed tools outside the selection", async () => {

@@ -99,6 +99,12 @@ pub enum SignalError {
     /// skill is taken over. `tool` is the registry key of the holding Tool.
     /// Owned by the Tool registry (`tool_adapters::tool_holding_path`).
     LocalSourceInsideToolDir { path: String, tool: String },
+    /// A stored setting that drives writes (the global Tool selection)
+    /// exists but cannot be parsed. Refused rather than defaulted: a default
+    /// here would mean "every detected tool". The operator repairs it by
+    /// saving the setting again. `key` is the storage key; `detail` is the
+    /// parser's diagnostic, not user copy. Owned by `core::settings`.
+    SettingCorrupt { key: String, detail: String },
 }
 
 impl fmt::Display for SignalError {
@@ -192,6 +198,9 @@ impl fmt::Display for SignalError {
                     f,
                     "folder is inside the {tool} skills directory (import it instead): {path}"
                 )
+            }
+            SignalError::SettingCorrupt { key, detail } => {
+                write!(f, "stored setting {key} is corrupt: {detail}")
             }
         }
     }

@@ -43,6 +43,7 @@ export type SyncOrchestrationDeps = {
   reporter: Pick<
     StatusReporter,
     | "loading"
+    | "notify"
     | "setActionMessage"
     | "setError"
     | "setSuccessToastMessage"
@@ -61,6 +62,7 @@ export type SyncOrchestrationDeps = {
 export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
   const {
     loading,
+    notify,
     setActionMessage,
     setError,
     setSuccessToastMessage,
@@ -175,6 +177,11 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
         setAutoSyncEnabled(settings.auto_sync_enabled);
         setGlobalSelectedTools(selectedTools);
         setScanSelectedToolsOnly(scanSelectedOnly);
+        // A corrupt saved selection reads as "unconfigured" for display only:
+        // every global sync refuses (SETTING_CORRUPT) until the operator
+        // saves the selection again, so say so once, up front.
+        if (settings.global_selected_tools_corrupt)
+          notify("warning", t("errors.settingCorruptStartup"));
       } catch (err) {
         // Non-fatal; fall back to defaults.
         console.warn(err);
@@ -210,6 +217,9 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
       }
     };
     void load();
+    // Mount-once load: the corrupt-selection warning is raised with the
+    // reporter and copy of that moment, not again on every language switch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const syncSkillsToTools = useCallback(

@@ -32,7 +32,6 @@ export type AddSkillFlowDeps = {
   sync: Pick<
     SyncOrchestration,
     | "autoSyncEnabled"
-    | "isInstalled"
     | "syncSkillsToTools"
     | "syncTargets"
     | "targetAllInstalled"
@@ -65,7 +64,6 @@ export function useAddSkillFlow({
   } = reporter;
   const {
     autoSyncEnabled,
-    isInstalled,
     syncSkillsToTools,
     syncTargets,
     targetAllInstalled,
@@ -92,30 +90,31 @@ export function useAddSkillFlow({
   const [exploreInstallTrigger, setExploreInstallTrigger] = useState(0);
   const exploreInstallUrlRef = useRef<string | null>(null);
 
-  /** Deploy targets that are both user-selected and actually installed. */
-  const getSelectedInstalledIds = useCallback(
-    () =>
-      tools
-        .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
-        .map((t) => t.id),
-    [isInstalled, syncTargets, tools],
+  /**
+   * The operator's deploy targets, not intersected with detection: the
+   * batch reports a selected-but-undetected tool as a skip, which is the
+   * operator's signal that the selection has gone stale (round 12 D3).
+   */
+  const getSelectedIds = useCallback(
+    () => tools.filter((tool) => syncTargets[tool.id]).map((t) => t.id),
+    [syncTargets, tools],
   );
 
   /** Acquisition already succeeded: even a thrown deploy cannot undo it. */
   const deployNewSkill = useCallback(
     async (created: InstallResultDto): Promise<InstallDeployment> => {
       if (!autoSyncEnabled) return { status: "disabled" };
-      const selectedInstalledIds = getSelectedInstalledIds();
-      if (!selectedInstalledIds.length) return { status: "no-targets" };
+      const selectedIds = getSelectedIds();
+      if (!selectedIds.length) return { status: "no-targets" };
       try {
         return { status: "reported", report: await syncSkillsToTools(
-          [toSyncItem(created)], selectedInstalledIds, { overwriteIfSameContent: true },
+          [toSyncItem(created)], selectedIds, { overwriteIfSameContent: true },
         ) };
       } catch (error) {
         return { status: "failed", error };
       }
     },
-    [autoSyncEnabled, getSelectedInstalledIds, syncSkillsToTools],
+    [autoSyncEnabled, getSelectedIds, syncSkillsToTools],
   );
 
   /**
@@ -344,7 +343,7 @@ export function useAddSkillFlow({
         selections,
         {
           auto_sync: autoSyncEnabled,
-          tools: autoSyncEnabled ? getSelectedInstalledIds() : null,
+          tools: autoSyncEnabled ? getSelectedIds() : null,
         },
         onProgress,
       );

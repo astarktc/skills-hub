@@ -42,6 +42,7 @@ function appSettings(overrides?: Partial<AppSettings>): AppSettings {
     github_token: "ghp_stored",
     auto_sync_enabled: true,
     global_selected_tools: null,
+    global_selected_tools_corrupt: false,
     scan_selected_tools_only: true,
     ui_zoom_level: 1.25,
     bounds: BOUNDS,

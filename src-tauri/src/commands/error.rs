@@ -154,6 +154,12 @@ pub enum CommandError {
         /// Registry key of the Tool whose skills directory holds it.
         tool: String,
     },
+    SettingCorrupt {
+        /// Storage key of the setting that could not be parsed.
+        key: String,
+        /// Parser diagnostic, not user copy.
+        detail: String,
+    },
     Other {
         message: String,
     },
@@ -310,6 +316,9 @@ impl From<SignalError> for CommandError {
             SignalError::NotRefreshable { name } => CommandError::NotRefreshable { name },
             SignalError::LocalSourceInsideToolDir { path, tool } => {
                 CommandError::LocalSourceInsideToolDir { path, tool }
+            }
+            SignalError::SettingCorrupt { key, detail } => {
+                CommandError::SettingCorrupt { key, detail }
             }
         }
     }

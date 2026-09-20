@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::core::errors::SignalError;
 use crate::core::settings::{
     apply_setting, effective_global_tool_targets, featured_skills_cache, git_cache_cleanup_days,
     git_cache_ttl_secs, github_token, load_settings, record_installed_tools,
@@ -42,6 +43,7 @@ fn load_on_empty_store_yields_defaults_and_bounds() {
     assert_eq!(s.github_token, "");
     assert_eq!(s.auto_sync_enabled, DEFAULT_AUTO_SYNC_ENABLED);
     assert_eq!(s.global_selected_tools, None);
+    assert!(!s.global_selected_tools_corrupt);
     assert_eq!(s.scan_selected_tools_only, DEFAULT_SCAN_SELECTED_TOOLS_ONLY);
     assert_eq!(s.ui_zoom_level, DEFAULT_UI_ZOOM_LEVEL);
 
@@ -184,27 +186,56 @@ fn scan_selected_tools_only_parses_bools_and_defaults_on_garbage() {
 }
 
 #[test]
-fn global_selected_tools_parses_json_and_defaults_to_unconfigured() {
+fn global_selected_tools_parses_json_and_flags_corrupt_rows() {
     let (dir, store) = make_store();
     let home = dir.path();
-    for (stored, expected) in [
+    // (stored, displayed selection, corrupt flag). Display keeps the
+    // "malformed parses to default" contract; the flag says why it is None.
+    for (stored, expected, corrupt) in [
         (
             r#"["claude_code","cursor"]"#,
             Some(vec!["claude_code".to_string(), "cursor".to_string()]),
+            false,
         ),
-        ("[]", Some(vec![])),
-        ("not json", None),
-        ("{\"a\":1}", None),
-        ("[1,2]", None),
-        ("", None),
+        ("[]", Some(vec![]), false),
+        ("", None, false),
+        ("   ", None, false),
+        ("not json", None, true),
+        ("{\"a\":1}", None, true),
+        ("[1,2]", None, true),
     ] {
         raw(&store, "global_selected_tools_v1", stored);
-        assert_eq!(
-            load_settings(&store, home).unwrap().global_selected_tools,
-            expected,
-            "raw {stored:?}"
-        );
+        let s = load_settings(&store, home).unwrap();
+        assert_eq!(s.global_selected_tools, expected, "raw {stored:?}");
+        assert_eq!(s.global_selected_tools_corrupt, corrupt, "raw {stored:?}");
     }
+}
+
+#[test]
+fn global_selected_tools_prunes_keys_the_registry_no_longer_knows() {
+    let (dir, store) = make_store();
+    let home = dir.path().join("home");
+    raw(
+        &store,
+        "global_selected_tools_v1",
+        r#"["ghost","claude_code","retired_tool"]"#,
+    );
+    assert_eq!(
+        load_settings(&store, &home).unwrap().global_selected_tools,
+        Some(vec!["claude_code".to_string()])
+    );
+    assert_eq!(
+        effective_global_tool_targets(&store, &home).unwrap(),
+        vec!["claude_code".to_string()]
+    );
+    // Pruning is a read-side view; the row is repaired by the next save, not here.
+    assert_eq!(
+        store
+            .get_setting("global_selected_tools_v1")
+            .unwrap()
+            .as_deref(),
+        Some(r#"["ghost","claude_code","retired_tool"]"#)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -253,12 +284,31 @@ fn effective_global_tool_targets_prefers_the_recorded_selection_over_detection()
         vec!["cursor".to_string(), "codex".to_string()]
     );
 
-    // A malformed stored value is "never configured", hence detection again.
-    raw(&store, "global_selected_tools_v1", "not json");
+    // A blank row is "never configured", hence detection again.
+    raw(&store, "global_selected_tools_v1", "  ");
     assert_eq!(
         effective_global_tool_targets(&store, &home).unwrap(),
         vec!["claude_code".to_string(), "codex".to_string()]
     );
+}
+
+#[test]
+fn effective_global_tool_targets_refuses_a_corrupt_selection() {
+    let (dir, store) = make_store();
+    let home = dir.path().join("home");
+    install_tool(&home, "claude_code");
+    for stored in ["not json", "{\"a\":1}", "[1,2]"] {
+        raw(&store, "global_selected_tools_v1", stored);
+        let err = effective_global_tool_targets(&store, &home)
+            .expect_err("corrupt selection must not fall back to detection");
+        match err.downcast_ref::<SignalError>() {
+            Some(SignalError::SettingCorrupt { key, detail }) => {
+                assert_eq!(key, "global_selected_tools_v1");
+                assert!(!detail.is_empty(), "raw {stored:?}");
+            }
+            other => panic!("raw {stored:?}: expected SettingCorrupt, got {other:?}"),
+        }
+    }
 }
 
 #[test]
@@ -412,6 +462,42 @@ fn apply_global_tool_config_round_trips_and_keeps_empty_selection() {
     .unwrap();
     assert_eq!(s.global_selected_tools, Some(vec![]));
     assert!(s.scan_selected_tools_only);
+}
+
+#[test]
+fn apply_global_tool_config_refuses_an_unknown_tool_key_and_leaves_the_row() {
+    let (dir, store) = make_store();
+    let home = dir.path();
+    raw(&store, "global_selected_tools_v1", r#"["claude_code"]"#);
+
+    let err = apply_setting(
+        &store,
+        home,
+        SettingUpdate::GlobalToolConfig {
+            selected_tools: vec!["claude_code".to_string(), "ghost".to_string()],
+            scan_selected_only: true,
+        },
+    )
+    .expect_err("unknown key must be refused");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::UnknownTool {
+            tool: "ghost".to_string()
+        })
+    );
+    assert_eq!(
+        store
+            .get_setting("global_selected_tools_v1")
+            .unwrap()
+            .as_deref(),
+        Some(r#"["claude_code"]"#)
+    );
+    assert_eq!(
+        load_settings(&store, home)
+            .unwrap()
+            .scan_selected_tools_only,
+        DEFAULT_SCAN_SELECTED_TOOLS_ONLY
+    );
 }
 
 #[test]

@@ -240,6 +240,21 @@ describe("describeCommandError", () => {
     );
   });
 
+  it("tells the operator how to repair SETTING_CORRUPT and keeps the key and parser detail as a detail line", () => {
+    expect(
+      describeCommandError(
+        {
+          code: "SETTING_CORRUPT",
+          key: "global_selected_tools_v1",
+          detail: "expected value at line 1 column 1",
+        },
+        t,
+      ),
+    ).toBe(
+      "errors.settingCorrupt\n\nglobal_selected_tools_v1: expected value at line 1 column 1",
+    );
+  });
+
   it("names the unknown tool key for UNKNOWN_TOOL", () => {
     expect(
       describeCommandError({ code: "UNKNOWN_TOOL", tool: "not-a-tool" }, t),

@@ -151,8 +151,18 @@ export type AppSettings = {
 	/**  Empty string when no token is stored. */
 	github_token: string,
 	auto_sync_enabled: boolean,
-	/**  `None` = never configured (distinct from an empty selection). */
+	/**
+	 *  `None` = never configured (distinct from an empty selection). Keys
+	 *  the Tool registry no longer knows are pruned on read (round 12 D2).
+	 */
 	global_selected_tools: string[] | null,
+	/**
+	 *  True when the stored selection exists but could not be parsed. The
+	 *  selection above is then `None` for display only: a global sync refuses
+	 *  with `SETTING_CORRUPT` until the operator saves the selection again,
+	 *  which rewrites the row (round 12 D1).
+	 */
+	global_selected_tools_corrupt: boolean,
 	scan_selected_tools_only: boolean,
 	/**
 	 *  Always finite (clamped into `UI_ZOOM_LEVEL_RANGE`), hence `number`
@@ -250,7 +260,11 @@ name: string } | { code: "LOCAL_SOURCE_INSIDE_TOOL_DIR";
 /**  The refused folder (inside a Tool's global skills directory). */
 path: string; 
 /**  Registry key of the Tool whose skills directory holds it. */
-tool: string } | { code: "OTHER"; message: string };
+tool: string } | { code: "SETTING_CORRUPT"; 
+/**  Storage key of the setting that could not be parsed. */
+key: string; 
+/**  Parser diagnostic, not user copy. */
+detail: string } | { code: "OTHER"; message: string };
 
 export type FeaturedSkillDto = {
 	slug: string,

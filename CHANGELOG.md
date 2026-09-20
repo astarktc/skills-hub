@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A corrupt saved tool selection no longer syncs to every detected tool.** If the stored selection cannot be read, global syncs refuse with a clear message and the app warns once at startup; saving the selection under Configure Tools repairs it.
+- **A selected tool that a later version removed is dropped when the selection is read**, instead of hiding invisibly in Configure Tools, being re-saved on every change, and failing every sync batch.
+- **Adding or importing a skill deploys to the tools you selected, not only the detected ones**, and a selected tool that is not detected is reported once per tool as a warning (also for Sync All) rather than being skipped silently.
+
 ## [1.2.12] - 2026-09-12
 
 Consistent git source resolution, byte-preserving manifest edits, and single-skill actions that return their finished library state.

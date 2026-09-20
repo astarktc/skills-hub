@@ -6,6 +6,7 @@ import type {
   PropagationTargetDto,
   RefreshReportDto,
   RemovalReportDto,
+  SyncTargetResultDto,
 } from "../bindings";
 import { describeCommandError } from "../commandError";
 import type { ActionErrorEntry, TranslateFn } from "../hooks/useStatusReporter";
@@ -209,16 +210,48 @@ export function removalOutcome(
   return out;
 }
 
-/** Bulk skips are silent; selected install targets surface unwritable skips;
- * an explicit toggle surfaces every non-success, including TARGET_EXISTS. */
+/**
+ * A selected tool that is not detected is skipped per skill
+ * (`TOOL_NOT_INSTALLED`); the operator sees it once per tool, as a warning:
+ * nothing failed, the selection is stale (round 12 D3). `count` is how many
+ * skills the skip covered.
+ */
+class NotInstalledSkips {
+  private readonly perTool = new Map<string, number>();
+  /** Absorb the result when it is such a skip; false leaves it to the caller. */
+  absorb(result: SyncTargetResultDto): boolean {
+    if (
+      result.status.status !== "skipped" ||
+      result.status.error.code !== "TOOL_NOT_INSTALLED"
+    )
+      return false;
+    this.perTool.set(result.tool, (this.perTool.get(result.tool) ?? 0) + 1);
+    return true;
+  }
+  warnings(ctx: ReportContext): PlainEntry[] {
+    return Array.from(this.perTool, ([tool, count]) => ({
+      title: ctx.t("errors.syncSkippedNotInstalledTitle", {
+        tool: label(ctx, tool),
+      }),
+      message: ctx.t("errors.syncSkippedNotInstalledMessage", { count }),
+    }));
+  }
+}
+
+/** Bulk and install surface not-detected skips as per-tool warnings and
+ * other bulk skips silently; selected install targets surface unwritable
+ * skips; an explicit toggle surfaces every non-success, including
+ * TARGET_EXISTS. */
 export function syncOutcome(
   report: BatchSyncReportDto,
   ctx: ReportContext & { action: "bulk" | "install" | "toggle" },
 ): Outcome<PlainEntry> {
   const out = empty();
+  const skips = new NotInstalledSkips();
   for (const result of report.results) {
     const status = result.status;
     if (status.status === "synced") continue;
+    if (ctx.action !== "toggle" && skips.absorb(result)) continue;
     if (
       status.status !== "failed" &&
       ctx.action !== "toggle" &&
@@ -236,6 +269,7 @@ export function syncOutcome(
           : errorMessage(ctx, status.error),
     });
   }
+  out.warnings.push(...skips.warnings(ctx));
   out.completion.closeModal = out.errors.length === 0;
   out.completion.reload = ctx.action !== "toggle" || out.errors.length === 0;
   // No new copy: failed explicit actions have their error entries, not a success.
@@ -256,6 +290,7 @@ export function importOutcome(
   const out = empty();
   const { t } = ctx;
   const forcedLines: string[] = [];
+  const skips = new NotInstalledSkips();
   for (const group of report.groups) {
     const name = group.group_name;
     if (group.status.status === "failed") {
@@ -270,7 +305,7 @@ export function importOutcome(
         t("status.importSourceToolForced", { name, tool: label(ctx, tool) }),
       );
     for (const target of group.status.targets) {
-      if (target.status.status === "synced") continue;
+      if (target.status.status === "synced" || skips.absorb(target)) continue;
       out.errors.push({
         title: t("errors.syncFailedTitle", {
           name,
@@ -300,8 +335,11 @@ export function importOutcome(
         });
     }
   }
+  // Warnings keep the modal open (kept_divergent needs a look), but a stale
+  // selection is not the import's problem: the skip warnings do not.
   out.completion.closeModal =
     out.errors.length === 0 && out.warnings.length === 0;
+  out.warnings.push(...skips.warnings(ctx));
   out.toast = {
     kind: out.completion.closeModal ? "success" : "warning",
     message:

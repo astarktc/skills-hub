@@ -345,6 +345,15 @@ export const resources = {
           '"{{name}}" is managed here: it was imported from a tool and has no source to update from.',
         localSourceInsideToolDir:
           "This folder is already inside {{tool}}'s skills directory. Use Import to take over a skill that lives in a tool:",
+        settingCorrupt:
+          "Your saved tool selection could not be read, so nothing was synced. Open Configure Tools and save your selection to repair it.",
+        settingCorruptStartup:
+          "Your saved tool selection could not be read. Syncs are paused until you open Configure Tools and save your selection.",
+        syncSkippedNotInstalledTitle: "Skipped {{tool}}: not detected",
+        syncSkippedNotInstalledMessage_one:
+          "{{count}} skill was not deployed there. Install the tool, or untick it under Configure Tools.",
+        syncSkippedNotInstalledMessage_other:
+          "{{count}} skills were not deployed there. Install the tool, or untick it under Configure Tools.",
         unsyncFailedTitle: "Could not remove from {{tool}}",
         gitCloneUnknown:
           "Could not fetch the repository from GitHub. Please check your network/proxy and try again.",
@@ -933,6 +942,15 @@ export const resources = {
           "“{{name}}” 由 Skills Hub 管理：它是从工具目录导入的，没有可供更新的来源。",
         localSourceInsideToolDir:
           "该文件夹已位于 {{tool}} 的 Skills 目录内。要接管已在工具中的 Skill，请使用“导入”：",
+        settingCorrupt:
+          "无法读取已保存的工具选择，因此未同步任何内容。请打开“配置工具”并重新保存选择以修复。",
+        settingCorruptStartup:
+          "无法读取已保存的工具选择。在你打开“配置工具”并重新保存选择之前，同步将暂停。",
+        syncSkippedNotInstalledTitle: "已跳过 {{tool}}：未检测到",
+        syncSkippedNotInstalledMessage_one:
+          "{{count}} 个 Skill 未部署到该工具。请安装该工具，或在“配置工具”中取消勾选。",
+        syncSkippedNotInstalledMessage_other:
+          "{{count}} 个 Skill 未部署到该工具。请安装该工具，或在“配置工具”中取消勾选。",
         unsyncFailedTitle: "无法从 {{tool}} 中移除",
         gitCloneUnknown:
           "无法从 GitHub 拉取仓库。请检查网络/代理，或稍后重试。",

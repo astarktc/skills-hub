@@ -1,8 +1,10 @@
 // Tests at the AddSkillFlow seam: git/local candidate discovery routing
 // (single-candidate fast path vs pick modal), name-collision guards, the
 // Explore-page auto-select (the backend resolves the name; this side only
-// decides install / pick / not-found), and the deploy-target intersection
-// (user-selected ∩ installed). Backend mocked at the invokeTauri module
+// decides install / pick / not-found), and the deploy-target rule (the
+// operator's selection as saved, never intersected with detection — a
+// selected-but-undetected tool is the backend's skip to report). Backend
+// mocked at the invokeTauri module
 // seam; sync and library worlds enter as mocked dependency interfaces.
 
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -165,9 +167,8 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
   };
   const sync = {
     autoSyncEnabled: true,
-    // cursor is deselected, goose is selected but not installed → the
-    // deploy set must intersect down to just claude.
-    isInstalled: (id: string) => id === "claude" || id === "cursor",
+    // cursor is deselected; goose is selected but not installed and stays
+    // in the deploy set (round 12 D3: the batch reports it as a skip).
     syncSkillsToTools: vi.fn().mockResolvedValue({
       results: [],
       synced: 0,
@@ -233,7 +234,7 @@ describe("useAddSkillFlow git flow", () => {
     expect(installGitCalls()).toHaveLength(0);
   });
 
-  it("a single free candidate installs and syncs to selected∩installed targets", async () => {
+  it("a single free candidate installs and syncs to every selected target, detected or not", async () => {
     stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha")] });
     const setup = makeDeps();
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
@@ -250,7 +251,8 @@ describe("useAddSkillFlow git flow", () => {
       null,
       null,
     );
-    // goose is selected but not installed; cursor installed but deselected.
+    // goose is selected but not installed and is still deployed to (the
+    // backend reports the skip); cursor is deselected.
     expect(setup.sync.syncSkillsToTools).toHaveBeenCalledWith(
       [
         {
@@ -259,7 +261,7 @@ describe("useAddSkillFlow git flow", () => {
           source_path: "/hub/installed-skill",
         },
       ],
-      ["claude"],
+      ["claude", "goose"],
       { overwriteIfSameContent: true },
     );
     expect(setup.reporter.notify).toHaveBeenCalledWith(
@@ -673,8 +675,8 @@ describe("useAddSkillFlow import flow", () => {
         name: null,
       },
     ]);
-    // goose is selected but not installed; cursor installed but deselected.
-    expect(policy).toEqual({ auto_sync: true, tools: ["claude"] });
+    // goose is selected but not installed and still named; cursor is deselected.
+    expect(policy).toEqual({ auto_sync: true, tools: ["claude", "goose"] });
     expect(setup.reporter.notify).toHaveBeenCalledWith("success", "status.importCompleted", undefined);
     expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([]);
     expect(result.current.showImportModal).toBe(false);
@@ -809,5 +811,18 @@ it("an installed skill still completes when the deployment command throws", asyn
   expect(result.current.showAddModal).toBe(false);
   expect(setup.library.loadManagedSkills).toHaveBeenCalledTimes(1);
   expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([{ title: t("errors.unsyncedTitle", { name: "installed-skill" }), message: "deploy failed" }]);
+  expect(setup.reporter.notify).toHaveBeenCalledWith("warning", "partialFailure", undefined);
+});
+
+it("an empty selection deploys nowhere and says so (no-targets), even with tools detected", async () => {
+  stubBackend({ gitCandidates: [gitCandidate("alpha", "alpha")] });
+  const setup = makeDeps();
+  setup.sync.syncTargets = { claude: false, cursor: false, goose: false };
+  const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+  act(() => { result.current.handleOpenAdd(); result.current.setGitUrl("https://github.com/x/y"); });
+  await act(async () => { await result.current.handleCreate(); });
+  expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
+  expect(result.current.showAddModal).toBe(false);
+  expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([{ title: t("errors.unsyncedTitle", { name: "installed-skill" }), message: t("errors.noSyncTargets") }]);
   expect(setup.reporter.notify).toHaveBeenCalledWith("warning", "partialFailure", undefined);
 });

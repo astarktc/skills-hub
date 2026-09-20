@@ -365,7 +365,9 @@ export function skillToolChips(
  * Which tools a Tool-selection list renders: every tool when the operator is
  * not filtering, otherwise the detected ones plus any tool the saved
  * selection already carries. A selected-but-undetected tool stays visible so
- * it can be unticked instead of being silently re-persisted.
+ * it can be unticked instead of being silently re-persisted. A selected key
+ * the registry no longer knows never reaches here: the backend prunes it
+ * when it reads the selection (round 12 D2).
  */
 export function visibleToolChoices<T extends { key: string }>(
   allTools: T[],

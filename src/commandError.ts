@@ -42,6 +42,7 @@ const COMMAND_ERROR_CODE_MAP = {
   SYMLINK_CHAIN_TOO_DEEP: true,
   NOT_REFRESHABLE: true,
   LOCAL_SOURCE_INSIDE_TOOL_DIR: true,
+  SETTING_CORRUPT: true,
   OTHER: true,
 } as const satisfies Record<CommandError["code"], true>;
 
@@ -180,6 +181,10 @@ export function describeCommandError(
         t("errors.localSourceInsideToolDir", { tool: toolLabel(t, e.tool) }),
         e.path,
       );
+    case "SETTING_CORRUPT":
+      // The copy names the repair (re-save under Configure Tools); the
+      // storage key and parser message are diagnostics.
+      return withDetail(t("errors.settingCorrupt"), `${e.key}: ${e.detail}`);
     case "OTHER":
       return e.message;
   }

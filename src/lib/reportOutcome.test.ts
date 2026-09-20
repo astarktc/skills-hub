@@ -9,6 +9,7 @@ import type {
   RefreshReportDto,
   RemovalReportDto,
   SkillRefreshResultDto,
+  SyncTargetResultDto,
 } from "../bindings";
 import {
   deleteOutcome,
@@ -489,18 +490,31 @@ const syncReport: BatchSyncReportDto = {
 };
 describe("syncOutcome", () => {
   it.each([
-    { action: "bulk", errors: 1 },
-    { action: "install", errors: 2 },
-    { action: "toggle", errors: 3 },
+    { action: "bulk", errors: 1, warnings: 1 },
+    { action: "install", errors: 2, warnings: 1 },
+    { action: "toggle", errors: 3, warnings: 0 },
   ] as const)(
     "$action selects the intended failures/skips",
-    ({ action, errors }) => {
+    ({ action, errors, warnings }) => {
       const out = syncOutcome(syncReport, { ...ctx, action });
       expect(out.errors).toHaveLength(errors);
       expect(out.errors[0]).toEqual({
         title: t("errors.syncFailedTitle", { name: "git", tool: "unknown" }),
         message: "failed",
       });
+      // A not-detected skip is a per-tool warning for bulk/install (the
+      // selection is stale, nothing failed); an explicit toggle keeps it
+      // as the error it already was.
+      expect(out.warnings).toEqual(
+        warnings
+          ? [
+              {
+                title: t("errors.syncSkippedNotInstalledTitle", { tool: "absent" }),
+                message: t("errors.syncSkippedNotInstalledMessage", { count: 1 }),
+              },
+            ]
+          : [],
+      );
       expect(out.toast).toBeNull();
       expect(out.completion).toEqual({
         reload: action !== "toggle",
@@ -531,6 +545,36 @@ describe("syncOutcome", () => {
                 : "status.syncCompleted",
           },
     );
+  });
+  it("folds one warning per not-detected tool across skills, labelled, without touching completion", () => {
+    const skip = (skill: string, tool: string): SyncTargetResultDto => ({
+      skill_id: skill,
+      skill_name: skill,
+      tool,
+      status: { status: "skipped", error: { code: "TOOL_NOT_INSTALLED", tool } },
+    });
+    const out = syncOutcome(
+      {
+        results: [syncReport.results[0], skip("a", "claude"), skip("b", "claude"), skip("a", "absent")],
+        synced: 1,
+        skipped: 3,
+        failed: 0,
+      },
+      { ...ctx, action: "bulk" },
+    );
+    expect(out.errors).toEqual([]);
+    expect(out.warnings).toEqual([
+      {
+        title: t("errors.syncSkippedNotInstalledTitle", { tool: "CLAUDE" }),
+        message: t("errors.syncSkippedNotInstalledMessage", { count: 2 }),
+      },
+      {
+        title: t("errors.syncSkippedNotInstalledTitle", { tool: "absent" }),
+        message: t("errors.syncSkippedNotInstalledMessage", { count: 1 }),
+      },
+    ]);
+    expect(out.completion).toEqual({ reload: true, closeModal: true, conflict: false });
+    expect(out.toast).toEqual({ kind: "success", message: "status.syncCompleted" });
   });
   it("explicit TARGET_EXISTS toggle shows the path and neither reloads nor succeeds", () => {
     const out = syncOutcome(
@@ -666,6 +710,18 @@ describe("importOutcome", () => {
         ? t("status.importPartial", { imported: 0, failed: 1 })
         : errors + warnings ? "partialFailure" : "status.importCompleted",
     );
+  });
+  it("reports a not-detected target as a per-tool warning that does not hold the import open", () => {
+    const out = importOutcome(importReport(imported({ targets: [syncReport.results[2]] })), ctx);
+    expect(out.errors).toEqual([]);
+    expect(out.warnings).toEqual([
+      {
+        title: t("errors.syncSkippedNotInstalledTitle", { tool: "absent" }),
+        message: t("errors.syncSkippedNotInstalledMessage", { count: 1 }),
+      },
+    ]);
+    expect(out.completion).toEqual({ reload: true, closeModal: true, conflict: false });
+    expect(out.toast).toEqual({ kind: "success", message: "status.importCompleted" });
   });
   it("keeps forced-tool explanations as separate detail lines with label fallback", () => {
     expect(

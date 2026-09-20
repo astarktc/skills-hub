@@ -5,20 +5,24 @@
 //! default / bound rule for each setting, the `AppSettings` DTO the frontend
 //! reads (bounds included, so the UI clamps from data), and the
 //! `SettingUpdate` command the frontend writes. Malformed or legacy stored
-//! values always parse to the setting's default — never an error.
+//! values parse to the setting's default — never an error — with one
+//! exception: the global tool selection drives sync writes, so a corrupt row
+//! is a typed refusal (`SignalError::SettingCorrupt`) on the write-driving
+//! read, not a silent fallback to "every detected tool" (round 12 D1).
 //!
 //! Core never reads the environment: callers pass `fallback_root` (the
 //! operator's home in production) for the central repo default.
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::central_repo::{ensure_central_repo, move_central_repo};
+use super::errors::SignalError;
 use super::skill_store::SkillStore;
-use super::tool_adapters::{global_tool_entries, installed_keys};
+use super::tool_adapters::{adapter_by_key, global_tool_entries, installed_keys};
 
 /// Storage keys — spelled here and nowhere else.
 mod keys {
@@ -107,8 +111,14 @@ pub struct AppSettings {
     /// Empty string when no token is stored.
     pub github_token: String,
     pub auto_sync_enabled: bool,
-    /// `None` = never configured (distinct from an empty selection).
+    /// `None` = never configured (distinct from an empty selection). Keys
+    /// the Tool registry no longer knows are pruned on read (round 12 D2).
     pub global_selected_tools: Option<Vec<String>>,
+    /// True when the stored selection exists but could not be parsed. The
+    /// selection above is then `None` for display only: a global sync refuses
+    /// with `SETTING_CORRUPT` until the operator saves the selection again,
+    /// which rewrites the row (round 12 D1).
+    pub global_selected_tools_corrupt: bool,
     pub scan_selected_tools_only: bool,
     /// Always finite (clamped into `UI_ZOOM_LEVEL_RANGE`), hence `number`
     /// rather than specta's default `number | null` for `f64`.
@@ -148,6 +158,7 @@ pub enum SettingUpdate {
 /// Read and parse every setting. Only a storage failure is an error;
 /// malformed values parse to their defaults.
 pub fn load_settings(store: &SkillStore, fallback_root: &Path) -> Result<AppSettings> {
+    let global_selection = read_tool_selection(store, keys::GLOBAL_SELECTED_TOOLS)?;
     Ok(AppSettings {
         central_repo_path: resolve_central_repo_path(store, fallback_root)?
             .to_string_lossy()
@@ -156,7 +167,8 @@ pub fn load_settings(store: &SkillStore, fallback_root: &Path) -> Result<AppSett
         git_cache_ttl_secs: git_cache_ttl_secs(store),
         github_token: github_token(store)?.unwrap_or_default(),
         auto_sync_enabled: read_bool(store, keys::AUTO_SYNC_ENABLED, DEFAULT_AUTO_SYNC_ENABLED)?,
-        global_selected_tools: read_string_list(store, keys::GLOBAL_SELECTED_TOOLS)?,
+        global_selected_tools: global_selection.configured(),
+        global_selected_tools_corrupt: matches!(global_selection, StoredSelection::Corrupt { .. }),
         scan_selected_tools_only: read_bool(
             store,
             keys::SCAN_SELECTED_TOOLS_ONLY,
@@ -248,11 +260,19 @@ pub fn ui_zoom_level(store: &SkillStore) -> f64 {
 /// detection either: a selected-but-uninstalled key stays in it and is
 /// reported downstream as a skip (`GlobalSyncError::ToolNotInstalled`), which
 /// is the operator's only signal that their selection has gone stale.
+///
+/// A stored selection that cannot be parsed is a refusal
+/// (`SignalError::SettingCorrupt`), never a fallback to detection: the
+/// operator repairs it by saving the selection again.
 pub fn effective_global_tool_targets(store: &SkillStore, home: &Path) -> Result<Vec<String>> {
     Ok(
-        match read_string_list(store, keys::GLOBAL_SELECTED_TOOLS)? {
-            Some(selected) => selected,
-            None => installed_keys(&global_tool_entries(home)),
+        match read_tool_selection(store, keys::GLOBAL_SELECTED_TOOLS)? {
+            StoredSelection::Configured(selected) => selected,
+            StoredSelection::Unconfigured => installed_keys(&global_tool_entries(home)),
+            StoredSelection::Corrupt { detail } => bail!(SignalError::SettingCorrupt {
+                key: keys::GLOBAL_SELECTED_TOOLS.to_string(),
+                detail,
+            }),
         },
     )
 }
@@ -297,6 +317,14 @@ pub fn apply_setting(
             selected_tools,
             scan_selected_only,
         } => {
+            // The UI only offers registry keys; the guard keeps the stored
+            // row honest for any other caller (round 12 D2).
+            if let Some(tool) = selected_tools
+                .iter()
+                .find(|key| adapter_by_key(key).is_none())
+            {
+                bail!(SignalError::UnknownTool { tool: tool.clone() });
+            }
             write_str(
                 store,
                 keys::GLOBAL_SELECTED_TOOLS,
@@ -401,10 +429,53 @@ fn read_bool(store: &SkillStore, key: &str, default: bool) -> Result<bool> {
         .unwrap_or(default))
 }
 
-fn read_string_list(store: &SkillStore, key: &str) -> Result<Option<Vec<String>>> {
-    Ok(store
-        .get_setting(key)?
-        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok()))
+/// A stored Tool selection as read from its row. `Unconfigured` (absent or
+/// blank) is the only state that may fall back to detection; `Configured`
+/// carries registry keys only; `Corrupt` is a row that exists but is not a
+/// JSON string array.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StoredSelection {
+    Unconfigured,
+    Configured(Vec<String>),
+    Corrupt { detail: String },
+}
+
+impl StoredSelection {
+    /// The display shape: `Corrupt` reads as `None`, the wire flag says why.
+    fn configured(&self) -> Option<Vec<String>> {
+        match self {
+            StoredSelection::Configured(keys) => Some(keys.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// The one reader of a Tool-selection row. Keys the registry no longer knows
+/// are dropped here (logged once per read), so neither the modal nor a sync
+/// batch ever sees a tool that does not exist; the operator's next save
+/// persists the pruned set.
+fn read_tool_selection(store: &SkillStore, key: &str) -> Result<StoredSelection> {
+    let Some(raw) = store.get_setting(key)? else {
+        return Ok(StoredSelection::Unconfigured);
+    };
+    if raw.trim().is_empty() {
+        return Ok(StoredSelection::Unconfigured);
+    }
+    let keys = match serde_json::from_str::<Vec<String>>(&raw) {
+        Ok(keys) => keys,
+        Err(err) => {
+            return Ok(StoredSelection::Corrupt {
+                detail: err.to_string(),
+            })
+        }
+    };
+    let (known, unknown): (Vec<String>, Vec<String>) = keys
+        .into_iter()
+        .partition(|tool| adapter_by_key(tool).is_some());
+    for tool in &unknown {
+        log::warn!("[settings] dropping unknown tool key {tool:?} from {key}");
+    }
+    Ok(StoredSelection::Configured(known))
 }
 
 fn write_str(store: &SkillStore, key: &str, value: &str) -> Result<()> {
