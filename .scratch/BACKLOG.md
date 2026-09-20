@@ -23,17 +23,6 @@ Numbers are stable: never renumber; retire by deleting the line (history keeps i
   source side, so an external central edit can make `overwrite_if_same_content` clobber a divergent target
   (`content_identity.rs:38,72`). Either an ADR recording "row is source of truth; external edits are unsupported" or
   reconcile-driven invalidation. Source: `archive/round7/backlog.md` #20 (Opus); follows round-10 Q2.
-- **#06 Malformed saved `global_selected_tools` must fail safely.** `settings.rs:404–407` turns a JSON parse failure
-  into `None` — corrupt is indistinguishable from never-configured, unlike a failed DB read. Excluded from every
-  wave-B ticket. Source: `archive/round10/wave-b-ticketing-evidence.md:57`.
-- **#07 C3 — a selected tool key the registry no longer knows is invisible and re-persisted.** A key in
-  `selectedTools` but not in `allTools` (tool removed in a later version) never renders — `visibleToolChoices` filters
-  `allTools` only (`skillPresentation.ts:376–379`) — and is written back on save. Distinct from the fixed
-  "known but undetected" case. Source: round-11 review C3 (`archive/round10/wave-b-ticketing-evidence.md:57`; original
-  text lived only in a gitignored conversation log, 2026-09-08).
-- **#08 C4 — Add/import silently drops a stale selected key.** `getSelectedInstalledIds` intersects the selection with
-  detection (`useAddSkillFlow.ts:96–101`), so a selected-but-undetected tool is skipped with no signal. Decide: document
-  the per-action exception, or align with the global-sync rule and report a skip. Source: round-11 review C4 (same as #07).
 - **#09 Reconstruct CHANGELOG entries 1.2.7–1.2.11.** Headings jump from 1.2.12 to 1.2.6. Reconstruct from tags and
   commit history; do not fabricate. Source: `archive/round10/wave-b-review-disposition.md:16`.
 - **#10 Release-mode regression for content identity in CI.** `update_supplies_a_real_hash_to_copy_assignments_and_reconcile_keeps_synced`
