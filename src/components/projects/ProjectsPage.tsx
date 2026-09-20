@@ -1,8 +1,9 @@
-import { memo, useCallback } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
 import { describeCommandError } from "../../commandError";
+import { projectRemovalOutcome, type Outcome, type PlainEntry } from "../../lib/reportOutcome";
 import { useProjectState } from "./useProjectState";
 import ProjectList from "./ProjectList";
 import AssignmentMatrix from "./AssignmentMatrix";
@@ -12,6 +13,7 @@ import ToolConfigModal from "../shared/ToolConfigModal";
 import RemoveProjectModal from "./RemoveProjectModal";
 import type { IgnoreUpdateOptions } from "./types";
 import type {
+  ActionErrorEntry,
   NotifyErrorFn,
   NotifyFn,
 } from "../../hooks/useStatusReporter";
@@ -21,14 +23,38 @@ type ProjectsPageProps = {
   notify: NotifyFn;
   /** The reporter's command-failure entry point: `notifyError(err)`. */
   notifyError: NotifyErrorFn;
+  /** The reporter's per-target failure batch (one toast per kept artifact). */
+  showActionErrors: (errors: ActionErrorEntry[]) => void;
 };
 
 const ProjectsPage = ({
   notify,
   notifyError,
+  showActionErrors,
 }: ProjectsPageProps) => {
   const { t } = useTranslation();
   const state = useProjectState();
+
+  const toolLabelById = useMemo(
+    () =>
+      Object.fromEntries(
+        (state.toolStatus?.tools ?? []).map((tool) => [tool.key, tool.label]),
+      ),
+    [state.toolStatus],
+  );
+
+  // Per-target removal outcomes (ADR-0002) are report data: the fold decides
+  // the entries and the toast; this only shows them and reports whether the
+  // modal may close.
+  const applyOutcome = useCallback(
+    (outcome: Outcome<PlainEntry>) => {
+      showActionErrors(outcome.errors);
+      if (outcome.toast)
+        notify(outcome.toast.kind, outcome.toast.message, outcome.toast.detail);
+      return outcome.completion;
+    },
+    [notify, showActionErrors],
+  );
 
   const handleAddProject = useCallback(
     async (path: string, gitignore: IgnoreUpdateOptions) => {
@@ -49,13 +75,17 @@ const ProjectsPage = ({
   const handleToolConfigConfirm = useCallback(
     async (selectedTools: string[]) => {
       try {
-        await state.configureTools(selectedTools);
-        state.closeDialog();
+        const report = await state.configureTools(selectedTools);
+        if (!report) return;
+        const completion = applyOutcome(
+          projectRemovalOutcome(report, { t, toolLabelById, action: "configureTools" }),
+        );
+        if (completion.closeModal) state.closeDialog();
       } catch (err) {
         notifyError(err);
       }
     },
-    [notifyError, state],
+    [applyOutcome, notifyError, state, t, toolLabelById],
   );
 
   const dialog = state.dialog;
@@ -67,13 +97,15 @@ const ProjectsPage = ({
   const handleRemoveProject = useCallback(async () => {
     if (dialog?.kind !== "remove") return;
     try {
-      await state.removeProject(dialog.projectId);
-      state.closeDialog();
-      notify("success", t("projects.removeConfirm"));
+      const report = await state.removeProject(dialog.projectId);
+      const completion = applyOutcome(
+        projectRemovalOutcome(report, { t, toolLabelById, action: "removeProject" }),
+      );
+      if (completion.closeModal) state.closeDialog();
     } catch (err) {
       notifyError(err);
     }
-  }, [dialog, notify, notifyError, state, t]);
+  }, [applyOutcome, dialog, notifyError, state, t, toolLabelById]);
 
   const handlePromptRemove = useCallback(
     (id: string) => {

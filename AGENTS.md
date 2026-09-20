@@ -123,10 +123,12 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   a catalog-read failure is a command error, never an empty success. Refresh-all, import and delete retain
   `getManagedSkills` (`loadManagedSkills`); thrown Update/Restore/Re-point requests also reload, thrown Edit
   does not. Three project mutations cannot
-  answer with a view: `remove_project` returns `Vec<ProjectDto>` (the project is gone),
+  answer with a view: `remove_project` returns `{ projects, report }` (the project is normally gone; a
+  project kept under ADR-0002 is still listed and the hook takes the failure-path `refreshView` for its matrix),
   `update_project_gitignore` returns `()` (it changes no view row), and `resync_all_projects` returns
   `{ summaries, projects }` spanning every project, so the hook refetches `getProjectView` for the selected
-  project alone.
+  project alone. `configure_project_tools` returns `{ view, report }` — the dropped tools' removal reports
+  merged into one. Both reports are folded by `projectRemovalOutcome` in `ProjectsPage`, never in the hook.
 - **Frontend tests are hook- and pure-function-level; no component rendering tests** (vitest + `renderHook`,
   jsdom; colocated `src/**/*.test.ts`,
   type-checked by `npm run build`): mock at module seams — `src/lib/tauri.ts` for backend calls,

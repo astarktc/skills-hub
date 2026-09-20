@@ -9,7 +9,7 @@ use crate::core::project_ops::{
 use crate::core::project_sync::{self, AssignTargetStatus, ToggleOutcome};
 use crate::core::skill_store::{ProjectSkillAssignmentRecord, SkillStore};
 
-use super::CommandError;
+use super::{to_removal_report_dto, CommandError, RemovalReportDto};
 use crate::core::clock::now_ms;
 
 /// Everything the project world shows for one project, as one wire value:
@@ -69,19 +69,33 @@ pub async fn register_project(
     .map_err(CommandError::from_anyhow)
 }
 
+/// What removing a project settled: the project list *after* the removal
+/// and the per-target report. When every artifact went, the project is
+/// absent from `projects`; when one stayed, the project is still listed
+/// (its rows kept with Sync status `error`, ADR-0002) and `report` names
+/// each path that could not be removed — report data, not a command error.
+#[derive(serde::Serialize, Type)]
+pub struct RemoveProjectResultDto {
+    pub projects: Vec<ProjectDto>,
+    pub report: RemovalReportDto,
+}
+
 /// Remove a project and every artifact it owns. The project it named is
-/// gone, so the fresh view is the *remaining* project list.
+/// (normally) gone, so the fresh view is the *remaining* project list.
 #[tauri::command]
 #[specta::specta]
 #[allow(non_snake_case)]
 pub async fn remove_project(
     store: State<'_, SkillStore>,
     projectId: String,
-) -> Result<Vec<ProjectDto>, CommandError> {
+) -> Result<RemoveProjectResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        project_ops::remove_project_and_artifacts(&store, &projectId)?;
-        project_ops::list_project_dtos(&store)
+        let report = project_ops::remove_project_and_artifacts(&store, &projectId)?;
+        Ok::<_, anyhow::Error>(RemoveProjectResultDto {
+            projects: project_ops::list_project_dtos(&store)?,
+            report: to_removal_report_dto(report),
+        })
     })
     .await
     .map_err(CommandError::internal)?
@@ -133,6 +147,17 @@ pub async fn update_project_path(
     .map_err(CommandError::from_anyhow)
 }
 
+/// What configuring a project's tool set settled: the resulting view and
+/// the removal report for every tool dropped from the set, merged into one
+/// (a tool whose artifact stayed is still in `view.tools` — its row was
+/// kept for a retry — and its failure is in `report`). A configuration
+/// that dropped nothing carries an empty report.
+#[derive(serde::Serialize, Type)]
+pub struct ConfigureProjectToolsResultDto {
+    pub view: ProjectViewDto,
+    pub report: RemovalReportDto,
+}
+
 /// Replace the project's configured tool set and, when `gitignore` is given,
 /// update its ignore files afterwards. Core owns the ordering
 /// (`project_ops::configure_project_tools`). Removing a tool cascades to its
@@ -145,11 +170,25 @@ pub async fn configure_project_tools(
     projectId: String,
     tools: Vec<String>,
     gitignore: Option<IgnoreUpdateOptions>,
-) -> Result<ProjectViewDto, CommandError> {
+) -> Result<ConfigureProjectToolsResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        project_ops::configure_project_tools(&store, &projectId, &tools, gitignore)?;
-        view_of(&store, &projectId)
+        let removals = project_ops::configure_project_tools(&store, &projectId, &tools, gitignore)?;
+        let mut report = RemovalReportDto {
+            targets: Vec::new(),
+            removed: 0,
+            failed: 0,
+        };
+        for removal in removals {
+            let dto = to_removal_report_dto(removal);
+            report.targets.extend(dto.targets);
+            report.removed += dto.removed;
+            report.failed += dto.failed;
+        }
+        Ok::<_, anyhow::Error>(ConfigureProjectToolsResultDto {
+            view: view_of(&store, &projectId)?,
+            report,
+        })
     })
     .await
     .map_err(CommandError::internal)?

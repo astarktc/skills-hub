@@ -211,6 +211,54 @@ export function removalOutcome(
 }
 
 /**
+ * Project removal and tool-set configuration (which removes the dropped
+ * tools' artifacts) settle per target under ADR-0002: a row whose artifact
+ * stayed is kept with status `error`, and for `removeProject` the project
+ * itself is kept too. The fold names every failed target; the toast says
+ * what was kept. An empty report is a normal outcome here (a project or
+ * dropped tool with no deployments), never a "nothing planned" warning.
+ * Neither action reloads: the project world applies what the mutation
+ * returned.
+ */
+export function projectRemovalOutcome(
+  report: RemovalReportDto,
+  ctx: ReportContext & { action: "removeProject" | "configureTools" },
+): Outcome<PlainEntry> {
+  const out = empty();
+  out.completion.reload = false;
+  for (const target of report.targets) {
+    if (target.status.status !== "failed") continue;
+    out.errors.push({
+      title: ctx.t("errors.projectRemovalFailedTitle", {
+        tool: label(ctx, target.tool),
+      }),
+      message: errorMessage(ctx, target.status.error),
+    });
+  }
+  const failed = report.failed > 0 || out.errors.length > 0;
+  out.completion.closeModal = !failed;
+  if (ctx.action === "removeProject")
+    out.toast = failed
+      ? {
+          kind: "warning",
+          message: ctx.t("projects.removeKept", {
+            count: report.removed,
+            failed: report.failed,
+          }),
+        }
+      : { kind: "success", message: ctx.t("projects.removeComplete") };
+  if (ctx.action === "configureTools" && failed)
+    out.toast = {
+      kind: "warning",
+      message: ctx.t("projects.toolRemovalKept", {
+        count: report.removed,
+        failed: report.failed,
+      }),
+    };
+  return out;
+}
+
+/**
  * A selected tool that is not detected is skipped per skill
  * (`TOOL_NOT_INSTALLED`); the operator sees it once per tool, as a warning:
  * nothing failed, the selection is stale (round 12 D3). `count` is how many

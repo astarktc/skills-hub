@@ -108,6 +108,7 @@ function App() {
     cancelLoading,
     notify,
     notifyError,
+    showActionErrors,
     copyToClipboard,
     notifications,
     unreadCount,
@@ -357,6 +358,7 @@ function App() {
           <ProjectsPage
             notify={notify}
             notifyError={notifyError}
+            showActionErrors={showActionErrors}
           />
         ) : (
           <ExplorePage

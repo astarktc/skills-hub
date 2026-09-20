@@ -16,6 +16,7 @@ import {
   invocationEditOutcome,
   importOutcome,
   installOutcome,
+  projectRemovalOutcome,
   refreshOutcome,
   removalOutcome,
   syncOutcome,
@@ -439,6 +440,75 @@ describe("removalOutcome", () => {
       });
       expect(out.errors).toEqual([]);
       expect(out.completion.closeModal).toBe(false);
+    }
+  });
+  it("a project removal reports each kept target and keeps its modal open", () => {
+    const report: RemovalReportDto = {
+      targets: [
+        {
+          scope: { scope: "project", project_id: "p1" },
+          tool: "claude",
+          path: "/work/p1/.claude/skills/a",
+          status: { status: "removed" },
+        },
+        {
+          scope: { scope: "project", project_id: "p1" },
+          tool: "pi",
+          path: "/work/p1/.pi/skills/a",
+          status: { status: "failed", error: { code: "OTHER", message: "denied" } },
+        },
+      ],
+      removed: 1,
+      failed: 1,
+    };
+    const kept = [
+      { title: t("errors.projectRemovalFailedTitle", { tool: "pi" }), message: "denied" },
+    ];
+    expect(projectRemovalOutcome(report, { ...ctx, action: "removeProject" })).toEqual({
+      toast: { kind: "warning", message: t("projects.removeKept", { count: 1, failed: 1 }) },
+      errors: kept,
+      warnings: [],
+      completion: { reload: false, closeModal: false, conflict: false },
+    });
+    expect(projectRemovalOutcome(report, { ...ctx, action: "configureTools" })).toEqual({
+      toast: { kind: "warning", message: t("projects.toolRemovalKept", { count: 1, failed: 1 }) },
+      errors: kept,
+      warnings: [],
+      completion: { reload: false, closeModal: false, conflict: false },
+    });
+    // The tool label map applies to the failed target's title.
+    const relabelled = { ...report, targets: [{ ...report.targets[1], tool: "claude" }] };
+    expect(
+      projectRemovalOutcome(relabelled, { ...ctx, action: "removeProject" }).errors[0].title,
+    ).toBe(t("errors.projectRemovalFailedTitle", { tool: "CLAUDE" }));
+  });
+  it("a clean or empty project removal closes without a nothing-planned warning", () => {
+    const clean: RemovalReportDto = {
+      targets: [
+        {
+          scope: { scope: "project", project_id: "p1" },
+          tool: "pi",
+          path: "/work/p1/.pi/skills/a",
+          status: { status: "removed" },
+        },
+      ],
+      removed: 1,
+      failed: 0,
+    };
+    const nothing: RemovalReportDto = { targets: [], removed: 0, failed: 0 };
+    for (const report of [clean, nothing]) {
+      expect(projectRemovalOutcome(report, { ...ctx, action: "removeProject" })).toEqual({
+        toast: { kind: "success", message: "projects.removeComplete" },
+        errors: [],
+        warnings: [],
+        completion: { reload: false, closeModal: true, conflict: false },
+      });
+      expect(projectRemovalOutcome(report, { ...ctx, action: "configureTools" })).toEqual({
+        toast: null,
+        errors: [],
+        warnings: [],
+        completion: { reload: false, closeModal: true, conflict: false },
+      });
     }
   });
   it("delete's null result reloads and closes; command errors are not reports", () => {

@@ -210,7 +210,10 @@ pub(crate) fn remove_project_tool_and_artifacts(
 /// managed block is rewritten afterwards — callers cannot get the sequence
 /// wrong. Tools already configured keep their records; removed tools go
 /// through [`remove_project_tool_and_artifacts`]. Unknown tool keys fail before any
-/// write. Returns the resulting tool list.
+/// write. Returns one [`RemovalReport`] per tool dropped from the set (in
+/// persisted order): a tool whose artifact stayed keeps its row for a retry
+/// and its report names the path — per-target failures are report data,
+/// never an error. The resulting tool list is read through the project view.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
 /// Both composed steps use their unlocked seams — the guard is not reentrant.
@@ -219,7 +222,7 @@ pub fn configure_project_tools(
     project_id: &str,
     tools: &[String],
     ignore: Option<IgnoreUpdateOptions>,
-) -> Result<Vec<ProjectToolDto>> {
+) -> Result<Vec<RemovalReport>> {
     mutation_guard::serialized(|| {
         configure_project_tools_unlocked(store, project_id, tools, ignore)
     })
@@ -230,7 +233,7 @@ pub(crate) fn configure_project_tools_unlocked(
     project_id: &str,
     tools: &[String],
     ignore: Option<IgnoreUpdateOptions>,
-) -> Result<Vec<ProjectToolDto>> {
+) -> Result<Vec<RemovalReport>> {
     require_project(store, project_id)?;
     for tool in tools {
         if tool_adapters::adapter_by_key(tool).is_none() {
@@ -249,14 +252,17 @@ pub(crate) fn configure_project_tools_unlocked(
         }
     }
     // Continue semantics: one tool whose artifacts could not be removed must
-    // not stop the others (or the ignore update). Its failures are collected
-    // and raised once, after the configuration is otherwise applied.
-    let mut failures: Vec<String> = Vec::new();
+    // not stop the others (or the ignore update). Its report is collected;
+    // the failures reach the caller as report data once the configuration is
+    // otherwise applied.
+    let mut removals: Vec<RemovalReport> = Vec::new();
     for record in &persisted {
         if !tools.contains(&record.tool) {
-            failures.extend(
-                remove_project_tool_and_artifacts(store, project_id, &record.tool)?.failures(),
-            );
+            removals.push(remove_project_tool_and_artifacts(
+                store,
+                project_id,
+                &record.tool,
+            )?);
         }
     }
 
@@ -264,19 +270,18 @@ pub(crate) fn configure_project_tools_unlocked(
         gitignore::update_for_project_unlocked(store, project_id, options)?;
     }
 
-    if !failures.is_empty() {
-        bail!(SignalError::DeleteCleanupFailed { failures });
-    }
-
-    project_tool_dtos(store, project_id)
+    Ok(removals)
 }
 
 /// Artifact removal for a whole project, then the project record: the
 /// [`RemovalScope::Project`] plan, executed once, then this caller's final
 /// policy — mirroring the whole-skill rule of ADR-0002: the project row goes
 /// only when every artifact went. If any removal failed, the project and its
-/// `error` assignment rows are kept and the typed `DeleteCleanupFailed` names
-/// what is still on disk, so a retry can re-plan exactly those paths.
+/// `error` assignment rows are kept and the returned report names what is
+/// still on disk (per-target failures are report data, not an error), so a
+/// retry can re-plan exactly those paths. `report.record_deleted` is not
+/// set for this scope; callers read `report.failures().is_empty()` (or the
+/// project's absence) for "the project is gone".
 ///
 /// Assignment rows the plan skipped (no locatable artifact: unknown tool key,
 /// no skill name) are deleted with the project — `delete_project` cascades
@@ -285,7 +290,7 @@ pub(crate) fn configure_project_tools_unlocked(
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
 /// No composite operation removes a project, so it has no unlocked seam.
-pub fn remove_project_and_artifacts(store: &SkillStore, project_id: &str) -> Result<()> {
+pub fn remove_project_and_artifacts(store: &SkillStore, project_id: &str) -> Result<RemovalReport> {
     mutation_guard::serialized(|| {
         require_project(store, project_id)?;
 
@@ -295,13 +300,16 @@ pub fn remove_project_and_artifacts(store: &SkillStore, project_id: &str) -> Res
         let plan = artifact_removal::plan(store, &scope)?;
         let report = artifact_removal::execute_unlocked(store, plan)?;
 
-        let failures = report.failures();
-        if !failures.is_empty() {
-            bail!(SignalError::DeleteCleanupFailed { failures });
+        if report.failures().is_empty() {
+            store.delete_project(project_id)?;
+        } else {
+            log::warn!(
+                "remove_project_and_artifacts: keeping project {} for retry: {}",
+                project_id,
+                report
+            );
         }
-
-        store.delete_project(project_id)?;
-        Ok(())
+        Ok(report)
     })
 }
 

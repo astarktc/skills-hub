@@ -11,6 +11,7 @@ import type {
   BulkAssignResultDto,
   GitignoreStatusDto,
   IgnoreUpdateOptions,
+  RemovalReportDto,
 } from "./types";
 import type { ManagedSkill, ToolStatusDto } from "../skills/types";
 
@@ -61,7 +62,13 @@ export type ProjectState = {
     path: string,
     gitignore: IgnoreUpdateOptions,
   ) => Promise<ProjectDto>;
-  removeProject: (id: string) => Promise<void>;
+  /**
+   * Remove a project and its artifacts. Resolves to the per-target removal
+   * report (folded by the caller, `projectRemovalOutcome`); a project whose
+   * artifact stayed is still listed (ADR-0002), and its matrix converges on
+   * the backend's settled rows.
+   */
+  removeProject: (id: string) => Promise<RemovalReportDto>;
   toggleAssignment: (skillId: string, tool: string) => Promise<void>;
   bulkAssign: (skillId: string) => Promise<BulkAssignResultDto | undefined>;
   resyncProject: () => Promise<ResyncSummaryDto>;
@@ -74,9 +81,11 @@ export type ProjectState = {
   /**
    * Make `tools` the selected project's tool set (one backend command).
    * A pending ignore intent rides along and is consumed only on success, so
-   * a retry after a failure replays it.
+   * a retry after a failure replays it. Resolves to the merged removal
+   * report for the dropped tools (empty when nothing was dropped), or
+   * `undefined` when no project is selected.
    */
-  configureTools: (tools: string[]) => Promise<void>;
+  configureTools: (tools: string[]) => Promise<RemovalReportDto | undefined>;
   /** Abandon a pending ignore intent (tool-config modal dismissed). */
   discardPendingIgnore: () => void;
   getGitignoreStatus: (projectId: string) => Promise<GitignoreStatusDto>;
@@ -262,22 +271,34 @@ export function useProjectState(): ProjectState {
   );
 
   const removeProject = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<RemovalReportDto> => {
       let remaining: ProjectDto[];
+      let report: RemovalReportDto;
       try {
-        // The project is gone, so the mutation's view is the remaining list.
-        remaining = await invokeTauri("removeProject", id);
+        // The mutation's view is the project list after the removal.
+        ({ projects: remaining, report } = await invokeTauri(
+          "removeProject",
+          id,
+        ));
       } catch (err) {
-        // Artifact removal keeps a row whose artifact stayed on disk with
-        // status `error` (ADR-0002) and the project stays registered, so
-        // converge on the backend's view before surfacing the failure.
+        // A thrown error is a store failure, not a per-target one; the
+        // rows may still have settled, so converge on the backend's view
+        // before surfacing it.
         await refreshView(id);
         throw err;
       }
       setProjects(remaining);
-      setSelection((current) =>
-        current.projectId === id ? NO_SELECTION : current,
-      );
+      if (remaining.some((p) => p.id === id)) {
+        // Artifact removal kept a row whose artifact stayed on disk with
+        // status `error` (ADR-0002) and the project stays registered. The
+        // response carries no matrix, so this is the failure-path read.
+        await refreshView(id);
+      } else {
+        setSelection((current) =>
+          current.projectId === id ? NO_SELECTION : current,
+        );
+      }
+      return report;
     },
     [refreshView],
   );
@@ -384,16 +405,17 @@ export function useProjectState(): ProjectState {
   }, []);
 
   const configureTools = useCallback(
-    async (toolIds: string[]) => {
-      if (!selectedProjectId) return;
+    async (toolIds: string[]): Promise<RemovalReportDto | undefined> => {
+      if (!selectedProjectId) return undefined;
       const gitignore =
         pendingIgnore?.projectId === selectedProjectId
           ? pendingIgnore.options
           : null;
       try {
         // The view already reflects the cascade of dropping a tool (its
-        // assignments are gone), so there is nothing to re-read.
-        const view = await invokeTauri(
+        // assignments are gone, or kept with status `error` when the
+        // artifact stayed), so there is nothing to re-read.
+        const { view, report } = await invokeTauri(
           "configureProjectTools",
           selectedProjectId,
           toolIds,
@@ -404,6 +426,7 @@ export function useProjectState(): ProjectState {
         // rejection the modal stays open, so keeping the intent lets a
         // retry replay it instead of silently persisting tools alone.
         setPendingIgnore(null);
+        return report;
       } catch (err) {
         // The tools may have been persisted before the ignore write failed;
         // converge on the backend's view (silently — the caller sees `err`).

@@ -4,6 +4,12 @@
 // state that got applied, not how many calls it took. The backend is mocked
 // at the invokeTauri module seam.
 
+const emptyRemoval = (): RemovalReportDto => ({
+  targets: [],
+  removed: 0,
+  failed: 0,
+});
+
 import { StrictMode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +21,7 @@ import type {
   ProjectSkillAssignmentDto,
   ProjectToolDto,
   ProjectViewDto,
+  RemovalReportDto,
 } from "./types";
 
 vi.mock("../../lib/tauri", () => ({
@@ -116,7 +123,10 @@ function stubBackend(options: { reconciled?: boolean } = {}) {
       case "removeProject": {
         const [projectId] = args as Parameters<Commands["removeProject"]>;
         projectIds.splice(projectIds.indexOf(projectId), 1);
-        return Promise.resolve(projectIds.map(projectRow));
+        return Promise.resolve({
+          projects: projectIds.map(projectRow),
+          report: emptyRemoval(),
+        });
       }
       case "getProjectView": {
         const [projectId] = args as Parameters<Commands["getProjectView"]>;
@@ -135,7 +145,7 @@ function stubBackend(options: { reconciled?: boolean } = {}) {
             tools.includes(a.tool),
           ),
         );
-        return Promise.resolve(view(projectId));
+        return Promise.resolve({ view: view(projectId), report: emptyRemoval() });
       }
       case "toggleProjectSkillAssignment": {
         const [projectId, skillId, tool] = args as Parameters<
@@ -482,6 +492,62 @@ describe("useProjectState applies the view a mutation returns", () => {
     expect(row?.assignment_count).toBe(1);
   });
 
+  it("applies the view and hands back the dropped tools' report from configureTools", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi", "cursor"]);
+    await act(async () => {
+      await result.current.toggleAssignment("s1", "pi");
+    });
+    // pi's artifact stayed on disk: the backend keeps the tool row and its
+    // `error` assignment (ADR-0002), answers with that view, and the report
+    // names the path. The hook applies the view and returns the report
+    // unread — the fold interprets it.
+    const kept: RemovalReportDto = {
+      targets: [
+        {
+          scope: { scope: "project", project_id: "p1" },
+          tool: "pi",
+          path: "/work/p1/.pi/skills/s1",
+          status: { status: "failed", error: { code: "OTHER", message: "busy" } },
+        },
+      ],
+      removed: 0,
+      failed: 1,
+    };
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) => {
+      if (command === "configureProjectTools") {
+        const [projectId] = args as Parameters<Commands["configureProjectTools"]>;
+        return base("getProjectView", projectId).then((view) => {
+          const settled = view as ProjectViewDto;
+          return {
+            view: {
+              ...settled,
+              assignments: settled.assignments.map((a) => ({
+                ...a,
+                status: "error",
+                last_error: "busy",
+              })),
+            } satisfies ProjectViewDto,
+            report: kept,
+          };
+        });
+      }
+      return base(command, ...args);
+    });
+    mockInvoke.mockClear();
+
+    let report: RemovalReportDto | undefined;
+    await act(async () => {
+      report = await result.current.configureTools(["cursor"]);
+    });
+
+    expect(report).toEqual(kept);
+    expect(commandOrder()).toEqual(["configureProjectTools"]);
+    expect(result.current.tools.map((t) => t.tool)).toEqual(["pi", "cursor"]);
+    expect(result.current.assignments.map((a) => a.status)).toEqual(["error"]);
+  });
+
   it("toggles an assignment on and off from the backend's own decision", async () => {
     const { result } = await renderReady();
     await withSelectedProject(result, ["claude_code"]);
@@ -555,33 +621,52 @@ describe("useProjectState applies the view a mutation returns", () => {
     await withSelectedProject(result);
     mockInvoke.mockClear();
 
+    let report: RemovalReportDto | null = null;
     await act(async () => {
-      await result.current.removeProject("p1");
+      report = await result.current.removeProject("p1");
     });
 
     expect(commandOrder()).toEqual(["removeProject"]);
+    expect(report).toEqual(emptyRemoval());
     expect(result.current.projects).toEqual([]);
     expect(result.current.selectedProjectId).toBeNull();
     expect(result.current.assignments).toEqual([]);
   });
 
-  it("converges on the backend's view when project removal fails", async () => {
+  it("returns the per-target report and keeps the project it lists when an artifact stayed", async () => {
     const { result } = await renderReady();
     await withSelectedProject(result, ["pi"]);
     await act(async () => {
       await result.current.toggleAssignment("s1", "pi");
     });
     // Artifact removal could not take s1's link off disk: ADR-0002 keeps
-    // the row with status `error`, the project stays registered, and the
-    // command reports the failure. The view the hook shows must be the one
-    // the backend settled — visible now, not after a reselect.
-    const removalFailure: CommandError = {
-      code: "DELETE_CLEANUP_FAILED",
-      failures: ["/work/p1/.pi/skills/s1: permission denied"],
+    // the row with status `error` and the project stays registered; the
+    // command answers with the list that still names it plus the report
+    // (report data, not an error). The response carries no matrix, so the
+    // hook converges on the backend's settled view — visible now, not
+    // after a reselect.
+    const kept: RemovalReportDto = {
+      targets: [
+        {
+          scope: { scope: "project", project_id: "p1" },
+          tool: "pi",
+          path: "/work/p1/.pi/skills/s1",
+          status: {
+            status: "failed",
+            error: { code: "OTHER", message: "permission denied" },
+          },
+        },
+      ],
+      removed: 0,
+      failed: 1,
     };
+    const listed = result.current.projects.map((p) =>
+      p.id === "p1" ? ({ ...p, sync_status: "error" } satisfies ProjectDto) : p,
+    );
     const base = mockInvoke.getMockImplementation()!;
     mockInvoke.mockImplementation((command, ...args) => {
-      if (command === "removeProject") return Promise.reject(removalFailure);
+      if (command === "removeProject")
+        return Promise.resolve({ projects: listed, report: kept });
       if (command === "getProjectView") {
         return base(command, ...args).then((view) => {
           const settled = view as ProjectViewDto;
@@ -600,12 +685,12 @@ describe("useProjectState applies the view a mutation returns", () => {
     });
     mockInvoke.mockClear();
 
+    let report: RemovalReportDto | null = null;
     await act(async () => {
-      await expect(result.current.removeProject("p1")).rejects.toMatchObject({
-        code: "DELETE_CLEANUP_FAILED",
-      });
+      report = await result.current.removeProject("p1");
     });
 
+    expect(report).toEqual(kept);
     expect(commandOrder()).toEqual(["removeProject", "getProjectView"]);
     expect(callsTo("getProjectView")).toEqual([["p1"]]);
     expect(result.current.selectedProjectId).toBe("p1");
@@ -613,6 +698,36 @@ describe("useProjectState applies the view a mutation returns", () => {
     expect(
       result.current.projects.find((p) => p.id === "p1")?.sync_status,
     ).toBe("error");
+  });
+
+  it("converges on the backend's view when the removal command itself fails", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    await act(async () => {
+      await result.current.toggleAssignment("s1", "pi");
+    });
+    // A thrown error is a store failure, not a per-target outcome; the
+    // rows may still have settled, so the hook re-reads before rethrowing.
+    const storeFailure: CommandError = {
+      code: "OTHER",
+      message: "database is locked",
+    };
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) => {
+      if (command === "removeProject") return Promise.reject(storeFailure);
+      return base(command, ...args);
+    });
+    mockInvoke.mockClear();
+
+    await act(async () => {
+      await expect(result.current.removeProject("p1")).rejects.toMatchObject({
+        code: "OTHER",
+      });
+    });
+
+    expect(commandOrder()).toEqual(["removeProject", "getProjectView"]);
+    expect(result.current.selectedProjectId).toBe("p1");
+    expect(result.current.assignments.map((a) => a.skill_id)).toEqual(["s1"]);
   });
 
   it("selects a project with one view read", async () => {

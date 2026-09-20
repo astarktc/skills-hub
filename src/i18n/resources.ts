@@ -355,6 +355,7 @@ export const resources = {
         syncSkippedNotInstalledMessage_other:
           "{{count}} skills were not deployed there. Install the tool, or untick it under Configure Tools.",
         unsyncFailedTitle: "Could not remove from {{tool}}",
+        projectRemovalFailedTitle: "Could not remove the {{tool}} deployment from the project",
         gitCloneUnknown:
           "Could not fetch the repository from GitHub. Please check your network/proxy and try again.",
         requireLocalPath: "Please enter a local path.",
@@ -575,6 +576,11 @@ export const resources = {
           "All deployed symlinks/copies will be removed from the project",
         removeWarning2: "Skill assignments for this project will be deleted",
         removeConfirm: "Remove Project",
+        removeComplete: "Project removed",
+        removeKept:
+          "Project kept: removed {{count}} deployments, {{failed}} could not be removed — fix the paths and retry",
+        toolRemovalKept:
+          "Removed {{count}} deployments, {{failed}} could not be removed — the affected tools stay configured so you can retry",
         syncErrorPrefix: "Sync failed: ",
         loadError:
           "Could not load projects. Check that the backend is running and try again.",
@@ -952,6 +958,7 @@ export const resources = {
         syncSkippedNotInstalledMessage_other:
           "{{count}} 个 Skill 未部署到该工具。请安装该工具，或在“配置工具”中取消勾选。",
         unsyncFailedTitle: "无法从 {{tool}} 中移除",
+        projectRemovalFailedTitle: "无法从项目中移除 {{tool}} 的部署",
         gitCloneUnknown:
           "无法从 GitHub 拉取仓库。请检查网络/代理，或稍后重试。",
         requireLocalPath: "请输入本地路径",
@@ -1161,6 +1168,11 @@ export const resources = {
         removeWarning1: "项目中所有已部署的符号链接/副本将被移除",
         removeWarning2: "该项目的 Skill 分配记录将被删除",
         removeConfirm: "移除项目",
+        removeComplete: "项目已移除",
+        removeKept:
+          "项目已保留：已移除 {{count}} 个部署，{{failed}} 个无法移除 — 请修复路径后重试",
+        toolRemovalKept:
+          "已移除 {{count}} 个部署，{{failed}} 个无法移除 — 受影响的工具保持已配置状态，可重试",
         syncErrorPrefix: "同步失败：",
         loadError: "无法加载项目。请确认后端正在运行后重试。",
         resyncSuccess: "已同步 {{synced}} 个分配",

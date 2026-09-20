@@ -106,9 +106,9 @@ export const commands = {
 	registerProject: (path: string) => __TAURI_INVOKE<ProjectViewDto>("register_project", { path }),
 	/**
 	 *  Remove a project and every artifact it owns. The project it named is
-	 *  gone, so the fresh view is the *remaining* project list.
+	 *  (normally) gone, so the fresh view is the *remaining* project list.
 	 */
-	removeProject: (projectId: string) => __TAURI_INVOKE<ProjectDto[]>("remove_project", { projectId }),
+	removeProject: (projectId: string) => __TAURI_INVOKE<RemoveProjectResultDto>("remove_project", { projectId }),
 	listProjects: () => __TAURI_INVOKE<ProjectDto[]>("list_projects"),
 	updateProjectPath: (projectId: string, path: string) => __TAURI_INVOKE<ProjectViewDto>("update_project_path", { projectId, path }),
 	/**
@@ -120,7 +120,7 @@ export const commands = {
 	configureProjectTools: (projectId: string, tools: string[], gitignore: {
 	add_to_gitignore: boolean,
 	add_to_exclude: boolean,
-} | null) => __TAURI_INVOKE<ProjectViewDto>("configure_project_tools", { projectId, tools, gitignore }),
+} | null) => __TAURI_INVOKE<ConfigureProjectToolsResultDto>("configure_project_tools", { projectId, tools, gitignore }),
 	/**
 	 *  The read counterpart of the mutation views: what selecting a project
 	 *  loads.
@@ -265,6 +265,18 @@ tool: string } | { code: "SETTING_CORRUPT";
 key: string; 
 /**  Parser diagnostic, not user copy. */
 detail: string } | { code: "OTHER"; message: string };
+
+/**
+ *  What configuring a project's tool set settled: the resulting view and
+ *  the removal report for every tool dropped from the set, merged into one
+ *  (a tool whose artifact stayed is still in `view.tools` — its row was
+ *  kept for a retry — and its failure is in `report`). A configuration
+ *  that dropped nothing carries an empty report.
+ */
+export type ConfigureProjectToolsResultDto = {
+	view: ProjectViewDto,
+	report: RemovalReportDto,
+};
 
 export type FeaturedSkillDto = {
 	slug: string,
@@ -673,6 +685,18 @@ export type RemovalTargetDto = {
  *  command error.
  */
 export type RemovalTargetStatusDto = { status: "removed" } | { status: "failed"; error: CommandError };
+
+/**
+ *  What removing a project settled: the project list *after* the removal
+ *  and the per-target report. When every artifact went, the project is
+ *  absent from `projects`; when one stayed, the project is still listed
+ *  (its rows kept with Sync status `error`, ADR-0002) and `report` names
+ *  each path that could not be removed — report data, not a command error.
+ */
+export type RemoveProjectResultDto = {
+	projects: ProjectDto[],
+	report: RemovalReportDto,
+};
 
 /**
  *  Per-project counts and errors plus the refreshed project list. A single

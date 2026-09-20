@@ -541,7 +541,8 @@ fn remove_project_and_artifacts_removes_project_scope_target_for_divergent_tool(
     let tmpdir = tempfile::tempdir().expect("tmpdir");
     let (project, _skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rpc-pi-skill");
 
-    project_ops::remove_project_and_artifacts(&store, &project.id).expect("remove project");
+    let report =
+        project_ops::remove_project_and_artifacts(&store, &project.id).expect("remove project");
 
     assert!(
         target.symlink_metadata().is_err(),
@@ -549,6 +550,9 @@ fn remove_project_and_artifacts_removes_project_scope_target_for_divergent_tool(
         target
     );
     assert!(store.get_project_by_id(&project.id).unwrap().is_none());
+    assert_eq!(report.removed_rows(), 1, "the report names the removed row");
+    assert_eq!(report.failed_rows(), 0);
+    assert!(report.failures().is_empty());
 }
 
 #[test]
@@ -718,10 +722,11 @@ fn remove_project_tool_and_artifacts_keeps_the_tool_row_when_an_artifact_stays()
 }
 
 /// Continue semantics: a stuck tool does not stop the rest of the batch — the
-/// added tool is persisted and the failures are raised once, at the end.
+/// added tool is persisted and the failure reaches the caller as report data
+/// (one report per dropped tool), never as an error.
 #[cfg(unix)]
 #[test]
-fn configure_tools_applies_the_rest_then_raises_the_removal_failures() {
+fn configure_tools_applies_the_rest_and_reports_the_removal_failures() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().expect("tmpdir");
     let (project, _skill, target) = setup_pi_assignment(tmpdir.path(), &store, "cfg-pi-stuck");
@@ -729,22 +734,21 @@ fn configure_tools_applies_the_rest_then_raises_the_removal_failures() {
         return;
     }
 
-    let err = project_ops::configure_project_tools(
+    let removals = project_ops::configure_project_tools(
         &store,
         &project.id,
         &["claude_code".to_string()],
         None,
     )
-    .expect_err("the stuck artifact is reported");
+    .expect("the stuck artifact is report data, not an error");
     unlock_parent(&target);
 
-    match err.downcast_ref::<SignalError>() {
-        Some(SignalError::DeleteCleanupFailed { failures }) => {
-            assert_eq!(failures.len(), 1);
-            assert!(failures[0].starts_with(&format!("{}: ", target.display())));
-        }
-        other => panic!("expected DeleteCleanupFailed, got {:?}", other),
-    }
+    assert_eq!(removals.len(), 1, "one report per dropped tool");
+    let failures = removals[0].failures();
+    assert_eq!(failures.len(), 1);
+    assert!(failures[0].starts_with(&format!("{}: ", target.display())));
+    assert_eq!(removals[0].failed_rows(), 1);
+    assert_eq!(removals[0].removed_rows(), 0);
 
     let tools: Vec<String> = store
         .list_project_tools(&project.id)
@@ -766,6 +770,8 @@ fn configure_tools_applies_the_rest_then_raises_the_removal_failures() {
 
 /// The whole-skill rule of ADR-0002 at project scope: a failed artifact keeps
 /// the project and its `error` rows, so a retry can still find every path.
+/// The failure is report data — the per-target outcome names the path — not
+/// a command error.
 #[cfg(unix)]
 #[test]
 fn remove_project_and_artifacts_keeps_the_project_when_an_artifact_stays() {
@@ -776,17 +782,21 @@ fn remove_project_and_artifacts_keeps_the_project_when_an_artifact_stays() {
         return;
     }
 
-    let err = project_ops::remove_project_and_artifacts(&store, &project.id)
-        .expect_err("a stuck artifact keeps the project");
+    let report = project_ops::remove_project_and_artifacts(&store, &project.id)
+        .expect("a stuck artifact is report data, not an error");
     unlock_parent(&target);
 
-    match err.downcast_ref::<SignalError>() {
-        Some(SignalError::DeleteCleanupFailed { failures }) => {
-            assert_eq!(failures.len(), 1);
-            assert!(failures[0].starts_with(&format!("{}: ", target.display())));
-        }
-        other => panic!("expected DeleteCleanupFailed, got {:?}", other),
-    }
+    let failures = report.failures();
+    assert_eq!(failures.len(), 1);
+    assert!(failures[0].starts_with(&format!("{}: ", target.display())));
+    assert_eq!(report.failed_rows(), 1);
+    assert_eq!(report.removed_rows(), 0);
+    assert_eq!(report.targets.len(), 1);
+    assert_eq!(report.targets[0].path, target);
+    assert!(matches!(
+        report.targets[0].status,
+        crate::core::artifact_removal::RemovalTargetStatus::Failed { .. }
+    ));
 
     assert!(
         store.get_project_by_id(&project.id).unwrap().is_some(),
@@ -845,7 +855,7 @@ fn configure_tools_writes_gitignore_from_the_tools_just_persisted() {
     // tools are written would yield an empty pattern set and no file.
     let project = register_dir_project(&store, &project_dir);
 
-    let tools = project_ops::configure_project_tools(
+    let removals = project_ops::configure_project_tools(
         &store,
         &project.id,
         &strs(&["claude_code", "windsurf"]),
@@ -856,10 +866,15 @@ fn configure_tools_writes_gitignore_from_the_tools_just_persisted() {
     )
     .expect("configure");
 
-    let mut keys: Vec<String> = tools.into_iter().map(|t| t.tool).collect();
+    assert!(removals.is_empty(), "nothing was dropped");
+    let mut keys: Vec<String> = store
+        .list_project_tools(&project.id)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.tool)
+        .collect();
     keys.sort();
     assert_eq!(keys, strs(&["claude_code", "windsurf"]));
-    assert_eq!(store.list_project_tools(&project.id).unwrap().len(), 2);
 
     let gitignore = fs::read_to_string(project_dir.join(".gitignore")).expect(".gitignore");
     assert!(gitignore.contains(MARKER));
@@ -894,7 +909,7 @@ fn configure_tools_diffs_against_persisted_tools_and_rewrites_the_block() {
         .collect();
 
     // Drop windsurf, add pi; claude_code stays (same record id, not re-inserted).
-    let tools = project_ops::configure_project_tools(
+    let removals = project_ops::configure_project_tools(
         &store,
         &project.id,
         &strs(&["claude_code", "pi"]),
@@ -905,6 +920,10 @@ fn configure_tools_diffs_against_persisted_tools_and_rewrites_the_block() {
     )
     .unwrap();
 
+    // windsurf had no assignments: its report plans nothing and fails nothing.
+    assert_eq!(removals.len(), 1, "one report for the dropped tool");
+    assert!(removals[0].failures().is_empty());
+    let tools = store.list_project_tools(&project.id).unwrap();
     let mut keys: Vec<String> = tools.iter().map(|t| t.tool.clone()).collect();
     keys.sort();
     assert_eq!(keys, strs(&["claude_code", "pi"]));
