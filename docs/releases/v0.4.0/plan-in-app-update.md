@@ -20,7 +20,7 @@
 
 在 SettingsModal 底部版本信息区域扩展为"检查更新"功能块：
 
-1. **SettingsModal.tsx** — 添加更新状态管理 + UI
+1. **SettingsModal.tsx** *(removed in v0.4.0 — now `src/components/skills/SettingsPage.tsx`)* — 添加更新状态管理 + UI
    - 状态：idle → checking → up-to-date / available → downloading → done / error
    - 使用 `@tauri-apps/plugin-updater` 的 `check()` 和 `downloadAndInstall()` API
    - 保存 update 对象引用避免重复请求
@@ -37,7 +37,7 @@
 
 | 文件 | 改动 |
 |------|------|
-| `src/components/skills/modals/SettingsModal.tsx` | 添加更新检查 UI + 逻辑 |
+| `src/components/skills/modals/SettingsModal.tsx` *(removed in v0.4.0 — now `src/components/skills/SettingsPage.tsx`)* | 添加更新检查 UI + 逻辑 |
 | `src/App.css` | 添加更新区块样式 |
 | `package.json` | 版本号 → 0.3.1 |
 | `src-tauri/tauri.conf.json` | 版本号 → 0.3.1 |

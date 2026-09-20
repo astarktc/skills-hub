@@ -2,7 +2,7 @@
 
 ## Checkout and commits
 
-- Checkout: `~/Projects/skills-hub/.scratch/round10/worktrees/git-resolution`
+- Checkout: `~/Projects/skills-hub/.scratch/round10/worktrees/git-resolution` *(worktree removed after merge; evidence now under `.scratch/archive/round10/evidence/b1/`)*
 - Branch: `r10b/git-resolution`
 - Base: `a824caf45fffb0bd5c38318ba10b2ffa0ca11c62`
 - Characterization-first commit: `342995f` — `test(git): characterize full listing interface before resolution refactor`

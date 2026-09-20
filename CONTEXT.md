@@ -49,8 +49,8 @@ The operator action that re-acquires one refreshable Managed skill from its sour
 _Avoid_: re-install
 
 **Content identity**:
-The hash that says whether a copy still matches its central copy; computed at finalize/Edit, read from the row everywhere else, and backfilled by the Content identity module when absent.
-_Avoid_: content hash (the column), checksum
+The hash that says whether a copy still matches its central copy; computed at finalize/Edit, read from the row everywhere else, and backfilled by the Content identity module when absent. The row is authoritative: bytes changed in the central copy by anything other than the app are unsupported, and no read path re-hashes a managed copy to check (`docs/adr/0005-content-identity-row-is-source-of-truth.md`).
+_Avoid_: content hash (the column), checksum, hand edit (of the central copy)
 
 **Sync target**:
 One (skill, tool) pair a sync batch attempts; each target resolves to synced, skipped, or failed as report data, never as a command error.

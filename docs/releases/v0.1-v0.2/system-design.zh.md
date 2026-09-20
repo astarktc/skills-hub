@@ -1,6 +1,6 @@
 # Skills Hub（Tauri Desktop）系统设计文档
 
-> English version: [`docs/system-design.md`](system-design.md)
+> English version: [`system-design.md`](system-design.md) (both files archived here under `docs/releases/v0.1-v0.2/` since v0.3.0)
 
 > 基于当前仓库实现（commit `b5246ab`），结合历史计划与 UI 设计稿整理，目标是给后来维护者提供一份“能落地、可对照代码”的完整系统设计说明。  
 

@@ -31,6 +31,79 @@ Consistent git source resolution, byte-preserving manifest edits, and single-ski
 - **Source resolution belongs to Git acquisition.** Stored-record, explicit-selection and by-name intents share private branch-split and repair policy; listing resolutions are reused without a second refs lookup, and repaired sources are persisted only at successful finalize.
 - **One Manifest module owns reads and byte-preserving invocation edits.** Existing saved Edit bases, unrelated bytes, file permissions and failure-atomic replay remain compatible. Rust and frontend fence tests consume one literal corpus.
 
+## [1.2.11] - 2026-09-08
+
+Global sync follows the operator's tool selection, `.agents/skills` is a global target, and orphaned target rows of an uninstalled tool can finally be seen and removed.
+
+### Added
+
+- **`.agents/skills` is listed in the global tool catalog** alongside its constituent tools, as an independent target of its own. Its label is per scope: the plain `.agents/skills` globally, the roster wording ("… (N tools)") at project scope.
+
+### Changed
+
+- **Global sync targets follow the operator's recorded selection**, not tool detection. One rule — the recorded selection when one exists (an empty selection means "sync nowhere"), detection only as the never-configured fallback — governs the auto-sync re-assert after Refresh, the per-skill link button and the "sync all to the new tools" prompt, and onboarding import without an explicit selection. A selected-but-uninstalled tool is reported as a not-installed skip rather than silently dropped. Copy now says "selected tools", not "installed tools".
+
+### Fixed
+
+- **A sync target row of an undetected tool renders a chip** — muted, badged, and with its unsync affordance — instead of disappearing from the card; the tool picker likewise keeps a selected-but-undetected tool visible so it can be unticked, and unknown keys are no longer dropped silently on save.
+- **Unsync removes an orphaned target row by its own recorded path** when the tool (and every member of its shared-dir group) is no longer detected; the artifact we created is removed, fenced to the tool skills dirs, under ADR-0002's presence and settlement rules.
+- **A sync or removal that plans zero targets warns instead of claiming success**: the link button and the new-tools sync say so when the effective target set is empty, and a removal report with nothing planned keeps the modal open.
+- **Onboarding import fails closed when the settings read fails**, falling back to an empty target set rather than raw detection.
+
+## [1.2.10] - 2026-09-08
+
+One report-outcome fold in the UI, one skill-update module in core, and content identity defined once.
+
+### Fixed
+
+- **A failed single Update, Restore or Re-point toasts its error once** instead of following it with a "0 skills refreshed, 1 failed" count summary; the acquisition-skip status is folded into the refresh outcome.
+- **Local Re-point is atomic**, and a local Update acquires its bytes before settlement.
+- **Edit returns its propagation report** so target failures reach the caller.
+- **Imported sources use their recorded content identity**.
+
+### Internal/architecture
+
+- **`reportOutcome.ts`** turns every backend report into one `Outcome` (toast, entries, completion).
+- **`skill_update.rs`** owns the git/local/Edit/Restore byte adapters; **`content_identity.rs`** owns the content hash and its backfill, with ownership documented in CONTEXT.md.
+
+## [1.2.9] - 2026-09-08
+
+Finalize records what it landed, replays edits inside its rollback window, and git install reuses the listing's resolution.
+
+### Fixed
+
+- **Finalize always records the landed content hash** and **replays invocation edits inside the rollback window**, so a failed replay rolls the whole update back.
+- **An invocation Edit conflict is resolved when upstream converges** on the overridden value.
+- **Install reuses the git listing's source resolution** instead of resolving the source a second time.
+- **The frontmatter closing fence rule is shared**: a column-zero `---` line, in every reader.
+
+### Internal/architecture
+
+- Git re-point reads the source kind directly; the stored-hint acquisition retry and the finalize rollback operation are named; the skill-file ignore predicate is shared.
+
+## [1.2.8] - 2026-09-08
+
+Finalize cleans up after itself, and git acquisition tolerates an unreadable token and a moved subpath.
+
+### Fixed
+
+- **A failed row upsert removes the install bytes it just landed** instead of leaving an orphan in the central repo.
+- **Week-old central backups beside a skill are swept**, dated from creation so the window is real.
+- **Acquisition continues unauthenticated when the GitHub token setting cannot be read**, and **a stored-subpath hint that 404s is re-resolved via matching refs**.
+- **The app derives its effective view when the detail skill is gone**, so a removed skill's detail page cannot linger.
+
+## [1.2.7] - 2026-09-08
+
+Invocation-mode overrides you can edit in-app and that survive Update.
+
+### Added
+
+- **Edit a skill's invocation mode in-app.** The invocation badge opens a dialog to choose who can invoke the skill or to follow the skill's own setting; the override is persisted and replayed on every Update, and an upstream change to the same setting after an override is reported as an Edit conflict with a banner to keep or clear the override.
+
+### Fixed
+
+- **An invocation Edit preserves the manifest's other bytes**; a manifest that cannot be read or saved surfaces as a typed `SKILL_MANIFEST_IO` error naming the path.
+
 ## [1.2.6] - 2026-09-08
 
 Updates that cannot half-succeed, git skills on branches with slashes in their name, a repair that leaves nothing behind, and an invocation badge on every skill.

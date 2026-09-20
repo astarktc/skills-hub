@@ -94,7 +94,7 @@
 
 ### 可能新增文件
 - `src/components/skills/ExplorePage.tsx` — Explore 页面组件
-- `src/components/skills/ExploreCard.tsx` — Explore 卡片组件
+- `src/components/skills/ExploreCard.tsx` — Explore 卡片组件 *(never created: the card is rendered inline by `ExplorePage.tsx`)*
 
 ## 实施顺序建议
 

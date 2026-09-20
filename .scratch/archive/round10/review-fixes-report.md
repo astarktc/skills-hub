@@ -3,7 +3,7 @@
 ## Result and integration handoff
 
 - Commit: **`a25f38ea925d6686fd153f591568cdcfd8bf0d20`** — `fix(manifest): preserve pre-upgrade indented-header edits`.
-- Checkout: `~/Projects/skills-hub/.scratch/round10/worktrees/review-fixes`.
+- Checkout: `~/Projects/skills-hub/.scratch/round10/worktrees/review-fixes` *(worktree removed after merge; every `worktrees/review-fixes` path below is historical — evidence now under `.scratch/archive/round10/evidence/review-fixes/`)*.
 - Branch: `r10b/review-fixes`; sole parent/base: `960e5d5bf6a300424761eda3bfc9ff64adf82418`.
 - Six scoped files; +359 / -16. Tracked working tree clean after commit. Report/evidence are ignored, not committed.
 - SPEC1 and STANDARDS4 reproduced and fixed. No new product decision needed; no ticket factual correction beyond accepting the parent's escalation of SPEC1 from follow-up to required fix.
@@ -48,7 +48,7 @@ Tests use real temporary stores/files and `set_invocation_override` plus Refresh
 ## Actual red/green and sensitivity evidence
 
 Evidence directory (absolute):
-`~/Projects/skills-hub/.scratch/round10/worktrees/review-fixes/.scratch/round10/evidence/`
+`~/Projects/skills-hub/.scratch/round10/worktrees/review-fixes/.scratch/round10/evidence/` *(historical; now `.scratch/archive/round10/evidence/review-fixes/`)*
 
 Every shell invocation began with `cd ~/Projects/skills-hub/.scratch/round10/worktrees/review-fixes`; Cargo used `CARGO_BUILD_JOBS=4`. Rust commands below used:
 

@@ -2,7 +2,7 @@
 
 This document describes the system design of **Skills Hub**, aligned with the current repository implementation.
 
-> 中文版：[`docs/system-design.zh.md`](docs/system-design.zh.md)
+> 中文版：[`system-design.zh.md`](system-design.zh.md) (both files archived here under `docs/releases/v0.1-v0.2/` since v0.3.0)
 
 ## 1. Background
 

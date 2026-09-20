@@ -228,7 +228,7 @@ GitHub API 限额（已认证）：5000 次/小时。即使未认证（60 次/�
 |------|------|
 | `scripts/fetch-featured-skills.mjs` | 重写（精选仓库列表 + Repos API + Trees API） |
 | `featured-skills.json` | 内容更新（精选仓库来源，≤300 条） |
-| `docs/requirements/skills-aggregation-repo.md` | 更新需求文档 |
+| `docs/requirements/skills-aggregation-repo.md` | 更新需求文档 *(never created: this document is the requirements doc, archived under `docs/releases/v0.3.1/`)* |
 | `.github/workflows/update-featured-skills.yml` | **无需改动** |
 | 后端代码 | **无需改动**（向前兼容） |
 | 前端代码 | **无需改动**（向前兼容） |

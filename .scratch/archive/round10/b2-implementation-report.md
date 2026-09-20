@@ -4,7 +4,7 @@
 
 Implemented end to end and committed in the authorized isolated checkout only.
 
-- Checkout: `~/Projects/skills-hub/.scratch/round10/worktrees/manifest`
+- Checkout: `~/Projects/skills-hub/.scratch/round10/worktrees/manifest` *(worktree removed after merge; the `cd` lines in the command blocks below are historical; evidence now under `.scratch/archive/round10/evidence/b2/`)*
 - Branch: `r10b/manifest`
 - Base: `a824caf45fffb0bd5c38318ba10b2ffa0ca11c62`
 - HEAD: `6adab087f313413a767358527c38d069d0b3fb1d`

@@ -2,7 +2,7 @@
 
 ## Checkout and scope
 
-- Only writable checkout: `~/Projects/skills-hub/.scratch/round10/worktrees/mutation-results`.
+- Only writable checkout: `~/Projects/skills-hub/.scratch/round10/worktrees/mutation-results` *(worktree removed after merge; evidence now under `.scratch/archive/round10/evidence/b3/`)*.
 - Branch: `r10b/mutation-results`.
 - Starting HEAD/base: `a824caf45fffb0bd5c38318ba10b2ffa0ca11c62` (v1.2.11; v1.2.12 remains the parent's release target).
 - Verified commit/HEAD: `57e7bba9a4a3d1d1c1f153bb5bab32055193e7ac` — `feat(skills): return catalogs with single mutation reports`. Commit succeeded without bypasses; tracked working tree was clean afterward.
