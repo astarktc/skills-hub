@@ -11,34 +11,19 @@ Numbers are stable: never renumber; retire by deleting the line (history keeps i
 - **#02 Wave C — one report representation across the wire + ADR-0001 amendment.** Round-10 decision Q8 deferred #7
   to wave C; the four report DTOs are still separate (`commands/mod.rs` BatchSyncReportDto / RemovalReportDto /
   RefreshReportDto / ImportReportDto). Source: `archive/round10/decisions.md` Q8; research `archive/round9/panel/opus.md:84–109`.
-- **#03 Content identity: remove the process-global warn-once state.** `content_identity::read` dedupes warnings through
-  `static WARNED: OnceLock<Mutex<HashSet<String>>>` (`content_identity.rs:56`) — ambient state in core; replace with a
-  caller-supplied sink or drop the dedupe. Source: `archive/round7/backlog.md` #17 (Fable, Opus).
 - **#04 Harden `UpdateRequest` and the byte/acquisition adapters.** Collapse `UpdateBytes::{GitAcquired, RestoreRebuild}`
   (identical payload/path) and drop the `unreachable!()`; one acquire door (`acquire_local` beside `acquire_update` or
   dispatch both); private `UpdateRequest` fields with Edit/Re-point constructors so callers cannot manufacture the
   admission protocol (`SourceProposal { ref, subpath, type }` instead of a whole record); reuse
   `installer::ensure_installable_skill_dir` instead of the re-inlined `is_skill_dir`. Source: `archive/round7/backlog.md` #18.
-- **#05 Decide the identity policy for a central copy edited outside the app.** `same_content` trusts the row for the
-  source side, so an external central edit can make `overwrite_if_same_content` clobber a divergent target
-  (`content_identity.rs:38,72`). Either an ADR recording "row is source of truth; external edits are unsupported" or
-  reconcile-driven invalidation. Source: `archive/round7/backlog.md` #20 (Opus); follows round-10 Q2.
-- **#09 Reconstruct CHANGELOG entries 1.2.7–1.2.11.** Headings jump from 1.2.12 to 1.2.6. Reconstruct from tags and
-  commit history; do not fabricate. Source: `archive/round10/wave-b-review-disposition.md:16`.
 - **#10 Release-mode regression for content identity in CI.** `update_supplies_a_real_hash_to_copy_assignments_and_reconcile_keeps_synced`
   (`tests/propagation.rs:473`) exists, but no `--release` run anywhere and its 30 s `try_serialized` poll remains.
   Source: `archive/round7/backlog.md` #15.
-- **#11 Local listing validity vs installability.** `skill_discovery.rs` admits `is_claude_skill_dir` without a manifest
-  (lines 125, 241, 292) while the install path requires one; align the `valid` rule. Source: `archive/v-next/issues/26:38`, `35:39`.
 
 ## Later — real, not urgent
 
 - **#12 Replace the old `bulk_assign_*` hand-simulated tests with engine calls.** `tests/project_sync.rs:697,763,816`
   coexist with the engine suite at :1025. Source: `archive/v-next/issues/25:41`.
-- **#13 Insert-shaped `TargetTransition` for new sync rows.** `global_sync.rs:134` still upserts directly inside
-  `sync_skill_into_root`. Source: `archive/arch-deepening/issues/02:94–95` (deviation 7).
-- **#14 Surface per-target project-removal outcomes, not only failure strings.** `project_ops.rs:268,300` bail
-  `DeleteCleanupFailed { failures }` although a `RemovalReport` exists at :184. Source: `archive/arch-deepening/issues/05:74–77`.
 - **#15 Byte acquisition must refuse a listing-only intent.** `git_acquisition` still accepts an optional-subpath
   `Selection`; current callers cannot reach it — revisit before a new caller does. Source: `archive/round10/wave-b-review-disposition.md:7`.
 - **#16 Old nonempty Explore preview cache: validate or migrate.** New publication is atomic, but inherited entries are
@@ -47,16 +32,7 @@ Numbers are stable: never renumber; retire by deleting the line (history keeps i
   on unit gates only. Needs operator permission (touches the live library). Source: `archive/v-next/assets/research-cursor-symlinks.md:224–228`.
 - **#18 Windows: Cursor junction fallback is unverified.** `sync_engine.rs:63` path never exercised on a Windows host.
   Source: same research, :231–233; `archive/v-next/issues/38:33–34`.
-- **#19 Backup-sweep test portability.** `tests/install_finalize.rs:373–375` shells out to `touch -h` (macOS/GNU only).
-  Source: `archive/round8/r8-review-fable.md:16`.
-- **#20 Repoint historical evidence/doc links.** `docs/releases/**` cite deleted files (`docs/system-design*.md`,
-  `docs/requirements/skills-aggregation-repo.md`, `ExploreCard.tsx`, `SettingsModal.tsx`); archived round-10 reports cite
-  removed `worktrees/…` lanes (evidence now under `archive/round10/evidence/<lane>/`). Source: sweep 2026-09-15 Part 2D.
 
-- **#31 Harden the four GitHub workflows.** zizmor/semgrep on `ci.yml` (2026-09-15): actions referenced by mutable tags
-  (`actions/checkout@v4`, `setup-node@v4`, `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`) — pin to commit
-  SHAs; add top-level `permissions: contents: read`; `persist-credentials: false` on checkout. Same pattern in
-  `release.yml`, `auto-tag.yml`, `update-featured-skills.yml`. Source: `lens_diagnostics` on `.github/workflows/ci.yml`.
 
 ## Parked — needs a product decision before it is work
 
