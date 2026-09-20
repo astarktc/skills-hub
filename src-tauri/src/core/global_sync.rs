@@ -11,9 +11,8 @@ use uuid::Uuid;
 use crate::core::{
     content_identity::{self, Source},
     mutation_guard,
-    skill_store::{SkillStore, SkillTargetRecord},
+    skill_store::{SkillStore, TargetTransition},
     sync_engine::{self, SyncOutcome},
-    sync_status::SyncStatus,
     tool_adapters::{
         adapter_by_key, adapters_sharing_skills_dir, is_installed_in, skills_dir_in, ToolAdapter,
     },
@@ -78,8 +77,8 @@ pub struct OverwritePolicy {
 }
 
 /// Deterministic single-pair sync: probe writability of `tool_root`, apply
-/// the overwrite policy, sync, and upsert a `SkillTargetRecord` for each
-/// tool in `record_tools`. The batch engine
+/// the overwrite policy, sync, and record a `Synced` target row for each
+/// tool in `record_tools` through [`TargetTransition::Recorded`]. The batch engine
 /// ([`sync_skills_to_planned_tools`]) drives this per attempted pair; tests
 /// drive it directly. Unlocked internal seam — callers reach it through an
 /// entry point that has already taken the mutation guard.
@@ -120,18 +119,18 @@ pub(crate) fn sync_skill_into_root(
             .map_err(|err| classify_sync_error(err, adapter, tool_root, &target))?;
 
     // Some tools share the same global skills directory; keep DB records consistent across them.
+    let target_path = outcome.target_path.to_string_lossy();
     for a in record_tools {
-        let record = SkillTargetRecord {
-            id: Uuid::new_v4().to_string(),
-            skill_id: skill_id.to_string(),
-            tool: a.id.as_key().to_string(),
-            target_path: outcome.target_path.to_string_lossy().to_string(),
-            mode: outcome.mode_used,
-            status: SyncStatus::Synced,
-            last_error: None,
-            synced_at: Some(now),
-        };
-        store.upsert_skill_target(&record)?;
+        store.transition_skill_target(
+            &Uuid::new_v4().to_string(),
+            TargetTransition::Recorded {
+                skill_id,
+                tool: a.id.as_key(),
+                mode: outcome.mode_used,
+                target_path: &target_path,
+                synced_at: now,
+            },
+        )?;
     }
 
     Ok(outcome)

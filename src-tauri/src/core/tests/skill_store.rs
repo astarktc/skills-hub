@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::core::skill_store::{
     AssignmentTransition, ProjectAggregate, ProjectRecord, ProjectSkillAssignmentRecord,
-    ProjectToolRecord, SkillRecord, SkillStore, SkillTargetRecord,
+    ProjectToolRecord, SkillRecord, SkillStore, SkillTargetRecord, TargetTransition,
 };
 
 fn make_store() -> (tempfile::TempDir, SkillStore) {
@@ -312,6 +312,66 @@ fn skill_targets_upsert_unique_constraint_and_list_order() {
 
     store.delete_skill_target("s1", "cursor").unwrap();
     assert!(store.get_skill_target("s1", "cursor").unwrap().is_none());
+}
+
+#[test]
+fn recorded_transition_inserts_a_synced_row_then_settles_the_existing_one() {
+    let (_dir, store) = make_store();
+    store
+        .upsert_skill(&make_skill("s1", "S1", "/central/s1", 1))
+        .unwrap();
+
+    // No row yet: the transition creates it under the caller's id.
+    store
+        .transition_skill_target(
+            "t1",
+            TargetTransition::Recorded {
+                skill_id: "s1",
+                tool: "cursor",
+                mode: SyncMode::Symlink,
+                target_path: "/target/1",
+                synced_at: 10,
+            },
+        )
+        .unwrap();
+    let row = store.get_skill_target("s1", "cursor").unwrap().unwrap();
+    assert_eq!(row.id, "t1");
+    assert_eq!(row.mode, SyncMode::Symlink);
+    assert_eq!(row.status, SyncStatus::Synced);
+    assert_eq!(row.last_error, None);
+    assert_eq!(row.synced_at, Some(10));
+
+    // Put the row into an error state, then record a fresh sync for the same
+    // (skill, tool) pair under a different id.
+    store
+        .transition_skill_target("t1", TargetTransition::SyncFailed { error: "boom" })
+        .unwrap();
+    store
+        .transition_skill_target(
+            "t2",
+            TargetTransition::Recorded {
+                skill_id: "s1",
+                tool: "cursor",
+                mode: SyncMode::Copy,
+                target_path: "/target/2",
+                synced_at: 20,
+            },
+        )
+        .unwrap();
+    let row = store.get_skill_target("s1", "cursor").unwrap().unwrap();
+    assert_eq!(
+        row.id, "t1",
+        "on unique(skill_id, tool) conflict the existing row is settled, not re-keyed"
+    );
+    assert_eq!(row.mode, SyncMode::Copy);
+    assert_eq!(row.target_path, "/target/2");
+    assert_eq!(row.status, SyncStatus::Synced);
+    assert_eq!(
+        row.last_error, None,
+        "a recorded sync clears the prior error"
+    );
+    assert_eq!(row.synced_at, Some(20));
+    assert_eq!(store.list_skill_targets("s1").unwrap().len(), 1);
 }
 
 #[test]

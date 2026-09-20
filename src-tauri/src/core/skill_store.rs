@@ -163,6 +163,10 @@ pub struct SkillTargetRecord {
     pub target_path: String,
     pub mode: SyncMode,
     pub status: SyncStatus,
+    /// Diagnostic chain of the last failed sync/removal (see
+    /// [`TargetTransition::SyncFailed`]); read back by tests and kept for
+    /// parity with the stored column — no production reader yet.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub last_error: Option<String>,
     pub synced_at: Option<i64>,
 }
@@ -264,6 +268,20 @@ pub enum TargetTransition<'a> {
     /// artifact landed (a shared skills dir group settles every member row
     /// with the one path that was written).
     SyncCompleted {
+        mode: SyncMode,
+        target_path: &'a str,
+        synced_at: i64,
+    },
+    /// The insert-shaped sibling of [`SyncCompleted`](Self::SyncCompleted):
+    /// a sync succeeded for a `(skill_id, tool)` pair that may have no row
+    /// yet (a first global sync, or a re-sync after unsync). The row is
+    /// created under the caller's `target_id` when absent; when one already
+    /// exists it keeps its id and is settled exactly as `SyncCompleted`
+    /// would settle it. Global sync records new targets through this arm so
+    /// no caller hand-builds a `Synced` [`SkillTargetRecord`].
+    Recorded {
+        skill_id: &'a str,
+        tool: &'a str,
         mode: SyncMode,
         target_path: &'a str,
         synced_at: i64,
@@ -556,6 +574,10 @@ impl SkillStore {
         })
     }
 
+    /// Test fixture door: writes a global target row with any lifecycle
+    /// columns. Production code never hand-builds a target row — it records
+    /// and settles rows through [`Self::transition_skill_target`].
+    #[cfg(test)]
     pub fn upsert_skill_target(&self, record: &SkillTargetRecord) -> Result<()> {
         self.with_conn(|conn| {
             conn.execute(
@@ -1072,12 +1094,47 @@ impl SkillStore {
     }
 
     /// Apply a typed lifecycle transition to one global target row.
+    ///
+    /// `target_id` names the row to settle; for the insert-shaped
+    /// [`TargetTransition::Recorded`] it is the id a newly created row gets,
+    /// and is ignored when a row for that `(skill_id, tool)` already exists.
     pub fn transition_skill_target(
         &self,
         target_id: &str,
         transition: TargetTransition<'_>,
     ) -> Result<()> {
         let (status, last_error, mode, target_path, synced_at) = match transition {
+            TargetTransition::Recorded {
+                skill_id,
+                tool,
+                mode,
+                target_path,
+                synced_at,
+            } => {
+                return self.with_conn(|conn| {
+                    conn.execute(
+                        "INSERT INTO skill_targets (
+                           id, skill_id, tool, target_path, mode, status, last_error, synced_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)
+                         ON CONFLICT(skill_id, tool) DO UPDATE SET
+                           target_path = excluded.target_path,
+                           mode = excluded.mode,
+                           status = excluded.status,
+                           last_error = excluded.last_error,
+                           synced_at = excluded.synced_at",
+                        params![
+                            target_id,
+                            skill_id,
+                            tool,
+                            target_path,
+                            mode.as_str(),
+                            SyncStatus::Synced.as_str(),
+                            synced_at
+                        ],
+                    )?;
+                    Ok(())
+                });
+            }
             TargetTransition::SyncCompleted {
                 mode,
                 target_path,
