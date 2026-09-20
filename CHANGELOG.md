@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.13] - 2026-09-16
+
+Tool-selection integrity, per-target project-removal outcomes, listing validity aligned with install, and a hardened CI/release pipeline.
+
 ### Changed
 
 - **Removing a project, or dropping a tool from a project's tool set, reports each deployment it could not remove** instead of failing the whole action with one error. A project is kept when any of its deployments stays on disk, the affected rows keep an error status for a retry, and the toast names what was removed and what was kept (ADR-0002 settlement applied to projects).
