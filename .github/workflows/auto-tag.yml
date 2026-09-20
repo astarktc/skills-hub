@@ -6,6 +6,8 @@ on:
     paths:
       - package.json
 
+# Single-job workflow: `contents: write` pushes the tag and `actions: write`
+# dispatches release.yml, so the top-level grant is the job's grant.
 permissions:
   contents: write
   actions: write
@@ -16,9 +18,12 @@ jobs:
     # Skip if the push was just a tag (avoid loops)
     if: "!contains(github.event.head_commit.message, '[skip-tag]')"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          # This job `git push`es the tag with the default GITHUB_TOKEN, which
+          # checkout stores in the local git config — keep the credentials.
+          persist-credentials: true
 
       - name: Extract version from package.json
         id: ver

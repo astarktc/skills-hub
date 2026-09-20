@@ -87,6 +87,7 @@ version = "1.2.12"
 dependencies = [
  "anyhow",
  "dirs",
+ "filetime",
  "git2",
  "hex",
  "junction",

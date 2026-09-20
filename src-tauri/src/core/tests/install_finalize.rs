@@ -370,15 +370,12 @@ fn finalize_update_backup_sweep_does_not_follow_symlinks() {
     std::os::unix::fs::symlink(target.path(), &fresh).unwrap();
     std::os::unix::fs::symlink(target.path(), &aged).unwrap();
     std::os::unix::fs::symlink(target.path().join("missing"), &dangling).unwrap();
-    // std has no portable no-follow timestamp setter; touch -h ages the links,
-    // not their targets, without adding a production or dev dependency.
-    assert!(std::process::Command::new("touch")
-        .args(["-h", "-t", "200001010000"])
-        .arg(&aged)
-        .arg(&dangling)
-        .status()
-        .unwrap()
-        .success());
+    // std has no no-follow timestamp setter; filetime's set_symlink_file_times
+    // ages the links themselves, not their targets (lutimes), so the sweep's
+    // age check reads the link's own mtime and `keep` stays fresh.
+    let epoch_2000 = filetime::FileTime::from_unix_time(946_684_800, 0);
+    filetime::set_symlink_file_times(&aged, epoch_2000, epoch_2000).unwrap();
+    filetime::set_symlink_file_times(&dangling, epoch_2000, epoch_2000).unwrap();
 
     finalize_update(
         &store,
