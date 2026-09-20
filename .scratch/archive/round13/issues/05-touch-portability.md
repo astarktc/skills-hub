@@ -1,6 +1,6 @@
 # 05 Backup-sweep test portability (touch -h)
 
-Status: done — pending parent commit
+Status: done — 7f9ac17
 Lane: B
 Source: BACKLOG #19
 
@@ -22,3 +22,5 @@ No `Command::new("touch")` remains; test passes.
   -A dead_code` clean (the only `-D warnings` failure is a `dead_code` field in lane E's in-progress
   `project_ops.rs::ConfigureProjectToolsResult`, not this ticket's files); `cargo fmt --check` clean for this file.
 
+
+- 2026-09-16 (parent) — closed `done — 7f9ac17`; review fixes in fa4ae9f; released as 1.2.13 (c927683).

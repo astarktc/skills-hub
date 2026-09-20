@@ -1,6 +1,6 @@
 # 01 Reconstruct CHANGELOG entries 1.2.7–1.2.11
 
-Status: done — pending parent commit
+Status: done — 49f2f9a
 Lane: A
 Source: BACKLOG #09
 
@@ -22,3 +22,5 @@ Five headings exist in order between 1.2.12 and 1.2.6; every bullet traces to a 
 
 - 2026-09-16 (parent, post-review) — Spec review (Astra) found the 1.2.11 clause "unknown keys are no longer dropped
   silently on save" traced to no commit in the range (`c909028` changes picker visibility only). Clause removed.
+
+- 2026-09-16 (parent) — closed `done — 49f2f9a`; review fixes in fa4ae9f; released as 1.2.13 (c927683).

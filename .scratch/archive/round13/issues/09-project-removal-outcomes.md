@@ -1,6 +1,6 @@
 # 09 Surface per-target project-removal outcomes
 
-Status: done — pending parent commit
+Status: done — 6280df2
 Lane: E
 Source: BACKLOG #14
 
@@ -41,3 +41,5 @@ Per-target outcomes reach the toast; vitest fold test added; bindings regenerate
     dropped tools' report from configureTools"); `npm run build` ok; `npm run lint` clean. `npm run check` / `cargo
     test --all` left to the parent.
 
+
+- 2026-09-16 (parent) — closed `done — 6280df2`; review fixes in fa4ae9f; released as 1.2.13 (c927683).

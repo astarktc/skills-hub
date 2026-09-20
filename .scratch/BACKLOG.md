@@ -4,7 +4,7 @@ Read this first every session, then the newest note in `.scratch/handoffs/`. An 
 commit that closes it (or that opens the effort/ticket which absorbs it — say which). Every item keeps its
 source pointer. Procedure and status vocabulary: `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#32**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#34**.
 
 ## Now — evidence of unfinished work is strong
 
@@ -33,6 +33,13 @@ Numbers are stable: never renumber; retire by deleting the line (history keeps i
 - **#18 Windows: Cursor junction fallback is unverified.** `sync_engine.rs:63` path never exercised on a Windows host.
   Source: same research, :231–233; `archive/v-next/issues/38:33–34`.
 
+
+- **#32 Bump GitHub Actions to current majors** (checkout v7, setup-node v7, upload-artifact v7, download-artifact v8,
+  softprops/action-gh-release v3). Round 13 #31 pinned SHAs within the existing majors so CI behaviour did not change;
+  a major bump is a separate, tested change. Source: `archive/round13/issues/04:comments`.
+- **#33 Remove-project toast can show raw tool keys.** `ProjectsPage` builds `toolLabelById` from `state.toolStatus`,
+  which loads only on the add/tool-config flow; a kept-project toast reached without it shows `claude` not `Claude Code`.
+  Source: `archive/round13/issues/09:comments`.
 
 ## Parked — needs a product decision before it is work
 

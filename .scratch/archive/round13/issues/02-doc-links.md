@@ -1,6 +1,6 @@
 # 02 Repoint dead doc links
 
-Status: done — pending parent commit
+Status: done — 49f2f9a
 Lane: A
 Source: BACKLOG #20
 
@@ -13,3 +13,5 @@ Source: BACKLOG #20
 ## Comments
 
 - 2026-09-16 (lane A child) — Edited in place, no moves. `docs/releases/`: `v0.1-v0.2/system-design{,.zh}.md` cross-links repointed to their sibling files (archived there since v0.3.0, ddcc7b8); `v0.3.0/plan-explore-page-redesign.md` `ExploreCard.tsx` marked *(never created: rendered inline by `ExplorePage.tsx`)* — the file never existed in history; `v0.3.1`+`v0.4.0/skills-aggregation-repo.md` `docs/requirements/…` marked *(never created: this document is the requirements doc)* — never existed in history; `v0.3.1`+`v0.4.0/plan-in-app-update.md` `SettingsModal.tsx` (×2 each) marked *(removed in v0.4.0 — now `SettingsPage.tsx`)* (deleted in f7b2091). `plan-settings-page.md`'s `modals/SettingsModal.tsx → SettingsPage.tsx` heading describes the migration itself — intentional historical mention, left. `.scratch/archive/round10/`: checkout lines in b1/b2/b3/review-fixes reports, the lane table in `wave-b-execution.md` and the checkout line in `wave-b-review-disposition.md` annotated *(worktree removed after merge; evidence under `.scratch/archive/round10/evidence/<b1|b2|b3|review-fixes>/`)*. Remaining `worktrees/` hits are verbatim command lines in code blocks (covered by the report-level note), the review brief's search instruction, and the "merged worktrees cleaned" log line — all intentional. Verified with `rg -n 'worktrees/' .scratch/archive/round10` and `rg -n 'docs/system-design|requirements/skills-aggregation-repo|ExploreCard\.tsx|SettingsModal\.tsx' docs/releases`. Note: `.scratch/archive/round10/evidence/` is gitignored (`**/evidence/`) and not present in this checkout — the pointer follows the ticket text.
+
+- 2026-09-16 (parent) — closed `done — 49f2f9a`; review fixes in fa4ae9f; released as 1.2.13 (c927683).

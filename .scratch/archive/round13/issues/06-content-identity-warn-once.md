@@ -1,6 +1,6 @@
 # 06 Remove the process-global warn-once in content_identity
 
-Status: done — pending parent commit
+Status: done — dd29ecc
 Lane: C
 Source: BACKLOG #03
 
@@ -20,3 +20,5 @@ No OnceLock/static in content_identity.rs; tests green.
   `hash_changes_with_content_and_ignores_git_dir`, `managed_read_backfills_once_and_trusts_the_row`);
   `rg "OnceLock|static " src-tauri/src/core/content_identity.rs` → no matches.
 
+
+- 2026-09-16 (parent) — closed `done — dd29ecc`; review fixes in fa4ae9f; released as 1.2.13 (c927683).

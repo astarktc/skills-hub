@@ -1,6 +1,6 @@
 # 04 Harden the four GitHub workflows
 
-Status: done — pending parent commit
+Status: done — 7f9ac17
 Lane: B
 Source: BACKLOG #31
 
@@ -38,3 +38,5 @@ All four workflows have SHA pins + permissions; ci.yml still green (parent verif
   `grep uses:` shows no floating tag left. Note: newer majors exist (checkout v7, setup-node v7, upload-artifact v7,
   download-artifact v8, gh-release v3) — bumping them is a separate, behaviour-changing ticket.
 
+
+- 2026-09-16 (parent) — closed `done — 7f9ac17`; review fixes in fa4ae9f; released as 1.2.13 (c927683).

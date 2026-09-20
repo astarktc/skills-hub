@@ -1,6 +1,6 @@
 # 08 Insert-shaped TargetTransition for new sync rows
 
-Status: done — pending parent commit
+Status: done — dbc0cdb
 Lane: D
 Source: BACKLOG #13
 
@@ -25,3 +25,5 @@ No direct upsert in global_sync.rs; existing tests green; the transition enum do
   `cargo test global_sync` 18 passed, `propagation` 16 passed, `project_sync` 33 passed, `skill_store` 51 passed;
   `cargo clippy --all-targets -- -D warnings` Finished.
 
+
+- 2026-09-16 (parent) — closed `done — dbc0cdb`; review fixes in fa4ae9f; released as 1.2.13 (c927683).

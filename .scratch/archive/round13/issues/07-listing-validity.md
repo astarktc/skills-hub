@@ -1,6 +1,6 @@
 # 07 Align local listing validity with installability
 
-Status: done — pending parent commit
+Status: done — dd29ecc
 Lane: C
 Source: BACKLOG #11
 
@@ -38,3 +38,5 @@ Test proves a manifest-less dir is listed-but-invalid; install path unchanged; `
   its rule), and install has always refused such a dir — the exception was the only path by which an uninstallable
   candidate reached the git picker. "Listed but invalid" applies to the local picker, which has the validity/reason
   DTO fields; the git DTO has none and gains none. CONTEXT.md **Skill candidate** updated to match; CHANGELOG says so.
+
+- 2026-09-16 (parent) — closed `done — dd29ecc`; review fixes in fa4ae9f; released as 1.2.13 (c927683).
