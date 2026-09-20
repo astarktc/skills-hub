@@ -132,8 +132,12 @@ fn every_known_scan_base_is_scanned() {
     );
 }
 
+/// Listing validity means installability: every install door applies
+/// `require_skill_md`, so a `.claude/skills/` child without a manifest is
+/// listed (the picker explains it) but never valid. The description fallback
+/// still comes from `.claude-plugin/plugin.json`.
 #[test]
-fn claude_skills_child_without_skill_md_is_valid_with_plugin_description() {
+fn claude_skills_child_without_skill_md_is_listed_but_invalid() {
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path();
     fs::create_dir_all(base.join(".claude/skills/plugin-skill")).unwrap();
@@ -148,7 +152,35 @@ fn claude_skills_child_without_skill_md_is_valid_with_plugin_description() {
     let c = find(&list, ".claude/skills/plugin-skill");
     assert_eq!(c.name, "plugin-skill");
     assert_eq!(c.description.as_deref(), Some("from plugin.json"));
-    assert_eq!(c.validity, Validity::Valid);
+    assert_eq!(c.validity, Validity::MissingSkillMd);
+    assert_eq!(c.validity.reason(), Some("missing_skill_md"));
+    assert!(!c.validity.is_valid());
+    assert!(!c.validity.is_installable());
+    // The install door refuses the same directory with the same token.
+    let err = super::require_skill_md(&base.join(".claude/skills/plugin-skill"))
+        .expect_err("listing must not call valid what install refuses");
+    match err.downcast_ref::<crate::core::errors::SignalError>() {
+        Some(crate::core::errors::SignalError::SkillInvalid { reason }) => {
+            assert_eq!(reason, "missing_skill_md");
+        }
+        other => panic!("expected SkillInvalid, got {other:?}"),
+    }
+}
+
+/// A listing rooted at a tool's skills dir (`~/.claude/skills`) still lists
+/// every manifest-less child, each marked invalid.
+#[test]
+fn listing_rooted_at_claude_skills_lists_manifestless_children_as_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join(".claude/skills");
+    fs::create_dir_all(root.join("bare")).unwrap();
+    fs::write(root.join("bare/notes.md"), "not a manifest").unwrap();
+    write_skill(&root, "good", "good");
+
+    let list = discover_skills(&root);
+    assert_eq!(subpaths(&list), vec!["bare".to_string(), "good".to_string()]);
+    assert_eq!(find(&list, "bare").validity, Validity::MissingSkillMd);
+    assert_eq!(find(&list, "good").validity, Validity::Valid);
 }
 
 #[test]

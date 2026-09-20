@@ -958,14 +958,13 @@ fn listing_interface_characterization() {
     fs::create_dir_all(base.join("skills/missing")).unwrap();
     fs::create_dir_all(base.join(".claude/skills/optional")).unwrap();
     fs::write(base.join(".claude/skills/optional/prompt.txt"), "bytes").unwrap();
+    // A manifest-less `.claude/skills/` child is not offered: install would
+    // refuse its landed bytes with `missing_skill_md` (round 13 ticket 07).
     check(
-        "malformed-missing-and-claude-exception",
+        "malformed-and-missing",
         "owner/repo",
         Some("broken"),
-        json!([
-            ["broken", null, "skills/broken", {"branch":null,"subpath":null}],
-            ["optional", null, ".claude/skills/optional", {"branch":null,"subpath":null}]
-        ]),
+        json!([["broken", null, "skills/broken", {"branch":null,"subpath":null}]]),
         json!({"kind":"resolved","subpath":"skills/broken"}),
     );
     fs::remove_dir_all(base.join("skills")).unwrap();

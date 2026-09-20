@@ -1,8 +1,4 @@
-use std::{
-    collections::HashSet,
-    path::Path,
-    sync::{Mutex, OnceLock},
-};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
@@ -30,7 +26,10 @@ pub fn record(store: &SkillStore, record: &mut SkillRecord) -> Result<()> {
 }
 
 /// Read identity, backfilling a missing managed hash once. Unknown identity must
-/// not be interpreted as drift. This is the only warning site for read failures.
+/// not be interpreted as drift. This is the only warning site for read failures,
+/// and it warns on every failure: reconcile may ask repeatedly while an I/O
+/// fault persists, so a persistent fault repeats in the log. That flood is
+/// accepted over keeping process-global dedupe state in core.
 pub fn read(source: Source<'_>) -> Option<String> {
     fn resolve(source: Source<'_>) -> Result<Option<String>> {
         match source {
@@ -51,18 +50,7 @@ pub fn read(source: Source<'_>) -> Option<String> {
     match resolve(source) {
         Ok(hash) => hash,
         Err(error) => {
-            // Reconcile can ask repeatedly while an I/O fault persists. Emit
-            // each diagnostic once rather than flooding the operator's log.
-            static WARNED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-            let detail = format!("{error:#}");
-            let first = WARNED
-                .get_or_init(|| Mutex::new(HashSet::new()))
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .insert(detail.clone());
-            if first {
-                log::warn!("[content identity] identity unavailable: {detail}");
-            }
+            log::warn!("[content identity] identity unavailable: {error:#}");
             None
         }
     }

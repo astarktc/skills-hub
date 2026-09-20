@@ -18,7 +18,10 @@
 //! Validity is reported, never enforced during discovery: callers decide
 //! what to show ([`Validity::is_installable`] vs [`Validity::is_valid`]).
 //! The one place validity *is* enforced is [`require_skill_md`], the
-//! admission rule every install path applies to a source directory.
+//! admission rule every install path applies to a source directory, and
+//! validity mirrors it: a directory without a `SKILL.md` is listed (so the
+//! picker can explain it) but never valid — including children of a
+//! `.claude/skills/` dir, which discovery lists without a manifest.
 //! No message here is user copy — reasons are stable machine tokens.
 
 use std::collections::HashSet;
@@ -59,26 +62,27 @@ const MAX_RECURSIVE_DEPTH: usize = 5;
 /// Why a discovered directory is or is not a usable skill.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Validity {
-    /// `SKILL.md` parsed (has a `name`), or the dir lives under `.claude/skills/`
-    /// where a manifest is optional.
+    /// `SKILL.md` parsed (has a `name`).
     Valid,
     /// A `SKILL.md` exists but is unusable; the token is one of
     /// `read_failed`, `invalid_frontmatter`, `missing_name`.
     InvalidSkillMd(&'static str),
-    /// No `SKILL.md` at all (only reported for children of a scan base).
+    /// No `SKILL.md` at all (reported for children of a scan base and for
+    /// `.claude/skills/` children, which are listed without one).
     MissingSkillMd,
 }
 
 impl Validity {
-    /// Manifest present and well-formed (or optional). The local listing's
-    /// notion of "valid".
+    /// Manifest present and well-formed. The local listing's notion of
+    /// "valid", which is exactly what [`require_skill_md`] plus a successful
+    /// parse admits at install.
     pub fn is_valid(self) -> bool {
         matches!(self, Validity::Valid)
     }
 
-    /// There are skill bytes to install: a `SKILL.md` exists (even if broken)
-    /// or the dir is a `.claude/skills/` child. The git listing's admission
-    /// rule, and the same predicate the git install path enforces.
+    /// There are skill bytes to install: a `SKILL.md` exists (even if broken).
+    /// The git listing's admission rule, and the same predicate
+    /// [`require_skill_md`] enforces on the landed bytes.
     pub fn is_installable(self) -> bool {
         !matches!(self, Validity::MissingSkillMd)
     }
@@ -238,10 +242,12 @@ fn inspect(root: &Path, dir: &Path, subpath: String) -> DiscoveredSkill {
                 Validity::InvalidSkillMd(reason),
             ),
         },
+        // A `.claude/skills/` child is listed without a manifest, but install
+        // refuses it all the same; only its description fallback differs.
         None if is_claude_skill_dir(dir) => (
             folder_name(),
             read_plugin_description(root),
-            Validity::Valid,
+            Validity::MissingSkillMd,
         ),
         None => (folder_name(), None, Validity::MissingSkillMd),
     };
@@ -288,11 +294,14 @@ pub(crate) fn require_skill_md(dir: &Path) -> Result<PathBuf> {
 }
 
 /// Check if a directory is a skill dir: has SKILL.md or is a `.claude/skills/` child.
+/// A discovery predicate (which dirs get *listed*), not the validity rule;
+/// on a staged install dir only the manifest arm can hold.
 pub(crate) fn is_skill_dir(p: &Path) -> bool {
     p.is_dir() && (has_skill_md(p) || is_claude_skill_dir(p))
 }
 
-/// A directory under `.claude/skills/` is a skill even without SKILL.md.
+/// A directory under `.claude/skills/` is listed as a candidate even without
+/// SKILL.md (it is marked `MissingSkillMd`, never valid).
 fn is_claude_skill_dir(p: &Path) -> bool {
     if let Some(parent) = p.parent() {
         let parent_str = parent.to_string_lossy();
