@@ -1,6 +1,6 @@
 # D1 — A corrupt saved tool selection refuses to sync instead of fanning out to every tool
 
-Status: claimed
+Status: done — 396374e
 
 Source: BACKLOG #06 (`archive/round10/wave-b-ticketing-evidence.md:57`).
 
@@ -26,3 +26,7 @@ Source: BACKLOG #06 (`archive/round10/wave-b-ticketing-evidence.md:57`).
   `load_settings` exposes `global_selected_tools_corrupt: true` only for the corrupt rows.
 - `src/commandError.test.ts`: `SETTING_CORRUPT` renders the key and detail.
 - `src/hooks/useSyncOrchestration.test.ts`: corrupt flag → one warning notification; clean → none.
+
+## Comments
+
+- 2026-09-16 — done in `396374e`. Evidence: `effective_global_tool_targets_refuses_a_corrupt_selection`, `global_selected_tools_parses_json_and_flags_corrupt_rows` (core/tests/settings.rs); `SETTING_CORRUPT` in commandError.test.ts; startup warning in useSyncOrchestration.test.ts.

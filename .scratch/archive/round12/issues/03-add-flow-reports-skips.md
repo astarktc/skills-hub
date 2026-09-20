@@ -1,6 +1,6 @@
 # D3 — Add/import deploys to the full selection; not-installed skips surface as warnings
 
-Status: claimed
+Status: done — 396374e
 
 Source: BACKLOG #08 (round-11 review C4).
 
@@ -22,3 +22,7 @@ Source: BACKLOG #08 (round-11 review C4).
   selection still yields `no-targets`.
 - `src/lib/reportOutcome.test.ts`: `install` and `bulk` produce one warning per skipped tool with the skill count;
   `toggle` still yields an error; `TOOL_NOT_WRITABLE` skips keep their existing treatment.
+
+## Comments
+
+- 2026-09-16 — done in `396374e`. Evidence: useAddSkillFlow.test.ts (full selection passed; empty selection → no-targets); reportOutcome.test.ts (per-tool warning for install/bulk/import, toggle unchanged). Scope note: `importOutcome` needed the same fold because the onboarding import carries the same selection — done in the same commit.

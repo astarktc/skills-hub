@@ -64,3 +64,17 @@ them.* This round extends the same principle to the read side.
 ## Verification
 
 `npm run version:check && npm run check` (+ `cargo test --all` to match CI). Each ticket names its tests.
+
+## Closure — 2026-09-16
+
+Shipped in `396374e` (unreleased; CHANGELOG `[Unreleased]` carries the three entries). All three tickets `done`.
+Gate: `npm run version:check && npm run check` green; `cargo test --all` 643 passed.
+
+Residue:
+- **Dropped by name:** automatic repair/migration of a corrupt selection row (the operator's next save is the repair);
+  extending the refusal policy to `read_bool`/`read_i64` keys (a bool/number default is safe, a tool set is not);
+  the ZH `syncSkippedNotInstalledMessage_one` key is unreachable (Intl plural rules for zh yield `other` only) and kept
+  solely for EN/ZH key parity.
+- **Scope note, no follow-up:** D3 also fixed the silent `TOOL_NOT_INSTALLED` drop in the bulk (Sync All) and
+  onboarding-import folds — the same principle, same helper (`NotInstalledSkips`).
+- No BACKLOG items extracted.

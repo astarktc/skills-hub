@@ -1,6 +1,6 @@
 # D2 — A selected tool key the registry no longer knows is pruned at the read seam
 
-Status: claimed
+Status: done — 396374e
 
 Source: BACKLOG #07 (round-11 review C3; `archive/round10/wave-b-ticketing-evidence.md:57`).
 
@@ -20,3 +20,7 @@ No UI change: a tool that no longer exists has nothing to render; the next save 
 - `core/tests/settings.rs`: `["claude_code","ghost"]` → `load_settings().global_selected_tools == Some(["claude_code"])`
   and `effective_global_tool_targets == ["claude_code"]`; `apply_setting` with `["ghost"]` → `Err` downcasting to
   `UnknownTool { tool: "ghost" }` and the stored row unchanged.
+
+## Comments
+
+- 2026-09-16 — done in `396374e`. Evidence: `global_selected_tools_prunes_keys_the_registry_no_longer_knows`, `apply_global_tool_config_refuses_an_unknown_tool_key_and_leaves_the_row` (core/tests/settings.rs).

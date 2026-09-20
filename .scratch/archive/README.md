@@ -17,3 +17,4 @@ Finished efforts, moved here intact by `git mv` per `docs/agents/issue-tracker.m
 | 2026-09-15 | round9 | Hygiene/defect patches + architecture panel that seeded round 10 (v1.2.9) | BACKLOG #02 #10; ADR-0004 |
 | 2026-09-15 | round10 | Content identity, Update module, outcome fold (wave A, v1.2.10); git resolution, Manifest, mutation catalogs (wave B, v1.2.12); wave C deferred | BACKLOG #02 #06 #07 #08 #09 #15 #16 #20 #28 |
 | 2026-09-15 | round11 | Intent-led global sync target set; visible selection; removable orphaned target rows (v1.2.11) | BACKLOG #07 #08 |
+| 2026-09-16 | round12 | Tool-selection integrity: corrupt selection refuses (SETTING_CORRUPT), unknown keys pruned on read, add/import/bulk report not-detected skips (unreleased, `396374e`) | none |
