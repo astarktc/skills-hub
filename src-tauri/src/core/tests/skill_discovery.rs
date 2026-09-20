@@ -178,7 +178,10 @@ fn listing_rooted_at_claude_skills_lists_manifestless_children_as_invalid() {
     write_skill(&root, "good", "good");
 
     let list = discover_skills(&root);
-    assert_eq!(subpaths(&list), vec!["bare".to_string(), "good".to_string()]);
+    assert_eq!(
+        subpaths(&list),
+        vec!["bare".to_string(), "good".to_string()]
+    );
     assert_eq!(find(&list, "bare").validity, Validity::MissingSkillMd);
     assert_eq!(find(&list, "good").validity, Validity::Valid);
 }
