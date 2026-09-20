@@ -31,3 +31,10 @@ Test proves a manifest-less dir is listed-but-invalid; install path unchanged; `
   fixture kept to prove exclusion.
   Evidence: `cargo test skill_discovery` → `test result: ok. 23 passed`; `cargo test git_candidates` → `2 passed`.
 
+
+- 2026-09-16 (parent, post-review) — Spec review (Astra) flagged that the git listing now *omits* a manifest-less
+  `.claude/skills/` child rather than listing it invalid. Requirement narrowed deliberately: the git listing is by
+  design the installable set (AGENTS.md: listing uses acquisition's candidate admission; `is_installable` was already
+  its rule), and install has always refused such a dir — the exception was the only path by which an uninstallable
+  candidate reached the git picker. "Listed but invalid" applies to the local picker, which has the validity/reason
+  DTO fields; the git DTO has none and gains none. CONTEXT.md **Skill candidate** updated to match; CHANGELOG says so.

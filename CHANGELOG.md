@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Removing a project, or dropping a tool from a project's tool set, reports each deployment it could not remove** instead of failing the whole action with one error. A project is kept when any of its deployments stays on disk, the affected rows keep an error status for a retry, and the toast names what was removed and what was kept (ADR-0002 settlement applied to projects).
+- **A `.claude/skills/<name>` folder without a `SKILL.md` is no longer offered as installable.** The local picker still lists it, disabled, with the missing-manifest reason; a repository listing omits it — matching what install has always required.
+- **Release and CI workflows are pinned to commit SHAs** with least-privilege permissions; the release build itself is unchanged.
+
 ### Fixed
 
 - **A corrupt saved tool selection no longer syncs to every detected tool.** If the stored selection cannot be read, global syncs refuse with a clear message and the app warns once at startup; saving the selection under Configure Tools repairs it.
@@ -45,7 +51,7 @@ Global sync follows the operator's tool selection, `.agents/skills` is a global 
 
 ### Fixed
 
-- **A sync target row of an undetected tool renders a chip** — muted, badged, and with its unsync affordance — instead of disappearing from the card; the tool picker likewise keeps a selected-but-undetected tool visible so it can be unticked, and unknown keys are no longer dropped silently on save.
+- **A sync target row of an undetected tool renders a chip** — muted, badged, and with its unsync affordance — instead of disappearing from the card; the tool picker likewise keeps a selected-but-undetected tool visible so it can be unticked.
 - **Unsync removes an orphaned target row by its own recorded path** when the tool (and every member of its shared-dir group) is no longer detected; the artifact we created is removed, fenced to the tool skills dirs, under ADR-0002's presence and settlement rules.
 - **A sync or removal that plans zero targets warns instead of claiming success**: the link button and the new-tools sync say so when the effective target set is empty, and a removal report with nothing planned keeps the modal open.
 - **Onboarding import fails closed when the settings read fails**, falling back to an empty target set rather than raw detection.

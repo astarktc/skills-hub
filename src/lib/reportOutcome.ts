@@ -170,21 +170,33 @@ export function invocationEditOutcome(
   };
 }
 
+/**
+ * One error entry per failed target of a removal report (ADR-0002: a kept
+ * row names its path). Shared by every removal-shaped fold; the title key
+ * is the only thing that differs per action. Returns whether anything failed.
+ */
+function collectRemovalFailures(
+  out: Outcome<PlainEntry>,
+  report: RemovalReportDto,
+  ctx: ReportContext,
+  titleKey: string,
+): boolean {
+  for (const target of report.targets) {
+    if (target.status.status !== "failed") continue;
+    out.errors.push({
+      title: ctx.t(titleKey, { tool: label(ctx, target.tool) }),
+      message: errorMessage(ctx, target.status.error),
+    });
+  }
+  return report.failed > 0 || out.errors.length > 0;
+}
+
 export function removalOutcome(
   report: RemovalReportDto,
   ctx: ReportContext & { action: "all" | "skill" | "toggle" },
 ): Outcome<PlainEntry> {
   const out = empty();
-  for (const target of report.targets) {
-    if (target.status.status !== "failed") continue;
-    out.errors.push({
-      title: ctx.t("errors.unsyncFailedTitle", {
-        tool: label(ctx, target.tool),
-      }),
-      message: errorMessage(ctx, target.status.error),
-    });
-  }
-  const failed = report.failed > 0 || out.errors.length > 0;
+  const failed = collectRemovalFailures(out, report, ctx, "errors.unsyncFailedTitle");
   // Zero targets is neither success nor failure: nothing was planned, so
   // nothing was removed and whatever the operator clicked is still there.
   // `failed` counts failures and must keep meaning exactly that.
@@ -226,16 +238,12 @@ export function projectRemovalOutcome(
 ): Outcome<PlainEntry> {
   const out = empty();
   out.completion.reload = false;
-  for (const target of report.targets) {
-    if (target.status.status !== "failed") continue;
-    out.errors.push({
-      title: ctx.t("errors.projectRemovalFailedTitle", {
-        tool: label(ctx, target.tool),
-      }),
-      message: errorMessage(ctx, target.status.error),
-    });
-  }
-  const failed = report.failed > 0 || out.errors.length > 0;
+  const failed = collectRemovalFailures(
+    out,
+    report,
+    ctx,
+    "errors.projectRemovalFailedTitle",
+  );
   out.completion.closeModal = !failed;
   if (ctx.action === "removeProject")
     out.toast = failed

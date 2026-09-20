@@ -73,7 +73,7 @@ The single scan ladder (`core/skill_discovery.rs::discover_skills`) that turns a
 _Avoid_: scan, collect skill dirs
 
 **Skill candidate**:
-One discovered directory with its subpath, name, description and validity. "Installable" means it has skill bytes (any `SKILL.md`, or a `.claude/skills/` child) — the git side's admission rule; "valid" means the manifest parsed — the local picker's rule.
+One discovered directory with its subpath, name, description and validity. "Installable" means it has skill bytes (a `SKILL.md`, even a broken one) — the git side's admission rule and what install enforces; "valid" means the manifest parsed — the local picker's rule. A `.claude/skills/` child without a manifest is *discovered* (listed, with its missing-manifest reason) but neither installable nor valid (round 13, BACKLOG #11).
 _Avoid_: skill entry, hit
 
 **Sync status**:
