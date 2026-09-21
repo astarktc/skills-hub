@@ -244,8 +244,8 @@ fn required_reads_are_typed_while_optional_reads_remain_permissive() {
         let error = read_manifest(&path).unwrap_err();
         assert!(error.downcast_ref::<std::io::Error>().is_some());
         assert!(matches!(
-            crate::commands::error::CommandError::from_anyhow(error),
-            crate::commands::error::CommandError::SkillManifestIo { .. }
+            crate::core::errors::CommandError::from_anyhow(error),
+            crate::core::errors::CommandError::SkillManifestIo { .. }
         ));
     }
 }

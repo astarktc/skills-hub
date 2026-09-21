@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::core::{
     content_identity::{self, Source},
+    errors::CommandError,
     mutation_guard,
     skill_store::{SkillStore, TargetTransition},
     sync_engine::{self, SyncOutcome},
@@ -18,9 +19,8 @@ use crate::core::{
     },
 };
 
-/// Typed failures the frontend reacts to specially. The command layer maps
-/// these onto `commands::error::CommandError` wire variants; core tests
-/// assert on the variants, not strings.
+/// Typed sync failures, classified into `CommandError` at batch settlement.
+/// Single-pair callers retain the internal error and its diagnostic chain.
 #[derive(Debug)]
 pub enum GlobalSyncError {
     ToolNotInstalled {
@@ -226,14 +226,15 @@ pub struct PlannedToolTarget {
 /// (tool absent, dir unwritable) — callers decide whether to surface it;
 /// `Failed` is everything else. Both carry the typed error, so no
 /// information is lost by the classification.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, specta::Type)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum BatchTargetStatus {
     Synced { outcome: SyncOutcome },
-    Skipped { error: GlobalSyncError },
-    Failed { error: GlobalSyncError },
+    Skipped { error: CommandError },
+    Failed { error: CommandError },
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, specta::Type)]
 pub struct BatchTargetOutcome {
     pub skill_id: String,
     pub skill_name: String,
@@ -323,9 +324,9 @@ pub(crate) fn sync_skills_to_planned_tools(
                 skill_name: skill.skill_name.clone(),
                 tool_key: tool_key.to_string(),
                 status: BatchTargetStatus::Skipped {
-                    error: GlobalSyncError::ToolNotInstalled {
+                    error: CommandError::from(GlobalSyncError::ToolNotInstalled {
                         tool_key: tool_key.to_string(),
-                    },
+                    }),
                 },
             });
         }
@@ -372,9 +373,13 @@ pub(crate) fn sync_skills_to_planned_tools(
             ) {
                 Ok(outcome) => BatchTargetStatus::Synced { outcome },
                 Err(error @ GlobalSyncError::ToolNotWritable { .. }) => {
-                    BatchTargetStatus::Skipped { error }
+                    BatchTargetStatus::Skipped {
+                        error: CommandError::from(error),
+                    }
                 }
-                Err(error) => BatchTargetStatus::Failed { error },
+                Err(error) => BatchTargetStatus::Failed {
+                    error: CommandError::from(error),
+                },
             };
             outcomes.push(BatchTargetOutcome {
                 skill_id: skill.skill_id.clone(),
@@ -425,14 +430,14 @@ pub(crate) fn sync_skills_to_tools_unlocked(
             Ok(target) => targets.push(target),
             Err((tool_key, error)) => {
                 // One planning failure per skill, mirroring attempted shape.
-                let msg = format!("{}", error);
+                let error = CommandError::from(error);
                 for skill in skills {
                     outcomes.push(BatchTargetOutcome {
                         skill_id: skill.skill_id.clone(),
                         skill_name: skill.skill_name.clone(),
                         tool_key: tool_key.clone(),
                         status: BatchTargetStatus::Failed {
-                            error: GlobalSyncError::Other(anyhow::anyhow!("{}", msg)),
+                            error: error.clone(),
                         },
                     });
                 }

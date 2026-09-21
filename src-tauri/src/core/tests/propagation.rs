@@ -20,6 +20,44 @@ use crate::core::skill_store::{
 use crate::core::sync_status::{SyncMode, SyncStatus};
 use crate::core::tool_adapters::{adapter_by_key, ToolAdapter};
 
+#[test]
+fn shared_edit_update_report_preserves_classified_failure_on_the_wire() {
+    use crate::core::errors::{CommandError, SignalError};
+    let target = PropagationOutcome {
+        scope: PropagationScope::Global {
+            tool: "cursor".into(),
+        },
+        status: PropagationStatus::Failed {
+            error: CommandError::from_anyhow(anyhow::anyhow!(SignalError::CentralPathMissing {
+                path: "central".into(),
+            })),
+        },
+    };
+    assert_eq!(
+        serde_json::to_value(target).unwrap(),
+        serde_json::json!({
+            "scope": { "scope": "global", "tool": "cursor" },
+            "status": { "status": "failed", "error": { "code": "CENTRAL_PATH_MISSING", "path": "central" } }
+        })
+    );
+    let skipped = PropagationOutcome {
+        scope: PropagationScope::Project {
+            project_id: "p1".into(),
+            tool: "pi".into(),
+        },
+        status: PropagationStatus::Skipped {
+            reason: PropagationSkip::LinkFollowsSource,
+        },
+    };
+    assert_eq!(
+        serde_json::to_value(skipped).unwrap(),
+        serde_json::json!({
+            "scope": { "scope": "project", "project_id": "p1", "tool": "pi" },
+            "status": { "status": "skipped", "reason": { "reason": "link_follows_source" } }
+        })
+    );
+}
+
 struct Fixture {
     dir: tempfile::TempDir,
     paths: InstallerPaths,
@@ -362,12 +400,11 @@ fn a_missing_central_source_fails_every_row_as_report_data() {
     for tool in ["amp", "kimi_cli"] {
         match outcome_for(&outcomes, &global(tool)) {
             PropagationStatus::Failed { error } => {
-                assert_eq!(
-                    error.downcast_ref::<crate::core::errors::SignalError>(),
-                    Some(&crate::core::errors::SignalError::InvalidPath {
-                        path: f.central_path.to_string_lossy().to_string(),
-                        reason: "missing".to_string(),
-                    }),
+                assert!(
+                    matches!(error,
+                        crate::core::errors::CommandError::InvalidPath { path, reason }
+                        if path == &f.central_path.to_string_lossy() && reason == "missing"
+                    ),
                     "a missing central copy is a typed condition, not prose"
                 );
             }

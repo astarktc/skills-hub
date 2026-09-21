@@ -1,6 +1,6 @@
 # 01 — Backend: core report types cross the wire as themselves
 
-Status: ready-for-agent
+Status: done — lane A (parent commit follows)
 Spec: `.scratch/round15/spec.md` — decisions D1–D7, rider R1. Read the spec first; this ticket is the backend half.
 
 ## Goal
@@ -96,3 +96,57 @@ diff shows no change to the `CommandError` union other than the removed `DELETE_
 - Report: files touched, the bindings diff summary (type renames the frontend will have to follow, listed
   old → new), test counts before/after, and anything the spec got wrong (a stale `file:line`, a decision that did
   not survive contact with the code — say so rather than silently deviating).
+
+## Comments
+
+### 2026-09-21 — lane A implementation and verification
+
+Claimed and implemented on `main`, without commits, stash, CHANGELOG edits, or frontend edits beyond generated
+`src/bindings/index.ts`. Status remains claimed for the parent to close with its commit SHA.
+
+- `cargo test --all` baseline: **646 passed**. Final `cargo fmt && cargo clippy --all-targets -- -D warnings &&
+  cargo test --all`: **648 passed**, no failures (main/doc-test targets: 0 tests). Logs: `/tmp/round15-before.log`,
+  `/tmp/round15-gate.log`.
+- `CommandError` and classification now live in `core/errors.rs`; `commands/error.rs` deleted. A byte comparison
+  of the generated TS union against HEAD, with only `DELETE_CLEANUP_FAILED` removed, passed.
+- Reports cross directly, counters are absent, shared removal rows stay grouped, delete returns its report,
+  and configure uses `RemovalReport::merge`. Serialization pins cover shared rows, both RowRef tags, typed
+  failures, propagation, and acquisition skips; merge tests cover order, rows, statuses, flags, and empty input.
+- Binding changes: `BatchSyncReportDto` → `BatchTargetOutcome[]` (bare array, no `results` wrapper);
+  `SyncTargetResultDto` → `BatchTargetOutcome`; `SyncTargetStatusDto` → `BatchTargetStatus` (`tool` → `tool_key`,
+  synced status now contains `outcome: { mode_used, target_path, replaced }`). `RemovalReportDto` → `RemovalReport`,
+  `RemovalTargetDto` → `RemovalTargetOutcome`, `RemovalTargetStatusDto` → `RemovalTargetStatus`, `RemovalScopeDto`
+  replaced by `RowRef` inside `targets[].rows[]` (`scope: global_target | assignment`, ids + skill_id + tool,
+  assignment adds project_id). Removal report adds central_removed/record_deleted and omits planning scope.
+  `RefreshReportDto` → `RefreshReport`, `SkillRefreshResultDto` → `SkillRefreshOutcome`, `SkillRefreshStatusDto`
+  → `SkillRefreshStatus`, `UpdateSkipDto` → `UpdateSkip`. `PropagationTargetDto` → `PropagationOutcome`, and
+  `PropagationScopeDto`/`PropagationSkipDto`/`PropagationStatusDto` lose `Dto`. `ImportReportDto`,
+  `ImportGroupOutcomeDto`, `ImportGroupStatusDto` lose `Dto`; `ImportOriginalDto` → `OriginalOutcome`,
+  `ImportOriginalStatusDto` → `OriginalStatus`. `InvocationEditReportDto` → `InvocationEditReport` and its
+  propagation array becomes `PropagationReport { targets }`. `ResyncSummaryDto` → `ResyncSummary` (same fields).
+- Exact serde discriminators: status enums use `tag = "status", rename_all = "snake_case"`; PropagationScope
+  and RowRef use `tag = "scope", rename_all = "snake_case"`; PropagationSkip uses `tag = "reason",
+  rename_all = "snake_case"`; UpdateSkip uses `rename_all = "snake_case"` (string enum). CommandError retains
+  `tag = "code", rename_all = "SCREAMING_SNAKE_CASE", rename_all_fields = "camelCase"`; GitCloneFailureKind
+  retains `rename_all = "camelCase"`.
+
+**Spec/gate discrepancies requiring parent awareness:**
+
+1. The literal grep gate is overbroad: it matches explicitly excluded catalog/view types and their conversions
+   (`ToolStatusDto`, `SkillTargetDto`, `GitignoreStatusDto`, `to_install_dto`, `to_project_view_dto`,
+   `to_assignment_dto`, and core `to_project_dto`). Left these unchanged rather than expand scope. No report
+   mirrors/mappers remain. The exact grep therefore is **not empty**.
+2. `core/tests/project_sync.rs:320` tests **single-assignment unassign**, not deleting a skill. Its caller
+   `unassign_and_remove_artifacts` was an additional live `DeleteCleanupFailed` producer omitted from D6's
+   implementation instructions. Preserved the toggle command's failure behavior by propagating the settled
+   target's `CommandError` through anyhow; added `Error` plus a downcast pass-through in `from_anyhow` to avoid
+   re-rendering or reclassifying it. A regression test pins preservation through context. Delete itself now
+   returns the kept-target report as specified; no new wire variant or toggle response change.
+3. Kept `RemovalReport::failures()` because `project_ops` and its tests still read it (ticket permits removal
+   only if unused). It is internal diagnostics, never returned on IPC. Removed RowRef::project_id because only
+   the deleted mapper used it. InvocationEditReport stays a composition-only seam wrapper, with core propagation.
+4. `git diff --check` is clean excluding generated bindings; specta emits trailing spaces in TS union comments.
+   Left generated output untouched so the binding drift guard remains reproducible.
+
+Frontend work and ADR-0001/AGENTS updates remain for lanes B and parent respectively; no full frontend gate run.
+

@@ -550,8 +550,8 @@ fn invalid_utf8_is_typed_for_set_and_replay() {
             Some(SignalError::SkillManifestIo { .. })
         ));
         assert!(matches!(
-            crate::commands::error::CommandError::from_anyhow(error),
-            crate::commands::error::CommandError::SkillManifestIo { .. }
+            crate::core::errors::CommandError::from_anyhow(error),
+            crate::core::errors::CommandError::SkillManifestIo { .. }
         ));
     }
 }
@@ -750,8 +750,8 @@ fn legacy_indented_edit_failed_clear_or_rechoose_retains_base_and_retry_restores
         let result = f.set(mode);
         fs::set_permissions(&f.central, permissions).unwrap();
         assert!(matches!(
-            crate::commands::error::CommandError::from_anyhow(result.unwrap_err()),
-            crate::commands::error::CommandError::SkillManifestIo { .. }
+            crate::core::errors::CommandError::from_anyhow(result.unwrap_err()),
+            crate::core::errors::CommandError::SkillManifestIo { .. }
         ));
         assert_eq!(f.text(), LEGACY_EDITED);
         let row = f

@@ -11,7 +11,36 @@ use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
 use crate::core::cancel_token::CancelToken;
-use crate::core::errors::SignalError;
+use crate::core::errors::{CommandError, SignalError};
+
+#[test]
+fn acquisition_skips_cross_the_wire_without_counters() {
+    use crate::core::{
+        refresh::{RefreshReport, SkillRefreshOutcome},
+        skill_update::UpdateSkip,
+    };
+    for (reason, wire) in [
+        (UpdateSkip::SkillGone, "skill_gone"),
+        (UpdateSkip::StaleAcquisition, "stale_acquisition"),
+    ] {
+        let report = RefreshReport {
+            skills: vec![SkillRefreshOutcome {
+                skill_id: "s1".into(),
+                skill_name: "alpha".into(),
+                status: SkillRefreshStatus::SkippedAcquisition { reason },
+            }],
+        };
+        assert_eq!(
+            serde_json::to_value(report).unwrap(),
+            serde_json::json!({
+                "skills": [{ "skill_id": "s1", "skill_name": "alpha", "status": {
+                    "status": "skipped_acquisition", "reason": wire
+                } }]
+            })
+        );
+    }
+}
+
 use crate::core::installer::{install_imported_skill, install_local_skill, InstallerPaths};
 use crate::core::propagation::{PropagationOutcome, PropagationScope, PropagationStatus};
 use crate::core::refresh::{
@@ -390,8 +419,8 @@ fn git_repoint_non_skill_directory_never_replaces_a_working_skill() {
     // so it refuses with install's token.
     assert!(
         matches!(
-            error.downcast_ref::<SignalError>(),
-            Some(SignalError::SkillInvalid { reason }) if reason == "missing_skill_md"
+            error,
+            CommandError::SkillInvalid { reason } if reason == "missing_skill_md"
         ),
         "{error:#}"
     );
@@ -447,10 +476,7 @@ fn git_repoint_404_preserves_every_record_field_and_central_bytes() {
     let SkillRefreshStatus::Failed { error } = &report.skills[0].status else {
         panic!("{report:?}")
     };
-    assert!(matches!(
-        error.downcast_ref::<SignalError>(),
-        Some(SignalError::GithubSkillNotFound { .. })
-    ));
+    assert!(matches!(error, CommandError::GithubSkillNotFound { .. }));
     assert_eq!(
         format!("{:?}", f.store.get_skill_by_id(&f.skill_id).unwrap()),
         before
@@ -704,10 +730,7 @@ fn git_repoint_ambiguous_repo_preserves_the_record_byte_for_byte() {
     let SkillRefreshStatus::Failed { error } = &report.skills[0].status else {
         panic!("{report:?}")
     };
-    assert_eq!(
-        error.downcast_ref::<SignalError>(),
-        Some(&SignalError::MultiSkills)
-    );
+    assert!(matches!(error, CommandError::MultiSkills));
     assert_eq!(
         format!("{:?}", f.store.get_skill_by_id(&f.skill_id).unwrap()),
         before
@@ -993,12 +1016,17 @@ fn a_failed_reassert_is_reported_alongside_the_refreshed_status() {
     let (kept, error) = merge_reassert(targets, Err(anyhow::anyhow!("store is gone")));
 
     assert_eq!(kept.len(), 1, "Propagation's own outcomes survive");
-    assert_eq!(
-        format!(
-            "{:#}",
-            error.expect("the failure is carried, never dropped")
-        ),
-        "store is gone"
+    assert!(matches!(error, Some(CommandError::Other { message }) if message == "store is gone"));
+    let (_, typed) = merge_reassert(
+        Vec::new(),
+        Err(anyhow::anyhow!(SignalError::SettingCorrupt {
+            key: "global_tools".into(),
+            detail: "invalid JSON".into(),
+        })
+        .context("read reassert policy")),
+    );
+    assert!(
+        matches!(typed, Some(CommandError::SettingCorrupt { key, .. }) if key == "global_tools")
     );
 }
 
@@ -1311,7 +1339,7 @@ fn cancelling_mid_batch_finalizes_nothing() {
         report.skills.iter().all(|o| matches!(
             &o.status,
             SkillRefreshStatus::Failed { error }
-                if error.downcast_ref::<SignalError>() == Some(&SignalError::Cancelled)
+                if matches!(error, CommandError::Cancelled)
         )),
         "cancelled skills are reported as cancelled: {report:?}"
     );
@@ -1558,11 +1586,8 @@ fn a_single_update_of_an_imported_skill_is_refused_with_a_typed_condition() {
     let SkillRefreshStatus::Failed { error } = &outcome.status else {
         panic!("an imported skill cannot be updated: {:?}", outcome);
     };
-    assert_eq!(
-        error.downcast_ref::<SignalError>(),
-        Some(&SignalError::NotRefreshable {
-            name: "taken-over".to_string(),
-        }),
+    assert!(
+        matches!(error, CommandError::NotRefreshable { name } if name == "taken-over"),
         "got {error:#}"
     );
     assert!(

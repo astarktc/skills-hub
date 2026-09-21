@@ -238,7 +238,7 @@ fn detach_turns_the_skill_imported_with_no_source_and_no_tool_history() {
     assert!(matches!(
         &o.status,
         SkillRefreshStatus::Failed { error }
-            if matches!(error.downcast_ref::<SignalError>(), Some(SignalError::NotRefreshable { .. }))
+            if matches!(error, crate::core::errors::CommandError::NotRefreshable { .. })
     ));
 }
 

@@ -37,7 +37,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::errors::SignalError;
+use super::errors::{CommandError, SignalError};
 use super::installer::InstallerPaths;
 use super::project_sync::AssignmentSyncContext;
 use super::skill_store::{
@@ -51,7 +51,8 @@ use super::tool_adapters::{
 };
 
 /// Which Sync target an outcome is about.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(tag = "scope", rename_all = "snake_case")]
 pub enum PropagationScope {
     Global { tool: String },
     Project { project_id: String, tool: String },
@@ -59,7 +60,8 @@ pub enum PropagationScope {
 
 /// Why a target needed no work. Not a failure: skipping is the correct
 /// outcome for a link, an uninstalled Tool, or a project that is not there.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(tag = "reason", rename_all = "snake_case")]
 pub enum PropagationSkip {
     /// The target is a link (or junction) into the central copy, which was
     /// just refreshed in place — the target is already current.
@@ -72,21 +74,22 @@ pub enum PropagationSkip {
     ProjectUnavailable { project_id: String },
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, specta::Type)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum PropagationStatus {
     Synced { mode_used: SyncMode },
     Skipped { reason: PropagationSkip },
-    Failed { error: anyhow::Error },
+    Failed { error: CommandError },
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, specta::Type)]
 pub struct PropagationOutcome {
     pub scope: PropagationScope,
     pub status: PropagationStatus,
 }
 
 /// Every Sync target of one Managed skill, with what happened to it.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize, specta::Type)]
 pub struct PropagationReport {
     pub targets: Vec<PropagationOutcome>,
 }
@@ -296,7 +299,9 @@ fn propagate_global_rows(
                         scope: PropagationScope::Global {
                             tool: member.tool.clone(),
                         },
-                        status: PropagationStatus::Failed { error },
+                        status: PropagationStatus::Failed {
+                            error: CommandError::from_anyhow(error),
+                        },
                     });
                 }
             }
@@ -400,7 +405,9 @@ fn propagate_one_assignment(
                 &assignment.id,
                 AssignmentTransition::SyncFailed { error: &detail },
             )?;
-            Ok(PropagationStatus::Failed { error })
+            Ok(PropagationStatus::Failed {
+                error: CommandError::from_anyhow(error),
+            })
         }
     }
 }

@@ -416,8 +416,8 @@ fn batch_skips_not_installed_tools_with_typed_reason() {
         .expect("cursor outcome");
     match &skipped.status {
         BatchTargetStatus::Skipped {
-            error: GlobalSyncError::ToolNotInstalled { tool_key },
-        } => assert_eq!(tool_key, "cursor"),
+            error: crate::core::errors::CommandError::ToolNotInstalled { tool },
+        } => assert_eq!(tool, "cursor"),
         other => panic!("expected Skipped(ToolNotInstalled), got {:?}", other),
     }
     // The not-installed tool got no filesystem write and no record.
@@ -459,7 +459,7 @@ fn batch_isolates_per_target_failures() {
     assert!(matches!(
         outcomes[0].status,
         BatchTargetStatus::Failed {
-            error: GlobalSyncError::TargetExists { .. }
+            error: crate::core::errors::CommandError::TargetExists { .. }
         }
     ));
     assert!(matches!(
@@ -501,7 +501,7 @@ fn batch_override_applies_to_named_tool_and_its_shared_dir_group() {
     assert!(matches!(
         outcomes[0].status,
         BatchTargetStatus::Failed {
-            error: GlobalSyncError::TargetExists { .. }
+            error: crate::core::errors::CommandError::TargetExists { .. }
         }
     ));
 
@@ -585,7 +585,7 @@ fn batch_direct_override_forces_overwrite_for_that_skill_only() {
     assert!(matches!(
         outcomes[1].status,
         BatchTargetStatus::Failed {
-            error: GlobalSyncError::TargetExists { .. }
+            error: crate::core::errors::CommandError::TargetExists { .. }
         }
     ));
 }
@@ -742,13 +742,13 @@ fn sync_skills_to_tools_writes_under_temp_home_and_reports_unknown_tools() {
     assert!(matches!(
         status_for("cursor"),
         BatchTargetStatus::Skipped {
-            error: GlobalSyncError::ToolNotInstalled { .. }
+            error: crate::core::errors::CommandError::ToolNotInstalled { .. }
         }
     ));
     assert!(matches!(
         status_for("nope"),
         BatchTargetStatus::Failed {
-            error: GlobalSyncError::Other(_)
+            error: crate::core::errors::CommandError::Other { .. }
         }
     ));
     let record = store

@@ -47,7 +47,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::core::{
-    errors::SignalError,
+    errors::CommandError,
     mutation_guard,
     project_sync::resolve_assignment_artifact,
     skill_store::{AssignmentTransition, ProjectRecord, SkillRecord, SkillStore, TargetTransition},
@@ -100,7 +100,8 @@ pub enum RemovalScope {
 }
 
 /// Where a row lives — the two tables that record Sync targets.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(tag = "scope", rename_all = "snake_case")]
 pub enum RowRef {
     /// A `skill_targets` row (global scope).
     GlobalTarget {
@@ -121,13 +122,6 @@ impl RowRef {
     pub fn tool(&self) -> &str {
         match self {
             RowRef::GlobalTarget { tool, .. } | RowRef::Assignment { tool, .. } => tool,
-        }
-    }
-
-    pub fn project_id(&self) -> Option<&str> {
-        match self {
-            RowRef::GlobalTarget { .. } => None,
-            RowRef::Assignment { project_id, .. } => Some(project_id),
         }
     }
 }
@@ -151,29 +145,28 @@ pub struct RemovalPlan {
     pub skill: Option<SkillRecord>,
 }
 
-/// Like `PropagationStatus`, the failure carries the error value itself —
-/// not its rendered chain — so a typed `SignalError` inside it survives to
-/// the command seam, where `CommandError::from_anyhow` classifies it. That
-/// costs `Clone`/`PartialEq` (an `anyhow::Error` has neither); the report is
-/// consumed once, so nothing needs them.
-#[derive(Debug)]
+/// Failures are classified at settlement, after writing the full chain to
+/// each attached row's diagnostic.
+#[derive(Debug, serde::Serialize, specta::Type)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum RemovalTargetStatus {
     /// Removed, or already absent.
     Removed,
-    /// The removal failure, chain intact. Every attached row was kept with
-    /// status `error` carrying its `{:#}` rendering as the diagnostic.
-    Failed { error: anyhow::Error },
+    /// Every attached row was kept with status `error` and the original chain.
+    Failed { error: CommandError },
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, specta::Type)]
 pub struct RemovalTargetOutcome {
     pub path: PathBuf,
     pub rows: Vec<RowRef>,
     pub status: RemovalTargetStatus,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, specta::Type)]
 pub struct RemovalReport {
+    #[serde(skip)]
+    #[specta(skip)]
     pub scope: RemovalScope,
     pub targets: Vec<RemovalTargetOutcome>,
     /// The central copy was deleted (only ever true for the `Skill` scope).
@@ -183,18 +176,36 @@ pub struct RemovalReport {
 }
 
 impl RemovalReport {
-    /// `"<path>: <error>"` per failed target — the payload of
-    /// `SignalError::DeleteCleanupFailed`.
+    /// Per-target diagnostics for internal removal policy and logs, never IPC.
     pub fn failures(&self) -> Vec<String> {
         self.targets
             .iter()
-            .filter_map(|t| match &t.status {
+            .filter_map(|target| match &target.status {
                 RemovalTargetStatus::Failed { error } => {
-                    Some(format!("{}: {:#}", t.path.display(), error))
+                    Some(format!("{}: {error}", target.path.display()))
                 }
                 RemovalTargetStatus::Removed => None,
             })
             .collect()
+    }
+
+    /// Combine settled reports in input order, without flattening shared rows.
+    /// The first scope is retained for diagnostics only; an empty merge uses
+    /// `EveryGlobalTarget`. Deletion flags indicate whether any input deleted it.
+    pub fn merge(reports: impl IntoIterator<Item = RemovalReport>) -> RemovalReport {
+        let mut reports = reports.into_iter();
+        let mut merged = reports.next().unwrap_or(RemovalReport {
+            scope: RemovalScope::EveryGlobalTarget,
+            targets: Vec::new(),
+            central_removed: false,
+            record_deleted: false,
+        });
+        for report in reports {
+            merged.targets.extend(report.targets);
+            merged.central_removed |= report.central_removed;
+            merged.record_deleted |= report.record_deleted;
+        }
+        merged
     }
 
     /// Rows whose artifact was removed (and whose row was therefore deleted).
@@ -221,8 +232,12 @@ impl fmt::Display for RemovalReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{:?}: central_removed={} record_deleted={}",
-            self.scope, self.central_removed, self.record_deleted
+            "{:?}: central_removed={} record_deleted={} removed_rows={} failed_rows={}",
+            self.scope,
+            self.central_removed,
+            self.record_deleted,
+            self.removed_rows(),
+            self.failed_rows()
         )?;
         for target in &self.targets {
             let status = match &target.status {
@@ -478,23 +493,29 @@ pub(crate) fn execute_unlocked(store: &SkillStore, plan: RemovalPlan) -> Result<
     let mut targets: Vec<RemovalTargetOutcome> = Vec::with_capacity(plan.targets.len());
 
     for target in plan.targets {
-        let status = if is_present(&target.path) {
-            match remove_path_any(&target.path) {
-                Ok(()) => RemovalTargetStatus::Removed,
-                Err(error) => RemovalTargetStatus::Failed { error },
-            }
+        let result = if is_present(&target.path) {
+            remove_path_any(&target.path)
         } else {
-            RemovalTargetStatus::Removed
+            Ok(())
         };
 
-        for row in &target.rows {
-            match &status {
-                RemovalTargetStatus::Removed => delete_row(store, row)?,
-                RemovalTargetStatus::Failed { error } => {
-                    settle_row_as_error(store, row, &format!("{:#}", error))?
+        let status = match result {
+            Ok(()) => {
+                for row in &target.rows {
+                    delete_row(store, row)?;
+                }
+                RemovalTargetStatus::Removed
+            }
+            Err(error) => {
+                let detail = format!("{error:#}");
+                for row in &target.rows {
+                    settle_row_as_error(store, row, &detail)?;
+                }
+                RemovalTargetStatus::Failed {
+                    error: CommandError::from_anyhow(error),
                 }
             }
-        }
+        };
 
         targets.push(RemovalTargetOutcome {
             path: target.path,
@@ -567,7 +588,7 @@ fn planned(store: &SkillStore, scope: RemovalScope) -> Result<RemovalReport> {
 ///
 /// When any artifact could not be removed, its row is kept with Sync status
 /// `error`, the skill itself is kept (so the failure is retryable), and the
-/// typed `SignalError::DeleteCleanupFailed` carries what is left behind.
+/// report carries the failed targets and `record_deleted: false`.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
 pub fn remove_skill(store: &SkillStore, skill_id: &str) -> Result<RemovalReport> {
@@ -578,10 +599,6 @@ pub fn remove_skill(store: &SkillStore, skill_id: &str) -> Result<RemovalReport>
                 skill_id: skill_id.to_string(),
             },
         )?;
-        let failures = report.failures();
-        if !failures.is_empty() {
-            anyhow::bail!(SignalError::DeleteCleanupFailed { failures });
-        }
         Ok(report)
     })
 }

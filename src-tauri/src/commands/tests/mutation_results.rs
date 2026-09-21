@@ -2,7 +2,10 @@
 use super::*;
 use crate::core::{
     installer::install_local_skill,
-    refresh::{refresh_managed_skills_with, repoint_git_skill_with, RefreshReport},
+    propagation::PropagationStatus,
+    refresh::{
+        refresh_managed_skills_with, repoint_git_skill_with, RefreshReport, SkillRefreshStatus,
+    },
     skill_edits::set_invocation_override,
     skill_store::SkillTargetRecord,
     skill_update::UpdateRequest,
@@ -56,7 +59,7 @@ impl Fixture {
         .unwrap()
     }
     fn result(&self, report: RefreshReport) -> SkillMutationResultDto {
-        SkillMutationResultDto::from_report(&self.store, to_refresh_report_dto(report)).unwrap()
+        SkillMutationResultDto::from_report(&self.store, report).unwrap()
     }
     fn blocked_target(&self) {
         let tool = crate::core::tool_adapters::adapter_by_key("cursor").unwrap();
@@ -94,7 +97,9 @@ fn update_and_restore_catalog_include_replayed_override_and_reasserted_targets()
             fs::remove_dir_all(&f.central).unwrap();
         }
         let result = f.result(f.update(true));
-        assert_eq!(result.report.refreshed, 1);
+        assert!(
+            matches!(result.report.skills.as_slice(), [outcome] if matches!(outcome.status, SkillRefreshStatus::Refreshed { .. }))
+        );
         let row = &result.skills[0];
         assert_eq!(row.id, f.id);
         assert_eq!(row.description.as_deref(), Some("new description"));
@@ -118,7 +123,9 @@ fn update_failure_returns_full_catalog_not_just_report_members() {
     let other = install_local_skill(&f.paths, &f.store, &f.source, Some("beta".into())).unwrap();
     fs::remove_dir_all(&f.source).unwrap();
     let result = f.result(f.update(false));
-    assert_eq!(result.report.failed, 1);
+    assert!(
+        matches!(result.report.skills.as_slice(), [outcome] if matches!(outcome.status, SkillRefreshStatus::Failed { .. }))
+    );
     assert_eq!(result.skills.len(), 2);
     assert!(result.skills.iter().any(|s| s.id == other.skill_id));
     for row in result.skills {
@@ -145,8 +152,12 @@ fn local_repoint_catalog_has_new_source_and_settled_target_failure() {
     )
     .unwrap();
     let result = f.result(report);
-    assert_eq!(result.report.refreshed, 1);
-    assert_eq!(result.report.target_failures, 1);
+    assert!(
+        matches!(result.report.skills.as_slice(), [outcome] if matches!(&outcome.status,
+            SkillRefreshStatus::Refreshed { targets, reassert_error: None, .. }
+            if matches!(targets.as_slice(), [target] if matches!(target.status, PropagationStatus::Failed { .. }))
+        ))
+    );
     assert_eq!(result.skills[0].source_ref.as_deref(), new_source.to_str());
     assert_eq!(result.skills[0].unlocatable, None);
     assert_eq!(result.skills[0].targets[0].status, SyncStatus::Error);
@@ -201,7 +212,9 @@ fn git_repoint_catalog_has_replaced_source_and_repaired_central() {
     )
     .unwrap();
     let result = f.result(report);
-    assert_eq!(result.report.refreshed, 1);
+    assert!(
+        matches!(result.report.skills.as_slice(), [outcome] if matches!(outcome.status, SkillRefreshStatus::Refreshed { .. }))
+    );
     assert_eq!(result.skills[0].source_ref.as_deref(), Some(url));
     assert_eq!(result.skills[0].description.as_deref(), Some("git bytes"));
     assert_eq!(result.skills[0].unlocatable, None);
@@ -222,8 +235,8 @@ fn edit_catalog_is_post_propagation_and_includes_unrelated_rows() {
     let result = InvocationEditResultDto::from_outcome(&f.store, outcome).unwrap();
     assert_eq!(result.report.skill_id, f.id);
     assert!(matches!(
-        result.report.propagation[0].status,
-        PropagationStatusDto::Failed { .. }
+        result.report.propagation.targets[0].status,
+        PropagationStatus::Failed { .. }
     ));
     let alpha = result.skills.iter().find(|s| s.id == f.id).unwrap();
     assert_eq!(alpha.invocation_mode, InvocationMode::UserOnly);
@@ -278,13 +291,8 @@ fn acquisition_skips_return_current_catalog_and_wire_reason() {
         )
         .unwrap();
         let result = f.result(report);
-        assert_eq!(
-            (
-                result.report.skipped,
-                result.report.failed,
-                result.report.refreshed
-            ),
-            (1, 0, 0)
+        assert!(
+            matches!(result.report.skills.as_slice(), [outcome] if matches!(outcome.status, SkillRefreshStatus::SkippedAcquisition { .. }))
         );
         let wire = serde_json::to_value(&result).unwrap();
         assert_eq!(
@@ -313,7 +321,7 @@ fn catalog_failure_after_settlement_is_an_error_never_an_empty_success() {
         let outcome =
             set_invocation_override(&f.paths, &f.store, &f.id, Some(InvocationMode::UserOnly))
                 .unwrap();
-        let report = to_refresh_report_dto(f.update(false));
+        let report = f.update(false);
         rusqlite::Connection::open(f.store.db_path())
             .unwrap()
             .execute_batch("PRAGMA foreign_keys = OFF; DROP TABLE skill_targets;")

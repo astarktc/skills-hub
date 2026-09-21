@@ -341,6 +341,7 @@ pub(crate) fn assign_skill_to_project_tool_unlocked(
     }
 }
 
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct ResyncSummary {
     pub project_id: String,
     pub synced: usize,
@@ -654,9 +655,8 @@ pub fn toggle_skill_assignment(
 /// skill from one tool has nothing else to report.
 ///
 /// The row is settled by the module (deleted on success, kept with Sync
-/// status `error` on failure, ADR-0002) *before* the typed
-/// `DeleteCleanupFailed` is raised, so the operator sees the `error` row and
-/// the path that stayed.
+/// status `error` on failure, ADR-0002) *before* its classified target error
+/// is propagated. The command seam preserves that error's wire classification.
 ///
 /// Unlocked internal seam: callers reach it through an entry point that has
 /// already taken the mutation guard.
@@ -680,9 +680,10 @@ pub(crate) fn unassign_and_remove_artifacts(
     let plan = artifact_removal::plan(store, &scope)?;
     let report = artifact_removal::execute_unlocked(store, plan)?;
 
-    let failures = report.failures();
-    if !failures.is_empty() {
-        anyhow::bail!(SignalError::DeleteCleanupFailed { failures });
+    for target in report.targets {
+        if let artifact_removal::RemovalTargetStatus::Failed { error } = target.status {
+            return Err(anyhow::Error::new(error));
+        }
     }
     Ok(())
 }

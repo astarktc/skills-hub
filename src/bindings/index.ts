@@ -28,8 +28,8 @@ export const commands = {
 	 *  policy, DB record fan-out — and returns a per-target report; per-target
 	 *  failures are data, not command errors.
 	 */
-	syncSkillsToTools: (skills: BatchSyncSkillDto[], tools: string[], policy: BatchSyncPolicyDto, onProgress: Channel<SyncProgressDto>) => __TAURI_INVOKE<BatchSyncReportDto>("sync_skills_to_tools", { skills, tools, policy, onProgress }),
-	unsyncSkillFromTool: (skillId: string, tool: string) => __TAURI_INVOKE<RemovalReportDto>("unsync_skill_from_tool", { skillId, tool }),
+	syncSkillsToTools: (skills: BatchSyncSkillDto[], tools: string[], policy: BatchSyncPolicyDto, onProgress: Channel<SyncProgressDto>) => __TAURI_INVOKE<BatchTargetOutcome[]>("sync_skills_to_tools", { skills, tools, policy, onProgress }),
+	unsyncSkillFromTool: (skillId: string, tool: string) => __TAURI_INVOKE<RemovalReport>("unsync_skill_from_tool", { skillId, tool }),
 	/**
 	 *  Re-acquire Managed skills from their sources, finalize them, and
 	 *  propagate to every Sync target — one batch, one report. `skillIds` of
@@ -37,7 +37,7 @@ export const commands = {
 	 *  a batch of one. Per-skill and per-target failures are report data, not
 	 *  command errors.
 	 */
-	refreshManagedSkills: (skillIds: string[] | null, policy: RefreshPolicyDto, onProgress: Channel<RefreshProgressDto>) => __TAURI_INVOKE<RefreshReportDto>("refresh_managed_skills", { skillIds, policy, onProgress }),
+	refreshManagedSkills: (skillIds: string[] | null, policy: RefreshPolicyDto, onProgress: Channel<RefreshProgressDto>) => __TAURI_INVOKE<RefreshReport>("refresh_managed_skills", { skillIds, policy, onProgress }),
 	/**
 	 *  Update / Restore use the existing batch-of-one operation, then read the
 	 *  complete catalog after settlement (including auto-sync reassert). This is
@@ -68,7 +68,7 @@ export const commands = {
 	 *  (auto-sync on) or remove the byte-identical originals (auto-sync off).
 	 *  Per-group, per-target and per-original failures are report data.
 	 */
-	importOnboardingSelection: (selections: OnboardingSelectionDto[], policy: ImportPolicyDto, onProgress: Channel<ImportProgressDto>) => __TAURI_INVOKE<ImportReportDto>("import_onboarding_selection", { selections, policy, onProgress }),
+	importOnboardingSelection: (selections: OnboardingSelectionDto[], policy: ImportPolicyDto, onProgress: Channel<ImportProgressDto>) => __TAURI_INVOKE<ImportReport>("import_onboarding_selection", { selections, policy, onProgress }),
 	getManagedSkills: () => __TAURI_INVOKE<ManagedSkillDto[]>("get_managed_skills"),
 	setSkillInvocationOverride: (skillId: string, mode: 
 /**  Default: the user can type `/name` and the model can load it on its own. */
@@ -79,9 +79,9 @@ export const commands = {
 "model-only" | 
 /**  Both keys restrict invocation — neither the user nor the model can invoke it. */
 "neither" | null) => __TAURI_INVOKE<InvocationEditResultDto>("set_skill_invocation_override", { skillId, mode }),
-	deleteManagedSkill: (skillId: string) => __TAURI_INVOKE<null>("delete_managed_skill", { skillId }),
-	unsyncAllSkills: () => __TAURI_INVOKE<RemovalReportDto>("unsync_all_skills"),
-	unsyncSkill: (skillId: string) => __TAURI_INVOKE<RemovalReportDto>("unsync_skill", { skillId }),
+	deleteManagedSkill: (skillId: string) => __TAURI_INVOKE<RemovalReport>("delete_managed_skill", { skillId }),
+	unsyncAllSkills: () => __TAURI_INVOKE<RemovalReport>("unsync_all_skills"),
+	unsyncSkill: (skillId: string) => __TAURI_INVOKE<RemovalReport>("unsync_skill", { skillId }),
 	getFeaturedSkills: () => __TAURI_INVOKE<FeaturedSkillDto[]>("get_featured_skills"),
 	searchSkillsOnline: (query: string, limit: number | null) => __TAURI_INVOKE<OnlineSkillDto[]>("search_skills_online", { query, limit }),
 	listSkillFiles: (centralPath: string) => __TAURI_INVOKE<SkillFileEntry[]>("list_skill_files", { centralPath }),
@@ -188,19 +188,27 @@ export type BatchSyncPolicyDto = {
 	overrides?: BatchSyncOverrideDto[],
 };
 
-export type BatchSyncReportDto = {
-	results: SyncTargetResultDto[],
-	synced: number,
-	skipped: number,
-	failed: number,
-};
-
 /**  One skill in a batch sync request. */
 export type BatchSyncSkillDto = {
 	skill_id: string,
 	name: string,
 	source_path: string,
 };
+
+export type BatchTargetOutcome = {
+	skill_id: string,
+	skill_name: string,
+	tool_key: string,
+	status: BatchTargetStatus,
+};
+
+/**
+ *  Per-(skill, tool) result. `Skipped` is the expected-and-ignorable class
+ *  (tool absent, dir unwritable) — callers decide whether to surface it;
+ *  `Failed` is everything else. Both carry the typed error, so no
+ *  information is lost by the classification.
+ */
+export type BatchTargetStatus = { status: "synced"; outcome: SyncOutcome } | { status: "skipped"; error: CommandError } | { status: "failed"; error: CommandError };
 
 export type BulkAssignErrorDto = {
 	tool: string,
@@ -236,9 +244,7 @@ reason: string } | { code: "CANCELLED" } | { code: "RATE_LIMITED";
 /**  Rounded-up minutes until the limit resets; 0 = unknown. */
 resetMinutes: number } | { code: "GIT_CLONE_FAILED"; kind: GitCloneFailureKind; detail: string } | { code: "GITHUB_SKILL_NOT_FOUND"; 
 /**  Human-checkable GitHub tree URL for the missing skill path. */
-url: string } | { code: "INVALID_GITHUB_URL"; url: string } | { code: "GIT_REPOINT_REQUIRES_GIT"; name: string } | { code: "DELETE_CLEANUP_FAILED"; 
-/**  `"<path>: <io error>"` diagnostics per failed removal target. */
-failures: string[] } | { code: "PATH_OUTSIDE_TOOL_DIRS"; 
+url: string } | { code: "INVALID_GITHUB_URL"; url: string } | { code: "GIT_REPOINT_REQUIRES_GIT"; name: string } | { code: "PATH_OUTSIDE_TOOL_DIRS"; 
 /**  The refused path (not inside any Tool's skills directory). */
 path: string } | { code: "SKILL_MANIFEST_IO"; path: string; detail: string } | { code: "SOURCE_PATH_MISSING"; 
 /**  The external source folder that is not there. */
@@ -275,7 +281,7 @@ detail: string } | { code: "OTHER"; message: string };
  */
 export type ConfigureProjectToolsResultDto = {
 	view: ProjectViewDto,
-	report: RemovalReportDto,
+	report: RemovalReport,
 };
 
 export type FeaturedSkillDto = {
@@ -345,35 +351,28 @@ export type IgnoreUpdateOptions = {
 	add_to_exclude: boolean,
 };
 
-export type ImportGroupOutcomeDto = {
+export type ImportGroupOutcome = {
 	group_name: string,
-	status: ImportGroupStatusDto,
+	status: ImportGroupStatus,
 };
 
+export type ImportGroupStatus = { status: "imported"; skill_id: string; skill_name: string; 
+/**  Sync targets (auto-sync on); empty when auto-sync is off. */
+targets: BatchTargetOutcome[]; 
 /**
- *  Per-group result. `targets` carries the sync outcomes (auto-sync on);
- *  `originals` the settled originals — every variant when auto-sync is off,
- *  only the divergent siblings kept in place when it is on. `forced_tools`
- *  lists the Tools synced beyond the policy's Tools because they held a
- *  variant byte-identical to the chosen one (so their originals are
- *  overwritten in place rather than left as untracked duplicates); empty
- *  when the policy already named every one of them.
+ *  The Tools synced beyond the policy's Tools because they held a
+ *  variant byte-identical to the chosen one (auto-sync on), in the
+ *  order they were appended to the target set; empty when the
+ *  policy already named every one of them or auto-sync is off.
  */
-export type ImportGroupStatusDto = { status: "imported"; skill_id: string; skill_name: string; targets: SyncTargetResultDto[]; forced_tools: string[]; originals: ImportOriginalDto[] } | { status: "failed"; error: CommandError };
-
-export type ImportOriginalDto = {
-	path: string,
-	tool: string,
-	status: ImportOriginalStatusDto,
-};
-
+forced_tools: string[]; 
 /**
- *  What happened to one original directory. `kept_divergent` means the
- *  directory's content differs from the imported skill, so it was
- *  deliberately left in place (under either auto-sync policy) — report data,
- *  not a command error.
+ *  Originals settled: every variant when auto-sync is off; only the
+ *  divergent siblings (kept in place) when auto-sync is on.
  */
-export type ImportOriginalStatusDto = { status: "removed" } | { status: "kept_divergent" } | { status: "failed"; error: CommandError };
+originals: OriginalOutcome[] } | 
+/**  Admission or finalize failed; nothing of this group was touched. */
+{ status: "failed"; error: CommandError };
 
 export type ImportPhaseDto = "admitting" | "applying";
 
@@ -394,10 +393,8 @@ export type ImportProgressDto = {
 	phase: ImportPhaseDto,
 };
 
-export type ImportReportDto = {
-	groups: ImportGroupOutcomeDto[],
-	imported: number,
-	failed: number,
+export type ImportReport = {
+	groups: ImportGroupOutcome[],
 };
 
 export type InstallResultDto = {
@@ -420,14 +417,14 @@ export type InvocationEditConflict = {
 };
 
 /**  Central Edit has settled; target failures remain report data. */
-export type InvocationEditReportDto = {
+export type InvocationEditReport = {
 	skill_id: string,
 	skill_name: string,
-	propagation: PropagationTargetDto[],
+	propagation: PropagationReport,
 };
 
 export type InvocationEditResultDto = {
-	report: InvocationEditReportDto,
+	report: InvocationEditReport,
 	skills: ManagedSkillDto[],
 };
 
@@ -547,6 +544,27 @@ export type OnlineSkillDto = {
 	source_url: string,
 };
 
+export type OriginalOutcome = {
+	path: string,
+	tool: string,
+	status: OriginalStatus,
+};
+
+/**  What happened to one original directory. */
+export type OriginalStatus = 
+/**
+ *  Byte-identical to the central copy (or already gone) — removed
+ *  (auto-sync off).
+ */
+{ status: "removed" } | 
+/**
+ *  Content differs from the central copy, so it was left in place
+ *  (either policy).
+ */
+{ status: "kept_divergent" } | 
+/**  The path was refused or could not be removed. Report data. */
+{ status: "failed"; error: CommandError };
+
 export type ProjectDto = {
 	id: string,
 	path: string,
@@ -610,21 +628,37 @@ export type ProjectViewDto = {
 	reconciled: boolean,
 };
 
-/**  Which Sync target a Propagation outcome is about. */
-export type PropagationScopeDto = { scope: "global"; tool: string } | { scope: "project"; project_id: string; tool: string };
+export type PropagationOutcome = {
+	scope: PropagationScope,
+	status: PropagationStatus,
+};
+
+/**  Every Sync target of one Managed skill, with what happened to it. */
+export type PropagationReport = {
+	targets: PropagationOutcome[],
+};
+
+/**  Which Sync target an outcome is about. */
+export type PropagationScope = { scope: "global"; tool: string } | { scope: "project"; project_id: string; tool: string };
 
 /**
- *  Why a Sync target needed no work. Not a failure — skipping is the correct
- *  outcome for a link, an uninstalled Tool, or an absent Project.
+ *  Why a target needed no work. Not a failure: skipping is the correct
+ *  outcome for a link, an uninstalled Tool, or a project that is not there.
  */
-export type PropagationSkipDto = { reason: "link_follows_source" } | { reason: "tool_not_installed"; tool: string } | { reason: "unknown_tool"; tool: string } | { reason: "project_unavailable"; project_id: string };
+export type PropagationSkip = 
+/**
+ *  The target is a link (or junction) into the central copy, which was
+ *  just refreshed in place — the target is already current.
+ */
+{ reason: "link_follows_source" } | 
+/**  The Tool is no longer installed for this operator. */
+{ reason: "tool_not_installed"; tool: string } | 
+/**  The row names a tool key the registry does not know. */
+{ reason: "unknown_tool"; tool: string } | 
+/**  The project row is gone, or its directory no longer exists on disk. */
+{ reason: "project_unavailable"; project_id: string };
 
-export type PropagationStatusDto = { status: "synced"; mode_used: SyncMode } | { status: "skipped"; reason: PropagationSkipDto } | { status: "failed"; error: CommandError };
-
-export type PropagationTargetDto = {
-	scope: PropagationScopeDto,
-	status: PropagationStatusDto,
-};
+export type PropagationStatus = { status: "synced"; mode_used: SyncMode } | { status: "skipped"; reason: PropagationSkip } | { status: "failed"; error: CommandError };
 
 export type RefreshPhaseDto = "acquiring" | "applying";
 
@@ -645,46 +679,33 @@ export type RefreshProgressDto = {
 	phase: RefreshPhaseDto,
 };
 
-export type RefreshReportDto = {
-	skills: SkillRefreshResultDto[],
-	refreshed: number,
-	failed: number,
-	/**
-	 *  Unlocatable skills Refresh (all) did not dispatch (one `skipped`
-	 *  entry each in `skills`).
-	 */
-	skipped: number,
-	/**
-	 *  Sync targets that failed across every refreshed skill. A failed
-	 *  auto-sync re-assert counts as one.
-	 */
-	target_failures: number,
+export type RefreshReport = {
+	skills: SkillRefreshOutcome[],
 };
 
-export type RemovalReportDto = {
-	targets: RemovalTargetDto[],
-	/**  Rows whose artifact was removed (and whose row was deleted). */
-	removed: number,
-	/**  Rows kept with Sync status `error` because their artifact stayed. */
-	failed: number,
+export type RemovalReport = {
+	targets: RemovalTargetOutcome[],
+	/**  The central copy was deleted (only ever true for the `Skill` scope). */
+	central_removed: boolean,
+	/**  The `skills` row was deleted (cascading targets and assignments). */
+	record_deleted: boolean,
 };
 
-/**  Which Sync target a removal outcome is about. */
-export type RemovalScopeDto = { scope: "global" } | { scope: "project"; project_id: string };
-
-export type RemovalTargetDto = {
-	scope: RemovalScopeDto,
-	tool: string,
+export type RemovalTargetOutcome = {
 	path: string,
-	status: RemovalTargetStatusDto,
+	rows: RowRef[],
+	status: RemovalTargetStatus,
 };
 
 /**
- *  Per-row removal result. `failed` means the artifact is still on disk and
- *  the row was kept with Sync status `error` (ADR-0002) — report data, not a
- *  command error.
+ *  Failures are classified at settlement, after writing the full chain to
+ *  each attached row's diagnostic.
  */
-export type RemovalTargetStatusDto = { status: "removed" } | { status: "failed"; error: CommandError };
+export type RemovalTargetStatus = 
+/**  Removed, or already absent. */
+{ status: "removed" } | 
+/**  Every attached row was kept with status `error` and the original chain. */
+{ status: "failed"; error: CommandError };
 
 /**
  *  What removing a project settled: the project list *after* the removal
@@ -695,7 +716,7 @@ export type RemovalTargetStatusDto = { status: "removed" } | { status: "failed";
  */
 export type RemoveProjectResultDto = {
 	projects: ProjectDto[],
-	report: RemovalReportDto,
+	report: RemovalReport,
 };
 
 /**
@@ -704,22 +725,29 @@ export type RemoveProjectResultDto = {
  *  view of whichever project it is showing.
  */
 export type ResyncAllResultDto = {
-	summaries: ResyncSummaryDto[],
+	summaries: ResyncSummary[],
 	projects: ProjectDto[],
 };
 
 /**  A resync's counts and errors alongside the project's fresh view. */
 export type ResyncProjectResultDto = {
 	view: ProjectViewDto,
-	summary: ResyncSummaryDto,
+	summary: ResyncSummary,
 };
 
-export type ResyncSummaryDto = {
+export type ResyncSummary = {
 	project_id: string,
 	synced: number,
 	failed: number,
 	errors: string[],
 };
+
+/**  Where a row lives — the two tables that record Sync targets. */
+export type RowRef = 
+/**  A `skill_targets` row (global scope). */
+{ scope: "global_target"; id: string; skill_id: string; tool: string } | 
+/**  A `project_skill_assignments` row (project scope). */
+{ scope: "assignment"; id: string; project_id: string; skill_id: string; tool: string };
 
 /**  One setting write, as sent by the frontend: `{ key, value }`. */
 export type SettingUpdate = 
@@ -757,28 +785,37 @@ export type SkillFileEntry = {
 };
 
 export type SkillMutationResultDto = {
-	report: RefreshReportDto,
+	report: RefreshReport,
 	skills: ManagedSkillDto[],
 };
 
-export type SkillRefreshResultDto = {
+export type SkillRefreshOutcome = {
 	skill_id: string,
 	skill_name: string,
-	status: SkillRefreshStatusDto,
+	status: SkillRefreshStatus,
 };
 
+export type SkillRefreshStatus = 
 /**
- *  Per-skill result of a Refresh batch. A skill whose bytes could not be
- *  acquired is `failed` — its Sync targets were left alone. A skill the
- *  app cannot locate is `skipped` with its state — nothing was touched.
+ *  Acquired, finalized and propagated. `targets` is Propagation's report.
+ *  `reassert_error` carries a store failure inside the auto-sync re-assert:
+ *  the skill is still `Refreshed` (finalize and Propagation did succeed),
+ *  but the targets the re-assert would have created are unknown, and that
+ *  is report data rather than a log line.
  */
-export type SkillRefreshStatusDto = { status: "refreshed"; content_hash: string | null; source_revision: string | null; targets: PropagationTargetDto[]; 
+{ status: "refreshed"; content_hash: string | null; source_revision: string | null; targets: PropagationOutcome[]; reassert_error: CommandError | null; edit_conflict: InvocationEditConflict | null } | 
+/**  Acquisition or finalize failed; this skill's targets were left alone. */
+{ status: "failed"; error: CommandError } | 
 /**
- *  A store failure inside the auto-sync re-assert. The skill is still
- *  `refreshed`; the targets the re-assert would have created are
- *  unknown, so this counts as one `target_failures`.
+ *  Refresh (all) did not dispatch this skill because the app cannot
+ *  locate it (`provenance::refresh_eligibility`); nothing was touched.
+ *  Only `All` skips — an explicitly named id proceeds to the acquire
+ *  step, which answers with the typed condition (or, for a missing
+ *  central copy, rebuilds it: that is Restore).
  */
-reassert_error: CommandError | null; edit_conflict: InvocationEditConflict | null } | { status: "failed"; error: CommandError } | { status: "skipped"; state: UnlocatableState } | { status: "skipped_acquisition"; reason: UpdateSkipDto };
+{ status: "skipped"; state: UnlocatableState } | 
+/**  Acquired bytes were discarded at admission; no target was touched. */
+{ status: "skipped_acquisition"; reason: UpdateSkip };
 
 export type SkillTargetDto = {
 	tool: string,
@@ -795,6 +832,12 @@ export type SkillTargetDto = {
 export type SyncMode = "symlink" | 
 /**  Windows directory junction (the symlink fallback). */
 "junction" | "copy";
+
+export type SyncOutcome = {
+	mode_used: SyncMode,
+	target_path: string,
+	replaced: boolean,
+};
 
 /**
  *  Progress tick streamed over the command's channel before each attempted
@@ -819,20 +862,6 @@ export type SyncStatus =
 "missing" | 
 /**  The last sync or Artifact removal attempt failed; `last_error` carries the diagnostic. */
 "error";
-
-export type SyncTargetResultDto = {
-	skill_id: string,
-	skill_name: string,
-	tool: string,
-	status: SyncTargetStatusDto,
-};
-
-/**
- *  Per-(skill, tool) result. `skipped` is the expected-and-ignorable class
- *  (tool absent, dir unwritable); `failed` is everything else. Both carry
- *  the typed error so call sites choose what to surface.
- */
-export type SyncTargetStatusDto = { status: "synced"; mode_used: SyncMode } | { status: "skipped"; error: CommandError } | { status: "failed"; error: CommandError };
 
 /**  Which way a toggle went, with the resulting view. */
 export type ToggleAssignmentResultDto = {
@@ -877,5 +906,5 @@ export type UnlocatableState =
 /**  The central copy is not there. */
 "central_missing";
 
-export type UpdateSkipDto = "skill_gone" | "stale_acquisition";
+export type UpdateSkip = "skill_gone" | "stale_acquisition";
 

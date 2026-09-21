@@ -1,54 +1,16 @@
 use super::*;
-use crate::core::artifact_removal::{
-    RemovalReport, RemovalScope, RemovalTargetOutcome, RemovalTargetStatus, RowRef,
-};
 use crate::core::errors::SignalError;
 use crate::core::global_sync::GlobalSyncError;
 use crate::core::sync_engine::remove_path_any;
-use error::GitCloneFailureKind;
-
 #[test]
-fn acquisition_skips_cross_the_wire_and_count_as_skipped_not_failed() {
-    use crate::core::{
-        refresh::{RefreshReport, SkillRefreshOutcome},
-        skill_update::UpdateSkip,
-    };
-    for (reason, wire) in [
-        (UpdateSkip::SkillGone, "skill_gone"),
-        (UpdateSkip::StaleAcquisition, "stale_acquisition"),
-    ] {
-        let dto = to_refresh_report_dto(RefreshReport {
-            skills: vec![SkillRefreshOutcome {
-                skill_id: "s1".into(),
-                skill_name: "alpha".into(),
-                status: SkillRefreshStatus::SkippedAcquisition { reason },
-            }],
-        });
-        assert_eq!(
-            (dto.skipped, dto.failed, dto.refreshed, dto.target_failures),
-            (1, 0, 0, 0)
-        );
-        assert_eq!(
-            serde_json::to_value(&dto.skills[0].status).unwrap(),
-            serde_json::json!({ "status": "skipped_acquisition", "reason": wire })
-        );
-    }
-}
-
-#[test]
-fn shared_edit_update_target_mapper_preserves_typed_failure() {
-    let dto = to_propagation_target_dto(crate::core::propagation::PropagationOutcome {
-        scope: PropagationScope::Global {
-            tool: "cursor".into(),
-        },
-        status: PropagationStatus::Failed {
-            error: anyhow::anyhow!(SignalError::CentralPathMissing {
-                path: "central".into()
-            }),
-        },
-    });
-    assert!(
-        matches!(dto.status, PropagationStatusDto::Failed { error: CommandError::CentralPathMissing { path } } if path == "central")
+fn settled_report_error_retains_its_classification_when_single_target_command_fails() {
+    let error = anyhow::Error::new(CommandError::PathOutsideToolDirs {
+        path: "refused".into(),
+    })
+    .context("unassign target");
+    assert_eq!(
+        serde_json::to_value(CommandError::from_anyhow(error)).unwrap(),
+        serde_json::json!({ "code": "PATH_OUTSIDE_TOOL_DIRS", "path": "refused" })
     );
 }
 
@@ -68,60 +30,6 @@ fn git_repoint_refusals_cross_the_wire_as_typed_errors() {
     ] {
         let error = CommandError::from_anyhow(anyhow::Error::new(signal).context("re-point"));
         assert_eq!(serde_json::to_value(error).unwrap(), expected);
-    }
-}
-
-/// A removal target that failed with a typed condition reaches the wire as
-/// that condition's own code — the report carries the error value, so the
-/// seam classifies it the way it classifies a thrown error (never `OTHER`).
-/// A shared skills dir settles several rows from one failure: every row
-/// carries the same classified error.
-#[test]
-fn removal_report_dto_classifies_a_typed_target_failure_at_the_seam() {
-    let refused = "/home/user/Documents/not-a-skill";
-    let error = anyhow::Error::new(SignalError::PathOutsideToolDirs {
-        path: refused.to_string(),
-    })
-    .context("remove dir");
-    let report = RemovalReport {
-        scope: RemovalScope::SkillGlobal {
-            skill_id: "s1".to_string(),
-        },
-        targets: vec![RemovalTargetOutcome {
-            path: std::path::PathBuf::from(refused),
-            rows: vec![
-                RowRef::GlobalTarget {
-                    id: "t1".to_string(),
-                    skill_id: "s1".to_string(),
-                    tool: "amp".to_string(),
-                },
-                RowRef::GlobalTarget {
-                    id: "t2".to_string(),
-                    skill_id: "s1".to_string(),
-                    tool: "kimi_cli".to_string(),
-                },
-            ],
-            status: RemovalTargetStatus::Failed { error },
-        }],
-        central_removed: false,
-        record_deleted: false,
-    };
-
-    let dto = to_removal_report_dto(report);
-
-    assert_eq!(dto.failed, 2);
-    assert_eq!(dto.removed, 0);
-    assert_eq!(dto.targets.len(), 2, "one DTO row per settled row");
-    for target in &dto.targets {
-        match &target.status {
-            RemovalTargetStatusDto::Failed {
-                error: CommandError::PathOutsideToolDirs { path },
-            } => assert_eq!(path, refused),
-            other => panic!(
-                "expected PATH_OUTSIDE_TOOL_DIRS for {}, got {other:?}",
-                target.tool
-            ),
-        }
     }
 }
 
@@ -411,7 +319,7 @@ fn missing_path_fixture() -> (
 }
 
 /// Run the single-skill Update the way the command does (a Refresh batch of
-/// one) and classify its outcome at the seam.
+/// one); its report already carries the classified error.
 fn update_outcome_at_the_seam(
     paths: &crate::core::installer::InstallerPaths,
     store: &crate::core::skill_store::SkillStore,
@@ -433,9 +341,7 @@ fn update_outcome_at_the_seam(
         .next()
         .expect("one outcome for the one skill");
     match outcome.status {
-        crate::core::refresh::SkillRefreshStatus::Failed { error } => {
-            CommandError::from_anyhow(error)
-        }
+        crate::core::refresh::SkillRefreshStatus::Failed { error } => error,
         other => panic!("expected the update to fail, got {other:?}"),
     }
 }

@@ -46,7 +46,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use super::content_identity::{self, Source};
-use super::errors::SignalError;
+use super::errors::{CommandError, SignalError};
 use super::global_sync::{
     sync_skills_to_tools_unlocked, BatchPolicy, BatchSkill, BatchTargetOutcome,
 };
@@ -98,7 +98,8 @@ pub struct ImportProgress<'a> {
 }
 
 /// What happened to one original directory.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, specta::Type)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum OriginalStatus {
     /// Byte-identical to the central copy (or already gone) — removed
     /// (auto-sync off).
@@ -107,17 +108,18 @@ pub enum OriginalStatus {
     /// (either policy).
     KeptDivergent,
     /// The path was refused or could not be removed. Report data.
-    Failed { error: anyhow::Error },
+    Failed { error: CommandError },
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, specta::Type)]
 pub struct OriginalOutcome {
     pub path: PathBuf,
     pub tool: String,
     pub status: OriginalStatus,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, specta::Type)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum ImportGroupStatus {
     Imported {
         skill_id: String,
@@ -134,16 +136,16 @@ pub enum ImportGroupStatus {
         originals: Vec<OriginalOutcome>,
     },
     /// Admission or finalize failed; nothing of this group was touched.
-    Failed { error: anyhow::Error },
+    Failed { error: CommandError },
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, specta::Type)]
 pub struct ImportGroupOutcome {
     pub group_name: String,
     pub status: ImportGroupStatus,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize, specta::Type)]
 pub struct ImportReport {
     pub groups: Vec<ImportGroupOutcome>,
 }
@@ -186,7 +188,9 @@ pub fn import_onboarding_selection(
                     apply_one_unlocked(paths, store, selection, group, policy, now)
                 })
             }
-            Err(error) => ImportGroupStatus::Failed { error },
+            Err(error) => ImportGroupStatus::Failed {
+                error: CommandError::from_anyhow(error),
+            },
         };
 
         report.groups.push(ImportGroupOutcome {
@@ -247,7 +251,11 @@ fn apply_one_unlocked(
         found_in_tool,
     ) {
         Ok(result) => result,
-        Err(error) => return ImportGroupStatus::Failed { error },
+        Err(error) => {
+            return ImportGroupStatus::Failed {
+                error: CommandError::from_anyhow(error),
+            }
+        }
     };
 
     let (targets, forced_tools, originals) = if policy.auto_sync {
@@ -391,14 +399,18 @@ fn settle_original(
     tool: &str,
 ) -> OriginalOutcome {
     let status = match ensure_path_within_tool_dirs(home, path) {
-        Err(error) => OriginalStatus::Failed { error },
+        Err(error) => OriginalStatus::Failed {
+            error: CommandError::from_anyhow(error),
+        },
         Ok(()) if path.symlink_metadata().is_err() => OriginalStatus::Removed,
         Ok(()) if !content_identity::same_content(Source::Managed { store, skill_id }, path) => {
             OriginalStatus::KeptDivergent
         }
         Ok(()) => match remove_path_any(path) {
             Ok(()) => OriginalStatus::Removed,
-            Err(error) => OriginalStatus::Failed { error },
+            Err(error) => OriginalStatus::Failed {
+                error: CommandError::from_anyhow(error),
+            },
         },
     };
     OriginalOutcome {

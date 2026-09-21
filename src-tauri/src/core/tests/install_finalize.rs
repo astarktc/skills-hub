@@ -745,8 +745,8 @@ fn rollback_rename_failure_names_and_preserves_backup() {
     assert!(message.contains(backup.to_str().unwrap()), "{message}");
     assert_eq!(fs::read(backup.join("a.txt")).unwrap(), b"data");
     assert!(!path.exists());
-    let wire = crate::commands::error::CommandError::from_anyhow(err);
-    let crate::commands::error::CommandError::FinalizeRollbackFailed {
+    let wire = crate::core::errors::CommandError::from_anyhow(err);
+    let crate::core::errors::CommandError::FinalizeRollbackFailed {
         central,
         backup: retained,
         detail,

@@ -1,23 +1,128 @@
 //! Tests for `core::artifact_removal` — the plan/execute/report shape behind
 //! every removal scope: one presence rule (a broken symlink is present), one
 //! settlement rule (rows deleted on success, kept as `error` on failure —
-//! ADR-0002), shared-skills-dir dedupe, and the typed `DeleteCleanupFailed`
-//! raised only by the composed skill-deletion entry point.
+//! ADR-0002), shared-skills-dir dedupe, and typed per-target report failures.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::core::artifact_removal::{
     execute_unlocked, plan, remove_skill, unsync_all_skill_targets, unsync_skill_from_tool,
-    unsync_skill_targets, RemovalScope, RemovalTargetStatus, RowRef,
+    unsync_skill_targets, RemovalReport, RemovalScope, RemovalTargetOutcome, RemovalTargetStatus,
+    RowRef,
 };
-use crate::core::errors::SignalError;
+use crate::core::errors::{CommandError, SignalError};
 use crate::core::project_sync;
 use crate::core::skill_store::{
     ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore, SkillTargetRecord,
 };
 use crate::core::sync_status::{SyncMode, SyncStatus};
 use crate::core::tool_adapters::adapter_by_key;
+
+#[test]
+fn removal_report_keeps_shared_rows_and_classified_failure_on_the_wire() {
+    let error = CommandError::from_anyhow(
+        anyhow::Error::new(SignalError::PathOutsideToolDirs {
+            path: "refused".into(),
+        })
+        .context("remove dir"),
+    );
+    let report = RemovalReport {
+        scope: RemovalScope::SkillGlobal {
+            skill_id: "s1".into(),
+        },
+        targets: vec![RemovalTargetOutcome {
+            path: PathBuf::from("refused"),
+            rows: vec![
+                RowRef::GlobalTarget {
+                    id: "t1".into(),
+                    skill_id: "s1".into(),
+                    tool: "amp".into(),
+                },
+                RowRef::GlobalTarget {
+                    id: "t2".into(),
+                    skill_id: "s1".into(),
+                    tool: "kimi_cli".into(),
+                },
+            ],
+            status: RemovalTargetStatus::Failed { error },
+        }],
+        central_removed: false,
+        record_deleted: false,
+    };
+    assert_eq!(report.failed_rows(), 2);
+    assert_eq!(
+        serde_json::to_value(&report).unwrap(),
+        serde_json::json!({
+            "targets": [{
+                "path": "refused",
+                "rows": [
+                    { "scope": "global_target", "id": "t1", "skill_id": "s1", "tool": "amp" },
+                    { "scope": "global_target", "id": "t2", "skill_id": "s1", "tool": "kimi_cli" }
+                ],
+                "status": { "status": "failed", "error": { "code": "PATH_OUTSIDE_TOOL_DIRS", "path": "refused" } }
+            }],
+            "central_removed": false,
+            "record_deleted": false
+        })
+    );
+}
+
+#[test]
+fn merge_preserves_target_order_rows_statuses_and_deletion_flags() {
+    let row = RowRef::Assignment {
+        id: "a1".into(),
+        project_id: "p1".into(),
+        skill_id: "s1".into(),
+        tool: "pi".into(),
+    };
+    let first = RemovalReport {
+        scope: RemovalScope::Project {
+            project_id: "p1".into(),
+        },
+        targets: vec![RemovalTargetOutcome {
+            path: "first".into(),
+            rows: vec![row.clone()],
+            status: RemovalTargetStatus::Removed,
+        }],
+        central_removed: true,
+        record_deleted: false,
+    };
+    let second = RemovalReport {
+        scope: RemovalScope::Skill {
+            skill_id: "s1".into(),
+        },
+        targets: vec![RemovalTargetOutcome {
+            path: "second".into(),
+            rows: vec![row.clone(), row.clone()],
+            status: RemovalTargetStatus::Failed {
+                error: CommandError::Cancelled,
+            },
+        }],
+        central_removed: false,
+        record_deleted: true,
+    };
+    let expected_targets = serde_json::json!([
+        serde_json::to_value(&first.targets[0]).unwrap(),
+        serde_json::to_value(&second.targets[0]).unwrap()
+    ]);
+    let merged = RemovalReport::merge([first, second]);
+    assert_eq!(
+        serde_json::to_value(&merged.targets).unwrap(),
+        expected_targets
+    );
+    assert_eq!((merged.removed_rows(), merged.failed_rows()), (1, 2));
+    assert!(merged.central_removed && merged.record_deleted);
+    assert_eq!(
+        serde_json::to_value(&row).unwrap(),
+        serde_json::json!({
+            "scope": "assignment", "id": "a1", "project_id": "p1", "skill_id": "s1", "tool": "pi"
+        })
+    );
+    let empty = RemovalReport::merge([]);
+    assert!(empty.targets.is_empty());
+    assert!(!empty.central_removed && !empty.record_deleted);
+}
 
 fn make_store(base: &Path) -> SkillStore {
     let store = SkillStore::new(base.join("test.db"));
@@ -532,12 +637,11 @@ fn a_failed_removal_keeps_every_attached_row_with_status_error() {
     }
 }
 
-/// The report carries the failure as an error value, not rendered text, so
-/// the command seam can classify it (a typed `SignalError` becomes its own
-/// wire code rather than `OTHER`). Here the chain bottoms out in the io error.
+/// An untyped I/O failure is classified at settlement with its full diagnostic
+/// chain. The persisted row still carries the original diagnostic, not JSON.
 #[cfg(unix)]
 #[test]
-fn a_failed_removal_reports_the_error_chain_not_its_rendering() {
+fn a_failed_removal_classifies_the_error_after_persisting_its_chain() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
     let home = home_with(tmp.path(), &["amp"]);
@@ -554,17 +658,15 @@ fn a_failed_removal_reports_the_error_chain_not_its_rendering() {
 
     assert_eq!(report.targets.len(), 1);
     match &report.targets[0].status {
-        RemovalTargetStatus::Failed { error } => {
-            assert!(
-                error
-                    .root_cause()
-                    .downcast_ref::<std::io::Error>()
-                    .is_some(),
-                "the io failure is still downcastable through the chain: {error:#}"
-            );
-            assert!(error.chain().count() > 1, "context layers are kept");
+        RemovalTargetStatus::Failed {
+            error: CommandError::Other { message },
+        } => {
+            assert!(message.contains(shared.to_str().unwrap()));
+            let row = store.get_skill_target(&skill.id, "amp").unwrap().unwrap();
+            assert_eq!(row.last_error.as_deref(), Some(message.as_str()));
+            assert!(message.contains("Permission denied"));
         }
-        RemovalTargetStatus::Removed => panic!("the stuck artifact must report Failed"),
+        other => panic!("the stuck artifact must report a classified I/O failure: {other:?}"),
     }
 }
 
@@ -796,7 +898,7 @@ fn remove_skill_with_no_record_sweeps_targets_without_touching_a_central_copy() 
 
 #[cfg(unix)]
 #[test]
-fn remove_skill_keeps_the_skill_and_raises_delete_cleanup_failed_on_partial_failure() {
+fn remove_skill_keeps_the_skill_and_reports_partial_failure() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
     let central = make_skill_dir(&tmp.path().join("central"), "iota");
@@ -806,16 +908,16 @@ fn remove_skill_keeps_the_skill_and_raises_delete_cleanup_failed_on_partial_fail
         return;
     }
 
-    let err = remove_skill(&store, &skill.id).expect_err("must fail");
+    let report = remove_skill(&store, &skill.id).expect("per-target failure is report data");
     restore_permissions(&bad);
 
-    match err.downcast_ref::<SignalError>() {
-        Some(SignalError::DeleteCleanupFailed { failures }) => {
-            assert_eq!(failures.len(), 1);
-            assert!(failures[0].starts_with(&format!("{}: ", bad.display())));
-        }
-        other => panic!("expected DeleteCleanupFailed, got {:?}", other),
-    }
+    assert!(!report.record_deleted && !report.central_removed);
+    assert_eq!(report.targets.len(), 1);
+    assert_eq!(report.targets[0].path, bad);
+    assert!(matches!(&report.targets[0].status,
+        RemovalTargetStatus::Failed { error: CommandError::Other { message } }
+        if message.contains(bad.to_str().unwrap())
+    ));
     // ADR-0002: nothing is deleted blind — the skill, its central copy and
     // its row survive so the operator can retry.
     assert!(store.get_skill_by_id(&skill.id).unwrap().is_some());

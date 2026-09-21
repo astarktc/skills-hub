@@ -7,7 +7,8 @@
 //! checking for cancellation) and the command seam recover the typed value with
 //! `err.downcast_ref::<SignalError>()` — no string sniffing.
 //!
-//! The wire mapping to the frontend lives in `commands::error::CommandError`.
+//! `CommandError` owns wire classification here: report rows classify at
+//! settlement, whole-command failures at the command seam.
 
 use std::fmt;
 
@@ -58,10 +59,6 @@ pub enum SignalError {
     InvalidGithubUrl { url: String },
     /// Git Re-point cannot change a skill's provenance.
     GitRepointRequiresGit { name: String },
-    /// Some Sync-target artifacts could not be removed, so the skill and the
-    /// rows describing them were kept for a retry (ADR-0002). Each entry is
-    /// `"<path>: <io error>"` diagnostics.
-    DeleteCleanupFailed { failures: Vec<String> },
     /// A path a caller asked to delete is not inside any Tool's skills
     /// directory, so Skills Hub refuses to touch it. Owned by the Tool
     /// registry (`tool_adapters::ensure_path_within_tool_dirs`).
@@ -157,9 +154,6 @@ impl fmt::Display for SignalError {
             SignalError::GitRepointRequiresGit { name } => {
                 write!(f, "git Re-point requires git provenance: {name}")
             }
-            SignalError::DeleteCleanupFailed { failures } => {
-                write!(f, "artifact removal failed for: {}", failures.join(", "))
-            }
             SignalError::PathOutsideToolDirs { path } => {
                 write!(f, "path is not under a known tool skills directory: {path}")
             }
@@ -207,3 +201,346 @@ impl fmt::Display for SignalError {
 }
 
 impl std::error::Error for SignalError {}
+
+use serde::Serialize;
+use specta::Type;
+
+use crate::core::global_sync::GlobalSyncError;
+
+/// Why a GitHub clone/fetch failed, classified backend-side from the error
+/// chain (the backend has the chain; the frontend owns the copy).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum GitCloneFailureKind {
+    Tls,
+    Auth,
+    NotFound,
+    Dns,
+    Timeout,
+    Refused,
+    /// Running the system `git` CLI itself failed (fallback disabled).
+    ExecFailed,
+    Unknown,
+}
+
+/// Structured command failure crossing the IPC seam.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(
+    tag = "code",
+    rename_all = "SCREAMING_SNAKE_CASE",
+    rename_all_fields = "camelCase"
+)]
+pub enum CommandError {
+    ToolNotInstalled {
+        tool: String,
+    },
+    TargetExists {
+        path: String,
+    },
+    ToolNotWritable {
+        tool: String,
+        path: String,
+    },
+    SkillInvalid {
+        reason: String,
+    },
+    MultiSkills,
+    SkillExists {
+        /// Name of the skill directory already present in the central repo.
+        name: String,
+    },
+    FinalizeRollbackFailed {
+        central: String,
+        backup: Option<String>,
+        /// Original failure and rollback error chain, diagnostics only.
+        detail: String,
+    },
+    DuplicateProject {
+        path: String,
+    },
+    AssignmentExists {
+        project: String,
+        skill: String,
+        tool: String,
+    },
+    NotFound {
+        kind: String,
+        id: String,
+    },
+    UnknownTool {
+        /// Registry key that matched no tool adapter.
+        tool: String,
+    },
+    InvalidPath {
+        path: String,
+        /// Machine token (`missing` / `not_a_directory`) the frontend localizes.
+        reason: String,
+    },
+    Cancelled,
+    RateLimited {
+        /// Rounded-up minutes until the limit resets; 0 = unknown.
+        reset_minutes: i64,
+    },
+    GitCloneFailed {
+        kind: GitCloneFailureKind,
+        detail: String,
+    },
+    GithubSkillNotFound {
+        /// Human-checkable GitHub tree URL for the missing skill path.
+        url: String,
+    },
+    InvalidGithubUrl {
+        url: String,
+    },
+    GitRepointRequiresGit {
+        name: String,
+    },
+    PathOutsideToolDirs {
+        /// The refused path (not inside any Tool's skills directory).
+        path: String,
+    },
+    SkillManifestIo {
+        path: String,
+        detail: String,
+    },
+    SourcePathMissing {
+        /// The external source folder that is not there.
+        path: String,
+    },
+    CentralPathMissing {
+        /// The Managed skill's central copy that is not there.
+        path: String,
+    },
+    SubpathMissing {
+        /// The requested repo-relative subpath (never a cache-internal path).
+        subpath: String,
+    },
+    RevealLogFailed {
+        /// Opener error chain, diagnostics only.
+        detail: String,
+    },
+    SymlinkEscapesRepo {
+        /// Repo-relative path of the symlink that was refused.
+        subpath: String,
+        /// The link's raw target (absolute, or climbing out of the repository).
+        target: String,
+    },
+    SymlinkChainTooDeep {
+        /// Repo-relative path where the upstream chain exceeded the hop bound.
+        subpath: String,
+    },
+    NotRefreshable {
+        /// The Managed skill that has no external source (imported provenance).
+        name: String,
+    },
+    LocalSourceInsideToolDir {
+        /// The refused folder (inside a Tool's global skills directory).
+        path: String,
+        /// Registry key of the Tool whose skills directory holds it.
+        tool: String,
+    },
+    SettingCorrupt {
+        /// Storage key of the setting that could not be parsed.
+        key: String,
+        /// Parser diagnostic, not user copy.
+        detail: String,
+    },
+    Other {
+        message: String,
+    },
+}
+
+impl CommandError {
+    /// Wrap an infrastructure failure (e.g. a task join error) as `Other`.
+    pub fn internal(err: impl std::fmt::Display) -> Self {
+        CommandError::Other {
+            message: err.to_string(),
+        }
+    }
+
+    /// Classify an `anyhow` chain into the wire contract. This is the single
+    /// classifier used at report-row settlement and the command seam: typed `SignalError`s
+    /// are recovered by downcast, GitHub clone failures are classified by
+    /// heuristic, and everything else becomes `Other` with the full chain.
+    pub fn from_anyhow(err: anyhow::Error) -> Self {
+        // A single-target caller may surface an already-settled report failure
+        // as a whole-command failure. Preserve its classification, never prose.
+        let err = match err.downcast::<CommandError>() {
+            Ok(error) => return error,
+            Err(err) => err,
+        };
+        let rollback_detail = matches!(
+            err.downcast_ref::<SignalError>(),
+            Some(SignalError::FinalizeRollbackFailed { .. })
+        )
+        .then(|| format!("{err:#}"));
+        let err = match err.downcast::<SignalError>() {
+            Ok(signal) => {
+                let mut command = CommandError::from(signal);
+                if let CommandError::FinalizeRollbackFailed { detail, .. } = &mut command {
+                    *detail = rollback_detail.unwrap_or_default();
+                }
+                return command;
+            }
+            Err(err) => err,
+        };
+        let err = match err.downcast::<GlobalSyncError>() {
+            Ok(sync_err) => return CommandError::from(sync_err),
+            Err(err) => err,
+        };
+
+        let full = format!("{:#}", err);
+        let root = err.root_cause().to_string();
+        let lower = full.to_lowercase();
+
+        // GitHub clone/fetch failures: classify so the frontend can show a
+        // localized hint instead of a raw git error chain.
+        if lower.contains("github.com")
+            && (lower.contains("clone ") || lower.contains("remote") || lower.contains("fetch"))
+        {
+            let kind = if lower.contains("securetransport") {
+                GitCloneFailureKind::Tls
+            } else if lower.contains("authentication")
+                || lower.contains("permission denied")
+                || lower.contains("credentials")
+            {
+                GitCloneFailureKind::Auth
+            } else if lower.contains("not found") {
+                GitCloneFailureKind::NotFound
+            } else if lower.contains("failed to resolve")
+                || lower.contains("could not resolve")
+                || lower.contains("dns")
+            {
+                GitCloneFailureKind::Dns
+            } else if lower.contains("timed out") || lower.contains("timeout") {
+                GitCloneFailureKind::Timeout
+            } else if lower.contains("connection refused") || lower.contains("connection reset") {
+                GitCloneFailureKind::Refused
+            } else {
+                GitCloneFailureKind::Unknown
+            };
+            return CommandError::GitCloneFailed { kind, detail: root };
+        }
+
+        // Redact noisy temp paths from clone context (we care about the cause,
+        // not the destination). Example head line:
+        // `clone https://... into "/Users/.../skills-hub-git-<uuid>"`
+        let mut message = full;
+        if let Some(head) = message.lines().next() {
+            if head.starts_with("clone ") {
+                if let Some(pos) = head.find(" into ") {
+                    let head_redacted = head[..pos].to_string();
+                    let rest: String = message.lines().skip(1).collect::<Vec<_>>().join("\n");
+                    message = if rest.is_empty() {
+                        head_redacted
+                    } else {
+                        format!("{}\n{}", head_redacted, rest)
+                    };
+                }
+            }
+        }
+
+        CommandError::Other { message }
+    }
+}
+
+impl From<SignalError> for CommandError {
+    fn from(signal: SignalError) -> Self {
+        match signal {
+            SignalError::Cancelled => CommandError::Cancelled,
+            SignalError::RateLimited { reset_minutes } => {
+                CommandError::RateLimited { reset_minutes }
+            }
+            SignalError::SkillInvalid { reason } => CommandError::SkillInvalid { reason },
+            SignalError::MultiSkills => CommandError::MultiSkills,
+            SignalError::SkillExists { name } => CommandError::SkillExists { name },
+            SignalError::FinalizeRollbackFailed { central, backup } => {
+                CommandError::FinalizeRollbackFailed {
+                    central,
+                    backup,
+                    detail: String::new(),
+                }
+            }
+            SignalError::DuplicateProject { path } => CommandError::DuplicateProject { path },
+            SignalError::AssignmentExists {
+                project,
+                skill,
+                tool,
+            } => CommandError::AssignmentExists {
+                project,
+                skill,
+                tool,
+            },
+            SignalError::NotFound { kind, id } => CommandError::NotFound { kind, id },
+            SignalError::UnknownTool { tool } => CommandError::UnknownTool { tool },
+            SignalError::InvalidPath { path, reason } => CommandError::InvalidPath { path, reason },
+            SignalError::GitExecFailed { detail } => CommandError::GitCloneFailed {
+                kind: GitCloneFailureKind::ExecFailed,
+                detail,
+            },
+            SignalError::GitTimeout { detail } => CommandError::GitCloneFailed {
+                kind: GitCloneFailureKind::Timeout,
+                detail,
+            },
+            SignalError::GithubSkillNotFound { url } => CommandError::GithubSkillNotFound { url },
+            SignalError::InvalidGithubUrl { url } => CommandError::InvalidGithubUrl { url },
+            SignalError::GitRepointRequiresGit { name } => {
+                CommandError::GitRepointRequiresGit { name }
+            }
+            SignalError::PathOutsideToolDirs { path } => CommandError::PathOutsideToolDirs { path },
+            SignalError::SkillManifestIo { path, detail } => {
+                CommandError::SkillManifestIo { path, detail }
+            }
+            SignalError::SourcePathMissing { path } => CommandError::SourcePathMissing { path },
+            SignalError::CentralPathMissing { path } => CommandError::CentralPathMissing { path },
+            SignalError::SubpathMissing { subpath } => CommandError::SubpathMissing { subpath },
+            SignalError::RevealLogFailed { detail } => CommandError::RevealLogFailed { detail },
+            SignalError::SymlinkEscapesRepo { subpath, target } => {
+                CommandError::SymlinkEscapesRepo { subpath, target }
+            }
+            SignalError::SymlinkChainTooDeep { subpath } => {
+                CommandError::SymlinkChainTooDeep { subpath }
+            }
+            SignalError::NotRefreshable { name } => CommandError::NotRefreshable { name },
+            SignalError::LocalSourceInsideToolDir { path, tool } => {
+                CommandError::LocalSourceInsideToolDir { path, tool }
+            }
+            SignalError::SettingCorrupt { key, detail } => {
+                CommandError::SettingCorrupt { key, detail }
+            }
+        }
+    }
+}
+
+impl From<GlobalSyncError> for CommandError {
+    fn from(err: GlobalSyncError) -> Self {
+        match err {
+            GlobalSyncError::ToolNotInstalled { tool_key } => {
+                CommandError::ToolNotInstalled { tool: tool_key }
+            }
+            GlobalSyncError::TargetExists { target_path } => CommandError::TargetExists {
+                path: target_path.to_string_lossy().to_string(),
+            },
+            GlobalSyncError::ToolNotWritable {
+                tool_display_name,
+                skills_dir,
+            } => CommandError::ToolNotWritable {
+                tool: tool_display_name,
+                path: skills_dir.to_string_lossy().to_string(),
+            },
+            GlobalSyncError::Other(err) => CommandError::from_anyhow(err),
+        }
+    }
+}
+
+impl std::error::Error for CommandError {}
+
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Debug-ish display for logs; user-facing copy lives frontend-side.
+        match serde_json::to_string(self) {
+            Ok(json) => write!(f, "{}", json),
+            Err(_) => write!(f, "{:?}", self),
+        }
+    }
+}

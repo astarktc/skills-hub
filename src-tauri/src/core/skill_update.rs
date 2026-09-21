@@ -104,7 +104,8 @@ impl UpdateRequest {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
 pub enum UpdateSkip {
     SkillGone,
     StaleAcquisition,

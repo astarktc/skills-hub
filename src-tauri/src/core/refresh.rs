@@ -37,7 +37,7 @@ use std::sync::Mutex;
 use anyhow::Result;
 
 use super::cancel_token::CancelToken;
-use super::errors::SignalError;
+use super::errors::{CommandError, SignalError};
 use super::git_acquisition::HttpGithubApi;
 use super::global_sync::{
     sync_skills_to_tools_unlocked, BatchPolicy, BatchSkill, BatchTargetStatus,
@@ -98,7 +98,8 @@ pub struct RefreshProgress<'a> {
     pub phase: RefreshPhase,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, specta::Type)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum SkillRefreshStatus {
     /// Acquired, finalized and propagated. `targets` is Propagation's report.
     /// `reassert_error` carries a store failure inside the auto-sync re-assert:
@@ -109,11 +110,11 @@ pub enum SkillRefreshStatus {
         content_hash: Option<String>,
         source_revision: Option<String>,
         targets: Vec<PropagationOutcome>,
-        reassert_error: Option<anyhow::Error>,
+        reassert_error: Option<CommandError>,
         edit_conflict: Option<super::skill_edits::InvocationEditConflict>,
     },
     /// Acquisition or finalize failed; this skill's targets were left alone.
-    Failed { error: anyhow::Error },
+    Failed { error: CommandError },
     /// Refresh (all) did not dispatch this skill because the app cannot
     /// locate it (`provenance::refresh_eligibility`); nothing was touched.
     /// Only `All` skips — an explicitly named id proceeds to the acquire
@@ -124,14 +125,14 @@ pub enum SkillRefreshStatus {
     SkippedAcquisition { reason: UpdateSkip },
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, specta::Type)]
 pub struct SkillRefreshOutcome {
     pub skill_id: String,
     pub skill_name: String,
     pub status: SkillRefreshStatus,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize, specta::Type)]
 pub struct RefreshReport {
     pub skills: Vec<SkillRefreshOutcome>,
 }
@@ -295,7 +296,7 @@ pub(crate) fn refresh_managed_skills_with(
                     skill_id,
                     skill_name,
                     status: SkillRefreshStatus::Failed {
-                        error: anyhow::anyhow!(SignalError::Cancelled),
+                        error: CommandError::Cancelled,
                     },
                 })
                 .collect(),
@@ -326,7 +327,9 @@ pub(crate) fn refresh_managed_skills_with(
                 report.skills.push(SkillRefreshOutcome {
                     skill_id,
                     skill_name,
-                    status: SkillRefreshStatus::Failed { error },
+                    status: SkillRefreshStatus::Failed {
+                        error: CommandError::from_anyhow(error),
+                    },
                 });
                 continue;
             }
@@ -470,7 +473,11 @@ fn apply_one_unlocked(
         Ok(ApplyOutcome::Skipped { reason }) => {
             return SkillRefreshStatus::SkippedAcquisition { reason }
         }
-        Err(error) => return SkillRefreshStatus::Failed { error },
+        Err(error) => {
+            return SkillRefreshStatus::Failed {
+                error: CommandError::from_anyhow(error),
+            }
+        }
     };
     let targets = outcome.propagation.targets;
     let (targets, reassert_error) = if policy.reassert_auto_sync {
@@ -501,13 +508,13 @@ fn apply_one_unlocked(
 pub(crate) fn merge_reassert(
     mut targets: Vec<PropagationOutcome>,
     result: Result<Vec<PropagationOutcome>>,
-) -> (Vec<PropagationOutcome>, Option<anyhow::Error>) {
+) -> (Vec<PropagationOutcome>, Option<CommandError>) {
     match result {
         Ok(extra) => {
             targets.extend(extra);
             (targets, None)
         }
-        Err(error) => (targets, Some(error)),
+        Err(error) => (targets, Some(CommandError::from_anyhow(error))),
     }
 }
 
@@ -570,20 +577,14 @@ fn reassert_auto_sync_unlocked(
                     mode_used: outcome.mode_used,
                 },
                 BatchTargetStatus::Skipped { error } => match error {
-                    super::global_sync::GlobalSyncError::ToolNotInstalled { tool_key } => {
-                        PropagationStatus::Skipped {
-                            reason: PropagationSkip::ToolNotInstalled { tool: tool_key },
-                        }
-                    }
+                    CommandError::ToolNotInstalled { tool } => PropagationStatus::Skipped {
+                        reason: PropagationSkip::ToolNotInstalled { tool },
+                    },
                     // A skips-because-unwritable is still a failure to report:
                     // the operator asked for this Tool to carry the skill.
-                    other => PropagationStatus::Failed {
-                        error: anyhow::Error::new(other),
-                    },
+                    other => PropagationStatus::Failed { error: other },
                 },
-                BatchTargetStatus::Failed { error } => PropagationStatus::Failed {
-                    error: anyhow::Error::new(error),
-                },
+                BatchTargetStatus::Failed { error } => PropagationStatus::Failed { error },
             },
         })
         .collect())

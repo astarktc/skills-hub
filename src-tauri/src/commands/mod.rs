@@ -1,4 +1,3 @@
-pub mod error;
 pub mod projects;
 
 use anyhow::Context;
@@ -12,15 +11,14 @@ use tauri_plugin_opener::OpenerExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::core::artifact_removal::RemovalReport;
 use crate::core::cache_cleanup::cleanup_git_cache_dirs;
 use crate::core::cancel_token::CancelToken;
 use crate::core::clock::now_ms;
 use crate::core::environment::{expand_home_path, expand_home_path_in, home_dir};
 use crate::core::errors::SignalError;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
-use crate::core::global_sync::{
-    BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome, BatchTargetStatus,
-};
+use crate::core::global_sync::{BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome};
 use crate::core::installer::{
     clone_for_explore_preview, install_git_skill_from_listing, install_local_skill_from_selection,
     list_git_skills, list_local_skills, GitSkillListing, InstallResult, InstallerPaths,
@@ -29,13 +27,13 @@ use crate::core::installer::{
 use crate::core::log_reveal::log_reveal_target;
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
 use crate::core::onboarding_import::{
-    import_onboarding_selection as import_onboarding_selection_core, ImportGroupStatus,
-    ImportPhase, ImportPolicy, ImportSelection, OriginalStatus,
+    import_onboarding_selection as import_onboarding_selection_core, ImportPhase, ImportPolicy,
+    ImportReport, ImportSelection,
 };
-use crate::core::propagation::{PropagationScope, PropagationSkip, PropagationStatus};
+use crate::core::propagation::PropagationReport;
 use crate::core::refresh::{
     refresh_managed_skills as refresh_managed_skills_core, RefreshPhase, RefreshPolicy,
-    RefreshSelection, SkillRefreshStatus,
+    RefreshReport, RefreshSelection,
 };
 use crate::core::settings::{
     apply_setting, load_settings, record_installed_tools, AppSettings, SettingUpdate,
@@ -52,7 +50,9 @@ use crate::core::tool_adapters::{
 };
 use crate::core::unlocatable::{detach_from_source, repoint_and_update, UnlocatableState};
 
-pub use error::CommandError;
+// Preserve the command seam's public error vocabulary after moving its owner.
+#[allow(unused_imports)]
+pub use crate::core::errors::{CommandError, GitCloneFailureKind};
 
 /// Production environment adapter for the central repo: `.skillshub` lives
 /// under the operator's home, or under the app data dir when no home can be
@@ -412,33 +412,6 @@ pub struct BatchSyncPolicyDto {
     pub overrides: Vec<BatchSyncOverrideDto>,
 }
 
-/// Per-(skill, tool) result. `skipped` is the expected-and-ignorable class
-/// (tool absent, dir unwritable); `failed` is everything else. Both carry
-/// the typed error so call sites choose what to surface.
-#[derive(Debug, Serialize, Type)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum SyncTargetStatusDto {
-    Synced { mode_used: SyncMode },
-    Skipped { error: CommandError },
-    Failed { error: CommandError },
-}
-
-#[derive(Debug, Serialize, Type)]
-pub struct SyncTargetResultDto {
-    pub skill_id: String,
-    pub skill_name: String,
-    pub tool: String,
-    pub status: SyncTargetStatusDto,
-}
-
-#[derive(Debug, Serialize, Type)]
-pub struct BatchSyncReportDto {
-    pub results: Vec<SyncTargetResultDto>,
-    pub synced: u32,
-    pub skipped: u32,
-    pub failed: u32,
-}
-
 /// Progress tick streamed over the command's channel before each attempted
 /// (skill, tool) pair.
 #[derive(Debug, Clone, Serialize, Type)]
@@ -461,7 +434,7 @@ pub async fn sync_skills_to_tools(
     tools: Vec<String>,
     policy: BatchSyncPolicyDto,
     on_progress: Channel<SyncProgressDto>,
-) -> Result<BatchSyncReportDto, CommandError> {
+) -> Result<Vec<BatchTargetOutcome>, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let batch_skills: Vec<BatchSkill> = skills
@@ -504,125 +477,11 @@ pub async fn sync_skills_to_tools(
             },
         );
 
-        let mut report = BatchSyncReportDto {
-            results: Vec::with_capacity(outcomes.len()),
-            synced: 0,
-            skipped: 0,
-            failed: 0,
-        };
-        for outcome in outcomes {
-            let result = to_sync_target_result_dto(outcome);
-            match result.status {
-                SyncTargetStatusDto::Synced { .. } => report.synced += 1,
-                SyncTargetStatusDto::Skipped { .. } => report.skipped += 1,
-                SyncTargetStatusDto::Failed { .. } => report.failed += 1,
-            }
-            report.results.push(result);
-        }
-        Ok::<_, anyhow::Error>(report)
+        Ok::<_, anyhow::Error>(outcomes)
     })
     .await
     .map_err(CommandError::internal)?
     .map_err(CommandError::from_anyhow)
-}
-
-/// The one wire shape for a (skill, tool) sync outcome — shared by the sync
-/// batch and the Onboarding import report.
-fn to_sync_target_result_dto(outcome: BatchTargetOutcome) -> SyncTargetResultDto {
-    let status = match outcome.status {
-        BatchTargetStatus::Synced { outcome } => SyncTargetStatusDto::Synced {
-            mode_used: outcome.mode_used,
-        },
-        BatchTargetStatus::Skipped { error } => SyncTargetStatusDto::Skipped {
-            error: CommandError::from(error),
-        },
-        BatchTargetStatus::Failed { error } => SyncTargetStatusDto::Failed {
-            error: CommandError::from(error),
-        },
-    };
-    SyncTargetResultDto {
-        skill_id: outcome.skill_id,
-        skill_name: outcome.skill_name,
-        tool: outcome.tool_key,
-        status,
-    }
-}
-
-/// Which Sync target a removal outcome is about.
-#[derive(Debug, Serialize, Type)]
-#[serde(tag = "scope", rename_all = "snake_case")]
-pub enum RemovalScopeDto {
-    Global,
-    Project { project_id: String },
-}
-
-/// Per-row removal result. `failed` means the artifact is still on disk and
-/// the row was kept with Sync status `error` (ADR-0002) — report data, not a
-/// command error.
-#[derive(Debug, Serialize, Type)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum RemovalTargetStatusDto {
-    Removed,
-    Failed { error: CommandError },
-}
-
-#[derive(Debug, Serialize, Type)]
-pub struct RemovalTargetDto {
-    pub scope: RemovalScopeDto,
-    pub tool: String,
-    pub path: String,
-    pub status: RemovalTargetStatusDto,
-}
-
-#[derive(Debug, Serialize, Type)]
-pub struct RemovalReportDto {
-    pub targets: Vec<RemovalTargetDto>,
-    /// Rows whose artifact was removed (and whose row was deleted).
-    pub removed: u32,
-    /// Rows kept with Sync status `error` because their artifact stayed.
-    pub failed: u32,
-}
-
-/// One DTO row per settled row: a shared skills dir removes one artifact but
-/// settles every member row, and the frontend reports per tool. A failure is
-/// classified once per target (the report carries the error chain, so a typed
-/// `SignalError` becomes its own code here) and repeated on every member row.
-fn to_removal_report_dto(report: crate::core::artifact_removal::RemovalReport) -> RemovalReportDto {
-    use crate::core::artifact_removal::RemovalTargetStatus;
-
-    let mut dto = RemovalReportDto {
-        targets: Vec::new(),
-        removed: report.removed_rows() as u32,
-        failed: report.failed_rows() as u32,
-    };
-    for target in report.targets {
-        let path = target.path.to_string_lossy().to_string();
-        let error = match target.status {
-            RemovalTargetStatus::Removed => None,
-            RemovalTargetStatus::Failed { error } => Some(CommandError::from_anyhow(error)),
-        };
-        for row in target.rows {
-            let status = match &error {
-                None => RemovalTargetStatusDto::Removed,
-                Some(error) => RemovalTargetStatusDto::Failed {
-                    error: error.clone(),
-                },
-            };
-            let scope = match row.project_id() {
-                None => RemovalScopeDto::Global,
-                Some(project_id) => RemovalScopeDto::Project {
-                    project_id: project_id.to_string(),
-                },
-            };
-            dto.targets.push(RemovalTargetDto {
-                scope,
-                tool: row.tool().to_string(),
-                path: path.clone(),
-                status,
-            });
-        }
-    }
-    dto
 }
 
 #[tauri::command]
@@ -632,104 +491,17 @@ pub async fn unsync_skill_from_tool(
     store: State<'_, SkillStore>,
     skillId: String,
     tool: String,
-) -> Result<RemovalReportDto, CommandError> {
+) -> Result<RemovalReport, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let home = home_dir()?;
         let report =
             crate::core::artifact_removal::unsync_skill_from_tool(&store, &home, &skillId, &tool)?;
-        Ok::<_, anyhow::Error>(to_removal_report_dto(report))
+        Ok::<_, anyhow::Error>(report)
     })
     .await
     .map_err(CommandError::internal)?
     .map_err(CommandError::from_anyhow)
-}
-
-/// Which Sync target a Propagation outcome is about.
-#[derive(Debug, Serialize, Type)]
-#[serde(tag = "scope", rename_all = "snake_case")]
-pub enum PropagationScopeDto {
-    Global { tool: String },
-    Project { project_id: String, tool: String },
-}
-
-/// Why a Sync target needed no work. Not a failure — skipping is the correct
-/// outcome for a link, an uninstalled Tool, or an absent Project.
-#[derive(Debug, Serialize, Type)]
-#[serde(tag = "reason", rename_all = "snake_case")]
-pub enum PropagationSkipDto {
-    LinkFollowsSource,
-    ToolNotInstalled { tool: String },
-    UnknownTool { tool: String },
-    ProjectUnavailable { project_id: String },
-}
-
-#[derive(Debug, Serialize, Type)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum PropagationStatusDto {
-    Synced { mode_used: SyncMode },
-    Skipped { reason: PropagationSkipDto },
-    Failed { error: CommandError },
-}
-
-#[derive(Debug, Serialize, Type)]
-pub struct PropagationTargetDto {
-    pub scope: PropagationScopeDto,
-    pub status: PropagationStatusDto,
-}
-
-#[derive(Debug, Serialize, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum UpdateSkipDto {
-    SkillGone,
-    StaleAcquisition,
-}
-
-/// Per-skill result of a Refresh batch. A skill whose bytes could not be
-/// acquired is `failed` — its Sync targets were left alone. A skill the
-/// app cannot locate is `skipped` with its state — nothing was touched.
-#[derive(Debug, Serialize, Type)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum SkillRefreshStatusDto {
-    Refreshed {
-        content_hash: Option<String>,
-        source_revision: Option<String>,
-        targets: Vec<PropagationTargetDto>,
-        /// A store failure inside the auto-sync re-assert. The skill is still
-        /// `refreshed`; the targets the re-assert would have created are
-        /// unknown, so this counts as one `target_failures`.
-        reassert_error: Option<CommandError>,
-        edit_conflict: Option<crate::core::skill_edits::InvocationEditConflict>,
-    },
-    Failed {
-        error: CommandError,
-    },
-    Skipped {
-        state: UnlocatableState,
-    },
-    SkippedAcquisition {
-        reason: UpdateSkipDto,
-    },
-}
-
-#[derive(Debug, Serialize, Type)]
-pub struct SkillRefreshResultDto {
-    pub skill_id: String,
-    pub skill_name: String,
-    pub status: SkillRefreshStatusDto,
-}
-
-#[derive(Debug, Serialize, Type)]
-pub struct RefreshReportDto {
-    pub skills: Vec<SkillRefreshResultDto>,
-    pub refreshed: u32,
-    pub failed: u32,
-    /// Unlocatable skills Refresh (all) did not dispatch (one `skipped`
-    /// entry each in `skills`).
-    pub skipped: u32,
-    /// Sync targets that failed across every refreshed skill. A failed
-    /// auto-sync re-assert counts as one.
-    pub target_failures: u32,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Type)]
@@ -772,7 +544,7 @@ pub async fn refresh_managed_skills(
     skillIds: Option<Vec<String>>,
     policy: RefreshPolicyDto,
     on_progress: Channel<RefreshProgressDto>,
-) -> Result<RefreshReportDto, CommandError> {
+) -> Result<RefreshReport, CommandError> {
     let store = store.inner().clone();
     let cancel = cancel.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -803,7 +575,7 @@ pub async fn refresh_managed_skills(
                 });
             },
         )?;
-        Ok::<_, anyhow::Error>(to_refresh_report_dto(report))
+        Ok::<_, anyhow::Error>(report)
     })
     .await
     .map_err(CommandError::internal)?
@@ -843,118 +615,17 @@ pub async fn update_managed_skill(
 
 #[derive(Debug, Serialize, Type)]
 pub struct SkillMutationResultDto {
-    pub report: RefreshReportDto,
+    pub report: RefreshReport,
     pub skills: Vec<ManagedSkillDto>,
 }
 
 impl SkillMutationResultDto {
-    fn from_report(store: &SkillStore, report: RefreshReportDto) -> anyhow::Result<Self> {
+    fn from_report(store: &SkillStore, report: RefreshReport) -> anyhow::Result<Self> {
         Ok(Self {
             report,
             skills: managed_skill_dtos(store)?,
         })
     }
-}
-
-fn to_propagation_target_dto(
-    target: crate::core::propagation::PropagationOutcome,
-) -> PropagationTargetDto {
-    PropagationTargetDto {
-        scope: match target.scope {
-            PropagationScope::Global { tool } => PropagationScopeDto::Global { tool },
-            PropagationScope::Project { project_id, tool } => {
-                PropagationScopeDto::Project { project_id, tool }
-            }
-        },
-        status: match target.status {
-            PropagationStatus::Synced { mode_used } => PropagationStatusDto::Synced { mode_used },
-            PropagationStatus::Skipped { reason } => PropagationStatusDto::Skipped {
-                reason: match reason {
-                    PropagationSkip::LinkFollowsSource => PropagationSkipDto::LinkFollowsSource,
-                    PropagationSkip::ToolNotInstalled { tool } => {
-                        PropagationSkipDto::ToolNotInstalled { tool }
-                    }
-                    PropagationSkip::UnknownTool { tool } => {
-                        PropagationSkipDto::UnknownTool { tool }
-                    }
-                    PropagationSkip::ProjectUnavailable { project_id } => {
-                        PropagationSkipDto::ProjectUnavailable { project_id }
-                    }
-                },
-            },
-            PropagationStatus::Failed { error } => PropagationStatusDto::Failed {
-                error: CommandError::from_anyhow(error),
-            },
-        },
-    }
-}
-
-fn to_refresh_report_dto(report: crate::core::refresh::RefreshReport) -> RefreshReportDto {
-    let mut dto = RefreshReportDto {
-        skills: Vec::with_capacity(report.skills.len()),
-        refreshed: 0,
-        failed: 0,
-        skipped: 0,
-        target_failures: 0,
-    };
-    for skill in report.skills {
-        let status = match skill.status {
-            SkillRefreshStatus::Refreshed {
-                content_hash,
-                source_revision,
-                targets,
-                reassert_error,
-                edit_conflict,
-            } => {
-                dto.refreshed += 1;
-                let targets: Vec<PropagationTargetDto> =
-                    targets.into_iter().map(to_propagation_target_dto).collect();
-                dto.target_failures += targets
-                    .iter()
-                    .filter(|target| matches!(target.status, PropagationStatusDto::Failed { .. }))
-                    .count() as u32;
-                SkillRefreshStatusDto::Refreshed {
-                    edit_conflict,
-                    content_hash,
-                    source_revision,
-                    targets,
-                    reassert_error: reassert_error.map(|error| {
-                        dto.target_failures += 1;
-                        CommandError::from_anyhow(error)
-                    }),
-                }
-            }
-            SkillRefreshStatus::Failed { error } => {
-                dto.failed += 1;
-                SkillRefreshStatusDto::Failed {
-                    error: CommandError::from_anyhow(error),
-                }
-            }
-            SkillRefreshStatus::SkippedAcquisition { reason } => {
-                dto.skipped += 1;
-                SkillRefreshStatusDto::SkippedAcquisition {
-                    reason: match reason {
-                        crate::core::skill_update::UpdateSkip::SkillGone => {
-                            UpdateSkipDto::SkillGone
-                        }
-                        crate::core::skill_update::UpdateSkip::StaleAcquisition => {
-                            UpdateSkipDto::StaleAcquisition
-                        }
-                    },
-                }
-            }
-            SkillRefreshStatus::Skipped { state } => {
-                dto.skipped += 1;
-                SkillRefreshStatusDto::Skipped { state }
-            }
-        };
-        dto.skills.push(SkillRefreshResultDto {
-            skill_id: skill.skill_id,
-            skill_name: skill.skill_name,
-            status,
-        });
-    }
-    dto
 }
 
 /// Re-point a `local` skill whose source folder is gone at the folder's new
@@ -989,7 +660,7 @@ pub async fn repoint_local_skill_source(
             now_ms(),
             |_| {},
         )?;
-        SkillMutationResultDto::from_report(&store, to_refresh_report_dto(report))
+        SkillMutationResultDto::from_report(&store, report)
     })
     .await
     .map_err(CommandError::internal)?
@@ -1026,7 +697,7 @@ pub async fn repoint_git_skill_source(
             Some(&cancel),
             now_ms(),
         )?;
-        SkillMutationResultDto::from_report(&store, to_refresh_report_dto(report))
+        SkillMutationResultDto::from_report(&store, report)
     })
     .await
     .map_err(CommandError::internal)?
@@ -1057,11 +728,10 @@ pub async fn detach_skill_from_source(
 #[specta::specta]
 pub async fn unsync_all_skills(
     store: State<'_, SkillStore>,
-) -> Result<RemovalReportDto, CommandError> {
+) -> Result<RemovalReport, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let report = crate::core::artifact_removal::unsync_all_skill_targets(&store)?;
-        Ok::<_, anyhow::Error>(to_removal_report_dto(report))
+        crate::core::artifact_removal::unsync_all_skill_targets(&store)
     })
     .await
     .map_err(CommandError::internal)?
@@ -1074,11 +744,10 @@ pub async fn unsync_all_skills(
 pub async fn unsync_skill(
     store: State<'_, SkillStore>,
     skillId: String,
-) -> Result<RemovalReportDto, CommandError> {
+) -> Result<RemovalReport, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let report = crate::core::artifact_removal::unsync_skill_targets(&store, &skillId)?;
-        Ok::<_, anyhow::Error>(to_removal_report_dto(report))
+        crate::core::artifact_removal::unsync_skill_targets(&store, &skillId)
     })
     .await
     .map_err(CommandError::internal)?
@@ -1121,60 +790,6 @@ pub struct ImportProgressDto {
     pub phase: ImportPhaseDto,
 }
 
-/// What happened to one original directory. `kept_divergent` means the
-/// directory's content differs from the imported skill, so it was
-/// deliberately left in place (under either auto-sync policy) — report data,
-/// not a command error.
-#[derive(Debug, Serialize, Type)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum ImportOriginalStatusDto {
-    Removed,
-    KeptDivergent,
-    Failed { error: CommandError },
-}
-
-#[derive(Debug, Serialize, Type)]
-pub struct ImportOriginalDto {
-    pub path: String,
-    pub tool: String,
-    pub status: ImportOriginalStatusDto,
-}
-
-/// Per-group result. `targets` carries the sync outcomes (auto-sync on);
-/// `originals` the settled originals — every variant when auto-sync is off,
-/// only the divergent siblings kept in place when it is on. `forced_tools`
-/// lists the Tools synced beyond the policy's Tools because they held a
-/// variant byte-identical to the chosen one (so their originals are
-/// overwritten in place rather than left as untracked duplicates); empty
-/// when the policy already named every one of them.
-#[derive(Debug, Serialize, Type)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum ImportGroupStatusDto {
-    Imported {
-        skill_id: String,
-        skill_name: String,
-        targets: Vec<SyncTargetResultDto>,
-        forced_tools: Vec<String>,
-        originals: Vec<ImportOriginalDto>,
-    },
-    Failed {
-        error: CommandError,
-    },
-}
-
-#[derive(Debug, Serialize, Type)]
-pub struct ImportGroupOutcomeDto {
-    pub group_name: String,
-    pub status: ImportGroupStatusDto,
-}
-
-#[derive(Debug, Serialize, Type)]
-pub struct ImportReportDto {
-    pub groups: Vec<ImportGroupOutcomeDto>,
-    pub imported: u32,
-    pub failed: u32,
-}
-
 /// Import pre-existing Tool skills the operator selected, in one call: admit
 /// each chosen variant, finalize it as a Managed skill, then sync it
 /// (auto-sync on) or remove the byte-identical originals (auto-sync off).
@@ -1187,7 +802,7 @@ pub async fn import_onboarding_selection(
     selections: Vec<OnboardingSelectionDto>,
     policy: ImportPolicyDto,
     on_progress: Channel<ImportProgressDto>,
-) -> Result<ImportReportDto, CommandError> {
+) -> Result<ImportReport, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let paths = installer_paths(&app, &store)?;
@@ -1220,67 +835,11 @@ pub async fn import_onboarding_selection(
                 });
             },
         )?;
-        Ok::<_, anyhow::Error>(to_import_report_dto(report))
+        Ok::<_, anyhow::Error>(report)
     })
     .await
     .map_err(CommandError::internal)?
     .map_err(CommandError::from_anyhow)
-}
-
-fn to_import_report_dto(report: crate::core::onboarding_import::ImportReport) -> ImportReportDto {
-    let mut dto = ImportReportDto {
-        groups: Vec::with_capacity(report.groups.len()),
-        imported: 0,
-        failed: 0,
-    };
-    for group in report.groups {
-        let status = match group.status {
-            ImportGroupStatus::Imported {
-                skill_id,
-                skill_name,
-                targets,
-                forced_tools,
-                originals,
-            } => {
-                dto.imported += 1;
-                ImportGroupStatusDto::Imported {
-                    skill_id,
-                    skill_name,
-                    targets: targets.into_iter().map(to_sync_target_result_dto).collect(),
-                    forced_tools,
-                    originals: originals
-                        .into_iter()
-                        .map(|original| ImportOriginalDto {
-                            path: original.path.to_string_lossy().to_string(),
-                            tool: original.tool,
-                            status: match original.status {
-                                OriginalStatus::Removed => ImportOriginalStatusDto::Removed,
-                                OriginalStatus::KeptDivergent => {
-                                    ImportOriginalStatusDto::KeptDivergent
-                                }
-                                OriginalStatus::Failed { error } => {
-                                    ImportOriginalStatusDto::Failed {
-                                        error: CommandError::from_anyhow(error),
-                                    }
-                                }
-                            },
-                        })
-                        .collect(),
-                }
-            }
-            ImportGroupStatus::Failed { error } => {
-                dto.failed += 1;
-                ImportGroupStatusDto::Failed {
-                    error: CommandError::from_anyhow(error),
-                }
-            }
-        };
-        dto.groups.push(ImportGroupOutcomeDto {
-            group_name: group.group_name,
-            status,
-        });
-    }
-    dto
 }
 
 #[derive(Debug, Serialize, Type)]
@@ -1344,15 +903,15 @@ fn managed_skill_dtos(store: &SkillStore) -> anyhow::Result<Vec<ManagedSkillDto>
 
 /// Central Edit has settled; target failures remain report data.
 #[derive(Debug, Serialize, Type)]
-pub struct InvocationEditReportDto {
+pub struct InvocationEditReport {
     pub skill_id: String,
     pub skill_name: String,
-    pub propagation: Vec<PropagationTargetDto>,
+    pub propagation: PropagationReport,
 }
 
 #[derive(Debug, Serialize, Type)]
 pub struct InvocationEditResultDto {
-    pub report: InvocationEditReportDto,
+    pub report: InvocationEditReport,
     pub skills: Vec<ManagedSkillDto>,
 }
 
@@ -1362,15 +921,10 @@ impl InvocationEditResultDto {
         outcome: crate::core::skill_edits::InvocationEditOutcome,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            report: InvocationEditReportDto {
+            report: InvocationEditReport {
                 skill_id: outcome.entry.skill.id,
                 skill_name: outcome.entry.skill.name,
-                propagation: outcome
-                    .propagation
-                    .targets
-                    .into_iter()
-                    .map(to_propagation_target_dto)
-                    .collect(),
+                propagation: outcome.propagation,
             },
             // Called after the Edit entry point released the Mutation guard.
             skills: managed_skill_dtos(store)?,
@@ -1404,12 +958,12 @@ pub async fn set_skill_invocation_override(
 pub async fn delete_managed_skill(
     store: State<'_, SkillStore>,
     skillId: String,
-) -> Result<(), CommandError> {
+) -> Result<RemovalReport, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let report = crate::core::artifact_removal::remove_skill(&store, &skillId)?;
         log::debug!("[delete_managed_skill] {}", report);
-        Ok::<_, anyhow::Error>(())
+        Ok::<_, anyhow::Error>(report)
     })
     .await
     .map_err(CommandError::internal)?

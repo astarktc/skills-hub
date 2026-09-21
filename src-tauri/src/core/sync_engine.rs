@@ -28,7 +28,7 @@ impl std::error::Error for TargetExistsError {}
 /// callers.
 pub use super::sync_status::SyncMode;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, specta::Type)]
 pub struct SyncOutcome {
     pub mode_used: SyncMode,
     pub target_path: PathBuf,

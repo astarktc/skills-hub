@@ -9,8 +9,10 @@ use crate::core::project_ops::{
 use crate::core::project_sync::{self, AssignTargetStatus, ToggleOutcome};
 use crate::core::skill_store::{ProjectSkillAssignmentRecord, SkillStore};
 
-use super::{to_removal_report_dto, CommandError, RemovalReportDto};
+use super::CommandError;
+use crate::core::artifact_removal::RemovalReport;
 use crate::core::clock::now_ms;
+use crate::core::project_sync::ResyncSummary;
 
 /// Everything the project world shows for one project, as one wire value:
 /// the project row (counts and aggregate status included), its configured
@@ -77,7 +79,7 @@ pub async fn register_project(
 #[derive(serde::Serialize, Type)]
 pub struct RemoveProjectResultDto {
     pub projects: Vec<ProjectDto>,
-    pub report: RemovalReportDto,
+    pub report: RemovalReport,
 }
 
 /// Remove a project and every artifact it owns. The project it named is
@@ -94,7 +96,7 @@ pub async fn remove_project(
         let report = project_ops::remove_project_and_artifacts(&store, &projectId)?;
         Ok::<_, anyhow::Error>(RemoveProjectResultDto {
             projects: project_ops::list_project_dtos(&store)?,
-            report: to_removal_report_dto(report),
+            report,
         })
     })
     .await
@@ -155,7 +157,7 @@ pub async fn update_project_path(
 #[derive(serde::Serialize, Type)]
 pub struct ConfigureProjectToolsResultDto {
     pub view: ProjectViewDto,
-    pub report: RemovalReportDto,
+    pub report: RemovalReport,
 }
 
 /// Replace the project's configured tool set and, when `gitignore` is given,
@@ -174,17 +176,7 @@ pub async fn configure_project_tools(
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let removals = project_ops::configure_project_tools(&store, &projectId, &tools, gitignore)?;
-        let mut report = RemovalReportDto {
-            targets: Vec::new(),
-            removed: 0,
-            failed: 0,
-        };
-        for removal in removals {
-            let dto = to_removal_report_dto(removal);
-            report.targets.extend(dto.targets);
-            report.removed += dto.removed;
-            report.failed += dto.failed;
-        }
+        let report = RemovalReport::merge(removals);
         Ok::<_, anyhow::Error>(ConfigureProjectToolsResultDto {
             view: view_of(&store, &projectId)?,
             report,
@@ -245,28 +237,11 @@ fn to_assignment_dto(record: ProjectSkillAssignmentRecord) -> ProjectSkillAssign
     }
 }
 
-#[derive(serde::Serialize, Clone, Type)]
-pub struct ResyncSummaryDto {
-    pub project_id: String,
-    pub synced: usize,
-    pub failed: usize,
-    pub errors: Vec<String>,
-}
-
-fn to_resync_summary_dto(summary: project_sync::ResyncSummary) -> ResyncSummaryDto {
-    ResyncSummaryDto {
-        project_id: summary.project_id,
-        synced: summary.synced,
-        failed: summary.failed,
-        errors: summary.errors,
-    }
-}
-
 /// A resync's counts and errors alongside the project's fresh view.
 #[derive(serde::Serialize, Clone, Type)]
 pub struct ResyncProjectResultDto {
     pub view: ProjectViewDto,
-    pub summary: ResyncSummaryDto,
+    pub summary: ResyncSummary,
 }
 
 #[tauri::command]
@@ -281,7 +256,7 @@ pub async fn resync_project(
         let summary = project_sync::resync_project(&store, &projectId, now_ms())?;
         Ok::<_, anyhow::Error>(ResyncProjectResultDto {
             view: view_of(&store, &projectId)?,
-            summary: to_resync_summary_dto(summary),
+            summary,
         })
     })
     .await
@@ -294,7 +269,7 @@ pub async fn resync_project(
 /// view of whichever project it is showing.
 #[derive(serde::Serialize, Clone, Type)]
 pub struct ResyncAllResultDto {
-    pub summaries: Vec<ResyncSummaryDto>,
+    pub summaries: Vec<ResyncSummary>,
     pub projects: Vec<ProjectDto>,
 }
 
@@ -307,7 +282,7 @@ pub async fn resync_all_projects(
     tauri::async_runtime::spawn_blocking(move || {
         let summaries = project_sync::resync_all_projects(&store, now_ms())?;
         Ok::<_, anyhow::Error>(ResyncAllResultDto {
-            summaries: summaries.into_iter().map(to_resync_summary_dto).collect(),
+            summaries,
             projects: project_ops::list_project_dtos(&store)?,
         })
     })

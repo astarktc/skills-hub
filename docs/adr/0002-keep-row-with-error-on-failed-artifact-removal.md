@@ -8,7 +8,8 @@ artifact could not be removed is kept with Sync status `error`, carrying the fai
 in `last_error`.** This holds for both tables (`skill_targets` and
 `project_skill_assignments`), and for the whole-skill scope it extends to the skill itself:
 if any target failed, the central copy and the `skills` row are kept too and the operation
-raises the typed `DELETE_CLEANUP_FAILED`, so a retry can still find every artifact. Only a
+returns a removal report with the kept targets and `record_deleted: false`, so a retry
+can still find every artifact. Only a
 store failure fails the whole operation; per-target failures are report data.
 
 ## Considered options
@@ -37,11 +38,10 @@ store failure fails the whole operation; per-target failures are report data.
 
 - A failed removal is visible in the library and project lists as an `error` row, and
   re-running the same operation re-plans exactly the artifacts that are still there.
-- Deleting a Managed skill can now leave the skill in place. The frontend copy for
-  `DELETE_CLEANUP_FAILED` says the skill was kept and the operator can retry (it previously
-  said the record was already deleted).
-- The unsync commands return a removal report (`removed` / `failed` counts plus per-target
-  outcomes) instead of a bare count, so the frontend can name every path it could not remove.
+- Deleting a Managed skill can leave the skill in place. The removal report carries the
+  kept targets as typed failures; the frontend says the skill was kept and can be retried.
+- Delete and unsync commands return the core removal report with per-target outcomes and
+  attached rows, so the frontend can name every path it could not remove and derive counts.
 
 ## Note: a target row whose Tool is no longer detected
 

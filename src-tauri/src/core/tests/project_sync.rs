@@ -287,7 +287,7 @@ fn unlock_parent(target: &Path) {
 
 /// ADR-0002 at project scope: the row that locates a stuck artifact is kept
 /// with Sync status `error`, and the caller's final policy turns the report's
-/// failures into the typed `DeleteCleanupFailed` naming the path.
+/// failure into the already-classified target error naming the path.
 #[cfg(unix)]
 #[test]
 fn unassign_failure_keeps_the_row_as_error_and_reports_the_path() {
@@ -316,17 +316,13 @@ fn unassign_failure_keeps_the_row_as_error_and_reports_the_path() {
         .expect_err("a stuck artifact must fail the unassign");
     unlock_parent(&target);
 
-    match err.downcast_ref::<crate::core::errors::SignalError>() {
-        Some(crate::core::errors::SignalError::DeleteCleanupFailed { failures }) => {
-            assert_eq!(failures.len(), 1);
-            assert!(
-                failures[0].starts_with(&format!("{}: ", target.display())),
-                "the report names the path it could not remove: {:?}",
-                failures
-            );
+    match crate::core::errors::CommandError::from_anyhow(err) {
+        crate::core::errors::CommandError::Other { message } => {
+            assert!(message.contains(target.to_str().unwrap()));
         }
-        other => panic!("expected DeleteCleanupFailed, got {:?}", other),
+        other => panic!("expected classified removal failure, got {other:?}"),
     }
+    assert!(store.get_skill_by_id(&skill.id).unwrap().is_some());
 
     let assignment = store
         .get_project_skill_assignment(&project.id, &skill.id, "claude_code")
