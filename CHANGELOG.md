@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.14] - 2026-09-20
+
+Update-request hardening, an Add skill button on My Skills, tool labels on removal toasts, and CI on current Actions majors with a release-mode regression guard.
+
+### Added
+
+- **My Skills has an Add skill button.** The Local / Git add flow no longer requires a detour through Explore's Manual button; both open the same modal.
+
+### Fixed
+
+- **Removal toasts name tools by their label on a fresh launch.** Removing a project or dropping a tool before the tool-status had loaded could title a kept-deployment error with the raw tool key (`claude` instead of `Claude Code`).
+
+### Internal/architecture
+
+- **`UpdateRequest` can only be built through its three doors** (`local`, `edit`, `acquire_update`); a module-private source proposal carries the only row fields an Update may change, Restore is no longer a separate byte variant (finalize rebuilds an absent central copy from the same staged bytes), and Re-point reuses install's manifest gate.
+- **CI runs the propagation suite under `--release`** to guard the content-identity regression that only surfaced in release builds.
+- **GitHub Actions bumped to current majors** (checkout v7, setup-node v7, upload-artifact v7, download-artifact v8, action-gh-release v3), SHA-pinned; permissions unchanged.
+
 ## [1.2.13] - 2026-09-16
 
 Tool-selection integrity, per-target project-removal outcomes, listing validity aligned with install, and a hardened CI/release pipeline.
