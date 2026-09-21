@@ -17,7 +17,7 @@ use super::{
     skill_catalog::{managed_skill_entry, ManagedSkillEntry},
     skill_discovery::find_skill_md,
     skill_store::{SkillEditKind, SkillEditRecord, SkillRecord, SkillStore},
-    skill_update::{self, ApplyOutcome, UpdateBytes, UpdateRequest},
+    skill_update::{self, ApplyOutcome, UpdateRequest},
 };
 
 #[derive(Clone, Debug, Serialize, specta::Type)]
@@ -111,14 +111,7 @@ pub fn set_invocation_override(
         let outcome = skill_update::apply_unlocked(
             paths,
             store,
-            UpdateRequest {
-                expected: record.clone(),
-                record,
-                bytes: UpdateBytes::EditInPlace {
-                    clear: mode.is_none(),
-                },
-                repoint: false,
-            },
+            UpdateRequest::edit(record, mode.is_none()),
         )?;
         let ApplyOutcome::Updated(outcome) = outcome else {
             anyhow::bail!("edited skill changed under guard")

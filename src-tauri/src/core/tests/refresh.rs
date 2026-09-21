@@ -386,10 +386,15 @@ fn git_repoint_non_skill_directory_never_replaces_a_working_skill() {
     let SkillRefreshStatus::Failed { error } = &report.skills[0].status else {
         panic!("{report:?}")
     };
-    assert!(matches!(
-        error.downcast_ref::<SignalError>(),
-        Some(SignalError::SkillInvalid { .. })
-    ));
+    // Re-point shares install's manifest gate (`ensure_installable_skill_dir`),
+    // so it refuses with install's token.
+    assert!(
+        matches!(
+            error.downcast_ref::<SignalError>(),
+            Some(SignalError::SkillInvalid { reason }) if reason == "missing_skill_md"
+        ),
+        "{error:#}"
+    );
     assert_eq!(
         format!("{:?}", f.store.get_skill_by_id(&f.skill_id).unwrap()),
         before

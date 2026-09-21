@@ -1,6 +1,6 @@
 # 01 Harden `UpdateRequest` and the byte adapters
 
-Status: ready-for-agent
+Status: claimed
 Lane: A
 Source: BACKLOG #04 (from `archive/round7/backlog.md` #18)
 
@@ -35,3 +35,42 @@ leave it). Gate: `cargo fmt`, `cargo clippy --all-targets --all-features -- -D w
 
 One staged variant; no `unreachable!`; `UpdateRequest` cannot be built by literal outside `skill_update.rs`;
 `ensure_installable_skill_dir` is the single manifest gate for install and Re-point; `cargo test --all` green.
+
+## Comments
+
+### 2026-09-20 — lane A (implementation)
+
+Done, all four sub-items, backend only, no wire change (`src/bindings/index.ts` unchanged after `cargo test --all`).
+
+Files: `src-tauri/src/core/skill_update.rs`, `skill_edits.rs`, `installer.rs`, `tests/skill_update.rs`, `tests/refresh.rs`.
+`unlocatable.rs`, `refresh.rs` and `commands/tests/mutation_results.rs` needed no change — they only use the
+constructors, never a field.
+
+1. `UpdateBytes::{GitAcquired, RestoreRebuild}` → one `Acquired { staged, revision }`. `UpdateRequest::local` and
+   `acquire_update` no longer probe the central copy for a `restore` flag (`acquire_update` keeps
+   `ensure_central_repo` — the staging dir still needs its parent). Enum doc says why Restore is not a fourth adapter.
+2. `apply_unlocked` matches `request.bytes` once; `Acquired`/`LocalFolder` call a private `settle_staged(store,
+   &current, staged, revision)` (finalize + Edit replay, ADR-0004). No `unreachable!`.
+3. `UpdateRequest` fields are private; doors are `local`, new `edit(record, clear)` (used by `skill_edits.rs`), and
+   `acquire_update`. **`SourceProposal` judgement call — adopted**, as a module-private
+   `struct SourceProposal { source_ref, source_subpath, source_type }` replacing `record: SkillRecord`:
+   `apply_unlocked` reads exactly those three fields, so the type now says what the doc comment used to promise
+   ("carries only proposed source changes") — apply *cannot* overwrite an unrelated field. It removes the full
+   `record.clone()` from all three constructors (`expected` now takes `record` by move; the proposal clones three
+   strings via `SourceProposal::unchanged(&record)`), and it widens nothing: no new `pub(crate)` item, the constructor
+   signatures are unchanged, and tests reach it as the child module they already are (`acquired.record.source_*` →
+   `acquired.proposal.source_*`). Admission (`expected` stale check) untouched.
+4. `installer::ensure_installable_skill_dir` is `pub(crate)` and is the Re-point manifest gate in `acquire_update`
+   (same `SkillInvalid { reason: "missing_skill_md" }` token).
+
+Tests (TDD): added `local_restore_rebuilds_the_central_copy_at_the_recorded_path` (`tests/skill_update.rs`) — pins
+the `UpdateRequest::local` Restore door whose branch was removed; verified green *before* the refactor and after.
+The git side was already pinned by `git_restore_rebuilds_the_central_copy_and_its_dangling_link`. Tightened
+`git_repoint_non_skill_directory_never_replaces_a_working_skill` (`tests/refresh.rs`) from `SkillInvalid { .. }`
+to the `missing_skill_md` token so the shared gate is asserted, not assumed. `every_byte_adapter_settles_and_reports_propagation`
+still covers `git`/`local`/`edit`/`restore` (restore now = same `Acquired` request with the central copy removed).
+
+Evidence: `cargo clippy --all-targets --all-features -- -D warnings` clean; `cargo test --all` → 646 passed,
+0 failed (was 645 + 1 new); `cargo test skill_update` → 11 passed. `rustfmt --check` clean on the five edited files
+(whole-crate `cargo fmt` left to the parent). `lens_diagnostics`: the only blocker is yamllint on
+`.github/workflows/auto-tag.yml` (lane B's file).

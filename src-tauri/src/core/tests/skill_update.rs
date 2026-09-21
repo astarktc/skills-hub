@@ -49,8 +49,11 @@ fn slash_branch_install_and_update_keep_url_and_resolved_subpath() {
         None,
     )
     .unwrap();
-    assert_eq!(acquired.record.source_ref.as_deref(), Some(url));
-    assert_eq!(acquired.record.source_subpath.as_deref(), Some("skills/a"));
+    assert_eq!(acquired.proposal.source_ref.as_deref(), Some(url));
+    assert_eq!(
+        acquired.proposal.source_subpath.as_deref(),
+        Some("skills/a")
+    );
     assert_eq!(staged_parts(&acquired).1.as_deref(), Some("next"));
 }
 
@@ -82,7 +85,10 @@ fn stale_split_repair_is_acquire_first_and_persisted_only_by_finalize() {
     let acquired =
         acquire_update(&paths, &store, &installed.skill_id, None, &api, 0, None).unwrap();
 
-    assert_eq!(acquired.record.source_subpath.as_deref(), Some("skills/a"));
+    assert_eq!(
+        acquired.proposal.source_subpath.as_deref(),
+        Some("skills/a")
+    );
     assert_eq!(
         format!(
             "{:?}",
@@ -219,8 +225,7 @@ fn update_acquisition_uses_the_fast_path() {
 }
 fn staged_parts(request: &UpdateRequest) -> (&StagingDir, &Option<String>) {
     match &request.bytes {
-        UpdateBytes::GitAcquired { staged, revision }
-        | UpdateBytes::RestoreRebuild { staged, revision } => (staged, revision),
+        UpdateBytes::Acquired { staged, revision } => (staged, revision),
         _ => panic!("expected staged bytes"),
     }
 }
@@ -248,9 +253,9 @@ fn staged_request(paths: &InstallerPaths, record: &SkillRecord) -> UpdateRequest
     .unwrap();
     UpdateRequest {
         expected: record.clone(),
-        record: record.clone(),
+        proposal: SourceProposal::unchanged(record),
         repoint: false,
-        bytes: UpdateBytes::GitAcquired {
+        bytes: UpdateBytes::Acquired {
             staged,
             revision: Some("next".into()),
         },
@@ -299,10 +304,6 @@ fn every_byte_adapter_settles_and_reports_propagation() {
             }
             "restore" => {
                 fs::remove_dir_all(&record.central_path).unwrap();
-                let UpdateBytes::GitAcquired { staged, revision } = request.bytes else {
-                    unreachable!()
-                };
-                request.bytes = UpdateBytes::RestoreRebuild { staged, revision };
             }
             _ => {}
         }
@@ -477,6 +478,33 @@ fn admission_preserves_current_non_source_fields() {
     assert_eq!(updated.last_sync_at, current.last_sync_at);
 }
 
+/// Restore is not its own byte adapter: a local skill whose central copy is
+/// gone goes through `UpdateRequest::local` like any other local Update, and
+/// finalize rebuilds the copy at the recorded path.
+#[test]
+fn local_restore_rebuilds_the_central_copy_at_the_recorded_path() {
+    let (_dir, paths, store, record) = fixture();
+    let source = PathBuf::from(record.source_ref.as_ref().unwrap());
+    fs::write(source.join("SKILL.md"), "---\nname: alpha\n---\nrestored\n").unwrap();
+    fs::remove_dir_all(&record.central_path).unwrap();
+    let request = UpdateRequest::local(record.clone(), &source, false).unwrap();
+    let ApplyOutcome::Updated(outcome) =
+        crate::core::mutation_guard::serialized(|| apply_unlocked(&paths, &store, request))
+            .unwrap()
+    else {
+        panic!("restore skipped")
+    };
+    assert_eq!(outcome.skill_id, record.id);
+    assert_eq!(
+        fs::read(Path::new(&record.central_path).join("SKILL.md")).unwrap(),
+        fs::read(source.join("SKILL.md")).unwrap()
+    );
+    let after = store.get_skill_by_id(&record.id).unwrap().unwrap();
+    assert_eq!(after.central_path, record.central_path);
+    assert_eq!(after.source_ref, record.source_ref);
+    assert!(after.content_hash.is_some());
+}
+
 #[test]
 fn git_restore_rebuilds_the_central_copy_and_its_dangling_link() {
     let (_dir, store) = make_store();
@@ -521,7 +549,7 @@ fn git_restore_rebuilds_the_central_copy_and_its_dangling_link() {
         None,
     )
     .unwrap();
-    assert!(matches!(request.bytes, UpdateBytes::RestoreRebuild { .. }));
+    assert!(matches!(request.bytes, UpdateBytes::Acquired { .. }));
     let ApplyOutcome::Updated(outcome) =
         crate::core::mutation_guard::serialized(|| apply_unlocked(&paths, &store, request))
             .unwrap()

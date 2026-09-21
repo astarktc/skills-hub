@@ -186,7 +186,9 @@ fn derive_name_from_repo_url(repo_url: &str) -> String {
     }
 }
 
-fn ensure_installable_skill_dir(p: &Path) -> Result<()> {
+/// The single manifest gate for bytes about to become a central copy: install
+/// and Re-point both refuse a directory without a `SKILL.md` with this token.
+pub(crate) fn ensure_installable_skill_dir(p: &Path) -> Result<()> {
     if is_skill_dir(p) {
         Ok(())
     } else {

@@ -13,17 +13,19 @@ use super::{
     errors::SignalError,
     git_acquisition::{acquire, parse_github_url, AcquireRequest, GithubApi, SkillIntent},
     install_finalize::{finalize_update, StagingDir},
-    installer::InstallerPaths,
+    installer::{ensure_installable_skill_dir, InstallerPaths},
     propagation::{propagate_unlocked, PropagationReport},
     provenance::{is_refreshable, Provenance},
     skill_store::{SkillRecord, SkillStore},
     sync_engine::copy_dir_recursive,
 };
 
-/// The four byte adapters. Local folders are staged by this module; Restore
-/// carries rebuilt bytes when acquisition found the central copy absent.
+/// The three byte adapters. Git acquisition and local folders are staged
+/// outside the guard; a direct Edit settles the central copy in place. Restore
+/// is not a fourth adapter: when acquisition finds the central copy absent it
+/// stages the same bytes, and finalize rebuilds the copy at the recorded path.
 pub(crate) enum UpdateBytes {
-    GitAcquired {
+    Acquired {
         staged: StagingDir,
         revision: Option<String>,
     },
@@ -33,19 +35,35 @@ pub(crate) enum UpdateBytes {
     EditInPlace {
         clear: bool,
     },
-    RestoreRebuild {
-        staged: StagingDir,
-        revision: Option<String>,
-    },
+}
+
+/// The only fields an Update may change on the row besides what finalize
+/// owns: the source it was acquired from. Everything else is re-read under
+/// the guard so unrelated current fields always win.
+struct SourceProposal {
+    source_ref: Option<String>,
+    source_subpath: Option<String>,
+    source_type: String,
+}
+
+impl SourceProposal {
+    fn unchanged(record: &SkillRecord) -> Self {
+        Self {
+            source_ref: record.source_ref.clone(),
+            source_subpath: record.source_subpath.clone(),
+            source_type: record.source_type.clone(),
+        }
+    }
 }
 
 /// Acquisition facts, not authority to upsert a record. `expected` is the
-/// provenance acquisition read; `record` carries only proposed source changes.
+/// provenance acquisition read; `proposal` carries only proposed source
+/// changes. Built only through `local`, `edit` and `acquire_update`.
 pub(crate) struct UpdateRequest {
-    pub expected: SkillRecord,
-    pub record: SkillRecord,
-    pub bytes: UpdateBytes,
-    pub repoint: bool,
+    expected: SkillRecord,
+    proposal: SourceProposal,
+    bytes: UpdateBytes,
+    repoint: bool,
 }
 
 impl UpdateRequest {
@@ -58,29 +76,31 @@ impl UpdateRequest {
             });
         }
         let central = Path::new(&record.central_path);
-        let restore = !central.exists();
         let parent = central.parent().context("invalid central path")?;
         ensure_central_repo(parent)?;
         let staged = StagingDir::new_in(parent);
         copy_dir_recursive(source, staged.path())?;
-        let expected = record.clone();
-        let mut record = record;
+        let mut proposal = SourceProposal::unchanged(&record);
         if repoint {
-            record.source_ref = Some(source.to_string_lossy().into_owned());
+            proposal.source_ref = Some(source.to_string_lossy().into_owned());
         }
         Ok(Self {
-            expected,
-            record,
+            expected: record,
+            proposal,
+            bytes: UpdateBytes::LocalFolder { staged },
             repoint,
-            bytes: if restore {
-                UpdateBytes::RestoreRebuild {
-                    staged,
-                    revision: None,
-                }
-            } else {
-                UpdateBytes::LocalFolder { staged }
-            },
         })
+    }
+
+    /// Direct Edit: no bytes to acquire and no source change; the central copy
+    /// is settled in place under the guard (`clear` drops the Edit row).
+    pub(crate) fn edit(record: SkillRecord, clear: bool) -> Self {
+        Self {
+            proposal: SourceProposal::unchanged(&record),
+            expected: record,
+            bytes: UpdateBytes::EditInPlace { clear },
+            repoint: false,
+        }
     }
 }
 
@@ -126,9 +146,9 @@ pub(crate) fn apply_unlocked(
             reason: UpdateSkip::StaleAcquisition,
         });
     }
-    current.source_ref = request.record.source_ref;
-    current.source_subpath = request.record.source_subpath;
-    current.source_type = request.record.source_type;
+    current.source_ref = request.proposal.source_ref;
+    current.source_subpath = request.proposal.source_subpath;
+    current.source_type = request.proposal.source_type;
     let now = now_ms();
     let (updated, edit_conflict) = match request.bytes {
         UpdateBytes::EditInPlace { clear } => {
@@ -137,17 +157,10 @@ pub(crate) fn apply_unlocked(
             content_identity::record(store, &mut current)?;
             (current, None)
         }
-        bytes => {
-            let (staged, revision) = match bytes {
-                UpdateBytes::GitAcquired { staged, revision }
-                | UpdateBytes::RestoreRebuild { staged, revision } => (staged, revision),
-                UpdateBytes::LocalFolder { staged } => (staged, None),
-                UpdateBytes::EditInPlace { .. } => unreachable!(),
-            };
-            finalize_update(store, &current, staged, revision, |updated| {
-                super::skill_edits::replay_unlocked(store, updated)
-            })?
+        UpdateBytes::Acquired { staged, revision } => {
+            settle_staged(store, &current, staged, revision)?
         }
+        UpdateBytes::LocalFolder { staged } => settle_staged(store, &current, staged, None)?,
     };
     let propagation = propagate_unlocked(store, paths, &updated.id, now)?;
     Ok(ApplyOutcome::Updated(UpdateOutcome {
@@ -158,6 +171,22 @@ pub(crate) fn apply_unlocked(
         propagation,
         edit_conflict,
     }))
+}
+
+/// Land staged bytes through finalize's failure-atomic window, replaying the
+/// Edit inside it (ADR-0004).
+fn settle_staged(
+    store: &SkillStore,
+    current: &SkillRecord,
+    staged: StagingDir,
+    revision: Option<String>,
+) -> Result<(
+    SkillRecord,
+    Option<super::skill_edits::InvocationEditConflict>,
+)> {
+    finalize_update(store, current, staged, revision, |updated| {
+        super::skill_edits::replay_unlocked(store, updated)
+    })
 }
 
 /// Acquire source bytes without settling rows or targets. The source override
@@ -172,14 +201,12 @@ pub(crate) fn acquire_update(
     ttl_ms: i64,
     source_override: Option<(&str, &super::git_acquisition::GitSource)>,
 ) -> Result<UpdateRequest> {
-    let mut record = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
+    let record = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
         anyhow::anyhow!(SignalError::NotFound {
             kind: "skill".to_string(),
             id: skill_id.to_string(),
         })
     })?;
-
-    let expected = record.clone();
 
     // The Provenance rule: a skill with no external source has nothing to
     // acquire, whatever the state of its central copy. The central copy's
@@ -196,7 +223,6 @@ pub(crate) fn acquire_update(
     }
 
     let central_path = PathBuf::from(record.central_path.clone());
-    let restore = !central_path.exists();
     let central_parent = central_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("invalid central path"))?
@@ -210,6 +236,7 @@ pub(crate) fn acquire_update(
     let staging_dir = staged.path().to_path_buf();
 
     let new_revision;
+    let mut proposal = SourceProposal::unchanged(&record);
 
     match Provenance::parse(&record.source_type) {
         Some(Provenance::Git) => {
@@ -245,36 +272,24 @@ pub(crate) fn acquire_update(
             new_revision = Some(acquired.revision);
 
             if let Some((url, _)) = source_override {
-                if !super::skill_discovery::is_skill_dir(&staging_dir) {
-                    anyhow::bail!(SignalError::SkillInvalid {
-                        reason: "missing_skill_md".into()
-                    });
-                }
-                record.source_ref = Some(url.to_string());
+                ensure_installable_skill_dir(&staging_dir)?;
+                proposal.source_ref = Some(url.to_string());
             }
             // Acquisition owns the branch/path split. Finalize carries this
             // resolved path into the record, including legacy backfills.
-            record.source_subpath = acquired.resolved_subpath.filter(|subpath| subpath != ".");
+            proposal.source_subpath = acquired.resolved_subpath.filter(|subpath| subpath != ".");
         }
         // Local returned above; imported/unknown were refused by admission.
         _ => anyhow::bail!(not_refreshable(&record)),
     }
 
-    let bytes = if restore {
-        UpdateBytes::RestoreRebuild {
-            staged,
-            revision: new_revision,
-        }
-    } else {
-        UpdateBytes::GitAcquired {
-            staged,
-            revision: new_revision,
-        }
-    };
     Ok(UpdateRequest {
-        expected,
-        record,
-        bytes,
+        expected: record,
+        proposal,
+        bytes: UpdateBytes::Acquired {
+            staged,
+            revision: new_revision,
+        },
         repoint: source_override.is_some(),
     })
 }
