@@ -322,8 +322,7 @@ export const resources = {
           "Skill not found on GitHub (it may have been deleted or the path changed). Please check: {{url}}. If it moved, use Re-point on the skill to paste its new GitHub URL.",
         invalidGithubUrl: "Enter a full GitHub repository or tree URL (https://github.com/owner/repo/tree/branch/path): {{url}}",
         gitRepointRequiresGit: "{{name}} is not a git skill. Only git skills can be re-pointed to a GitHub URL.",
-        deleteCleanupFailed:
-          "Some artifacts could not be removed, so what describes them was kept — you can retry:",
+        deleteKeptTargetTitle: "Could not remove the target for {{tool}}.",
         finalizeRollbackFailed:
           "The update failed and the previous copy could not be restored to {{central}}. The previous files are retained at {{backup}} for manual recovery.",
         finalizeRollbackFailedNoBackup:
@@ -432,6 +431,7 @@ export const resources = {
         gitSkillCreated: "Git skill created.",
         selectedSkillsInstalled: "Selected skills installed.",
         skillRemoved: "Skill removed.",
+        skillDeleteKept: "Skill kept: {{failed}} targets could not be removed. You can retry.",
         syncCompleted: "Sync completed.",
         refreshCompleted: "All skills refreshed.",
         refreshSummary: "{{refreshed}} skills refreshed, {{failed}} failed.",
@@ -928,8 +928,7 @@ export const resources = {
           "在 GitHub 上未找到该 Skill（可能已被删除或路径已变更）。请检查：{{url}}。如果已移动，请使用该 Skill 的“重新指向”操作，粘贴新的 GitHub URL。",
         invalidGithubUrl: "请输入完整的 GitHub 仓库或目录 URL（https://github.com/owner/repo/tree/branch/path）：{{url}}",
         gitRepointRequiresGit: "{{name}} 不是 git Skill。只有 git Skill 才能重新指向 GitHub URL。",
-        deleteCleanupFailed:
-          "部分产物无法移除，相关记录已保留，你可以重试：",
+        deleteKeptTargetTitle: "无法移除 {{tool}} 的同步目标。",
         finalizeRollbackFailed:
           "更新失败，且无法将原副本恢复到 {{central}}。原文件已保留在 {{backup}}，请手动恢复。",
         finalizeRollbackFailedNoBackup:
@@ -1029,6 +1028,7 @@ export const resources = {
         gitSkillCreated: "Git 技能创建完成。",
         selectedSkillsInstalled: "选中技能安装完成。",
         skillRemoved: "已删除该技能。",
+        skillDeleteKept: "技能已保留：{{failed}} 个同步目标无法移除。你可以重试。",
         syncCompleted: "同步完成。",
         refreshCompleted: "所有 Skills 已刷新。",
         refreshSummary: "已刷新 {{refreshed}} 个 Skills，{{failed}} 个失败。",

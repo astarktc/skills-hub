@@ -12,7 +12,7 @@ import type {
   ProjectDto,
   ProjectSkillAssignmentDto,
   ProjectToolDto,
-  ResyncSummaryDto,
+  ResyncSummary,
 } from "./types";
 import type { ManagedSkill } from "../skills/types";
 import type {
@@ -43,8 +43,8 @@ export type AssignmentMatrixProps = {
   matrixLoading: boolean;
   onToggleAssignment: (skillId: string, tool: string) => Promise<void>;
   onBulkAssign: (skillId: string) => Promise<void>;
-  onResyncProject: () => Promise<ResyncSummaryDto>;
-  onResyncAll: () => Promise<ResyncSummaryDto[]>;
+  onResyncProject: () => Promise<ResyncSummary>;
+  onResyncAll: () => Promise<ResyncSummary[]>;
   onConfigureTools: () => void;
   /** The reporter's notification entry point, handed down by the page. */
   notify: NotifyFn;

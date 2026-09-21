@@ -4,10 +4,10 @@
 // state that got applied, not how many calls it took. The backend is mocked
 // at the invokeTauri module seam.
 
-const emptyRemoval = (): RemovalReportDto => ({
+const emptyRemoval = (): RemovalReport => ({
   targets: [],
-  removed: 0,
-  failed: 0,
+  central_removed: false,
+  record_deleted: false,
 });
 
 import { StrictMode } from "react";
@@ -21,7 +21,7 @@ import type {
   ProjectSkillAssignmentDto,
   ProjectToolDto,
   ProjectViewDto,
-  RemovalReportDto,
+  RemovalReport,
 } from "./types";
 
 vi.mock("../../lib/tauri", () => ({
@@ -502,17 +502,16 @@ describe("useProjectState applies the view a mutation returns", () => {
     // `error` assignment (ADR-0002), answers with that view, and the report
     // names the path. The hook applies the view and returns the report
     // unread — the fold interprets it.
-    const kept: RemovalReportDto = {
+    const kept: RemovalReport = {
       targets: [
         {
-          scope: { scope: "project", project_id: "p1" },
-          tool: "pi",
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "pi" }],
           path: "/work/p1/.pi/skills/s1",
           status: { status: "failed", error: { code: "OTHER", message: "busy" } },
         },
       ],
-      removed: 0,
-      failed: 1,
+      central_removed: false,
+      record_deleted: false,
     };
     const base = mockInvoke.getMockImplementation()!;
     mockInvoke.mockImplementation((command, ...args) => {
@@ -537,7 +536,7 @@ describe("useProjectState applies the view a mutation returns", () => {
     });
     mockInvoke.mockClear();
 
-    let report: RemovalReportDto | undefined;
+    let report: RemovalReport | undefined;
     await act(async () => {
       report = await result.current.configureTools(["cursor"]);
     });
@@ -621,7 +620,7 @@ describe("useProjectState applies the view a mutation returns", () => {
     await withSelectedProject(result);
     mockInvoke.mockClear();
 
-    let report: RemovalReportDto | null = null;
+    let report: RemovalReport | null = null;
     await act(async () => {
       report = await result.current.removeProject("p1");
     });
@@ -645,11 +644,10 @@ describe("useProjectState applies the view a mutation returns", () => {
     // (report data, not an error). The response carries no matrix, so the
     // hook converges on the backend's settled view — visible now, not
     // after a reselect.
-    const kept: RemovalReportDto = {
+    const kept: RemovalReport = {
       targets: [
         {
-          scope: { scope: "project", project_id: "p1" },
-          tool: "pi",
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "pi" }],
           path: "/work/p1/.pi/skills/s1",
           status: {
             status: "failed",
@@ -657,8 +655,8 @@ describe("useProjectState applies the view a mutation returns", () => {
           },
         },
       ],
-      removed: 0,
-      failed: 1,
+      central_removed: false,
+      record_deleted: false,
     };
     const listed = result.current.projects.map((p) =>
       p.id === "p1" ? ({ ...p, sync_status: "error" } satisfies ProjectDto) : p,
@@ -685,7 +683,7 @@ describe("useProjectState applies the view a mutation returns", () => {
     });
     mockInvoke.mockClear();
 
-    let report: RemovalReportDto | null = null;
+    let report: RemovalReport | null = null;
     await act(async () => {
       report = await result.current.removeProject("p1");
     });

@@ -7,7 +7,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
-  BatchSyncReportDto,
+  BatchTargetOutcome,
   AppSettings,
   SyncProgressDto,
   ToolInfoDto,
@@ -104,7 +104,7 @@ function stubBackend(overrides?: {
     >
   >;
   status?: Partial<ToolStatusDto>;
-  syncReport?: BatchSyncReportDto;
+  syncReport?: BatchTargetOutcome[];
 }) {
   mockInvoke.mockImplementation((command) => {
     switch (command) {
@@ -114,12 +114,7 @@ function stubBackend(overrides?: {
         return Promise.resolve({ ...TOOL_STATUS, ...overrides?.status });
       case "syncSkillsToTools":
         return Promise.resolve(
-          overrides?.syncReport ?? {
-            results: [],
-            synced: 0,
-            skipped: 0,
-            failed: 0,
-          },
+          overrides?.syncReport ?? [],
         );
       default:
         return Promise.resolve(undefined);

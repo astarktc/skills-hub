@@ -122,15 +122,6 @@ describe("describeCommandError", () => {
     ).toBe('errors.githubSkillNotFound {"url":"https://g/tree/main/s"}');
   });
 
-  it("lists failed paths for DELETE_CLEANUP_FAILED", () => {
-    expect(
-      describeCommandError(
-        { code: "DELETE_CLEANUP_FAILED", failures: ["/a: denied", "/b: busy"] },
-        t,
-      ),
-    ).toBe("errors.deleteCleanupFailed\n- /a: denied\n- /b: busy");
-  });
-
   it("localizes rollback recovery paths and keeps diagnostics separate", () => {
     const error = { code: "FINALIZE_ROLLBACK_FAILED", central: "/central", backup: "/backup", detail: "move failed" };
     expect(toCommandError(error)).toBe(error);

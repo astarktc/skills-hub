@@ -1,15 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { resources } from "../i18n/resources";
 import type {
-  BatchSyncReportDto,
-  ImportGroupStatusDto,
-  ImportReportDto,
+  BatchTargetOutcome,
+  ImportGroupStatus,
+  ImportReport,
   InstallResultDto,
-  InvocationEditReportDto,
-  RefreshReportDto,
-  RemovalReportDto,
-  SkillRefreshResultDto,
-  SyncTargetResultDto,
+  InvocationEditReport,
+  RefreshReport,
+  RemovalReport,
+  SkillRefreshOutcome,
 } from "../bindings";
 import {
   deleteOutcome,
@@ -31,7 +30,7 @@ const ctx = {
   toolLabelById: { claude: "CLAUDE" },
   canRepoint: (id: string) => id === "git",
 };
-const refreshed = (id = "git"): SkillRefreshResultDto => ({
+const refreshed = (id = "git"): SkillRefreshOutcome => ({
   skill_id: id,
   skill_name: id,
   status: {
@@ -43,7 +42,7 @@ const refreshed = (id = "git"): SkillRefreshResultDto => ({
     edit_conflict: null,
   },
 });
-const failed: SkillRefreshResultDto = {
+const failed: SkillRefreshOutcome = {
   skill_id: "git",
   skill_name: "git",
   status: {
@@ -54,24 +53,24 @@ const failed: SkillRefreshResultDto = {
     },
   },
 };
-const skipped: SkillRefreshResultDto = {
+const skipped: SkillRefreshOutcome = {
   skill_id: "local",
   skill_name: "local",
   status: { status: "skipped", state: "source_missing" },
 };
-const skippedGone: SkillRefreshResultDto = {
+const skippedGone: SkillRefreshOutcome = {
   skill_id: "gone",
   skill_name: "gone",
   status: { status: "skipped_acquisition", reason: "skill_gone" },
 };
-const skippedStale: SkillRefreshResultDto = {
+const skippedStale: SkillRefreshOutcome = {
   skill_id: "stale",
   skill_name: "stale",
   status: { status: "skipped_acquisition", reason: "stale_acquisition" },
 };
 function changed(
   kind: "conflict" | "target" | "reassert",
-): SkillRefreshResultDto {
+): SkillRefreshOutcome {
   const row = refreshed();
   if (row.status.status !== "refreshed") throw new Error("fixture");
   if (kind === "conflict")
@@ -92,26 +91,8 @@ function changed(
     row.status.reassert_error = { code: "OTHER", message: "reassert failed" };
   return row;
 }
-function refreshReport(skills: SkillRefreshResultDto[]): RefreshReportDto {
-  return {
-    skills,
-    refreshed: skills.filter((s) => s.status.status === "refreshed").length,
-    failed: skills.filter((s) => s.status.status === "failed").length,
-    skipped: skills.filter(
-      (s) =>
-        s.status.status === "skipped" ||
-        s.status.status === "skipped_acquisition",
-    ).length,
-    target_failures: skills.reduce(
-      (n, s) =>
-        n +
-        (s.status.status === "refreshed"
-          ? s.status.targets.filter((t) => t.status.status === "failed")
-              .length + Number(Boolean(s.status.reassert_error))
-          : 0),
-      0,
-    ),
-  };
+function refreshReport(skills: SkillRefreshOutcome[]): RefreshReport {
+  return { skills };
 }
 
 describe("refreshOutcome: one precedence and completion policy", () => {
@@ -346,11 +327,11 @@ describe("refreshOutcome: one precedence and completion policy", () => {
 });
 
 describe("invocationEditOutcome", () => {
-  const globalFailure: InvocationEditReportDto["propagation"][number] = {
+  const globalFailure: InvocationEditReport["propagation"]["targets"][number] = {
     scope: { scope: "global", tool: "claude" },
     status: { status: "failed", error: { code: "OTHER", message: "global blocked" } },
   };
-  const projectFailure: InvocationEditReportDto["propagation"][number] = {
+  const projectFailure: InvocationEditReport["propagation"]["targets"][number] = {
     scope: { scope: "project", project_id: "p1", tool: "unknown" },
     status: { status: "failed", error: { code: "OTHER", message: "project blocked" } },
   };
@@ -369,8 +350,8 @@ describe("invocationEditOutcome", () => {
       { scope: { scope: "global", tool: "unknown" }, status: { status: "skipped", reason: { reason: "unknown_tool", tool: "unknown" } } },
       { scope: { scope: "project", project_id: "p1", tool: "claude" }, status: { status: "skipped", reason: { reason: "project_unavailable", project_id: "p1" } } },
     ], errors: [] },
-  ] satisfies { name: string; propagation: InvocationEditReportDto["propagation"]; errors: { title: string; message: string }[] }[])("$name: central-settled completion, no unconditional success", ({ propagation, errors }) => {
-    const report: InvocationEditReportDto = { skill_id: "s1", skill_name: "alpha", propagation };
+  ] satisfies { name: string; propagation: InvocationEditReport["propagation"]["targets"]; errors: { title: string; message: string }[] }[])("$name: central-settled completion, no unconditional success", ({ propagation, errors }) => {
+    const report: InvocationEditReport = { skill_id: "s1", skill_name: "alpha", propagation: { targets: propagation } };
     const before = JSON.stringify(report);
     expect(invocationEditOutcome(report, ctx)).toEqual({
       toast: errors.length ? null : { kind: "success", message: "invocationEdit.saved" },
@@ -380,21 +361,85 @@ describe("invocationEditOutcome", () => {
   });
 });
 
-const removal = (fail: boolean): RemovalReportDto => ({
+const removal = (fail: boolean): RemovalReport => ({
   targets: [
     {
-      scope: { scope: "global" },
-      tool: "unknown",
+      rows: [{ scope: "global_target", id: "t1", skill_id: "s1", tool: "unknown" }],
       path: "/target",
       status: fail
         ? { status: "failed", error: { code: "OTHER", message: "busy" } }
         : { status: "removed" },
     },
   ],
-  removed: fail ? 0 : 1,
-  failed: fail ? 1 : 0,
+  central_removed: false,
+  record_deleted: false,
 });
 describe("removalOutcome", () => {
+  it("counts shared artifact rows and emits failures in target/row order for every removal action", () => {
+    const report: RemovalReport = {
+      targets: [
+        {
+          path: "/removed",
+          rows: [
+            { scope: "global_target", id: "r1", skill_id: "s1", tool: "claude" },
+            { scope: "global_target", id: "r2", skill_id: "s1", tool: "pi" },
+          ],
+          status: { status: "removed" },
+        },
+        {
+          path: "/kept",
+          rows: [
+            { scope: "global_target", id: "t1", skill_id: "s1", tool: "claude" },
+            { scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "unknown" },
+          ],
+          status: { status: "failed", error: { code: "PATH_OUTSIDE_TOOL_DIRS", path: "/kept" } },
+        },
+        {
+          path: "/also-kept",
+          rows: [{ scope: "assignment", id: "a2", project_id: "p2", skill_id: "s1", tool: "pi" }],
+          status: { status: "failed", error: { code: "OTHER", message: "busy" } },
+        },
+      ],
+      central_removed: false,
+      record_deleted: false,
+    };
+    const before = JSON.stringify(report);
+    const unsync = removalOutcome(report, { ...ctx, action: "all" });
+    const project = projectRemovalOutcome(report, { ...ctx, action: "removeProject" });
+    const configure = projectRemovalOutcome(report, { ...ctx, action: "configureTools" });
+    const deleted = deleteOutcome(report, ctx);
+    for (const [out, key] of [
+      [unsync, "errors.unsyncFailedTitle"],
+      [project, "errors.projectRemovalFailedTitle"],
+      [configure, "errors.projectRemovalFailedTitle"],
+      [deleted, "errors.deleteKeptTargetTitle"],
+    ] as const) {
+      expect(out.errors).toEqual([
+        { title: t(key, { tool: "CLAUDE" }), message: t("errors.pathOutsideToolDirs", { path: "/kept" }) },
+        { title: t(key, { tool: "unknown" }), message: t("errors.pathOutsideToolDirs", { path: "/kept" }) },
+        { title: t(key, { tool: "pi" }), message: "busy" },
+      ]);
+      expect(out.completion.closeModal).toBe(false);
+    }
+    expect(unsync.toast).toEqual({ kind: "warning", message: t("unsyncPartial", { count: 2, failed: 3 }) });
+    expect(project.toast).toEqual({ kind: "warning", message: t("projects.removeKept", { count: 2, failed: 3 }) });
+    expect(configure.toast).toEqual({ kind: "warning", message: t("projects.toolRemovalKept", { count: 2, failed: 3 }) });
+    expect(deleted.toast).toEqual({ kind: "warning", message: t("status.skillDeleteKept", { failed: 3 }) });
+    expect(deleted.completion).toEqual({ reload: true, closeModal: false, conflict: false });
+    expect(JSON.stringify(report)).toBe(before);
+  });
+
+  it("delete succeeds for removed targets and has kept/retry copy in both locales", () => {
+    expect(deleteOutcome({ ...removal(false), central_removed: true, record_deleted: true }, ctx)).toEqual({
+      toast: { kind: "success", message: "status.skillRemoved" },
+      errors: [], warnings: [], completion: { reload: true, closeModal: true, conflict: false },
+    });
+    expect(resources.en.translation.errors.deleteKeptTargetTitle).toContain("{{tool}}");
+    expect(resources.zh.translation.errors.deleteKeptTargetTitle).toContain("{{tool}}");
+    expect(resources.en.translation.status.skillDeleteKept).toBe("Skill kept: {{failed}} targets could not be removed. You can retry.");
+    expect(resources.zh.translation.status.skillDeleteKept).toBe("技能已保留：{{failed}} 个同步目标无法移除。你可以重试。");
+  });
+
   it.each(["all", "skill", "toggle"] as const)(
     "%s removal settles kept rows without claiming success",
     (action) => {
@@ -431,7 +476,7 @@ describe("removalOutcome", () => {
     },
   );
   it("a zero-target report warns instead of claiming an unsync happened", () => {
-    const nothing: RemovalReportDto = { targets: [], removed: 0, failed: 0 };
+    const nothing: RemovalReport = { targets: [], central_removed: false, record_deleted: false };
     for (const action of ["all", "skill", "toggle"] as const) {
       const out = removalOutcome(nothing, { ...ctx, action });
       expect(out.toast).toEqual({
@@ -443,23 +488,21 @@ describe("removalOutcome", () => {
     }
   });
   it("a project removal reports each kept target and keeps its modal open", () => {
-    const report: RemovalReportDto = {
+    const report: RemovalReport = {
       targets: [
         {
-          scope: { scope: "project", project_id: "p1" },
-          tool: "claude",
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude" }],
           path: "/work/p1/.claude/skills/a",
           status: { status: "removed" },
         },
         {
-          scope: { scope: "project", project_id: "p1" },
-          tool: "pi",
+          rows: [{ scope: "assignment", id: "a2", project_id: "p1", skill_id: "s1", tool: "pi" }],
           path: "/work/p1/.pi/skills/a",
           status: { status: "failed", error: { code: "OTHER", message: "denied" } },
         },
       ],
-      removed: 1,
-      failed: 1,
+      central_removed: false,
+      record_deleted: false,
     };
     const kept = [
       { title: t("errors.projectRemovalFailedTitle", { tool: "pi" }), message: "denied" },
@@ -477,7 +520,7 @@ describe("removalOutcome", () => {
       completion: { reload: false, closeModal: false, conflict: false },
     });
     // The tool label map applies to the failed target's title.
-    const relabelled = { ...report, targets: [{ ...report.targets[1], tool: "claude" }] };
+    const relabelled = { ...report, targets: [{ ...report.targets[1], rows: [{ ...report.targets[1].rows[0], tool: "claude" }] }] };
     expect(
       projectRemovalOutcome(relabelled, { ...ctx, action: "removeProject" }).errors[0].title,
     ).toBe(t("errors.projectRemovalFailedTitle", { tool: "CLAUDE" }));
@@ -486,17 +529,16 @@ describe("removalOutcome", () => {
     // The fold never invents a label: a key the map lacks (and the fresh-launch
     // case of an empty map) surfaces as-is. The binder is responsible for
     // handing the projects world the startup-loaded map (round 14 D4).
-    const report: RemovalReportDto = {
+    const report: RemovalReport = {
       targets: [
         {
-          scope: { scope: "project", project_id: "p1" },
-          tool: "claude",
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude" }],
           path: "/work/p1/.claude/skills/a",
           status: { status: "failed", error: { code: "OTHER", message: "denied" } },
         },
       ],
-      removed: 0,
-      failed: 1,
+      central_removed: false,
+      record_deleted: false,
     };
     for (const toolLabelById of [{}, { pi: "Pi" }] as Record<string, string>[]) {
       for (const action of ["removeProject", "configureTools"] as const) {
@@ -512,19 +554,18 @@ describe("removalOutcome", () => {
     ).toBe(t("errors.projectRemovalFailedTitle", { tool: "CLAUDE" }));
   });
   it("a clean or empty project removal closes without a nothing-planned warning", () => {
-    const clean: RemovalReportDto = {
+    const clean: RemovalReport = {
       targets: [
         {
-          scope: { scope: "project", project_id: "p1" },
-          tool: "pi",
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "pi" }],
           path: "/work/p1/.pi/skills/a",
           status: { status: "removed" },
         },
       ],
-      removed: 1,
-      failed: 0,
+      central_removed: false,
+      record_deleted: false,
     };
-    const nothing: RemovalReportDto = { targets: [], removed: 0, failed: 0 };
+    const nothing: RemovalReport = { targets: [], central_removed: false, record_deleted: false };
     for (const report of [clean, nothing]) {
       expect(projectRemovalOutcome(report, { ...ctx, action: "removeProject" })).toEqual({
         toast: { kind: "success", message: "projects.removeComplete" },
@@ -540,8 +581,8 @@ describe("removalOutcome", () => {
       });
     }
   });
-  it("delete's null result reloads and closes; command errors are not reports", () => {
-    expect(deleteOutcome(null, ctx)).toEqual({
+  it("delete's successful report reloads and closes", () => {
+    expect(deleteOutcome({ targets: [], central_removed: true, record_deleted: true }, ctx)).toEqual({
       toast: { kind: "success", message: "status.skillRemoved" },
       errors: [],
       warnings: [],
@@ -550,24 +591,23 @@ describe("removalOutcome", () => {
   });
 });
 
-const syncReport: BatchSyncReportDto = {
-  results: [
+const syncReport: BatchTargetOutcome[] = [
     {
       skill_id: "git",
       skill_name: "git",
-      tool: "claude",
-      status: { status: "synced", mode_used: "copy" },
+      tool_key: "claude",
+      status: { status: "synced", outcome: { mode_used: "copy", target_path: "/target", replaced: false } },
     },
     {
       skill_id: "git",
       skill_name: "git",
-      tool: "unknown",
+      tool_key: "unknown",
       status: { status: "failed", error: { code: "OTHER", message: "failed" } },
     },
     {
       skill_id: "git",
       skill_name: "git",
-      tool: "absent",
+      tool_key: "absent",
       status: {
         status: "skipped",
         error: { code: "TOOL_NOT_INSTALLED", tool: "absent" },
@@ -576,17 +616,13 @@ const syncReport: BatchSyncReportDto = {
     {
       skill_id: "git",
       skill_name: "git",
-      tool: "claude",
+      tool_key: "claude",
       status: {
         status: "skipped",
         error: { code: "TOOL_NOT_WRITABLE", tool: "claude", path: "/locked" },
       },
     },
-  ],
-  synced: 1,
-  failed: 1,
-  skipped: 2,
-};
+];
 describe("syncOutcome", () => {
   it.each([
     { action: "bulk", errors: 1, warnings: 1 },
@@ -624,7 +660,7 @@ describe("syncOutcome", () => {
   );
   it.each(["bulk", "install", "toggle"] as const)("%s success", (action) => {
     const out = syncOutcome(
-      { results: [syncReport.results[0]], synced: 1, skipped: 0, failed: 0 },
+      [syncReport[0]],
       { ...ctx, action },
     );
     expect(out.errors).toEqual([]);
@@ -646,19 +682,14 @@ describe("syncOutcome", () => {
     );
   });
   it("folds one warning per not-detected tool across skills, labelled, without touching completion", () => {
-    const skip = (skill: string, tool: string): SyncTargetResultDto => ({
+    const skip = (skill: string, tool: string): BatchTargetOutcome => ({
       skill_id: skill,
       skill_name: skill,
-      tool,
+      tool_key: tool,
       status: { status: "skipped", error: { code: "TOOL_NOT_INSTALLED", tool } },
     });
     const out = syncOutcome(
-      {
-        results: [syncReport.results[0], skip("a", "claude"), skip("b", "claude"), skip("a", "absent")],
-        synced: 1,
-        skipped: 3,
-        failed: 0,
-      },
+      [syncReport[0], skip("a", "claude"), skip("b", "claude"), skip("a", "absent")],
       { ...ctx, action: "bulk" },
     );
     expect(out.errors).toEqual([]);
@@ -677,20 +708,15 @@ describe("syncOutcome", () => {
   });
   it("explicit TARGET_EXISTS toggle shows the path and neither reloads nor succeeds", () => {
     const out = syncOutcome(
-      {
-        results: [
+      [
           {
-            ...syncReport.results[0],
+            ...syncReport[0],
             status: {
               status: "skipped",
               error: { code: "TARGET_EXISTS", path: "/conflict" },
             },
           },
-        ],
-        synced: 0,
-        skipped: 1,
-        failed: 0,
-      },
+      ],
       { ...ctx, action: "toggle" },
     );
     expect(out.errors[0].message).toBe(
@@ -703,9 +729,9 @@ describe("syncOutcome", () => {
 
 const imported = (
   overrides: Partial<
-    Extract<ImportGroupStatusDto, { status: "imported" }>
+    Extract<ImportGroupStatus, { status: "imported" }>
   > = {},
-): ImportGroupStatusDto => ({
+): ImportGroupStatus => ({
   status: "imported",
   skill_id: "git",
   skill_name: "git",
@@ -714,12 +740,27 @@ const imported = (
   originals: [],
   ...overrides,
 });
-const importReport = (status: ImportGroupStatusDto): ImportReportDto => ({
+const importReport = (status: ImportGroupStatus): ImportReport => ({
   groups: [{ group_name: "git", status }],
-  imported: Number(status.status === "imported"),
-  failed: Number(status.status === "failed"),
 });
 describe("importOutcome", () => {
+  it("derives mixed group totals without counting target/original failures as failed imports", () => {
+    const report: ImportReport = {
+      groups: [
+        { group_name: "clean", status: imported() },
+        { group_name: "partial", status: imported({ targets: [syncReport[1]], originals: [
+          { tool: "claude", path: "/original", status: { status: "failed", error: { code: "OTHER", message: "busy" } } },
+        ] }) },
+        { group_name: "failed", status: { status: "failed", error: { code: "OTHER", message: "admission failed" } } },
+      ],
+    };
+    const before = JSON.stringify(report);
+    const out = importOutcome(report, ctx);
+    expect(out.toast).toEqual({ kind: "warning", message: t("status.importPartial", { imported: 2, failed: 1 }) });
+    expect(out.errors).toHaveLength(3);
+    expect(out.completion).toEqual({ reload: true, closeModal: false, conflict: false });
+    expect(JSON.stringify(report)).toBe(before);
+  });
   it.each([
     { name: "success", status: imported(), errors: 0, warnings: 0 },
     {
@@ -727,7 +768,7 @@ describe("importOutcome", () => {
       status: {
         status: "failed",
         error: { code: "SKILL_INVALID", reason: "missing_skill_md" },
-      } as ImportGroupStatusDto,
+      } as ImportGroupStatus,
       errors: 1,
       warnings: 0,
     },
@@ -736,7 +777,7 @@ describe("importOutcome", () => {
       status: imported({
         targets: [
           {
-            ...syncReport.results[0],
+            ...syncReport[0],
             status: {
               status: "failed",
               error: { code: "TARGET_EXISTS", path: "/conflict" },
@@ -749,7 +790,7 @@ describe("importOutcome", () => {
     },
     {
       name: "target skipped",
-      status: imported({ targets: [syncReport.results[3]] }),
+      status: imported({ targets: [syncReport[3]] }),
       errors: 1,
       warnings: 0,
     },
@@ -811,7 +852,7 @@ describe("importOutcome", () => {
     );
   });
   it("reports a not-detected target as a per-tool warning that does not hold the import open", () => {
-    const out = importOutcome(importReport(imported({ targets: [syncReport.results[2]] })), ctx);
+    const out = importOutcome(importReport(imported({ targets: [syncReport[2]] })), ctx);
     expect(out.errors).toEqual([]);
     expect(out.warnings).toEqual([
       {
@@ -843,7 +884,7 @@ describe("importOutcome", () => {
         imported({
           targets: [
             {
-              ...syncReport.results[0],
+              ...syncReport[0],
               status: {
                 status: "failed",
                 error: { code: "TARGET_EXISTS", path: "/conflict" },

@@ -1,5 +1,5 @@
 // The single frontend consumer of the backend's structured CommandError
-// (see src-tauri/src/commands/error.rs and the generated union in
+// (see src-tauri/src/core/errors.rs and the generated union in
 // src/bindings/index.ts). All user-facing error copy is composed here
 // via i18n; nothing else in the frontend should inspect command failures.
 
@@ -31,7 +31,6 @@ const COMMAND_ERROR_CODE_MAP = {
   GITHUB_SKILL_NOT_FOUND: true,
   INVALID_GITHUB_URL: true,
   GIT_REPOINT_REQUIRES_GIT: true,
-  DELETE_CLEANUP_FAILED: true,
   PATH_OUTSIDE_TOOL_DIRS: true,
   SKILL_MANIFEST_IO: true,
   SOURCE_PATH_MISSING: true,
@@ -151,8 +150,6 @@ export function describeCommandError(
       return t("errors.invalidGithubUrl", { url: e.url });
     case "GIT_REPOINT_REQUIRES_GIT":
       return t("errors.gitRepointRequiresGit", { name: e.name });
-    case "DELETE_CLEANUP_FAILED":
-      return t("errors.deleteCleanupFailed") + "\n- " + e.failures.join("\n- ");
     case "PATH_OUTSIDE_TOOL_DIRS":
       return t("errors.pathOutsideToolDirs", { path: e.path });
     case "SKILL_MANIFEST_IO":

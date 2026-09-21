@@ -6,13 +6,13 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
-  BatchSyncReportDto,
+  BatchTargetOutcome,
   ManagedSkill,
-  InvocationEditReportDto,
+  InvocationEditReport,
   SkillMutationResultDto,
-  RefreshReportDto,
-  SkillRefreshStatusDto,
-  RemovalReportDto,
+  RefreshReport,
+  SkillRefreshStatus,
+  RemovalReport,
 } from "../components/skills/types";
 import type { SkillLibraryDeps } from "./useSkillLibrary";
 
@@ -86,15 +86,10 @@ function skill(id: string, name: string, targets: string[] = []): ManagedSkill {
   };
 }
 
-const EMPTY_REPORT: BatchSyncReportDto = {
-  results: [],
-  synced: 0,
-  skipped: 0,
-  failed: 0,
-};
+const EMPTY_REPORT: BatchTargetOutcome[] = [];
 
 /** A refresh report in which every named skill refreshed with no targets. */
-function refreshedReport(names: string[]): RefreshReportDto {
+function refreshedReport(names: string[]): RefreshReport {
   return {
     skills: names.map((name, i) => ({
       skill_id: `s${i + 1}`,
@@ -108,24 +103,19 @@ function refreshedReport(names: string[]): RefreshReportDto {
         edit_conflict: null,
       },
     })),
-    refreshed: names.length,
-    failed: 0,
-    skipped: 0,
-    target_failures: 0,
   };
 }
 
 /** A removal report in which every named tool's artifact was removed. */
-function removedReport(tools: string[]): RemovalReportDto {
+function removedReport(tools: string[]): RemovalReport {
   return {
     targets: tools.map((tool) => ({
-      scope: { scope: "global" },
-      tool,
+      rows: [{ scope: "global_target", id: tool, skill_id: "s1", tool }],
       path: `/tools/${tool}/alpha`,
       status: { status: "removed" },
     })),
-    removed: tools.length,
-    failed: 0,
+    central_removed: false,
+    record_deleted: false,
   };
 }
 
@@ -134,11 +124,11 @@ function makeDeps(overrides?: {
   autoSyncEnabled?: boolean;
   effectiveSyncTargetIds?: string[];
   sharedDirConfirmation?: boolean | Promise<boolean>;
-  syncReport?: BatchSyncReportDto;
-  refreshReport?: RefreshReportDto;
+  syncReport?: BatchTargetOutcome[];
+  refreshReport?: RefreshReport;
   returnedSkills?: ManagedSkill[];
-  editReport?: InvocationEditReportDto;
-  removalReport?: RemovalReportDto;
+  editReport?: InvocationEditReport;
+  removalReport?: RemovalReport;
 }) {
   const skills = overrides?.skills ?? [skill("s1", "alpha")];
   const refreshReport =
@@ -155,11 +145,11 @@ function makeDeps(overrides?: {
         return Promise.resolve({ report: refreshReport, skills: overrides?.returnedSkills ?? skills } satisfies SkillMutationResultDto);
       case "setSkillInvocationOverride":
         return Promise.resolve({
-          report: overrides?.editReport ?? { skill_id: skills[0].id, skill_name: skills[0].name, propagation: [] },
+          report: overrides?.editReport ?? { skill_id: skills[0].id, skill_name: skills[0].name, propagation: { targets: [] } },
           skills: overrides?.returnedSkills ?? skills,
         });
       case "deleteManagedSkill":
-        return Promise.resolve(null);
+        return Promise.resolve({ targets: [], central_removed: true, record_deleted: true } satisfies RemovalReport);
       case "unsyncSkill":
       case "unsyncAllSkills":
       case "unsyncSkillFromTool":
@@ -272,7 +262,7 @@ describe("invocation Edits", () => {
     act(() => result.current.openInvocationEdit("s1"));
     const updated: ManagedSkill = { ...setup.skills[0], invocation_mode: "user-only", invocation_override: { mode: "user-only", base_mode: "user-and-model", conflict: false } };
     const unrelated = { ...setup.skills[1], description: "fresh unrelated row" };
-    mockInvoke.mockResolvedValueOnce({ report: { skill_id: "s1", skill_name: "alpha", propagation: [] }, skills: [updated, unrelated] });
+    mockInvoke.mockResolvedValueOnce({ report: { skill_id: "s1", skill_name: "alpha", propagation: { targets: [] } }, skills: [updated, unrelated] });
     await act(async () => { await result.current.setInvocationOverride("s1", "user-only"); });
     expect(mockInvoke).toHaveBeenLastCalledWith("setSkillInvocationOverride", "s1", "user-only");
     expect(result.current.managedSkills).toEqual([updated, unrelated]);
@@ -325,18 +315,18 @@ describe("single-mutation envelopes", () => {
     },
   );
 
-  const settled: Extract<SkillRefreshStatusDto, { status: "refreshed" }> = {
+  const settled: Extract<SkillRefreshStatus, { status: "refreshed" }> = {
     status: "refreshed", content_hash: null, source_revision: null,
     targets: [], reassert_error: null, edit_conflict: null,
   };
-  const cases: { name: string; status: SkillRefreshStatusDto | null; refreshed: number; failed: number; skipped: number; target_failures: number; close: boolean; errors: number; warning: string | null; toast: string | null }[] = [
-    { name: "acquisition failure", status: { status: "failed", error: { code: "OTHER", message: "acquisition failed" } }, refreshed: 0, failed: 1, skipped: 0, target_failures: 0, close: false, errors: 1, warning: null, toast: null },
-    { name: "target failure", status: { ...settled, targets: [{ scope: { scope: "global", tool: "claude" }, status: { status: "failed", error: { code: "OTHER", message: "target blocked" } } }] }, refreshed: 1, failed: 0, skipped: 0, target_failures: 1, close: true, errors: 1, warning: null, toast: null },
-    { name: "reassert failure", status: { ...settled, reassert_error: { code: "OTHER", message: "reassert blocked" } }, refreshed: 1, failed: 0, skipped: 0, target_failures: 1, close: true, errors: 1, warning: null, toast: null },
-    { name: "Edit conflict", status: { ...settled, edit_conflict: { base_mode: "user-and-model", upstream_mode: "model-only", override_mode: "user-only" } }, refreshed: 1, failed: 0, skipped: 0, target_failures: 0, close: true, errors: 0, warning: 'invocationEdit.refreshWarning {"name":"alpha","upstream":"invocationMode.modelOnly","override":"invocationMode.userOnly"}', toast: 'invocationEdit.updateCompletedWithConflict {"name":"alpha"}' },
-    { name: "skill gone", status: { status: "skipped_acquisition", reason: "skill_gone" }, refreshed: 0, failed: 0, skipped: 1, target_failures: 0, close: false, errors: 0, warning: "errors.refreshSkippedSkillGone", toast: null },
-    { name: "stale acquisition", status: { status: "skipped_acquisition", reason: "stale_acquisition" }, refreshed: 0, failed: 0, skipped: 1, target_failures: 0, close: false, errors: 0, warning: "errors.refreshSkippedStaleAcquisition", toast: null },
-    { name: "empty report", status: null, refreshed: 0, failed: 0, skipped: 0, target_failures: 0, close: false, errors: 0, warning: null, toast: "success" },
+  const cases: { name: string; status: SkillRefreshStatus | null; close: boolean; errors: number; warning: string | null; toast: string | null }[] = [
+    { name: "acquisition failure", status: { status: "failed", error: { code: "OTHER", message: "acquisition failed" } }, close: false, errors: 1, warning: null, toast: null },
+    { name: "target failure", status: { ...settled, targets: [{ scope: { scope: "global", tool: "claude" }, status: { status: "failed", error: { code: "OTHER", message: "target blocked" } } }] }, close: true, errors: 1, warning: null, toast: null },
+    { name: "reassert failure", status: { ...settled, reassert_error: { code: "OTHER", message: "reassert blocked" } }, close: true, errors: 1, warning: null, toast: null },
+    { name: "Edit conflict", status: { ...settled, edit_conflict: { base_mode: "user-and-model", upstream_mode: "model-only", override_mode: "user-only" } }, close: true, errors: 0, warning: 'invocationEdit.refreshWarning {"name":"alpha","upstream":"invocationMode.modelOnly","override":"invocationMode.userOnly"}', toast: 'invocationEdit.updateCompletedWithConflict {"name":"alpha"}' },
+    { name: "skill gone", status: { status: "skipped_acquisition", reason: "skill_gone" }, close: false, errors: 0, warning: "errors.refreshSkippedSkillGone", toast: null },
+    { name: "stale acquisition", status: { status: "skipped_acquisition", reason: "stale_acquisition" }, close: false, errors: 0, warning: "errors.refreshSkippedStaleAcquisition", toast: null },
+    { name: "empty report", status: null, close: false, errors: 0, warning: null, toast: "success" },
   ];
   describe.each(["Update", "Restore", "git Re-point", "local Re-point"] as const)("%s returned reports", (action) => {
     it.each(cases)("$name: apply catalog even without success, retain fold completion", async (scenario) => {
@@ -347,7 +337,6 @@ describe("single-mutation envelopes", () => {
       ];
       const setup = makeDeps({ skills: initial, returnedSkills: catalog, refreshReport: {
         skills: scenario.status ? [{ skill_id: "s1", skill_name: "alpha", status: scenario.status }] : [],
-        refreshed: scenario.refreshed, failed: scenario.failed, skipped: scenario.skipped, target_failures: scenario.target_failures,
       } });
       const { result } = await renderLibrary(setup);
       act(() => { result.current.openDetail("s1"); result.current.handleRepointGitSkill(initial[0]); });
@@ -378,10 +367,10 @@ describe("single-mutation envelopes", () => {
   it("Edit surfaces global and project propagation failures while retaining central settlement", async () => {
     const updated = { ...skill("s1", "alpha"), invocation_mode: "user-only" as const };
     const setup = makeDeps({ returnedSkills: [updated], editReport: {
-      skill_id: "s1", skill_name: "alpha", propagation: [
+      skill_id: "s1", skill_name: "alpha", propagation: { targets: [
         { scope: { scope: "global", tool: "claude" }, status: { status: "failed", error: { code: "OTHER", message: "global blocked" } } },
         { scope: { scope: "project", tool: "cursor", project_id: "p1" }, status: { status: "failed", error: { code: "OTHER", message: "project blocked" } } },
-      ],
+      ] },
     } });
     const { result } = await renderLibrary(setup);
     act(() => result.current.openInvocationEdit("s1"));
@@ -408,13 +397,12 @@ describe("repair notification actions", () => {
         skills: [{ skill_id: "s1", skill_name: "alpha", status: {
           status: "failed", error: { code: "GITHUB_SKILL_NOT_FOUND", url: "https://github.com/old/repo" },
         } }],
-        refreshed: 0, failed: 1, skipped: 0, target_failures: 0,
       },
     });
     const { result } = await renderLibrary(setup);
     await act(async () => { await result.current.handleRefresh(); });
     const action = vi.mocked(setup.reporter.showActionErrors).mock.calls[0][0][0].action!;
-    mockInvoke.mockImplementation((cmd) => Promise.resolve(cmd === "deleteManagedSkill" ? null : []));
+    mockInvoke.mockImplementation((cmd) => Promise.resolve(cmd === "deleteManagedSkill" ? { targets: [], central_removed: true, record_deleted: true } : []));
     await act(async () => { await result.current.handleDeleteManaged(gitSkill); });
     act(() => action.onClick());
     expect(setup.reporter.notify).toHaveBeenCalledWith(
@@ -431,7 +419,7 @@ describe("unchanged refetch contracts", () => {
     const { result } = await renderLibrary(setup);
     act(() => result.current.handleDeletePrompt("s1"));
     mockInvoke.mockClear();
-    mockInvoke.mockResolvedValueOnce(action === "Delete" ? null : refreshedReport(["alpha"]))
+    mockInvoke.mockResolvedValueOnce(action === "Delete" ? { targets: [], central_removed: true, record_deleted: true } : refreshedReport(["alpha"]))
       .mockResolvedValueOnce([]);
     await act(async () => {
       if (action === "Delete") await result.current.handleDeleteManaged(setup.skills[0]);
@@ -444,17 +432,55 @@ describe("unchanged refetch contracts", () => {
     if (action === "Delete") expect(result.current.pendingDeleteId).toBeNull();
   });
 
-  it("Delete cleanup failure preserves the row and confirmation without a response-tail fetch", async () => {
+  it("Delete kept-target reports reload the settled catalog, retain confirmation, and permit retry", async () => {
+    const setup = makeDeps();
+    const { result } = await renderLibrary(setup);
+    act(() => result.current.handleDeletePrompt("s1"));
+    const kept = { ...setup.skills[0], description: "settled after failed deletion" };
+    const report: RemovalReport = {
+      targets: [{
+        path: "/shared/alpha",
+        rows: [
+          { scope: "global_target", id: "t1", skill_id: "s1", tool: "claude" },
+          { scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "cursor" },
+        ],
+        status: { status: "failed", error: { code: "OTHER", message: "busy" } },
+      }],
+      central_removed: false,
+      record_deleted: false,
+    };
+    mockInvoke.mockClear();
+    mockInvoke.mockResolvedValueOnce(report).mockResolvedValueOnce([kept]);
+    await act(async () => { await result.current.handleDeleteManaged(setup.skills[0]); });
+    expect(mockInvoke.mock.calls.map(([cmd]) => cmd)).toEqual(["deleteManagedSkill", "getManagedSkills"]);
+    expect(result.current.managedSkills).toEqual([kept]);
+    expect(result.current.pendingDeleteId).toBe("s1");
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
+      { title: 'errors.deleteKeptTargetTitle {"tool":"CLAUDE"}', message: "busy" },
+      { title: 'errors.deleteKeptTargetTitle {"tool":"CURSOR"}', message: "busy" },
+    ]);
+    expect(setup.reporter.notify).toHaveBeenCalledWith("warning", 'status.skillDeleteKept {"failed":2}', undefined);
+    expect(setup.reporter.setError).not.toHaveBeenCalled();
+    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
+    mockInvoke.mockResolvedValueOnce({ targets: [], central_removed: true, record_deleted: true } satisfies RemovalReport)
+      .mockResolvedValueOnce([]);
+    await act(async () => { await result.current.handleDeleteManaged(kept); });
+    expect(result.current.managedSkills).toEqual([]);
+    expect(result.current.pendingDeleteId).toBeNull();
+    expect(setup.reporter.notify).toHaveBeenLastCalledWith("success", "status.skillRemoved", undefined);
+  });
+
+  it("Delete command failure preserves the row and confirmation without a response-tail fetch", async () => {
     const setup = makeDeps();
     const { result } = await renderLibrary(setup);
     act(() => result.current.handleDeletePrompt("s1"));
     mockInvoke.mockClear();
-    mockInvoke.mockRejectedValueOnce({ code: "DELETE_CLEANUP_FAILED" });
+    mockInvoke.mockRejectedValueOnce({ code: "OTHER", message: "store failure" });
     await act(async () => { await result.current.handleDeleteManaged(setup.skills[0]); });
     expect(result.current.managedSkills).toEqual(setup.skills);
     expect(result.current.pendingDeleteId).toBe("s1");
     expect(mockInvoke.mock.calls.map(([cmd]) => cmd)).toEqual(["deleteManagedSkill"]);
-    expect(setup.reporter.setError).toHaveBeenCalledWith("formatted:DELETE_CLEANUP_FAILED");
+    expect(setup.reporter.setError).toHaveBeenCalledWith("formatted:OTHER");
     expect(setup.reporter.notify).not.toHaveBeenCalled();
   });
 });
@@ -720,7 +746,7 @@ describe("invoke → fold → completion", () => {
     await act(async () => { await result.current.handleRefresh(); });
     const click = vi.mocked(setup.reporter.showActionErrors).mock.calls[0][0][0].action!.onClick;
     const updated = { ...setup.skills[0], source_ref: "new source" };
-    mockInvoke.mockResolvedValue({ report: { skill_id: "s1", skill_name: "alpha", propagation: [] }, skills: [updated] });
+    mockInvoke.mockResolvedValue({ report: { skill_id: "s1", skill_name: "alpha", propagation: { targets: [] } }, skills: [updated] });
     await act(async () => { await result.current.setInvocationOverride("s1", null); });
     act(() => click());
     expect(result.current.pendingGitRepointSkill).toEqual(updated);

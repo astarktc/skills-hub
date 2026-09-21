@@ -1,6 +1,6 @@
 # 02 — Frontend: follow the regenerated bindings; derive counters in the fold; delete folds a report
 
-Status: ready-for-agent
+Status: done — pending
 Blocked by: 01
 Spec: `.scratch/round15/spec.md` — decisions D3, D4, D6. Read the spec and ticket 01's result comment first.
 
@@ -63,3 +63,45 @@ place counters are computed.
 - No component-rendering tests (project rule); hook- and pure-function-level only.
 - Report: files touched, new i18n keys, vitest counts before/after, any fixture whose counters disagreed with its
   items, and anything the spec or ticket got wrong.
+
+## Comments
+
+### 2026-09-21 — lane B implementation and verification
+
+Claimed and implemented on `main` against `d3ea34a`; no commits, stash, backend/bindings/CHANGELOG changes,
+archives, or live-data runs. Status remains claimed for the parent to close with its commit SHA.
+
+- `npm run lint && npm run test && npm run build` passed. Vitest: **358 → 361 passed**, 15 files both times
+  (retired one obsolete command-error test, added four fold/hook regressions). Build used typescript-7;
+  existing dynamic-import and large-chunk warnings remain. `git diff --check` passed.
+- Folds consume bare sync arrays, `tool_key`, grouped removal rows, and `propagation.targets`. Counts live only
+  in `reportOutcome.ts` helpers: refresh counts include both acquisition skip kinds and reassert failures;
+  removal counts rows, not artifacts; import counts group settlement, not target/original failures.
+  Existing precedence/completion expectations are unchanged except D6's delete report behavior.
+- Delete names every kept row's tool, warns, reloads the settled catalog, retains confirmation, and succeeds on
+  retry. Tests cover both RowRef tags, shared artifact fan-out/counts, typed errors and label fallback, no-target
+  success, both locales, and a real hook invocation → fold → reload → retry sequence. Whole-command rejection
+  remains separately tested with `OTHER`; the retired code and translation key are gone.
+- New keys in **both EN and ZH**: `errors.deleteKeptTargetTitle` (`{{tool}}`) and `status.skillDeleteKept`
+  (`{{failed}}`, skill kept + retry). Removed `errors.deleteCleanupFailed`.
+- Files touched: this ticket; `src/commandError.ts`, `src/commandError.test.ts`;
+  `src/components/projects/{AssignmentMatrix.tsx,types.ts,useProjectState.ts,useProjectState.test.ts}`;
+  `src/components/skills/types.ts`; `src/hooks/{useAddSkillFlow.test.ts,useSkillLibrary.test.ts,
+  useSyncOrchestration.ts,useSyncOrchestration.test.ts}`; `src/i18n/resources.ts`;
+  `src/lib/{reportOutcome.ts,reportOutcome.test.ts,skillPresentation.ts}`.
+
+**Fixture discrepancy:** `reportOutcome.test.ts`'s project-removal test constructed `relabelled` by spreading a
+report with `removed: 1`, then retaining only its failed target. Its actual items mean removed **0**, failed **1**.
+The old test only asserted the labelled error title, so no expectation changed. No other counter/item mismatch
+was found; the single-mutation hook table's counters were consistent and are now removed entirely.
+
+**Spec/ticket corrections:**
+
+1. The literal grep gate is overbroad, as lane A noted. Its only surviving names are the legitimate catalog/view
+   types `ToolStatusDto`, `SkillTargetDto`, and `GitignoreStatusDto`; excluding these yields no matches.
+   `ProjectSkillAssignmentDto` also legitimately remains (it does not match that exact grep expression).
+2. `syncOutcome` did not read `report.synced/skipped/failed`; its decisions already follow entries. No unused
+   sync-counter helper was added. The existing per-tool skip counter stays in the fold.
+3. `useSkillLibrary.ts` already passed delete's return value to `deleteOutcome` and executed its completion;
+   D6 needs no production hook change. `skillPresentation.test.ts` uses only catalog/view fixtures and needs
+   no changes either. Invocation Edit's additional `PropagationReport` nesting follows lane A's bindings.

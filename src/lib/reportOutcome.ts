@@ -1,12 +1,11 @@
 import type {
-  BatchSyncReportDto,
-  ImportReportDto,
+  BatchTargetOutcome,
+  ImportReport,
   InstallResultDto,
-  InvocationEditReportDto,
-  PropagationTargetDto,
-  RefreshReportDto,
-  RemovalReportDto,
-  SyncTargetResultDto,
+  InvocationEditReport,
+  PropagationOutcome,
+  RefreshReport,
+  RemovalReport,
 } from "../bindings";
 import { describeCommandError } from "../commandError";
 import type { ActionErrorEntry, TranslateFn } from "../hooks/useStatusReporter";
@@ -43,6 +42,33 @@ const label = (ctx: ReportContext, tool: string) =>
 const errorMessage = (ctx: ReportContext, error: unknown) =>
   describeCommandError(error, ctx.t) ?? "";
 
+function refreshCounts(report: RefreshReport) {
+  const counts = { refreshed: 0, failed: 0, skipped: 0, target_failures: 0 };
+  for (const { status } of report.skills) {
+    if (status.status === "refreshed") {
+      counts.refreshed++;
+      counts.target_failures +=
+        status.targets.filter((target) => target.status.status === "failed").length
+        + Number(status.reassert_error !== null);
+    } else if (status.status === "failed") counts.failed++;
+    else counts.skipped++;
+  }
+  return counts;
+}
+
+function removalCounts(report: RemovalReport) {
+  const counts = { removed: 0, failed: 0 };
+  for (const target of report.targets)
+    counts[target.status.status] += target.rows.length;
+  return counts;
+}
+
+function importCounts(report: ImportReport) {
+  const counts = { imported: 0, failed: 0 };
+  for (const group of report.groups) counts[group.status.status]++;
+  return counts;
+}
+
 /**
  * Update, Restore and BOTH Re-points use the same batch-of-one policy.
  * Conflict > failure (including targets/reassert) > skip > success, without
@@ -54,7 +80,7 @@ const errorMessage = (ctx: ReportContext, error: unknown) =>
  * already the one entry, so a second toast would repeat it.
  */
 export function refreshOutcome(
-  report: RefreshReportDto,
+  report: RefreshReport,
   ctx: ReportContext & {
     single?: { name: string; success: string };
   },
@@ -62,6 +88,7 @@ export function refreshOutcome(
   const out: Outcome = empty();
   out.completion.reload = !ctx.single;
   const { t } = ctx;
+  const summary = refreshCounts(report);
   const targetErrors: OutcomeEntry[] = [];
   for (const skill of report.skills) {
     const status = skill.status;
@@ -115,11 +142,11 @@ export function refreshOutcome(
     });
   }
   const failed =
-    report.failed > 0 || report.target_failures > 0 || out.errors.length > 0;
-  const skipped = report.skipped > 0;
+    summary.failed > 0 || summary.target_failures > 0 || out.errors.length > 0;
+  const skipped = summary.skipped > 0;
   out.completion.closeModal =
-    report.refreshed > 0 && report.failed === 0 && !skipped;
-  const counts = { refreshed: report.refreshed, failed: report.failed };
+    summary.refreshed > 0 && summary.failed === 0 && !skipped;
+  const counts = { refreshed: summary.refreshed, failed: summary.failed };
   if (ctx.single && !out.completion.conflict && (failed || skipped)) {
     return out;
   }
@@ -130,9 +157,9 @@ export function refreshOutcome(
       ? t("invocationEdit.updateCompletedWithConflict", { name: ctx.single.name })
       : t("invocationEdit.refreshCompletedWithEdits");
   } else if (failed) {
-    message = report.failed > 0 ? t("status.refreshSummary", counts) : t("partialFailure");
+    message = summary.failed > 0 ? t("status.refreshSummary", counts) : t("partialFailure");
   } else if (skipped) {
-    message = t("status.refreshSummarySkipped", { ...counts, skipped: report.skipped });
+    message = t("status.refreshSummarySkipped", { ...counts, skipped: summary.skipped });
   } else {
     message = ctx.single?.success ?? t("status.refreshCompleted");
   }
@@ -144,7 +171,7 @@ export function refreshOutcome(
 }
 
 function propagationErrors(
-  targets: PropagationTargetDto[],
+  targets: PropagationOutcome[],
   name: string,
   ctx: ReportContext,
 ): PlainEntry[] {
@@ -158,10 +185,10 @@ function propagationErrors(
  * propagation skips are silent; failures in either scope are notifications,
  * not a saved toast. The accompanying catalog replaces the whole library. */
 export function invocationEditOutcome(
-  report: InvocationEditReportDto,
+  report: InvocationEditReport,
   ctx: ReportContext,
 ): Outcome<PlainEntry> {
-  const errors = propagationErrors(report.propagation, report.skill_name, ctx);
+  const errors = propagationErrors(report.propagation.targets, report.skill_name, ctx);
   return {
     toast: errors.length ? null : { kind: "success", message: ctx.t("invocationEdit.saved") },
     errors,
@@ -171,31 +198,34 @@ export function invocationEditOutcome(
 }
 
 /**
- * One error entry per failed target of a removal report (ADR-0002: a kept
- * row names its path). Shared by every removal-shaped fold; the title key
+ * One error entry per kept row of a removal report (ADR-0002: shared
+ * artifacts may describe several tools' rows). Shared by every removal-shaped fold; the title key
  * is the only thing that differs per action. Returns whether anything failed.
  */
 function collectRemovalFailures(
   out: Outcome<PlainEntry>,
-  report: RemovalReportDto,
+  report: RemovalReport,
   ctx: ReportContext,
   titleKey: string,
 ): boolean {
   for (const target of report.targets) {
     if (target.status.status !== "failed") continue;
-    out.errors.push({
-      title: ctx.t(titleKey, { tool: label(ctx, target.tool) }),
-      message: errorMessage(ctx, target.status.error),
-    });
+    for (const row of target.rows) {
+      out.errors.push({
+        title: ctx.t(titleKey, { tool: label(ctx, row.tool) }),
+        message: errorMessage(ctx, target.status.error),
+      });
+    }
   }
-  return report.failed > 0 || out.errors.length > 0;
+  return removalCounts(report).failed > 0 || out.errors.length > 0;
 }
 
 export function removalOutcome(
-  report: RemovalReportDto,
+  report: RemovalReport,
   ctx: ReportContext & { action: "all" | "skill" | "toggle" },
 ): Outcome<PlainEntry> {
   const out = empty();
+  const counts = removalCounts(report);
   const failed = collectRemovalFailures(out, report, ctx, "errors.unsyncFailedTitle");
   // Zero targets is neither success nor failure: nothing was planned, so
   // nothing was removed and whatever the operator clicked is still there.
@@ -212,10 +242,10 @@ export function removalOutcome(
       kind: failed ? "warning" : "success",
       message: failed
         ? ctx.t("unsyncPartial", {
-            count: report.removed,
-            failed: report.failed,
+            count: counts.removed,
+            failed: counts.failed,
           })
-        : ctx.t("unsyncAllComplete", { count: report.removed }),
+        : ctx.t("unsyncAllComplete", { count: counts.removed }),
     };
   if (ctx.action === "toggle" && !failed)
     out.toast = { kind: "success", message: ctx.t("status.syncDisabled") };
@@ -233,11 +263,12 @@ export function removalOutcome(
  * returned.
  */
 export function projectRemovalOutcome(
-  report: RemovalReportDto,
+  report: RemovalReport,
   ctx: ReportContext & { action: "removeProject" | "configureTools" },
 ): Outcome<PlainEntry> {
   const out = empty();
   out.completion.reload = false;
+  const counts = removalCounts(report);
   const failed = collectRemovalFailures(
     out,
     report,
@@ -250,8 +281,8 @@ export function projectRemovalOutcome(
       ? {
           kind: "warning",
           message: ctx.t("projects.removeKept", {
-            count: report.removed,
-            failed: report.failed,
+            count: counts.removed,
+            failed: counts.failed,
           }),
         }
       : { kind: "success", message: ctx.t("projects.removeComplete") };
@@ -259,8 +290,8 @@ export function projectRemovalOutcome(
     out.toast = {
       kind: "warning",
       message: ctx.t("projects.toolRemovalKept", {
-        count: report.removed,
-        failed: report.failed,
+        count: counts.removed,
+        failed: counts.failed,
       }),
     };
   return out;
@@ -275,13 +306,13 @@ export function projectRemovalOutcome(
 class NotInstalledSkips {
   private readonly perTool = new Map<string, number>();
   /** Absorb the result when it is such a skip; false leaves it to the caller. */
-  absorb(result: SyncTargetResultDto): boolean {
+  absorb(result: BatchTargetOutcome): boolean {
     if (
       result.status.status !== "skipped" ||
       result.status.error.code !== "TOOL_NOT_INSTALLED"
     )
       return false;
-    this.perTool.set(result.tool, (this.perTool.get(result.tool) ?? 0) + 1);
+    this.perTool.set(result.tool_key, (this.perTool.get(result.tool_key) ?? 0) + 1);
     return true;
   }
   warnings(ctx: ReportContext): PlainEntry[] {
@@ -299,12 +330,12 @@ class NotInstalledSkips {
  * skips; an explicit toggle surfaces every non-success, including
  * TARGET_EXISTS. */
 export function syncOutcome(
-  report: BatchSyncReportDto,
+  report: BatchTargetOutcome[],
   ctx: ReportContext & { action: "bulk" | "install" | "toggle" },
 ): Outcome<PlainEntry> {
   const out = empty();
   const skips = new NotInstalledSkips();
-  for (const result of report.results) {
+  for (const result of report) {
     const status = result.status;
     if (status.status === "synced") continue;
     if (ctx.action !== "toggle" && skips.absorb(result)) continue;
@@ -317,7 +348,7 @@ export function syncOutcome(
     out.errors.push({
       title: ctx.t("errors.syncFailedTitle", {
         name: result.skill_name,
-        tool: label(ctx, result.tool),
+        tool: label(ctx, result.tool_key),
       }),
       message:
         ctx.action === "toggle" && status.error.code === "TARGET_EXISTS"
@@ -340,11 +371,12 @@ export function syncOutcome(
 }
 
 export function importOutcome(
-  report: ImportReportDto,
+  report: ImportReport,
   ctx: ReportContext,
 ): Outcome<PlainEntry> {
   const out = empty();
   const { t } = ctx;
+  const counts = importCounts(report);
   const forcedLines: string[] = [];
   const skips = new NotInstalledSkips();
   for (const group of report.groups) {
@@ -365,7 +397,7 @@ export function importOutcome(
       out.errors.push({
         title: t("errors.syncFailedTitle", {
           name,
-          tool: label(ctx, target.tool),
+          tool: label(ctx, target.tool_key),
         }),
         message:
           target.status.error.code === "TARGET_EXISTS"
@@ -399,10 +431,10 @@ export function importOutcome(
   out.toast = {
     kind: out.completion.closeModal ? "success" : "warning",
     message:
-      report.failed > 0
+      counts.failed > 0
         ? t("status.importPartial", {
-            imported: report.imported,
-            failed: report.failed,
+            imported: counts.imported,
+            failed: counts.failed,
           })
         : out.completion.closeModal
           ? t("status.importCompleted")
@@ -417,7 +449,7 @@ export function importOutcome(
 export type InstallDeployment =
   | { status: "disabled" }
   | { status: "no-targets" }
-  | { status: "reported"; report: BatchSyncReportDto }
+  | { status: "reported"; report: BatchTargetOutcome[] }
   | { status: "failed"; error: unknown };
 export type InstallSettlement = { name: string } & (
   | {
@@ -471,13 +503,16 @@ export function installOutcome(
   return out;
 }
 
-/** deleteManagedSkill returns null; cleanup failure is a thrown CommandError. */
+/** Delete keeps failed rows and the confirmation available for retry. */
 export function deleteOutcome(
-  _report: null,
+  report: RemovalReport,
   ctx: ReportContext,
 ): Outcome<PlainEntry> {
-  return {
-    ...empty(),
-    toast: { kind: "success", message: ctx.t("status.skillRemoved") },
-  };
+  const out = empty();
+  const failed = collectRemovalFailures(out, report, ctx, "errors.deleteKeptTargetTitle");
+  out.completion.closeModal = !failed;
+  out.toast = failed
+    ? { kind: "warning", message: ctx.t("status.skillDeleteKept", { failed: removalCounts(report).failed }) }
+    : { kind: "success", message: ctx.t("status.skillRemoved") };
+  return out;
 }

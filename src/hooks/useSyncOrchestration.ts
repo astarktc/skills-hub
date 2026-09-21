@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   BatchSyncOverrideDto,
-  BatchSyncReportDto,
+  BatchTargetOutcome,
   BatchSyncSkillDto,
   SyncProgressDto,
   ToolOption,
@@ -227,7 +227,7 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
       skills: BatchSyncSkillDto[],
       toolIds: string[],
       policy?: SyncPolicy,
-    ): Promise<BatchSyncReportDto> => {
+    ): Promise<BatchTargetOutcome[]> => {
       const { Channel } = await import("@tauri-apps/api/core");
       const onProgress = new Channel<SyncProgressDto>();
       onProgress.onmessage = (progress) => {

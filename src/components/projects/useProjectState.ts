@@ -7,11 +7,11 @@ import type {
   ProjectToolDto,
   ProjectSkillAssignmentDto,
   ProjectViewDto,
-  ResyncSummaryDto,
+  ResyncSummary,
   BulkAssignResultDto,
   GitignoreStatusDto,
   IgnoreUpdateOptions,
-  RemovalReportDto,
+  RemovalReport,
 } from "./types";
 import type { ManagedSkill, ToolStatusDto } from "../skills/types";
 
@@ -68,15 +68,15 @@ export type ProjectState = {
    * artifact stayed is still listed (ADR-0002), and its matrix converges on
    * the backend's settled rows.
    */
-  removeProject: (id: string) => Promise<RemovalReportDto>;
+  removeProject: (id: string) => Promise<RemovalReport>;
   toggleAssignment: (skillId: string, tool: string) => Promise<void>;
   bulkAssign: (skillId: string) => Promise<BulkAssignResultDto | undefined>;
-  resyncProject: () => Promise<ResyncSummaryDto>;
+  resyncProject: () => Promise<ResyncSummary>;
   updateProjectPath: (
     projectId: string,
     newPath: string,
   ) => Promise<ProjectDto>;
-  resyncAll: () => Promise<ResyncSummaryDto[]>;
+  resyncAll: () => Promise<ResyncSummary[]>;
   loadToolStatus: () => Promise<void>;
   /**
    * Make `tools` the selected project's tool set (one backend command).
@@ -85,7 +85,7 @@ export type ProjectState = {
    * report for the dropped tools (empty when nothing was dropped), or
    * `undefined` when no project is selected.
    */
-  configureTools: (tools: string[]) => Promise<RemovalReportDto | undefined>;
+  configureTools: (tools: string[]) => Promise<RemovalReport | undefined>;
   /** Abandon a pending ignore intent (tool-config modal dismissed). */
   discardPendingIgnore: () => void;
   getGitignoreStatus: (projectId: string) => Promise<GitignoreStatusDto>;
@@ -271,9 +271,9 @@ export function useProjectState(): ProjectState {
   );
 
   const removeProject = useCallback(
-    async (id: string): Promise<RemovalReportDto> => {
+    async (id: string): Promise<RemovalReport> => {
       let remaining: ProjectDto[];
-      let report: RemovalReportDto;
+      let report: RemovalReport;
       try {
         // The mutation's view is the project list after the removal.
         ({ projects: remaining, report } = await invokeTauri(
@@ -382,14 +382,14 @@ export function useProjectState(): ProjectState {
     [applyView],
   );
 
-  const resyncProject = useCallback(async (): Promise<ResyncSummaryDto> => {
+  const resyncProject = useCallback(async (): Promise<ResyncSummary> => {
     if (!selectedProjectId) throw new Error("No project selected");
     const result = await invokeTauri("resyncProject", selectedProjectId);
     applyView(result.view);
     return result.summary;
   }, [selectedProjectId, applyView]);
 
-  const resyncAll = useCallback(async (): Promise<ResyncSummaryDto[]> => {
+  const resyncAll = useCallback(async (): Promise<ResyncSummary[]> => {
     const result = await invokeTauri("resyncAllProjects");
     setProjects(result.projects);
     // The batch touches every project; only the shown one needs its matrix.
@@ -405,7 +405,7 @@ export function useProjectState(): ProjectState {
   }, []);
 
   const configureTools = useCallback(
-    async (toolIds: string[]): Promise<RemovalReportDto | undefined> => {
+    async (toolIds: string[]): Promise<RemovalReport | undefined> => {
       if (!selectedProjectId) return undefined;
       const gitignore =
         pendingIgnore?.projectId === selectedProjectId

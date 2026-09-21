@@ -14,8 +14,8 @@ import type {
   GitSkillCandidate,
   GitSkillListing,
   GitSourceResolution,
-  ImportGroupStatusDto,
-  ImportReportDto,
+  ImportGroupStatus,
+  ImportReport,
   LocalSkillCandidate,
   OnboardingPlan,
 } from "../components/skills/types";
@@ -169,12 +169,7 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
     autoSyncEnabled: true,
     // cursor is deselected; goose is selected but not installed and stays
     // in the deploy set (round 12 D3: the batch reports it as a skip).
-    syncSkillsToTools: vi.fn().mockResolvedValue({
-      results: [],
-      synced: 0,
-      skipped: 0,
-      failed: 0,
-    }),
+    syncSkillsToTools: vi.fn().mockResolvedValue([]),
     syncTargets: { claude: true, cursor: false, goose: true },
     targetAllInstalled: vi.fn(),
     toolLabelById: { claude: "CLAUDE", cursor: "CURSOR" },
@@ -596,8 +591,8 @@ describe("useAddSkillFlow import flow", () => {
 
   /** An `imported` group with nothing to report. */
   const importedGroup = (
-    overrides?: Partial<Extract<ImportGroupStatusDto, { status: "imported" }>>,
-  ): ImportGroupStatusDto => ({
+    overrides?: Partial<Extract<ImportGroupStatus, { status: "imported" }>>,
+  ): ImportGroupStatus => ({
     status: "imported",
     skill_id: "imported-id",
     skill_name: "alpha",
@@ -607,10 +602,8 @@ describe("useAddSkillFlow import flow", () => {
     ...overrides,
   });
 
-  const report = (status: ImportGroupStatusDto): ImportReportDto => ({
+  const report = (status: ImportGroupStatus): ImportReport => ({
     groups: [{ group_name: "alpha", status }],
-    imported: status.status === "imported" ? 1 : 0,
-    failed: status.status === "failed" ? 1 : 0,
   });
 
   /**
@@ -619,7 +612,7 @@ describe("useAddSkillFlow import flow", () => {
    */
   function stubImportBackend(
     planCalls: (() => Promise<unknown>)[],
-    importReport: ImportReportDto = report(importedGroup()),
+    importReport: ImportReport = report(importedGroup()),
   ) {
     let call = 0;
     mockInvoke.mockImplementation((command) => {

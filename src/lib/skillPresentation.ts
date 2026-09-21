@@ -11,7 +11,7 @@ import type {
   SkillTargetDto,
   ToolOption,
   UnlocatableState,
-  UpdateSkipDto,
+  UpdateSkip,
 } from "../components/skills/types";
 
 export const INVOCATION_MODES = ["user-and-model", "user-only", "model-only", "neither"] as const;
@@ -273,7 +273,7 @@ export const UNLOCATABLE_STATE_KEY = {
 export const ACQUISITION_SKIP_KEY = {
   skill_gone: "errors.refreshSkippedSkillGone",
   stale_acquisition: "errors.refreshSkippedStaleAcquisition",
-} satisfies Record<UpdateSkipDto, string>;
+} satisfies Record<UpdateSkip, string>;
 
 export const UNLOCATABLE_TOOLTIP_KEY = {
   source_missing: "unlocatable.sourceMissingTooltip",
