@@ -4,21 +4,15 @@ Read this first every session, then the newest note in `.scratch/handoffs/`. An 
 commit that closes it (or that opens the effort/ticket which absorbs it — say which). Every item keeps its
 source pointer. Procedure and status vocabulary: `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#34**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#35**.
 
 ## Now — evidence of unfinished work is strong
+
+- (#04 #10 #32 #33 #34 absorbed by `round14/` — opening commit.)
 
 - **#02 Wave C — one report representation across the wire + ADR-0001 amendment.** Round-10 decision Q8 deferred #7
   to wave C; the four report DTOs are still separate (`commands/mod.rs` BatchSyncReportDto / RemovalReportDto /
   RefreshReportDto / ImportReportDto). Source: `archive/round10/decisions.md` Q8; research `archive/round9/panel/opus.md:84–109`.
-- **#04 Harden `UpdateRequest` and the byte/acquisition adapters.** Collapse `UpdateBytes::{GitAcquired, RestoreRebuild}`
-  (identical payload/path) and drop the `unreachable!()`; one acquire door (`acquire_local` beside `acquire_update` or
-  dispatch both); private `UpdateRequest` fields with Edit/Re-point constructors so callers cannot manufacture the
-  admission protocol (`SourceProposal { ref, subpath, type }` instead of a whole record); reuse
-  `installer::ensure_installable_skill_dir` instead of the re-inlined `is_skill_dir`. Source: `archive/round7/backlog.md` #18.
-- **#10 Release-mode regression for content identity in CI.** `update_supplies_a_real_hash_to_copy_assignments_and_reconcile_keeps_synced`
-  (`tests/propagation.rs:473`) exists, but no `--release` run anywhere and its 30 s `try_serialized` poll remains.
-  Source: `archive/round7/backlog.md` #15.
 
 ## Later — real, not urgent
 
@@ -34,12 +28,6 @@ Numbers are stable: never renumber; retire by deleting the line (history keeps i
   Source: same research, :231–233; `archive/v-next/issues/38:33–34`.
 
 
-- **#32 Bump GitHub Actions to current majors** (checkout v7, setup-node v7, upload-artifact v7, download-artifact v8,
-  softprops/action-gh-release v3). Round 13 #31 pinned SHAs within the existing majors so CI behaviour did not change;
-  a major bump is a separate, tested change. Source: `archive/round13/issues/04:comments`.
-- **#33 Remove-project toast can show raw tool keys.** `ProjectsPage` builds `toolLabelById` from `state.toolStatus`,
-  which loads only on the add/tool-config flow; a kept-project toast reached without it shows `claude` not `Claude Code`.
-  Source: `archive/round13/issues/09:comments`.
 
 ## Parked — needs a product decision before it is work
 
