@@ -1,6 +1,6 @@
 # 04 — Review fixes: project unassign toggle returns its RemovalReport; carve-out deleted; two nits
 
-Status: done — pending
+Status: done — d09aa77
 Blocked by: 01, 02, 03
 Source: Opus 5 adversarial review of `8cfe657..b42dccd` (verdict fix-then-ship) — Standards #1 + Spec #1 (both
 `should`), Standards #2 and #4 (nits). Review text is in the parent thread; the findings are restated here in full.
