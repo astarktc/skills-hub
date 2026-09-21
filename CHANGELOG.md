@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.15] - 2026-09-21
+
+Fan-out reports cross the wire as their core types (round 15, wave C): one representation per report, per-target failures classified where the row settles, delete and the project unassign toggle report kept targets instead of throwing.
+
 ### Changed
 
 - Turning a project assignment off whose deployment cannot be removed now reports the kept target the same way unsync does.

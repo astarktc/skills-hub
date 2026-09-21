@@ -220,6 +220,12 @@ function collectRemovalFailures(
   return removalCounts(report).failed > 0 || out.errors.length > 0;
 }
 
+/**
+ * Unsync-shaped folds: `all` / `skill` (skills world, reloads the catalog)
+ * and `toggle` — used by BOTH the global unsync toggle (skills world, which
+ * honours `completion.reload`) and the project assignment toggle-off (projects
+ * world, which applies the mutation's returned view and ignores `completion`).
+ */
 export function removalOutcome(
   report: RemovalReport,
   ctx: ReportContext & { action: "all" | "skill" | "toggle" },
