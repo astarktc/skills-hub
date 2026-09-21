@@ -1,6 +1,6 @@
 # 03 Bump GitHub Actions to current majors
 
-Status: claimed
+Status: done — e9bdb6c
 Lane: B (after 02)
 Source: BACKLOG #32 (from `archive/round13/issues/04:comments`)
 
@@ -107,3 +107,5 @@ What the parent's push exercises, and what to watch:
    `vX.Y.Z` tag.
 4. **update-featured-skills.yml** is not exercised by the push (nightly cron / manual); its first run tonight is the
    second `persist-credentials: true` + checkout v7 `git push` path to glance at.
+
+- 2026-09-20 (parent) — closed `done — e9bdb6c`.
