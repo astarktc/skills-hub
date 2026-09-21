@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Deleting a skill whose deployments cannot all be removed now reports each kept target** (with the skill kept for a retry) instead of failing the whole action with one error listing paths — the same per-target settlement unsync and project removal already had (ADR-0002).
+
+### Internal/architecture
+
+- **Fan-out reports cross the wire as their core types.** The five `…ReportDto` mirrors and their mappers in `commands/` are gone; `CommandError` lives in `core/errors.rs` and per-target failures are classified where the row settles, so a report is wire-complete when core finishes it. Counters are derived by the frontend fold. `DELETE_CLEANUP_FAILED` is retired. ADR-0001 amended.
+
 ## [1.2.14] - 2026-09-20
 
 Update-request hardening, an Add skill button on My Skills, tool labels on removal toasts, and CI on current Actions majors with a release-mode regression guard.
