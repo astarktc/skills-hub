@@ -69,7 +69,7 @@ export type ProjectState = {
    * the backend's settled rows.
    */
   removeProject: (id: string) => Promise<RemovalReport>;
-  toggleAssignment: (skillId: string, tool: string) => Promise<void>;
+  toggleAssignment: (skillId: string, tool: string) => Promise<RemovalReport | null>;
   bulkAssign: (skillId: string) => Promise<BulkAssignResultDto | undefined>;
   resyncProject: () => Promise<ResyncSummary>;
   updateProjectPath: (
@@ -304,11 +304,11 @@ export function useProjectState(): ProjectState {
   );
 
   const toggleAssignment = useCallback(
-    async (skillId: string, tool: string) => {
-      if (!selectedProjectId) return;
+    async (skillId: string, tool: string): Promise<RemovalReport | null> => {
+      if (!selectedProjectId) return null;
       const key = `${skillId}:${tool}`;
       // Prevent double-toggle while a pending operation is in flight
-      if (pendingCells.has(key)) return;
+      if (pendingCells.has(key)) return null;
       setPendingCells((prev) => {
         const next = new Set(prev);
         next.add(key);
@@ -324,9 +324,9 @@ export function useProjectState(): ProjectState {
           tool,
         );
         applyView(result.view);
+        return result.report;
       } catch (err) {
-        // A failed mutation may still have settled rows (an unassign whose
-        // artifact stayed keeps the row with status `error`), so converge on
+        // A whole-command failure may follow settled rows, so converge on
         // the backend's view before surfacing the failure.
         await refreshView(selectedProjectId);
         throw err;

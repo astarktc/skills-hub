@@ -363,12 +363,6 @@ impl CommandError {
     /// are recovered by downcast, GitHub clone failures are classified by
     /// heuristic, and everything else becomes `Other` with the full chain.
     pub fn from_anyhow(err: anyhow::Error) -> Self {
-        // A single-target caller may surface an already-settled report failure
-        // as a whole-command failure. Preserve its classification, never prose.
-        let err = match err.downcast::<CommandError>() {
-            Ok(error) => return error,
-            Err(err) => err,
-        };
         let rollback_detail = matches!(
             err.downcast_ref::<SignalError>(),
             Some(SignalError::FinalizeRollbackFailed { .. })
@@ -532,8 +526,6 @@ impl From<GlobalSyncError> for CommandError {
         }
     }
 }
-
-impl std::error::Error for CommandError {}
 
 impl std::fmt::Display for CommandError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

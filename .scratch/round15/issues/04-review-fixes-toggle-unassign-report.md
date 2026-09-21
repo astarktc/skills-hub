@@ -1,6 +1,6 @@
 # 04 — Review fixes: project unassign toggle returns its RemovalReport; carve-out deleted; two nits
 
-Status: ready-for-agent
+Status: done — pending
 Blocked by: 01, 02, 03
 Source: Opus 5 adversarial review of `8cfe657..b42dccd` (verdict fix-then-ship) — Standards #1 + Spec #1 (both
 `should`), Standards #2 and #4 (nits). Review text is in the parent thread; the findings are restated here in full.
@@ -74,3 +74,23 @@ clippy `-D warnings`, `cargo test --all`); `git status` clean after `cargo test`
 - Targeted edits over rewrites; re-read after writing. No refactors beyond the items above.
 - Report: files touched, the bindings diff, test counts before/after, and anything here that did not survive contact
   with the code.
+
+## Comments
+
+### 2026-09-21 — implementation complete; awaiting parent review
+
+- Toggle-off returns its settled RemovalReport through core, command and hook; the page uses the existing
+  removalOutcome toggle fold and applyOutcome, with no success-path refetch. The stuck-artifact Rust test now
+  exercises the public toggle and pins the failed report, kept error row and path. Hook coverage pins report
+  return and settled-view application; existing fold coverage pins errors.unsyncFailedTitle (no page hook seam).
+- Removed the CommandError downcast carve-out and std::error::Error implementation; nothing else needs it.
+  Split the re-export and moved InvocationEditReport into core/skill_edits.rs. Only the allowed ADR parenthetical
+  and changelog line changed. Bindings add report: RemovalReport | null plus the corrected assigned doc comment.
+- Fresh baseline: cargo 648, vitest 361. After: cargo 647 (obsolete carve-out test removed), vitest 362.
+  npm run version:check && npm run check passed; cargo test --all passed twice, with identical bindings SHA-256
+  on the repeat run. git diff --check clean. No commits or stash; only ticket-scoped edits on main.
+- Necessary shape adjustment: ToggleOutcome lost Copy/Clone/PartialEq/Eq and the command DTO lost Clone because
+  RemovalReport does not implement them; two equality assertions became pattern/report assertions.
+- Literal grep gate has one pre-existing false positive: src-tauri/src/core/manifest.rs:460 wraps std::io::Error
+  using anyhow::Error::new(error), not CommandError. Verified identical in HEAD; left untouched to respect scope.
+  No CommandError downcast or CommandError-in-anyhow producer remains.

@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Turning a project assignment off whose deployment cannot be removed now reports the kept target the same way unsync does.
 - **Deleting a skill whose deployments cannot all be removed now reports each kept target** (with the skill kept for a retry) instead of failing the whole action with one error listing paths — the same per-target settlement unsync and project removal already had (ADR-0002).
 
 ### Internal/architecture

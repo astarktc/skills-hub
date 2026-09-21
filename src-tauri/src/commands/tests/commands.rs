@@ -3,18 +3,6 @@ use crate::core::errors::SignalError;
 use crate::core::global_sync::GlobalSyncError;
 use crate::core::sync_engine::remove_path_any;
 #[test]
-fn settled_report_error_retains_its_classification_when_single_target_command_fails() {
-    let error = anyhow::Error::new(CommandError::PathOutsideToolDirs {
-        path: "refused".into(),
-    })
-    .context("unassign target");
-    assert_eq!(
-        serde_json::to_value(CommandError::from_anyhow(error)).unwrap(),
-        serde_json::json!({ "code": "PATH_OUTSIDE_TOOL_DIRS", "path": "refused" })
-    );
-}
-
-#[test]
 fn git_repoint_refusals_cross_the_wire_as_typed_errors() {
     for (signal, expected) in [
         (

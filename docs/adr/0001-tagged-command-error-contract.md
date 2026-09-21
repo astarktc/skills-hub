@@ -74,9 +74,7 @@ Decided:
   `RemovalTargetStatus::Failed`, `PropagationStatus::Failed`, `SkillRefreshStatus::Failed`,
   `BatchTargetStatus::{Skipped, Failed}`, `ImportGroupStatus::Failed` and `OriginalStatus::Failed`
   carry a `CommandError`. The command seam's `from_anyhow` remains only for errors that fail a *whole
-  command*; core never classifies an error it then `?`-propagates. (`from_anyhow` also recovers an
-  already-classified `CommandError` by downcast, for the one single-target caller — the unassign
-  toggle — that raises a settled row failure as its command failure.)
+  command*; core never classifies an error it then `?`-propagates.
 - **Core report types derive `Serialize + specta::Type` and are what the command returns.** No
   `*ReportDto`, no mapper; serde tags (`status` / `scope` / `reason`, snake_case) live on the core
   enum. The wire vocabulary follows core names (`tool_key`, `RemovalReport.targets[].rows[]`) — no

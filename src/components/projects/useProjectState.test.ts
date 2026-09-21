@@ -161,6 +161,7 @@ function stubBackend(options: { reconciled?: boolean } = {}) {
         return Promise.resolve({
           view: view(projectId),
           assigned: existing < 0,
+          report: existing < 0 ? null : emptyRemoval(),
         });
       }
       case "bulkAssignSkill": {
@@ -553,7 +554,7 @@ describe("useProjectState applies the view a mutation returns", () => {
     mockInvoke.mockClear();
 
     await act(async () => {
-      await result.current.toggleAssignment("s1", "claude_code");
+      expect(await result.current.toggleAssignment("s1", "claude_code")).toBeNull();
     });
     expect(result.current.assignments.map((a) => a.skill_id)).toEqual(["s1"]);
     expect(
@@ -561,7 +562,7 @@ describe("useProjectState applies the view a mutation returns", () => {
     ).toBe(1);
 
     await act(async () => {
-      await result.current.toggleAssignment("s1", "claude_code");
+      expect(await result.current.toggleAssignment("s1", "claude_code")).toEqual(emptyRemoval());
     });
     expect(result.current.assignments).toEqual([]);
 
@@ -577,6 +578,47 @@ describe("useProjectState applies the view a mutation returns", () => {
       ["p1", "s1", "claude_code"],
       ["p1", "s1", "claude_code"],
     ]);
+  });
+
+  it("returns a kept-target toggle report and applies its view without a refetch", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    await act(async () => {
+      await result.current.toggleAssignment("s1", "pi");
+    });
+    const kept: RemovalReport = {
+      targets: [{
+        path: "/project/.pi/skills/s1",
+        rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "pi" }],
+        status: { status: "failed", error: { code: "OTHER", message: "busy" } },
+      }],
+      central_removed: false,
+      record_deleted: false,
+    };
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) => {
+      if (command === "toggleProjectSkillAssignment") {
+        return base("getProjectView", "p1").then((view) => {
+          const settled = view as ProjectViewDto;
+          return {
+            view: {
+              ...settled,
+              assignments: settled.assignments.map((a) => ({ ...a, status: "error", last_error: "busy" })),
+            } satisfies ProjectViewDto,
+            assigned: false,
+            report: kept,
+          };
+        });
+      }
+      return base(command, ...args);
+    });
+    mockInvoke.mockClear();
+    await act(async () => {
+      expect(await result.current.toggleAssignment("s1", "pi")).toEqual(kept);
+    });
+    expect(commandOrder()).toEqual(["toggleProjectSkillAssignment"]);
+    expect(result.current.assignments.map((a) => a.status)).toEqual(["error"]);
+    expect(result.current.projects.find((p) => p.id === "p1")?.assignment_count).toBe(1);
   });
 
   it("applies the bulk-assign view without a follow-up read", async () => {
@@ -765,7 +807,7 @@ describe("useProjectState selection and matrix agree", () => {
       }
       return base(command, ...args);
     });
-    let toggle!: Promise<void>;
+    let toggle!: Promise<RemovalReport | null>;
     act(() => {
       toggle = result.current.toggleAssignment("s1", "pi");
     });

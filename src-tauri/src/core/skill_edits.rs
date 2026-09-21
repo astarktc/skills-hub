@@ -72,6 +72,14 @@ fn manifest(record: &SkillRecord) -> Result<PathBuf> {
     })
 }
 
+/// Central Edit has settled; target failures remain report data.
+#[derive(Debug, Serialize, specta::Type)]
+pub struct InvocationEditReport {
+    pub skill_id: String,
+    pub skill_name: String,
+    pub propagation: PropagationReport,
+}
+
 pub struct InvocationEditOutcome {
     pub entry: ManagedSkillEntry,
     pub propagation: PropagationReport,

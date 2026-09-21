@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
 import { describeCommandError } from "../../commandError";
-import { projectRemovalOutcome, type Outcome, type PlainEntry } from "../../lib/reportOutcome";
+import { projectRemovalOutcome, removalOutcome, type Outcome, type PlainEntry } from "../../lib/reportOutcome";
 import { useProjectState } from "./useProjectState";
 import ProjectList from "./ProjectList";
 import AssignmentMatrix from "./AssignmentMatrix";
@@ -144,12 +144,15 @@ const ProjectsPage = ({
   const handleToggleAssignment = useCallback(
     async (skillId: string, tool: string) => {
       try {
-        await state.toggleAssignment(skillId, tool);
+        const report = await state.toggleAssignment(skillId, tool);
+        if (report) {
+          applyOutcome(removalOutcome(report, { t, toolLabelById, action: "toggle" }));
+        }
       } catch (err) {
         notifyError(err);
       }
     },
-    [notifyError, state],
+    [applyOutcome, notifyError, state, t, toolLabelById],
   );
 
   const handleBulkAssign = useCallback(

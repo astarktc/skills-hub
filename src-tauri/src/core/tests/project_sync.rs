@@ -312,11 +312,20 @@ fn unassign_failure_keeps_the_row_as_error_and_reports_the_path() {
         return; // running as root
     }
 
-    let err = project_sync::unassign_and_remove_artifacts(&store, &project, &skill, "claude_code")
-        .expect_err("a stuck artifact must fail the unassign");
+    let outcome =
+        project_sync::toggle_skill_assignment(&store, &project.id, &skill.id, "claude_code", 2001)
+            .expect("a stuck artifact is report data");
     unlock_parent(&target);
-
-    match crate::core::errors::CommandError::from_anyhow(err) {
+    let project_sync::ToggleOutcome::Unassigned { report } = outcome else {
+        panic!("expected unassign report");
+    };
+    assert_eq!(report.failed_rows(), 1);
+    let crate::core::artifact_removal::RemovalTargetStatus::Failed { error } =
+        &report.targets[0].status
+    else {
+        panic!("expected failed target");
+    };
+    match error {
         crate::core::errors::CommandError::Other { message } => {
             assert!(message.contains(target.to_str().unwrap()));
         }
@@ -1368,7 +1377,7 @@ fn toggle_assigns_then_unassigns_from_the_stored_state() {
 
     let first = toggle_skill_assignment(&store, &project.id, &skill.id, "claude_code", 4000)
         .expect("first toggle");
-    assert_eq!(first, ToggleOutcome::Assigned);
+    assert!(matches!(first, ToggleOutcome::Assigned));
     assert!(target.symlink_metadata().is_ok(), "artifact materialised");
     assert_eq!(
         store
@@ -1380,7 +1389,11 @@ fn toggle_assigns_then_unassigns_from_the_stored_state() {
 
     let second = toggle_skill_assignment(&store, &project.id, &skill.id, "claude_code", 4001)
         .expect("second toggle");
-    assert_eq!(second, ToggleOutcome::Unassigned);
+    let ToggleOutcome::Unassigned { report } = second else {
+        panic!("expected unassign report");
+    };
+    assert_eq!(report.removed_rows(), 1);
+    assert_eq!(report.failed_rows(), 0);
     assert!(
         target.symlink_metadata().is_err(),
         "artifact removed: {:?}",

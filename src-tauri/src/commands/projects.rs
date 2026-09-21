@@ -188,12 +188,12 @@ pub async fn configure_project_tools(
 }
 
 /// Which way a toggle went, with the resulting view.
-#[derive(serde::Serialize, Clone, Type)]
+#[derive(serde::Serialize, Type)]
 pub struct ToggleAssignmentResultDto {
     pub view: ProjectViewDto,
-    /// True when the skill is now assigned to the tool, false when the
-    /// assignment was removed.
+    /// True for the assign direction, false for the unassign direction.
     pub assigned: bool,
+    pub report: Option<RemovalReport>,
 }
 
 /// Assign or unassign one skill × project Tool pair — the backend decides
@@ -211,9 +211,14 @@ pub async fn toggle_project_skill_assignment(
     tauri::async_runtime::spawn_blocking(move || {
         let outcome =
             project_sync::toggle_skill_assignment(&store, &projectId, &skillId, &tool, now_ms())?;
+        let (assigned, report) = match outcome {
+            ToggleOutcome::Assigned => (true, None),
+            ToggleOutcome::Unassigned { report } => (false, Some(report)),
+        };
         Ok::<_, anyhow::Error>(ToggleAssignmentResultDto {
             view: view_of(&store, &projectId)?,
-            assigned: outcome == ToggleOutcome::Assigned,
+            assigned,
+            report,
         })
     })
     .await

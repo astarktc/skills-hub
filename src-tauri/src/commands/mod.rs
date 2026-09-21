@@ -30,7 +30,6 @@ use crate::core::onboarding_import::{
     import_onboarding_selection as import_onboarding_selection_core, ImportPhase, ImportPolicy,
     ImportReport, ImportSelection,
 };
-use crate::core::propagation::PropagationReport;
 use crate::core::refresh::{
     refresh_managed_skills as refresh_managed_skills_core, RefreshPhase, RefreshPolicy,
     RefreshReport, RefreshSelection,
@@ -40,6 +39,7 @@ use crate::core::settings::{
 };
 use crate::core::skill_catalog::{managed_skill_catalog, ManagedSkillEntry};
 use crate::core::skill_discovery::InvocationMode;
+use crate::core::skill_edits::InvocationEditReport;
 use crate::core::skill_store::SkillStore;
 use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
@@ -51,8 +51,9 @@ use crate::core::tool_adapters::{
 use crate::core::unlocatable::{detach_from_source, repoint_and_update, UnlocatableState};
 
 // Preserve the command seam's public error vocabulary after moving its owner.
-#[allow(unused_imports)]
-pub use crate::core::errors::{CommandError, GitCloneFailureKind};
+pub use crate::core::errors::CommandError;
+#[cfg(test)]
+pub(crate) use crate::core::errors::GitCloneFailureKind;
 
 /// Production environment adapter for the central repo: `.skillshub` lives
 /// under the operator's home, or under the app data dir when no home can be
@@ -899,14 +900,6 @@ fn managed_skill_dtos(store: &SkillStore) -> anyhow::Result<Vec<ManagedSkillDto>
         .into_iter()
         .map(ManagedSkillDto::from)
         .collect())
-}
-
-/// Central Edit has settled; target failures remain report data.
-#[derive(Debug, Serialize, Type)]
-pub struct InvocationEditReport {
-    pub skill_id: String,
-    pub skill_name: String,
-    pub propagation: PropagationReport,
 }
 
 #[derive(Debug, Serialize, Type)]

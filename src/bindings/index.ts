@@ -866,11 +866,9 @@ export type SyncStatus =
 /**  Which way a toggle went, with the resulting view. */
 export type ToggleAssignmentResultDto = {
 	view: ProjectViewDto,
-	/**
-	 *  True when the skill is now assigned to the tool, false when the
-	 *  assignment was removed.
-	 */
+	/**  True for the assign direction, false for the unassign direction. */
 	assigned: boolean,
+	report: RemovalReport | null,
 };
 
 export type ToolInfoDto = {

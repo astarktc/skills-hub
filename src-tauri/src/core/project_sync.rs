@@ -615,10 +615,12 @@ pub(crate) fn reconcile_listing_unlocked(
 /// Which way a toggle went. The decision is the backend's: it reads its own
 /// assignment rows under the guard, so no caller has to mirror assignment
 /// existence to choose between assigning and unassigning.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum ToggleOutcome {
     Assigned,
-    Unassigned,
+    Unassigned {
+        report: artifact_removal::RemovalReport,
+    },
 }
 
 /// Assign one skill to one project Tool, or unassign it when the row is
@@ -641,8 +643,8 @@ pub fn toggle_skill_assignment(
             .is_some()
         {
             let (project, skill) = lookup_project_and_skill(store, project_id, skill_id)?;
-            unassign_and_remove_artifacts(store, &project, &skill, tool_key)?;
-            return Ok(ToggleOutcome::Unassigned);
+            let report = unassign_and_remove_artifacts(store, &project, &skill, tool_key)?;
+            return Ok(ToggleOutcome::Unassigned { report });
         }
         assign_skill_to_project_tool_unlocked(store, project_id, skill_id, tool_key, now)?;
         Ok(ToggleOutcome::Assigned)
@@ -650,13 +652,9 @@ pub fn toggle_skill_assignment(
 }
 
 /// Artifact removal for one assignment row: plan the
-/// [`RemovalScope::ProjectSkillTool`] scope, execute it once, then apply this
-/// caller's final policy — a failure is an error, because unassigning one
-/// skill from one tool has nothing else to report.
-///
+/// [`RemovalScope::ProjectSkillTool`] scope and execute it once.
 /// The row is settled by the module (deleted on success, kept with Sync
-/// status `error` on failure, ADR-0002) *before* its classified target error
-/// is propagated. The command seam preserves that error's wire classification.
+/// status `error` on failure, ADR-0002); target failures remain report data.
 ///
 /// Unlocked internal seam: callers reach it through an entry point that has
 /// already taken the mutation guard.
@@ -665,7 +663,7 @@ pub(crate) fn unassign_and_remove_artifacts(
     project: &ProjectRecord,
     skill: &SkillRecord,
     tool_key: &str,
-) -> Result<()> {
+) -> Result<artifact_removal::RemovalReport> {
     if tool_adapters::adapter_by_key(tool_key).is_none() {
         anyhow::bail!(SignalError::UnknownTool {
             tool: tool_key.to_string(),
@@ -678,14 +676,7 @@ pub(crate) fn unassign_and_remove_artifacts(
         tool_key: tool_key.to_string(),
     };
     let plan = artifact_removal::plan(store, &scope)?;
-    let report = artifact_removal::execute_unlocked(store, plan)?;
-
-    for target in report.targets {
-        if let artifact_removal::RemovalTargetStatus::Failed { error } = target.status {
-            return Err(anyhow::Error::new(error));
-        }
-    }
-    Ok(())
+    artifact_removal::execute_unlocked(store, plan)
 }
 
 #[cfg(test)]
