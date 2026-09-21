@@ -1,6 +1,6 @@
 # 01 — Backend: core report types cross the wire as themselves
 
-Status: done — lane A (parent commit follows)
+Status: done — d3ea34a
 Spec: `.scratch/round15/spec.md` — decisions D1–D7, rider R1. Read the spec first; this ticket is the backend half.
 
 ## Goal
