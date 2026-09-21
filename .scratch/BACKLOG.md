@@ -8,9 +8,7 @@ Numbers are stable: never renumber; retire by deleting the line (history keeps i
 
 ## Now — evidence of unfinished work is strong
 
-- **#02 Wave C — one report representation across the wire + ADR-0001 amendment.** Round-10 decision Q8 deferred #7
-  to wave C; the four report DTOs are still separate (`commands/mod.rs` BatchSyncReportDto / RemovalReportDto /
-  RefreshReportDto / ImportReportDto). Source: `archive/round10/decisions.md` Q8; research `archive/round9/panel/opus.md:84–109`.
+(empty — #02 absorbed by `round15/spec.md`, opened 2026-09-21)
 
 ## Later — real, not urgent
 
