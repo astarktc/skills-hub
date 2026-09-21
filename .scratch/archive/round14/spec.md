@@ -1,6 +1,6 @@
 # Round 14 — small backend/CI/UI bundle into 1.2.14
 
-Status: open
+Status: closed
 Opened: 2026-09-20
 
 Absorbs BACKLOG #04 #10 #32 #33 #34 (lines left BACKLOG.md in the opening commit).
@@ -31,3 +31,17 @@ targets + `updater.json`), operator smoke passed for #14 toasts and #11 local-pi
 ## Lanes
 
 A: 01 · B: 02 03 (sequential) · C: 04 05
+
+## Closure — 2026-09-20
+
+Shipped as **1.2.14** (`17624f6`; lanes `e9bdb6c` B, `28ea72c` C, `8ebf49f` A). All five tickets `done`. Gate:
+`npm run version:check && npm run check` green; `cargo test --all` 646 (+1); vitest 358 (+1); bindings unchanged.
+Adversarial review: GPT-6 Astra, Standards + Spec — **no findings on either axis**, verified all five action SHAs
+independently and the Restore path through `finalize_update`.
+
+Residue:
+- None to BACKLOG. Ticket 03's hypotheses about gh-release v3 breaking `files`/draft defaults were wrong (v3.0.0 is
+  the Node 24 runtime only) — recorded in that ticket, no follow-up. download-artifact v8 makes digest mismatch
+  fatal — a release-run behaviour to watch on the 1.2.14 build, not a queue item.
+- Operator smoke of 1.2.14: Add skill button on My Skills; a fresh-launch Remove Project kept-target toast says
+  `Claude Code` not `claude` (ticket 04 was not exercised against the real backend).
