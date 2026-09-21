@@ -1,6 +1,6 @@
 # 04 Kept-project toast shows raw tool keys
 
-Status: claimed
+Status: done — 28ea72c
 Lane: C
 Source: BACKLOG #33 (from `archive/round13/issues/09:comments`)
 
@@ -49,3 +49,5 @@ Evidence: `npm run lint` clean; `npm run test` 15 files / **358 passed** (report
 `npm run build` (typescript-7) ✓. `lens_diagnostics mode=all`: no errors, only pre-existing style warnings.
 Not smoke-tested in `tauri:dev` (forbidden for this lane) — the operator's 1.2.14 smoke should trigger Remove Project on
 a fresh launch and confirm the kept-target toast title reads `Claude Code`, not `claude`.
+
+- 2026-09-20 (parent) — closed `done — 28ea72c`.
