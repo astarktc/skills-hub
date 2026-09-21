@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
@@ -25,23 +25,22 @@ type ProjectsPageProps = {
   notifyError: NotifyErrorFn;
   /** The reporter's per-target failure batch (one toast per kept artifact). */
   showActionErrors: (errors: ActionErrorEntry[]) => void;
+  /**
+   * Tool key → display label, owned by the sync world and loaded at startup;
+   * handed down by the binder so removal toasts name tools by label even
+   * before this world's own tool status has loaded (round 14 D4).
+   */
+  toolLabelById: Record<string, string>;
 };
 
 const ProjectsPage = ({
   notify,
   notifyError,
   showActionErrors,
+  toolLabelById,
 }: ProjectsPageProps) => {
   const { t } = useTranslation();
   const state = useProjectState();
-
-  const toolLabelById = useMemo(
-    () =>
-      Object.fromEntries(
-        (state.toolStatus?.tools ?? []).map((tool) => [tool.key, tool.label]),
-      ),
-    [state.toolStatus],
-  );
 
   // Per-target removal outcomes (ADR-0002) are report data: the fold decides
   // the entries and the toast; this only shows them and reports whether the

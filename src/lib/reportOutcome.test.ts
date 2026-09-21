@@ -482,6 +482,35 @@ describe("removalOutcome", () => {
       projectRemovalOutcome(relabelled, { ...ctx, action: "removeProject" }).errors[0].title,
     ).toBe(t("errors.projectRemovalFailedTitle", { tool: "CLAUDE" }));
   });
+  it("a tool key absent from the label map falls back to the raw key", () => {
+    // The fold never invents a label: a key the map lacks (and the fresh-launch
+    // case of an empty map) surfaces as-is. The binder is responsible for
+    // handing the projects world the startup-loaded map (round 14 D4).
+    const report: RemovalReportDto = {
+      targets: [
+        {
+          scope: { scope: "project", project_id: "p1" },
+          tool: "claude",
+          path: "/work/p1/.claude/skills/a",
+          status: { status: "failed", error: { code: "OTHER", message: "denied" } },
+        },
+      ],
+      removed: 0,
+      failed: 1,
+    };
+    for (const toolLabelById of [{}, { pi: "Pi" }] as Record<string, string>[]) {
+      for (const action of ["removeProject", "configureTools"] as const) {
+        expect(
+          projectRemovalOutcome(report, { ...ctx, toolLabelById, action }).errors,
+        ).toEqual([
+          { title: t("errors.projectRemovalFailedTitle", { tool: "claude" }), message: "denied" },
+        ]);
+      }
+    }
+    expect(
+      projectRemovalOutcome(report, { ...ctx, action: "removeProject" }).errors[0].title,
+    ).toBe(t("errors.projectRemovalFailedTitle", { tool: "CLAUDE" }));
+  });
   it("a clean or empty project removal closes without a nothing-planned warning", () => {
     const clean: RemovalReportDto = {
       targets: [

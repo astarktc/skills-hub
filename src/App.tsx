@@ -297,6 +297,7 @@ function App() {
               loading={loading}
               onSortChange={handleSortChange}
               onSearchChange={handleSearchChange}
+              onAddSkill={addFlow.handleOpenAdd}
               onRefresh={library.handleRefresh}
               autoSyncEnabled={sync.autoSyncEnabled}
               onAutoSyncChange={sync.handleAutoSyncToggle}
@@ -359,6 +360,7 @@ function App() {
             notify={notify}
             notifyError={notifyError}
             showActionErrors={showActionErrors}
+            toolLabelById={sync.toolLabelById}
           />
         ) : (
           <ExplorePage

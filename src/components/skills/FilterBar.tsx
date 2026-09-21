@@ -2,6 +2,7 @@ import { memo } from "react";
 import {
   ArrowUpDown,
   LayoutList,
+  Plus,
   RefreshCw,
   Search,
   Wrench,
@@ -14,6 +15,8 @@ type FilterBarProps = {
   loading: boolean;
   onSortChange: (value: "name" | "updated" | "added") => void;
   onSearchChange: (value: string) => void;
+  /** Opens the Local / Git add modal — the same flow Explore's Manual button uses. */
+  onAddSkill: () => void;
   onRefresh: () => void;
   autoSyncEnabled: boolean;
   onAutoSyncChange: (enabled: boolean) => void;
@@ -32,6 +35,7 @@ const FilterBar = ({
   loading,
   onSortChange,
   onSearchChange,
+  onAddSkill,
   onRefresh,
   autoSyncEnabled,
   onAutoSyncChange,
@@ -98,6 +102,15 @@ const FilterBar = ({
         </button>
       </div>
       <div className="filter-bar-right">
+        <button
+          className="btn btn-primary"
+          type="button"
+          onClick={onAddSkill}
+          disabled={loading}
+        >
+          <Plus size={14} />
+          {t("addSkillButton")}
+        </button>
         <label className="auto-sync-toggle" title={t("autoSyncToggle")}>
           <input
             type="checkbox"

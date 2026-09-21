@@ -1,6 +1,6 @@
 # 05 Add Skill entry point on My Skills
 
-Status: ready-for-agent
+Status: claimed
 Lane: C (after 04)
 Source: BACKLOG #34 (operator 1.2.13 smoke)
 
@@ -26,3 +26,34 @@ No tests required beyond `npm run lint && npm run build` (components get no JSX 
 ## Done when
 
 My Skills toolbar has an Add Skill button opening the same Local/Git modal as Explore's Manual; EN+ZH keys; gate green.
+
+## Comments
+
+### 2026-09-21 — lane C (Fable)
+
+Done.
+
+- `src/components/skills/FilterBar.tsx`: new prop `onAddSkill: () => void`; a `btn btn-primary` button with a lucide
+  `Plus` (14px, matching the sibling icons) and `t("addSkillButton")`, `disabled={loading}` like its neighbours, placed
+  **first** in `.filter-bar-right` — before Auto-sync / Configure Tools / Uninstall / search / Refresh. It is the only
+  primary in the toolbar (impeccable: one primary per toolbar, accent reserved for the primary action; the toolbar had
+  zero primaries before). No new CSS — existing `.btn` / `.btn-primary` / `.btn:disabled`.
+- `src/App.tsx`: `onAddSkill={addFlow.handleOpenAdd}` — the same handler Explore's Manual button gets via
+  `onOpenManualAdd`; one flow, one modal. `useAddSkillFlow` untouched.
+- `src/i18n/resources.ts`: `addSkillButton: "Add skill"` (en) / `"添加 Skill"` (zh), next to `addSkillTitle` in both
+  locales, same wording.
+
+Visual check (Vite dev on port 5174 via `VITE_DEV_PORT` — another project held 127.0.0.1:5173; t3-code `preview_*`,
+no Tauri backend so the list is the empty placeholder; `tauri.conf.json` sets no `minWidth`, default window 1920):
+
+- 1920 wide: one row, Add skill leads the right group —
+  `/Users/alexstark/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mube5ozg-14ce32f3.png`
+- 800 wide: the right group wraps onto two tidy rows under the sort/view row, Add skill first —
+  `/Users/alexstark/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mube5ybl-f0400a93.png`
+- 1280 wide: right group already wrapped to a second row before this change (it was ~1440px of content); unchanged in
+  kind.
+- Clicking the button opened the modal (`Add skill ✕ Local Folder / Git Repository …`); toggling to 中文 rendered
+  `添加 Skill` on the same `btn btn-primary`; language restored to EN afterwards (it is a persisted preference).
+
+Evidence: `npm run lint` clean; `npm run test` 15 files / 358 passed; `npm run build` (typescript-7) ✓;
+`lens_diagnostics mode=all` no errors. Dev server stopped after the check.
