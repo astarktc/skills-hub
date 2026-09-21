@@ -18,11 +18,12 @@ jobs:
     # Skip if the push was just a tag (avoid loops)
     if: "!contains(github.event.head_commit.message, '[skip-tag]')"
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           # This job `git push`es the tag with the default GITHUB_TOKEN, which
-          # checkout stores in the local git config — keep the credentials.
+          # checkout wires into the local git config (v6+: an included
+          # credentials file under $RUNNER_TEMP) — keep the credentials.
           persist-credentials: true
 
       - name: Extract version from package.json
