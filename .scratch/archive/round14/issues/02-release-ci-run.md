@@ -1,6 +1,6 @@
 # 02 Release-mode regression run for content identity in CI
 
-Status: done — e9bdb6c
+Status: done — 8cf55c3
 Lane: B (first; 03 follows in the same lane)
 Source: BACKLOG #10 (from `archive/round7/backlog.md` #15), narrowed by round-14 D2
 
@@ -58,4 +58,4 @@ dir with lane A):
 Parent should watch in the CI run: the new step's duration and the rust-cache post-step's "cache size" line (the
 ticket allows re-keying only if the cache blows its size limit; I did not change the cache config).
 
-- 2026-09-20 (parent) — closed `done — e9bdb6c`.
+- 2026-09-20 (parent) — closed `done — 8cf55c3`.

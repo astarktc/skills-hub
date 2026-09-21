@@ -8,9 +8,9 @@ The queue is `.scratch/BACKLOG.md` — this note does not repeat it.
   smoke passed for #14 toasts and #11 local-picker rows (staged fixture at `/tmp/smoke`, operator's to clean up along
   with the `smoke-good` skill it installed into the live library).
 - **Round 14 is done and archived** (`archive/round14/`): BACKLOG #04 #10 #32 #33 #34 shipped across three parallel
-  Fable 5.1 lanes (B CI `e9bdb6c`, C UI `28ea72c`, A core `8ebf49f`), Astra review with no findings, released as
-  **1.2.14** (`17624f6`).
-- **Release:** the push carrying `17624f6` triggers `auto-tag.yml` → `release.yml`. This is the **first run on the
+  Fable 5.1 lanes (B CI `8cf55c3`, C UI `13eab13`, A core `78ff47f`), Astra review with no findings, released as
+  **1.2.14** (`af55d70`).
+- **Release:** the push carrying `af55d70` triggers `auto-tag.yml` → `release.yml`. This is the **first run on the
   bumped Actions majors** (checkout v7, setup-node v7, upload/download-artifact v7/v8, gh-release v3). Watch: CI's
   new `cargo test --release --all propagation` step (16 tests) then the drift check; auto-tag's push + dispatch on
   checkout v7's credential-file path; Release's "Download workflow artifacts" step (download-artifact v8 makes digest

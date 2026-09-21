@@ -34,7 +34,7 @@ A: 01 · B: 02 03 (sequential) · C: 04 05
 
 ## Closure — 2026-09-20
 
-Shipped as **1.2.14** (`17624f6`; lanes `e9bdb6c` B, `28ea72c` C, `8ebf49f` A). All five tickets `done`. Gate:
+Shipped as **1.2.14** (`af55d70`; lanes `8cf55c3` B, `13eab13` C, `78ff47f` A). All five tickets `done`. Gate:
 `npm run version:check && npm run check` green; `cargo test --all` 646 (+1); vitest 358 (+1); bindings unchanged.
 Adversarial review: GPT-6 Astra, Standards + Spec — **no findings on either axis**, verified all five action SHAs
 independently and the Restore path through `finalize_update`.

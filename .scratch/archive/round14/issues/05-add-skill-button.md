@@ -1,6 +1,6 @@
 # 05 Add Skill entry point on My Skills
 
-Status: done — 28ea72c
+Status: done — 13eab13
 Lane: C (after 04)
 Source: BACKLOG #34 (operator 1.2.13 smoke)
 
@@ -58,4 +58,4 @@ no Tauri backend so the list is the empty placeholder; `tauri.conf.json` sets no
 Evidence: `npm run lint` clean; `npm run test` 15 files / 358 passed; `npm run build` (typescript-7) ✓;
 `lens_diagnostics mode=all` no errors. Dev server stopped after the check.
 
-- 2026-09-20 (parent) — closed `done — 28ea72c`.
+- 2026-09-20 (parent) — closed `done — 13eab13`.

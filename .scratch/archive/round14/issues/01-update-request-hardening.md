@@ -1,6 +1,6 @@
 # 01 Harden `UpdateRequest` and the byte adapters
 
-Status: done — 8ebf49f
+Status: done — 78ff47f
 Lane: A
 Source: BACKLOG #04 (from `archive/round7/backlog.md` #18)
 
@@ -75,4 +75,4 @@ Evidence: `cargo clippy --all-targets --all-features -- -D warnings` clean; `car
 (whole-crate `cargo fmt` left to the parent). `lens_diagnostics`: the only blocker is yamllint on
 `.github/workflows/auto-tag.yml` (lane B's file).
 
-- 2026-09-20 (parent) — closed `done — 8ebf49f`.
+- 2026-09-20 (parent) — closed `done — 78ff47f`.
