@@ -4,11 +4,11 @@ Read this first every session, then the newest note in `.scratch/handoffs/`. An 
 commit that closes it (or that opens the effort/ticket which absorbs it — say which). Every item keeps its
 source pointer. Procedure and status vocabulary: `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#35**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#37**.
 
 ## Now — evidence of unfinished work is strong
 
-(empty — #02 absorbed by `round15/spec.md`, opened 2026-09-21)
+(empty — #02 shipped in 1.2.15, `archive/round15/spec.md`)
 
 ## Later — real, not urgent
 
@@ -22,6 +22,13 @@ Numbers are stable: never renumber; retire by deleting the line (history keeps i
   on unit gates only. Needs operator permission (touches the live library). Source: `archive/v-next/assets/research-cursor-symlinks.md:224–228`.
 - **#18 Windows: Cursor junction fallback is unverified.** `sync_engine.rs:63` path never exercised on a Windows host.
   Source: same research, :231–233; `archive/v-next/issues/38:33–34`.
+- **#35 Project assignment toggle toasts asymmetrically.** Toggle-off folds its `RemovalReport` and toasts
+  `status.syncDisabled`; toggle-on returns no report and stays silent. Symmetric fix = assign-side outcome from the
+  backend (`toggle_skill_assignment` `Assigned` carrying its sync outcome), not a frontend patch.
+  Source: `archive/round15/review/opus-review.md` re-check nit.
+- **#36 `ResyncSummary.errors: Vec<String>` is rendered chains on the wire** — the last prose-on-wire field after
+  round 15 (R1 carve-out). Typed per-assignment outcomes would let `AssignmentMatrix` use the fold.
+  Source: `archive/round15/spec.md` R1.
 
 
 

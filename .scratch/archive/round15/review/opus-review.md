@@ -32,3 +32,13 @@ classify at settlement), D3 (wire shape matches ticket 01's claims, checked agai
 `refreshCounts`/`removalCounts`/`importCounts` reproduce the deleted Rust mappers' rules exactly, including the
 reassert term and both skip kinds)**, D5, D6 (delete fold + hook completion pinned end-to-end), D7, D8, R1;
 out-of-scope respected; nothing asked for is missing. Gate green: cargo 648, vitest 361, bindings do not drift.
+
+## Re-check (Opus 5, medium) on ticket 04 only — `60b7895..59dc2e1`
+
+Verdict: **ship**. All six questions answered clean with evidence: Standards #1 closed at the root (`impl Error for
+CommandError` and the `downcast::<CommandError>` carve-out gone; `unassign_and_remove_artifacts` returns the report);
+Spec #1 closed (page folds `removalOutcome` toggle through `applyOutcome`, localized tool-labelled copy, view applied
+with no refetch, assign direction unchanged); wire delta is only `ToggleAssignmentResultDto.report: RemovalReport |
+null`; no coverage lost (stuck-artifact test now stronger, new hook test); nits done; no AGENTS.md violations.
+Two nits left: toggle-off toasts `status.syncDisabled` while toggle-on stays silent (→ BACKLOG #35); `removalOutcome`
+doc block should name the projects caller (done by the parent in the release commit).

@@ -118,3 +118,27 @@ classified **where the row settles**, so the report is wire-complete the moment 
 ## Lanes
 
 A: 01 → B: 02 (sequential) · parent: 03, gate, review, release
+
+## Closure — 2026-09-21
+
+Shipped as **1.2.15** (`a3cff96`; lane A `d3ea34a`, lane B `6f45b59`, docs `b09616f`, review fixes `d09aa77`).
+All four tickets `done`. Gate: `npm run version:check && npm run check` green; `cargo test --all` 647 (646 → 648 →
+647: the `from_anyhow` carve-out test had nothing left to pin once the carve-out itself went); vitest 362 (+4).
+Round diff `8cfe657..a3cff96`: −117 lines net in `src-tauri/` + `src/`, zero `*ReportDto` mirrors or mappers left.
+
+Adversarial review: Claude Opus 5 (high), Standards + Spec — **fix-then-ship** with two `should`s sharing one root
+cause (lane A's unassign-toggle deviation re-raised a settled `CommandError` inside `anyhow`); fixed at the root by
+ticket 04 (toggle returns its `RemovalReport`; carve-out and `impl Error for CommandError` deleted). Re-check on
+ticket 04 alone: **ship**. `review/opus-review.md` holds both.
+
+Residue:
+- **BACKLOG #35** — project assignment toggle: toggle-off now toasts `status.syncDisabled` while toggle-on stays
+  silent; symmetric fix is an assign-side outcome from the backend (re-check nit).
+- **BACKLOG #36** — `ResyncSummary.errors: Vec<String>` is rendered chains crossing the wire (R1 carve-out); the last
+  prose-on-wire field.
+- Dropped by name: `RemovalReport::merge` keeping the first input's scope (scope is skipped on the wire, `Display`
+  only); removal `Display`/`failures()` rendering `CommandError` JSON in log lines (DB `last_error` keeps the chain);
+  moving `merge` into `project_ops` (ticket allowed the command).
+- Operator smoke of 1.2.15: delete a skill whose deployment is stuck → warning toast "Skill kept…" + per-tool entry,
+  modal stays open, retry works; project matrix toggle-off shows "Sync disabled"; Refresh-all / import / unsync
+  toasts and counts read as before.
