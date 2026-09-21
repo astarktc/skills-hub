@@ -1,6 +1,6 @@
 # 03 — ADR-0001 amendment "report rows classify at settlement" + AGENTS.md / CONTEXT.md
 
-Status: done — pending
+Status: done — b09616f
 Blocked by: 01, 02
 Owner: parent (spec D8)
 
