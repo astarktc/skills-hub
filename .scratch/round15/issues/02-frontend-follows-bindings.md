@@ -1,6 +1,6 @@
 # 02 — Frontend: follow the regenerated bindings; derive counters in the fold; delete folds a report
 
-Status: done — pending
+Status: done — 6f45b59
 Blocked by: 01
 Spec: `.scratch/round15/spec.md` — decisions D3, D4, D6. Read the spec and ticket 01's result comment first.
 
