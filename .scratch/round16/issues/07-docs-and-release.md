@@ -1,6 +1,6 @@
 # 07 — Docs, version, release 1.2.16
 
-Status: ready-for-agent
+Status: done — d8218d0
 Blocked by: 01, 02, 03, 04, 05, 06 (and the review fixes)
 Spec: `.scratch/round16/spec.md`. Orchestrator ticket.
 
@@ -23,3 +23,7 @@ Spec: `.scratch/round16/spec.md`. Orchestrator ticket.
 - `npm run version:set 1.2.16`; `npm run version:check && npm run check`; `git fetch && git rebase origin/main`
   (take origin's `featured-skills.json`); push main = release. Watch `release.yml`: five assets, `.sig`s,
   `updater.json`.
+
+## Comments
+
+- 2026-09-22 — docs half in `2592e37` (CONTEXT.md, ADR-0003 amendment, ADR-0005 rows, AGENTS.md, CHANGELOG); release commit `d8218d0` ("release: 1.2.16") pushed after `npm run version:check && npm run check` green (cargo 661, vitest 393, eslint 0 warnings). Tag `v1.2.16` created by `auto-tag.yml`; `release.yml` dispatched — asset check recorded in the spec's Closure block.
