@@ -1,6 +1,6 @@
 # 01 — Backend-A: `ProjectSyncReport`, bulk unassign, Tool-dir candidates flagged at listing
 
-Status: ready-for-agent
+Status: claimed
 Spec: `.scratch/round16/spec.md` — decisions D1, D2, D6. Read the spec first; this ticket is the project-world
 backend half. Ticket 03 (frontend-A) follows the bindings you regenerate.
 
@@ -94,3 +94,48 @@ inverse. The Add flow's local listing flags a Tool-dir folder before Install has
 
 Old→new wire map (every renamed/removed/added TS type and command, with the new field shapes) — ticket 03's
 brief is built from it. Any deviation from D1/D2/D6 and why. Gate output (`cargo test --all` count, clippy).
+
+## Comments
+
+### 2026-09-22 — backend-A implementation (branch `round16/backend-a`, commits `c84a65a`, `cbb2474`)
+
+Done. Gate: `cargo fmt && cargo clippy --all-targets -- -D warnings` clean; `cargo test --all` **655 passed**
+(+8 new tests over the 647 baseline); `npm run build` green; `npm run test` 362 passed; `npm run lint` clean.
+
+**Wire map (old → new)**
+- NEW `ProjectSyncReport = { items: ProjectSyncOutcome[] }`;
+  `ProjectSyncOutcome = { assignment_id: string | null, skill_id, skill_name, tool, status: ProjectSyncOutcomeStatus }`;
+  `ProjectSyncOutcomeStatus = { status: "synced" } | { status: "already_assigned" } | { status: "failed"; error: CommandError }`.
+- `ToggleAssignmentResultDto { view, assigned: boolean, report: RemovalReport | null }` →
+  `{ kind: "assigned"; view; report: ProjectSyncReport } | { kind: "unassigned"; view; report: RemovalReport }`.
+- `BulkAssignResultDto { view, failed: BulkAssignErrorDto[] }` → `{ view, report: ProjectSyncReport }`;
+  `BulkAssignErrorDto` REMOVED.
+- `ResyncProjectResultDto { view, summary: ResyncSummary }` → `{ view, report: ProjectSyncReport }`.
+- `ResyncAllResultDto { summaries: ResyncSummary[], projects }` → `{ report: ProjectSyncReport, projects }` (one report
+  spanning every project). `ResyncSummary` REMOVED.
+- NEW command `commands.bulkUnassignSkill(projectId, skillId) → BulkUnassignResultDto { view: ProjectViewDto, report: RemovalReport }`.
+- `LocalSkillCandidate` shape unchanged; new `reason` code `"inside_tool_dir"` (with `valid: false`).
+- `CommandError` union unchanged.
+
+**Deviations**
+1. Status enum is `ProjectSyncOutcomeStatus`, not `ProjectSyncStatus`: that name is taken by the existing project
+   roll-up enum (`sync_status::ProjectSyncStatus`, already on the wire as `ProjectDto.sync_status`); specta refuses
+   duplicate names. Pairs with `ProjectSyncOutcome` like `RemovalTargetOutcome`/`RemovalTargetStatus`.
+2. `RemovalScope` does not appear in the bindings (it is `#[serde(skip)]`/`#[specta(skip)]` on `RemovalReport` since
+   round 15), so `project_skill` has no TS face; the ticket's bindings checklist expected it.
+3. `resync_all_projects`: a project-level failure (store failure listing a project's assignments) now fails the whole
+   command instead of producing a prose `"project-level error: …"` summary — items carry no `project_id`, and "only a
+   store failure fails the whole operation" is the established rule. Per-assignment failures stay report data.
+4. Toggle-on with an unknown tool is now report data (`failed` + `UNKNOWN_TOOL`, `assignment_id: null`), not a command
+   error — the batch-of-one reading of D1. `AssignmentExists` stays an internal invariant bail.
+5. `assign_and_sync` is `#[cfg(test)]` (a fixture over the private `assign_and_settle`, which returns the settled
+   failure as `CommandError`); production reaches first syncs only through the fan-out.
+6. A listing candidate both inside a Tool dir and manifest-invalid reports `inside_tool_dir` (editing `SKILL.md`
+   would not make it installable).
+
+**Frontend lines touched (type-level follow-ups only; ticket 03 replaces them with the fold)**: `types.ts` re-exports
+(−`ResyncSummary`, −`BulkAssignErrorDto`, +`ProjectSyncReport`, +`ProjectSyncOutcome`, +`ProjectSyncOutcomeStatus`,
++`BulkUnassignResultDto`); `useProjectState.ts` resync return types → `ProjectSyncReport`, toggle returns
+`result.kind === "unassigned" ? result.report : null`; `AssignmentMatrix.tsx` props types + interim inline counts from
+`report.items`; `ProjectsPage.tsx` `handleBulkAssign` derives the failed list from `report.items`;
+`useProjectState.test.ts` stubs follow the new shapes.
