@@ -309,8 +309,8 @@ medium changes), `high` for reviewing large-scale work; ask if unsure. Adversari
 than the implementer.
 
 Children read AGENTS.md's Workflow step 1 literally and stop for confirmation: **pre-approve it in the brief**
-("state your approach and continue"). Tell them `.scratch/` is tracked: they may edit tickets and write handoffs, but
-they never archive, `git mv`, or commit under it.
+("state your approach and continue"). Tell them `.scratch/` is tracked and that `docs/agents/issue-tracker.md`
+§ Delegated children applies: they may edit tickets and write handoffs, never archive, `git mv`, or commit under it.
 
 Launch children with `runtimeMode: "full-access"` (or `inherit`) so they run unattended. Never use
 `approval-required` for delegated work — it gates every child tool call on an operator prompt. Express
@@ -326,9 +326,14 @@ read-only/no-run constraints in the task brief instead.
 ### Issue tracker
 
 Issues live as local markdown files under `.scratch/<effort>/`, tracked in git. **Start every session by reading
-`.scratch/BACKLOG.md`, then the newest note (by filename date) in `.scratch/handoffs/`.** Read `docs/agents/issue-tracker.md`
-§ Lifecycle before declaring an effort finished, archiving anything under `.scratch/`, or adding an item that belongs
-to no effort.
+`.scratch/BACKLOG.md` — the only cross-effort queue — then the newest note (by filename date) in `.scratch/handoffs/`.**
+Read `docs/agents/issue-tracker.md` § Lifecycle before scheduling a BACKLOG item, declaring an effort finished, archiving
+anything under `.scratch/`, or adding an item that belongs to no effort.
+
+### Handoffs
+
+Write handoffs to `.scratch/handoffs/<YYYY-MM-DD>-<slug>.md` (overrides the handoff skill's temp-dir default — `/tmp` is
+purged between sessions). A handoff points at `BACKLOG.md`, never embeds it.
 
 ### Triage labels
 

@@ -2,7 +2,8 @@
 
 Read this first every session, then the newest note in `.scratch/handoffs/`. An item leaves this file in the
 commit that closes it (or that opens the effort/ticket which absorbs it — say which). Every item keeps its
-source pointer. Procedure and status vocabulary: `docs/agents/issue-tracker.md` § Lifecycle.
+source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
+`docs/agents/issue-tracker.md` § Lifecycle.
 
 Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#37**.
 
