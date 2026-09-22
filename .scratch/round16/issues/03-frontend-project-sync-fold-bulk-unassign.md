@@ -1,6 +1,6 @@
 # 03 — Frontend-A: fold `ProjectSyncReport`, bulk unassign button, disabled Tool-dir candidates, factory rename
 
-Status: ready-for-agent
+Status: claimed
 Blocked by: 01 (done — 2a79874, merged to main)
 Spec: `.scratch/round16/spec.md` — D1, D2, D6, D9. Read the spec first. The wire map from ticket 01's report is
 pasted under § Wire map below before this ticket is claimed.
@@ -77,3 +77,47 @@ export type ProjectSyncOutcomeStatus =
   unassigned report), `:~385–399` (resync returns `result.report`); `AssignmentMatrix.tsx:~111–116, ~138–141`
   (counts synced/failed inline — marked interim); `ProjectsPage.tsx:~162–167` (`handleBulkAssign` builds a failed
   list from `report.items`); `useProjectState.test.ts` stubs follow the new shapes.
+
+## Comments
+
+### 2026-09-22 — lane 03 (frontend-A) implementation
+
+Branch `round16/frontend-a`: `5a80cfe` (D6 + D9), `384fd0a` (D1 + D2 frontend). No Rust, bindings, App.tsx,
+SkillCard, Re-point code or `gitRepoint.*`/`changeSource.*`/`unlocatable.*` keys touched. Status left `claimed`
+for the orchestrator to close with the merge SHA.
+
+- **Fold** `projectSyncOutcome` (`src/lib/reportOutcome.ts`): counters `synced/alreadyAssigned/failed` derived in
+  `projectSyncCounts`; one error entry per failed item, title `errors.syncFailedTitle { name: skill_name, tool:
+  label }`, message `describeCommandError`. Precedence collapses to failure › success (the report has no conflict
+  or skip outcome; `already_assigned` is neither). `completion.reload` is always false (the view came back);
+  `closeModal = !failed`. Toasts: toggleOn success `status.syncEnabled` (symmetric with toggle-off's
+  `status.syncDisabled`), failure = entries only; bulkAssign `projects.bulkAssignSuccess` (plural) /
+  `projects.bulkAssignNothing` (all already assigned) / `projects.bulkAssignPartial` (existing key, now used);
+  resync `projects.resyncSuccess`/`resyncPartial` (existing); resyncAll new `projects.resyncAllSuccess`/`Partial`.
+  `removalOutcome` gains `"bulkUnassign"`: `projects.bulkUnassignSuccess` (plural) / `projects.bulkUnassignPartial`,
+  kept rows as `errors.unsyncFailedTitle` entries, never reloads; zero targets keeps the `unsyncNothingPlanned` warning.
+- **Hook**: `ToggleResult` tagged union (`assigned` → `ProjectSyncReport`, `unassigned` → `RemovalReport`);
+  `bulkAssign` → `ProjectSyncReport`; `bulkUnassign(skillId)` → `RemovalReport` (pending cells = only the cells that
+  hold an assignment); `resyncProject` now also takes the failure-path `refreshView`; `resyncAll` keeps its single
+  `getProjectView` read for the selected project, now through `refreshView` (a failed read no longer masks the
+  report) and converges on a thrown batch too.
+- **Page/matrix**: `ProjectsPage` folds toggle-on/off, bulk assign/unassign and both resyncs; `AssignmentMatrix`
+  lost its interim counters and its `notify`/`notifyError` props (its memo comparator never compared them);
+  resync props are `() => Promise<void>`. Row: `All Tools` shown when >1 tool and not saturated; `Unassign All`
+  shown when >1 tool and ≥1 assignment; both disabled while any of the row's cells is pending; `title` tooltips.
+  No confirmation. Comparators updated (`onBulkUnassign`; `showBulkAssign` prop removed — derived in the row).
+- **D6** `LocalPickModal.mapReason`: `inside_tool_dir` → `localSkillInvalid.insideToolDir`. **D9** rename done
+  (no test referenced the old name).
+- **i18n** (EN + ZH): `localSkillInvalid.insideToolDir`; `projects.{allToolsTitle, unassignAll, unassignAllTitle,
+  resyncAllSuccess, resyncAllPartial, bulkAssignSuccess_one/_other, bulkAssignNothing, bulkUnassignSuccess_one/_other,
+  bulkUnassignPartial}`. Removed `projects.bulkAssignFailed` (only the interim handler read it).
+- **Gate**: `npm run lint` clean; `npm run test` 15 files / 374 tests (+12: 6 fold, 6 hook); `npm run build`
+  (typescript-7) ok with the pre-existing dynamic-import / chunk-size warnings.
+
+**Deviations** (for review):
+1. `Unassign All` also requires >1 configured tool (D2 says "shown when ≥1 assignment"). With one tool the row's
+   checkbox already is "all", and `All Tools` has always been hidden there — the gate keeps the pair symmetric.
+2. Failure entries carry skill *name* + tool label, not a skill id: no project-sync failure has a click action
+   (the only reason an entry carries an id), and the report already carries `skill_name`.
+3. `resyncAll` failure entries cannot name the project — `ProjectSyncOutcome` has no `project_id`. If the operator
+   needs it, the backend item would have to gain one (not in this lane).
