@@ -129,6 +129,11 @@ export const commands = {
 	resyncProject: (projectId: string) => __TAURI_INVOKE<ResyncProjectResultDto>("resync_project", { projectId }),
 	resyncAllProjects: () => __TAURI_INVOKE<ResyncAllResultDto>("resync_all_projects"),
 	bulkAssignSkill: (projectId: string, skillId: string) => __TAURI_INVOKE<BulkAssignResultDto>("bulk_assign_skill", { projectId, skillId }),
+	/**
+	 *  Unassign one skill from every Tool of one project — the inverse of
+	 *  `bulk_assign_skill`.
+	 */
+	bulkUnassignSkill: (projectId: string, skillId: string) => __TAURI_INVOKE<BulkUnassignResultDto>("bulk_unassign_skill", { projectId, skillId }),
 	updateProjectGitignore: (projectId: string, gitignore: IgnoreUpdateOptions) => __TAURI_INVOKE<null>("update_project_gitignore", { projectId, gitignore }),
 	getProjectGitignoreStatus: (projectId: string) => __TAURI_INVOKE<GitignoreStatusDto>("get_project_gitignore_status", { projectId }),
 };
@@ -205,19 +210,23 @@ export type BatchTargetOutcome = {
  */
 export type BatchTargetStatus = { status: "synced"; outcome: SyncOutcome } | { status: "skipped"; error: CommandError } | { status: "failed"; error: CommandError };
 
-export type BulkAssignErrorDto = {
-	tool: string,
-	error: CommandError,
-};
-
 /**
- *  The fan-out's fresh view plus the tools it could not assign. Tools that
- *  were already assigned are silent (nothing changed for them); the view
- *  carries every assignment that now exists.
+ *  The fan-out's fresh view plus its report: one item per configured Tool
+ *  (`synced`, `already_assigned`, or `failed` with the typed error).
  */
 export type BulkAssignResultDto = {
 	view: ProjectViewDto,
-	failed: BulkAssignErrorDto[],
+	report: ProjectSyncReport,
+};
+
+/**
+ *  Bulk unassign's fresh view plus the removal report for every assignment
+ *  row of the skill in the project (a row whose artifact stayed is kept with
+ *  status `error` and named in `report`, ADR-0002).
+ */
+export type BulkUnassignResultDto = {
+	view: ProjectViewDto,
+	report: RemovalReport,
 };
 
 /**
@@ -587,6 +596,36 @@ export type ProjectSkillAssignmentDto = {
 	created_at: number,
 };
 
+/**  One skill × project Tool pair's result. */
+export type ProjectSyncOutcome = {
+	/**
+	 *  The assignment row this outcome describes. Absent (`null` on the
+	 *  wire) only when no row exists — the assignment itself was refused
+	 *  (unknown tool) or the store failed before a row could be created.
+	 */
+	assignment_id: string | null,
+	skill_id: string,
+	skill_name: string,
+	/**  Registry key of the project Tool. */
+	tool: string,
+	status: ProjectSyncOutcomeStatus,
+};
+
+export type ProjectSyncOutcomeStatus = 
+/**  The artifact was (re-)materialised and the row is `synced`. */
+{ status: "synced" } | 
+/**  Bulk assign only: the pair was already assigned; nothing changed. */
+{ status: "already_assigned" } | 
+/**
+ *  The sync did not happen. When `assignment_id` is present the row
+ *  exists with Sync status `error` and this chain in `last_error`.
+ */
+{ status: "failed"; error: CommandError };
+
+export type ProjectSyncReport = {
+	items: ProjectSyncOutcome[],
+};
+
 /**
  *  Roll-up of a project's assignments as shown on the project list.
  *  `Missing` folds into `Error` (both need the user's attention).
@@ -732,26 +771,19 @@ export type RepointTarget =
 { kind: "local"; path: string };
 
 /**
- *  Per-project counts and errors plus the refreshed project list. A single
- *  project's assignments are not returned here — the caller re-reads the
- *  view of whichever project it is showing.
+ *  One report spanning every project plus the refreshed project list. A
+ *  single project's assignments are not returned here — the caller re-reads
+ *  the view of whichever project it is showing.
  */
 export type ResyncAllResultDto = {
-	summaries: ResyncSummary[],
+	report: ProjectSyncReport,
 	projects: ProjectDto[],
 };
 
-/**  A resync's counts and errors alongside the project's fresh view. */
+/**  A re-sync's report alongside the project's fresh view. */
 export type ResyncProjectResultDto = {
 	view: ProjectViewDto,
-	summary: ResyncSummary,
-};
-
-export type ResyncSummary = {
-	project_id: string,
-	synced: number,
-	failed: number,
-	errors: string[],
+	report: ProjectSyncReport,
 };
 
 /**  Where a row lives — the two tables that record Sync targets. */
@@ -875,13 +907,13 @@ export type SyncStatus =
 /**  The last sync or Artifact removal attempt failed; `last_error` carries the diagnostic. */
 "error";
 
-/**  Which way a toggle went, with the resulting view. */
-export type ToggleAssignmentResultDto = {
-	view: ProjectViewDto,
-	/**  True for the assign direction, false for the unassign direction. */
-	assigned: boolean,
-	report: RemovalReport | null,
-};
+/**
+ *  Which way a toggle went, with the resulting view and that direction's
+ *  report: the project-sync report of one on assign (a sync failure is
+ *  report data — the row is kept with status `error`), the removal report on
+ *  unassign.
+ */
+export type ToggleAssignmentResultDto = { kind: "assigned"; view: ProjectViewDto; report: ProjectSyncReport } | { kind: "unassigned"; view: ProjectViewDto; report: RemovalReport };
 
 export type ToolInfoDto = {
 	key: string,

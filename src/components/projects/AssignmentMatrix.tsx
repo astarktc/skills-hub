@@ -12,7 +12,7 @@ import type {
   ProjectDto,
   ProjectSkillAssignmentDto,
   ProjectToolDto,
-  ResyncSummary,
+  ProjectSyncReport,
 } from "./types";
 import type { ManagedSkill } from "../skills/types";
 import type {
@@ -43,8 +43,8 @@ export type AssignmentMatrixProps = {
   matrixLoading: boolean;
   onToggleAssignment: (skillId: string, tool: string) => Promise<void>;
   onBulkAssign: (skillId: string) => Promise<void>;
-  onResyncProject: () => Promise<ResyncSummary>;
-  onResyncAll: () => Promise<ResyncSummary[]>;
+  onResyncProject: () => Promise<ProjectSyncReport>;
+  onResyncAll: () => Promise<ProjectSyncReport>;
   onConfigureTools: () => void;
   /** The reporter's notification entry point, handed down by the page. */
   notify: NotifyFn;
@@ -108,7 +108,12 @@ const AssignmentMatrix = ({
 
   const handleResyncProject = useCallback(async () => {
     try {
-      const summary = await onResyncProject();
+      const report = await onResyncProject();
+      // Interim counts until ticket 03 folds the report in reportOutcome.ts.
+      const summary = {
+        synced: report.items.filter((i) => i.status.status === "synced").length,
+        failed: report.items.filter((i) => i.status.status === "failed").length,
+      };
       if (summary.failed > 0) {
         notify(
           "warning",
@@ -130,9 +135,10 @@ const AssignmentMatrix = ({
 
   const handleResyncAll = useCallback(async () => {
     try {
-      const summaries = await onResyncAll();
-      const totalSynced = summaries.reduce((sum, s) => sum + s.synced, 0);
-      const totalFailed = summaries.reduce((sum, s) => sum + s.failed, 0);
+      const report = await onResyncAll();
+      // Interim counts until ticket 03 folds the report in reportOutcome.ts.
+      const totalSynced = report.items.filter((i) => i.status.status === "synced").length;
+      const totalFailed = report.items.filter((i) => i.status.status === "failed").length;
       if (totalFailed > 0) {
         notify(
           "warning",

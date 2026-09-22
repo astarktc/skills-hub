@@ -7,7 +7,7 @@ import type {
   ProjectToolDto,
   ProjectSkillAssignmentDto,
   ProjectViewDto,
-  ResyncSummary,
+  ProjectSyncReport,
   BulkAssignResultDto,
   GitignoreStatusDto,
   IgnoreUpdateOptions,
@@ -71,12 +71,12 @@ export type ProjectState = {
   removeProject: (id: string) => Promise<RemovalReport>;
   toggleAssignment: (skillId: string, tool: string) => Promise<RemovalReport | null>;
   bulkAssign: (skillId: string) => Promise<BulkAssignResultDto | undefined>;
-  resyncProject: () => Promise<ResyncSummary>;
+  resyncProject: () => Promise<ProjectSyncReport>;
   updateProjectPath: (
     projectId: string,
     newPath: string,
   ) => Promise<ProjectDto>;
-  resyncAll: () => Promise<ResyncSummary[]>;
+  resyncAll: () => Promise<ProjectSyncReport>;
   loadToolStatus: () => Promise<void>;
   /**
    * Make `tools` the selected project's tool set (one backend command).
@@ -324,7 +324,7 @@ export function useProjectState(): ProjectState {
           tool,
         );
         applyView(result.view);
-        return result.report;
+        return result.kind === "unassigned" ? result.report : null;
       } catch (err) {
         // A whole-command failure may follow settled rows, so converge on
         // the backend's view before surfacing the failure.
@@ -382,21 +382,21 @@ export function useProjectState(): ProjectState {
     [applyView],
   );
 
-  const resyncProject = useCallback(async (): Promise<ResyncSummary> => {
+  const resyncProject = useCallback(async (): Promise<ProjectSyncReport> => {
     if (!selectedProjectId) throw new Error("No project selected");
     const result = await invokeTauri("resyncProject", selectedProjectId);
     applyView(result.view);
-    return result.summary;
+    return result.report;
   }, [selectedProjectId, applyView]);
 
-  const resyncAll = useCallback(async (): Promise<ResyncSummary[]> => {
+  const resyncAll = useCallback(async (): Promise<ProjectSyncReport> => {
     const result = await invokeTauri("resyncAllProjects");
     setProjects(result.projects);
     // The batch touches every project; only the shown one needs its matrix.
     if (selectedProjectId) {
       applyView(await invokeTauri("getProjectView", selectedProjectId));
     }
-    return result.summaries;
+    return result.report;
   }, [selectedProjectId, applyView]);
 
   const loadToolStatus = useCallback(async () => {

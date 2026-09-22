@@ -1,8 +1,8 @@
 //! Artifact removal: taking Sync targets off disk and settling their rows.
 //!
 //! One module for every scope an operator can ask to remove — one Managed
-//! skill, one skill × Tool pair, one Project, one Project × Tool pair, or
-//! every global target — because "take the artifact off disk, then settle
+//! skill, one skill × Tool pair, one Project, one Project × Tool pair, one
+//! Project × skill pair, or every global target — because "take the artifact off disk, then settle
 //! the row that describes it" is one rule, not five. The deletion
 //! counterpart of `global_sync.rs` / `project_sync.rs`, with the same
 //! plan/execute/report split:
@@ -93,6 +93,13 @@ pub enum RemovalScope {
         project_id: String,
         skill_id: String,
         tool_key: String,
+    },
+    /// One Project × skill pair across every Tool it is assigned to — every
+    /// assignment row of one skill in one project. Bulk unassign; planned
+    /// by `project_sync::unassign_skill_from_project`.
+    ProjectSkill {
+        project_id: String,
+        skill_id: String,
     },
     /// Every global Sync target of every Managed skill. "Uninstall
     /// everything from tool directories".
@@ -335,6 +342,17 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
         } => {
             let assignment = store.get_project_skill_assignment(project_id, skill_id, tool_key)?;
             push_assignments(store, &mut builder, assignment.into_iter().collect())?;
+        }
+        RemovalScope::ProjectSkill {
+            project_id,
+            skill_id,
+        } => {
+            let assignments = store
+                .list_project_skill_assignments(project_id)?
+                .into_iter()
+                .filter(|assignment| &assignment.skill_id == skill_id)
+                .collect();
+            push_assignments(store, &mut builder, assignments)?;
         }
         RemovalScope::EveryGlobalTarget => {
             for skill in store.list_skills()? {

@@ -394,12 +394,15 @@ fn resync_updates_all() {
     fs::write(skill1_dir.join("extra.txt"), "new content").expect("write extra file");
 
     // Re-sync the project
-    let summary = project_sync::resync_project(&store, &project.id, 3000)
+    let report = project_sync::resync_project(&store, &project.id, 3000)
         .expect("resync_project should succeed");
 
-    assert_eq!(summary.synced, 2, "both assignments should be re-synced");
-    assert_eq!(summary.failed, 0, "no failures expected");
-    assert_eq!(summary.project_id, project.id);
+    assert_eq!(report.synced(), 2, "both assignments should be re-synced");
+    assert_eq!(report.failed(), 0, "no failures expected");
+    let mut names: Vec<&str> = report.items.iter().map(|o| o.skill_name.as_str()).collect();
+    names.sort();
+    assert_eq!(names, vec!["skill-a", "skill-b"]);
+    assert!(report.items.iter().all(|o| o.assignment_id.is_some()));
 
     // Verify both targets still exist
     let target1 = project_dir.join(".claude/skills/skill-a");
@@ -455,12 +458,11 @@ fn resync_continues_on_error() {
     fs::remove_dir_all(&bad_skill_dir).expect("remove bad-skill source");
 
     // Re-sync should continue despite the error on bad-skill
-    let summary = project_sync::resync_project(&store, &project.id, 3000)
+    let report = project_sync::resync_project(&store, &project.id, 3000)
         .expect("resync_project should succeed overall");
 
-    assert_eq!(summary.synced, 1, "one assignment should succeed");
-    assert_eq!(summary.failed, 1, "one assignment should fail");
-    assert_eq!(summary.errors.len(), 1, "one error recorded");
+    assert_eq!(report.synced(), 1, "one assignment should succeed");
+    assert_eq!(report.failed(), 1, "one assignment should fail");
 
     // Verify the failed assignment has error status in DB
     let bad_assignment = store
@@ -468,6 +470,32 @@ fn resync_continues_on_error() {
         .unwrap()
         .expect("bad assignment should exist");
     assert_eq!(bad_assignment.status, SyncStatus::Error);
+
+    // The failure is report data naming the kept row, classified after the
+    // row's `last_error` was written (the typed error carries the same chain).
+    let failed = report
+        .items
+        .iter()
+        .find(|o| o.skill_id == bad_skill.id)
+        .expect("bad-skill outcome");
+    assert_eq!(
+        failed.assignment_id.as_deref(),
+        Some(bad_assignment.id.as_str())
+    );
+    assert_eq!(failed.skill_name, "bad-skill");
+    assert_eq!(failed.tool, "cursor");
+    let project_sync::ProjectSyncOutcomeStatus::Failed { error } = &failed.status else {
+        panic!("expected Failed, got {:?}", failed.status);
+    };
+    let last_error = bad_assignment.last_error.expect("row keeps its diagnostic");
+    let bad_source = bad_skill_dir.to_string_lossy().to_string();
+    assert!(last_error.contains(&bad_source), "{last_error}");
+    match error {
+        crate::core::errors::CommandError::InvalidPath { path, .. } => {
+            assert_eq!(path, &bad_source)
+        }
+        other => panic!("expected the typed missing-source error, got {other:?}"),
+    }
 
     // Verify the successful assignment has synced status
     let ok_assignment = store
@@ -509,14 +537,22 @@ fn resync_all_multiple_projects() {
         .expect("assign to project2");
 
     // Re-sync all
-    let summaries = project_sync::resync_all_projects(&store, 3000)
+    let report = project_sync::resync_all_projects(&store, 3000)
         .expect("resync_all_projects should succeed");
 
-    assert_eq!(summaries.len(), 2, "should have 2 project summaries");
-    for s in &summaries {
-        assert_eq!(s.synced, 1, "each project should have 1 synced assignment");
-        assert_eq!(s.failed, 0, "no failures expected");
-    }
+    // One report spanning every project.
+    assert_eq!(
+        report.items.len(),
+        2,
+        "one item per assignment, both projects"
+    );
+    assert_eq!(report.synced(), 2);
+    assert_eq!(report.failed(), 0, "no failures expected");
+    let mut skills: Vec<&str> = report.items.iter().map(|o| o.skill_id.as_str()).collect();
+    skills.sort();
+    let mut expected = vec![skill1.id.as_str(), skill2.id.as_str()];
+    expected.sort();
+    assert_eq!(skills, expected);
 }
 
 #[test]
@@ -1030,10 +1066,11 @@ fn missing_status_source_and_target_both_absent() {
 // fan-out engine behind `bulk_assign_skill` and the toggle command.
 // ---------------------------------------------------------------------------
 
+use crate::core::errors::CommandError;
 use crate::core::errors::SignalError;
 use crate::core::project_sync::{
     assign_skill_to_project_tool_unlocked, assign_skill_to_project_tools, assign_skill_to_tools,
-    AssignTargetStatus,
+    ProjectSyncOutcomeStatus,
 };
 use crate::core::skill_store::ProjectToolRecord;
 
@@ -1067,7 +1104,7 @@ fn fanout_assigns_every_tool_in_caller_order() {
         &skill_dir.to_string_lossy(),
     );
 
-    let outcomes = assign_skill_to_tools(
+    let report = assign_skill_to_tools(
         &store,
         &project,
         &skill,
@@ -1075,15 +1112,23 @@ fn fanout_assigns_every_tool_in_caller_order() {
         3000,
     );
 
-    let tool_keys: Vec<&str> = outcomes.iter().map(|o| o.tool_key.as_str()).collect();
+    let tool_keys: Vec<&str> = report.items.iter().map(|o| o.tool.as_str()).collect();
     assert_eq!(tool_keys, vec!["claude_code", "cursor"]);
-    for o in &outcomes {
-        match &o.status {
-            AssignTargetStatus::Assigned { record } => {
-                assert_eq!(record.status, SyncStatus::Synced, "tool {}", o.tool_key)
-            }
-            other => panic!("expected Assigned for {}, got {:?}", o.tool_key, other),
-        }
+    for o in &report.items {
+        assert!(
+            matches!(o.status, ProjectSyncOutcomeStatus::Synced),
+            "tool {}: {:?}",
+            o.tool,
+            o.status
+        );
+        let row = store
+            .get_project_skill_assignment(&project.id, &skill.id, &o.tool)
+            .unwrap()
+            .expect("row exists");
+        assert_eq!(o.assignment_id.as_deref(), Some(row.id.as_str()));
+        assert_eq!(row.status, SyncStatus::Synced, "tool {}", o.tool);
+        assert_eq!(o.skill_id, skill.id);
+        assert_eq!(o.skill_name, "fan-skill");
     }
     assert!(project_dir.join(".claude/skills/fan-skill").exists());
     assert!(project_dir.join(".agents/skills/fan-skill").exists());
@@ -1102,9 +1147,10 @@ fn fanout_reports_already_assigned_as_data_and_does_not_duplicate() {
         "dedupe-skill",
         &skill_dir.to_string_lossy(),
     );
-    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000).unwrap();
+    let existing =
+        project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000).unwrap();
 
-    let outcomes = assign_skill_to_tools(
+    let report = assign_skill_to_tools(
         &store,
         &project,
         &skill,
@@ -1113,12 +1159,17 @@ fn fanout_reports_already_assigned_as_data_and_does_not_duplicate() {
     );
 
     assert!(matches!(
-        outcomes[0].status,
-        AssignTargetStatus::AlreadyAssigned
+        report.items[0].status,
+        ProjectSyncOutcomeStatus::AlreadyAssigned
     ));
+    assert_eq!(
+        report.items[0].assignment_id.as_deref(),
+        Some(existing.id.as_str()),
+        "already-assigned names the existing row"
+    );
     assert!(matches!(
-        outcomes[1].status,
-        AssignTargetStatus::Assigned { .. }
+        report.items[1].status,
+        ProjectSyncOutcomeStatus::Synced
     ));
     assert_eq!(
         store
@@ -1143,7 +1194,7 @@ fn fanout_isolates_an_unknown_tool_and_continues() {
         &skill_dir.to_string_lossy(),
     );
 
-    let outcomes = assign_skill_to_tools(
+    let report = assign_skill_to_tools(
         &store,
         &project,
         &skill,
@@ -1152,18 +1203,23 @@ fn fanout_isolates_an_unknown_tool_and_continues() {
     );
 
     assert!(matches!(
-        outcomes[0].status,
-        AssignTargetStatus::Assigned { .. }
+        report.items[0].status,
+        ProjectSyncOutcomeStatus::Synced
     ));
-    match &outcomes[1].status {
-        AssignTargetStatus::Failed { error } => {
-            assert!(format!("{:#}", error).contains("unknown tool"));
-        }
+    match &report.items[1].status {
+        ProjectSyncOutcomeStatus::Failed { error } => assert!(
+            matches!(error, CommandError::UnknownTool { tool } if tool == "no-such-tool"),
+            "{error:?}"
+        ),
         other => panic!("expected Failed, got {:?}", other),
     }
+    assert_eq!(
+        report.items[1].assignment_id, None,
+        "a refused assignment has no row"
+    );
     assert!(matches!(
-        outcomes[2].status,
-        AssignTargetStatus::Assigned { .. }
+        report.items[2].status,
+        ProjectSyncOutcomeStatus::Synced
     ));
     assert_eq!(
         store
@@ -1176,9 +1232,10 @@ fn fanout_isolates_an_unknown_tool_and_continues() {
 }
 
 #[test]
-fn fanout_keeps_sync_failures_inside_the_assignment_record() {
-    // A sync failure is not a fan-out failure: the assignment row exists with
-    // status "error" (what the UI shows per cell), so the outcome is Assigned.
+fn fanout_reports_a_sync_failure_with_the_kept_error_row() {
+    // A sync failure keeps its assignment row with status "error" (what the UI
+    // shows per cell) *and* reports Failed naming that row, so the operator
+    // hears about the red cell.
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().unwrap();
     let skill_dir = make_skill_dir(tmpdir.path(), "gone-skill");
@@ -1192,12 +1249,74 @@ fn fanout_keeps_sync_failures_inside_the_assignment_record() {
     );
     fs::remove_dir_all(&skill_dir).unwrap();
 
-    let outcomes = assign_skill_to_tools(&store, &project, &skill, &keys(&["cursor"]), 3000);
+    let report = assign_skill_to_tools(&store, &project, &skill, &keys(&["cursor"]), 3000);
 
-    match &outcomes[0].status {
-        AssignTargetStatus::Assigned { record } => assert_eq!(record.status, SyncStatus::Error),
-        other => panic!("expected Assigned with error status, got {:?}", other),
+    let row = store
+        .get_project_skill_assignment(&project.id, &skill.id, "cursor")
+        .unwrap()
+        .expect("the row exists");
+    assert_eq!(row.status, SyncStatus::Error);
+    let item = &report.items[0];
+    assert_eq!(item.assignment_id.as_deref(), Some(row.id.as_str()));
+    let source = skill_dir.to_string_lossy().to_string();
+    assert!(row.last_error.as_deref().unwrap_or("").contains(&source));
+    match &item.status {
+        ProjectSyncOutcomeStatus::Failed {
+            error: CommandError::InvalidPath { path, .. },
+        } => assert_eq!(path, &source),
+        other => panic!("expected Failed with the typed error, got {:?}", other),
     }
+}
+
+/// Wire-shape pins: `status` is the tag, snake_case; `Failed` nests the
+/// tagged `CommandError`; `assignment_id` is always present (`null` when no
+/// row exists).
+#[test]
+fn project_sync_report_wire_shape() {
+    use crate::core::project_sync::{ProjectSyncOutcome, ProjectSyncReport};
+    use serde_json::json;
+
+    let report = ProjectSyncReport {
+        items: vec![
+            ProjectSyncOutcome {
+                assignment_id: Some("a1".into()),
+                skill_id: "s".into(),
+                skill_name: "skill".into(),
+                tool: "claude_code".into(),
+                status: ProjectSyncOutcomeStatus::Synced,
+            },
+            ProjectSyncOutcome {
+                assignment_id: Some("a2".into()),
+                skill_id: "s".into(),
+                skill_name: "skill".into(),
+                tool: "cursor".into(),
+                status: ProjectSyncOutcomeStatus::AlreadyAssigned,
+            },
+            ProjectSyncOutcome {
+                assignment_id: None,
+                skill_id: "s".into(),
+                skill_name: "skill".into(),
+                tool: "nope".into(),
+                status: ProjectSyncOutcomeStatus::Failed {
+                    error: CommandError::UnknownTool {
+                        tool: "nope".into(),
+                    },
+                },
+            },
+        ],
+    };
+    assert_eq!(
+        serde_json::to_value(&report).unwrap(),
+        json!({ "items": [
+            { "assignment_id": "a1", "skill_id": "s", "skill_name": "skill",
+              "tool": "claude_code", "status": { "status": "synced" } },
+            { "assignment_id": "a2", "skill_id": "s", "skill_name": "skill",
+              "tool": "cursor", "status": { "status": "already_assigned" } },
+            { "assignment_id": null, "skill_id": "s", "skill_name": "skill",
+              "tool": "nope", "status": { "status": "failed",
+                "error": { "code": "UNKNOWN_TOOL", "tool": "nope" } } },
+        ] })
+    );
 }
 
 #[test]
@@ -1215,15 +1334,16 @@ fn project_fanout_uses_persisted_project_tools() {
     );
     add_tools(&store, &project, &["claude_code", "pi"]);
 
-    let outcomes =
+    let report =
         assign_skill_to_project_tools(&store, &project.id, &skill.id, 3000).expect("fan-out");
 
-    let mut tool_keys: Vec<&str> = outcomes.iter().map(|o| o.tool_key.as_str()).collect();
+    let mut tool_keys: Vec<&str> = report.items.iter().map(|o| o.tool.as_str()).collect();
     tool_keys.sort();
     assert_eq!(tool_keys, vec!["claude_code", "pi"]);
-    assert!(outcomes
+    assert!(report
+        .items
         .iter()
-        .all(|o| matches!(o.status, AssignTargetStatus::Assigned { .. })));
+        .all(|o| matches!(o.status, ProjectSyncOutcomeStatus::Synced)));
     // pi's project-scope dir, not its global one
     let pi = crate::core::tool_adapters::adapter_by_key("pi").unwrap();
     assert!(
@@ -1269,7 +1389,7 @@ fn project_fanout_raises_typed_not_found_for_project_and_skill() {
 }
 
 #[test]
-fn single_tool_assign_returns_record_and_raises_assignment_exists_on_repeat() {
+fn single_tool_assign_reports_one_item_and_raises_assignment_exists_on_repeat() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().unwrap();
     let skill_dir = make_skill_dir(tmpdir.path(), "single-skill");
@@ -1282,11 +1402,15 @@ fn single_tool_assign_returns_record_and_raises_assignment_exists_on_repeat() {
         &skill_dir.to_string_lossy(),
     );
 
-    let record =
+    let report =
         assign_skill_to_project_tool_unlocked(&store, &project.id, &skill.id, "claude_code", 3000)
             .expect("first assign");
-    assert_eq!(record.status, SyncStatus::Synced);
-    assert_eq!(record.tool, "claude_code");
+    assert_eq!(report.items.len(), 1);
+    assert!(matches!(
+        report.items[0].status,
+        ProjectSyncOutcomeStatus::Synced
+    ));
+    assert_eq!(report.items[0].tool, "claude_code");
 
     let err =
         assign_skill_to_project_tool_unlocked(&store, &project.id, &skill.id, "claude_code", 3001)
@@ -1300,15 +1424,16 @@ fn single_tool_assign_returns_record_and_raises_assignment_exists_on_repeat() {
         })
     );
 
-    let err =
+    // A batch of one: an unknown tool is report data with no row, not an
+    // error of the whole operation.
+    let report =
         assign_skill_to_project_tool_unlocked(&store, &project.id, &skill.id, "no-such-tool", 3002)
-            .expect_err("unknown tool must fail");
-    assert_eq!(
-        err.downcast_ref::<SignalError>(),
-        Some(&SignalError::UnknownTool {
-            tool: "no-such-tool".to_string(),
-        })
-    );
+            .expect("an unknown tool is report data");
+    assert_eq!(report.items[0].assignment_id, None);
+    assert!(matches!(
+        &report.items[0].status,
+        ProjectSyncOutcomeStatus::Failed { error: CommandError::UnknownTool { tool } } if tool == "no-such-tool"
+    ));
 }
 
 #[test]
@@ -1377,7 +1502,14 @@ fn toggle_assigns_then_unassigns_from_the_stored_state() {
 
     let first = toggle_skill_assignment(&store, &project.id, &skill.id, "claude_code", 4000)
         .expect("first toggle");
-    assert!(matches!(first, ToggleOutcome::Assigned));
+    let ToggleOutcome::Assigned { report } = first else {
+        panic!("expected assign report");
+    };
+    assert_eq!(report.items.len(), 1, "a batch of one");
+    assert!(matches!(
+        report.items[0].status,
+        crate::core::project_sync::ProjectSyncOutcomeStatus::Synced
+    ));
     assert!(target.symlink_metadata().is_ok(), "artifact materialised");
     assert_eq!(
         store
@@ -1466,9 +1598,13 @@ fn resync_rematerialises_the_artifact_under_its_stored_name_after_a_rename() {
     )
     .expect("change the central copy");
 
-    let summary = project_sync::resync_project(&store, &project.id, 3000).expect("resync");
+    let report = project_sync::resync_project(&store, &project.id, 3000).expect("resync");
 
-    assert_eq!(summary.synced, 1, "errors: {:?}", summary.errors);
+    assert_eq!(report.synced(), 1, "{report}");
+    assert_eq!(
+        report.items[0].skill_name, "named-skill",
+        "the report names the stored artifact name"
+    );
     assert!(
         target.join("extra.txt").exists(),
         "the stored-name artifact receives the new bytes"
@@ -1496,4 +1632,136 @@ fn reconcile_observes_the_artifact_under_its_stored_name_after_a_rename() {
         "the artifact is still there under the name it was materialised with"
     );
     assert_eq!(assignments[0].skill_name, "named-skill");
+}
+
+// ---------------------------------------------------------------------------
+// Toggle-on reports a sync failure; bulk unassign is bulk assign's inverse
+// ---------------------------------------------------------------------------
+
+/// Toggle-on is a batch of one: a sync failure keeps the row with status
+/// `error` (the red cell) *and* is reported `Failed` naming that row, so the
+/// operator is told — no silent red cell.
+#[test]
+fn toggle_on_reports_a_sync_failure_with_the_kept_row() {
+    use crate::core::project_sync::{toggle_skill_assignment, ToggleOutcome};
+
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let skill_dir = make_skill_dir(tmpdir.path(), "vanished-skill");
+    let project_dir = tmpdir.path().join("vanished-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "vanished-skill",
+        &skill_dir.to_string_lossy(),
+    );
+    fs::remove_dir_all(&skill_dir).unwrap();
+
+    let outcome = toggle_skill_assignment(&store, &project.id, &skill.id, "claude_code", 5000)
+        .expect("a sync failure is report data");
+    let ToggleOutcome::Assigned { report } = outcome else {
+        panic!("expected the assign direction");
+    };
+    let row = store
+        .get_project_skill_assignment(&project.id, &skill.id, "claude_code")
+        .unwrap()
+        .expect("the row is kept");
+    assert_eq!(row.status, SyncStatus::Error);
+    assert_eq!(report.items.len(), 1);
+    assert_eq!(
+        report.items[0].assignment_id.as_deref(),
+        Some(row.id.as_str())
+    );
+    assert!(matches!(
+        report.items[0].status,
+        ProjectSyncOutcomeStatus::Failed { .. }
+    ));
+}
+
+/// Bulk unassign removes every Tool's artifact of one skill in one project
+/// and deletes those rows; the project's other skills are untouched.
+#[test]
+fn unassign_skill_from_project_clears_every_tool_of_that_skill_only() {
+    use crate::core::project_sync::unassign_skill_from_project;
+
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let skill_dir = make_skill_dir(tmpdir.path(), "bulk-off");
+    let other_dir = make_skill_dir(tmpdir.path(), "stays");
+    let project_dir = tmpdir.path().join("bulk-off-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "bulk-off",
+        &skill_dir.to_string_lossy(),
+    );
+    let mut other = skill.clone();
+    other.id = uuid::Uuid::new_v4().to_string();
+    other.name = "stays".to_string();
+    other.central_path = other_dir.to_string_lossy().to_string();
+    store.upsert_skill(&other).unwrap();
+    add_tools(&store, &project, &["claude_code", "cursor"]);
+    let assigned = assign_skill_to_project_tools(&store, &project.id, &skill.id, 3000).unwrap();
+    assert_eq!(assigned.synced(), 2);
+    project_sync::assign_and_sync(&store, &project, &other, "claude_code", 3000).unwrap();
+
+    let report = unassign_skill_from_project(&store, &project.id, &skill.id).expect("unassign");
+
+    assert_eq!(report.removed_rows(), 2);
+    assert_eq!(report.failed_rows(), 0);
+    assert!(!report.record_deleted, "the skill itself stays managed");
+    for tool in ["claude_code", "cursor"] {
+        let adapter = crate::core::tool_adapters::adapter_by_key(tool).unwrap();
+        let target = project_sync::resolve_project_sync_target(&project_dir, adapter, "bulk-off");
+        assert!(
+            target.symlink_metadata().is_err(),
+            "{tool} artifact removed"
+        );
+    }
+    let left = store.list_project_skill_assignments(&project.id).unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].skill_id, other.id);
+    assert!(store.get_skill_by_id(&skill.id).unwrap().is_some());
+
+    // Nothing left to unassign: an empty report, not an error.
+    let again = unassign_skill_from_project(&store, &project.id, &skill.id).expect("again");
+    assert!(again.targets.is_empty());
+}
+
+#[test]
+fn unassign_skill_from_project_raises_typed_not_found() {
+    use crate::core::project_sync::unassign_skill_from_project;
+
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let skill_dir = make_skill_dir(tmpdir.path(), "nf-off");
+    let project_dir = tmpdir.path().join("nf-off-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "nf-off",
+        &skill_dir.to_string_lossy(),
+    );
+
+    let err = unassign_skill_from_project(&store, "missing-project", &skill.id)
+        .expect_err("project must be missing");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::NotFound {
+            kind: "project".to_string(),
+            id: "missing-project".to_string(),
+        })
+    );
+    let err = unassign_skill_from_project(&store, &project.id, "missing-skill")
+        .expect_err("skill must be missing");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::NotFound {
+            kind: "skill".to_string(),
+            id: "missing-skill".to_string(),
+        })
+    );
 }

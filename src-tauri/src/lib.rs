@@ -64,6 +64,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::projects::resync_project,
             commands::projects::resync_all_projects,
             commands::projects::bulk_assign_skill,
+            commands::projects::bulk_unassign_skill,
             commands::projects::update_project_gitignore,
             commands::projects::get_project_gitignore_status,
         ])

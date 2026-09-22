@@ -159,8 +159,12 @@ const ProjectsPage = ({
     async (skillId: string) => {
       try {
         const result = await state.bulkAssign(skillId);
-        if (result && result.failed.length > 0) {
-          const details = result.failed
+        // Interim until ticket 03 folds the report in reportOutcome.ts.
+        const failed = (result?.report.items ?? []).flatMap((item) =>
+          item.status.status === "failed" ? [{ tool: item.tool, error: item.status.error }] : [],
+        );
+        if (failed.length > 0) {
+          const details = failed
             .map(
               (f) =>
                 `${f.tool}: ${describeCommandError(f.error, t) ?? f.error.code}`,

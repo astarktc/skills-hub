@@ -448,6 +448,105 @@ fn project_scopes_plan_the_projects_assignments() {
     );
 }
 
+/// Bulk unassign's scope: every assignment row of one skill in one project,
+/// across every Tool (whatever its status) — never another skill's rows in
+/// the same project, never the same skill's rows in another project.
+#[test]
+fn project_skill_scope_plans_every_tool_row_of_one_skill_in_one_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = make_skill_dir(&tmp.path().join("central"), "delta");
+    let skill = seed_skill(&store, "delta", &central);
+    let sibling_central = make_skill_dir(&tmp.path().join("central"), "sibling");
+    let sibling = seed_skill(&store, "sibling", &sibling_central);
+    let project = seed_project(&store, tmp.path(), "proj");
+    let other = seed_project(&store, tmp.path(), "other");
+    let claude = seed_assignment(&store, &project, &skill, "claude_code", SyncStatus::Synced);
+    let pi = seed_assignment(&store, &project, &skill, "pi", SyncStatus::Error);
+    let sibling_row = seed_assignment(
+        &store,
+        &project,
+        &sibling,
+        "claude_code",
+        SyncStatus::Synced,
+    );
+    let elsewhere = seed_assignment(&store, &other, &skill, "claude_code", SyncStatus::Synced);
+
+    let planned = plan(
+        &store,
+        &RemovalScope::ProjectSkill {
+            project_id: project.id.clone(),
+            skill_id: skill.id.clone(),
+        },
+    )
+    .expect("plan");
+    let mut paths: Vec<PathBuf> = planned.targets.iter().map(|t| t.path.clone()).collect();
+    paths.sort();
+    let mut expected = vec![claude.clone(), pi.clone()];
+    expected.sort();
+    assert_eq!(
+        paths, expected,
+        "every Tool row of the skill, whatever its status"
+    );
+    assert!(planned.skill.is_none(), "the skill itself is not removed");
+
+    let report = execute_unlocked(&store, planned).expect("execute");
+    assert_eq!(report.removed_rows(), 2);
+    assert!(!exists_any(&claude) && !exists_any(&pi));
+    assert!(
+        exists_any(&sibling_row),
+        "another skill in the project is untouched"
+    );
+    assert!(exists_any(&elsewhere), "another project is untouched");
+    let left: Vec<String> = store
+        .list_project_skill_assignments(&project.id)
+        .unwrap()
+        .into_iter()
+        .map(|row| row.skill_id)
+        .collect();
+    assert_eq!(left, vec![sibling.id.clone()]);
+    assert!(store.get_skill_by_id(&skill.id).unwrap().is_some());
+}
+
+/// ADR-0002 at the Project × skill scope: a stuck artifact keeps its row
+/// with status `error`, the healthy Tool's row goes.
+#[cfg(unix)]
+#[test]
+fn project_skill_scope_keeps_the_stuck_row_and_removes_the_healthy_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = make_skill_dir(&tmp.path().join("central"), "epsilon");
+    let skill = seed_skill(&store, "epsilon", &central);
+    let project = seed_project(&store, tmp.path(), "proj");
+    let good = seed_assignment(&store, &project, &skill, "claude_code", SyncStatus::Synced);
+    let bad = seed_assignment(&store, &project, &skill, "pi", SyncStatus::Synced);
+    if !make_unremovable(&bad) {
+        return;
+    }
+
+    let planned = plan(
+        &store,
+        &RemovalScope::ProjectSkill {
+            project_id: project.id.clone(),
+            skill_id: skill.id.clone(),
+        },
+    )
+    .expect("plan");
+    let report = execute_unlocked(&store, planned).expect("execute");
+    restore_permissions(&bad);
+
+    assert_eq!(report.removed_rows(), 1);
+    assert_eq!(report.failed_rows(), 1);
+    assert!(!exists_any(&good));
+    let rows = store
+        .list_project_skill_assignments(&project.id)
+        .expect("rows");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].tool, "pi");
+    assert_eq!(rows[0].status, SyncStatus::Error);
+    assert!(rows[0].last_error.is_some());
+}
+
 #[test]
 fn every_global_target_scope_plans_every_skills_global_rows() {
     let tmp = tempfile::tempdir().unwrap();

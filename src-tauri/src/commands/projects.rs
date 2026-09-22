@@ -6,13 +6,12 @@ use crate::core::gitignore::{self, IgnoreUpdateOptions};
 use crate::core::project_ops::{
     self, ProjectDto, ProjectSkillAssignmentDto, ProjectToolDto, ProjectView,
 };
-use crate::core::project_sync::{self, AssignTargetStatus, ToggleOutcome};
+use crate::core::project_sync::{self, ProjectSyncReport, ToggleOutcome};
 use crate::core::skill_store::{ProjectSkillAssignmentRecord, SkillStore};
 
 use super::CommandError;
 use crate::core::artifact_removal::RemovalReport;
 use crate::core::clock::now_ms;
-use crate::core::project_sync::ResyncSummary;
 
 /// Everything the project world shows for one project, as one wire value:
 /// the project row (counts and aggregate status included), its configured
@@ -187,13 +186,21 @@ pub async fn configure_project_tools(
     .map_err(CommandError::from_anyhow)
 }
 
-/// Which way a toggle went, with the resulting view.
+/// Which way a toggle went, with the resulting view and that direction's
+/// report: the project-sync report of one on assign (a sync failure is
+/// report data — the row is kept with status `error`), the removal report on
+/// unassign.
 #[derive(serde::Serialize, Type)]
-pub struct ToggleAssignmentResultDto {
-    pub view: ProjectViewDto,
-    /// True for the assign direction, false for the unassign direction.
-    pub assigned: bool,
-    pub report: Option<RemovalReport>,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ToggleAssignmentResultDto {
+    Assigned {
+        view: ProjectViewDto,
+        report: ProjectSyncReport,
+    },
+    Unassigned {
+        view: ProjectViewDto,
+        report: RemovalReport,
+    },
 }
 
 /// Assign or unassign one skill × project Tool pair — the backend decides
@@ -211,14 +218,14 @@ pub async fn toggle_project_skill_assignment(
     tauri::async_runtime::spawn_blocking(move || {
         let outcome =
             project_sync::toggle_skill_assignment(&store, &projectId, &skillId, &tool, now_ms())?;
-        let (assigned, report) = match outcome {
-            ToggleOutcome::Assigned => (true, None),
-            ToggleOutcome::Unassigned { report } => (false, Some(report)),
-        };
-        Ok::<_, anyhow::Error>(ToggleAssignmentResultDto {
-            view: view_of(&store, &projectId)?,
-            assigned,
-            report,
+        let view = view_of(&store, &projectId)?;
+        Ok::<_, anyhow::Error>(match outcome {
+            ToggleOutcome::Assigned { report } => {
+                ToggleAssignmentResultDto::Assigned { view, report }
+            }
+            ToggleOutcome::Unassigned { report } => {
+                ToggleAssignmentResultDto::Unassigned { view, report }
+            }
         })
     })
     .await
@@ -242,11 +249,11 @@ fn to_assignment_dto(record: ProjectSkillAssignmentRecord) -> ProjectSkillAssign
     }
 }
 
-/// A resync's counts and errors alongside the project's fresh view.
+/// A re-sync's report alongside the project's fresh view.
 #[derive(serde::Serialize, Clone, Type)]
 pub struct ResyncProjectResultDto {
     pub view: ProjectViewDto,
-    pub summary: ResyncSummary,
+    pub report: ProjectSyncReport,
 }
 
 #[tauri::command]
@@ -258,10 +265,10 @@ pub async fn resync_project(
 ) -> Result<ResyncProjectResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let summary = project_sync::resync_project(&store, &projectId, now_ms())?;
+        let report = project_sync::resync_project(&store, &projectId, now_ms())?;
         Ok::<_, anyhow::Error>(ResyncProjectResultDto {
             view: view_of(&store, &projectId)?,
-            summary,
+            report,
         })
     })
     .await
@@ -269,12 +276,12 @@ pub async fn resync_project(
     .map_err(CommandError::from_anyhow)
 }
 
-/// Per-project counts and errors plus the refreshed project list. A single
-/// project's assignments are not returned here — the caller re-reads the
-/// view of whichever project it is showing.
+/// One report spanning every project plus the refreshed project list. A
+/// single project's assignments are not returned here — the caller re-reads
+/// the view of whichever project it is showing.
 #[derive(serde::Serialize, Clone, Type)]
 pub struct ResyncAllResultDto {
-    pub summaries: Vec<ResyncSummary>,
+    pub report: ProjectSyncReport,
     pub projects: Vec<ProjectDto>,
 }
 
@@ -285,9 +292,9 @@ pub async fn resync_all_projects(
 ) -> Result<ResyncAllResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let summaries = project_sync::resync_all_projects(&store, now_ms())?;
+        let report = project_sync::resync_all_projects(&store, now_ms())?;
         Ok::<_, anyhow::Error>(ResyncAllResultDto {
-            summaries,
+            report,
             projects: project_ops::list_project_dtos(&store)?,
         })
     })
@@ -296,19 +303,12 @@ pub async fn resync_all_projects(
     .map_err(CommandError::from_anyhow)
 }
 
-/// The fan-out's fresh view plus the tools it could not assign. Tools that
-/// were already assigned are silent (nothing changed for them); the view
-/// carries every assignment that now exists.
+/// The fan-out's fresh view plus its report: one item per configured Tool
+/// (`synced`, `already_assigned`, or `failed` with the typed error).
 #[derive(serde::Serialize, Clone, Type)]
 pub struct BulkAssignResultDto {
     pub view: ProjectViewDto,
-    pub failed: Vec<BulkAssignErrorDto>,
-}
-
-#[derive(serde::Serialize, Clone, Type)]
-pub struct BulkAssignErrorDto {
-    pub tool: String,
-    pub error: CommandError,
+    pub report: ProjectSyncReport,
 }
 
 #[tauri::command]
@@ -321,22 +321,43 @@ pub async fn bulk_assign_skill(
 ) -> Result<BulkAssignResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let outcomes =
+        let report =
             project_sync::assign_skill_to_project_tools(&store, &projectId, &skillId, now_ms())?;
-
-        let mut failed = Vec::new();
-        for outcome in outcomes {
-            match outcome.status {
-                AssignTargetStatus::Assigned { .. } | AssignTargetStatus::AlreadyAssigned => {}
-                AssignTargetStatus::Failed { error } => failed.push(BulkAssignErrorDto {
-                    tool: outcome.tool_key,
-                    error: CommandError::from_anyhow(error),
-                }),
-            }
-        }
         Ok::<_, anyhow::Error>(BulkAssignResultDto {
             view: view_of(&store, &projectId)?,
-            failed,
+            report,
+        })
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+/// Bulk unassign's fresh view plus the removal report for every assignment
+/// row of the skill in the project (a row whose artifact stayed is kept with
+/// status `error` and named in `report`, ADR-0002).
+#[derive(serde::Serialize, Type)]
+pub struct BulkUnassignResultDto {
+    pub view: ProjectViewDto,
+    pub report: RemovalReport,
+}
+
+/// Unassign one skill from every Tool of one project — the inverse of
+/// `bulk_assign_skill`.
+#[tauri::command]
+#[specta::specta]
+#[allow(non_snake_case)]
+pub async fn bulk_unassign_skill(
+    store: State<'_, SkillStore>,
+    projectId: String,
+    skillId: String,
+) -> Result<BulkUnassignResultDto, CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let report = project_sync::unassign_skill_from_project(&store, &projectId, &skillId)?;
+        Ok::<_, anyhow::Error>(BulkUnassignResultDto {
+            view: view_of(&store, &projectId)?,
+            report,
         })
     })
     .await

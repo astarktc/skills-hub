@@ -158,11 +158,11 @@ function stubBackend(options: { reconciled?: boolean } = {}) {
         if (existing >= 0) rows.splice(existing, 1);
         else rows.push(assignmentRecord(projectId, skillId, tool));
         assignmentsByProject.set(projectId, rows);
-        return Promise.resolve({
-          view: view(projectId),
-          assigned: existing < 0,
-          report: existing < 0 ? null : emptyRemoval(),
-        });
+        return Promise.resolve(
+          existing < 0
+            ? { kind: "assigned", view: view(projectId), report: { items: [] } }
+            : { kind: "unassigned", view: view(projectId), report: emptyRemoval() },
+        );
       }
       case "bulkAssignSkill": {
         const [projectId, skillId] = args as Parameters<
@@ -175,28 +175,26 @@ function stubBackend(options: { reconciled?: boolean } = {}) {
           }
         }
         assignmentsByProject.set(projectId, rows);
-        return Promise.resolve({ view: view(projectId), failed: [] });
+        return Promise.resolve({ view: view(projectId), report: { items: [] } });
       }
       case "resyncProject": {
         const [projectId] = args as Parameters<Commands["resyncProject"]>;
         return Promise.resolve({
           view: view(projectId),
-          summary: {
-            project_id: projectId,
-            synced: (assignmentsByProject.get(projectId) ?? []).length,
-            failed: 0,
-            errors: [],
+          report: {
+            items: (assignmentsByProject.get(projectId) ?? []).map((a) => ({
+              assignment_id: a.id,
+              skill_id: a.skill_id,
+              skill_name: a.skill_name,
+              tool: a.tool,
+              status: { status: "synced" },
+            })),
           },
         });
       }
       case "resyncAllProjects":
         return Promise.resolve({
-          summaries: projectIds.map((id) => ({
-            project_id: id,
-            synced: 0,
-            failed: 0,
-            errors: [],
-          })),
+          report: { items: [] },
           projects: projectIds.map(projectRow),
         });
       case "updateProjectPath": {
@@ -605,7 +603,7 @@ describe("useProjectState applies the view a mutation returns", () => {
               ...settled,
               assignments: settled.assignments.map((a) => ({ ...a, status: "error", last_error: "busy" })),
             } satisfies ProjectViewDto,
-            assigned: false,
+            kind: "unassigned",
             report: kept,
           };
         });
@@ -637,7 +635,7 @@ describe("useProjectState applies the view a mutation returns", () => {
     ]);
   });
 
-  it("applies the resync view and returns its summary", async () => {
+  it("applies the resync view and returns its report", async () => {
     const { result } = await renderReady();
     await withSelectedProject(result, ["pi"]);
     await act(async () => {
@@ -653,7 +651,7 @@ describe("useProjectState applies the view a mutation returns", () => {
     });
 
     expect(commandOrder()).toEqual(["resyncProject"]);
-    expect(summary).toMatchObject({ project_id: "p1", synced: 1, failed: 0 });
+    expect(summary).toMatchObject({ items: [{ tool: "pi", status: { status: "synced" } }] });
     expect(result.current.assignments).toHaveLength(1);
   });
 

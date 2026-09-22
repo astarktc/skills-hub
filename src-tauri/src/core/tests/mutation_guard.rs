@@ -214,6 +214,19 @@ fn resync_project_is_serialized() {
     });
 }
 
+/// Bulk unassign is a Sync-target mutation entry point of its own.
+#[test]
+fn unassign_skill_from_project_is_serialized() {
+    let f = fixture("bulk-unassign-guard");
+    let store = f.store.clone();
+    let project_id = f.project.id.clone();
+    let skill_id = f.skill.id.clone();
+    assert_serialized("unassign_skill_from_project", move || {
+        project_sync::unassign_skill_from_project(&store, &project_id, &skill_id)
+            .expect("bulk unassign");
+    });
+}
+
 #[test]
 fn deleting_a_managed_skill_is_serialized() {
     let f = fixture("delete-guard");
