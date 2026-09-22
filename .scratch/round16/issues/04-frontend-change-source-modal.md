@@ -1,7 +1,7 @@
 # 04 — Frontend-B: "Change source…" on every managed skill
 
-Status: needs-info
-Blocked by: 02
+Status: ready-for-agent
+Blocked by: 02 (done — 3c48a86, merged to main)
 Spec: `.scratch/round16/spec.md` — D3, D4, D5. Read the spec first. The wire map from ticket 02's report is
 pasted under § Wire map below before this ticket is claimed.
 
@@ -52,4 +52,26 @@ local folder. The Unlocatable `source_missing` repair opens the same modal with 
 
 ## Wire map (from ticket 02)
 
-_(pasted by the orchestrator before claiming)_
+From ticket 02's report (merged to main as `3c48a86`):
+
+| Before | After |
+|---|---|
+| `repointLocalSkillSource(skillId, newPath, policy)` | removed |
+| `repointGitSkillSource(skillId, newUrl, policy)` | removed |
+| — | `repointSkillSource(skillId: string, target: RepointTarget, policy: RefreshPolicyDto) => Promise<SkillMutationResultDto>` |
+
+```ts
+export type RepointTarget =
+  | { kind: "git"; url: string }    // full GitHub repo/skill URL; stored as given (trimmed)
+  | { kind: "local"; path: string } // folder as typed or picked; "~" is expanded in the backend
+```
+
+- Removed error code: `GIT_REPOINT_REQUIRES_GIT` (already gone from `src/commandError.ts`; its i18n keys
+  `errors.gitRepointRequiresGit` at `src/i18n/resources.ts:~324` (EN) and `:~930` (ZH) are now unused — delete).
+- Unchanged: `SkillMutationResultDto` (`{ report: RefreshReport, skills }`). No progress channel.
+- Errors the modal can receive: `SOURCE_PATH_MISSING`, `SKILL_INVALID`, `LOCAL_SOURCE_INSIDE_TOOL_DIR` (local arm);
+  `INVALID_GITHUB_URL` (git arm); `NOT_FOUND`. Acquisition/finalize failures are report data (`refreshOutcome`).
+- `RepointTarget` is re-exported from `src/components/skills/types.ts`.
+- Lane 02 already switched the two `invokeTauri` call sites in `src/hooks/useSkillLibrary.ts` (`:~371` git,
+  `:~409` local) to `repointSkillSource` with the matching `target` — the hook still has today's two-path shape
+  (modal for git, inline folder picker for local); D5 replaces that with one modal.
