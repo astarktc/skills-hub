@@ -1,6 +1,6 @@
 # 01 — Backend-A: `ProjectSyncReport`, bulk unassign, Tool-dir candidates flagged at listing
 
-Status: claimed
+Status: done — 2a79874
 Spec: `.scratch/round16/spec.md` — decisions D1, D2, D6. Read the spec first; this ticket is the project-world
 backend half. Ticket 03 (frontend-A) follows the bindings you regenerate.
 
@@ -139,3 +139,5 @@ Done. Gate: `cargo fmt && cargo clippy --all-targets -- -D warnings` clean; `car
 `result.kind === "unassigned" ? result.report : null`; `AssignmentMatrix.tsx` props types + interim inline counts from
 `report.items`; `ProjectsPage.tsx` `handleBulkAssign` derives the failed list from `report.items`;
 `useProjectState.test.ts` stubs follow the new shapes.
+
+- 2026-09-22 (orchestrator) — rebased onto main (only `src/bindings/index.ts` conflicted; regenerated from the union, never hand-merged) and merged fast-forward. Deletion review: removed symbols are `ToggleAssignmentResultDto` (struct → tagged enum), `BulkAssignErrorDto`, `ResyncSummary`, `AssignTargetStatus`/`AssignTargetOutcome` (replaced by `ProjectSyncOutcome`), and the two resync signatures. Deviations 1–6 accepted; #3 (a DB read failure in resync-all fails the command) is the round-15 rule, not a regression. Gate on main: cargo 662, vitest 362, lint, build, bindings clean.
