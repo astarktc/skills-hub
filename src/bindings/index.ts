@@ -604,6 +604,11 @@ export type ProjectSyncOutcome = {
 	 *  (unknown tool) or the store failed before a row could be created.
 	 */
 	assignment_id: string | null,
+	/**
+	 *  The Project the assignment belongs to — a resync of every project
+	 *  answers one report, so the fold needs it to name the project.
+	 */
+	project_id: string,
 	skill_id: string,
 	skill_name: string,
 	/**  Registry key of the project Tool. */

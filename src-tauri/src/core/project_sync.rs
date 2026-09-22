@@ -247,6 +247,9 @@ pub struct ProjectSyncOutcome {
     /// wire) only when no row exists — the assignment itself was refused
     /// (unknown tool) or the store failed before a row could be created.
     pub assignment_id: Option<String>,
+    /// The Project the assignment belongs to — a resync of every project
+    /// answers one report, so the fold needs it to name the project.
+    pub project_id: String,
     pub skill_id: String,
     pub skill_name: String,
     /// Registry key of the project Tool.
@@ -367,6 +370,7 @@ pub(crate) fn assign_skill_to_tools(
                 };
             ProjectSyncOutcome {
                 assignment_id,
+                project_id: project.id.clone(),
                 skill_id: skill.id.clone(),
                 skill_name: skill.name.clone(),
                 tool: tool_key.clone(),
@@ -526,6 +530,7 @@ pub(crate) fn resync_project_unlocked(
         };
         report.items.push(ProjectSyncOutcome {
             assignment_id: Some(assignment.id.clone()),
+            project_id: assignment.project_id.clone(),
             skill_id: assignment.skill_id.clone(),
             skill_name: reported_skill_name(store, assignment),
             tool: assignment.tool.clone(),

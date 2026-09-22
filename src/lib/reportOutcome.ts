@@ -111,7 +111,7 @@ export function refreshOutcome(
         ctx.canRepoint?.(skill.skill_id)
           ? {
               action: {
-                label: t("gitRepoint.action"),
+                label: t("changeSource.action"),
                 skillId: skill.skill_id,
                 skillName: skill.skill_name,
               },
@@ -304,6 +304,8 @@ export function projectSyncOutcome(
   report: ProjectSyncReport,
   ctx: ReportContext & {
     action: "toggleOn" | "bulkAssign" | "resync" | "resyncAll";
+    /** Project names by id — a resync of every project names the project in each failure. */
+    projectLabelById?: Readonly<Record<string, string>>;
   },
 ): Outcome<PlainEntry> {
   const out = empty();
@@ -311,13 +313,18 @@ export function projectSyncOutcome(
   const counts = projectSyncCounts(report);
   for (const item of report.items) {
     if (item.status.status !== "failed") continue;
-    out.errors.push({
-      title: ctx.t("errors.syncFailedTitle", {
-        name: item.skill_name,
-        tool: label(ctx, item.tool),
-      }),
-      message: errorMessage(ctx, item.status.error),
-    });
+    const title =
+      ctx.action === "resyncAll"
+        ? ctx.t("errors.syncFailedInProjectTitle", {
+            name: item.skill_name,
+            tool: label(ctx, item.tool),
+            project: ctx.projectLabelById?.[item.project_id] ?? item.project_id,
+          })
+        : ctx.t("errors.syncFailedTitle", {
+            name: item.skill_name,
+            tool: label(ctx, item.tool),
+          });
+    out.errors.push({ title, message: errorMessage(ctx, item.status.error) });
   }
   const failed = counts.failed > 0;
   out.completion.closeModal = !failed;

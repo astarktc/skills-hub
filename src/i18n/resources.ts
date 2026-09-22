@@ -195,9 +195,6 @@ export const resources = {
       remove: "Remove",
       // Compatibility: src/lib/reportOutcome.ts still labels its notification
       // action with this key; retire it once that fold reads changeSource.action.
-      gitRepoint: {
-        action: "Change source…",
-      },
       changeSource: {
         action: "Change source…",
         title: "Change the source of {{name}}",
@@ -387,6 +384,7 @@ export const resources = {
         multiSelectNoCustomName:
           "Custom name is not supported when installing multiple skills. Leave it empty or select one.",
         syncFailedTitle: "Sync failed: {{name}} -> {{tool}}",
+        syncFailedInProjectTitle: "Sync failed in {{project}}: {{name}} -> {{tool}}",
         syncTargetExistsMessage:
           "Target folder already exists: {{path}}.\nFor safety it was not overwritten.\n" +
           "You can uncheck this tool or clean the folder first, then retry.",
@@ -835,9 +833,6 @@ export const resources = {
       update: "更新",
       remove: "移除",
       // 兼容：src/lib/reportOutcome.ts 仍使用此键；改用 changeSource.action 后删除。
-      gitRepoint: {
-        action: "更改来源…",
-      },
       changeSource: {
         action: "更改来源…",
         title: "更改 {{name}} 的来源",
@@ -1013,6 +1008,7 @@ export const resources = {
         multiSelectNoCustomName:
           "多选安装时不支持自定义名称，请将名称留空或仅选择一个 Skill。",
         syncFailedTitle: "同步失败：{{name}} -> {{tool}}",
+        syncFailedInProjectTitle: "{{project}} 中同步失败：{{name}} -> {{tool}}",
         syncTargetExistsMessage:
           "目标目录已存在同名 Skill：{{path}}。为安全起见未覆盖。\n你可以：取消勾选该工具，或先手动清理该目录后重试。",
         importFailedTitle: "导入失败：{{name}}",

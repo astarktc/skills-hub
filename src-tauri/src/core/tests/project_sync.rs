@@ -1104,6 +1104,7 @@ fn project_sync_report_wire_shape() {
         items: vec![
             ProjectSyncOutcome {
                 assignment_id: Some("a1".into()),
+                project_id: "p".into(),
                 skill_id: "s".into(),
                 skill_name: "skill".into(),
                 tool: "claude_code".into(),
@@ -1111,6 +1112,7 @@ fn project_sync_report_wire_shape() {
             },
             ProjectSyncOutcome {
                 assignment_id: Some("a2".into()),
+                project_id: "p".into(),
                 skill_id: "s".into(),
                 skill_name: "skill".into(),
                 tool: "cursor".into(),
@@ -1118,6 +1120,7 @@ fn project_sync_report_wire_shape() {
             },
             ProjectSyncOutcome {
                 assignment_id: None,
+                project_id: "p".into(),
                 skill_id: "s".into(),
                 skill_name: "skill".into(),
                 tool: "nope".into(),
@@ -1132,11 +1135,11 @@ fn project_sync_report_wire_shape() {
     assert_eq!(
         serde_json::to_value(&report).unwrap(),
         json!({ "items": [
-            { "assignment_id": "a1", "skill_id": "s", "skill_name": "skill",
+            { "assignment_id": "a1", "project_id": "p", "skill_id": "s", "skill_name": "skill",
               "tool": "claude_code", "status": { "status": "synced" } },
-            { "assignment_id": "a2", "skill_id": "s", "skill_name": "skill",
+            { "assignment_id": "a2", "project_id": "p", "skill_id": "s", "skill_name": "skill",
               "tool": "cursor", "status": { "status": "already_assigned" } },
-            { "assignment_id": null, "skill_id": "s", "skill_name": "skill",
+            { "assignment_id": null, "project_id": "p", "skill_id": "s", "skill_name": "skill",
               "tool": "nope", "status": { "status": "failed",
                 "error": { "code": "UNKNOWN_TOOL", "tool": "nope" } } },
         ] })

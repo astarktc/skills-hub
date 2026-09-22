@@ -249,7 +249,7 @@ describe("refreshOutcome: one precedence and completion policy", () => {
   it("returns a repair id, never a callback or captured ManagedSkill", () => {
     const out = refreshOutcome(refreshReport([failed]), ctx);
     expect(out.errors[0].action).toEqual({
-      label: "gitRepoint.action",
+      label: "changeSource.action",
       skillId: "git",
       skillName: "git",
     });
@@ -643,6 +643,7 @@ const projectItem = (
   skill = "s1",
 ): ProjectSyncOutcome => ({
   assignment_id: `p1:${skill}:${tool}`,
+  project_id: "p1",
   skill_id: skill,
   skill_name: `${skill}-name`,
   tool,
@@ -667,13 +668,16 @@ describe("projectSyncOutcome", () => {
     const before = JSON.stringify(report);
     for (const action of actions) {
       const out = projectSyncOutcome(report, { ...ctx, action });
+      // A resync of every project names the project too — the same skill × tool
+      // can fail in two projects — falling back to the id when no name is known.
+      const title = (name: string, tool: string) =>
+        action === "resyncAll"
+          ? t("errors.syncFailedInProjectTitle", { name, tool, project: "p1" })
+          : t("errors.syncFailedTitle", { name, tool });
       expect(out.errors).toEqual([
+        { title: title("s2-name", "CLAUDE"), message: "denied" },
         {
-          title: t("errors.syncFailedTitle", { name: "s2-name", tool: "CLAUDE" }),
-          message: "denied",
-        },
-        {
-          title: t("errors.syncFailedTitle", { name: "s1-name", tool: "unknown" }),
+          title: title("s1-name", "unknown"),
           message: t("errors.pathOutsideToolDirs", { path: "/x" }),
         },
       ]);
@@ -682,6 +686,18 @@ describe("projectSyncOutcome", () => {
       expect(out.completion).toEqual({ reload: false, closeModal: false, conflict: false });
     }
     expect(JSON.stringify(report)).toBe(before);
+  });
+
+  it("resync-all names the project by its label when one is supplied", () => {
+    const report: ProjectSyncReport = { items: [projectItem("claude", denied)] };
+    const out = projectSyncOutcome(report, {
+      ...ctx,
+      action: "resyncAll",
+      projectLabelById: { p1: "My App" },
+    });
+    expect(out.errors[0]?.title).toBe(
+      t("errors.syncFailedInProjectTitle", { name: "s1-name", tool: "CLAUDE", project: "My App" }),
+    );
   });
 
   it("derives the counters per action: failure outranks success", () => {

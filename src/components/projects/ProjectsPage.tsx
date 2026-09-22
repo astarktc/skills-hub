@@ -150,7 +150,12 @@ const ProjectsPage = ({
   const handleResyncAll = useCallback(async () => {
     try {
       const report = await state.resyncAll();
-      applyOutcome(projectSyncOutcome(report, { t, toolLabelById, action: "resyncAll" }));
+      const projectLabelById = Object.fromEntries(
+        state.projects.map((project) => [project.id, project.name]),
+      );
+      applyOutcome(
+        projectSyncOutcome(report, { t, toolLabelById, projectLabelById, action: "resyncAll" }),
+      );
     } catch (err) {
       notifyError(err);
     }
