@@ -302,8 +302,9 @@ pub async fn list_local_skills_cmd(
     basePath: String,
 ) -> Result<Vec<LocalSkillCandidate>, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
+        let home = home_dir()?;
         let path = std::path::PathBuf::from(basePath);
-        list_local_skills(&path)
+        list_local_skills(&home, &path)
     })
     .await
     .map_err(CommandError::internal)?

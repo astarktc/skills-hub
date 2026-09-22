@@ -144,6 +144,46 @@ fn adding_a_folder_inside_a_tool_skills_dir_is_refused_before_anything_is_writte
 /// The refusal reaches the selection flow too (it installs through
 /// `install_local_skill`), so picking a candidate under a Tool dir is refused
 /// the same way.
+/// The Add flow's local listing flags a candidate inside a Tool's skills
+/// directory before Install has to refuse it: shown (not hidden), not
+/// selectable, with the `inside_tool_dir` reason code — even when its
+/// `SKILL.md` is fine. A sibling outside every Tool dir stays valid.
+#[test]
+fn listing_flags_a_candidate_inside_a_tool_skills_dir() {
+    let (_roots, paths) = make_paths();
+
+    let claude = adapter_by_key("claude_code").unwrap();
+    let tool_dir = skills_dir_in(&paths.home, claude);
+    let taken = tool_dir.join("x");
+    fs::create_dir_all(&taken).unwrap();
+    fs::write(taken.join("SKILL.md"), b"---\nname: x\n---\n").unwrap();
+
+    // Picking the Tool dir itself lists its children as candidates.
+    let list = super::list_local_skills(&paths.home, &tool_dir).unwrap();
+    let x = list.iter().find(|c| c.subpath == "x").expect("x is listed");
+    assert!(!x.valid);
+    assert_eq!(
+        x.reason.as_deref(),
+        Some(super::INSIDE_TOOL_DIR_REASON),
+        "the Tool-dir reason wins over a well-formed manifest"
+    );
+
+    // Picking the skill folder itself (the root candidate) is flagged too.
+    let list = super::list_local_skills(&paths.home, &taken).unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].subpath, ".");
+    assert!(!list[0].valid);
+    assert_eq!(list[0].reason.as_deref(), Some("inside_tool_dir"));
+
+    // A folder outside every Tool dir is untouched by the rule.
+    let free = paths.home.join("my-skills/free");
+    fs::create_dir_all(&free).unwrap();
+    fs::write(free.join("SKILL.md"), b"---\nname: free\n---\n").unwrap();
+    let list = super::list_local_skills(&paths.home, &free).unwrap();
+    assert!(list[0].valid, "{:?}", list[0]);
+    assert_eq!(list[0].reason, None);
+}
+
 #[test]
 fn selecting_a_candidate_inside_a_tool_skills_dir_is_refused_the_same_way() {
     let (_dir, store) = make_store();
@@ -394,7 +434,8 @@ fn lists_local_skills_with_invalid_entries() {
     fs::write(base.join("skills/c/SKILL.md"), "name: C\n").unwrap();
     fs::write(base.join("skills/d/SKILL.md"), "---\ndescription: D\n---\n").unwrap();
 
-    let list = super::list_local_skills(base).unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let list = super::list_local_skills(home.path(), base).unwrap();
 
     let find = |subpath: &str| list.iter().find(|c| c.subpath == subpath).cloned();
 
@@ -810,7 +851,8 @@ fn list_local_skills_discovers_deeply_nested() {
         .unwrap();
     }
 
-    let list = super::list_local_skills(base).unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let list = super::list_local_skills(home.path(), base).unwrap();
     assert!(
         list.len() >= 2,
         "should find at least 2 deeply nested skills, found {}",
@@ -1120,7 +1162,8 @@ fn list_local_skills_reports_root_validity() {
     fs::create_dir_all(&base).unwrap();
     fs::write(base.join("SKILL.md"), "---\ndescription: x\n---\n").unwrap();
 
-    let list = super::list_local_skills(&base).unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let list = super::list_local_skills(home.path(), &base).unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].subpath, ".");
     assert_eq!(list[0].name, "root-skill");

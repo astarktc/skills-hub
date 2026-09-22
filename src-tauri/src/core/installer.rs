@@ -290,21 +290,45 @@ fn list_git_skills_with(
     })
 }
 
+/// Reason code for a local candidate whose folder lies inside a Tool's
+/// skills directory — the listing-time face of the refusal
+/// [`install_local_skill`] raises (`LocalSourceInsideToolDir`).
+pub const INSIDE_TOOL_DIR_REASON: &str = "inside_tool_dir";
+
 /// Local listing adapter: every discovered candidate is shown, with its
 /// validity and reason, so the picker can explain why a folder under a
-/// declared skills dir is not selectable.
-pub fn list_local_skills(base_path: &Path) -> Result<Vec<LocalSkillCandidate>> {
+/// declared skills dir is not selectable. A candidate inside a Tool's skills
+/// directory (the same predicate Install refuses by, `tool_holding_path`) is
+/// flagged [`INSIDE_TOOL_DIR_REASON`] — that reason wins over a manifest
+/// reason, because editing `SKILL.md` would not make it installable.
+/// `home` locates the Tool dirs; the command seam resolves it.
+pub fn list_local_skills(home: &Path, base_path: &Path) -> Result<Vec<LocalSkillCandidate>> {
     if !base_path.exists() {
         anyhow::bail!(source_path_missing(base_path));
     }
     Ok(discover_skills(base_path)
         .into_iter()
-        .map(|c| LocalSkillCandidate {
-            name: c.name,
-            description: c.description,
-            subpath: c.subpath,
-            valid: c.validity.is_valid(),
-            reason: c.validity.reason().map(str::to_string),
+        .map(|c| {
+            let folder = if c.subpath == "." {
+                base_path.to_path_buf()
+            } else {
+                base_path.join(&c.subpath)
+            };
+            let (valid, reason) = if tool_holding_path(home, &folder).is_some() {
+                (false, Some(INSIDE_TOOL_DIR_REASON.to_string()))
+            } else {
+                (
+                    c.validity.is_valid(),
+                    c.validity.reason().map(str::to_string),
+                )
+            };
+            LocalSkillCandidate {
+                name: c.name,
+                description: c.description,
+                subpath: c.subpath,
+                valid,
+                reason,
+            }
         })
         .collect())
 }
