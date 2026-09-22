@@ -1,6 +1,6 @@
 # 02 — Backend-B: one Re-point over a target enum, every provenance
 
-Status: claimed
+Status: done — 3c48a86
 Spec: `.scratch/round16/spec.md` — decisions D3, D4. Read the spec first; this ticket is the Re-point backend
 half. Ticket 04 (frontend-B) follows the bindings you regenerate.
 
@@ -124,3 +124,5 @@ must make, gate output.
   left for ticket 04.
 - **Gate**: fmt, clippy `-D warnings`, `cargo test --all` (654 + 0 + 0), `npm run build`, `npm run test` (362),
   `npm run lint`, `version:check` — all green.
+
+- 2026-09-22 (orchestrator) — merged fast-forward onto main after rebase; deletion review: the 689/155 lines removed from `tests/refresh.rs`/`tests/unlocatable.rs` are the ported Re-point tests (now `tests/repoint.rs`, 23 tests) plus the two guard tests whose conditions no longer exist. Gate on main: cargo 654, vitest 362, lint, build, bindings clean.
