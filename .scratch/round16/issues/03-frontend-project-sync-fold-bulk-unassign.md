@@ -1,7 +1,7 @@
 # 03 — Frontend-A: fold `ProjectSyncReport`, bulk unassign button, disabled Tool-dir candidates, factory rename
 
-Status: needs-info
-Blocked by: 01
+Status: ready-for-agent
+Blocked by: 01 (done — 2a79874, merged to main)
 Spec: `.scratch/round16/spec.md` — D1, D2, D6, D9. Read the spec first. The wire map from ticket 01's report is
 pasted under § Wire map below before this ticket is claimed.
 
@@ -44,4 +44,36 @@ reason. `refreshProgress` is named as the factory it is.
 
 ## Wire map (from ticket 01)
 
-_(pasted by the orchestrator before claiming)_
+From ticket 01's report (merged to main as `2a79874`). Note the status enum is `ProjectSyncOutcomeStatus`
+(not `ProjectSyncStatus` — that name was already taken by `ProjectDto.sync_status`).
+
+```ts
+export type ProjectSyncReport = { items: ProjectSyncOutcome[] };
+export type ProjectSyncOutcome = {
+  assignment_id: string | null;   // null only when no row could be created (e.g. unknown tool)
+  skill_id: string; skill_name: string; tool: string;   // tool = registry key
+  status: ProjectSyncOutcomeStatus;
+};
+export type ProjectSyncOutcomeStatus =
+  | { status: "synced" } | { status: "already_assigned" } | { status: "failed"; error: CommandError };
+```
+
+| Command | Was | Now |
+|---|---|---|
+| `toggleProjectSkillAssignment(projectId, skillId, tool)` | `{ view, assigned: boolean, report: RemovalReport \| null }` | `{ kind: "assigned"; view; report: ProjectSyncReport } \| { kind: "unassigned"; view; report: RemovalReport }` |
+| `bulkAssignSkill(projectId, skillId)` | `{ view, failed: BulkAssignErrorDto[] }` | `{ view; report: ProjectSyncReport }` (`BulkAssignErrorDto` gone) |
+| `resyncProject(projectId)` | `{ view, summary: ResyncSummary }` | `{ view; report: ProjectSyncReport }` |
+| `resyncAllProjects()` | `{ summaries: ResyncSummary[], projects }` | `{ report: ProjectSyncReport; projects: ProjectDto[] }` — one report spanning every project |
+| **new** `bulkUnassignSkill(projectId, skillId)` | — | `BulkUnassignResultDto = { view; report: RemovalReport }` |
+
+- `ResyncSummary` is gone. `CommandError` union unchanged.
+- `LocalSkillCandidate` unchanged in shape; new `reason` code `"inside_tool_dir"` (always with `valid: false`; it
+  takes precedence over `invalid_frontmatter`).
+- A sync failure inside a freshly created row comes back as `{ status: "failed", error }` **with** `assignment_id`
+  present — the cell is red in the matrix and the operator must hear about it via the fold.
+- Types re-exported from `src/components/projects/types.ts`: `ProjectSyncReport`, `ProjectSyncOutcome`,
+  `ProjectSyncOutcomeStatus`, `BulkUnassignResultDto`.
+- Lane 01 made interim build-forced edits you replace: `useProjectState.ts:~327` (toggle returns only the
+  unassigned report), `:~385–399` (resync returns `result.report`); `AssignmentMatrix.tsx:~111–116, ~138–141`
+  (counts synced/failed inline — marked interim); `ProjectsPage.tsx:~162–167` (`handleBulkAssign` builds a failed
+  list from `report.items`); `useProjectState.test.ts` stubs follow the new shapes.
