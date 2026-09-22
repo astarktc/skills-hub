@@ -567,7 +567,7 @@ fn explicit_selection_is_not_rewritten_even_when_it_equals_the_parsed_url_path()
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("x/skills/foo"),
+                subpath: "x/skills/foo",
                 resolution: None,
             }),
             &dest,
@@ -603,7 +603,7 @@ fn supplied_default_branch_selection_is_reused_and_can_clone_the_real_default() 
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("skills/a"),
+                subpath: "skills/a",
                 resolution: Some(&resolution),
             }),
             &dest,
@@ -637,7 +637,7 @@ fn supplied_explicit_branch_sha_404_never_repairs_or_clones() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("x/skills/foo"),
+                subpath: "x/skills/foo",
                 resolution: Some(&resolution),
             }),
             &dest,
@@ -845,7 +845,7 @@ fn fast_path_serves_a_subpath_and_records_the_commit_sha() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("skills/a"),
+                subpath: "skills/a",
                 resolution: None,
             }),
             &dest,
@@ -888,7 +888,7 @@ fn fast_path_is_skipped_for_the_repo_root() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("."),
+                subpath: ".",
                 resolution: None,
             }),
             &dest,
@@ -923,7 +923,7 @@ fn fast_path_can_be_disallowed_by_the_caller() {
             ..request(
                 &source,
                 SkillIntent::Selection(super::GitSelection {
-                    subpath: Some("skills/a"),
+                    subpath: "skills/a",
                     resolution: None,
                 }),
                 &dest,
@@ -954,7 +954,7 @@ fn a_source_without_github_coordinates_clones() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("skills/a"),
+                subpath: "skills/a",
                 resolution: None,
             }),
             &dest,
@@ -988,7 +988,7 @@ fn an_api_failure_falls_back_to_a_clone() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("skills/a"),
+                subpath: "skills/a",
                 resolution: None,
             }),
             &dest,
@@ -1025,7 +1025,7 @@ fn an_assumed_branch_that_does_not_exist_falls_back_to_a_clone() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("skills/a"),
+                subpath: "skills/a",
                 resolution: None,
             }),
             &dest,
@@ -1064,7 +1064,7 @@ fn a_named_branch_that_does_not_exist_is_typed_not_found() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("skills/a"),
+                subpath: "skills/a",
                 resolution: None,
             }),
             &dest,
@@ -1100,7 +1100,7 @@ fn a_missing_subpath_on_an_existing_branch_is_typed_not_found() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("skills/missing"),
+                subpath: "skills/missing",
                 resolution: None,
             }),
             &dest,
@@ -1135,7 +1135,7 @@ fn a_rate_limit_is_typed_and_never_falls_back() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("skills/a"),
+                subpath: "skills/a",
                 resolution: None,
             }),
             &dest,
@@ -1164,7 +1164,7 @@ fn a_rate_limit_without_an_eta_reports_zero() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("skills/a"),
+                subpath: "skills/a",
                 resolution: None,
             }),
             &dest,
@@ -1201,7 +1201,7 @@ fn a_typed_refusal_on_the_fast_path_is_not_retried_as_a_clone() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("skills/a"),
+                subpath: "skills/a",
                 resolution: None,
             }),
             &dest,
@@ -1238,7 +1238,7 @@ fn a_pre_cancelled_acquisition_aborts_cleanly() {
             ..request(
                 &source,
                 SkillIntent::Selection(super::GitSelection {
-                    subpath: Some("skills/a"),
+                    subpath: "skills/a",
                     resolution: None,
                 }),
                 &dest,
@@ -1277,7 +1277,7 @@ fn a_cancel_during_the_fast_path_aborts_instead_of_cloning() {
             ..request(
                 &source,
                 SkillIntent::Selection(super::GitSelection {
-                    subpath: Some("skills/a"),
+                    subpath: "skills/a",
                     resolution: None,
                 }),
                 &dest,
@@ -1314,7 +1314,7 @@ fn a_cancelled_clone_acquisition_aborts() {
             ..request(
                 &source,
                 SkillIntent::Selection(super::GitSelection {
-                    subpath: Some("."),
+                    subpath: ".",
                     resolution: None,
                 }),
                 &dest,
@@ -1348,7 +1348,7 @@ fn a_subpath_intent_fetches_sparsely() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("skills/a"),
+                subpath: "skills/a",
                 resolution: None,
             }),
             &dest,
@@ -1382,7 +1382,7 @@ fn a_missing_subpath_fails() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("skills/nope"),
+                subpath: "skills/nope",
                 resolution: None,
             }),
             &dest,
@@ -1425,7 +1425,7 @@ fn a_subpath_with_a_parent_segment_is_refused_before_anything_is_read() {
             &request(
                 &source,
                 SkillIntent::Selection(super::GitSelection {
-                    subpath: Some(subpath),
+                    subpath,
                     resolution: None,
                 }),
                 &dest,
@@ -1731,7 +1731,7 @@ fn a_subpath_that_is_an_upstream_symlink_acquires_the_targets_content() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some(BUNDLE_ALIAS),
+                subpath: BUNDLE_ALIAS,
                 resolution: None,
             }),
             &dest,
@@ -1767,7 +1767,7 @@ fn a_subpath_that_is_an_upstream_symlink_acquires_the_targets_content() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some(BUNDLE_ALIAS),
+                subpath: BUNDLE_ALIAS,
                 resolution: None,
             }),
             &refresh_dest,
@@ -1800,7 +1800,7 @@ fn a_symlinked_component_of_the_subpath_is_followed() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("plugins/tanstack-all/skills/x"),
+                subpath: "plugins/tanstack-all/skills/x",
                 resolution: None,
             }),
             &dest,
@@ -1839,7 +1839,7 @@ fn a_chain_of_two_symlinks_resolves() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("plugins/all/skills/t"),
+                subpath: "plugins/all/skills/t",
                 resolution: None,
             }),
             &dest,
@@ -1878,7 +1878,7 @@ fn a_symlink_chain_deeper_than_the_bound_is_refused() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("l0"),
+                subpath: "l0",
                 resolution: None,
             }),
             &dest,
@@ -1912,7 +1912,7 @@ fn an_absolute_symlink_target_is_refused_typed_and_never_read() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("skills/x"),
+                subpath: "skills/x",
                 resolution: None,
             }),
             &dest,
@@ -1956,7 +1956,7 @@ fn an_escaping_symlink_target_is_refused_typed_and_never_read() {
         &request(
             &source,
             SkillIntent::Selection(super::GitSelection {
-                subpath: Some("skills/x"),
+                subpath: "skills/x",
                 resolution: None,
             }),
             &dest,

@@ -348,7 +348,7 @@ pub(crate) fn install_git_skill_from_selection_with(
         store,
         repo_url,
         GitSelection {
-            subpath: Some(subpath),
+            subpath,
             resolution: None,
         },
         name,
@@ -387,9 +387,7 @@ fn install_git_selection_with(
     api: &dyn GithubApi,
 ) -> Result<InstallResult> {
     let source = parse_github_url(repo_url);
-    let subpath = selection
-        .subpath
-        .context("install requires an explicit selection")?;
+    let subpath = selection.subpath;
     let name = name_intent(name, || {
         derive_name_from_subpath(&source.clone_url, Some(subpath))
     });

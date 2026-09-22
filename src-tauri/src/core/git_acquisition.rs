@@ -83,10 +83,13 @@ pub struct GitSourceResolution {
     pub subpath: Option<String>,
 }
 
-/// An explicit repo-relative selection; absent subpath means list candidates.
-#[derive(Clone, Copy, Debug, Default)]
+/// An explicit repo-relative selection: the subpath a listing offered and
+/// the operator picked. Listing itself never goes through an intent
+/// (`list_candidates_with` builds its own resolution), so `acquire` cannot be
+/// handed "list candidates" as something to acquire.
+#[derive(Clone, Copy, Debug)]
 pub struct GitSelection<'a> {
-    pub subpath: Option<&'a str>,
+    pub subpath: &'a str,
     pub resolution: Option<&'a GitSourceResolution>,
 }
 
@@ -273,15 +276,16 @@ fn acquire_source(
     Ok(report(acquired, req))
 }
 
-/// Listing uses the same unresolved Selection intent, but needs the full
-/// checkout (not copied skill bytes). The supplied checkout adapter preserves
-/// the listing → install git-cache reuse and permits local fixtures in tests.
+/// Listing resolves the source the way an unhinted acquisition would, but
+/// needs the full checkout (not copied skill bytes). The supplied checkout
+/// adapter preserves the listing → install git-cache reuse and permits local
+/// fixtures in tests.
 pub(crate) fn list_candidates_with(
     source: &GitSource,
     api: &dyn GithubApi,
     checkout: impl FnOnce(&GitSource) -> Result<PathBuf>,
 ) -> Result<(Vec<DiscoveredSkill>, GitSourceResolution)> {
-    let resolved = Resolved::new(source, SkillIntent::Selection(GitSelection::default()), api);
+    let resolved = Resolved::listing(source, api);
     let prefix = resolved.known_subpath();
     if let Some(prefix) = prefix {
         require_plain_subpath(prefix)?;
@@ -506,7 +510,6 @@ fn resolve_subpath(
         Intent::Subpath(_) => return Ok(None),
         Intent::ByName(name) => name.as_deref(),
         Intent::Legacy(name) => Some(name.as_str()),
-        Intent::Listing => anyhow::bail!("listing intent requires the candidate listing seam"),
     };
 
     // A repo without a nested installable skill is the skill (or nothing

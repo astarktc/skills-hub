@@ -10,7 +10,6 @@ pub(super) enum Intent {
     Subpath(String),
     ByName(Option<String>),
     Legacy(String),
-    Listing,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,16 +49,14 @@ impl Resolved {
                 subpath: Some(path),
                 ..
             }
-            | SkillIntent::Selection(super::GitSelection {
-                subpath: Some(path),
-                ..
-            }) => Intent::Subpath(path.into()),
+            | SkillIntent::Selection(super::GitSelection { subpath: path, .. }) => {
+                Intent::Subpath(path.into())
+            }
             SkillIntent::StoredRecord {
                 name,
                 subpath: None,
             } => Intent::Legacy(name.into()),
             SkillIntent::ByName(name) => Intent::ByName(name.map(str::to_string)),
-            SkillIntent::Selection(_) => Intent::Listing,
         };
         // A blob root is explicit, unlike a branch consuming the whole URL.
         let intent = if source.subpath.as_deref() == Some(".")
@@ -69,6 +66,20 @@ impl Resolved {
         } else {
             intent
         };
+        Self {
+            source,
+            intent,
+            split,
+        }
+    }
+
+    /// The listing's resolution: the parser's branch/subpath, repaired from
+    /// refs when the URL's tree split is ambiguous, with the subpath the URL
+    /// named (or the repo root) as the only known prefix. Reachable only from
+    /// the candidate listing seam — never an acquisition.
+    pub fn listing(source: &GitSource, api: &dyn GithubApi) -> Self {
+        let (source, split) = resolve_tree_source(source, None, api);
+        let intent = Intent::Subpath(source.subpath.clone().unwrap_or_else(|| ".".into()));
         Self {
             source,
             intent,

@@ -373,7 +373,7 @@ pub async fn install_git_selection(
             &store,
             &repoUrl,
             crate::core::git_acquisition::GitSelection {
-                subpath: Some(&subpath),
+                subpath: &subpath,
                 resolution: resolution.as_ref(),
             },
             name,

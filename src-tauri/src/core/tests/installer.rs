@@ -1491,7 +1491,7 @@ fn listing_and_install_share_one_refs_resolution_and_old_selection_still_resolve
             &store,
             url,
             super::GitSelection {
-                subpath: Some(&candidate.subpath),
+                subpath: &candidate.subpath,
                 resolution,
             },
             None,
