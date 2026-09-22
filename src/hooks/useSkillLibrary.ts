@@ -128,9 +128,10 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
 
   /**
    * Update and Refresh-all share progress presentation, not response types.
-   * Progress ticks come from the backend, one per phase step.
+   * Progress ticks come from the backend, one per phase step. A factory, not
+   * state: every call builds a fresh Channel for one command invocation.
    */
-  const refreshProgress = useCallback(
+  const newRefreshProgressChannel = useCallback(
     async () => {
       const { Channel } = await import("@tauri-apps/api/core");
       const onProgress = new Channel<RefreshProgressDto>();
@@ -204,10 +205,10 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     if (managedSkills.length === 0) return;
     await runAction({}, async () => {
       const report = await invokeTauri("refreshManagedSkills", null,
-        { reassert_auto_sync: autoSyncEnabled }, await refreshProgress());
+        { reassert_auto_sync: autoSyncEnabled }, await newRefreshProgressChannel());
       return applyOutcome(refreshOutcome(report, foldContext));
     });
-  }, [applyOutcome, autoSyncEnabled, foldContext, managedSkills.length, refreshProgress, runAction]);
+  }, [applyOutcome, autoSyncEnabled, foldContext, managedSkills.length, newRefreshProgressChannel, runAction]);
 
   const handleUnsyncAll = useCallback(async () => {
     await runAction({}, async () => {
@@ -325,14 +326,14 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     let response: SkillMutationResultDto;
     try {
       response = await (requestRefresh ? requestRefresh() : invokeTauri("updateManagedSkill", skill.id,
-        { reassert_auto_sync: autoSyncEnabled }, await refreshProgress()));
+        { reassert_auto_sync: autoSyncEnabled }, await newRefreshProgressChannel()));
     } catch (error) {
       await loadManagedSkills();
       throw error;
     }
     setManagedSkills(response.skills);
     return applyOutcome(refreshOutcome(response.report, { ...foldContext, single: { name: skill.name, success: copy.success } }));
-  }), [applyOutcome, autoSyncEnabled, foldContext, loadManagedSkills, refreshProgress, runAction]);
+  }), [applyOutcome, autoSyncEnabled, foldContext, loadManagedSkills, newRefreshProgressChannel, runAction]);
 
   const handleUpdateManaged = useCallback(
     (skill: ManagedSkill) =>

@@ -39,6 +39,7 @@ const LocalPickModal = ({
     if (code === 'invalid_frontmatter') return t('localSkillInvalid.invalidFrontmatter')
     if (code === 'missing_name') return t('localSkillInvalid.missingName')
     if (code === 'read_failed') return t('localSkillInvalid.readFailed')
+    if (code === 'inside_tool_dir') return t('localSkillInvalid.insideToolDir')
     return t('localSkillInvalid.unknown')
   }
 

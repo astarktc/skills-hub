@@ -289,6 +289,8 @@ export const resources = {
         invalidFrontmatter: "Invalid frontmatter",
         missingName: "Missing name in frontmatter",
         readFailed: "Failed to read SKILL.md",
+        insideToolDir:
+          "This folder is a Tool's own skills copy — use Import instead",
         unknown: "Unknown issue",
       },
       toolsScanned: "Tools scanned: {{count}}",
@@ -912,6 +914,7 @@ export const resources = {
         invalidFrontmatter: "Frontmatter 格式不合法",
         missingName: "Frontmatter 缺少 name",
         readFailed: "无法读取 SKILL.md",
+        insideToolDir: "该文件夹是某个工具自己的 Skills 副本 — 请改用“导入”",
         unknown: "未知问题",
       },
       toolsScanned: "已扫描工具数：{{count}}",
