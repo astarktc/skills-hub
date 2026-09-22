@@ -1,6 +1,6 @@
 # 03 — Frontend-A: fold `ProjectSyncReport`, bulk unassign button, disabled Tool-dir candidates, factory rename
 
-Status: claimed
+Status: done — f275802
 Blocked by: 01 (done — 2a79874, merged to main)
 Spec: `.scratch/round16/spec.md` — D1, D2, D6, D9. Read the spec first. The wire map from ticket 01's report is
 pasted under § Wire map below before this ticket is claimed.
@@ -121,3 +121,5 @@ for the orchestrator to close with the merge SHA.
    (the only reason an entry carries an id), and the report already carries `skill_name`.
 3. `resyncAll` failure entries cannot name the project — `ProjectSyncOutcome` has no `project_id`. If the operator
    needs it, the backend item would have to gain one (not in this lane).
+
+- 2026-09-22 (orchestrator) — rebased onto main (lane 04 already merged; no conflicts) and merged fast-forward. Deviations 1 (Unassign All needs >1 configured tool, symmetric with All Tools) and 2 (entries carry name + tool label, no id — nothing clickable) accepted. Deviation 3 (resync-all failures cannot name the project) closed in the orchestrator sweep: `ProjectSyncOutcome.project_id` added on the wire. Gate: lint clean, vitest 374 (wait: 391 after both lanes), build ok.
