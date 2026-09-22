@@ -8,12 +8,21 @@ import type {
   ProjectSkillAssignmentDto,
   ProjectViewDto,
   ProjectSyncReport,
-  BulkAssignResultDto,
+  ResyncAllResultDto,
   GitignoreStatusDto,
   IgnoreUpdateOptions,
   RemovalReport,
 } from "./types";
 import type { ManagedSkill, ToolStatusDto } from "../skills/types";
+
+/**
+ * What a toggle did, as the backend decided it under the mutation guard:
+ * toggle-on answers with a batch-of-one sync report, toggle-off with the
+ * removal report. The view the command returned is already applied.
+ */
+export type ToggleResult =
+  | { kind: "assigned"; report: ProjectSyncReport }
+  | { kind: "unassigned"; report: RemovalReport };
 
 /**
  * Which modal the project world is showing, and what it is about. One value
@@ -69,8 +78,16 @@ export type ProjectState = {
    * the backend's settled rows.
    */
   removeProject: (id: string) => Promise<RemovalReport>;
-  toggleAssignment: (skillId: string, tool: string) => Promise<RemovalReport | null>;
-  bulkAssign: (skillId: string) => Promise<BulkAssignResultDto | undefined>;
+  /**
+   * The mutations below apply the view their command returned and resolve
+   * to its report, unread — the caller folds it. A thrown command converges
+   * on the backend's view (`refreshView`) before rethrowing. `null` /
+   * `undefined`: nothing was sent (no project selected, cell already pending).
+   */
+  toggleAssignment: (skillId: string, tool: string) => Promise<ToggleResult | null>;
+  bulkAssign: (skillId: string) => Promise<ProjectSyncReport | undefined>;
+  /** Inverse of `bulkAssign`: one skill off every Tool of the project. */
+  bulkUnassign: (skillId: string) => Promise<RemovalReport | undefined>;
   resyncProject: () => Promise<ProjectSyncReport>;
   updateProjectPath: (
     projectId: string,
@@ -304,7 +321,7 @@ export function useProjectState(): ProjectState {
   );
 
   const toggleAssignment = useCallback(
-    async (skillId: string, tool: string): Promise<RemovalReport | null> => {
+    async (skillId: string, tool: string): Promise<ToggleResult | null> => {
       if (!selectedProjectId) return null;
       const key = `${skillId}:${tool}`;
       // Prevent double-toggle while a pending operation is in flight
@@ -324,7 +341,9 @@ export function useProjectState(): ProjectState {
           tool,
         );
         applyView(result.view);
-        return result.kind === "unassigned" ? result.report : null;
+        return result.kind === "assigned"
+          ? { kind: "assigned", report: result.report }
+          : { kind: "unassigned", report: result.report };
       } catch (err) {
         // A whole-command failure may follow settled rows, so converge on
         // the backend's view before surfacing the failure.
@@ -342,7 +361,7 @@ export function useProjectState(): ProjectState {
   );
 
   const bulkAssign = useCallback(
-    async (skillId: string) => {
+    async (skillId: string): Promise<ProjectSyncReport | undefined> => {
       if (!selectedProjectId) return;
       const toolKeys = tools.map((t) => t.tool);
       const pendingKeys = toolKeys.map((tk) => `${skillId}:${tk}`);
@@ -358,7 +377,7 @@ export function useProjectState(): ProjectState {
           skillId,
         );
         applyView(result.view);
-        return result;
+        return result.report;
       } catch (err) {
         await refreshView(selectedProjectId);
         throw err;
@@ -373,6 +392,42 @@ export function useProjectState(): ProjectState {
     [selectedProjectId, tools, applyView, refreshView],
   );
 
+  const bulkUnassign = useCallback(
+    async (skillId: string): Promise<RemovalReport | undefined> => {
+      if (!selectedProjectId) return;
+      // Only the cells that hold an assignment are in flight.
+      const pendingKeys = assignments
+        .filter((a) => a.skill_id === skillId)
+        .map((a) => `${skillId}:${a.tool}`);
+      setPendingCells((prev) => {
+        const next = new Set(prev);
+        for (const k of pendingKeys) next.add(k);
+        return next;
+      });
+      try {
+        const result = await invokeTauri(
+          "bulkUnassignSkill",
+          selectedProjectId,
+          skillId,
+        );
+        // A row whose artifact stayed is kept with status `error`
+        // (ADR-0002); the view already shows it.
+        applyView(result.view);
+        return result.report;
+      } catch (err) {
+        await refreshView(selectedProjectId);
+        throw err;
+      } finally {
+        setPendingCells((prev) => {
+          const next = new Set(prev);
+          for (const k of pendingKeys) next.delete(k);
+          return next;
+        });
+      }
+    },
+    [selectedProjectId, assignments, applyView, refreshView],
+  );
+
   const updateProjectPath = useCallback(
     async (projectId: string, newPath: string): Promise<ProjectDto> => {
       const view = await invokeTauri("updateProjectPath", projectId, newPath);
@@ -384,20 +439,30 @@ export function useProjectState(): ProjectState {
 
   const resyncProject = useCallback(async (): Promise<ProjectSyncReport> => {
     if (!selectedProjectId) throw new Error("No project selected");
-    const result = await invokeTauri("resyncProject", selectedProjectId);
-    applyView(result.view);
-    return result.report;
-  }, [selectedProjectId, applyView]);
+    try {
+      const result = await invokeTauri("resyncProject", selectedProjectId);
+      applyView(result.view);
+      return result.report;
+    } catch (err) {
+      await refreshView(selectedProjectId);
+      throw err;
+    }
+  }, [selectedProjectId, applyView, refreshView]);
 
   const resyncAll = useCallback(async (): Promise<ProjectSyncReport> => {
-    const result = await invokeTauri("resyncAllProjects");
-    setProjects(result.projects);
-    // The batch touches every project; only the shown one needs its matrix.
-    if (selectedProjectId) {
-      applyView(await invokeTauri("getProjectView", selectedProjectId));
+    let result: ResyncAllResultDto;
+    try {
+      result = await invokeTauri("resyncAllProjects");
+    } catch (err) {
+      if (selectedProjectId) await refreshView(selectedProjectId);
+      throw err;
     }
+    setProjects(result.projects);
+    // The batch touches every project and answers with no view; only the
+    // shown one needs its matrix, so this read is the success path here.
+    if (selectedProjectId) await refreshView(selectedProjectId);
     return result.report;
-  }, [selectedProjectId, applyView]);
+  }, [selectedProjectId, refreshView]);
 
   const loadToolStatus = useCallback(async () => {
     const result = await invokeTauri("getProjectToolStatus");
@@ -484,6 +549,7 @@ export function useProjectState(): ProjectState {
     removeProject,
     toggleAssignment,
     bulkAssign,
+    bulkUnassign,
     resyncProject,
     updateProjectPath,
     resyncAll,

@@ -3,6 +3,7 @@ import type {
   ImportReport,
   InstallResultDto,
   InvocationEditReport,
+  ProjectSyncReport,
   PropagationOutcome,
   RefreshReport,
   RemovalReport,
@@ -60,6 +61,16 @@ function removalCounts(report: RemovalReport) {
   const counts = { removed: 0, failed: 0 };
   for (const target of report.targets)
     counts[target.status.status] += target.rows.length;
+  return counts;
+}
+
+function projectSyncCounts(report: ProjectSyncReport) {
+  const counts = { synced: 0, alreadyAssigned: 0, failed: 0 };
+  for (const { status } of report.items) {
+    if (status.status === "synced") counts.synced++;
+    else if (status.status === "already_assigned") counts.alreadyAssigned++;
+    else counts.failed++;
+  }
   return counts;
 }
 
@@ -225,10 +236,12 @@ function collectRemovalFailures(
  * and `toggle` — used by BOTH the global unsync toggle (skills world, which
  * honours `completion.reload`) and the project assignment toggle-off (projects
  * world, which applies the mutation's returned view and ignores `completion`).
+ * `bulkUnassign` is the projects world's inverse of bulk assign: one skill
+ * off every Tool of one project; it never reloads (the view came back).
  */
 export function removalOutcome(
   report: RemovalReport,
-  ctx: ReportContext & { action: "all" | "skill" | "toggle" },
+  ctx: ReportContext & { action: "all" | "skill" | "toggle" | "bulkUnassign" },
 ): Outcome<PlainEntry> {
   const out = empty();
   const counts = removalCounts(report);
@@ -239,6 +252,7 @@ export function removalOutcome(
   const nothingPlanned = !failed && report.targets.length === 0;
   out.completion.closeModal = !failed && !nothingPlanned;
   if (ctx.action === "toggle") out.completion.reload = !failed;
+  if (ctx.action === "bulkUnassign") out.completion.reload = false;
   if (nothingPlanned) {
     out.toast = { kind: "warning", message: ctx.t("unsyncNothingPlanned") };
     return out;
@@ -255,6 +269,100 @@ export function removalOutcome(
     };
   if (ctx.action === "toggle" && !failed)
     out.toast = { kind: "success", message: ctx.t("status.syncDisabled") };
+  if (ctx.action === "bulkUnassign")
+    out.toast = failed
+      ? {
+          kind: "warning",
+          message: ctx.t("projects.bulkUnassignPartial", {
+            count: counts.removed,
+            failed: counts.failed,
+          }),
+        }
+      : {
+          kind: "success",
+          message: ctx.t("projects.bulkUnassignSuccess", { count: counts.removed }),
+        };
+  return out;
+}
+
+/**
+ * Every project-assignment sync (toggle-on, bulk assign, resync of one
+ * project or of all of them) answers with one `ProjectSyncReport`. A failed
+ * item is a row the backend kept with status `error` (its cell is red); the
+ * fold names each one by skill and tool label. There is no conflict or skip
+ * outcome here, so the precedence collapses to failure › success; an
+ * `already_assigned` item is neither. Nothing reloads: the project world
+ * applies the view the mutation returned.
+ *
+ * - `toggleOn`: success confirms like the global toggle; a failure is its
+ *   error entry alone (no success claim, no summary for a batch of one).
+ * - `bulkAssign`: success counts the tools newly assigned; a failure adds
+ *   a partial summary.
+ * - `resync` / `resyncAll`: synced/failed summary, as before the report.
+ */
+export function projectSyncOutcome(
+  report: ProjectSyncReport,
+  ctx: ReportContext & {
+    action: "toggleOn" | "bulkAssign" | "resync" | "resyncAll";
+  },
+): Outcome<PlainEntry> {
+  const out = empty();
+  out.completion.reload = false;
+  const counts = projectSyncCounts(report);
+  for (const item of report.items) {
+    if (item.status.status !== "failed") continue;
+    out.errors.push({
+      title: ctx.t("errors.syncFailedTitle", {
+        name: item.skill_name,
+        tool: label(ctx, item.tool),
+      }),
+      message: errorMessage(ctx, item.status.error),
+    });
+  }
+  const failed = counts.failed > 0;
+  out.completion.closeModal = !failed;
+  const { t } = ctx;
+  switch (ctx.action) {
+    case "toggleOn":
+      if (!failed) out.toast = { kind: "success", message: t("status.syncEnabled") };
+      break;
+    case "bulkAssign":
+      out.toast = failed
+        ? {
+            kind: "warning",
+            message: t("projects.bulkAssignPartial", {
+              assigned: counts.synced,
+              failed: counts.failed,
+            }),
+          }
+        : {
+            kind: "success",
+            message:
+              counts.synced > 0
+                ? t("projects.bulkAssignSuccess", { count: counts.synced })
+                : t("projects.bulkAssignNothing"),
+          };
+      break;
+    case "resync":
+    case "resyncAll": {
+      const all = ctx.action === "resyncAll";
+      out.toast = failed
+        ? {
+            kind: "warning",
+            message: t(all ? "projects.resyncAllPartial" : "projects.resyncPartial", {
+              synced: counts.synced,
+              failed: counts.failed,
+            }),
+          }
+        : {
+            kind: "success",
+            message: t(all ? "projects.resyncAllSuccess" : "projects.resyncSuccess", {
+              synced: counts.synced,
+            }),
+          };
+      break;
+    }
+  }
   return out;
 }
 

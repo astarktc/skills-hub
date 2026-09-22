@@ -20,6 +20,8 @@ import type {
   ProjectDto,
   ProjectSkillAssignmentDto,
   ProjectToolDto,
+  ProjectSyncOutcome,
+  ProjectSyncReport,
   ProjectViewDto,
   RemovalReport,
 } from "./types";
@@ -34,7 +36,7 @@ import {
   type CommandName,
   type Commands,
 } from "../../lib/tauri";
-import { useProjectState } from "./useProjectState";
+import { useProjectState, type ToggleResult } from "./useProjectState";
 
 // The seam is generic over the command table; the stub switches on the
 // command name, so it is typed loosely (positional args, unknown result).
@@ -70,6 +72,19 @@ function assignmentRecord(
     synced_at: 1,
     content_hash: null,
     created_at: 1,
+  };
+}
+
+function syncItem(
+  row: ProjectSkillAssignmentDto,
+  status: ProjectSyncOutcome["status"] = { status: "synced" },
+): ProjectSyncOutcome {
+  return {
+    assignment_id: row.id,
+    skill_id: row.skill_id,
+    skill_name: row.skill_name,
+    tool: row.tool,
+    status,
   };
 }
 
@@ -155,40 +170,82 @@ function stubBackend(options: { reconciled?: boolean } = {}) {
         const existing = rows.findIndex(
           (a) => a.skill_id === skillId && a.tool === tool,
         );
-        if (existing >= 0) rows.splice(existing, 1);
-        else rows.push(assignmentRecord(projectId, skillId, tool));
+        if (existing >= 0) {
+          rows.splice(existing, 1);
+          assignmentsByProject.set(projectId, rows);
+          return Promise.resolve({
+            kind: "unassigned",
+            view: view(projectId),
+            report: emptyRemoval(),
+          });
+        }
+        const created = assignmentRecord(projectId, skillId, tool);
+        rows.push(created);
         assignmentsByProject.set(projectId, rows);
-        return Promise.resolve(
-          existing < 0
-            ? { kind: "assigned", view: view(projectId), report: { items: [] } }
-            : { kind: "unassigned", view: view(projectId), report: emptyRemoval() },
-        );
+        return Promise.resolve({
+          kind: "assigned",
+          view: view(projectId),
+          report: { items: [syncItem(created)] },
+        });
       }
       case "bulkAssignSkill": {
         const [projectId, skillId] = args as Parameters<
           Commands["bulkAssignSkill"]
         >;
         const rows = assignmentsByProject.get(projectId) ?? [];
+        const items: ProjectSyncOutcome[] = [];
         for (const tool of toolsByProject.get(projectId) ?? []) {
-          if (!rows.some((a) => a.skill_id === skillId && a.tool === tool)) {
-            rows.push(assignmentRecord(projectId, skillId, tool));
+          const held = rows.find((a) => a.skill_id === skillId && a.tool === tool);
+          if (held) {
+            items.push(syncItem(held, { status: "already_assigned" }));
+          } else {
+            const created = assignmentRecord(projectId, skillId, tool);
+            rows.push(created);
+            items.push(syncItem(created));
           }
         }
         assignmentsByProject.set(projectId, rows);
-        return Promise.resolve({ view: view(projectId), report: { items: [] } });
+        return Promise.resolve({ view: view(projectId), report: { items } });
+      }
+      case "bulkUnassignSkill": {
+        const [projectId, skillId] = args as Parameters<
+          Commands["bulkUnassignSkill"]
+        >;
+        const rows = assignmentsByProject.get(projectId) ?? [];
+        const removed = rows.filter((a) => a.skill_id === skillId);
+        assignmentsByProject.set(
+          projectId,
+          rows.filter((a) => a.skill_id !== skillId),
+        );
+        return Promise.resolve({
+          view: view(projectId),
+          report: {
+            targets: removed.map((a) => ({
+              path: `/work/${projectId}/${a.tool}/${skillId}`,
+              rows: [
+                {
+                  scope: "assignment",
+                  id: a.id,
+                  project_id: projectId,
+                  skill_id: skillId,
+                  tool: a.tool,
+                },
+              ],
+              status: { status: "removed" },
+            })),
+            central_removed: false,
+            record_deleted: false,
+          } satisfies RemovalReport,
+        });
       }
       case "resyncProject": {
         const [projectId] = args as Parameters<Commands["resyncProject"]>;
         return Promise.resolve({
           view: view(projectId),
           report: {
-            items: (assignmentsByProject.get(projectId) ?? []).map((a) => ({
-              assignment_id: a.id,
-              skill_id: a.skill_id,
-              skill_name: a.skill_name,
-              tool: a.tool,
-              status: { status: "synced" },
-            })),
+            items: (assignmentsByProject.get(projectId) ?? []).map((a) =>
+              syncItem(a),
+            ),
           },
         });
       }
@@ -552,7 +609,14 @@ describe("useProjectState applies the view a mutation returns", () => {
     mockInvoke.mockClear();
 
     await act(async () => {
-      expect(await result.current.toggleAssignment("s1", "claude_code")).toBeNull();
+      expect(await result.current.toggleAssignment("s1", "claude_code")).toEqual({
+        kind: "assigned",
+        report: {
+          items: [
+            syncItem(assignmentRecord("p1", "s1", "claude_code")),
+          ],
+        },
+      } satisfies ToggleResult);
     });
     expect(result.current.assignments.map((a) => a.skill_id)).toEqual(["s1"]);
     expect(
@@ -560,7 +624,10 @@ describe("useProjectState applies the view a mutation returns", () => {
     ).toBe(1);
 
     await act(async () => {
-      expect(await result.current.toggleAssignment("s1", "claude_code")).toEqual(emptyRemoval());
+      expect(await result.current.toggleAssignment("s1", "claude_code")).toEqual({
+        kind: "unassigned",
+        report: emptyRemoval(),
+      } satisfies ToggleResult);
     });
     expect(result.current.assignments).toEqual([]);
 
@@ -612,7 +679,10 @@ describe("useProjectState applies the view a mutation returns", () => {
     });
     mockInvoke.mockClear();
     await act(async () => {
-      expect(await result.current.toggleAssignment("s1", "pi")).toEqual(kept);
+      expect(await result.current.toggleAssignment("s1", "pi")).toEqual({
+        kind: "unassigned",
+        report: kept,
+      } satisfies ToggleResult);
     });
     expect(commandOrder()).toEqual(["toggleProjectSkillAssignment"]);
     expect(result.current.assignments.map((a) => a.status)).toEqual(["error"]);
@@ -624,8 +694,9 @@ describe("useProjectState applies the view a mutation returns", () => {
     await withSelectedProject(result, ["pi", "cursor"]);
     mockInvoke.mockClear();
 
+    let report: ProjectSyncReport | undefined;
     await act(async () => {
-      await result.current.bulkAssign("s1");
+      report = await result.current.bulkAssign("s1");
     });
 
     expect(commandOrder()).toEqual(["bulkAssignSkill"]);
@@ -633,6 +704,152 @@ describe("useProjectState applies the view a mutation returns", () => {
       "pi",
       "cursor",
     ]);
+    // The report is handed back unread — counters are the fold's business.
+    expect(report?.items.map((i) => [i.tool, i.status.status])).toEqual([
+      ["pi", "synced"],
+      ["cursor", "synced"],
+    ]);
+    expect(result.current.pendingCells.size).toBe(0);
+  });
+
+  it("returns a toggle-on sync failure as report data with the kept error row applied", async () => {
+    // A sync failure inside a freshly created row is not a thrown command:
+    // the backend keeps the row with status `error` and reports it failed.
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    const failure: CommandError = { code: "OTHER", message: "denied" };
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) => {
+      if (command === "toggleProjectSkillAssignment") {
+        return base(command, ...args).then((raw) => {
+          const answered = raw as Extract<
+            Awaited<ReturnType<Commands["toggleProjectSkillAssignment"]>>,
+            { kind: "assigned" }
+          >;
+          return {
+            kind: "assigned",
+            view: {
+              ...answered.view,
+              assignments: answered.view.assignments.map((a) => ({
+                ...a,
+                status: "error",
+                last_error: "denied",
+              })),
+            } satisfies ProjectViewDto,
+            report: {
+              items: answered.report.items.map((i) => ({
+                ...i,
+                status: { status: "failed", error: failure },
+              })),
+            },
+          };
+        });
+      }
+      return base(command, ...args);
+    });
+    mockInvoke.mockClear();
+
+    let toggled: ToggleResult | null = null;
+    await act(async () => {
+      toggled = await result.current.toggleAssignment("s1", "pi");
+    });
+
+    expect(toggled).toMatchObject({
+      kind: "assigned",
+      report: { items: [{ tool: "pi", status: { status: "failed", error: failure } }] },
+    });
+    expect(commandOrder()).toEqual(["toggleProjectSkillAssignment"]);
+    expect(result.current.assignments.map((a) => a.status)).toEqual(["error"]);
+  });
+
+  it("bulk-unassigns one skill from every tool, applying the view and returning the removal report", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi", "cursor", "claude_code"]);
+    await act(async () => {
+      await result.current.bulkAssign("s1");
+    });
+    await act(async () => {
+      await result.current.toggleAssignment("s2", "pi");
+    });
+    // s1 comes off cursor by hand first: only its remaining cells are in flight.
+    await act(async () => {
+      await result.current.toggleAssignment("s1", "cursor");
+    });
+    const base = mockInvoke.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "bulkUnassignSkill"
+        ? gate.then(() => base(command, ...args))
+        : base(command, ...args),
+    );
+    mockInvoke.mockClear();
+
+    let pending!: Promise<RemovalReport | undefined>;
+    act(() => {
+      pending = result.current.bulkUnassign("s1");
+    });
+    expect([...result.current.pendingCells].sort()).toEqual([
+      "s1:claude_code",
+      "s1:pi",
+    ]);
+    let report: RemovalReport | undefined;
+    await act(async () => {
+      release();
+      report = await pending;
+    });
+
+    expect(commandOrder()).toEqual(["bulkUnassignSkill"]);
+    expect(callsTo("bulkUnassignSkill")).toEqual([["p1", "s1"]]);
+    expect(report?.targets.flatMap((t) => t.rows.map((r) => r.tool)).sort()).toEqual([
+      "claude_code",
+      "pi",
+    ]);
+    // Only s1 left the project; s2 is untouched.
+    expect(result.current.assignments.map((a) => `${a.skill_id}:${a.tool}`)).toEqual([
+      "s2:pi",
+    ]);
+    expect(result.current.pendingCells.size).toBe(0);
+  });
+
+  it("converges on the backend's view when bulk unassign throws", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi", "cursor"]);
+    await act(async () => {
+      await result.current.bulkAssign("s1");
+    });
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "bulkUnassignSkill"
+        ? Promise.reject({ code: "OTHER", message: "database is locked" } satisfies CommandError)
+        : base(command, ...args),
+    );
+    mockInvoke.mockClear();
+
+    await act(async () => {
+      await expect(result.current.bulkUnassign("s1")).rejects.toMatchObject({
+        code: "OTHER",
+      });
+    });
+
+    expect(commandOrder()).toEqual(["bulkUnassignSkill", "getProjectView"]);
+    expect(result.current.assignments).toHaveLength(2);
+    expect(result.current.pendingCells.size).toBe(0);
+  });
+
+  it("sends nothing for bulk actions without a selected project", async () => {
+    const { result } = await renderReady();
+    mockInvoke.mockClear();
+
+    await act(async () => {
+      expect(await result.current.bulkAssign("s1")).toBeUndefined();
+      expect(await result.current.bulkUnassign("s1")).toBeUndefined();
+      expect(await result.current.toggleAssignment("s1", "pi")).toBeNull();
+    });
+
+    expect(commandOrder()).toEqual([]);
   });
 
   it("applies the resync view and returns its report", async () => {
@@ -653,6 +870,65 @@ describe("useProjectState applies the view a mutation returns", () => {
     expect(commandOrder()).toEqual(["resyncProject"]);
     expect(summary).toMatchObject({ items: [{ tool: "pi", status: { status: "synced" } }] });
     expect(result.current.assignments).toHaveLength(1);
+  });
+
+  it("converges on the backend's view when a resync throws", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "resyncProject" || command === "resyncAllProjects"
+        ? Promise.reject({ code: "OTHER", message: "busy" } satisfies CommandError)
+        : base(command, ...args),
+    );
+    mockInvoke.mockClear();
+
+    await act(async () => {
+      await expect(result.current.resyncProject()).rejects.toMatchObject({ code: "OTHER" });
+    });
+    await act(async () => {
+      await expect(result.current.resyncAll()).rejects.toMatchObject({ code: "OTHER" });
+    });
+
+    expect(commandOrder()).toEqual([
+      "resyncProject",
+      "getProjectView",
+      "resyncAllProjects",
+      "getProjectView",
+    ]);
+  });
+
+  it("resync-all returns the one report spanning every project and re-reads only the shown matrix", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    const spanning: ProjectSyncReport = {
+      items: [
+        syncItem(assignmentRecord("p1", "s1", "pi")),
+        syncItem(assignmentRecord("p9", "s1", "pi"), {
+          status: "failed",
+          error: { code: "OTHER", message: "denied" },
+        }),
+      ],
+    };
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "resyncAllProjects"
+        ? base(command, ...args).then((raw) => ({
+            ...(raw as Awaited<ReturnType<Commands["resyncAllProjects"]>>),
+            report: spanning,
+          }))
+        : base(command, ...args),
+    );
+    mockInvoke.mockClear();
+
+    let report: ProjectSyncReport | undefined;
+    await act(async () => {
+      report = await result.current.resyncAll();
+    });
+
+    expect(report).toEqual(spanning);
+    expect(commandOrder()).toEqual(["resyncAllProjects", "getProjectView"]);
+    expect(callsTo("getProjectView")).toEqual([["p1"]]);
   });
 
   it("takes the remaining project list straight from removeProject", async () => {
@@ -805,7 +1081,7 @@ describe("useProjectState selection and matrix agree", () => {
       }
       return base(command, ...args);
     });
-    let toggle!: Promise<RemovalReport | null>;
+    let toggle!: Promise<ToggleResult | null>;
     act(() => {
       toggle = result.current.toggleAssignment("s1", "pi");
     });

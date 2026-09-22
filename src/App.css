@@ -3394,7 +3394,14 @@
   opacity: 1;
 }
 
-.matrix-all-tools-btn {
+.matrix-bulk-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.matrix-all-tools-btn,
+.matrix-unassign-all-btn {
   white-space: nowrap;
 }
 

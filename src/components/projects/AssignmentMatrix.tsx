@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useMemo, useState } from "react";
+import React, { memo, useMemo, useState } from "react";
 import {
   TriangleAlert,
   ArrowUpDown,
@@ -12,13 +12,8 @@ import type {
   ProjectDto,
   ProjectSkillAssignmentDto,
   ProjectToolDto,
-  ProjectSyncReport,
 } from "./types";
 import type { ManagedSkill } from "../skills/types";
-import type {
-  NotifyErrorFn,
-  NotifyFn,
-} from "../../hooks/useStatusReporter";
 import { SYNC_STATUS_CLASS } from "../../syncStatus";
 import {
   filterAndSortSkills,
@@ -43,13 +38,11 @@ export type AssignmentMatrixProps = {
   matrixLoading: boolean;
   onToggleAssignment: (skillId: string, tool: string) => Promise<void>;
   onBulkAssign: (skillId: string) => Promise<void>;
-  onResyncProject: () => Promise<ProjectSyncReport>;
-  onResyncAll: () => Promise<ProjectSyncReport>;
+  onBulkUnassign: (skillId: string) => Promise<void>;
+  /** Resync handlers own their outcome (the page folds the report). */
+  onResyncProject: () => Promise<void>;
+  onResyncAll: () => Promise<void>;
   onConfigureTools: () => void;
-  /** The reporter's notification entry point, handed down by the page. */
-  notify: NotifyFn;
-  /** The reporter's command-failure entry point: `notifyError(err)`. */
-  notifyError: NotifyErrorFn;
   t: TFunction;
 };
 
@@ -63,11 +56,10 @@ const AssignmentMatrix = ({
   matrixLoading,
   onToggleAssignment,
   onBulkAssign,
+  onBulkUnassign,
   onResyncProject,
   onResyncAll,
   onConfigureTools,
-  notify,
-  notifyError,
   t,
 }: AssignmentMatrixProps) => {
   const lastSyncAt = useMemo(() => {
@@ -105,58 +97,6 @@ const AssignmentMatrix = ({
   }, [assignments]);
 
   const pathMissing = project ? !project.path_exists : false;
-
-  const handleResyncProject = useCallback(async () => {
-    try {
-      const report = await onResyncProject();
-      // Interim counts until ticket 03 folds the report in reportOutcome.ts.
-      const summary = {
-        synced: report.items.filter((i) => i.status.status === "synced").length,
-        failed: report.items.filter((i) => i.status.status === "failed").length,
-      };
-      if (summary.failed > 0) {
-        notify(
-          "warning",
-          t("projects.resyncPartial", {
-            synced: summary.synced,
-            failed: summary.failed,
-          }),
-        );
-      } else {
-        notify(
-          "success",
-          t("projects.resyncSuccess", { synced: summary.synced }),
-        );
-      }
-    } catch (err) {
-      notifyError(err);
-    }
-  }, [notify, notifyError, onResyncProject, t]);
-
-  const handleResyncAll = useCallback(async () => {
-    try {
-      const report = await onResyncAll();
-      // Interim counts until ticket 03 folds the report in reportOutcome.ts.
-      const totalSynced = report.items.filter((i) => i.status.status === "synced").length;
-      const totalFailed = report.items.filter((i) => i.status.status === "failed").length;
-      if (totalFailed > 0) {
-        notify(
-          "warning",
-          t("projects.resyncPartial", {
-            synced: totalSynced,
-            failed: totalFailed,
-          }),
-        );
-      } else {
-        notify(
-          "success",
-          t("projects.resyncSuccess", { synced: totalSynced }),
-        );
-      }
-    } catch (err) {
-      notifyError(err);
-    }
-  }, [notify, notifyError, onResyncAll, t]);
 
   if (!project) {
     return (
@@ -218,7 +158,7 @@ const AssignmentMatrix = ({
           </button>
           <button
             className="btn btn-primary btn-sm"
-            onClick={handleResyncProject}
+            onClick={() => void onResyncProject()}
             disabled={pathMissing}
             title={
               pathMissing
@@ -231,7 +171,7 @@ const AssignmentMatrix = ({
           </button>
           <button
             className="btn btn-secondary btn-sm"
-            onClick={handleResyncAll}
+            onClick={() => void onResyncAll()}
             disabled={pathMissing}
             title={
               pathMissing
@@ -314,9 +254,9 @@ const AssignmentMatrix = ({
                           assignmentMap={assignmentMap}
                           pendingCells={pendingCells}
                           disabled={pathMissing}
-                          showBulkAssign={tools.length > 1}
                           onToggleAssignment={onToggleAssignment}
                           onBulkAssign={onBulkAssign}
+                          onBulkUnassign={onBulkUnassign}
                           t={t}
                         />
                       ))}
@@ -330,9 +270,9 @@ const AssignmentMatrix = ({
                       assignmentMap={assignmentMap}
                       pendingCells={pendingCells}
                       disabled={pathMissing}
-                      showBulkAssign={tools.length > 1}
                       onToggleAssignment={onToggleAssignment}
                       onBulkAssign={onBulkAssign}
+                      onBulkUnassign={onBulkUnassign}
                       t={t}
                     />
                   ))}
@@ -350,9 +290,9 @@ type MatrixRowProps = {
   assignmentMap: Map<string, ProjectSkillAssignmentDto>;
   pendingCells: Set<string>;
   disabled: boolean;
-  showBulkAssign: boolean;
   onToggleAssignment: (skillId: string, tool: string) => Promise<void>;
   onBulkAssign: (skillId: string) => Promise<void>;
+  onBulkUnassign: (skillId: string) => Promise<void>;
   t: TFunction;
 };
 
@@ -371,11 +311,20 @@ const MatrixRow = memo(
     assignmentMap,
     pendingCells,
     disabled,
-    showBulkAssign,
     onToggleAssignment,
     onBulkAssign,
+    onBulkUnassign,
     t,
   }: MatrixRowProps) => {
+    // Bulk actions only earn a column when there is more than one Tool (a
+    // single checkbox already is "all"). Bulk assign hides once the row is
+    // saturated; its inverse shows once the skill holds any assignment here.
+    const cellKeys = tools.map((tool) => `${skill.id}:${tool.tool}`);
+    const assignedCount = cellKeys.filter((key) => assignmentMap.has(key)).length;
+    const multiTool = tools.length > 1;
+    const showBulkAssign = multiTool && assignedCount < tools.length;
+    const showBulkUnassign = multiTool && assignedCount > 0;
+    const rowPending = cellKeys.some((key) => pendingCells.has(key));
     return (
       <tr className="matrix-row">
         <td
@@ -441,15 +390,28 @@ const MatrixRow = memo(
           );
         })}
         <td>
-          {showBulkAssign && (
-            <button
-              className="btn btn-xs matrix-all-tools-btn"
-              onClick={() => onBulkAssign(skill.id)}
-              disabled={disabled}
-            >
-              {t("projects.allTools")}
-            </button>
-          )}
+          <div className="matrix-bulk-actions">
+            {showBulkAssign && (
+              <button
+                className="btn btn-xs matrix-all-tools-btn"
+                onClick={() => onBulkAssign(skill.id)}
+                disabled={disabled || rowPending}
+                title={t("projects.allToolsTitle", { name: skill.name })}
+              >
+                {t("projects.allTools")}
+              </button>
+            )}
+            {showBulkUnassign && (
+              <button
+                className="btn btn-xs matrix-unassign-all-btn"
+                onClick={() => onBulkUnassign(skill.id)}
+                disabled={disabled || rowPending}
+                title={t("projects.unassignAllTitle", { name: skill.name })}
+              >
+                {t("projects.unassignAll")}
+              </button>
+            )}
+          </div>
         </td>
       </tr>
     );
@@ -459,9 +421,9 @@ const MatrixRow = memo(
     if (prev.tools !== next.tools) return false;
     if (prev.assignmentMap !== next.assignmentMap) return false;
     if (prev.disabled !== next.disabled) return false;
-    if (prev.showBulkAssign !== next.showBulkAssign) return false;
     if (prev.onToggleAssignment !== next.onToggleAssignment) return false;
     if (prev.onBulkAssign !== next.onBulkAssign) return false;
+    if (prev.onBulkUnassign !== next.onBulkUnassign) return false;
     if (prev.t !== next.t) return false;
     return setsEqual(prev.pendingCells, next.pendingCells);
   },
@@ -478,6 +440,7 @@ export default memo(AssignmentMatrix, (prev, next) => {
   if (prev.matrixLoading !== next.matrixLoading) return false;
   if (prev.onToggleAssignment !== next.onToggleAssignment) return false;
   if (prev.onBulkAssign !== next.onBulkAssign) return false;
+  if (prev.onBulkUnassign !== next.onBulkUnassign) return false;
   if (prev.onResyncProject !== next.onResyncProject) return false;
   if (prev.onResyncAll !== next.onResyncAll) return false;
   if (prev.onConfigureTools !== next.onConfigureTools) return false;

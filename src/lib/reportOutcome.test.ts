@@ -6,6 +6,8 @@ import type {
   ImportReport,
   InstallResultDto,
   InvocationEditReport,
+  ProjectSyncOutcome,
+  ProjectSyncReport,
   RefreshReport,
   RemovalReport,
   SkillRefreshOutcome,
@@ -16,6 +18,7 @@ import {
   importOutcome,
   installOutcome,
   projectRemovalOutcome,
+  projectSyncOutcome,
   refreshOutcome,
   removalOutcome,
   syncOutcome,
@@ -477,7 +480,7 @@ describe("removalOutcome", () => {
   );
   it("a zero-target report warns instead of claiming an unsync happened", () => {
     const nothing: RemovalReport = { targets: [], central_removed: false, record_deleted: false };
-    for (const action of ["all", "skill", "toggle"] as const) {
+    for (const action of ["all", "skill", "toggle", "bulkUnassign"] as const) {
       const out = removalOutcome(nothing, { ...ctx, action });
       expect(out.toast).toEqual({
         kind: "warning",
@@ -486,6 +489,49 @@ describe("removalOutcome", () => {
       expect(out.errors).toEqual([]);
       expect(out.completion.closeModal).toBe(false);
     }
+  });
+  it("bulk unassign counts removed rows, names kept ones, and never reloads", () => {
+    const report: RemovalReport = {
+      targets: [
+        {
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude" }],
+          path: "/work/p1/.claude/skills/s1",
+          status: { status: "removed" },
+        },
+        {
+          rows: [{ scope: "assignment", id: "a2", project_id: "p1", skill_id: "s1", tool: "pi" }],
+          path: "/work/p1/.pi/skills/s1",
+          status: { status: "removed" },
+        },
+      ],
+      central_removed: false,
+      record_deleted: false,
+    };
+    expect(removalOutcome(report, { ...ctx, action: "bulkUnassign" })).toEqual({
+      toast: { kind: "success", message: t("projects.bulkUnassignSuccess", { count: 2 }) },
+      errors: [],
+      warnings: [],
+      completion: { reload: false, closeModal: true, conflict: false },
+    });
+    const kept: RemovalReport = {
+      ...report,
+      targets: [
+        report.targets[0],
+        {
+          ...report.targets[1],
+          status: { status: "failed", error: { code: "OTHER", message: "busy" } },
+        },
+      ],
+    };
+    expect(removalOutcome(kept, { ...ctx, action: "bulkUnassign" })).toEqual({
+      toast: {
+        kind: "warning",
+        message: t("projects.bulkUnassignPartial", { count: 1, failed: 1 }),
+      },
+      errors: [{ title: t("errors.unsyncFailedTitle", { tool: "pi" }), message: "busy" }],
+      warnings: [],
+      completion: { reload: false, closeModal: false, conflict: false },
+    });
   });
   it("a project removal reports each kept target and keeps its modal open", () => {
     const report: RemovalReport = {
@@ -588,6 +634,144 @@ describe("removalOutcome", () => {
       warnings: [],
       completion: { reload: true, closeModal: true, conflict: false },
     });
+  });
+});
+
+const projectItem = (
+  tool: string,
+  status: ProjectSyncOutcome["status"],
+  skill = "s1",
+): ProjectSyncOutcome => ({
+  assignment_id: `p1:${skill}:${tool}`,
+  skill_id: skill,
+  skill_name: `${skill}-name`,
+  tool,
+  status,
+});
+const denied = { status: "failed", error: { code: "OTHER", message: "denied" } } as const;
+describe("projectSyncOutcome", () => {
+  const actions = ["toggleOn", "bulkAssign", "resync", "resyncAll"] as const;
+
+  it("names every failed row by skill and tool label with the typed error copy, in report order", () => {
+    const report: ProjectSyncReport = {
+      items: [
+        projectItem("claude", { status: "synced" }),
+        projectItem("claude", denied, "s2"),
+        projectItem("pi", { status: "already_assigned" }),
+        projectItem("unknown", {
+          status: "failed",
+          error: { code: "PATH_OUTSIDE_TOOL_DIRS", path: "/x" },
+        }),
+      ],
+    };
+    const before = JSON.stringify(report);
+    for (const action of actions) {
+      const out = projectSyncOutcome(report, { ...ctx, action });
+      expect(out.errors).toEqual([
+        {
+          title: t("errors.syncFailedTitle", { name: "s2-name", tool: "CLAUDE" }),
+          message: "denied",
+        },
+        {
+          title: t("errors.syncFailedTitle", { name: "s1-name", tool: "unknown" }),
+          message: t("errors.pathOutsideToolDirs", { path: "/x" }),
+        },
+      ]);
+      expect(out.warnings).toEqual([]);
+      // The project world applies the view the mutation returned.
+      expect(out.completion).toEqual({ reload: false, closeModal: false, conflict: false });
+    }
+    expect(JSON.stringify(report)).toBe(before);
+  });
+
+  it("derives the counters per action: failure outranks success", () => {
+    const mixed: ProjectSyncReport = {
+      items: [
+        projectItem("claude", { status: "synced" }),
+        projectItem("pi", { status: "synced" }),
+        projectItem("cursor", { status: "already_assigned" }),
+        projectItem("codex", denied),
+      ],
+    };
+    const toasts = Object.fromEntries(
+      actions.map((action) => [action, projectSyncOutcome(mixed, { ...ctx, action }).toast]),
+    );
+    expect(toasts).toEqual({
+      // A failed batch-of-one is its error entry alone, never a success claim.
+      toggleOn: null,
+      bulkAssign: {
+        kind: "warning",
+        message: t("projects.bulkAssignPartial", { assigned: 2, failed: 1 }),
+      },
+      resync: {
+        kind: "warning",
+        message: t("projects.resyncPartial", { synced: 2, failed: 1 }),
+      },
+      resyncAll: {
+        kind: "warning",
+        message: t("projects.resyncAllPartial", { synced: 2, failed: 1 }),
+      },
+    });
+  });
+
+  it("a clean report succeeds with per-action copy and closes", () => {
+    const clean: ProjectSyncReport = {
+      items: [
+        projectItem("claude", { status: "synced" }),
+        projectItem("pi", { status: "already_assigned" }),
+      ],
+    };
+    const outs = Object.fromEntries(
+      actions.map((action) => [action, projectSyncOutcome(clean, { ...ctx, action })]),
+    );
+    expect(outs.toggleOn.toast).toEqual({ kind: "success", message: "status.syncEnabled" });
+    expect(outs.bulkAssign.toast).toEqual({
+      kind: "success",
+      message: t("projects.bulkAssignSuccess", { count: 1 }),
+    });
+    expect(outs.resync.toast).toEqual({
+      kind: "success",
+      message: t("projects.resyncSuccess", { synced: 1 }),
+    });
+    expect(outs.resyncAll.toast).toEqual({
+      kind: "success",
+      message: t("projects.resyncAllSuccess", { synced: 1 }),
+    });
+    for (const out of Object.values(outs)) {
+      expect(out.errors).toEqual([]);
+      expect(out.completion).toEqual({ reload: false, closeModal: true, conflict: false });
+    }
+  });
+
+  it("a saturated bulk assign says so instead of counting zero; an empty resync still reports", () => {
+    const saturated: ProjectSyncReport = {
+      items: [projectItem("claude", { status: "already_assigned" })],
+    };
+    expect(projectSyncOutcome(saturated, { ...ctx, action: "bulkAssign" }).toast).toEqual({
+      kind: "success",
+      message: "projects.bulkAssignNothing",
+    });
+    expect(projectSyncOutcome({ items: [] }, { ...ctx, action: "resync" }).toast).toEqual({
+      kind: "success",
+      message: t("projects.resyncSuccess", { synced: 0 }),
+    });
+  });
+
+  it("carries the new copy in both locales", () => {
+    const en = resources.en.translation.projects;
+    const zh = resources.zh.translation.projects;
+    for (const catalog of [en, zh]) {
+      expect(catalog.bulkAssignSuccess_other).toContain("{{count}}");
+      expect(catalog.bulkUnassignSuccess_other).toContain("{{count}}");
+      expect(catalog.bulkUnassignPartial).toContain("{{failed}}");
+      expect(catalog.resyncAllPartial).toContain("{{failed}}");
+      expect(catalog.resyncAllSuccess).toContain("{{synced}}");
+    }
+    expect(en.bulkAssignSuccess_one).toBe("Assigned to {{count}} tool");
+    expect(resources.en.translation.localSkillInvalid.insideToolDir).toBe(
+      "This folder is a Tool's own skills copy — use Import instead",
+    );
+    expect(resources.zh.translation.localSkillInvalid.insideToolDir).toBeTruthy();
   });
 });
 

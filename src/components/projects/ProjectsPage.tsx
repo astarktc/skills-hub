@@ -2,8 +2,13 @@ import { memo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
-import { describeCommandError } from "../../commandError";
-import { projectRemovalOutcome, removalOutcome, type Outcome, type PlainEntry } from "../../lib/reportOutcome";
+import {
+  projectRemovalOutcome,
+  projectSyncOutcome,
+  removalOutcome,
+  type Outcome,
+  type PlainEntry,
+} from "../../lib/reportOutcome";
 import { useProjectState } from "./useProjectState";
 import ProjectList from "./ProjectList";
 import AssignmentMatrix from "./AssignmentMatrix";
@@ -42,9 +47,9 @@ const ProjectsPage = ({
   const { t } = useTranslation();
   const state = useProjectState();
 
-  // Per-target removal outcomes (ADR-0002) are report data: the fold decides
-  // the entries and the toast; this only shows them and reports whether the
-  // modal may close.
+  // Per-target outcomes (removal under ADR-0002, project sync) are report
+  // data: the fold decides the entries and the toast; this only shows them
+  // and reports whether the modal may close.
   const applyOutcome = useCallback(
     (outcome: Outcome<PlainEntry>) => {
       showActionErrors(outcome.errors);
@@ -134,20 +139,33 @@ const ProjectsPage = ({
   );
 
   const handleResyncProject = useCallback(async () => {
-    return await state.resyncProject();
-  }, [state]);
+    try {
+      const report = await state.resyncProject();
+      applyOutcome(projectSyncOutcome(report, { t, toolLabelById, action: "resync" }));
+    } catch (err) {
+      notifyError(err);
+    }
+  }, [applyOutcome, notifyError, state, t, toolLabelById]);
 
   const handleResyncAll = useCallback(async () => {
-    return await state.resyncAll();
-  }, [state]);
+    try {
+      const report = await state.resyncAll();
+      applyOutcome(projectSyncOutcome(report, { t, toolLabelById, action: "resyncAll" }));
+    } catch (err) {
+      notifyError(err);
+    }
+  }, [applyOutcome, notifyError, state, t, toolLabelById]);
 
   const handleToggleAssignment = useCallback(
     async (skillId: string, tool: string) => {
       try {
-        const report = await state.toggleAssignment(skillId, tool);
-        if (report) {
-          applyOutcome(removalOutcome(report, { t, toolLabelById, action: "toggle" }));
-        }
+        const result = await state.toggleAssignment(skillId, tool);
+        if (!result) return;
+        applyOutcome(
+          result.kind === "assigned"
+            ? projectSyncOutcome(result.report, { t, toolLabelById, action: "toggleOn" })
+            : removalOutcome(result.report, { t, toolLabelById, action: "toggle" }),
+        );
       } catch (err) {
         notifyError(err);
       }
@@ -158,30 +176,29 @@ const ProjectsPage = ({
   const handleBulkAssign = useCallback(
     async (skillId: string) => {
       try {
-        const result = await state.bulkAssign(skillId);
-        // Interim until ticket 03 folds the report in reportOutcome.ts.
-        const failed = (result?.report.items ?? []).flatMap((item) =>
-          item.status.status === "failed" ? [{ tool: item.tool, error: item.status.error }] : [],
-        );
-        if (failed.length > 0) {
-          const details = failed
-            .map(
-              (f) =>
-                `${f.tool}: ${describeCommandError(f.error, t) ?? f.error.code}`,
-            )
-            .join(", ");
-          notify(
-            "warning",
-            t("projects.bulkAssignFailed", {
-              details,
-            }),
-          );
-        }
+        const report = await state.bulkAssign(skillId);
+        if (report)
+          applyOutcome(projectSyncOutcome(report, { t, toolLabelById, action: "bulkAssign" }));
       } catch (err) {
         notifyError(err);
       }
     },
-    [notify, notifyError, state, t],
+    [applyOutcome, notifyError, state, t, toolLabelById],
+  );
+
+  // No confirmation, symmetric with bulk assign: a removed link is
+  // re-assignable, not data loss (round 16 D2).
+  const handleBulkUnassign = useCallback(
+    async (skillId: string) => {
+      try {
+        const report = await state.bulkUnassign(skillId);
+        if (report)
+          applyOutcome(removalOutcome(report, { t, toolLabelById, action: "bulkUnassign" }));
+      } catch (err) {
+        notifyError(err);
+      }
+    },
+    [applyOutcome, notifyError, state, t, toolLabelById],
   );
 
   const handleConfigureToolsFromToolbar = useCallback(async () => {
@@ -256,11 +273,10 @@ const ProjectsPage = ({
                   matrixLoading={state.matrixLoading}
                   onToggleAssignment={handleToggleAssignment}
                   onBulkAssign={handleBulkAssign}
+                  onBulkUnassign={handleBulkUnassign}
                   onResyncProject={handleResyncProject}
                   onResyncAll={handleResyncAll}
                   onConfigureTools={handleConfigureToolsFromToolbar}
-                  notify={notify}
-                  notifyError={notifyError}
                   t={t}
                 />
               </div>
