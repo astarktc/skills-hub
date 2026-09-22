@@ -6,7 +6,6 @@ use crate::core::{
     },
     skill_store::SkillTargetRecord,
     sync_status::{SyncMode, SyncStatus},
-    unlocatable::repoint_and_update,
 };
 use std::fs;
 
@@ -279,11 +278,13 @@ fn restore_and_repoint_replay_the_edit() {
     );
     let new = f.dir.path().join("new");
     fs::rename(&f.source, &new).unwrap();
-    let report = repoint_and_update(
+    let report = crate::core::repoint::repoint_skill_source(
         &f.paths,
         &f.store,
         &f.id,
-        &new,
+        crate::core::repoint::RepointTarget::Local {
+            path: new.to_string_lossy().into_owned(),
+        },
         RefreshPolicy::default(),
         None,
         6000,

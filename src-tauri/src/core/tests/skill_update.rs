@@ -46,7 +46,6 @@ fn slash_branch_install_and_update_keep_url_and_resolved_subpath() {
         None,
         &StubApi::serving("next"),
         0,
-        None,
     )
     .unwrap();
     assert_eq!(acquired.proposal.source_ref.as_deref(), Some(url));
@@ -82,8 +81,7 @@ fn stale_split_repair_is_acquire_first_and_persisted_only_by_finalize() {
         ..StubApi::serving("next")
     };
 
-    let acquired =
-        acquire_update(&paths, &store, &installed.skill_id, None, &api, 0, None).unwrap();
+    let acquired = acquire_update(&paths, &store, &installed.skill_id, None, &api, 0).unwrap();
 
     assert_eq!(
         acquired.proposal.source_subpath.as_deref(),
@@ -120,7 +118,7 @@ fn stale_split_repair_is_acquire_first_and_persisted_only_by_finalize() {
         missing_branch: Some("feature"),
         ..StubApi::failing(404)
     };
-    let error = acquire_update(&paths, &store, &installed.skill_id, None, &refused, 0, None)
+    let error = acquire_update(&paths, &store, &installed.skill_id, None, &refused, 0)
         .err()
         .unwrap();
     assert!(matches!(
@@ -140,8 +138,7 @@ fn stale_split_repair_is_acquire_first_and_persisted_only_by_finalize() {
     );
     db.execute_batch("DROP TRIGGER reject_skill_write;")
         .unwrap();
-    let acquired =
-        acquire_update(&paths, &store, &installed.skill_id, None, &api, 0, None).unwrap();
+    let acquired = acquire_update(&paths, &store, &installed.skill_id, None, &api, 0).unwrap();
     crate::core::mutation_guard::serialized(|| apply_unlocked(&paths, &store, acquired)).unwrap();
     let after = store.get_skill_by_id(&installed.skill_id).unwrap().unwrap();
     assert_eq!(after.source_subpath.as_deref(), Some("skills/a"));
@@ -172,7 +169,6 @@ fn update_acquisition_surfaces_a_typed_not_found() {
         None,
         &StubApi::failing(404),
         0,
-        None,
     )
     .err()
     .expect("a removed skill fails its update");
@@ -209,7 +205,6 @@ fn update_acquisition_uses_the_fast_path() {
         None,
         &StubApi::serving("2222222222222222222222222222222222222222"),
         0,
-        None,
     )
     .expect("update acquires");
 
@@ -348,7 +343,6 @@ fn local_bytes_are_acquired_before_apply_and_do_not_follow_later_source_edits() 
         None,
         &StubApi::serving("unused"),
         0,
-        None,
     )
     .unwrap();
     let expected = fs::read(source.join("SKILL.md")).unwrap();
@@ -421,11 +415,13 @@ fn failed_local_repoint_preserves_source_and_old_bytes() {
             )
             .unwrap();
         }
-        let report = crate::core::unlocatable::repoint_and_update(
+        let report = crate::core::repoint::repoint_skill_source(
             &paths,
             &store,
             &record.id,
-            &source,
+            crate::core::repoint::RepointTarget::Local {
+                path: source.to_string_lossy().into_owned(),
+            },
             RefreshPolicy::default(),
             None,
             1234,
@@ -546,7 +542,6 @@ fn git_restore_rebuilds_the_central_copy_and_its_dangling_link() {
         None,
         &StubApi::serving("next"),
         0,
-        None,
     )
     .unwrap();
     assert!(matches!(request.bytes, UpdateBytes::Acquired { .. }));

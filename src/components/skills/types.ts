@@ -23,6 +23,7 @@ export type { InstallResultDto } from "../../bindings";
 export type { RefreshReport } from "../../bindings";
 export type { SkillMutationResultDto, InvocationEditResultDto, InvocationEditReport } from "../../bindings";
 export type { RefreshPolicyDto } from "../../bindings";
+export type { RepointTarget } from "../../bindings";
 export type { RefreshProgressDto } from "../../bindings";
 export type { SkillRefreshOutcome } from "../../bindings";
 export type { SkillRefreshStatus } from "../../bindings";

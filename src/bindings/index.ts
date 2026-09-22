@@ -45,17 +45,12 @@ export const commands = {
 	 */
 	updateManagedSkill: (skillId: string, policy: RefreshPolicyDto, onProgress: Channel<RefreshProgressDto>) => __TAURI_INVOKE<SkillMutationResultDto>("update_managed_skill", { skillId, policy, onProgress }),
 	/**
-	 *  Re-point a `local` skill whose source folder is gone at the folder's new
-	 *  location and update from it (see **Unlocatable skill** in `CONTEXT.md`).
-	 *  Honours the Update auto-sync reassert policy; its outcome is report data.
+	 *  Re-point any Managed skill (`git`, `local` or `imported`) at a GitHub URL
+	 *  or a local folder and update from it (see **Re-point** in `CONTEXT.md`).
+	 *  Honours the Update auto-sync reassert policy; the Update's outcome is
+	 *  report data, answered with the catalog read after settlement.
 	 */
-	repointLocalSkillSource: (skillId: string, newPath: string, policy: RefreshPolicyDto) => __TAURI_INVOKE<SkillMutationResultDto>("repoint_local_skill_source", { skillId, newPath, policy }),
-	/**
-	 *  Re-point a git skill only after acquiring from its new source; the normal
-	 *  single-Update policy includes auto-sync reassert, and its report includes
-	 *  every existing Propagation target and any newly asserted targets.
-	 */
-	repointGitSkillSource: (skillId: string, newUrl: string, policy: RefreshPolicyDto) => __TAURI_INVOKE<SkillMutationResultDto>("repoint_git_skill_source", { skillId, newUrl, policy }),
+	repointSkillSource: (skillId: string, target: RepointTarget, policy: RefreshPolicyDto) => __TAURI_INVOKE<SkillMutationResultDto>("repoint_skill_source", { skillId, target, policy }),
 	/**
 	 *  Detach a `local` skill from its vanished source folder: it becomes
 	 *  `imported` — the central copy is its truth from now on (ADR-0003).
@@ -244,7 +239,7 @@ reason: string } | { code: "CANCELLED" } | { code: "RATE_LIMITED";
 /**  Rounded-up minutes until the limit resets; 0 = unknown. */
 resetMinutes: number } | { code: "GIT_CLONE_FAILED"; kind: GitCloneFailureKind; detail: string } | { code: "GITHUB_SKILL_NOT_FOUND"; 
 /**  Human-checkable GitHub tree URL for the missing skill path. */
-url: string } | { code: "INVALID_GITHUB_URL"; url: string } | { code: "GIT_REPOINT_REQUIRES_GIT"; name: string } | { code: "PATH_OUTSIDE_TOOL_DIRS"; 
+url: string } | { code: "INVALID_GITHUB_URL"; url: string } | { code: "PATH_OUTSIDE_TOOL_DIRS"; 
 /**  The refused path (not inside any Tool's skills directory). */
 path: string } | { code: "SKILL_MANIFEST_IO"; path: string; detail: string } | { code: "SOURCE_PATH_MISSING"; 
 /**  The external source folder that is not there. */
@@ -718,6 +713,23 @@ export type RemoveProjectResultDto = {
 	projects: ProjectDto[],
 	report: RemovalReport,
 };
+
+/**
+ *  Where a Re-point sends a skill. Crosses the wire as itself:
+ *  `{ kind: "git", url }` or `{ kind: "local", path }`.
+ */
+export type RepointTarget = 
+/**
+ *  A full GitHub repository or skill URL — HTTP, HTTPS or schemeless
+ *  `github.com/…`, tree/blob links and a `.git` suffix; not `owner/repo`
+ *  shorthand. Stored as given (trimmed).
+ */
+{ kind: "git"; url: string } | 
+/**
+ *  A skill folder outside every Tool's skills directory, as the operator
+ *  typed or picked it; `~` expands against the operator's home.
+ */
+{ kind: "local"; path: string };
 
 /**
  *  Per-project counts and errors plus the refreshed project list. A single

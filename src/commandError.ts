@@ -30,7 +30,6 @@ const COMMAND_ERROR_CODE_MAP = {
   GIT_CLONE_FAILED: true,
   GITHUB_SKILL_NOT_FOUND: true,
   INVALID_GITHUB_URL: true,
-  GIT_REPOINT_REQUIRES_GIT: true,
   PATH_OUTSIDE_TOOL_DIRS: true,
   SKILL_MANIFEST_IO: true,
   SOURCE_PATH_MISSING: true,
@@ -148,8 +147,6 @@ export function describeCommandError(
       return t("errors.githubSkillNotFound", { url: e.url });
     case "INVALID_GITHUB_URL":
       return t("errors.invalidGithubUrl", { url: e.url });
-    case "GIT_REPOINT_REQUIRES_GIT":
-      return t("errors.gitRepointRequiresGit", { name: e.name });
     case "PATH_OUTSIDE_TOOL_DIRS":
       return t("errors.pathOutsideToolDirs", { path: e.path });
     case "SKILL_MANIFEST_IO":

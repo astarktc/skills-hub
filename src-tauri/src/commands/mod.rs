@@ -15,7 +15,7 @@ use crate::core::artifact_removal::RemovalReport;
 use crate::core::cache_cleanup::cleanup_git_cache_dirs;
 use crate::core::cancel_token::CancelToken;
 use crate::core::clock::now_ms;
-use crate::core::environment::{expand_home_path, expand_home_path_in, home_dir};
+use crate::core::environment::{expand_home_path, home_dir};
 use crate::core::errors::SignalError;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::global_sync::{BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome};
@@ -34,6 +34,7 @@ use crate::core::refresh::{
     refresh_managed_skills as refresh_managed_skills_core, RefreshPhase, RefreshPolicy,
     RefreshReport, RefreshSelection,
 };
+use crate::core::repoint::RepointTarget;
 use crate::core::settings::{
     apply_setting, load_settings, record_installed_tools, AppSettings, SettingUpdate,
 };
@@ -48,7 +49,7 @@ use crate::core::sync_status::{SyncMode, SyncStatus};
 use crate::core::tool_adapters::{
     global_tool_entries, installed_keys, project_tool_entries, ToolCatalogEntry,
 };
-use crate::core::unlocatable::{detach_from_source, repoint_and_update, UnlocatableState};
+use crate::core::unlocatable::{detach_from_source, UnlocatableState};
 
 // Preserve the command seam's public error vocabulary after moving its owner.
 pub use crate::core::errors::CommandError;
@@ -629,18 +630,19 @@ impl SkillMutationResultDto {
     }
 }
 
-/// Re-point a `local` skill whose source folder is gone at the folder's new
-/// location and update from it (see **Unlocatable skill** in `CONTEXT.md`).
-/// Honours the Update auto-sync reassert policy; its outcome is report data.
+/// Re-point any Managed skill (`git`, `local` or `imported`) at a GitHub URL
+/// or a local folder and update from it (see **Re-point** in `CONTEXT.md`).
+/// Honours the Update auto-sync reassert policy; the Update's outcome is
+/// report data, answered with the catalog read after settlement.
 #[tauri::command]
 #[specta::specta]
 #[allow(non_snake_case)]
-pub async fn repoint_local_skill_source(
+pub async fn repoint_skill_source(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     cancel: State<'_, Arc<CancelToken>>,
     skillId: String,
-    newPath: String,
+    target: RepointTarget,
     policy: RefreshPolicyDto,
 ) -> Result<SkillMutationResultDto, CommandError> {
     let store = store.inner().clone();
@@ -648,55 +650,17 @@ pub async fn repoint_local_skill_source(
     tauri::async_runtime::spawn_blocking(move || {
         cancel.reset();
         let paths = installer_paths(&app, &store)?;
-        let new_source = expand_home_path_in(&paths.home, &newPath)?;
-        let report = repoint_and_update(
+        let report = crate::core::repoint::repoint_skill_source(
             &paths,
             &store,
             &skillId,
-            &new_source,
+            target,
             crate::core::refresh::RefreshPolicy {
                 reassert_auto_sync: policy.reassert_auto_sync,
             },
             Some(&cancel),
             now_ms(),
             |_| {},
-        )?;
-        SkillMutationResultDto::from_report(&store, report)
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
-/// Re-point a git skill only after acquiring from its new source; the normal
-/// single-Update policy includes auto-sync reassert, and its report includes
-/// every existing Propagation target and any newly asserted targets.
-#[tauri::command]
-#[specta::specta]
-#[allow(non_snake_case)]
-pub async fn repoint_git_skill_source(
-    app: tauri::AppHandle,
-    store: State<'_, SkillStore>,
-    cancel: State<'_, Arc<CancelToken>>,
-    skillId: String,
-    newUrl: String,
-    policy: RefreshPolicyDto,
-) -> Result<SkillMutationResultDto, CommandError> {
-    let store = store.inner().clone();
-    let cancel = cancel.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        cancel.reset();
-        let paths = installer_paths(&app, &store)?;
-        let report = crate::core::refresh::repoint_git_skill(
-            &paths,
-            &store,
-            &skillId,
-            &newUrl,
-            crate::core::refresh::RefreshPolicy {
-                reassert_auto_sync: policy.reassert_auto_sync,
-            },
-            Some(&cancel),
-            now_ms(),
         )?;
         SkillMutationResultDto::from_report(&store, report)
     })

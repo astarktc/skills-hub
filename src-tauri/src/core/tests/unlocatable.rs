@@ -1,7 +1,7 @@
-//! Tests for `core::unlocatable` — two of an Unlocatable skill's repairs:
-//! Re-point (new source folder, then the single-skill Update) and Detach
-//! (becomes `imported`). Restore is the single-skill Update and is tested
-//! with `core::refresh`.
+//! Tests for `core::unlocatable` — the Unlocatable states and Detach (a
+//! `local` skill becomes `imported`). Re-point is tested with
+//! `core::repoint`; Restore is the single-skill Update and is tested with
+//! `core::refresh`.
 
 use std::fs;
 use std::path::PathBuf;
@@ -13,7 +13,7 @@ use crate::core::refresh::{
 };
 use crate::core::skill_store::SkillStore;
 use crate::core::unlocatable::{
-    detach_from_source, is_detachable, repoint_and_update, unlocatable_state, UnlocatableState,
+    detach_from_source, is_detachable, unlocatable_state, UnlocatableState,
 };
 
 struct Fixture {
@@ -60,57 +60,6 @@ fn fixture_with_moved_source() -> (Fixture, PathBuf) {
     )
 }
 
-fn repoint(f: &Fixture, new_source: &std::path::Path) -> anyhow::Result<RefreshReport> {
-    repoint_and_update(
-        &f.paths,
-        &f.store,
-        &f.skill_id,
-        new_source,
-        RefreshPolicy::default(),
-        None,
-        3000,
-        |_| {},
-    )
-}
-
-#[test]
-fn local_repoint_honours_auto_sync_reassert_policy() {
-    for reassert_auto_sync in [false, true] {
-        let (f, new) = fixture_with_moved_source();
-        let tool = crate::core::tool_adapters::adapter_by_key("claude_code").unwrap();
-        fs::create_dir_all(f.paths.home.join(tool.relative_detect_dir)).unwrap();
-        assert!(f.store.list_skill_targets(&f.skill_id).unwrap().is_empty());
-        let report = repoint_and_update(
-            &f.paths,
-            &f.store,
-            &f.skill_id,
-            &new,
-            RefreshPolicy { reassert_auto_sync },
-            None,
-            3000,
-            |_| {},
-        )
-        .unwrap();
-        assert!(matches!(
-            report.skills[0].status,
-            SkillRefreshStatus::Refreshed {
-                reassert_error: None,
-                ..
-            }
-        ));
-        let targets = f.store.list_skill_targets(&f.skill_id).unwrap();
-        assert_eq!(targets.len(), usize::from(reassert_auto_sync));
-        assert_eq!(
-            f.paths
-                .home
-                .join(tool.relative_skills_dir)
-                .join("alpha/SKILL.md")
-                .is_file(),
-            reassert_auto_sync
-        );
-    }
-}
-
 fn update(f: &Fixture) -> RefreshReport {
     refresh_managed_skills(
         &f.paths,
@@ -124,89 +73,14 @@ fn update(f: &Fixture) -> RefreshReport {
     .expect("refresh")
 }
 
-/// Re-point is one operation: the record names the new folder and the
-/// central copy holds its bytes when the call returns, with the Update's
-/// outcome as report data.
 #[test]
-fn repoint_rewrites_the_source_and_lands_the_new_folders_bytes() {
-    let (f, new) = fixture_with_moved_source();
+fn detach_turns_the_skill_imported_with_no_source_and_no_tool_history() {
+    let (f, _new) = fixture_with_moved_source();
     let before = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
     assert_eq!(
         unlocatable_state(&before),
         Some(UnlocatableState::SourceMissing)
     );
-
-    let report = repoint(&f, &new).expect("re-point");
-
-    assert!(
-        matches!(
-            report.skills.as_slice(),
-            [o] if o.skill_id == f.skill_id && matches!(o.status, SkillRefreshStatus::Refreshed { .. })
-        ),
-        "{report:?}"
-    );
-    let record = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
-    assert_eq!(record.source_ref.as_deref(), Some(new.to_str().unwrap()));
-    assert_eq!(record.source_type, "local", "still a local skill");
-    assert_eq!(unlocatable_state(&record), None);
-    assert_eq!(
-        fs::read_to_string(f.central_path.join("a.txt")).unwrap(),
-        "v2",
-        "the Update copied from the new folder"
-    );
-}
-
-#[test]
-fn repoint_validates_the_new_folder_the_way_add_does() {
-    let (f, _new) = fixture_with_moved_source();
-    let before = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
-
-    // Not there.
-    let err = repoint(&f, &f.paths.home.join("nowhere")).expect_err("a missing folder is refused");
-    assert!(matches!(
-        err.downcast_ref::<SignalError>(),
-        Some(SignalError::SourcePathMissing { .. })
-    ));
-
-    // No SKILL.md.
-    let empty = f.paths.home.join("Documents/empty");
-    fs::create_dir_all(&empty).unwrap();
-    let err = repoint(&f, &empty).expect_err("a folder without SKILL.md is refused");
-    assert!(matches!(
-        err.downcast_ref::<SignalError>(),
-        Some(SignalError::SkillInvalid { .. })
-    ));
-
-    // Inside a Tool's skills dir: a Tool's copy is not a source.
-    let in_tool = f.paths.home.join(".claude/skills/alpha");
-    fs::create_dir_all(&in_tool).unwrap();
-    fs::write(in_tool.join("SKILL.md"), "---\nname: alpha\n---\n").unwrap();
-    let err = repoint(&f, &in_tool).expect_err("a Tool-dir folder is refused");
-    assert_eq!(
-        err.downcast_ref::<SignalError>(),
-        Some(&SignalError::LocalSourceInsideToolDir {
-            path: in_tool.to_string_lossy().to_string(),
-            tool: "claude_code".to_string(),
-        })
-    );
-
-    let after = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
-    assert_eq!(
-        format!("{after:?}"),
-        format!("{before:?}"),
-        "a refused re-point changes nothing"
-    );
-    assert_eq!(
-        fs::read_to_string(f.central_path.join("a.txt")).unwrap(),
-        "v1",
-        "a refused re-point runs no Update"
-    );
-}
-
-#[test]
-fn detach_turns_the_skill_imported_with_no_source_and_no_tool_history() {
-    let (f, _new) = fixture_with_moved_source();
-    let before = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
     assert!(is_detachable(&before), "a local skill with a central copy");
 
     let record = detach_from_source(&f.store, &f.skill_id).expect("detach");
@@ -266,8 +140,8 @@ fn detach_is_refused_when_the_central_copy_is_also_gone() {
 }
 
 #[test]
-fn only_a_local_skill_can_be_repointed_or_detached() {
-    let (f, new) = fixture_with_moved_source();
+fn only_a_local_skill_can_be_detached() {
+    let (f, _new) = fixture_with_moved_source();
     let found = f.paths.home.join(".claude/skills/taken-over");
     fs::create_dir_all(&found).unwrap();
     fs::write(found.join("SKILL.md"), "---\nname: taken-over\n---\n").unwrap();
@@ -280,17 +154,6 @@ fn only_a_local_skill_can_be_repointed_or_detached() {
     )
     .unwrap();
 
-    assert!(repoint_and_update(
-        &f.paths,
-        &f.store,
-        &imported.skill_id,
-        &new,
-        RefreshPolicy::default(),
-        None,
-        3000,
-        |_| {}
-    )
-    .is_err());
     assert!(detach_from_source(&f.store, &imported.skill_id).is_err());
     let err = detach_from_source(&f.store, "no-such-id").expect_err("unknown id");
     assert!(matches!(

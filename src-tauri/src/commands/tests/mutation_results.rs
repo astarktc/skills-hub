@@ -3,9 +3,8 @@ use super::*;
 use crate::core::{
     installer::install_local_skill,
     propagation::PropagationStatus,
-    refresh::{
-        refresh_managed_skills_with, repoint_git_skill_with, RefreshReport, SkillRefreshStatus,
-    },
+    refresh::{refresh_managed_skills_with, RefreshReport, SkillRefreshStatus},
+    repoint::{repoint_skill_source_with, RepointTarget},
     skill_edits::set_invocation_override,
     skill_store::SkillTargetRecord,
     skill_update::UpdateRequest,
@@ -140,15 +139,18 @@ fn local_repoint_catalog_has_new_source_and_settled_target_failure() {
     f.blocked_target();
     let new_source = f.paths.home.join("new-source");
     fs::rename(&f.source, &new_source).unwrap();
-    let report = repoint_and_update(
+    let report = repoint_skill_source_with(
         &f.paths,
         &f.store,
         &f.id,
-        &new_source,
+        RepointTarget::Local {
+            path: new_source.to_string_lossy().into_owned(),
+        },
         RefreshPolicy::default(),
         None,
         5000,
         |_| {},
+        &RepointApi,
     )
     .unwrap();
     let result = f.result(report);
@@ -200,14 +202,15 @@ fn git_repoint_catalog_has_replaced_source_and_repaired_central() {
     f.store.upsert_skill(&row).unwrap();
     fs::remove_dir_all(&f.central).unwrap();
     let url = "https://github.com/new/repo/tree/main/skills/alpha";
-    let report = repoint_git_skill_with(
+    let report = repoint_skill_source_with(
         &f.paths,
         &f.store,
         &f.id,
-        url,
+        RepointTarget::Git { url: url.into() },
         RefreshPolicy::default(),
         None,
         5000,
+        |_| {},
         &RepointApi,
     )
     .unwrap();

@@ -27,6 +27,7 @@ pub mod propagation;
 pub mod provenance;
 pub mod refresh;
 pub mod repo_subpath;
+pub mod repoint;
 pub mod settings;
 pub mod skill_catalog;
 pub mod skill_discovery;

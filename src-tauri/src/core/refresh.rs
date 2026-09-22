@@ -47,7 +47,7 @@ use super::mutation_guard;
 use super::propagation::{
     PropagationOutcome, PropagationScope, PropagationSkip, PropagationStatus,
 };
-use super::provenance::{refresh_eligibility, Provenance, RefreshEligibility};
+use super::provenance::{refresh_eligibility, RefreshEligibility};
 use super::skill_store::SkillStore;
 use super::skill_update::{
     acquire_update, apply_unlocked, ApplyOutcome, UpdateRequest, UpdateSkip,
@@ -175,78 +175,6 @@ pub fn refresh_managed_skills(
                 cancel,
                 &HttpGithubApi::new(token.clone()),
                 ttl_ms,
-                None,
-            )
-        },
-    )
-}
-
-/// Repair a git source through the same single-Update acquire/apply pipeline,
-/// including the caller's auto-sync reassert policy.
-/// The new source is carried only in the acquired record, never written first.
-pub fn repoint_git_skill(
-    paths: &InstallerPaths,
-    store: &SkillStore,
-    skill_id: &str,
-    new_url: &str,
-    policy: RefreshPolicy,
-    cancel: Option<&CancelToken>,
-    now: i64,
-) -> Result<RefreshReport> {
-    let token = super::settings::github_token_or_none(store);
-    repoint_git_skill_with(
-        paths,
-        store,
-        skill_id,
-        new_url,
-        policy,
-        cancel,
-        now,
-        &HttpGithubApi::new(token),
-    )
-}
-
-/// Injectable acquisition seam for Re-point with the same Update policy.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn repoint_git_skill_with(
-    paths: &InstallerPaths,
-    store: &SkillStore,
-    skill_id: &str,
-    new_url: &str,
-    policy: RefreshPolicy,
-    cancel: Option<&CancelToken>,
-    now: i64,
-    api: &(dyn super::git_acquisition::GithubApi + Sync),
-) -> Result<RefreshReport> {
-    let record = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
-        anyhow::anyhow!(SignalError::NotFound {
-            kind: "skill".into(),
-            id: skill_id.into(),
-        })
-    })?;
-    if Provenance::parse(&record.source_type) != Some(Provenance::Git) {
-        anyhow::bail!(SignalError::GitRepointRequiresGit { name: record.name });
-    }
-    let new_url = new_url.trim();
-    let source = super::git_acquisition::parse_full_github_url(new_url)?;
-    let ttl_ms = super::settings::git_cache_ttl_ms(store);
-    refresh_managed_skills_with(
-        paths,
-        store,
-        RefreshSelection::Ids(vec![skill_id.to_string()]),
-        policy,
-        cancel,
-        now,
-        |_| {},
-        &|id, cancel| {
-            acquire_update(
-                paths,
-                store,
-                id,
-                cancel,
-                api,
-                ttl_ms,
-                Some((new_url, &source)),
             )
         },
     )

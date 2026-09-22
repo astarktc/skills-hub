@@ -3,22 +3,13 @@ use crate::core::errors::SignalError;
 use crate::core::global_sync::GlobalSyncError;
 use crate::core::sync_engine::remove_path_any;
 #[test]
-fn git_repoint_refusals_cross_the_wire_as_typed_errors() {
-    for (signal, expected) in [
-        (
-            SignalError::InvalidGithubUrl { url: "bad".into() },
-            serde_json::json!({ "code": "INVALID_GITHUB_URL", "url": "bad" }),
-        ),
-        (
-            SignalError::GitRepointRequiresGit {
-                name: "local".into(),
-            },
-            serde_json::json!({ "code": "GIT_REPOINT_REQUIRES_GIT", "name": "local" }),
-        ),
-    ] {
-        let error = CommandError::from_anyhow(anyhow::Error::new(signal).context("re-point"));
-        assert_eq!(serde_json::to_value(error).unwrap(), expected);
-    }
+fn git_repoint_refusal_crosses_the_wire_as_a_typed_error() {
+    let signal = SignalError::InvalidGithubUrl { url: "bad".into() };
+    let error = CommandError::from_anyhow(anyhow::Error::new(signal).context("re-point"));
+    assert_eq!(
+        serde_json::to_value(error).unwrap(),
+        serde_json::json!({ "code": "INVALID_GITHUB_URL", "url": "bad" })
+    );
 }
 
 #[test]

@@ -57,8 +57,6 @@ pub enum SignalError {
     GithubSkillNotFound { url: String },
     /// Re-point requires a full GitHub repository or tree URL.
     InvalidGithubUrl { url: String },
-    /// Git Re-point cannot change a skill's provenance.
-    GitRepointRequiresGit { name: String },
     /// A path a caller asked to delete is not inside any Tool's skills
     /// directory, so Skills Hub refuses to touch it. Owned by the Tool
     /// registry (`tool_adapters::ensure_path_within_tool_dirs`).
@@ -151,9 +149,6 @@ impl fmt::Display for SignalError {
                 write!(f, "skill not found on GitHub: {url}")
             }
             SignalError::InvalidGithubUrl { url } => write!(f, "invalid GitHub URL: {url}"),
-            SignalError::GitRepointRequiresGit { name } => {
-                write!(f, "git Re-point requires git provenance: {name}")
-            }
             SignalError::PathOutsideToolDirs { path } => {
                 write!(f, "path is not under a known tool skills directory: {path}")
             }
@@ -291,9 +286,6 @@ pub enum CommandError {
     },
     InvalidGithubUrl {
         url: String,
-    },
-    GitRepointRequiresGit {
-        name: String,
     },
     PathOutsideToolDirs {
         /// The refused path (not inside any Tool's skills directory).
@@ -478,9 +470,6 @@ impl From<SignalError> for CommandError {
             },
             SignalError::GithubSkillNotFound { url } => CommandError::GithubSkillNotFound { url },
             SignalError::InvalidGithubUrl { url } => CommandError::InvalidGithubUrl { url },
-            SignalError::GitRepointRequiresGit { name } => {
-                CommandError::GitRepointRequiresGit { name }
-            }
             SignalError::PathOutsideToolDirs { path } => CommandError::PathOutsideToolDirs { path },
             SignalError::SkillManifestIo { path, detail } => {
                 CommandError::SkillManifestIo { path, detail }

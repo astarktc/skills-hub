@@ -140,8 +140,7 @@ function makeDeps(overrides?: {
       case "refreshManagedSkills":
         return Promise.resolve(refreshReport);
       case "updateManagedSkill":
-      case "repointLocalSkillSource":
-      case "repointGitSkillSource":
+      case "repointSkillSource":
         return Promise.resolve({ report: refreshReport, skills: overrides?.returnedSkills ?? skills } satisfies SkillMutationResultDto);
       case "setSkillInvocationOverride":
         return Promise.resolve({
@@ -508,7 +507,7 @@ describe("cancellation and non-report actions", () => {
     });
 
     expect(mockInvoke).not.toHaveBeenCalledWith(
-      "repointLocalSkillSource",
+      "repointSkillSource",
       expect.anything(),
       expect.anything(),
       expect.anything(),
@@ -656,8 +655,8 @@ describe("invoke → fold → completion", () => {
   it.each([
     ["Update", "refreshOutcome", "updateManagedSkill"],
     ["Restore", "refreshOutcome", "updateManagedSkill"],
-    ["git Re-point", "refreshOutcome", "repointGitSkillSource"],
-    ["local Re-point", "refreshOutcome", "repointLocalSkillSource"],
+    ["git Re-point", "refreshOutcome", "repointSkillSource"],
+    ["local Re-point", "refreshOutcome", "repointSkillSource"],
     ["Refresh-all", "refreshOutcome", "refreshManagedSkills"],
     ["Edit", "invocationEditOutcome", "setSkillInvocationOverride"],
     ["unsync-all", "removalOutcome", "unsyncAllSkills"],
