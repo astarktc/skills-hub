@@ -193,13 +193,26 @@ export const resources = {
       },
       update: "Update",
       remove: "Remove",
+      // Compatibility: src/lib/reportOutcome.ts still labels its notification
+      // action with this key; retire it once that fold reads changeSource.action.
       gitRepoint: {
-        action: "Re-point",
-        title: "Re-point {{name}}",
-        confirm: "Re-point and Update",
-        urlLabel: "New GitHub URL",
+        action: "Change source…",
+      },
+      changeSource: {
+        action: "Change source…",
+        title: "Change the source of {{name}}",
+        kindLabel: "New source",
+        kindGit: "GitHub URL",
+        kindLocal: "Local folder",
+        confirm: "Change source and Update",
+        urlLabel: "GitHub URL",
         urlPlaceholder: "https://github.com/owner/repo/tree/main/skills/name",
-        help: "Paste a repository or skill folder URL. Your source changes only after acquisition succeeds; existing sync targets and project assignments are preserved.",
+        urlHelp: "Paste a repository or skill folder URL. Your source changes only after acquisition succeeds; existing sync targets and project assignments are preserved.",
+        pathLabel: "Folder",
+        pathPlaceholder: "~/path/to/skill-folder",
+        pathHelp: "Type a path (~ is your home folder) or choose a folder. It must contain SKILL.md and sit outside every tool's skills directory. Your source changes only after the update succeeds; existing sync targets and project assignments are preserved.",
+        chooseFolder: "Choose folder…",
+        selectFolderTitle: "Select the new source folder for {{name}}",
       },
       provenance: {
         managedHere: "Managed here",
@@ -217,7 +230,6 @@ export const resources = {
         repoint: "Re-point",
         detach: "Detach",
         restore: "Restore",
-        selectNewSourceFolder: "Select the new folder for {{name}}",
       },
       localTab: "Local Folder",
       gitTab: "Git Repository",
@@ -319,9 +331,8 @@ export const resources = {
         gitCloneExecFailed:
           "Running the system git command failed (stopped without falling back to the built-in git, to avoid hangs). Please check your git installation, network, or proxy.",
         githubSkillNotFound:
-          "Skill not found on GitHub (it may have been deleted or the path changed). Please check: {{url}}. If it moved, use Re-point on the skill to paste its new GitHub URL.",
+          "Skill not found on GitHub (it may have been deleted or the path changed). Please check: {{url}}. If it moved, use Change source on the skill to paste its new GitHub URL.",
         invalidGithubUrl: "Enter a full GitHub repository or tree URL (https://github.com/owner/repo/tree/branch/path): {{url}}",
-        gitRepointRequiresGit: "{{name}} is not a git skill. Only git skills can be re-pointed to a GitHub URL.",
         deleteKeptTargetTitle: "Could not remove the target for {{tool}}.",
         finalizeRollbackFailed:
           "The update failed and the previous copy could not be restored to {{central}}. The previous files are retained at {{backup}} for manual recovery.",
@@ -331,7 +342,7 @@ export const resources = {
           "Refused to delete {{path}}: it is not inside a known tool skills directory.",
         skillManifestIo: "Could not read or save the skill manifest at {{path}}.",
         sourcePathMissing:
-          "The skill's source folder is missing. It may have been moved or deleted:",
+          "The source folder does not exist. It may have been moved, renamed or mistyped:",
         centralPathMissing:
           "The skill's central copy is missing from the Skills Hub library:",
         subpathMissing:
@@ -344,7 +355,7 @@ export const resources = {
         notRefreshable:
           '"{{name}}" is managed here: it was imported from a tool and has no source to update from.',
         localSourceInsideToolDir:
-          "This folder is already inside {{tool}}'s skills directory. Use Import to take over a skill that lives in a tool:",
+          "This folder is inside {{tool}}'s skills directory, so it cannot be a skill's source. Choose a folder outside every tool's skills directory, or use Import to take over a skill that lives in a tool:",
         settingCorrupt:
           "Your saved tool selection could not be read, so nothing was synced. Open Configure Tools and save your selection to repair it.",
         settingCorruptStartup:
@@ -809,13 +820,25 @@ export const resources = {
       },
       update: "更新",
       remove: "移除",
+      // 兼容：src/lib/reportOutcome.ts 仍使用此键；改用 changeSource.action 后删除。
       gitRepoint: {
-        action: "重新指向",
-        title: "重新指向 {{name}}",
-        confirm: "重新指向并更新",
-        urlLabel: "新的 GitHub URL",
+        action: "更改来源…",
+      },
+      changeSource: {
+        action: "更改来源…",
+        title: "更改 {{name}} 的来源",
+        kindLabel: "新来源",
+        kindGit: "GitHub URL",
+        kindLocal: "本地文件夹",
+        confirm: "更改来源并更新",
+        urlLabel: "GitHub URL",
         urlPlaceholder: "https://github.com/owner/repo/tree/main/skills/name",
-        help: "粘贴仓库或 Skill 文件夹 URL。仅在成功获取后更改来源；已有同步目标和项目分配将被保留。",
+        urlHelp: "粘贴仓库或 Skill 文件夹 URL。仅在成功获取后更改来源；已有同步目标和项目分配将被保留。",
+        pathLabel: "文件夹",
+        pathPlaceholder: "~/path/to/skill-folder",
+        pathHelp: "输入路径（~ 表示主目录）或选择文件夹。该文件夹须包含 SKILL.md，且不在任何工具的 Skills 目录内。仅在更新成功后更改来源；已有同步目标和项目分配将被保留。",
+        chooseFolder: "选择文件夹…",
+        selectFolderTitle: "为 {{name}} 选择新的来源文件夹",
       },
       provenance: {
         managedHere: "由此管理",
@@ -833,7 +856,6 @@ export const resources = {
         repoint: "重新指向",
         detach: "分离",
         restore: "恢复",
-        selectNewSourceFolder: "为 {{name}} 选择新的目录",
       },
       localTab: "本地目录",
       gitTab: "Git 仓库",
@@ -925,9 +947,8 @@ export const resources = {
         gitCloneExecFailed:
           "git 命令执行失败（为避免卡死，已停止并不再回退到内置 git）。请检查系统 git/网络/代理。",
         githubSkillNotFound:
-          "在 GitHub 上未找到该 Skill（可能已被删除或路径已变更）。请检查：{{url}}。如果已移动，请使用该 Skill 的“重新指向”操作，粘贴新的 GitHub URL。",
+          "在 GitHub 上未找到该 Skill（可能已被删除或路径已变更）。请检查：{{url}}。如果已移动，请使用该 Skill 的“更改来源”操作，粘贴新的 GitHub URL。",
         invalidGithubUrl: "请输入完整的 GitHub 仓库或目录 URL（https://github.com/owner/repo/tree/branch/path）：{{url}}",
-        gitRepointRequiresGit: "{{name}} 不是 git Skill。只有 git Skill 才能重新指向 GitHub URL。",
         deleteKeptTargetTitle: "无法移除 {{tool}} 的同步目标。",
         finalizeRollbackFailed:
           "更新失败，且无法将原副本恢复到 {{central}}。原文件已保留在 {{backup}}，请手动恢复。",
@@ -936,7 +957,7 @@ export const resources = {
         pathOutsideToolDirs:
           "已拒绝删除 {{path}}：该路径不在已知的工具 Skills 目录内。",
         skillManifestIo: "无法读取或保存 {{path}} 处的 Skill 清单。",
-        sourcePathMissing: "该 Skill 的来源文件夹不存在，可能已被移动或删除：",
+        sourcePathMissing: "来源文件夹不存在，可能已被移动、重命名或路径输入有误：",
         centralPathMissing:
           "该 Skill 在 Skills Hub 库中的中央副本不存在：",
         subpathMissing: "仓库中已不存在该 Skill 文件夹，可能已被移动或重命名：",
@@ -948,7 +969,7 @@ export const resources = {
         notRefreshable:
           "“{{name}}” 由 Skills Hub 管理：它是从工具目录导入的，没有可供更新的来源。",
         localSourceInsideToolDir:
-          "该文件夹已位于 {{tool}} 的 Skills 目录内。要接管已在工具中的 Skill，请使用“导入”：",
+          "该文件夹位于 {{tool}} 的 Skills 目录内，不能作为 Skill 的来源。请选择任何工具 Skills 目录之外的文件夹；要接管已在工具中的 Skill，请使用“导入”：",
         settingCorrupt:
           "无法读取已保存的工具选择，因此未同步任何内容。请打开“配置工具”并重新保存选择以修复。",
         settingCorruptStartup:

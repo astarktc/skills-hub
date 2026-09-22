@@ -1334,6 +1334,24 @@
   cursor: not-allowed;
 }
 
+/* Change source: the kind picker is a radio group drawn as the tab row. */
+.change-source-kind {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.change-source-kind .tab-item:has(input:focus-visible) {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.change-source-kind:disabled .tab-item {
+  cursor: not-allowed;
+}
+
 .form-group {
   margin-bottom: 12px;
 }

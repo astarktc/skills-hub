@@ -8,6 +8,7 @@
 
 import type {
   InvocationMode,
+  RepointTarget,
   SkillTargetDto,
   ToolOption,
   UnlocatableState,
@@ -73,6 +74,19 @@ export function sourceKind(
   const type = skill.source_type.toLowerCase();
   if (type === "imported") return "imported";
   return type.includes("git") ? "git" : "local";
+}
+
+/** The source kind a Change source target can take (`→ imported` is Detach). */
+export type RepointKind = RepointTarget["kind"];
+
+/**
+ * The Change source modal's preselected kind: the skill's current source
+ * kind; an imported skill has no source, so it starts on the local folder.
+ */
+export function repointKind(
+  skill: Pick<SkillPresentationFields, "source_type">,
+): RepointKind {
+  return sourceKind(skill) === "git" ? "git" : "local";
 }
 
 /**

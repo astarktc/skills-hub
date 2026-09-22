@@ -16,7 +16,7 @@ import Modal from "./components/shared/Modal";
 import NotificationsModal from "./components/shared/NotificationsModal";
 import AddSkillModal from "./components/skills/modals/AddSkillModal";
 import DeleteModal from "./components/skills/modals/DeleteModal";
-import GitRepointModal from "./components/skills/modals/GitRepointModal";
+import ChangeSourceModal from "./components/skills/modals/ChangeSourceModal";
 import InvocationModeModal from "./components/skills/modals/InvocationModeModal";
 import GitPickModal from "./components/skills/modals/GitPickModal";
 import LocalPickModal from "./components/skills/modals/LocalPickModal";
@@ -272,7 +272,7 @@ function App() {
         detailSkill ? (
           <SkillDetailView
             skill={detailSkill}
-            onRepoint={library.handleRepointGitSkill}
+            onRepoint={library.handleRepointSkill}
             actionLoading={loading}
             onBack={
               effectiveView === "explore-detail"
@@ -480,13 +480,15 @@ function App() {
         />
       ) : null}
 
-      {library.pendingGitRepointSkill ? (
-        <GitRepointModal
-          key={library.pendingGitRepointSkill.id}
-          skillName={library.pendingGitRepointSkill.name}
+      {library.pendingRepointSkill && library.repointSelection ? (
+        <ChangeSourceModal
+          key={`${library.pendingRepointSkill.id}:${library.repointSelection.preselect}`}
+          skillName={library.pendingRepointSkill.name}
+          preselect={library.repointSelection.preselect}
           loading={loading}
-          onRequestClose={library.handleCloseRepointGitSkill}
-          onConfirm={library.handleConfirmRepointGitSkill}
+          onRequestClose={library.handleCloseRepoint}
+          onPickFolder={library.pickRepointFolder}
+          onConfirm={library.handleConfirmRepoint}
           t={t}
         />
       ) : null}

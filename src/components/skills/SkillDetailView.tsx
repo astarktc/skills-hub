@@ -481,14 +481,14 @@ const SkillDetailView = ({
             <ArrowLeft size={16} />
             {t("detail.back")}
           </button>
-          {!isExplorePreview && sourceKind(skill) === "git" && onRepoint ? (
+          {!isExplorePreview && onRepoint ? (
             <button
               className="btn btn-secondary"
               type="button"
               disabled={actionLoading}
               onClick={() => onRepoint(skill)}
             >
-              {t("gitRepoint.action")}
+              {t("changeSource.action")}
             </button>
           ) : null}
           {isExplorePreview && onInstall && (

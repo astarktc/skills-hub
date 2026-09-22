@@ -4,7 +4,7 @@ import type { TFunction } from "i18next";
 import type { ManagedSkill, OnboardingPlan, ToolOption } from "./types";
 import type { CopyToClipboardFn } from "../../hooks/useStatusReporter";
 import SkillCard from "./SkillCard";
-import { groupSkillsByRepo } from "../../lib/skillPresentation";
+import { groupSkillsByRepo, type RepointKind } from "../../lib/skillPresentation";
 
 type SkillsListProps = {
   plan: OnboardingPlan | null;
@@ -17,7 +17,8 @@ type SkillsListProps = {
   loading: boolean;
   onReviewImport: () => void;
   onUpdateSkill: (skill: ManagedSkill) => void;
-  onRepointSkill: (skill: ManagedSkill) => void;
+  /** Change source; the `source_missing` repair opens it on `local`. */
+  onRepointSkill: (skill: ManagedSkill, preselect?: RepointKind) => void;
   onDetachSkill: (skill: ManagedSkill) => void;
   onRestoreSkill: (skill: ManagedSkill) => void;
   onDeleteSkill: (skillId: string) => void;

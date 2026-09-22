@@ -3,6 +3,7 @@ import type {
   ManagedSkill,
   InvocationMode,
   RefreshProgressDto,
+  RepointTarget,
   SkillMutationResultDto,
 } from "../components/skills/types";
 import {
@@ -14,7 +15,7 @@ import {
   type Outcome,
 } from "../lib/reportOutcome";
 import { invokeTauri, isTauri } from "../lib/tauri";
-import { sourceKind } from "../lib/skillPresentation";
+import { repointKind, type RepointKind } from "../lib/skillPresentation";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type {
   ActionErrorEntry,
@@ -85,10 +86,11 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   const openInvocationEdit = useCallback((id: string) => setInvocationEditSkillId(id), []);
   const closeInvocationEdit = useCallback(() => { if (!loading) setInvocationEditSkillId(null); }, [loading]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [gitRepointSelection, setGitRepointSelection] =
-    useState<{ skillId: string; name: string } | null>(null);
-  const pendingGitRepointSkill = managedSkills.find(
-    (skill) => skill.id === gitRepointSelection?.skillId,
+  // Change source: which skill the modal is open for and the kind it opens on.
+  const [repointSelection, setRepointSelection] =
+    useState<{ skillId: string; name: string; preselect: RepointKind } | null>(null);
+  const pendingRepointSkill = managedSkills.find(
+    (skill) => skill.id === repointSelection?.skillId,
   ) ?? null;
 
   const loadManagedSkills = useCallback(async () => {
@@ -151,28 +153,36 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     [setActionMessage, t],
   );
 
-  const handleRepointGitSkill = useCallback((skill: ManagedSkill) => {
-    setGitRepointSelection({ skillId: skill.id, name: skill.name });
+  /**
+   * Change source: open the one modal for any managed skill (git, local or
+   * imported), on the given kind or the skill's own (`repointKind`). The
+   * `source_missing` repair passes `local` — the folder moved.
+   */
+  const handleRepointSkill = useCallback((skill: ManagedSkill, preselect?: RepointKind) => {
+    setRepointSelection({ skillId: skill.id, name: skill.name, preselect: preselect ?? repointKind(skill) });
   }, []);
 
   // Both the modal and historical notification actions select by id. A click
   // resolves against this render's list, not the list that produced the report.
-  const repointSkillGone = gitRepointSelection !== null && pendingGitRepointSkill === null;
+  const repointSkillGone = repointSelection !== null && pendingRepointSkill === null;
   useEffect(() => {
-    if (repointSkillGone && gitRepointSelection) {
-      notify("warning", t("errors.skillGone", { name: gitRepointSelection.name }));
+    if (repointSkillGone && repointSelection) {
+      notify("warning", t("errors.skillGone", { name: repointSelection.name }));
     }
-  }, [gitRepointSelection, notify, repointSkillGone, t]);
+  }, [repointSelection, notify, repointSkillGone, t]);
 
+  // Every managed skill can change its source.
   const foldContext = useMemo(() => ({
     t, toolLabelById,
-    canRepoint: (id: string) => managedSkills.some((skill) => skill.id === id && sourceKind(skill) === "git"),
+    canRepoint: (id: string) => managedSkills.some((skill) => skill.id === id),
   }), [managedSkills, t, toolLabelById]);
 
   const applyOutcome = useCallback(async (outcome: Outcome) => {
+    // The fold offers Change source only for a GitHub skill that went
+    // missing upstream, so the notification action opens on the URL arm.
     const entries = (items: Outcome["errors"]): ActionErrorEntry[] => items.map(({ action, ...entry }) => ({
       ...entry,
-      ...(action ? { action: { label: action.label, onClick: () => setGitRepointSelection({ skillId: action.skillId, name: action.skillName }) } } : {}),
+      ...(action ? { action: { label: action.label, onClick: () => setRepointSelection({ skillId: action.skillId, name: action.skillName, preselect: "git" }) } } : {}),
     }));
     if (outcome.completion.reload) await loadManagedSkills();
     showActionErrors(entries(outcome.errors));
@@ -354,61 +364,55 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     [runSingleRefresh, t],
   );
 
-  const handleCloseRepointGitSkill = useCallback(() => {
-    setGitRepointSelection(null);
+  const handleCloseRepoint = useCallback(() => {
+    setRepointSelection(null);
   }, []);
 
-  const handleConfirmRepointGitSkill = useCallback(
-    async (url: string) => {
-      const skill = pendingGitRepointSkill;
+  const repointName = repointSelection?.name ?? "";
+  /**
+   * The modal's folder button. A cancelled picker answers null — not an
+   * action at all; a picker failure lands on the error surface.
+   */
+  const pickRepointFolder = useCallback(async (): Promise<string | null> => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: t("changeSource.selectFolderTitle", { name: repointName }),
+      });
+      return !selected || Array.isArray(selected) ? null : selected;
+    } catch (err) {
+      setError(formatError(err));
+      return null;
+    }
+  }, [formatError, repointName, setError, t]);
+
+  /**
+   * Change source, confirmed: the backend validates the new source, runs the
+   * Update from it (a batch of one) and records it only when that succeeds.
+   * A folder may be typed with `~`; the backend expands it.
+   */
+  const handleConfirmRepoint = useCallback(
+    async (target: RepointTarget) => {
+      const skill = pendingRepointSkill;
       if (!skill) return;
+      const trimmed: RepointTarget = target.kind === "git"
+        ? { kind: "git", url: target.url.trim() }
+        : { kind: "local", path: target.path.trim() };
       const completed = await runSingleRefresh(
         skill,
         {
           message: t("actions.repointing", { name: skill.name }),
           success: t("status.repointed", { name: skill.name }),
         },
-        () => invokeTauri("repointSkillSource", skill.id, { kind: "git", url: url.trim() }, {
+        () => invokeTauri("repointSkillSource", skill.id, trimmed, {
           reassert_auto_sync: autoSyncEnabled,
         }),
       );
-      if (completed?.closeModal) setGitRepointSelection(null);
+      if (completed?.closeModal) setRepointSelection(null);
     },
-    [autoSyncEnabled, pendingGitRepointSkill, runSingleRefresh, t],
-  );
-
-  /**
-   * Re-point by provenance: git opens the URL Modal; local picks a folder.
-   * For a `local` skill whose folder is gone, pick its new location,
-   * then the backend rewrites the source and runs the Update from it. A
-   * cancelled picker is not an action at all.
-   */
-  const handleRepointSkill = useCallback(
-    async (skill: ManagedSkill) => {
-      if (sourceKind(skill) === "git") {
-        handleRepointGitSkill(skill);
-        return;
-      }
-      let newPath: string;
-      try {
-        const { open } = await import("@tauri-apps/plugin-dialog");
-        const selected = await open({
-          directory: true,
-          multiple: false,
-          title: t("unlocatable.selectNewSourceFolder", { name: skill.name }),
-        });
-        if (!selected || Array.isArray(selected)) return;
-        newPath = selected;
-      } catch (err) {
-        setError(formatError(err));
-        return;
-      }
-      await runSingleRefresh(skill, {
-        message: t("actions.repointing", { name: skill.name }),
-        success: t("status.repointed", { name: skill.name }),
-      }, () => invokeTauri("repointSkillSource", skill.id, { kind: "local", path: newPath }, { reassert_auto_sync: autoSyncEnabled }));
-    },
-    [autoSyncEnabled, formatError, handleRepointGitSkill, runSingleRefresh, setError, t],
+    [autoSyncEnabled, pendingRepointSkill, runSingleRefresh, t],
   );
 
   /**
@@ -443,10 +447,11 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     closeDetail,
     pendingDeleteId,
     pendingDeleteSkill,
-    pendingGitRepointSkill,
-    handleRepointGitSkill,
-    handleCloseRepointGitSkill,
-    handleConfirmRepointGitSkill,
+    repointSelection,
+    pendingRepointSkill,
+    handleCloseRepoint,
+    pickRepointFolder,
+    handleConfirmRepoint,
     loadManagedSkills,
     isSkillNameTaken,
     handleRefresh,

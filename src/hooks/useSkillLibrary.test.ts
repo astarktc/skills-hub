@@ -30,10 +30,10 @@ vi.mock("@tauri-apps/api/core", () => ({
     onmessage: ((message: unknown) => void) | null = null;
   },
 }));
-// Re-point picks the folder through the dialog plugin (lazily imported).
-const pickFolder = vi.fn<() => Promise<string | null>>();
+// Change source picks a folder through the dialog plugin (lazily imported).
+const pickFolder = vi.fn<(options?: unknown) => Promise<string | string[] | null>>();
 vi.mock("@tauri-apps/plugin-dialog", () => ({
-  open: (...args: unknown[]) => pickFolder(...(args as [])),
+  open: (options?: unknown) => pickFolder(options),
 }));
 
 import { invokeTauri, type CommandName } from "../lib/tauri";
@@ -295,15 +295,14 @@ describe("single-mutation envelopes", () => {
       act(() => {
         result.current.openDetail("s1");
         result.current.openInvocationEdit("s1");
-        result.current.handleRepointGitSkill(initial[0]);
+        result.current.handleRepointSkill(initial[0]);
       });
-      pickFolder.mockResolvedValue("/new/alpha");
       mockInvoke.mockClear();
       await act(async () => {
         if (action === "Update") result.current.handleUpdateSkill(initial[0]);
         if (action === "Restore") await result.current.handleRestoreSkill(initial[0]);
-        if (action === "git Re-point") await result.current.handleConfirmRepointGitSkill("https://github.com/new/repo");
-        if (action === "local Re-point") await result.current.handleRepointSkill(initial[0]);
+        if (action === "git Re-point") await result.current.handleConfirmRepoint({ kind: "git", url: "https://github.com/new/repo" });
+        if (action === "local Re-point") await result.current.handleConfirmRepoint({ kind: "local", path: "/new/alpha" });
         if (action === "Edit") await result.current.setInvocationOverride("s1", "user-only");
       });
       await waitFor(() => expect(result.current.managedSkills).toEqual(catalog));
@@ -338,14 +337,13 @@ describe("single-mutation envelopes", () => {
         skills: scenario.status ? [{ skill_id: "s1", skill_name: "alpha", status: scenario.status }] : [],
       } });
       const { result } = await renderLibrary(setup);
-      act(() => { result.current.openDetail("s1"); result.current.handleRepointGitSkill(initial[0]); });
-      pickFolder.mockResolvedValue("/new/alpha");
+      act(() => { result.current.openDetail("s1"); result.current.handleRepointSkill(initial[0]); });
       mockInvoke.mockClear();
       await act(async () => {
         if (action === "Update") result.current.handleUpdateSkill(initial[0]);
         if (action === "Restore") await result.current.handleRestoreSkill(initial[0]);
-        if (action === "git Re-point") await result.current.handleConfirmRepointGitSkill("https://github.com/new/repo");
-        if (action === "local Re-point") await result.current.handleRepointSkill(initial[0]);
+        if (action === "git Re-point") await result.current.handleConfirmRepoint({ kind: "git", url: "https://github.com/new/repo" });
+        if (action === "local Re-point") await result.current.handleConfirmRepoint({ kind: "local", path: "/new/alpha" });
       });
       await waitFor(() => expect(setup.reporter.showActionWarnings).toHaveBeenCalledTimes(1));
       expect(result.current.managedSkills).toEqual(catalog);
@@ -354,8 +352,8 @@ describe("single-mutation envelopes", () => {
       expect(vi.mocked(setup.reporter.showActionErrors).mock.calls[0][0]).toHaveLength(scenario.errors);
       const warnings = vi.mocked(setup.reporter.showActionWarnings).mock.calls[0][0];
       expect(warnings.map((entry) => entry.message)).toEqual(scenario.warning ? [scenario.warning] : []);
-      if (action === "git Re-point" && catalog.length) {
-        expect(result.current.pendingGitRepointSkill).toEqual(scenario.close ? null : catalog[0]);
+      if (action.endsWith("Re-point") && catalog.length) {
+        expect(result.current.pendingRepointSkill).toEqual(scenario.close ? null : catalog[0]);
       }
       if (scenario.toast === null && catalog.length) expect(setup.reporter.notify).not.toHaveBeenCalled();
       if (scenario.toast && scenario.toast !== "success") expect(setup.reporter.notify).toHaveBeenCalledWith("warning", scenario.toast, undefined);
@@ -407,9 +405,113 @@ describe("repair notification actions", () => {
     expect(setup.reporter.notify).toHaveBeenCalledWith(
       "warning", 'errors.skillGone {"name":"alpha"}',
     );
-    expect(result.current.pendingGitRepointSkill).toBeNull();
+    expect(result.current.pendingRepointSkill).toBeNull();
   });
 
+  it("opens Change source on the URL arm for a GitHub skill gone upstream", async () => {
+    const gitSkill = { ...skill("s1", "alpha"), source_type: "git" };
+    const setup = makeDeps({
+      skills: [gitSkill],
+      refreshReport: {
+        skills: [{ skill_id: "s1", skill_name: "alpha", status: {
+          status: "failed", error: { code: "GITHUB_SKILL_NOT_FOUND", url: "https://github.com/old/repo" },
+        } }],
+      },
+    });
+    const { result } = await renderLibrary(setup);
+    await act(async () => { await result.current.handleRefresh(); });
+    const action = vi.mocked(setup.reporter.showActionErrors).mock.calls[0][0][0].action!;
+    act(() => action.onClick());
+    expect(result.current.repointSelection).toEqual({ skillId: "s1", name: "alpha", preselect: "git" });
+    expect(result.current.pendingRepointSkill).toEqual(gitSkill);
+  });
+
+});
+
+describe("Change source", () => {
+  it.each([
+    ["git", undefined, "git"],
+    ["local", undefined, "local"],
+    // An imported skill has no source: it opens on a folder.
+    ["imported", undefined, "local"],
+    // The source_missing repair names its kind explicitly.
+    ["local", "local", "local"],
+    ["git", "local", "local"],
+  ] as const)("a %s skill (preselect %s) opens the modal on %s", async (source_type, preselect, expected) => {
+    const row = { ...skill("s1", "alpha"), source_type };
+    const setup = makeDeps({ skills: [row] });
+    const { result } = await renderLibrary(setup);
+    act(() => result.current.handleRepointSkill(row, preselect));
+    expect(result.current.repointSelection).toEqual({ skillId: "s1", name: "alpha", preselect: expected });
+    expect(result.current.pendingRepointSkill).toEqual(row);
+    expect(mockInvoke).not.toHaveBeenCalledWith("repointSkillSource", expect.anything(), expect.anything(), expect.anything());
+  });
+
+  it.each([
+    [{ kind: "git", url: "  https://github.com/new/repo  " }, { kind: "git", url: "https://github.com/new/repo" }],
+    [{ kind: "local", path: " ~/skills/alpha " }, { kind: "local", path: "~/skills/alpha" }],
+  ] as const)("confirms %o as one trimmed target with the auto-sync policy", async (target, sent) => {
+    const imported = { ...skill("s1", "alpha"), source_type: "imported" };
+    const setup = makeDeps({ skills: [imported], autoSyncEnabled: false });
+    const { result } = await renderLibrary(setup);
+    act(() => result.current.handleRepointSkill(imported));
+    await act(async () => { await result.current.handleConfirmRepoint(target); });
+    expect(mockInvoke).toHaveBeenCalledWith("repointSkillSource", "s1", sent, { reassert_auto_sync: false });
+    expect(setup.reporter.runAction).toHaveBeenCalledWith(
+      { message: 'actions.repointing {"name":"alpha"}' }, expect.any(Function),
+    );
+    expect(result.current.repointSelection).toBeNull();
+    expect(setup.reporter.notify).toHaveBeenCalledWith("success", 'status.repointed {"name":"alpha"}', undefined);
+  });
+
+  it("offers the repair action for every managed skill, not only git", async () => {
+    const setup = makeDeps({ skills: [skill("s1", "alpha")] });
+    const spy = vi.spyOn(folds, "refreshOutcome");
+    const { result } = await renderLibrary(setup);
+    await act(async () => { await result.current.handleRefresh(); });
+    const ctx = spy.mock.calls[0][1];
+    expect(ctx.canRepoint?.("s1")).toBe(true);
+    expect(ctx.canRepoint?.("missing")).toBe(false);
+    spy.mockRestore();
+  });
+
+  it("the folder button answers the picked folder", async () => {
+    const setup = makeDeps();
+    const { result } = await renderLibrary(setup);
+    act(() => result.current.handleRepointSkill(setup.skills[0]));
+    pickFolder.mockResolvedValueOnce("/new/alpha");
+    let picked: string | null = null;
+    await act(async () => { picked = await result.current.pickRepointFolder(); });
+    expect(picked).toBe("/new/alpha");
+    expect(pickFolder).toHaveBeenCalledWith({
+      directory: true, multiple: false, title: 'changeSource.selectFolderTitle {"name":"alpha"}',
+    });
+    expect(mockInvoke).not.toHaveBeenCalledWith("repointSkillSource", expect.anything(), expect.anything(), expect.anything());
+  });
+
+  it.each([null, ["/a", "/b"]])("a cancelled or multi-select picker (%o) answers null and performs no action", async (answer) => {
+    const setup = makeDeps();
+    const { result } = await renderLibrary(setup);
+    act(() => result.current.handleRepointSkill(setup.skills[0]));
+    pickFolder.mockResolvedValueOnce(answer);
+    let picked: string | null = "unset";
+    await act(async () => { picked = await result.current.pickRepointFolder(); });
+    expect(picked).toBeNull();
+    expect(setup.reporter.runAction).not.toHaveBeenCalled();
+    expect(setup.reporter.setError).not.toHaveBeenCalled();
+    expect(result.current.repointSelection).not.toBeNull();
+  });
+
+  it("a picker failure lands on the error surface", async () => {
+    const setup = makeDeps();
+    const { result } = await renderLibrary(setup);
+    act(() => result.current.handleRepointSkill(setup.skills[0]));
+    pickFolder.mockRejectedValueOnce({ code: "OTHER", message: "dialog failed" });
+    let picked: string | null = "unset";
+    await act(async () => { picked = await result.current.pickRepointFolder(); });
+    expect(picked).toBeNull();
+    expect(setup.reporter.setError).toHaveBeenCalledWith("formatted:OTHER");
+  });
 });
 
 describe("unchanged refetch contracts", () => {
@@ -485,33 +587,18 @@ describe("unchanged refetch contracts", () => {
 });
 
 describe("cancellation and non-report actions", () => {
-  it("cancelling git Re-point performs no invoke or action", async () => {
+  it.each(["git", "local"] as const)("cancelling Change source (%s) performs no invoke or action", async (kind) => {
     const setup = makeDeps();
     const { result } = await renderLibrary(setup);
     mockInvoke.mockClear();
-    act(() => result.current.handleRepointGitSkill({ ...setup.skills[0], source_type: "git" }));
-    act(() => result.current.handleCloseRepointGitSkill());
-    await act(async () => { await result.current.handleConfirmRepointGitSkill("https://github.com/new/repo"); });
-    expect(result.current.pendingGitRepointSkill).toBeNull();
-    expect(mockInvoke).not.toHaveBeenCalled();
-    expect(setup.reporter.runAction).not.toHaveBeenCalled();
-  });
-
-  it("Re-point does nothing when the folder picker is cancelled", async () => {
-    const setup = makeDeps();
-    pickFolder.mockResolvedValue(null);
-    const { result } = await renderLibrary(setup);
-
+    act(() => result.current.handleRepointSkill(setup.skills[0], kind));
+    act(() => result.current.handleCloseRepoint());
     await act(async () => {
-      await result.current.handleRepointSkill(setup.skills[0]);
+      await result.current.handleConfirmRepoint(kind === "git"
+        ? { kind, url: "https://github.com/new/repo" } : { kind, path: "/new/alpha" });
     });
-
-    expect(mockInvoke).not.toHaveBeenCalledWith(
-      "repointSkillSource",
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-    );
+    expect(result.current.pendingRepointSkill).toBeNull();
+    expect(mockInvoke).not.toHaveBeenCalled();
     expect(setup.reporter.runAction).not.toHaveBeenCalled();
   });
 
@@ -677,10 +764,9 @@ describe("invoke → fold → completion", () => {
       };
       const spy = vi.spyOn(folds, fold).mockReturnValue(outcome);
       const { result, unmount } = await renderLibrary(setup);
-      pickFolder.mockResolvedValue("/new/alpha");
       act(() => {
         result.current.handleDeletePrompt("s1");
-        result.current.handleRepointGitSkill(setup.skills[0]);
+        result.current.handleRepointSkill(setup.skills[0]);
         result.current.openInvocationEdit("s1");
       });
       mockInvoke.mockClear();
@@ -690,8 +776,8 @@ describe("invoke → fold → completion", () => {
         switch (action) {
           case "Update": lib.handleUpdateSkill(row); break;
           case "Restore": await lib.handleRestoreSkill(row); break;
-          case "git Re-point": await lib.handleConfirmRepointGitSkill(" https://github.com/new/repo "); break;
-          case "local Re-point": await lib.handleRepointSkill(row); break;
+          case "git Re-point": await lib.handleConfirmRepoint({ kind: "git", url: " https://github.com/new/repo " }); break;
+          case "local Re-point": await lib.handleConfirmRepoint({ kind: "local", path: "/new/alpha" }); break;
           case "Refresh-all": await lib.handleRefresh(); break;
           case "Edit": await lib.setInvocationOverride(row.id, "user-only"); break;
           case "unsync-all": await lib.handleUnsyncAll(); break;
@@ -711,7 +797,7 @@ describe("invoke → fold → completion", () => {
       expect(setup.reporter.notify).toHaveBeenCalledWith("warning", "fold toast", "detail");
       if (action === "delete") expect(result.current.pendingDeleteId).toBe(complete ? null : "s1");
       if (action === "Edit") expect(result.current.invocationEditSkillId).toBe(complete ? null : "s1");
-      if (action === "git Re-point") expect(result.current.pendingGitRepointSkill).toEqual(complete ? null : setup.skills[0]);
+      if (action.endsWith("Re-point")) expect(result.current.pendingRepointSkill).toEqual(complete ? null : setup.skills[0]);
       unmount();
       spy.mockRestore();
     }
@@ -720,19 +806,18 @@ describe("invoke → fold → completion", () => {
   it.each(["Update", "Restore", "git", "local"])("%s reloads after a thrown request without closing the repair modal", async (action) => {
     const setup = makeDeps();
     const { result } = await renderLibrary(setup);
-    act(() => result.current.handleRepointGitSkill(setup.skills[0]));
-    pickFolder.mockResolvedValue("/new/alpha");
+    act(() => result.current.handleRepointSkill(setup.skills[0]));
     mockInvoke.mockImplementation((cmd) => cmd === "getManagedSkills" ? Promise.resolve(setup.skills) : Promise.reject({ code: "OTHER", message: "request failed" }));
     mockInvoke.mockClear();
     await act(async () => {
       if (action === "Update") result.current.handleUpdateSkill(setup.skills[0]);
       else if (action === "Restore") await result.current.handleRestoreSkill(setup.skills[0]);
-      else if (action === "git") await result.current.handleConfirmRepointGitSkill("https://github.com/new/repo");
-      else await result.current.handleRepointSkill(setup.skills[0]);
+      else if (action === "git") await result.current.handleConfirmRepoint({ kind: "git", url: "https://github.com/new/repo" });
+      else await result.current.handleConfirmRepoint({ kind: "local", path: "/new/alpha" });
     });
     await waitFor(() => expect(setup.reporter.setError).toHaveBeenCalledWith("formatted:OTHER"));
     expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "getManagedSkills")).toHaveLength(1);
-    expect(result.current.pendingGitRepointSkill).toEqual(setup.skills[0]);
+    expect(result.current.pendingRepointSkill).toEqual(setup.skills[0]);
   });
 
   it("resolves a notification id against a replaced row at click time", async () => {
@@ -748,6 +833,6 @@ describe("invoke → fold → completion", () => {
     mockInvoke.mockResolvedValue({ report: { skill_id: "s1", skill_name: "alpha", propagation: { targets: [] } }, skills: [updated] });
     await act(async () => { await result.current.setInvocationOverride("s1", null); });
     act(() => click());
-    expect(result.current.pendingGitRepointSkill).toEqual(updated);
+    expect(result.current.pendingRepointSkill).toEqual(updated);
   });
 });

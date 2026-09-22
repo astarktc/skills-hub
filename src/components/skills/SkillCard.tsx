@@ -27,6 +27,7 @@ import {
   UNLOCATABLE_TOOLTIP_KEY,
   UNLOCATABLE_REPAIR_KEY,
   type SkillToolChip,
+  type RepointKind,
   type UnlocatableRepair,
 } from "../../lib/skillPresentation";
 
@@ -39,8 +40,11 @@ type SkillCardProps = {
   allTools: ToolOption[];
   loading: boolean;
   onUpdate: (skill: ManagedSkill) => void;
-  /** Unlocatable-skill repairs (see the badge row); Remove is `onDelete`. */
-  onRepoint: (skill: ManagedSkill) => void;
+  /**
+   * Change source (every managed skill); the `source_missing` repair opens
+   * it on `local`. The other Unlocatable repairs follow; Remove is `onDelete`.
+   */
+  onRepoint: (skill: ManagedSkill, preselect?: RepointKind) => void;
   onDetach: (skill: ManagedSkill) => void;
   onRestore: (skill: ManagedSkill) => void;
   onDelete: (skillId: string) => void;
@@ -99,7 +103,8 @@ const SkillCard = ({
   // wires each repair to its handler. Remove is always offered.
   const unlocatable = skill.unlocatable;
   const repairHandlers: Record<UnlocatableRepair, () => void> = {
-    repoint: () => onRepoint(skill),
+    // Only a local folder can go missing: its repair picks the new folder.
+    repoint: () => onRepoint(skill, "local"),
     detach: () => onDetach(skill),
     restore: () => onRestore(skill),
   };
@@ -295,18 +300,16 @@ const SkillCard = ({
             <RefreshCw size={16} />
           </button>
         ) : null}
-        {sourceKind(skill) === "git" ? (
-          <button
-            className="card-btn secondary-action"
-            type="button"
-            onClick={() => onRepoint(skill)}
-            disabled={loading}
-            aria-label={t("gitRepoint.action")}
-            title={t("gitRepoint.action")}
-          >
-            <MapPin size={16} />
-          </button>
-        ) : null}
+        <button
+          className="card-btn secondary-action"
+          type="button"
+          onClick={() => onRepoint(skill)}
+          disabled={loading}
+          aria-label={t("changeSource.action")}
+          title={t("changeSource.action")}
+        >
+          <MapPin size={16} />
+        </button>
         <button
           className="card-btn secondary-action"
           type="button"

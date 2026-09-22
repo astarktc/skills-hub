@@ -7,6 +7,7 @@ import {
   groupSkillsByRepo,
   importedSourceLine,
   repoInfo,
+  repointKind,
   skillSourceLabel,
   sourceKind,
   toolLabel,
@@ -74,6 +75,18 @@ describe("sourceKind", () => {
     expect(sourceKind(skill({ name: "a", source_type: "local" }))).toBe(
       "local",
     );
+  });
+});
+
+describe("repointKind", () => {
+  it.each([
+    ["git", "git"],
+    ["GitHub", "git"],
+    ["local", "local"],
+    // An imported skill has no source: Change source starts on a folder.
+    ["imported", "local"],
+  ] as const)("%s preselects %s", (source_type, expected) => {
+    expect(repointKind(skill({ name: "a", source_type }))).toBe(expected);
   });
 });
 
