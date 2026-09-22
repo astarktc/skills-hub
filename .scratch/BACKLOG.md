@@ -5,51 +5,34 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#37**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#42**.
 
 ## Now — evidence of unfinished work is strong
 
-(empty — #02 shipped in 1.2.15, `archive/round15/spec.md`)
+(empty — every `Later`/`Parked` line was absorbed by `round16/spec.md` § Dispositions in its opening commit:
+#12 #15 #22 #28 #35 #36 → tickets; #18 → ticket 08; #16 #17 #21 #23 #24 #25 #27 #29 dropped by name there;
+#30 superseded by #37–#41 below; #26 moved to Future efforts.)
 
 ## Later — real, not urgent
 
-- **#12 Replace the old `bulk_assign_*` hand-simulated tests with engine calls.** `tests/project_sync.rs:697,763,816`
-  coexist with the engine suite at :1025. Source: `archive/v-next/issues/25:41`.
-- **#15 Byte acquisition must refuse a listing-only intent.** `git_acquisition` still accepts an optional-subpath
-  `Selection`; current callers cannot reach it — revisit before a new caller does. Source: `archive/round10/wave-b-review-disposition.md:7`.
-- **#16 Old nonempty Explore preview cache: validate or migrate.** New publication is atomic, but inherited entries are
-  trusted by `preview_has_content`/`read_dir` (`installer.rs:502,528,542`). Source: `archive/round10/wave-b-execution.md:40`.
-- **#17 Permissioned Cursor smoke: hidden-target directory symlink + full IDE restart.** Ticket 38 flipped the capability
-  on unit gates only. Needs operator permission (touches the live library). Source: `archive/v-next/assets/research-cursor-symlinks.md:224–228`.
-- **#18 Windows: Cursor junction fallback is unverified.** `sync_engine.rs:63` path never exercised on a Windows host.
-  Source: same research, :231–233; `archive/v-next/issues/38:33–34`.
-- **#35 Project assignment toggle toasts asymmetrically.** Toggle-off folds its `RemovalReport` and toasts
-  `status.syncDisabled`; toggle-on returns no report and stays silent. Symmetric fix = assign-side outcome from the
-  backend (`toggle_skill_assignment` `Assigned` carrying its sync outcome), not a frontend patch.
-  Source: `archive/round15/review/opus-review.md` re-check nit.
-- **#36 `ResyncSummary.errors: Vec<String>` is rendered chains on the wire** — the last prose-on-wire field after
-  round 15 (R1 carve-out). Typed per-assignment outcomes would let `AssignmentMatrix` use the fold.
-  Source: `archive/round15/spec.md` R1.
-
-
+(empty)
 
 ## Parked — needs a product decision before it is work
 
-- **#21 Notification history persistence** (DB table or JSONL). Session-only ring was deliberate. Source: `archive/round3/spec.md:28`.
-- **#22 Refuse Tool-dir local sources at listing time** (UX; second predicate call site). Source: `archive/round4/issues/08:31`.
-- **#23 Bulk local Re-point** of many stale rows at once. Source: `archive/round4/spec.md:191–192`.
-- **#24 WSL ↔ Windows path translation.** Explicitly excluded in round 4. Source: `archive/round4/spec.md:193`.
-- **#25 GitHub API path follows only a leaf symlink** (ancestor symlinks need the clone path). Limitation accepted;
-  CONTEXT.md **Acquisition** records it. Source: `archive/round4/issues/12:10`, `archive/round5/spec.md:39`.
-- **#26 Skill Edit V2 / Fork** (keep upstream, layer operator edits, replay on Update, flag conflicts). Edit V1 is the
-  foundation; Manifest module is the write door. Source: `archive/round7/issues/02:19`, `archive/round10/issues/04:35`.
-- **#27 Collapse the three unsync commands into one scoped removal command.** Distinct toasts are the recorded reason to
-  keep them. Source: `archive/arch-deepening/issues/03:90–91`.
-- **#28 Decouple `update_managed_skill` from the batch command's signature**; rename the `refreshProgress` channel factory.
-  Source: `archive/round10/wave-b-review-disposition.md:8–9`.
-- **#29 Document `content_identity::record`'s upsert effect** (or rename). Doc comment at :25 may already suffice.
-  Source: `archive/round7/backlog.md` #19.
-- **#30 v-next feature ideas beyond the invocation badge** — operator input needed. Source: `archive/v-next/map.md:68`.
+(empty)
+
+## Future efforts — decided as "yes, someday", each needs its own grill/spec before it is work
+
+- **#26 Skill Edit V2 / Fork** (keep upstream, layer operator edits, replay on Update, flag conflicts). Edit V1 is
+  the foundation; Manifest module is the write door. Source: `archive/round7/issues/02:19`, `archive/round10/issues/04:35`.
+- **#37 Overall UI audit** — usability, user-friendliness, design quality across the app (the `impeccable` skill
+  is the natural vehicle). Source: operator, 2026-09-22.
+- **#38 Add skills via `npx skill add …`-style commands**, not only GitHub repo URLs. Source: operator, 2026-09-22.
+- **#39 Repo-level skill deployment from the My Skills page.** Source: operator, 2026-09-22.
+- **#40 Harness-specific detection/deployment audit** — what does and doesn't exist per Tool (e.g. `openai.yaml`
+  deployment for Codex). Source: operator, 2026-09-22.
+- **#41 Repo scan finds both a Codex and a Claude Code variant of one skill** — keep both, collapse, or
+  something else; needs analysis, likely absorbs part of #40. Source: operator, 2026-09-22.
 
 ## Dropped by name (recorded so nobody requeues them)
 
@@ -61,3 +44,12 @@ Numbers are stable: never renumber; retire by deleting the line (history keeps i
 - Double single-action toast, fence rules, override convergence — fixed (round 9/10), not open.
 - Operator smoke of a release — not a queue item: the operator installs each GitHub release build and smokes that.
 - Pin "unknown status + copy + matching hash → Synced" as an integration test — declined, v-next 35:41; stored-string tests exist.
+- Old nonempty Explore preview cache validation (#16) — startup wipes `.explore-cache` (`lib.rs:179`); round16 spec.
+- Permissioned Cursor symlink smoke (#17) and Cursor-through-junction on Windows (#18 facet b) — no Cursor on any
+  operator host; vendor docs; `supports_symlink` is the revert lever; round16 spec.
+- Notification history persistence (#21) — per-row `last_error` is the durable record; round16 spec.
+- Bulk local Re-point (#23) — never hit; its own effort if demand shows; round16 spec.
+- WSL ↔ Windows path translation (#24), GitHub API ancestor-symlink (#25) — explicit exclusions, no new evidence; round16 spec.
+- Collapse the three unsync commands (#27) — uniform since round 15; distinct toasts remain the reason; round16 spec.
+- Decouple `update_managed_skill` from the batch signature (#28 half) — "a batch of one" is the documented design; round16 spec.
+- Document `content_identity::record`'s upsert (#29) — doc + 2-line body already say it; round16 spec.
