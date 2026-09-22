@@ -160,7 +160,7 @@ const ProjectsPage = ({
     } catch (err) {
       notifyError(err);
     }
-  }, [applyOutcome, notifyError, state, t, toolLabelById]);
+  }, [applyOutcome, notify, notifyError, state, t, toolLabelById]);
 
   const handleToggleAssignment = useCallback(
     async (skillId: string, tool: string) => {
