@@ -14,9 +14,9 @@ new identity:
 
 | Source kind (see **Provenance**) | Where the operator edits | What rewrites the central copy and its hash |
 |---|---|---|
-| `git` | The upstream repository (or a fork of it, then Re-point) | Update / Refresh, Restore |
-| `local` | The source folder | Update / Refresh, Restore, Re-point (local) |
-| `imported` / central-only (ADR-0003) | The in-app **Edit** | Edit, which settles through the Update module |
+| `git` | The upstream repository (or a fork of it, then Re-point) | Update / Refresh, Restore, Re-point (any target) |
+| `local` | The source folder | Update / Refresh, Restore, Re-point (any target) |
+| `imported` / central-only (ADR-0003) | The in-app **Edit** | Edit, which settles through the Update module; Re-point (any target), after which the skill is `git` or `local` |
 
 The consequence the backlog flagged is accepted: after an out-of-band edit, a target that was
 byte-identical to the *recorded* copy still passes `overwrite_if_same_content`, so the next sync

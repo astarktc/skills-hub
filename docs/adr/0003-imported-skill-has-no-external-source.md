@@ -53,3 +53,21 @@ a real upstream and is recorded `git`.
 - Adding a folder that lives inside a Tool's skills directory through "Add from a local folder"
   would recreate the accident; that entry point refuses such a path and steers to Import
   (ticket 08).
+
+## Amendment (round 16, 2026): imported is a state a skill can leave by Re-point
+
+The title still holds for the imported *state*: while a skill is imported it has no external source and
+none of the operations above may treat one as such. Round 16 made Re-point one operation over one target
+(`core/repoint.rs`, CONTEXT.md **Re-point**) offered to every Managed skill, so the statement is about
+provenance as a state, not a permanent property of the row:
+
+- **An imported skill may be re-pointed at a GitHub URL or a local folder.** On settle its provenance
+  becomes `git` or `local` (source fields recorded as Add records them), `imported_from_tool` is cleared,
+  and it is refreshable from then on — a member of Refresh (all), offering Update. The bytes that land are
+  the target's, through the same single-Update finalize (Edits replayed, ADR-0004); a refused target or a
+  failed acquisition/finalize leaves the row imported and untouched.
+- **Detach remains the only road into imported.** No Re-point target is "imported"; the operator who wants
+  the central copy to be the truth again detaches.
+- The rejected option "make imported skills refreshable from the Tool directory" stays rejected: a Tool's
+  copy is a Sync target and a Re-point to a folder inside a Tool's skills directory is refused
+  (`LOCAL_SOURCE_INSIDE_TOOL_DIR`) exactly as Add refuses it.

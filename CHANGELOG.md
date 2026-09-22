@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+Round 16 closes the backlog: the project world reports every sync like the rest of the app, bulk assign gets its inverse, and Re-point works across every source kind.
+
+### Added
+
+- **Change source… on every managed skill.** Any skill — git, local, or imported — can be re-pointed at a GitHub URL or a local folder from one modal. Pointing an imported skill at a source makes it refreshable; pointing a git skill at a folder you maintain keeps its deployments and project assignments. The Unlocatable "source missing" repair opens the same modal.
+- **Bulk unassign.** One click clears a skill from every tool of a project — the inverse of bulk assign; kept targets are reported per tool (ADR-0002).
+- The Add flow's local folder picker now shows a folder inside a tool's own skills directory as disabled with the reason, instead of refusing it only on Install.
+
+### Changed
+
+- Turning a project assignment on, bulk assign, and Resync (one project or all) now report each assignment's outcome with a toast — a sync failure inside a freshly created row is surfaced, not just painted red in the matrix.
+
+### Internal/architecture
+
+- `ProjectSyncReport` replaces `ResyncSummary` and the bulk-assign error list — the last prose-on-wire field is gone; counters are derived by the frontend fold. `RemovalScope::ProjectSkill` and `bulk_unassign_skill`. `toggle_project_skill_assignment` answers a `kind`-tagged union.
+- `repoint_skill_source` over `RepointTarget::{Git, Local}` in `core/repoint.rs` replaces the two same-kind Re-point commands; `GIT_REPOINT_REQUIRES_GIT` retired. ADR-0003 amended: imported is a provenance a skill can leave by Re-point.
+- `git_acquisition::acquire` can no longer be handed a listing-only intent (`GitSelection.subpath` is non-optional; listing builds its own resolution) — two runtime guards retired.
+- The three hand-simulated `bulk_assign_*` tests are retired in favour of the engine suite; `refreshProgress` renamed `newRefreshProgressChannel`.
+
 ## [1.2.15] - 2026-09-21
 
 Fan-out reports cross the wire as their core types (round 15, wave C): one representation per report, per-target failures classified where the row settles, delete and the project unassign toggle report kept targets instead of throwing.

@@ -118,7 +118,7 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   twice); those are internal to that world, not a cross-world seam. After a mutation, the **project**
   world applies what the mutation returned — a `ProjectViewDto` fed to `useProjectState::applyView`, no
   success-path refetch tail, only a failure-path `refreshView`. The **skills** world replaces its entire
-  catalog from `{ report, skills }` after Update, Restore, either Re-point and Edit — even when the returned
+  catalog from `{ report, skills }` after Update, Restore, Re-point and Edit — even when the returned
   report contains failures/skips. Commands read that catalog after settlement/reassert, outside the guard;
   a catalog-read failure is a command error, never an empty success. Refresh-all, import and delete retain
   `getManagedSkills` (`loadManagedSkills`); thrown Update/Restore/Re-point requests also reload, thrown Edit
@@ -126,9 +126,12 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   answer with a view: `remove_project` returns `{ projects, report }` (the project is normally gone; a
   project kept under ADR-0002 is still listed and the hook takes the failure-path `refreshView` for its matrix),
   `update_project_gitignore` returns `()` (it changes no view row), and `resync_all_projects` returns
-  `{ summaries, projects }` spanning every project, so the hook refetches `getProjectView` for the selected
-  project alone. `configure_project_tools` returns `{ view, report }` — the dropped tools' removal reports
-  merged into one. Both reports are folded by `projectRemovalOutcome` in `ProjectsPage`, never in the hook.
+  `{ report, projects }` — one `ProjectSyncReport` spanning every project — so the hook refetches
+  `getProjectView` for the selected project alone. `configure_project_tools` returns `{ view, report }` — the
+  dropped tools' removal reports merged into one. Every project report is folded in `ProjectsPage`, never in
+  the hook: removal reports by `projectRemovalOutcome` / `removalOutcome` (toggle-off, bulk unassign,
+  configure, remove), `ProjectSyncReport`s by `projectSyncOutcome` (toggle-on, bulk assign, resync);
+  `toggle_project_skill_assignment` answers a `kind`-tagged union so the page picks the fold without a boolean.
 - **Frontend tests are hook- and pure-function-level; no component rendering tests** (vitest + `renderHook`,
   jsdom; colocated `src/**/*.test.ts`,
   type-checked by `npm run build`): mock at module seams — `src/lib/tauri.ts` for backend calls,
@@ -200,17 +203,23 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
     discarded as skipped report data, never retried in-batch. Direct Edit settles through the same Update
     module; its core result `{ entry, propagation }` becomes a `{ report, skills }` command response.
     The Edit fold consumes target failures as report data, never unconditional saved success.
+  - Re-point → `repoint_skill_source` (`core/repoint.rs`): one operation over `RepointTarget::{Git, Local}` for
+    every provenance (imported included — it stops being imported, ADR-0003 amendment); validates the target,
+    then the same batch-of-one Update settles source and bytes together.
   - Onboarding import → `import_onboarding_selection` (`core/onboarding_import.rs`): admit, finalize,
     then sync through the global sync batch (auto-sync on — a first sync, not Propagation) or remove
     byte-identical originals (auto-sync off), per group. An imported skill has no external source (ADR-0003).
-  - unsync / delete / project removal → `core/artifact_removal.rs` (below).
+  - project assignment on / bulk assign / resync → `core/project_sync.rs`, answering a `ProjectSyncReport`
+    (per-assignment `synced` / `already_assigned` / `failed { error }`, the failed row's id carried when the
+    row exists); the store failure that fails a listing is a whole-command error, not an item.
+  - unsync / delete / project removal / bulk unassign → `core/artifact_removal.rs` (below).
   Bringing every target of one changed skill into line is **Propagation** (`core/propagation.rs`) — the
   only writer of target rows on an update path, spanning global target rows and project assignment
   rows, honouring each Tool's capability through `sync_engine::sync_dir_for_tool_with_overwrite`.
   The shared-skills-dir grouping reaches the UI only as `ToolInfoDto.shared_with`; do not re-derive it
   from `skills_dir`.
 - **Artifact removal is one module.** `core/artifact_removal.rs` plans by scope (`Skill`, `SkillGlobal`,
-  `SkillTool`, `Project`, `ProjectTool`, `ProjectSkillTool`, `EveryGlobalTarget`; a scope carries the
+  `SkillTool`, `Project`, `ProjectTool`, `ProjectSkill`, `ProjectSkillTool`, `EveryGlobalTarget`; a scope carries the
   roots its planning needs), executes with one presence rule (`symlink_metadata`) and one settlement
   rule — a row whose artifact could not be removed is **kept** with sync status `error`, rows are
   deleted only on success (`docs/adr/0002-keep-row-with-error-on-failed-artifact-removal.md`) — and
@@ -222,7 +231,9 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   (full / sparse union) is entry metadata, a hit needs freshness *and* coverage, and an entry is only
   ever widened, never narrowed (so the Add flow's listing clone serves its install, and two skills of
   one repo share an entry safely under parallel Refresh). `git_acquisition::acquire` is the only way
-  bytes land from a git source: `SkillIntent::{StoredRecord, Selection, ByName}` carries caller intent;
+  bytes land from a git source: `SkillIntent::{StoredRecord, Selection, ByName}` carries caller intent
+  (a `Selection` always names a subpath — listing builds its own private resolution, so "list candidates"
+  is unrepresentable as an acquisition);
   `git_acquisition/resolution.rs` privately owns branch splitting, stored-hint repair and assumed-branch
   policy. Listing uses acquisition's candidate admission and returns `GitSourceResolution` for the selected
   install to reuse (including deliberate null/default branch). The Contents API fast path records a real
