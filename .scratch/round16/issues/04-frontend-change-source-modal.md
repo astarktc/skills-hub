@@ -1,6 +1,6 @@
 # 04 — Frontend-B: "Change source…" on every managed skill
 
-Status: ready-for-agent
+Status: claimed
 Blocked by: 02 (done — 3c48a86, merged to main)
 Spec: `.scratch/round16/spec.md` — D3, D4, D5. Read the spec first. The wire map from ticket 02's report is
 pasted under § Wire map below before this ticket is claimed.
@@ -75,3 +75,29 @@ export type RepointTarget =
 - Lane 02 already switched the two `invokeTauri` call sites in `src/hooks/useSkillLibrary.ts` (`:~371` git,
   `:~409` local) to `repointSkillSource` with the matching `target` — the hook still has today's two-path shape
   (modal for git, inline folder picker for local); D5 replaces that with one modal.
+
+## Comments
+
+### 2026-09-22 — frontend-B (lane 04), implemented on `round16/frontend-b` @ `daac72a`
+
+- **Modal**: `GitRepointModal.tsx` → `ChangeSourceModal.tsx`. Kind picker = a `<fieldset>` radio group drawn with
+  the Add modal's `.tabs`/`.tab-item` (sr-only radios, `:has(input:focus-visible)` ring; CSS in `App.css`
+  `.change-source-kind`). Each arm keeps its own input (switching kinds loses nothing). Local arm: editable path
+  (`~` allowed, expanded by the backend) + "Choose folder…" (`onPickFolder` prop → hook's `pickRepointFolder`, the
+  only `@tauri-apps/plugin-dialog` caller for Change source). Confirm → `RepointTarget`; disabled while loading or empty.
+- **Hook** (`useSkillLibrary.ts`): `repointSelection {skillId, name, preselect}` + `pendingRepointSkill`;
+  `handleRepointSkill(skill, preselect?)` (default `repointKind(skill)`), `handleCloseRepoint`, `pickRepointFolder`
+  (cancel/multi → null, failure → `setError`), `handleConfirmRepoint(target)` (trims, `repointSkillSource`, batch of
+  one via `runSingleRefresh`, `closeModal` closes). Inline folder-picker path deleted. `canRepoint` = any managed
+  skill. Notification action (only offered for `GITHUB_SKILL_NOT_FOUND`) opens on `git`. `skillGone` warning kept.
+- **Card / list / detail**: MapPin "Change source…" on every managed card; the `source_missing` repair calls
+  `onRepoint(skill, "local")`. Detail view's button also ungated from `git` (same action, consistency with D5).
+- **Pure**: `skillPresentation.repointKind` (+ `RepointKind` type), table-tested (imported → local).
+- **i18n**: `gitRepoint.*` → `changeSource.*` (action, title, kindLabel, kindGit, kindLocal, confirm, urlLabel,
+  urlPlaceholder, urlHelp, pathLabel, pathPlaceholder, pathHelp, chooseFolder, selectFolderTitle). **Kept**
+  `gitRepoint.action` (value now "Change source…") only because `src/lib/reportOutcome.ts` (lane 03's file) and its
+  test read it — orchestrator: after merging 03, switch that label + test to `changeSource.action` and delete the
+  `gitRepoint` block (EN/ZH). Removed `errors.gitRepointRequiresGit`, `unlocatable.selectNewSourceFolder`.
+  Reworded `errors.sourcePathMissing`, `errors.localSourceInsideToolDir` (fit Add, Update and Change source) and
+  `errors.githubSkillNotFound` ("use Change source"). `unlocatable.repoint` repair label stays "Re-point".
+- **Gate**: `npm run lint` clean; `npm run test` 15 files / 379 tests; `npm run build` ok. EN/ZH key parity checked.
