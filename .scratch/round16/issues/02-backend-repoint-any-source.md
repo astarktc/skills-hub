@@ -1,6 +1,6 @@
 # 02 — Backend-B: one Re-point over a target enum, every provenance
 
-Status: ready-for-agent
+Status: claimed
 Spec: `.scratch/round16/spec.md` — decisions D3, D4. Read the spec first; this ticket is the Re-point backend
 half. Ticket 04 (frontend-B) follows the bindings you regenerate.
 
@@ -101,3 +101,26 @@ their kind guards are retired.
 Old→new wire map (command names, `RepointTarget` shape, removed error code, changed `SkillMutationResultDto`
 if any), every frontend line you touched to keep the build green, the doc-facing changes you believe ticket 07
 must make, gate output.
+
+## Comments
+
+### 2026-09-22 — backend-B (lane 02), implemented on `round16/backend-b` @ `4644bbd`
+
+- **Wire**: `repoint_local_skill_source(skillId, newPath, policy)` and `repoint_git_skill_source(skillId, newUrl,
+  policy)` → `repoint_skill_source(skillId, target: RepointTarget, policy) -> SkillMutationResultDto` (no progress
+  channel — neither old command had one). `RepointTarget = { kind: "git"; url } | { kind: "local"; path }`, the core
+  type crossing as itself (`core/repoint.rs`). `GIT_REPOINT_REQUIRES_GIT` gone; no replacement.
+  `SkillMutationResultDto` unchanged.
+- **Core**: `core/repoint.rs` `repoint_skill_source{,_with(api)}`; `~` expansion is in core against `paths.home`
+  (pure, explicit root). `skill_update::acquire_git_repoint` (provenance-blind) split from `acquire_update` (lost its
+  `source_override` param). `UpdateRequest::local(…, repoint = true)` proposes `local`/folder/no subpath;
+  `apply_unlocked` clears `source_revision` + `imported_from_tool` on any Re-point (git's revision is then set by
+  finalize from the acquisition). `require_local` removed; Detach keeps its own local-only guard inline.
+- **Tests**: `core/tests/repoint.rs` (23): ported git + local Re-point tests, cross-kind git→local, local→git,
+  imported→local (+ joins Refresh (all)), imported→git, failed git→local settle changes nothing (revision kept),
+  Edit replay across git→local, unknown id for both targets, `~` expansion.
+- **Frontend (build-forced only)**: `useSkillLibrary.ts:371,409`, `useSkillLibrary.test.ts:143,510,658–659`,
+  `commandError.ts` (map entry + case), `components/skills/types.ts` re-export. i18n `gitRepointRequiresGit` (EN/ZH)
+  left for ticket 04.
+- **Gate**: fmt, clippy `-D warnings`, `cargo test --all` (654 + 0 + 0), `npm run build`, `npm run test` (362),
+  `npm run lint`, `version:check` — all green.
