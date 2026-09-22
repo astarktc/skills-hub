@@ -934,7 +934,8 @@ fn fanout_assigns_every_tool_in_caller_order() {
         &skill,
         &keys(&["claude_code", "cursor"]),
         3000,
-    );
+    )
+    .unwrap();
 
     let tool_keys: Vec<&str> = report.items.iter().map(|o| o.tool.as_str()).collect();
     assert_eq!(tool_keys, vec!["claude_code", "cursor"]);
@@ -980,7 +981,8 @@ fn fanout_reports_already_assigned_as_data_and_does_not_duplicate() {
         &skill,
         &keys(&["claude_code", "cursor"]),
         3000,
-    );
+    )
+    .unwrap();
 
     assert!(matches!(
         report.items[0].status,
@@ -1024,7 +1026,8 @@ fn fanout_isolates_an_unknown_tool_and_continues() {
         &skill,
         &keys(&["claude_code", "no-such-tool", "cursor"]),
         3000,
-    );
+    )
+    .unwrap();
 
     assert!(matches!(
         report.items[0].status,
@@ -1073,7 +1076,7 @@ fn fanout_reports_a_sync_failure_with_the_kept_error_row() {
     );
     fs::remove_dir_all(&skill_dir).unwrap();
 
-    let report = assign_skill_to_tools(&store, &project, &skill, &keys(&["cursor"]), 3000);
+    let report = assign_skill_to_tools(&store, &project, &skill, &keys(&["cursor"]), 3000).unwrap();
 
     let row = store
         .get_project_skill_assignment(&project.id, &skill.id, "cursor")
@@ -1090,6 +1093,96 @@ fn fanout_reports_a_sync_failure_with_the_kept_error_row() {
         } => assert_eq!(path, &source),
         other => panic!("expected Failed with the typed error, got {:?}", other),
     }
+}
+
+/// A SQLite trigger that refuses to settle any assignment row as `error` —
+/// the "store cannot persist the outcome" fault (disk full, read-only DB).
+fn refuse_error_settlement(store: &SkillStore) {
+    let conn = rusqlite::Connection::open(store.db_path()).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER refuse_error_settlement
+         BEFORE UPDATE OF status ON project_skill_assignments
+         WHEN NEW.status = 'error'
+         BEGIN SELECT RAISE(ABORT, 'settlement refused by test'); END;",
+    )
+    .unwrap();
+}
+
+/// Review round 16 M1: a sync failure whose settlement the store refuses is
+/// a store failure, not report data — the engine must not answer with an
+/// item claiming a settled `error` row that was never written. The row it
+/// inserted stays `pending` with no `last_error`, and the store failure
+/// carries the sync chain as context.
+#[test]
+fn fanout_propagates_a_refused_settlement_instead_of_reporting_it_settled() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let skill_dir = make_skill_dir(tmpdir.path(), "unsettled-skill");
+    let project_dir = tmpdir.path().join("unsettled-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "unsettled-skill",
+        &skill_dir.to_string_lossy(),
+    );
+    fs::remove_dir_all(&skill_dir).unwrap();
+    refuse_error_settlement(&store);
+
+    let err = assign_skill_to_tools(&store, &project, &skill, &keys(&["cursor"]), 3000)
+        .expect_err("a refused settlement is a store failure");
+
+    let chain = format!("{err:#}");
+    assert!(chain.contains("settle assignment"), "{chain}");
+    assert!(chain.contains("settlement refused by test"), "{chain}");
+    assert!(
+        chain.contains(&skill_dir.to_string_lossy().to_string()),
+        "the sync failure stays in the chain as context: {chain}"
+    );
+    let row = store
+        .get_project_skill_assignment(&project.id, &skill.id, "cursor")
+        .unwrap()
+        .expect("the inserted row remains");
+    assert_eq!(row.status, SyncStatus::Pending, "nothing settled");
+    assert_eq!(row.last_error, None);
+}
+
+/// The same fault on the re-sync path: the row keeps its previous state and
+/// the command fails rather than answering with a `Failed` item.
+#[test]
+fn resync_propagates_a_refused_settlement_instead_of_reporting_it_settled() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let skill_dir = make_skill_dir(tmpdir.path(), "resync-unsettled");
+    let project_dir = tmpdir.path().join("resync-unsettled-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "resync-unsettled",
+        &skill_dir.to_string_lossy(),
+    );
+    let synced =
+        project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 1000).unwrap();
+    assert_eq!(synced.status, SyncStatus::Synced);
+    fs::remove_dir_all(&skill_dir).unwrap();
+    refuse_error_settlement(&store);
+
+    let err = project_sync::resync_project(&store, &project.id, 2000)
+        .expect_err("a refused settlement is a store failure");
+
+    let chain = format!("{err:#}");
+    assert!(chain.contains("settle assignment"), "{chain}");
+    assert!(chain.contains("settlement refused by test"), "{chain}");
+    let row = store
+        .get_project_skill_assignment(&project.id, &skill.id, "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.status,
+        SyncStatus::Synced,
+        "the previous state is untouched"
+    );
 }
 
 /// Wire-shape pins: `status` is the tag, snake_case; `Failed` nests the

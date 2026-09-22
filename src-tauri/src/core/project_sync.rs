@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::core::{
     artifact_removal, content_identity,
@@ -161,15 +161,35 @@ pub(crate) fn assign_and_sync(
     tool_key: &str,
     now: i64,
 ) -> Result<ProjectSkillAssignmentRecord> {
-    assign_and_settle(store, project, skill, tool_key, now).map(|(record, _)| record)
+    match assign_and_settle(store, project, skill, tool_key, now)? {
+        AssignAttempt::Settled { record, .. } => Ok(*record),
+        AssignAttempt::Refused(refusal) => Err(refusal),
+    }
+}
+
+/// What one assignment attempt settled to. Both arms are report data: the
+/// row exists and carries its outcome, or no row was ever created because
+/// the assignment was refused (unknown tool — the typed refusal, classified
+/// by the engine when it builds the item, never propagated). A store
+/// failure is *not* an arm — it is the `Err` of [`assign_and_settle`],
+/// because a failure to persist the outcome means nothing settled and the
+/// report may not claim it did.
+enum AssignAttempt {
+    Refused(anyhow::Error),
+    Settled {
+        record: Box<ProjectSkillAssignmentRecord>,
+        sync_error: Option<CommandError>,
+    },
 }
 
 /// Create one assignment row and run its first sync. A sync failure is
 /// recorded on the row (`status = error`, `last_error`) and returned beside
 /// it, classified here, right after its `{:#}` chain was written to the
 /// row's `last_error` — the report-row settlement point (ADR-0001, round
-/// 15). Only a refusal before the row exists (unknown tool) or a store
-/// failure is an `Err`.
+/// 15). A refusal before the row exists (unknown tool) is settlement too
+/// ([`AssignAttempt::Refused`]). Only a store failure is an `Err`: it
+/// propagates to the command boundary (ADR-0001's whole-command timing)
+/// instead of being reported as a settled row that was never written.
 ///
 /// Unlocked internal seam: callers reach it through an entry point that has
 /// already taken the mutation guard (`mutation_guard`).
@@ -179,9 +199,12 @@ fn assign_and_settle(
     skill: &SkillRecord,
     tool_key: &str,
     now: i64,
-) -> Result<(ProjectSkillAssignmentRecord, Option<CommandError>)> {
+) -> Result<AssignAttempt> {
     // Refuse before a row exists: an unknown tool gets no assignment.
-    let adapter = require_adapter(tool_key)?;
+    let adapter = match require_adapter(tool_key) {
+        Ok(adapter) => adapter,
+        Err(refusal) => return Ok(AssignAttempt::Refused(refusal)),
+    };
 
     let record = ProjectSkillAssignmentRecord {
         id: uuid::Uuid::new_v4().to_string(),
@@ -213,21 +236,34 @@ fn assign_and_settle(
         })
     }) {
         Ok(_) => {
-            let updated = store
+            let record = store
                 .get_project_skill_assignment(&project.id, &skill.id, tool_key)?
                 .unwrap_or(record);
-            Ok((updated, None))
+            Ok(AssignAttempt::Settled {
+                record: Box::new(record),
+                sync_error: None,
+            })
         }
         Err(e) => {
             let err_msg = format!("{:#}", e);
-            store.transition_assignment(
-                &record.id,
-                AssignmentTransition::SyncFailed { error: &err_msg },
-            )?;
-            let updated = store
+            store
+                .transition_assignment(
+                    &record.id,
+                    AssignmentTransition::SyncFailed { error: &err_msg },
+                )
+                .with_context(|| {
+                    format!(
+                        "settle assignment {} as error after its sync failed: {err_msg}",
+                        record.id
+                    )
+                })?;
+            let record = store
                 .get_project_skill_assignment(&project.id, &skill.id, tool_key)?
                 .unwrap_or(record);
-            Ok((updated, Some(CommandError::from_anyhow(e))))
+            Ok(AssignAttempt::Settled {
+                record: Box::new(record),
+                sync_error: Some(CommandError::from_anyhow(e)),
+            })
         }
     }
 }
@@ -324,61 +360,51 @@ impl std::fmt::Display for ProjectSyncReport {
 
 /// Deterministic engine: for each tool key in caller order, skip tools the
 /// skill is already assigned to (`AlreadyAssigned`), otherwise assign and
-/// sync. Failures are isolated per tool — one bad tool never aborts the
-/// batch. A *sync* failure leaves its row with status `error` and is
+/// sync. Target failures are isolated per tool — one bad tool never aborts
+/// the batch: a *sync* failure leaves its row with status `error` and is
 /// reported `Failed` with that row's id; a refused assignment (unknown
-/// tool) or a store failure is `Failed` with the id of whatever row exists.
+/// tool) is `Failed` with no row. A store failure — the row could not be
+/// read, created, or settled — is the `Err`: nothing settled, so the report
+/// may not claim it did (ADR-0001; review round 16 M1).
 pub(crate) fn assign_skill_to_tools(
     store: &SkillStore,
     project: &ProjectRecord,
     skill: &SkillRecord,
     tool_keys: &[String],
     now: i64,
-) -> ProjectSyncReport {
-    let items = tool_keys
-        .iter()
-        .map(|tool_key| {
-            let (assignment_id, status) =
-                match store.get_project_skill_assignment(&project.id, &skill.id, tool_key) {
-                    Ok(Some(existing)) => {
-                        (Some(existing.id), ProjectSyncOutcomeStatus::AlreadyAssigned)
-                    }
-                    Ok(None) => match assign_and_settle(store, project, skill, tool_key, now) {
-                        Ok((record, None)) => (Some(record.id), ProjectSyncOutcomeStatus::Synced),
-                        Ok((record, Some(error))) => {
-                            (Some(record.id), ProjectSyncOutcomeStatus::Failed { error })
-                        }
-                        // Refused or a store failure: report whichever row the
-                        // failure left behind (none for a refusal).
-                        Err(error) => (
-                            store
-                                .get_project_skill_assignment(&project.id, &skill.id, tool_key)
-                                .ok()
-                                .flatten()
-                                .map(|row| row.id),
-                            ProjectSyncOutcomeStatus::Failed {
-                                error: CommandError::from_anyhow(error),
-                            },
-                        ),
-                    },
-                    Err(error) => (
+) -> Result<ProjectSyncReport> {
+    let mut items = Vec::with_capacity(tool_keys.len());
+    for tool_key in tool_keys {
+        let (assignment_id, status) =
+            match store.get_project_skill_assignment(&project.id, &skill.id, tool_key)? {
+                Some(existing) => (Some(existing.id), ProjectSyncOutcomeStatus::AlreadyAssigned),
+                None => match assign_and_settle(store, project, skill, tool_key, now)? {
+                    AssignAttempt::Settled {
+                        record,
+                        sync_error: None,
+                    } => (Some(record.id), ProjectSyncOutcomeStatus::Synced),
+                    AssignAttempt::Settled {
+                        record,
+                        sync_error: Some(error),
+                    } => (Some(record.id), ProjectSyncOutcomeStatus::Failed { error }),
+                    AssignAttempt::Refused(refusal) => (
                         None,
                         ProjectSyncOutcomeStatus::Failed {
-                            error: CommandError::from_anyhow(error),
+                            error: CommandError::from_anyhow(refusal),
                         },
                     ),
-                };
-            ProjectSyncOutcome {
-                assignment_id,
-                project_id: project.id.clone(),
-                skill_id: skill.id.clone(),
-                skill_name: skill.name.clone(),
-                tool: tool_key.clone(),
-                status,
-            }
-        })
-        .collect();
-    ProjectSyncReport { items }
+                },
+            };
+        items.push(ProjectSyncOutcome {
+            assignment_id,
+            project_id: project.id.clone(),
+            skill_id: skill.id.clone(),
+            skill_name: skill.name.clone(),
+            tool: tool_key.clone(),
+            status,
+        });
+    }
+    Ok(ProjectSyncReport { items })
 }
 
 /// The one "this project and this skill must both exist" lookup, raising the
@@ -400,8 +426,8 @@ pub fn lookup_project_and_skill(
 }
 
 /// Assign one skill to every tool persisted for the project (the
-/// `bulk_assign_skill` command). Only the lookups can error; per-tool
-/// results are data.
+/// `bulk_assign_skill` command). Lookups and store failures error; per-tool
+/// target outcomes are data.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
 /// No composite operation composes it, so it has no unlocked seam.
@@ -418,9 +444,7 @@ pub fn assign_skill_to_project_tools(
             .into_iter()
             .map(|t| t.tool)
             .collect();
-        Ok(assign_skill_to_tools(
-            store, &project, &skill, &tool_keys, now,
-        ))
+        assign_skill_to_tools(store, &project, &skill, &tool_keys, now)
     })
 }
 
@@ -441,7 +465,7 @@ pub(crate) fn assign_skill_to_project_tool_unlocked(
     now: i64,
 ) -> Result<ProjectSyncReport> {
     let (project, skill) = lookup_project_and_skill(store, project_id, skill_id)?;
-    let report = assign_skill_to_tools(store, &project, &skill, &[tool_key.to_string()], now);
+    let report = assign_skill_to_tools(store, &project, &skill, &[tool_key.to_string()], now)?;
     if report
         .items
         .iter()
@@ -496,8 +520,9 @@ pub fn resync_project(store: &SkillStore, project_id: &str, now: i64) -> Result<
 }
 
 /// Per-assignment failures are report data, classified after the row was
-/// settled `error` with the chain in `last_error`; only the project lookup
-/// and the assignment listing (store failures) fail the whole re-sync.
+/// settled `error` with the chain in `last_error`; store failures — the
+/// project lookup, the assignment listing, or settling a row — fail the
+/// whole re-sync, because a row the store would not settle is not settled.
 pub(crate) fn resync_project_unlocked(
     store: &SkillStore,
     project_id: &str,
@@ -511,18 +536,18 @@ pub(crate) fn resync_project_unlocked(
         let status = match sync_single_assignment(store, &project, assignment, true, now) {
             Ok(()) => ProjectSyncOutcomeStatus::Synced,
             Err(e) => {
-                if let Err(settle) = store.transition_assignment(
-                    &assignment.id,
-                    AssignmentTransition::SyncFailed {
-                        error: &format!("{:#}", e),
-                    },
-                ) {
-                    log::warn!(
-                        "resync: could not settle assignment {} as error: {:#}",
-                        assignment.id,
-                        settle
-                    );
-                }
+                let err_msg = format!("{:#}", e);
+                store
+                    .transition_assignment(
+                        &assignment.id,
+                        AssignmentTransition::SyncFailed { error: &err_msg },
+                    )
+                    .with_context(|| {
+                        format!(
+                            "settle assignment {} as error after its re-sync failed: {err_msg}",
+                            assignment.id
+                        )
+                    })?;
                 ProjectSyncOutcomeStatus::Failed {
                     error: CommandError::from_anyhow(e),
                 }

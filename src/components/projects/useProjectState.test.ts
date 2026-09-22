@@ -922,14 +922,35 @@ describe("useProjectState applies the view a mutation returns", () => {
     );
     mockInvoke.mockClear();
 
-    let report: ProjectSyncReport | undefined;
+    let answer: { report: ProjectSyncReport; viewRefreshed: boolean } | undefined;
     await act(async () => {
-      report = await result.current.resyncAll();
+      answer = await result.current.resyncAll();
     });
 
-    expect(report).toEqual(spanning);
+    expect(answer).toEqual({ report: spanning, viewRefreshed: true });
     expect(commandOrder()).toEqual(["resyncAllProjects", "getProjectView"]);
     expect(callsTo("getProjectView")).toEqual([["p1"]]);
+  });
+
+  it("resync-all keeps its report and marks the view stale when the matrix re-read fails", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result);
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "getProjectView"
+        ? Promise.reject({ code: "OTHER", message: "db locked" })
+        : base(command, ...args),
+    );
+    mockInvoke.mockClear();
+
+    let answer: { report: ProjectSyncReport; viewRefreshed: boolean } | undefined;
+    await act(async () => {
+      answer = await result.current.resyncAll();
+    });
+
+    expect(answer?.viewRefreshed).toBe(false);
+    expect(answer?.report.items).toBeDefined();
+    expect(commandOrder()).toEqual(["resyncAllProjects", "getProjectView"]);
   });
 
   it("takes the remaining project list straight from removeProject", async () => {

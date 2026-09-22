@@ -149,13 +149,14 @@ const ProjectsPage = ({
 
   const handleResyncAll = useCallback(async () => {
     try {
-      const report = await state.resyncAll();
+      const { report, viewRefreshed } = await state.resyncAll();
       const projectLabelById = Object.fromEntries(
         state.projects.map((project) => [project.id, project.name]),
       );
       applyOutcome(
         projectSyncOutcome(report, { t, toolLabelById, projectLabelById, action: "resyncAll" }),
       );
+      if (!viewRefreshed) notify("warning", t("projects.viewRefreshFailed"));
     } catch (err) {
       notifyError(err);
     }

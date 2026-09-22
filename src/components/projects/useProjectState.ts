@@ -93,7 +93,12 @@ export type ProjectState = {
     projectId: string,
     newPath: string,
   ) => Promise<ProjectDto>;
-  resyncAll: () => Promise<ProjectSyncReport>;
+  /**
+   * Re-sync every project. Answers the spanning report plus whether the
+   * selected project's matrix was re-read afterwards (`viewRefreshed: false`
+   * means the matrix shown may be stale).
+   */
+  resyncAll: () => Promise<{ report: ProjectSyncReport; viewRefreshed: boolean }>;
   loadToolStatus: () => Promise<void>;
   /**
    * Make `tools` the selected project's tool set (one backend command).
@@ -197,16 +202,21 @@ export function useProjectState(): ProjectState {
   }, []);
 
   /**
-   * Error-path convergence only: re-read a project's view after a mutation
-   * failed, so what is shown matches what the backend settled. Success
-   * paths never need it — the mutation returned its own view.
+   * Re-read a project's view so what is shown matches what the backend
+   * settled: the error-path convergence after a failed mutation, and the one
+   * success path whose mutation answers with no view (`resyncAll`). Returns
+   * whether the view was applied — a caller on a success path reports a
+   * `false` instead of letting a stale matrix pass for current.
    */
   const refreshView = useCallback(
-    async (projectId: string) => {
+    async (projectId: string): Promise<boolean> => {
       try {
         applyView(await invokeTauri("getProjectView", projectId));
+        return true;
       } catch {
-        // Silent fallback — state may be stale
+        // The mutation's own outcome is what the caller reports; the read
+        // failure is a stale marker, not a second error.
+        return false;
       }
     },
     [applyView],
@@ -449,7 +459,10 @@ export function useProjectState(): ProjectState {
     }
   }, [selectedProjectId, applyView, refreshView]);
 
-  const resyncAll = useCallback(async (): Promise<ProjectSyncReport> => {
+  const resyncAll = useCallback(async (): Promise<{
+    report: ProjectSyncReport;
+    viewRefreshed: boolean;
+  }> => {
     let result: ResyncAllResultDto;
     try {
       result = await invokeTauri("resyncAllProjects");
@@ -460,8 +473,8 @@ export function useProjectState(): ProjectState {
     setProjects(result.projects);
     // The batch touches every project and answers with no view; only the
     // shown one needs its matrix, so this read is the success path here.
-    if (selectedProjectId) await refreshView(selectedProjectId);
-    return result.report;
+    const viewRefreshed = selectedProjectId ? await refreshView(selectedProjectId) : true;
+    return { report: result.report, viewRefreshed };
   }, [selectedProjectId, refreshView]);
 
   const loadToolStatus = useCallback(async () => {

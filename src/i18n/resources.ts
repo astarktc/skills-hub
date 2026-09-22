@@ -193,8 +193,6 @@ export const resources = {
       },
       update: "Update",
       remove: "Remove",
-      // Compatibility: src/lib/reportOutcome.ts still labels its notification
-      // action with this key; retire it once that fold reads changeSource.action.
       changeSource: {
         action: "Change source…",
         title: "Change the source of {{name}}",
@@ -601,6 +599,7 @@ export const resources = {
           "Could not load projects. Check that the backend is running and try again.",
         resyncSuccess: "Synced {{synced}} assignments",
         resyncPartial: "Synced {{synced}}, {{failed}} failed",
+        viewRefreshFailed: "Could not re-read this project's assignments — the matrix may be stale",
         resyncAllSuccess: "Synced {{synced}} assignments across all projects",
         resyncAllPartial:
           "Synced {{synced}} across all projects, {{failed}} failed",
@@ -832,7 +831,6 @@ export const resources = {
       },
       update: "更新",
       remove: "移除",
-      // 兼容：src/lib/reportOutcome.ts 仍使用此键；改用 changeSource.action 后删除。
       changeSource: {
         action: "更改来源…",
         title: "更改 {{name}} 的来源",
@@ -1214,6 +1212,7 @@ export const resources = {
         loadError: "无法加载项目。请确认后端正在运行后重试。",
         resyncSuccess: "已同步 {{synced}} 个分配",
         resyncPartial: "已同步 {{synced}} 个，{{failed}} 个失败",
+        viewRefreshFailed: "无法重新读取此项目的分配 — 矩阵可能已过时",
         resyncAllSuccess: "已在所有项目中同步 {{synced}} 个分配",
         resyncAllPartial: "已在所有项目中同步 {{synced}} 个，{{failed}} 个失败",
         noSkills: "尚未安装任何 Skills。请先在「我的 Skills」页添加。",
