@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.16] - 2026-09-22
+
 Round 16 closes the backlog: the project world reports every sync like the rest of the app, bulk assign gets its inverse, and Re-point works across every source kind.
 
 ### Added
