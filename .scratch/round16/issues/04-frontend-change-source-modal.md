@@ -1,6 +1,6 @@
 # 04 — Frontend-B: "Change source…" on every managed skill
 
-Status: claimed
+Status: done — 9de5ca0
 Blocked by: 02 (done — 3c48a86, merged to main)
 Spec: `.scratch/round16/spec.md` — D3, D4, D5. Read the spec first. The wire map from ticket 02's report is
 pasted under § Wire map below before this ticket is claimed.
@@ -101,3 +101,5 @@ export type RepointTarget =
   Reworded `errors.sourcePathMissing`, `errors.localSourceInsideToolDir` (fit Add, Update and Change source) and
   `errors.githubSkillNotFound` ("use Change source"). `unlocatable.repoint` repair label stays "Re-point".
 - **Gate**: `npm run lint` clean; `npm run test` 15 files / 379 tests; `npm run build` ok. EN/ZH key parity checked.
+
+- 2026-09-22 (orchestrator) — rebased onto main clean, merged fast-forward. Deviations accepted (folder picker in the hook for testability; detail-view button also lifted; git-not-found notification action opens on git). Residue for after lane 03 merges: `reportOutcome.ts:103` still uses `gitRepoint.action`; switch to `changeSource.action` and delete the `gitRepoint` block (EN `resources.ts:~198`, ZH `:~824`). Gate: lint clean, vitest 379, build ok.
