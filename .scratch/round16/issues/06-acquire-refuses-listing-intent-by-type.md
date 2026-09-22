@@ -1,6 +1,6 @@
 # 06 — `acquire` cannot be handed a listing-only intent (BACKLOG #15)
 
-Status: ready-for-agent
+Status: done — aee54af
 Spec: `.scratch/round16/spec.md` — D8. Orchestrator ticket.
 
 ## Work
@@ -13,3 +13,11 @@ non-optional (`&str`) so `acquire` cannot receive a listing; the listing path (`
 level by taking a narrower type — choose the smallest change that makes the misuse unrepresentable). No runtime
 refusal, no new error variant. `installer.rs:404` (always has a subpath) adapts trivially. Tests compile-only
 plus the existing suite.
+
+## Comments
+
+- 2026-09-22 — done in `aee54af`. `GitSelection.subpath: &str`; `Resolved::listing(source, api)` (private to
+  `git_acquisition`) replaces `Resolved::new(Selection(default))`; `Intent::Listing` deleted along with **two**
+  runtime guards the type now makes unreachable — `resolve_subpath`'s "listing intent requires the candidate
+  listing seam" bail and `install_git_selection_with`'s "install requires an explicit selection" `.context`.
+  `cargo test --all` 647 (unchanged — type-level change), clippy clean, bindings untouched.
