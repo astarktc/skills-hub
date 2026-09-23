@@ -6,8 +6,8 @@ The queue is `.scratch/BACKLOG.md` — this note does not repeat it.
 
 - **1.2.15 verified** at session start (all five targets, `.sig`s, `updater.json`).
 - **Round 16 is code-complete and released**: main @ `d8218d0` ("release: 1.2.16"), tag `v1.2.16`, `release.yml`
-  run 35799656007 was in progress when this note was written — **confirm it went green with all five assets +
-  `updater.json`** (`gh run view 35799656007`, `gh release view v1.2.16`) before treating the release as done.
+  run 35799656007 **green** — release published 2026-09-23T00:08Z with all five targets, macOS/Linux `.sig`s and
+  `updater.json` (same asset shape as 1.2.15).
 - What shipped (spec: `.scratch/round16/spec.md`): `ProjectSyncReport` for toggle-on / bulk assign / resync (D1,
   `project_id` on every item); `RemovalScope::ProjectSkill` + `bulk_unassign_skill` + "Unassign All" (D2);
   `repoint_skill_source` over `RepointTarget::{Git, Local}` for every provenance + one "Change source…" modal on
@@ -23,8 +23,7 @@ The queue is `.scratch/BACKLOG.md` — this note does not repeat it.
 
 ## Exact next step
 
-1. Confirm the v1.2.16 release built (five targets, `.sig`s, `updater.json`). Operator installs it and smokes the
-   spec's Closure checklist (toggle-on toast; bulk assign / unassign toasts; resync via the fold; Change source
+1. Operator installs the v1.2.16 build and smokes the spec's Closure checklist (toggle-on toast; bulk assign / unassign toasts; resync via the fold; Change source
    git → local and back; imported → GitHub URL makes it refreshable; Add flow shows a `~/.claude/skills/*` folder
    disabled with a reason).
 2. Operator runs ticket 08's checklist on the Windows host (Developer Mode **off**, non-elevated) and pastes the
