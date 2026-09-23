@@ -10,8 +10,8 @@ Numbers are stable: never renumber; retire by deleting the line (history keeps i
 ## Now — evidence of unfinished work is strong
 
 (empty — every `Later`/`Parked` line was absorbed by `round16/spec.md` § Dispositions in its opening commit:
-#12 #15 #22 #28 #35 #36 → tickets; #18 → ticket 08; #16 #17 #21 #23 #24 #25 #27 #29 dropped by name there;
-#30 superseded by #37–#41 below; #26 moved to Future efforts.)
+items #12 #15 #22 #28 #35 #36 → tickets; item #18 → ticket 08; items #16 #17 #21 #23 #24 #25 #27 #29 dropped by
+name there; item #30 superseded by #37–#41 below; item #26 moved to Future efforts.)
 
 ## Later — real, not urgent
 
