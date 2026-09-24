@@ -94,6 +94,9 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   completeness is test-enforced and the README table is not enforced at all — check it matches the `ToolId` variant
   count whenever adapters change. Tool lists shown to the UI come
   from `tool_adapters::global_tool_entries` / `project_tool_entries` — commands only map them to DTOs.
+  Installedness is one rule, `tool_adapters::is_installed_in`: detect dir exists and is not a skills-only
+  footprint (virtual groups exempt). Test fixtures install a tool through `tool_adapters::mark_installed_in`,
+  never a bare `create_dir_all(detect_dir)` — that is the footprint the rule rejects.
 - **Sync-target mutation**: every operation that materialises or removes a Sync target (global sync
   batch, unsync, delete, assign/unassign/toggle, resync, configure project tools, remove project,
   gitignore update, Refresh's apply phase, Onboarding import's apply phase) wraps its **own** body in
@@ -194,7 +197,10 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   and counters (`refreshed/failed/skipped`, `removed/failed`, …) are derived once by the frontend fold
   (`src/lib/reportOutcome.ts`), never carried on the wire. Delete returns its `RemovalReport` too:
   - sync → `sync_skills_to_tools` (`core/global_sync.rs`): installedness filtering, shared-dir dedupe,
-    overwrite policy (batch default + per-(skill,tool) overrides), DB record fan-out.
+    overwrite policy (batch default + per-(skill,tool) overrides), DB record fan-out. The frontend seam
+    (`useSyncOrchestration.syncSkillsToTools`) owns the **overwrite ask**: every call site passes
+    `overwriteIfSameContent: true` (identical content is replaced silently); `TARGET_EXISTS` rows raise one
+    confirmation and, confirmed, one retry batch with per-pair `overrides` whose rows replace the asked ones.
   - Update / Refresh (all) → `refresh_managed_skills` (`core/refresh.rs`): acquire every skill (bounded
     pool of 4, std threads), then `skill_update::apply_unlocked` admits and settles each under the
     guard (finalize + Edit replay + Propagation; ADR-0004), plus the `reassert_auto_sync` policy. A single
@@ -206,6 +212,9 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   - Re-point → `repoint_skill_source` (`core/repoint.rs`): one operation over `RepointTarget::{Git, Local}` for
     every provenance (imported included — it stops being imported, ADR-0003 amendment); validates the target,
     then the same batch-of-one Update settles source and bytes together.
+  - Onboarding scan → `get_onboarding_plan`: `commands::onboarding_scan_scope` resolves
+    `OnboardingScanScope::{Installed, Selected}` from the settings once; the plan and the import re-derive
+    under the same scope.
   - Onboarding import → `import_onboarding_selection` (`core/onboarding_import.rs`): admit, finalize,
     then sync through the global sync batch (auto-sync on — a first sync, not Propagation) or remove
     byte-identical originals (auto-sync off), per group. An imported skill has no external source (ADR-0003).

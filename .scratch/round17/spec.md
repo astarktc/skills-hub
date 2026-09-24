@@ -68,7 +68,7 @@ requirement, 2026-09-23). Released as 1.2.17.
 ## Tickets
 
 | # | Ticket | Lane |
-|---|---|---|
+| --- | --- | --- |
 | 01 | `01-backend-scan-scope.md` — D1 | Rust |
 | 02 | `02-backend-footprint-is-not-installed.md` — D2 | Rust |
 | 03 | `03-frontend-overwrite-ask.md` — D3 | TS |

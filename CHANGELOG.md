@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.17] - 2026-09-23
+
+Round 17: detection and the onboarding scan tell the truth, and a first sync onto an occupied folder asks.
+
+### Added
+
+- **Overwrite ask**: syncing a skill onto a tool folder that already exists with *different* content now asks before overwriting, listing every affected skill → tool → path; "Keep existing" leaves them in place. Identical content is still replaced silently, as before.
+
+### Fixed
+
+- "Only scan for existing skills within selected tools" now actually scopes Review & Import (and the import that follows it) — previously it only hid the new-tools popup, so a skill deployed into every tool directory by another installer showed up dozens of times.
+- A tool directory holding nothing but a `skills/` folder (what `npx skills add`, ego-browser and similar deployers leave behind) no longer counts as an installed tool, so the tool config modal stops badging phantom tools "(installed)". `~/.agents` is exempt: it is the convention itself.
+- "Sync to all tools" now applies the same-content rule like every other sync path.
+
+### Internal
+
+- `OnboardingScanScope` (core) resolved once at the command seam and carried by `ImportPolicy`; `tool_adapters::mark_installed_in` for test fixtures; the Modal shell gains `backdropClassName`.
+
 ## [1.2.16] - 2026-09-22
 
 Round 16 closes the backlog: the project world reports every sync like the rest of the app, bulk assign gets its inverse, and Re-point works across every source kind.
