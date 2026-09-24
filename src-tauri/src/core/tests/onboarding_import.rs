@@ -9,13 +9,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::core::installer::InstallerPaths;
+use crate::core::onboarding::OnboardingScanScope;
 use crate::core::onboarding_import::{
     import_onboarding_selection, ImportGroupStatus, ImportPhase, ImportPolicy, ImportSelection,
     OriginalStatus,
 };
 use crate::core::skill_store::SkillStore;
 use crate::core::sync_status::SyncMode;
-use crate::core::tool_adapters::adapter_by_key;
+use crate::core::tool_adapters::{adapter_by_key, mark_installed_in};
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -43,7 +44,7 @@ fn fixture() -> Fixture {
 /// Mark a Tool installed for this fixture's operator.
 fn install_tool(f: &Fixture, key: &str) {
     let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {}", key));
-    fs::create_dir_all(f.paths.home.join(adapter.relative_detect_dir)).expect("install tool");
+    mark_installed_in(&f.paths.home, adapter);
 }
 
 /// A pre-existing skill directory inside a Tool's global skills dir.
@@ -208,6 +209,7 @@ fn auto_sync_on_overwrites_the_source_tool_in_place_across_its_shared_dir_group(
         ImportPolicy {
             auto_sync: true,
             tools: Some(vec!["amp".to_string(), "kimi_cli".to_string()]),
+            scan_scope: OnboardingScanScope::Installed,
         },
     );
 
@@ -269,6 +271,7 @@ fn auto_sync_on_force_includes_a_source_tool_the_policy_deselected() {
         ImportPolicy {
             auto_sync: true,
             tools: Some(vec!["cursor".to_string()]),
+            scan_scope: OnboardingScanScope::Installed,
         },
     );
 
@@ -347,6 +350,7 @@ fn auto_sync_on_takes_over_every_identical_original_in_the_group() {
         ImportPolicy {
             auto_sync: true,
             tools: Some(vec!["claude_code".to_string()]),
+            scan_scope: OnboardingScanScope::Installed,
         },
     );
 
@@ -415,6 +419,7 @@ fn auto_sync_on_leaves_a_divergent_sibling_in_place_and_reports_it() {
         ImportPolicy {
             auto_sync: true,
             tools: Some(vec!["claude_code".to_string()]),
+            scan_scope: OnboardingScanScope::Installed,
         },
     );
 
@@ -476,6 +481,7 @@ fn auto_sync_on_keeps_a_sibling_that_diverged_after_planning() {
         &ImportPolicy {
             auto_sync: true,
             tools: Some(vec!["cursor".to_string()]),
+            scan_scope: OnboardingScanScope::Installed,
         },
         5000,
         |progress| {
@@ -533,6 +539,7 @@ fn auto_sync_on_reports_nothing_beyond_a_policy_naming_every_identical_tool() {
         ImportPolicy {
             auto_sync: true,
             tools: Some(vec!["claude_code".to_string(), "pi".to_string()]),
+            scan_scope: OnboardingScanScope::Installed,
         },
     );
 
@@ -580,6 +587,7 @@ fn chosen_original_with_internal_symlinks_is_same_content() {
             ImportPolicy {
                 auto_sync,
                 tools: Some(vec![]),
+                scan_scope: OnboardingScanScope::Installed,
             },
         );
         let ImportGroupStatus::Imported {
@@ -832,6 +840,7 @@ fn import_without_a_policy_selection_follows_the_recorded_global_selection() {
         ImportPolicy {
             auto_sync: true,
             tools: None,
+            scan_scope: OnboardingScanScope::Installed,
         },
     );
 

@@ -17,7 +17,7 @@ use crate::core::skill_store::{
     ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore, SkillTargetRecord,
 };
 use crate::core::sync_status::{SyncMode, SyncStatus};
-use crate::core::tool_adapters::adapter_by_key;
+use crate::core::tool_adapters::{adapter_by_key, mark_installed_in};
 
 #[test]
 fn removal_report_keeps_shared_rows_and_classified_failure_on_the_wire() {
@@ -241,7 +241,7 @@ fn home_with(base: &Path, tools: &[&str]) -> PathBuf {
     let home = base.join("home");
     for tool in tools {
         let adapter = adapter_by_key(tool).expect("adapter");
-        fs::create_dir_all(home.join(adapter.relative_detect_dir)).expect("detect dir");
+        mark_installed_in(&home, adapter);
     }
     fs::create_dir_all(&home).expect("home");
     home

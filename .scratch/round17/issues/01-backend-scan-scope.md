@@ -1,6 +1,6 @@
 # 01 — Onboarding scan honours "only scan selected tools" (D1)
 
-Status: ready-for-agent
+Status: done — (this commit)
 Spec: `.scratch/round17/spec.md` — D1.
 
 ## Work
@@ -16,3 +16,5 @@ Spec: `.scratch/round17/spec.md` — D1.
   unselected tool and scans a selected one; `total_tools_scanned` matches the scope.
 
 ## Comments
+
+- 2026-09-23 — `OnboardingScanScope::{Installed, Selected}`; `build_onboarding_plan` takes the scope; `ImportPolicy.scan_scope` carries it into the import so the originals it acts on are the ones the operator reviewed (an addition to the ticket: the import re-derives the plan as its authority); `commands::onboarding_scan_scope` resolves it once for both commands. Tests: installed-scope skips a footprint, selected scope scans exactly the selection, selected scope does not require detection.

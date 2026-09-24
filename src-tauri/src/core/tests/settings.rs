@@ -246,7 +246,7 @@ fn global_selected_tools_prunes_keys_the_registry_no_longer_knows() {
 fn install_tool(home: &std::path::Path, key: &str) {
     let adapter =
         crate::core::tool_adapters::adapter_by_key(key).unwrap_or_else(|| panic!("adapter {key}"));
-    std::fs::create_dir_all(home.join(adapter.relative_detect_dir)).expect("install tool");
+    crate::core::tool_adapters::mark_installed_in(home, adapter);
 }
 
 #[test]

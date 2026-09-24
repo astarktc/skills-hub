@@ -270,7 +270,7 @@ fn every_byte_adapter_settles_and_reports_propagation() {
         let mut adapter = tool_adapters::adapter_by_key("cursor").unwrap().clone();
         adapter.supports_symlink = false;
         let adapter = tool_adapters::test_overrides::shadow(adapter);
-        fs::create_dir_all(paths.home.join(adapter.relative_detect_dir)).unwrap();
+        crate::core::tool_adapters::mark_installed_in(&paths.home, adapter);
         let target = paths.home.join("target");
         fs::create_dir(&target).unwrap();
         fs::write(target.join("SKILL.md"), "old").unwrap();
@@ -517,7 +517,7 @@ fn git_restore_rebuilds_the_central_copy_and_its_dangling_link() {
     .unwrap();
     let record = store.get_skill_by_id(&installed.skill_id).unwrap().unwrap();
     let adapter = crate::core::tool_adapters::adapter_by_key("claude_code").unwrap();
-    fs::create_dir_all(paths.home.join(adapter.relative_detect_dir)).unwrap();
+    crate::core::tool_adapters::mark_installed_in(&paths.home, adapter);
     let target = paths.home.join("linked");
     let synced =
         crate::core::sync_engine::sync_dir_hybrid(Path::new(&record.central_path), &target)

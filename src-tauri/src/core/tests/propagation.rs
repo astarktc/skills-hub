@@ -18,7 +18,7 @@ use crate::core::skill_store::{
     ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore, SkillTargetRecord,
 };
 use crate::core::sync_status::{SyncMode, SyncStatus};
-use crate::core::tool_adapters::{adapter_by_key, ToolAdapter};
+use crate::core::tool_adapters::{adapter_by_key, mark_installed_in, ToolAdapter};
 
 #[test]
 fn shared_edit_update_report_preserves_classified_failure_on_the_wire() {
@@ -114,7 +114,7 @@ fn fixture() -> Fixture {
 
 /// Fake `tool` as installed for the fixture's home by creating its detect dir.
 fn install_tool(f: &Fixture, adapter: &ToolAdapter) {
-    fs::create_dir_all(f.paths.home.join(adapter.relative_detect_dir)).expect("create detect dir");
+    mark_installed_in(&f.paths.home, adapter);
 }
 
 /// A registry shadow of Cursor with the symlink capability flipped off — no

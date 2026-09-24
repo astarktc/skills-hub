@@ -1,6 +1,6 @@
 # 02 — A skills-only footprint is not an installed tool (D2)
 
-Status: ready-for-agent
+Status: done — (this commit)
 Spec: `.scratch/round17/spec.md` — D2.
 
 ## Work
@@ -20,3 +20,5 @@ Spec: `.scratch/round17/spec.md` — D2.
   beside `skills/` so the test states "installed tool with an unmanaged skill" honestly.
 
 ## Comments
+
+- 2026-09-23 — `is_installed_in` = detect dir exists && (virtual group || !skills-only footprint); `.DS_Store` ignored on the walk; read errors read as installed. Test-only `tool_adapters::mark_installed_in` installs a tool honestly (detect dir + `installed.marker`) and replaces every fixture's bare `create_dir_all(detect_dir)` (10 test files). New tests: footprint, every-level walk (`.pi/agent`), group exemption, every adapter nests skills under detect. cargo 668, clippy clean.

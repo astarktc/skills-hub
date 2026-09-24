@@ -1,14 +1,13 @@
-use std::fs;
 use std::path::Path;
 
 use crate::core::tool_adapters::{
     adapter_by_key, constituents_of, default_tool_adapters, global_tool_entries, installed_keys,
-    project_tool_entries, skills_dir_in, ToolCatalogEntry, ToolId, VirtualGroup,
+    mark_installed_in, project_tool_entries, skills_dir_in, ToolCatalogEntry, ToolId, VirtualGroup,
 };
 
 fn install(home: &Path, key: &str) {
     let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {key}"));
-    fs::create_dir_all(home.join(adapter.relative_detect_dir)).unwrap();
+    mark_installed_in(home, adapter);
 }
 
 fn entry<'a>(entries: &'a [ToolCatalogEntry], key: &str) -> &'a ToolCatalogEntry {

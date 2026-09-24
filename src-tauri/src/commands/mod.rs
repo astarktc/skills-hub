@@ -8,7 +8,7 @@ use tauri::ipc::Channel;
 use tauri::{Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::core::artifact_removal::RemovalReport;
@@ -25,7 +25,7 @@ use crate::core::installer::{
     LocalSkillCandidate,
 };
 use crate::core::log_reveal::log_reveal_target;
-use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
+use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan, OnboardingScanScope};
 use crate::core::onboarding_import::{
     import_onboarding_selection as import_onboarding_selection_core, ImportPhase, ImportPolicy,
     ImportReport, ImportSelection,
@@ -68,6 +68,24 @@ pub(crate) fn resolve_central_repo_path_for_app(
 
 /// Root under which the default central repo lives (see
 /// `settings::resolve_central_repo_path`): home, else the app data dir.
+/// The onboarding scan's scope, resolved from the saved settings exactly as
+/// the frontend scopes the new-tools popup: "only scan selected tools" on
+/// with a saved selection scopes to it; otherwise every detected Tool (a
+/// corrupt selection reads as unsaved here — the sync path refuses it
+/// separately). Both the plan and the import that acts on it use this.
+fn onboarding_scan_scope(
+    store: &SkillStore,
+    home: &Path,
+) -> Result<OnboardingScanScope, anyhow::Error> {
+    let settings = load_settings(store, home)?;
+    Ok(match settings.global_selected_tools {
+        Some(selected) if settings.scan_selected_tools_only => {
+            OnboardingScanScope::Selected(selected)
+        }
+        _ => OnboardingScanScope::Installed,
+    })
+}
+
 fn settings_fallback_root(app: &tauri::AppHandle) -> Result<PathBuf, anyhow::Error> {
     match home_dir() {
         Ok(home) => Ok(home),
@@ -177,7 +195,8 @@ pub async fn get_onboarding_plan(
     tauri::async_runtime::spawn_blocking(move || {
         let home = home_dir()?;
         let central = resolve_central_repo_path_for_app(&app, &store)?;
-        build_onboarding_plan(&home, &central, &store)
+        let scope = onboarding_scan_scope(&store, &home)?;
+        build_onboarding_plan(&home, &central, &store, &scope)
     })
     .await
     .map_err(CommandError::internal)?
@@ -772,6 +791,7 @@ pub async fn import_onboarding_selection(
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let paths = installer_paths(&app, &store)?;
+        let scan_scope = onboarding_scan_scope(&store, &paths.home)?;
         let selections: Vec<ImportSelection> = selections
             .into_iter()
             .map(|s| ImportSelection {
@@ -787,6 +807,7 @@ pub async fn import_onboarding_selection(
             &ImportPolicy {
                 auto_sync: policy.auto_sync,
                 tools: policy.tools,
+                scan_scope,
             },
             now_ms(),
             |p| {

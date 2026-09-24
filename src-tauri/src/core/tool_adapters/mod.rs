@@ -745,6 +745,18 @@ pub mod test_overrides {
     }
 }
 
+/// Test-only: install `adapter` for the operator whose home is `home` the
+/// way a tool does — its detect dir plus a file of its own beside the skills
+/// path — so a fixture that then seeds skills under it is not mistaken for a
+/// skills-only footprint. Every core fixture installs tools through this
+/// door; a bare `create_dir_all(detect_dir)` is the footprint the rule rejects.
+#[cfg(test)]
+pub fn mark_installed_in(home: &Path, adapter: &ToolAdapter) {
+    let detect_dir = detect_dir_in(home, adapter);
+    std::fs::create_dir_all(&detect_dir).expect("create detect dir");
+    std::fs::write(detect_dir.join("installed.marker"), b"").expect("write install marker");
+}
+
 /// The tool's global skills directory under `home`.
 pub fn skills_dir_in(home: &Path, adapter: &ToolAdapter) -> PathBuf {
     home.join(adapter.relative_skills_dir)
@@ -799,8 +811,54 @@ pub fn detect_dir_in(home: &Path, adapter: &ToolAdapter) -> PathBuf {
 }
 
 /// Whether the tool is installed for the operator whose home is `home`.
+///
+/// The detect dir must exist **and** must not be a *skills-only footprint*:
+/// a detect dir holding nothing but the path down to the tool's skills dir
+/// (`~/.kiro/skills/x` and nothing else) is what a skill deployer leaves
+/// behind — `npx skills add`, ego-browser, Skills Hub itself after the tool
+/// was uninstalled — not evidence of the tool. An empty detect dir still
+/// counts, as does any sibling beside the skills path (`~/.pi/agent/
+/// settings.json`). A virtual group's detect dir *is* the convention
+/// (`~/.agents` legitimately holds only `skills/`), so for a group entry
+/// presence alone counts.
 pub fn is_installed_in(home: &Path, adapter: &ToolAdapter) -> bool {
-    detect_dir_in(home, adapter).exists()
+    let detect_dir = detect_dir_in(home, adapter);
+    if !detect_dir.exists() {
+        return false;
+    }
+    if adapter.as_virtual_group().is_some() {
+        return true;
+    }
+    !is_skills_only_footprint(&detect_dir, &skills_dir_in(home, adapter))
+}
+
+/// True when every directory from `detect_dir` down to (but excluding)
+/// `skills_dir` holds exactly one entry — the next path component. A skills
+/// dir outside the detect dir, or any read error on the way, is not a
+/// footprint: a permissions hiccup must never hide a tool. Finder's
+/// `.DS_Store` is not an entry: browsing a footprint must not promote it.
+fn is_skills_only_footprint(detect_dir: &Path, skills_dir: &Path) -> bool {
+    let Ok(relative) = skills_dir.strip_prefix(detect_dir) else {
+        return false;
+    };
+    let mut dir = detect_dir.to_path_buf();
+    for component in relative.components() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return false;
+        };
+        let mut names = entries
+            .filter_map(|e| e.ok().map(|e| e.file_name()))
+            .filter(|name| name != ".DS_Store");
+        let only_entry = match (names.next(), names.next()) {
+            (Some(name), None) => name,
+            _ => return false,
+        };
+        if only_entry != component.as_os_str() {
+            return false;
+        }
+        dir.push(component);
+    }
+    true
 }
 
 pub fn scan_tool_dir(tool: &ToolAdapter, dir: &Path) -> Result<Vec<DetectedSkill>> {

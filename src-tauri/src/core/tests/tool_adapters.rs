@@ -73,6 +73,70 @@ fn installedness_is_decided_by_detect_dir_not_skills_dir() {
 }
 
 #[test]
+fn a_skills_only_footprint_is_not_an_installed_tool() {
+    let home = tempfile::tempdir().unwrap();
+    let kiro = adapter_by_key("kiro_cli").unwrap();
+
+    // What a skill deployer leaves behind: the skills path and nothing else.
+    fs::create_dir_all(home.path().join(".kiro/skills/ego-browser")).unwrap();
+    fs::write(home.path().join(".kiro/skills/ego-browser/SKILL.md"), b"x").unwrap();
+    assert!(!is_installed_in(home.path(), kiro));
+
+    // An empty skills dir is the same footprint.
+    fs::remove_dir_all(home.path().join(".kiro/skills/ego-browser")).unwrap();
+    assert!(!is_installed_in(home.path(), kiro));
+
+    // Finder noise does not promote a footprint.
+    fs::write(home.path().join(".kiro/.DS_Store"), b"").unwrap();
+    assert!(!is_installed_in(home.path(), kiro));
+
+    // Anything else beside the skills path is the tool.
+    fs::write(home.path().join(".kiro/settings.json"), b"{}").unwrap();
+    assert!(is_installed_in(home.path(), kiro));
+}
+
+#[test]
+fn footprint_rule_walks_every_level_down_to_the_skills_dir() {
+    let home = tempfile::tempdir().unwrap();
+    let pi = adapter_by_key("pi").unwrap();
+
+    // `.pi/agent/skills/x` alone: `.pi` holds only `agent`, `agent` only `skills`.
+    fs::create_dir_all(home.path().join(".pi/agent/skills/x")).unwrap();
+    assert!(!is_installed_in(home.path(), pi));
+
+    // A sibling at an intermediate level is the tool.
+    fs::write(home.path().join(".pi/agent/settings.json"), b"{}").unwrap();
+    assert!(is_installed_in(home.path(), pi));
+}
+
+#[test]
+fn a_virtual_group_is_installed_by_its_directory_alone() {
+    let home = tempfile::tempdir().unwrap();
+    let agents = adapter_by_key("agents_skills").unwrap();
+    assert!(agents.as_virtual_group().is_some());
+
+    // `~/.agents` legitimately holds only `skills/`: the convention is the dir.
+    fs::create_dir_all(home.path().join(".agents/skills/x")).unwrap();
+    assert!(is_installed_in(home.path(), agents));
+}
+
+#[test]
+fn every_adapter_nests_its_skills_dir_under_its_detect_dir() {
+    // The footprint walk strips the detect dir off the skills dir; a registry
+    // entry breaking this would silently fall back to "dir exists".
+    for adapter in default_tool_adapters() {
+        assert!(
+            std::path::Path::new(adapter.relative_skills_dir)
+                .starts_with(adapter.relative_detect_dir),
+            "{}: {} is not under {}",
+            adapter.id.as_key(),
+            adapter.relative_skills_dir,
+            adapter.relative_detect_dir
+        );
+    }
+}
+
+#[test]
 fn adapter_by_key_finds_known_tool() {
     let a = adapter_by_key("codex").unwrap();
     assert_eq!(a.id, ToolId::Codex);

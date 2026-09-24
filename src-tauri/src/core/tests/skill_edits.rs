@@ -67,7 +67,7 @@ impl Fixture {
 fn edit_returns_a_failed_copy_target_in_its_propagation_report() {
     let f = Fixture::new();
     let adapter = crate::core::tool_adapters::adapter_by_key("cursor").unwrap();
-    fs::create_dir_all(f.paths.home.join(adapter.relative_detect_dir)).unwrap();
+    crate::core::tool_adapters::mark_installed_in(&f.paths.home, adapter);
     let blocker = f.dir.path().join("blocked");
     fs::write(&blocker, "not a directory").unwrap();
     f.store
@@ -324,7 +324,7 @@ fn set_propagates_to_copy_fallback_target() {
         .clone();
     adapter.supports_symlink = false;
     let adapter = crate::core::tool_adapters::test_overrides::shadow(adapter);
-    fs::create_dir_all(f.paths.home.join(adapter.relative_detect_dir)).unwrap();
+    crate::core::tool_adapters::mark_installed_in(&f.paths.home, adapter);
     let target = f.paths.home.join(adapter.relative_skills_dir).join("alpha");
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("SKILL.md"), UPSTREAM).unwrap();

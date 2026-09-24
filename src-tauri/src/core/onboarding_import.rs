@@ -52,7 +52,9 @@ use super::global_sync::{
 };
 use super::installer::{install_imported_skill, InstallerPaths};
 use super::mutation_guard;
-use super::onboarding::{build_onboarding_plan, OnboardingGroup, OnboardingVariant};
+use super::onboarding::{
+    build_onboarding_plan, OnboardingGroup, OnboardingScanScope, OnboardingVariant,
+};
 use super::skill_discovery::require_skill_md;
 use super::skill_store::SkillStore;
 use super::sync_engine::remove_path_any;
@@ -77,6 +79,10 @@ pub struct ImportPolicy {
     /// Tools to sync to when `auto_sync` is on; `None` means every installed
     /// Tool. Ignored when `auto_sync` is off.
     pub tools: Option<Vec<String>>,
+    /// The scope the presented plan was built with: the import re-derives
+    /// the plan under the same scope, so the originals it takes over or
+    /// removes are exactly the ones the operator reviewed.
+    pub scan_scope: OnboardingScanScope,
 }
 
 /// Which half of a group's import a progress tick is about.
@@ -164,7 +170,7 @@ pub fn import_onboarding_selection(
 ) -> Result<ImportReport> {
     // The authority on which paths a group owns. Reading it is the only
     // failure that fails the whole operation.
-    let plan = build_onboarding_plan(&paths.home, &paths.central_dir, store)?;
+    let plan = build_onboarding_plan(&paths.home, &paths.central_dir, store, &policy.scan_scope)?;
 
     let total = selections.len();
     let mut report = ImportReport::default();

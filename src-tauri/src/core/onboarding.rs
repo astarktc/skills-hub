@@ -9,6 +9,7 @@ use super::content_identity::{self, Source};
 use super::skill_store::SkillStore;
 use super::tool_adapters::{
     default_tool_adapters, is_installed_in, scan_tool_dir, skills_dir_in, DetectedSkill,
+    ToolAdapter,
 };
 
 #[derive(Clone, Debug, Serialize, Type)]
@@ -35,13 +36,36 @@ pub struct OnboardingPlan {
     pub groups: Vec<OnboardingGroup>,
 }
 
-/// Scan every installed tool under `home` for unmanaged skills, excluding
+/// Which Tools the onboarding scan visits. Resolved at the command seam
+/// from the "only scan selected tools" setting and the global selection;
+/// core applies it and reports the scope's size as `total_tools_scanned`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum OnboardingScanScope {
+    /// Every detected Tool (the setting is off, or on with no saved selection).
+    #[default]
+    Installed,
+    /// Exactly these registry keys, detected or not: an absent skills dir
+    /// simply scans to nothing, and the selection is the operator's word.
+    Selected(Vec<String>),
+}
+
+impl OnboardingScanScope {
+    fn includes(&self, home: &Path, adapter: &ToolAdapter) -> bool {
+        match self {
+            OnboardingScanScope::Installed => is_installed_in(home, adapter),
+            OnboardingScanScope::Selected(keys) => keys.iter().any(|k| k == adapter.key()),
+        }
+    }
+}
+
+/// Scan the Tools in `scope` under `home` for unmanaged skills, excluding
 /// anything already living in (or linked into) `central_dir` and every
 /// target the store already manages.
 pub fn build_onboarding_plan(
     home: &Path,
     central_dir: &Path,
     store: &SkillStore,
+    scope: &OnboardingScanScope,
 ) -> Result<OnboardingPlan> {
     let managed_targets = store
         .list_all_skill_target_paths()
@@ -49,11 +73,12 @@ pub fn build_onboarding_plan(
         .into_iter()
         .map(|(tool, path)| managed_target_key(&tool, Path::new(&path)))
         .collect::<std::collections::HashSet<_>>();
-    build_onboarding_plan_in_home(home, Some(central_dir), Some(&managed_targets))
+    build_onboarding_plan_in_home(home, scope, Some(central_dir), Some(&managed_targets))
 }
 
 fn build_onboarding_plan_in_home(
     home: &Path,
+    scope: &OnboardingScanScope,
     exclude_root: Option<&Path>,
     exclude_managed_targets: Option<&std::collections::HashSet<String>>,
 ) -> Result<OnboardingPlan> {
@@ -62,7 +87,7 @@ fn build_onboarding_plan_in_home(
     let mut scanned = 0usize;
 
     for adapter in adapters {
-        if !is_installed_in(home, adapter) {
+        if !scope.includes(home, adapter) {
             continue;
         }
         scanned += 1;

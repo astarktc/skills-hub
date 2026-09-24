@@ -48,7 +48,7 @@ use crate::core::refresh::{
     RefreshPolicy, RefreshSelection, SkillRefreshStatus,
 };
 use crate::core::skill_store::SkillStore;
-use crate::core::tool_adapters::adapter_by_key;
+use crate::core::tool_adapters::{adapter_by_key, mark_installed_in};
 use crate::core::unlocatable::UnlocatableState;
 
 struct Fixture {
@@ -103,7 +103,7 @@ fn refresh(f: &Fixture, policy: RefreshPolicy) -> crate::core::refresh::RefreshR
 fn a_refreshed_skill_gets_its_new_bytes_and_reports_its_targets() {
     let f = fixture();
     let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    fs::create_dir_all(f.paths.home.join(claude.relative_detect_dir)).expect("install tool");
+    mark_installed_in(&f.paths.home, claude);
     fs::write(f.source.path().join("a.txt"), "v2").expect("write a.txt");
 
     let mut phases: Vec<(RefreshPhase, String)> = Vec::new();
@@ -195,7 +195,7 @@ fn a_skill_that_fails_acquisition_is_reported_and_never_finalized() {
 fn reassert_auto_sync_creates_a_target_the_skill_was_never_on() {
     let f = fixture();
     let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    fs::create_dir_all(f.paths.home.join(claude.relative_detect_dir)).expect("install tool");
+    mark_installed_in(&f.paths.home, claude);
     assert!(
         f.store
             .list_skill_targets(&f.skill_id)
@@ -227,7 +227,7 @@ fn reassert_auto_sync_writes_the_recorded_selection_not_every_installed_tool() {
     let f = fixture();
     for key in ["claude_code", "codex"] {
         let adapter = adapter_by_key(key).expect("adapter");
-        fs::create_dir_all(f.paths.home.join(adapter.relative_detect_dir)).expect("install tool");
+        mark_installed_in(&f.paths.home, adapter);
     }
     f.store
         .set_setting("global_selected_tools_v1", r#"["claude_code"]"#)
@@ -263,7 +263,7 @@ fn reassert_auto_sync_writes_the_recorded_selection_not_every_installed_tool() {
 fn reassert_auto_sync_reports_a_selected_but_uninstalled_tool_as_a_skip() {
     let f = fixture();
     let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    fs::create_dir_all(f.paths.home.join(claude.relative_detect_dir)).expect("install tool");
+    mark_installed_in(&f.paths.home, claude);
     f.store
         .set_setting("global_selected_tools_v1", r#"["claude_code","cursor"]"#)
         .expect("record the selection");
@@ -306,7 +306,7 @@ fn reassert_auto_sync_reports_a_selected_but_uninstalled_tool_as_a_skip() {
 fn without_the_reassert_policy_a_missing_target_stays_missing() {
     let f = fixture();
     let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    fs::create_dir_all(f.paths.home.join(claude.relative_detect_dir)).expect("install tool");
+    mark_installed_in(&f.paths.home, claude);
 
     refresh(&f, RefreshPolicy::default());
 
@@ -377,7 +377,7 @@ fn outcome_for(tool: &str) -> PropagationOutcome {
 fn a_skill_that_fails_acquisition_is_excluded_from_the_reassert() {
     let f = fixture();
     let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    fs::create_dir_all(f.paths.home.join(claude.relative_detect_dir)).expect("install tool");
+    mark_installed_in(&f.paths.home, claude);
     fs::remove_dir_all(f.source.path()).expect("remove source");
 
     refresh(
@@ -858,7 +858,7 @@ fn refresh_all_never_puts_an_imported_skill_in_the_batch() {
     // The auto-sync re-assert ran for the git skill only: the imported skill
     // got no target and its record was not touched.
     let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    fs::create_dir_all(f.paths.home.join(claude.relative_detect_dir)).expect("install tool");
+    mark_installed_in(&f.paths.home, claude);
     assert!(
         f.store
             .list_skill_targets(&imported_id)
@@ -925,7 +925,7 @@ fn a_single_update_of_an_imported_skill_is_refused_with_a_typed_condition() {
 fn refresh_all_skips_unlocatable_skills_and_mints_no_targets_for_them() {
     let f = pool_fixture(3);
     let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    fs::create_dir_all(f.paths.home.join(claude.relative_detect_dir)).expect("install tool");
+    mark_installed_in(&f.paths.home, claude);
     let ids: Vec<String> = f
         .store
         .list_skills()

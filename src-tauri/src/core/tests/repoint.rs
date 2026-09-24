@@ -21,7 +21,7 @@ use crate::core::refresh::{
 };
 use crate::core::repoint::{repoint_skill_source_with, RepointTarget};
 use crate::core::skill_store::{SkillRecord, SkillStore};
-use crate::core::tool_adapters::adapter_by_key;
+use crate::core::tool_adapters::{adapter_by_key, mark_installed_in};
 use crate::core::unlocatable::{unlocatable_state, UnlocatableState};
 
 /// The git arm with the call shape the pre-enum tests were written against.
@@ -225,7 +225,7 @@ fn git_repoint_slash_branch_persists_resolved_path_and_original_url() {
 fn git_repoint_acquires_before_rewriting_and_rebuilds_central() {
     let f = fixture();
     let tool = adapter_by_key("claude_code").unwrap();
-    fs::create_dir_all(f.paths.home.join(tool.relative_detect_dir)).unwrap();
+    mark_installed_in(&f.paths.home, tool);
     refresh(
         &f,
         RefreshPolicy {
@@ -369,7 +369,7 @@ fn git_repoint_honours_auto_sync_reassert_policy() {
     for reassert_auto_sync in [false, true] {
         let f = git_repoint_fixture();
         let tool = adapter_by_key("claude_code").unwrap();
-        fs::create_dir_all(f.paths.home.join(tool.relative_detect_dir)).unwrap();
+        mark_installed_in(&f.paths.home, tool);
         assert!(f.store.list_skill_targets(&f.skill_id).unwrap().is_empty());
         let report = repoint_git(
             &f.paths,
@@ -526,7 +526,7 @@ fn git_repoint_to_another_repo_propagates_every_existing_scope() {
     use crate::core::sync_status::{SyncMode, SyncStatus};
     let f = git_repoint_fixture();
     let tool = adapter_by_key("claude_code").unwrap();
-    fs::create_dir_all(f.paths.home.join(tool.relative_detect_dir)).unwrap();
+    mark_installed_in(&f.paths.home, tool);
     let target = f.paths.home.join(tool.relative_skills_dir).join("alpha");
     f.store
         .upsert_skill_target(&SkillTargetRecord {
@@ -860,7 +860,7 @@ fn local_repoint_honours_auto_sync_reassert_policy() {
     for reassert_auto_sync in [false, true] {
         let (f, new) = moved_source(fixture());
         let tool = adapter_by_key("claude_code").unwrap();
-        fs::create_dir_all(f.paths.home.join(tool.relative_detect_dir)).unwrap();
+        mark_installed_in(&f.paths.home, tool);
         assert!(f.store.list_skill_targets(&f.skill_id).unwrap().is_empty());
         let report = repoint_local(
             &f.paths,

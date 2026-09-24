@@ -16,7 +16,7 @@ use crate::core::global_sync::{
     GlobalSyncError, OverwritePolicy, PlannedToolTarget,
 };
 use crate::core::skill_store::{SkillRecord, SkillStore};
-use crate::core::tool_adapters::{adapter_by_key, ToolAdapter};
+use crate::core::tool_adapters::{adapter_by_key, mark_installed_in, ToolAdapter};
 
 fn make_store(base: &Path) -> SkillStore {
     let store = SkillStore::new(base.join("test.db"));
@@ -653,7 +653,7 @@ fn classification_leaves_unrelated_errors_as_other_even_with_suspicious_prose() 
 
 fn install_tool(home: &Path, key: &str) {
     let adapter = adapter_by_key(key).expect("adapter");
-    fs::create_dir_all(home.join(adapter.relative_detect_dir)).expect("detect dir");
+    mark_installed_in(home, adapter);
 }
 
 #[test]
