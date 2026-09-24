@@ -1,6 +1,6 @@
 # 05 — Astra review fixes (M1, M2, S1, S2, S3)
 
-Status: done — (this commit)
+Status: done — 88e8885
 Spec: `.scratch/round17/spec.md` § Review. Review: `.scratch/round17/review/astra-review.md`.
 
 ## Work
