@@ -70,8 +70,8 @@
     "jsdom": "^30.0.1",
     "playwright": "^1.61.1",
     "typescript": "~6.0.3",
-    "typescript-7": "npm:typescript@^7.0.1-rc",
-    "typescript-eslint": "^8.62.0",
+    "typescript-7": "npm:typescript@^7.0.2",
+    "typescript-eslint": "^8.70.1",
     "vite": "^8.1.0",
     "vitest": "^4.1.11"
   }
