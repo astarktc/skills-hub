@@ -690,6 +690,23 @@ describe("cancellation and non-report actions", () => {
     );
   });
 
+  it("a thrown sync reloads the catalog before the error surfaces", async () => {
+    // The seam may have settled a first batch before its overwrite retry
+    // threw; the catalog must show what was written (thrown Update/Restore
+    // requests reload the same way).
+    const setup = makeDeps({ effectiveSyncTargetIds: ["claude"] });
+    setup.sync.syncSkillsToTools.mockRejectedValueOnce(new Error("retry transport down"));
+    const { result } = await renderLibrary(setup);
+    const loadsBefore = mockInvoke.mock.calls.filter(([cmd]) => cmd === "getManagedSkills").length;
+
+    await act(async () => {
+      await result.current.handleSyncSkillToAllTools(setup.skills[0]);
+    });
+
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "getManagedSkills")).toHaveLength(loadsBefore + 1);
+    expect(setup.reporter.setError).toHaveBeenCalledWith("formatted:Error: retry transport down");
+  });
+
   it("deploys nowhere when the effective target set is empty", async () => {
     const setup = makeDeps({ effectiveSyncTargetIds: [] });
     const { result } = await renderLibrary(setup);

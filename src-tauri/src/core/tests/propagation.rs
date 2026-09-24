@@ -310,6 +310,7 @@ fn a_shared_skills_dir_group_syncs_once_and_settles_every_member_row() {
     let kimi = adapter_by_key("kimi_cli").expect("kimi_cli adapter");
     assert_eq!(amp.relative_skills_dir, kimi.relative_skills_dir);
     install_tool(&f, amp);
+    install_tool(&f, kimi);
     let target = f.paths.home.join(".config/agents/skills/skill");
     seed_stale_copy(&target);
     seed_global_target(&f, "t-amp", "amp", &target, SyncMode::Copy);
@@ -351,7 +352,7 @@ fn a_row_whose_tool_shares_no_dir_with_the_registry_is_still_its_own_group() {
     let f = fixture();
     let mut lone = adapter_by_key("cursor").expect("cursor adapter").clone();
     lone.relative_skills_dir = ".lone-tool/skills";
-    lone.relative_detect_dir = ".lone-tool";
+    lone.relative_detect_dirs = &[".lone-tool"];
     lone.supports_symlink = false;
     let lone = crate::core::tool_adapters::test_overrides::shadow(lone);
     install_tool(&f, lone);
@@ -389,6 +390,7 @@ fn a_missing_central_source_fails_every_row_as_report_data() {
     let f = fixture();
     let amp = adapter_by_key("amp").expect("amp adapter");
     install_tool(&f, amp);
+    install_tool(&f, adapter_by_key("kimi_cli").expect("kimi_cli adapter"));
     let target = f.paths.home.join(".config/agents/skills/skill");
     seed_stale_copy(&target);
     seed_global_target(&f, "t-amp", "amp", &target, SyncMode::Copy);

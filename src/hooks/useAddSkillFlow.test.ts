@@ -167,6 +167,7 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
   };
   const sync = {
     autoSyncEnabled: true,
+    scanScopeRevision: 0,
     // cursor is deselected; goose is selected but not installed and stays
     // in the deploy set (round 12 D3: the batch reports it as a skip).
     syncSkillsToTools: vi.fn().mockResolvedValue([]),
@@ -607,8 +608,9 @@ describe("useAddSkillFlow import flow", () => {
   });
 
   /**
-   * Plan loads once (mount) and the import is one command returning one
-   * report — the hook states the selection and renders what comes back.
+   * Plan loads on mount and again on Review (the reviewed plan is always a
+   * fresh one); the import is one command returning one report — the hook
+   * states the selection and renders what comes back.
    */
   function stubImportBackend(
     planCalls: (() => Promise<unknown>)[],
@@ -736,10 +738,53 @@ describe("useAddSkillFlow import flow", () => {
     expect(policy).toEqual({ auto_sync: false, tools: null });
   });
 
+  it("Review always reviews a plan fetched now, never the banner's cached one", async () => {
+    // The backend resolves the scan's scope from the saved configuration at
+    // fetch time; the import acts on what it finds under that scope, so the
+    // reviewed plan must be current.
+    const widened = {
+      ...PLAN,
+      groups: [...PLAN.groups, { name: "beta", has_conflict: false, variants: [
+        { tool: "cursor", name: "beta", path: "/home/.cursor/skills/beta", fingerprint: "f2", is_link: false, link_target: null },
+      ] }],
+    };
+    stubImportBackend([() => Promise.resolve(PLAN), () => Promise.resolve(widened)]);
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await waitFor(() => expect(result.current.plan).not.toBeNull());
+    expect(result.current.plan!.groups.map((g) => g.name)).toEqual(["alpha"]);
+
+    await act(async () => {
+      await result.current.handleReviewImport();
+    });
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "getOnboardingPlan")).toHaveLength(2);
+    expect(result.current.showImportModal).toBe(true);
+    expect(result.current.plan!.groups.map((g) => g.name)).toEqual(["alpha", "beta"]);
+    expect(result.current.selected).toEqual({ alpha: true, beta: true });
+  });
+
+  it("reloads the plan when the saved tool configuration changes", async () => {
+    // A narrowed scope can empty the plan (the banner disappears) and a
+    // widened one can populate it: the banner follows the configuration.
+    const empty = { ...PLAN, total_skills_found: 0, groups: [] };
+    stubImportBackend([() => Promise.resolve(empty), () => Promise.resolve(PLAN)]);
+    const setup = makeDeps();
+    const { result, rerender } = renderHook((deps: AddSkillFlowDeps) => useAddSkillFlow(deps), {
+      initialProps: setup.deps,
+    });
+    await waitFor(() => expect(result.current.plan).not.toBeNull());
+    expect(result.current.plan!.total_skills_found).toBe(0);
+
+    rerender({ ...setup.deps, sync: { ...setup.sync, scanScopeRevision: 1 } });
+    await waitFor(() => expect(result.current.plan!.total_skills_found).toBe(PLAN.total_skills_found));
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "getOnboardingPlan")).toHaveLength(2);
+  });
+
   it("completes the import even when the post-import plan reload fails", async () => {
     stubImportBackend([
-      () => Promise.resolve(PLAN),
-      () => Promise.reject(new Error("plan reload boom")),
+      () => Promise.resolve(PLAN), // mount
+      () => Promise.resolve(PLAN), // Review
+      () => Promise.reject(new Error("plan reload boom")), // post-import
     ]);
     const setup = makeDeps();
 

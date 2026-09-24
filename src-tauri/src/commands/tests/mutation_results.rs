@@ -62,7 +62,7 @@ impl Fixture {
     }
     fn blocked_target(&self) {
         let tool = crate::core::tool_adapters::adapter_by_key("cursor").unwrap();
-        fs::create_dir_all(self.paths.home.join(tool.relative_detect_dir)).unwrap();
+        crate::core::tool_adapters::mark_installed_in(&self.paths.home, tool);
         let blocker = self.paths.home.join("blocked");
         fs::write(&blocker, "not a directory").unwrap();
         self.store
@@ -86,7 +86,7 @@ fn update_and_restore_catalog_include_replayed_override_and_reasserted_targets()
         let f = Fixture::new();
         set_invocation_override(&f.paths, &f.store, &f.id, Some(InvocationMode::UserOnly)).unwrap();
         let tool = crate::core::tool_adapters::adapter_by_key("claude_code").unwrap();
-        fs::create_dir_all(f.paths.home.join(tool.relative_detect_dir)).unwrap();
+        crate::core::tool_adapters::mark_installed_in(&f.paths.home, tool);
         fs::write(
             f.source.join("SKILL.md"),
             "---\nname: alpha\ndescription: new description\n---\nnew\n",

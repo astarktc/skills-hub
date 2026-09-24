@@ -293,6 +293,24 @@ describe("useSyncOrchestration effective sync targets", () => {
 
     expect(result.current.effectiveSyncTargetIds).toEqual(["claude"]);
   });
+
+  it("bumps the scan-scope revision on every saved configuration", async () => {
+    // The onboarding plan's scope is resolved by the backend from the saved
+    // configuration; the add/import world reloads its plan on this signal.
+    stubBackend();
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+    expect(result.current.scanScopeRevision).toBe(0);
+
+    await act(async () => {
+      await result.current.handleToolConfigConfirm(["claude"], true);
+    });
+    expect(result.current.scanScopeRevision).toBe(1);
+    await act(async () => {
+      await result.current.handleToolConfigConfirm(["claude"], false);
+    });
+    expect(result.current.scanScopeRevision).toBe(2);
+  });
 });
 
 describe("useSyncOrchestration shared-dir groups", () => {
@@ -576,6 +594,41 @@ describe("syncSkillsToTools overwrite ask", () => {
       overwrite_if_same_content: false,
       overrides: [{ skill_id: "s2", tool: "claude", overwrite: true }],
     });
+  });
+
+  it("a thrown retry propagates as a whole-command error (the caller reloads)", async () => {
+    let batch = 0;
+    mockInvoke.mockImplementation((command) => {
+      switch (command) {
+        case "getSettings":
+          return Promise.resolve(appSettings());
+        case "getToolStatus":
+          return Promise.resolve(TOOL_STATUS);
+        case "syncSkillsToTools":
+          batch += 1;
+          return batch === 1
+            ? Promise.resolve([synced("s1", "claude"), occupied("s1", "cursor")])
+            : Promise.reject(new Error("retry transport down"));
+        default:
+          return Promise.resolve(undefined);
+      }
+    });
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+
+    let reportPromise!: Promise<BatchTargetOutcome[]>;
+    act(() => {
+      reportPromise = result.current.syncSkillsToTools([skills[0]!], ["claude", "cursor"]);
+      // A rejection is expected; attach the handler before the ask resolves.
+      reportPromise.catch(() => undefined);
+    });
+    await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
+    await act(async () => {
+      result.current.overwritePending!.resolve(true);
+      await expect(reportPromise).rejects.toThrow("retry transport down");
+    });
+    expect(syncCalls()).toHaveLength(2);
+    expect(result.current.overwritePending).toBeNull();
   });
 
   it("declined, returns the first report unchanged after one batch", async () => {

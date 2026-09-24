@@ -201,6 +201,7 @@ fn auto_sync_on_overwrites_the_source_tool_in_place_across_its_shared_dir_group(
     // artifact): the source variant's own path IS one of the sync targets.
     let f = fixture();
     install_tool(&f, "amp");
+    install_tool(&f, "kimi_cli");
     let original = seed_skill_dir(&f, "amp", "alpha", "v1");
 
     let report = run(

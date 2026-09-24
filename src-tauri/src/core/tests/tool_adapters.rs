@@ -3,20 +3,26 @@ use std::fs;
 use crate::core::errors::SignalError;
 use crate::core::tool_adapters::{
     adapter_by_key, adapters_sharing_skills_dir, constituents_of, default_tool_adapters,
-    detect_dir_in, ensure_path_within_tool_dirs, is_installed_in, scan_tool_dir, skills_dir_in,
+    detect_dirs_in, ensure_path_within_tool_dirs, is_installed_in, scan_tool_dir, skills_dir_in,
     tool_holding_path, ToolAdapter, ToolId, VirtualGroup,
 };
 
 #[test]
 fn path_resolution_joins_adapter_dirs_onto_home() {
     let home = tempfile::tempdir().unwrap();
-    let cases = [
-        ("claude_code", ".claude/skills", ".claude"),
-        ("codex", ".codex/skills", ".codex"),
-        ("cursor", ".cursor/skills", ".cursor"),
-        ("amp", ".config/agents/skills", ".config/agents"),
-        ("kimi_cli", ".config/agents/skills", ".config/agents"),
-        ("pi", ".pi/agent/skills", ".pi"),
+    let cases: [(&str, &str, &[&str]); 6] = [
+        ("claude_code", ".claude/skills", &[".claude"]),
+        ("codex", ".codex/skills", &[".codex"]),
+        ("cursor", ".cursor/skills", &[".cursor"]),
+        // Amp and Kimi share a skills convention dir but are detected by
+        // their own config roots (Kimi's moved across releases).
+        ("amp", ".config/agents/skills", &[".config/amp"]),
+        (
+            "kimi_cli",
+            ".config/agents/skills",
+            &[".kimi-code", ".kimi"],
+        ),
+        ("pi", ".pi/agent/skills", &[".pi"]),
     ];
     for (key, skills, detect) in cases {
         let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {key}"));
@@ -26,9 +32,12 @@ fn path_resolution_joins_adapter_dirs_onto_home() {
             "skills dir for {key}"
         );
         assert_eq!(
-            detect_dir_in(home.path(), adapter),
-            home.path().join(detect),
-            "detect dir for {key}"
+            detect_dirs_in(home.path(), adapter),
+            detect
+                .iter()
+                .map(|d| home.path().join(d))
+                .collect::<Vec<_>>(),
+            "detect dirs for {key}"
         );
     }
 }
@@ -38,7 +47,9 @@ fn every_adapter_resolves_under_home() {
     let home = tempfile::tempdir().unwrap();
     for adapter in default_tool_adapters() {
         assert!(skills_dir_in(home.path(), adapter).starts_with(home.path()));
-        assert!(detect_dir_in(home.path(), adapter).starts_with(home.path()));
+        for detect_dir in detect_dirs_in(home.path(), adapter) {
+            assert!(detect_dir.starts_with(home.path()));
+        }
         assert!(
             !is_installed_in(home.path(), adapter),
             "{} must not be installed in an empty home",
@@ -65,11 +76,37 @@ fn installedness_is_decided_by_detect_dir_not_skills_dir() {
     let amp = adapter_by_key("amp").unwrap();
     fs::create_dir_all(home.path().join(".config/other")).unwrap();
     assert!(!is_installed_in(home.path(), amp));
-    fs::create_dir_all(home.path().join(".config/agents")).unwrap();
+    fs::create_dir_all(home.path().join(".config/amp")).unwrap();
     assert!(is_installed_in(home.path(), amp));
-    // Shared-dir tools are detected independently by the same dir.
+    // Shared-skills-dir tools are detected independently, by their own roots.
     let kimi = adapter_by_key("kimi_cli").unwrap();
-    assert!(is_installed_in(home.path(), kimi));
+    assert!(!is_installed_in(home.path(), kimi));
+}
+
+#[test]
+fn a_tool_whose_skills_dir_is_a_shared_convention_is_detected_by_its_own_root() {
+    // The vendor-documented Kimi / Amp layout: config root beside the shared
+    // `~/.config/agents/skills` convention, which alone is a footprint.
+    let home = tempfile::tempdir().unwrap();
+    let kimi = adapter_by_key("kimi_cli").unwrap();
+    let amp = adapter_by_key("amp").unwrap();
+
+    fs::create_dir_all(home.path().join(".config/agents/skills/foo")).unwrap();
+    assert!(!is_installed_in(home.path(), kimi));
+    assert!(!is_installed_in(home.path(), amp));
+
+    fs::create_dir_all(home.path().join(".kimi")).unwrap();
+    fs::write(home.path().join(".kimi/config.toml"), b"").unwrap();
+    assert!(is_installed_in(home.path(), kimi), "kimi-cli.com layout");
+    assert!(!is_installed_in(home.path(), amp));
+
+    fs::remove_dir_all(home.path().join(".kimi")).unwrap();
+    fs::create_dir_all(home.path().join(".kimi-code")).unwrap();
+    assert!(is_installed_in(home.path(), kimi), "kimi.com/code layout");
+
+    fs::create_dir_all(home.path().join(".config/amp")).unwrap();
+    fs::write(home.path().join(".config/amp/settings.json"), b"{}").unwrap();
+    assert!(is_installed_in(home.path(), amp));
 }
 
 #[test]
@@ -121,18 +158,29 @@ fn a_virtual_group_is_installed_by_its_directory_alone() {
 }
 
 #[test]
-fn every_adapter_nests_its_skills_dir_under_its_detect_dir() {
-    // The footprint walk strips the detect dir off the skills dir; a registry
-    // entry breaking this would silently fall back to "dir exists".
+fn no_adapter_is_detected_by_a_shared_skills_convention_dir() {
+    // The parent of a skills dir several tools share (`~/.config/agents`)
+    // is a convention, not a tool: presence there is exactly the footprint
+    // the rule rejects. Only a virtual group entry may be detected by one.
     for adapter in default_tool_adapters() {
         assert!(
-            std::path::Path::new(adapter.relative_skills_dir)
-                .starts_with(adapter.relative_detect_dir),
-            "{}: {} is not under {}",
-            adapter.id.as_key(),
-            adapter.relative_skills_dir,
-            adapter.relative_detect_dir
+            !adapter.relative_detect_dirs.is_empty(),
+            "{} has no detect dir",
+            adapter.id.as_key()
         );
+        if adapter.as_virtual_group().is_some() {
+            continue;
+        }
+        let shared = adapters_sharing_skills_dir(adapter).len() > 1;
+        let convention_root = std::path::Path::new(adapter.relative_skills_dir).parent();
+        for detect_dir in adapter.relative_detect_dirs {
+            assert!(
+                !(shared && convention_root == Some(std::path::Path::new(detect_dir))),
+                "{}: detected by the shared convention dir {}",
+                adapter.id.as_key(),
+                detect_dir
+            );
+        }
     }
 }
 
@@ -179,7 +227,7 @@ fn scan_tool_dir_skips_codex_system_and_includes_symlink_dir() {
         display_name: "Codex",
         group_label: None,
         relative_skills_dir: "ignored",
-        relative_detect_dir: "ignored",
+        relative_detect_dirs: &["ignored"],
         project_relative_skills_dir: "ignored",
         group: None,
         supports_symlink: true,
@@ -212,7 +260,7 @@ fn scan_tool_dir_skips_app_support_path() {
         display_name: "Cursor",
         group_label: None,
         relative_skills_dir: "ignored",
-        relative_detect_dir: "ignored",
+        relative_detect_dirs: &["ignored"],
         project_relative_skills_dir: "ignored",
         group: None,
         supports_symlink: false,

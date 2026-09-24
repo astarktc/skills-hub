@@ -39,8 +39,8 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `codex` | Codex | `.codex/skills` | `.codex` |
 | `opencode` | OpenCode | `.config/opencode/skills` | `.config/opencode` |
 | `antigravity` | Antigravity | `.gemini/antigravity/global_skills` | `.gemini/antigravity` |
-| `amp` | Amp | `.config/agents/skills` | `.config/agents` |
-| `kimi_cli` | Kimi Code CLI | `.config/agents/skills` | `.config/agents` |
+| `amp` | Amp | `.config/agents/skills` | `.config/amp` |
+| `kimi_cli` | Kimi Code CLI | `.config/agents/skills` | `.kimi-code` or `.kimi` |
 | `augment` | Augment | `.augment/rules` | `.augment` |
 | `openclaw` | OpenClaw | `.openclaw/skills` | `.openclaw` |
 | `copaw` | Copaw | `.copaw/skill_pool` | `.copaw` |

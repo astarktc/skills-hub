@@ -226,6 +226,24 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     }
   }, [applyOutcome, foldContext, formatError, setError]);
 
+  /**
+   * A thrown sync request also reloads, like a thrown Update/Restore: the
+   * seam may already have settled a first batch before its overwrite retry
+   * threw (a whole-command failure, not a report row), so the catalog must
+   * show what was written rather than the pre-sync state. The thrown error
+   * still ends the action through runAction's failure path.
+   */
+  const syncOrReload = useCallback(async (
+    ...args: Parameters<typeof syncSkillsToTools>
+  ) => {
+    try {
+      return await syncSkillsToTools(...args);
+    } catch (error) {
+      await loadManagedSkills();
+      throw error;
+    }
+  }, [loadManagedSkills, syncSkillsToTools]);
+
   // The link button deploys to the operator's effective target set (their
   // recorded selection, or detection when they never configured one) — never
   // to every detected tool.
@@ -237,7 +255,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
       return;
     }
     await runAction({}, async () => {
-      const report = await syncSkillsToTools(
+      const report = await syncOrReload(
         [toSyncItem(skill)], effectiveSyncTargetIds, { overwriteIfSameContent: true },
       );
       return applyOutcome(syncOutcome(report, { ...foldContext, action: "bulk" }));
@@ -248,19 +266,19 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     foldContext,
     notify,
     runAction,
-    syncSkillsToTools,
+    syncOrReload,
     t,
   ]);
 
   const syncAllManagedToTools = useCallback(async (toolIds: string[]) => {
     if (!autoSyncEnabled || !managedSkills.length || !toolIds.length) return;
     await runAction({}, async () => {
-      const report = await syncSkillsToTools(
+      const report = await syncOrReload(
         managedSkills.map(toSyncItem), toolIds, { overwriteIfSameContent: true },
       );
       return applyOutcome(syncOutcome(report, { ...foldContext, action: "bulk" }));
     });
-  }, [applyOutcome, autoSyncEnabled, foldContext, managedSkills, runAction, syncSkillsToTools]);
+  }, [applyOutcome, autoSyncEnabled, foldContext, managedSkills, runAction, syncOrReload]);
 
   const handleDeleteManaged = useCallback(async (skill: ManagedSkill) => {
     await runAction({ message: t("actions.removing", { name: skill.name }) }, async () => {
@@ -296,7 +314,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
             const report = await invokeTauri("unsyncSkillFromTool", skill.id, toolId);
             await applyOutcome(removalOutcome(report, { ...foldContext, action: "toggle" }));
           } else {
-            const report = await syncSkillsToTools(
+            const report = await syncOrReload(
               [toSyncItem(skill)], [toolId], { overwriteIfSameContent: true },
             );
             await applyOutcome(syncOutcome(report, { ...foldContext, action: "toggle" }));
@@ -304,7 +322,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
         },
       );
     },
-    [applyOutcome, foldContext, loading, runAction, syncSkillsToTools, t, tools],
+    [applyOutcome, foldContext, loading, runAction, syncOrReload, t, tools],
   );
 
   const handleToggleToolForSkill = useCallback(

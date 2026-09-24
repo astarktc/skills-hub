@@ -17,10 +17,12 @@ Round 17: detection and the onboarding scan tell the truth, and a first sync ont
 - "Only scan for existing skills within selected tools" now actually scopes Review & Import (and the import that follows it) — previously it only hid the new-tools popup, so a skill deployed into every tool directory by another installer showed up dozens of times.
 - A tool directory holding nothing but a `skills/` folder (what `npx skills add`, ego-browser and similar deployers leave behind) no longer counts as an installed tool, so the tool config modal stops badging phantom tools "(installed)". `~/.agents` is exempt: it is the convention itself.
 - "Sync to all tools" now applies the same-content rule like every other sync path.
+- Amp and Kimi Code CLI are detected by their own configuration roots (`~/.config/amp`; `~/.kimi-code` or `~/.kimi`) instead of the shared `~/.config/agents` skills convention, which alone is a deployer's footprint. Detecting Amp no longer implies Kimi, and vice versa.
+- Review & Import always reviews a plan fetched at that moment, and the discovered-skills banner reloads when the tool configuration is saved.
 
 ### Internal
 
-- `OnboardingScanScope` (core) resolved once at the command seam and carried by `ImportPolicy`; `tool_adapters::mark_installed_in` for test fixtures; the Modal shell gains `backdropClassName`.
+- `OnboardingScanScope` (core) resolved once at the command seam and carried by `ImportPolicy`; `ToolAdapter.relative_detect_dirs` (a slice — any present root counts); `tool_adapters::mark_installed_in` for test fixtures; the Modal shell gains `backdropClassName`; `useSyncOrchestration.scanScopeRevision`; a thrown sync request reloads the catalog like a thrown Update.
 
 ## [1.2.16] - 2026-09-22
 

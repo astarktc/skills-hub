@@ -32,6 +32,7 @@ export type AddSkillFlowDeps = {
   sync: Pick<
     SyncOrchestration,
     | "autoSyncEnabled"
+    | "scanScopeRevision"
     | "syncSkillsToTools"
     | "syncTargets"
     | "targetAllInstalled"
@@ -64,6 +65,7 @@ export function useAddSkillFlow({
   } = reporter;
   const {
     autoSyncEnabled,
+    scanScopeRevision,
     syncSkillsToTools,
     syncTargets,
     targetAllInstalled,
@@ -207,12 +209,15 @@ export function useAddSkillFlow({
 
   useEffect(() => {
     if (!isTauri) return;
-    // Fire-and-forget load on mount (see loadManagedSkills effect). loadPlan's
-    // intentional eager loading-overlay setState is preserved exactly.
+    // Fire-and-forget load on mount (see loadManagedSkills effect) and again
+    // whenever the saved tool configuration changes: the backend resolves
+    // the scan's scope from it, so the banner, its count and the reviewed
+    // plan must follow the configuration, never a plan from before it.
+    // loadPlan's intentional eager loading-overlay setState is preserved.
     void (async () => {
       await loadPlan();
     })();
-  }, [loadPlan]);
+  }, [loadPlan, scanScopeRevision]);
 
   const handleOpenAdd = useCallback(() => {
     setShowAddModal(true);
@@ -234,16 +239,18 @@ export function useAddSkillFlow({
     [closeUnlessLoading],
   );
 
+  /**
+   * Review always reviews a plan fetched now: the import re-derives the
+   * plan under the current scope and acts on the originals it finds, so the
+   * operator must have seen exactly those. The banner's plan is only the
+   * invitation.
+   */
   const handleReviewImport = useCallback(async () => {
-    if (plan) {
-      setShowImportModal(true);
-      return;
-    }
     const result = await loadPlan();
     if (result) {
       setShowImportModal(true);
     }
-  }, [loadPlan, plan]);
+  }, [loadPlan]);
 
   const handlePickLocalPath = useCallback(async () => {
     try {

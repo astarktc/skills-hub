@@ -73,6 +73,16 @@ requirement, 2026-09-23). Released as 1.2.17.
 | 02 | `02-backend-footprint-is-not-installed.md` — D2 | Rust |
 | 03 | `03-frontend-overwrite-ask.md` — D3 | TS |
 | 04 | `04-docs-and-release.md` | orchestrator |
+| 05 | `05-review-fixes.md` — Astra review M1 M2 S1 S2 S3 | both |
+
+## Review (Astra, 2026-09-23 — `review/astra-review.md`)
+
+Verdict fix-then-ship; every finding applied in ticket 05, each in the fuller form where the smallest fix would
+have bent a rule: M2 became a registry correction (`relative_detect_dirs` slice; Amp `.config/amp`, Kimi
+`.kimi-code`/`.kimi`) rather than a presence-only exemption for `.config/agents`; M1 reloads the plan on a
+configuration revision **and** on Review; S1 gives the ask explicit ownership (ref, one-shot, displacement,
+unmount); S2 makes any enumeration error read as installed; S3 takes the "thrown requests also reload"
+precedent rather than synthesising report rows.
 
 ## Closure checklist (operator smoke on the installed 1.2.17)
 

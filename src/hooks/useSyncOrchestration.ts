@@ -123,6 +123,13 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
     string[] | null
   >(null);
   const [scanSelectedToolsOnly, setScanSelectedToolsOnly] = useState(true);
+  /**
+   * Bumped on every saved tool configuration. The onboarding scan's scope is
+   * resolved by the backend from that configuration, so a plan fetched
+   * before a save no longer describes what an import would act on; the
+   * add/import world reloads its plan when this changes.
+   */
+  const [scanScopeRevision, setScanScopeRevision] = useState(0);
   const [syncTargets, setSyncTargets] = useState<Record<string, boolean>>({});
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
 
@@ -392,6 +399,7 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
         });
         setGlobalSelectedTools(selected);
         setScanSelectedToolsOnly(scanOnly);
+        setScanScopeRevision((revision) => revision + 1);
         // Deploy targets follow the saved selection exactly.
         setSyncTargets(() => {
           const next: Record<string, boolean> = {};
@@ -463,6 +471,7 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
     effectiveSyncTargetIds,
     globalSelectedTools,
     scanSelectedToolsOnly,
+    scanScopeRevision,
     syncTargets,
     autoSyncEnabled,
     showNewToolsModal,

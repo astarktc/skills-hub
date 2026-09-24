@@ -118,12 +118,12 @@ fn global_catalog_installedness_comes_from_home() {
     let entries = global_tool_entries(home.path());
     assert!(entry(&entries, "claude_code").installed);
     assert!(entry(&entries, "amp").installed);
-    // Shared detect dir: kimi_cli is detected by the same directory as amp.
-    assert!(entry(&entries, "kimi_cli").installed);
+    // A shared skills dir does not make kimi_cli installed: it has its own root.
+    assert!(!entry(&entries, "kimi_cli").installed);
     assert!(!entry(&entries, "cursor").installed);
     assert_eq!(
         installed_keys(&entries),
-        vec!["claude_code", "amp", "kimi_cli"],
+        vec!["claude_code", "amp"],
         "catalog order, not alphabetical"
     );
 }

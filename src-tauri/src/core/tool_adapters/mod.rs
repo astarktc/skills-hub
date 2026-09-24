@@ -145,8 +145,12 @@ pub struct ToolAdapter {
     pub group_label: Option<&'static str>,
     /// Global skill directory under user home (aligned with add-skill docs).
     pub relative_skills_dir: &'static str,
-    /// Directory used to detect whether the tool is installed (aligned with add-skill docs).
-    pub relative_detect_dir: &'static str,
+    /// Directories whose presence under home marks the tool as installed —
+    /// the tool's own configuration root(s), any one of which counts. More
+    /// than one entry when a tool moved its root across versions (Kimi:
+    /// `.kimi-code` today, `.kimi` before). Never a shared skills convention
+    /// dir (`.config/agents`): those are footprints, not tools.
+    pub relative_detect_dirs: &'static [&'static str],
     /// Project-scope skill directory relative to a project root. Differs
     /// from the global dir for many tools (e.g. Pi, Windsurf) and is the
     /// only mapping project sync may use.
@@ -197,7 +201,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         id: ToolId::AgentsStandard,
         display_name: ".agents/skills",
         relative_skills_dir: ".agents/skills",
-        relative_detect_dir: ".agents",
+        relative_detect_dirs: &[".agents"],
         project_relative_skills_dir: ".agents/skills",
         group_label: Some(".agents/skills (9 tools)"),
         group: None,
@@ -207,7 +211,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         id: ToolId::Cursor,
         display_name: "Cursor",
         relative_skills_dir: ".cursor/skills",
-        relative_detect_dir: ".cursor",
+        relative_detect_dirs: &[".cursor"],
         project_relative_skills_dir: ".agents/skills",
         group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
@@ -219,7 +223,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         id: ToolId::ClaudeCode,
         display_name: "Claude Code",
         relative_skills_dir: ".claude/skills",
-        relative_detect_dir: ".claude",
+        relative_detect_dirs: &[".claude"],
         project_relative_skills_dir: ".claude/skills",
         group_label: None,
         group: None,
@@ -229,7 +233,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         id: ToolId::Codex,
         display_name: "Codex",
         relative_skills_dir: ".codex/skills",
-        relative_detect_dir: ".codex",
+        relative_detect_dirs: &[".codex"],
         project_relative_skills_dir: ".agents/skills",
         group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
@@ -240,7 +244,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "OpenCode",
         // add-skill global path: ~/.config/opencode/skills/
         relative_skills_dir: ".config/opencode/skills",
-        relative_detect_dir: ".config/opencode",
+        relative_detect_dirs: &[".config/opencode"],
         project_relative_skills_dir: ".agents/skills",
         group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
@@ -251,7 +255,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Antigravity",
         // add-skill global path: ~/.gemini/antigravity/global_skills/
         relative_skills_dir: ".gemini/antigravity/global_skills",
-        relative_detect_dir: ".gemini/antigravity",
+        relative_detect_dirs: &[".gemini/antigravity"],
         project_relative_skills_dir: ".agents/skills",
         group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
@@ -260,9 +264,10 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     ToolAdapter {
         id: ToolId::Amp,
         display_name: "Amp",
-        // add-skill global path: ~/.config/agents/skills/
+        // add-skill global path: ~/.config/agents/skills/; the tool itself
+        // lives in ~/.config/amp (settings.json — ampcode.com/docs/cli/settings).
         relative_skills_dir: ".config/agents/skills",
-        relative_detect_dir: ".config/agents",
+        relative_detect_dirs: &[".config/amp"],
         project_relative_skills_dir: ".agents/skills",
         group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
@@ -271,10 +276,11 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     ToolAdapter {
         id: ToolId::KimiCli,
         display_name: "Kimi Code CLI",
-        // add-skill global path: ~/.config/agents/skills/
-        // NOTE: Shares the same skills directory with Amp.
+        // add-skill global path: ~/.config/agents/skills/ (shared with Amp).
+        // The tool's config root is ~/.kimi-code (kimi.com/code docs) or
+        // ~/.kimi on earlier releases (kimi-cli.com docs); either counts.
         relative_skills_dir: ".config/agents/skills",
-        relative_detect_dir: ".config/agents",
+        relative_detect_dirs: &[".kimi-code", ".kimi"],
         project_relative_skills_dir: ".agents/skills",
         group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
@@ -285,7 +291,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Augment",
         // add-skill global path: ~/.augment/rules/
         relative_skills_dir: ".augment/rules",
-        relative_detect_dir: ".augment",
+        relative_detect_dirs: &[".augment"],
         project_relative_skills_dir: ".augment/skills",
         group_label: None,
         group: None,
@@ -296,7 +302,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "OpenClaw",
         // add-skill global path: ~/.openclaw/skills/
         relative_skills_dir: ".openclaw/skills",
-        relative_detect_dir: ".openclaw",
+        relative_detect_dirs: &[".openclaw"],
         project_relative_skills_dir: "skills",
         group_label: None,
         group: None,
@@ -307,7 +313,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Copaw",
         // add-skill global path: ~/.copaw/skill_pool/
         relative_skills_dir: ".copaw/skill_pool",
-        relative_detect_dir: ".copaw",
+        relative_detect_dirs: &[".copaw"],
         project_relative_skills_dir: ".copaw/skill_pool",
         group_label: None,
         group: None,
@@ -318,7 +324,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Cline",
         // add-skill global path: ~/.cline/skills/
         relative_skills_dir: ".cline/skills",
-        relative_detect_dir: ".cline",
+        relative_detect_dirs: &[".cline"],
         project_relative_skills_dir: ".agents/skills",
         group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
@@ -329,7 +335,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "CodeBuddy",
         // add-skill global path: ~/.codebuddy/skills/
         relative_skills_dir: ".codebuddy/skills",
-        relative_detect_dir: ".codebuddy",
+        relative_detect_dirs: &[".codebuddy"],
         project_relative_skills_dir: ".codebuddy/skills",
         group_label: None,
         group: None,
@@ -340,7 +346,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Command Code",
         // add-skill global path: ~/.commandcode/skills/
         relative_skills_dir: ".commandcode/skills",
-        relative_detect_dir: ".commandcode",
+        relative_detect_dirs: &[".commandcode"],
         project_relative_skills_dir: ".commandcode/skills",
         group_label: None,
         group: None,
@@ -351,7 +357,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Continue",
         // add-skill global path: ~/.continue/skills/
         relative_skills_dir: ".continue/skills",
-        relative_detect_dir: ".continue",
+        relative_detect_dirs: &[".continue"],
         project_relative_skills_dir: ".continue/skills",
         group_label: None,
         group: None,
@@ -362,7 +368,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Crush",
         // add-skill global path: ~/.config/crush/skills/
         relative_skills_dir: ".config/crush/skills",
-        relative_detect_dir: ".config/crush",
+        relative_detect_dirs: &[".config/crush"],
         project_relative_skills_dir: ".crush/skills",
         group_label: None,
         group: None,
@@ -373,7 +379,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Junie",
         // add-skill global path: ~/.junie/skills/
         relative_skills_dir: ".junie/skills",
-        relative_detect_dir: ".junie",
+        relative_detect_dirs: &[".junie"],
         project_relative_skills_dir: ".junie/skills",
         group_label: None,
         group: None,
@@ -384,7 +390,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "iFlow CLI",
         // add-skill global path: ~/.iflow/skills/
         relative_skills_dir: ".iflow/skills",
-        relative_detect_dir: ".iflow",
+        relative_detect_dirs: &[".iflow"],
         project_relative_skills_dir: ".iflow/skills",
         group_label: None,
         group: None,
@@ -395,7 +401,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Kiro CLI",
         // add-skill global path: ~/.kiro/skills/
         relative_skills_dir: ".kiro/skills",
-        relative_detect_dir: ".kiro",
+        relative_detect_dirs: &[".kiro"],
         project_relative_skills_dir: ".kiro/skills",
         group_label: None,
         group: None,
@@ -406,7 +412,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Kode",
         // add-skill global path: ~/.kode/skills/
         relative_skills_dir: ".kode/skills",
-        relative_detect_dir: ".kode",
+        relative_detect_dirs: &[".kode"],
         project_relative_skills_dir: ".kode/skills",
         group_label: None,
         group: None,
@@ -417,7 +423,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "MCPJam",
         // add-skill global path: ~/.mcpjam/skills/
         relative_skills_dir: ".mcpjam/skills",
-        relative_detect_dir: ".mcpjam",
+        relative_detect_dirs: &[".mcpjam"],
         project_relative_skills_dir: ".mcpjam/skills",
         group_label: None,
         group: None,
@@ -428,7 +434,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Mistral Vibe",
         // add-skill global path: ~/.vibe/skills/
         relative_skills_dir: ".vibe/skills",
-        relative_detect_dir: ".vibe",
+        relative_detect_dirs: &[".vibe"],
         project_relative_skills_dir: ".vibe/skills",
         group_label: None,
         group: None,
@@ -439,7 +445,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Mux",
         // add-skill global path: ~/.mux/skills/
         relative_skills_dir: ".mux/skills",
-        relative_detect_dir: ".mux",
+        relative_detect_dirs: &[".mux"],
         project_relative_skills_dir: ".mux/skills",
         group_label: None,
         group: None,
@@ -450,7 +456,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "OpenClaude IDE",
         // add-skill global path: ~/.openclaude/skills/
         relative_skills_dir: ".openclaude/skills",
-        relative_detect_dir: ".openclaude",
+        relative_detect_dirs: &[".openclaude"],
         project_relative_skills_dir: ".openclaude/skills",
         group_label: None,
         group: None,
@@ -461,7 +467,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "OpenHands",
         // add-skill global path: ~/.openhands/skills/
         relative_skills_dir: ".openhands/skills",
-        relative_detect_dir: ".openhands",
+        relative_detect_dirs: &[".openhands"],
         project_relative_skills_dir: ".openhands/skills",
         group_label: None,
         group: None,
@@ -472,7 +478,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Pi",
         // add-skill global path: ~/.pi/agent/skills/
         relative_skills_dir: ".pi/agent/skills",
-        relative_detect_dir: ".pi",
+        relative_detect_dirs: &[".pi"],
         project_relative_skills_dir: ".pi/skills",
         group_label: None,
         group: None,
@@ -483,7 +489,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Qoder",
         // add-skill global path: ~/.qoder/skills/
         relative_skills_dir: ".qoder/skills",
-        relative_detect_dir: ".qoder",
+        relative_detect_dirs: &[".qoder"],
         project_relative_skills_dir: ".qoder/skills",
         group_label: None,
         group: None,
@@ -494,7 +500,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "QoderWork",
         // add-skill global path: ~/.qoderwork/skills/
         relative_skills_dir: ".qoderwork/skills",
-        relative_detect_dir: ".qoderwork",
+        relative_detect_dirs: &[".qoderwork"],
         project_relative_skills_dir: ".qoderwork/skills",
         group_label: None,
         group: None,
@@ -505,7 +511,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Qwen Code",
         // add-skill global path: ~/.qwen/skills/
         relative_skills_dir: ".qwen/skills",
-        relative_detect_dir: ".qwen",
+        relative_detect_dirs: &[".qwen"],
         project_relative_skills_dir: ".qwen/skills",
         group_label: None,
         group: None,
@@ -516,7 +522,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Trae",
         // add-skill global path: ~/.trae/skills/
         relative_skills_dir: ".trae/skills",
-        relative_detect_dir: ".trae",
+        relative_detect_dirs: &[".trae"],
         project_relative_skills_dir: ".trae/skills",
         group_label: None,
         group: None,
@@ -527,7 +533,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Trae CN",
         // add-skill global path: ~/.trae-cn/skills/
         relative_skills_dir: ".trae-cn/skills",
-        relative_detect_dir: ".trae-cn",
+        relative_detect_dirs: &[".trae-cn"],
         project_relative_skills_dir: ".trae/skills",
         group_label: None,
         group: None,
@@ -538,7 +544,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Zencoder",
         // add-skill global path: ~/.zencoder/skills/
         relative_skills_dir: ".zencoder/skills",
-        relative_detect_dir: ".zencoder",
+        relative_detect_dirs: &[".zencoder"],
         project_relative_skills_dir: ".zencoder/skills",
         group_label: None,
         group: None,
@@ -549,7 +555,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Neovate",
         // add-skill global path: ~/.neovate/skills/
         relative_skills_dir: ".neovate/skills",
-        relative_detect_dir: ".neovate",
+        relative_detect_dirs: &[".neovate"],
         project_relative_skills_dir: ".neovate/skills",
         group_label: None,
         group: None,
@@ -560,7 +566,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Pochi",
         // add-skill global path: ~/.pochi/skills/
         relative_skills_dir: ".pochi/skills",
-        relative_detect_dir: ".pochi",
+        relative_detect_dirs: &[".pochi"],
         project_relative_skills_dir: ".pochi/skills",
         group_label: None,
         group: None,
@@ -571,7 +577,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "AdaL",
         // add-skill global path: ~/.adal/skills/
         relative_skills_dir: ".adal/skills",
-        relative_detect_dir: ".adal",
+        relative_detect_dirs: &[".adal"],
         project_relative_skills_dir: ".adal/skills",
         group_label: None,
         group: None,
@@ -582,7 +588,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Kilo Code",
         // add-skill global path: ~/.kilocode/skills/
         relative_skills_dir: ".kilocode/skills",
-        relative_detect_dir: ".kilocode",
+        relative_detect_dirs: &[".kilocode"],
         project_relative_skills_dir: ".kilocode/skills",
         group_label: None,
         group: None,
@@ -593,7 +599,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Roo Code",
         // add-skill global path: ~/.roo/skills/
         relative_skills_dir: ".roo/skills",
-        relative_detect_dir: ".roo",
+        relative_detect_dirs: &[".roo"],
         project_relative_skills_dir: ".roo/skills",
         group_label: None,
         group: None,
@@ -604,7 +610,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Goose",
         // add-skill global path: ~/.config/goose/skills/
         relative_skills_dir: ".config/goose/skills",
-        relative_detect_dir: ".config/goose",
+        relative_detect_dirs: &[".config/goose"],
         project_relative_skills_dir: ".goose/skills",
         group_label: None,
         group: None,
@@ -615,7 +621,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Gemini CLI",
         // add-skill global path: ~/.gemini/skills/
         relative_skills_dir: ".gemini/skills",
-        relative_detect_dir: ".gemini",
+        relative_detect_dirs: &[".gemini"],
         project_relative_skills_dir: ".agents/skills",
         group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
@@ -626,7 +632,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "GitHub Copilot",
         // add-skill global path: ~/.copilot/skills/
         relative_skills_dir: ".copilot/skills",
-        relative_detect_dir: ".copilot",
+        relative_detect_dirs: &[".copilot"],
         project_relative_skills_dir: ".agents/skills",
         group_label: None,
         group: Some(VirtualGroup::AgentsStandard),
@@ -637,7 +643,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Clawdbot",
         // add-skill global path: ~/.clawdbot/skills/
         relative_skills_dir: ".clawdbot/skills",
-        relative_detect_dir: ".clawdbot",
+        relative_detect_dirs: &[".clawdbot"],
         project_relative_skills_dir: ".clawdbot/skills",
         group_label: None,
         group: None,
@@ -648,7 +654,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Droid",
         // add-skill global path: ~/.factory/skills/
         relative_skills_dir: ".factory/skills",
-        relative_detect_dir: ".factory",
+        relative_detect_dirs: &[".factory"],
         project_relative_skills_dir: ".factory/skills",
         group_label: None,
         group: None,
@@ -659,7 +665,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Windsurf",
         // add-skill global path: ~/.codeium/windsurf/skills/
         relative_skills_dir: ".codeium/windsurf/skills",
-        relative_detect_dir: ".codeium/windsurf",
+        relative_detect_dirs: &[".codeium/windsurf"],
         project_relative_skills_dir: ".windsurf/skills",
         group_label: None,
         group: None,
@@ -670,7 +676,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "MoltBot",
         // add-skill global path: ~/.moltbot/skills/
         relative_skills_dir: ".moltbot/skills",
-        relative_detect_dir: ".moltbot",
+        relative_detect_dirs: &[".moltbot"],
         project_relative_skills_dir: ".moltbot/skills",
         group_label: None,
         group: None,
@@ -680,7 +686,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         id: ToolId::HermesAgent,
         display_name: "Hermes Agent",
         relative_skills_dir: ".hermes/skills",
-        relative_detect_dir: ".hermes",
+        relative_detect_dirs: &[".hermes"],
         project_relative_skills_dir: ".hermes/skills",
         group_label: None,
         group: None,
@@ -752,7 +758,7 @@ pub mod test_overrides {
 /// door; a bare `create_dir_all(detect_dir)` is the footprint the rule rejects.
 #[cfg(test)]
 pub fn mark_installed_in(home: &Path, adapter: &ToolAdapter) {
-    let detect_dir = detect_dir_in(home, adapter);
+    let detect_dir = home.join(adapter.relative_detect_dirs[0]);
     std::fs::create_dir_all(&detect_dir).expect("create detect dir");
     std::fs::write(detect_dir.join("installed.marker"), b"").expect("write install marker");
 }
@@ -805,53 +811,52 @@ pub fn ensure_path_within_tool_dirs(home: &Path, path: &Path) -> Result<()> {
     })
 }
 
-/// The directory whose presence under `home` marks the tool as installed.
-pub fn detect_dir_in(home: &Path, adapter: &ToolAdapter) -> PathBuf {
-    home.join(adapter.relative_detect_dir)
+/// The directories any one of whose presence under `home` marks the tool as
+/// installed, in registry order.
+pub fn detect_dirs_in(home: &Path, adapter: &ToolAdapter) -> Vec<PathBuf> {
+    adapter
+        .relative_detect_dirs
+        .iter()
+        .map(|dir| home.join(dir))
+        .collect()
 }
 
 /// Whether the tool is installed for the operator whose home is `home`.
 ///
-/// The detect dir must exist **and** must not be a *skills-only footprint*:
-/// a detect dir holding nothing but the path down to the tool's skills dir
+/// Some detect dir must exist **and** not be a *skills-only footprint*: a
+/// detect dir holding nothing but the path down to the tool's skills dir
 /// (`~/.kiro/skills/x` and nothing else) is what a skill deployer leaves
 /// behind — `npx skills add`, ego-browser, Skills Hub itself after the tool
 /// was uninstalled — not evidence of the tool. An empty detect dir still
 /// counts, as does any sibling beside the skills path (`~/.pi/agent/
-/// settings.json`). A virtual group's detect dir *is* the convention
+/// settings.json`), and a detect dir the skills dir does not live under
+/// (Amp's `~/.config/amp` beside `~/.config/agents/skills`) counts by
+/// presence alone. A virtual group's detect dir *is* the convention
 /// (`~/.agents` legitimately holds only `skills/`), so for a group entry
-/// presence alone counts.
+/// presence alone counts too.
 pub fn is_installed_in(home: &Path, adapter: &ToolAdapter) -> bool {
-    let detect_dir = detect_dir_in(home, adapter);
-    if !detect_dir.exists() {
-        return false;
-    }
-    if adapter.as_virtual_group().is_some() {
-        return true;
-    }
-    !is_skills_only_footprint(&detect_dir, &skills_dir_in(home, adapter))
+    let skills_dir = skills_dir_in(home, adapter);
+    detect_dirs_in(home, adapter).iter().any(|detect_dir| {
+        detect_dir.exists()
+            && (adapter.as_virtual_group().is_some()
+                || !is_skills_only_footprint(detect_dir, &skills_dir))
+    })
 }
 
 /// True when every directory from `detect_dir` down to (but excluding)
 /// `skills_dir` holds exactly one entry — the next path component. A skills
-/// dir outside the detect dir, or any read error on the way, is not a
-/// footprint: a permissions hiccup must never hide a tool. Finder's
-/// `.DS_Store` is not an entry: browsing a footprint must not promote it.
+/// dir outside the detect dir, or any read error on the way (opening a
+/// directory or enumerating one of its entries), is not a footprint: a
+/// permissions hiccup must never hide a tool. Finder's `.DS_Store` is not
+/// an entry: browsing a footprint must not promote it.
 fn is_skills_only_footprint(detect_dir: &Path, skills_dir: &Path) -> bool {
     let Ok(relative) = skills_dir.strip_prefix(detect_dir) else {
         return false;
     };
     let mut dir = detect_dir.to_path_buf();
     for component in relative.components() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Some(only_entry) = sole_entry(&dir) else {
             return false;
-        };
-        let mut names = entries
-            .filter_map(|e| e.ok().map(|e| e.file_name()))
-            .filter(|name| name != ".DS_Store");
-        let only_entry = match (names.next(), names.next()) {
-            (Some(name), None) => name,
-            _ => return false,
         };
         if only_entry != component.as_os_str() {
             return false;
@@ -859,6 +864,25 @@ fn is_skills_only_footprint(detect_dir: &Path, skills_dir: &Path) -> bool {
         dir.push(component);
     }
     true
+}
+
+/// The one entry of `dir` (ignoring `.DS_Store`), or `None` when it holds
+/// none, several, or cannot be read in full — every error is `None`, so a
+/// partially enumerable directory is never mistaken for a single-entry one.
+fn sole_entry(dir: &Path) -> Option<std::ffi::OsString> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut sole: Option<std::ffi::OsString> = None;
+    for entry in entries {
+        let name = entry.ok()?.file_name();
+        if name == ".DS_Store" {
+            continue;
+        }
+        if sole.is_some() {
+            return None;
+        }
+        sole = Some(name);
+    }
+    sole
 }
 
 pub fn scan_tool_dir(tool: &ToolAdapter, dir: &Path) -> Result<Vec<DetectedSkill>> {

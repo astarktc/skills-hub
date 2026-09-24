@@ -94,9 +94,11 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   completeness is test-enforced and the README table is not enforced at all — check it matches the `ToolId` variant
   count whenever adapters change. Tool lists shown to the UI come
   from `tool_adapters::global_tool_entries` / `project_tool_entries` — commands only map them to DTOs.
-  Installedness is one rule, `tool_adapters::is_installed_in`: detect dir exists and is not a skills-only
-  footprint (virtual groups exempt). Test fixtures install a tool through `tool_adapters::mark_installed_in`,
-  never a bare `create_dir_all(detect_dir)` — that is the footprint the rule rejects.
+  Installedness is one rule, `tool_adapters::is_installed_in`: some `relative_detect_dirs` entry exists and is
+  not a skills-only footprint (virtual groups exempt; a shared skills convention dir such as `.config/agents` is
+  never a detect dir — `no_adapter_is_detected_by_a_shared_skills_convention_dir` enforces it). Test fixtures
+  install a tool through `tool_adapters::mark_installed_in`, never a bare `create_dir_all(detect_dir)` — that is
+  the footprint the rule rejects.
 - **Sync-target mutation**: every operation that materialises or removes a Sync target (global sync
   batch, unsync, delete, assign/unassign/toggle, resync, configure project tools, remove project,
   gitignore update, Refresh's apply phase, Onboarding import's apply phase) wraps its **own** body in

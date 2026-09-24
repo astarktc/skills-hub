@@ -660,9 +660,10 @@ fn install_tool(home: &Path, key: &str) {
 fn plan_resolves_root_installedness_and_installed_shared_group_from_home() {
     let home = tempfile::tempdir().expect("home");
     install_tool(home.path(), "claude_code");
-    // amp and kimi_cli share ~/.config/agents/skills; only amp's detect dir
-    // exists — but they share the same detect dir too, so both are installed.
+    // amp and kimi_cli share ~/.config/agents/skills but are detected by
+    // their own config roots; install both so the shared group is complete.
     install_tool(home.path(), "amp");
+    install_tool(home.path(), "kimi_cli");
 
     let keys = ["claude_code", "cursor", "amp", "nope"]
         .iter()
