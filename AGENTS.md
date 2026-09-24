@@ -8,7 +8,7 @@ Canonical agent context for every harness. `CLAUDE.md` imports this file.
 ```bash
 npm run dev              # Vite dev server (port 5173, strict; VITE_DEV_PORT=5174 overrides — tauri:dev follows it)
 npm run tauri:dev        # Tauri dev window (frontend + backend) — see live-data warning below
-npm run build            # node node_modules/typescript-7/lib/tsc.js -b && vite build
+npm run build            # tsc -b (TypeScript 7) && vite build
 npm run lint             # ESLint
 npm run test             # vitest unit tests (hooks + pure folds + commandError; jsdom, mocked seams)
 npm run check            # lint + test + build + rust:fmt:check + rust:clippy + rust:test
@@ -19,9 +19,13 @@ cd src-tauri && cargo test <filter>              # single test / module by name 
 cd src-tauri && cargo test <filter> -- --nocapture   # show println!/dbg! output
 ```
 
-**Two TypeScript compilers are installed**: `typescript` (~6.0.3) and `typescript-7` (`npm:typescript@^7.0.1-rc`).
-`npm run build` uses **typescript-7** explicitly. A bare `npx tsc --noEmit` type-checks with the *wrong*
-compiler and can disagree with the build — always type-check via `npm run build`.
+**Two TypeScript compilers are installed, in the shape Microsoft's TS 7 release notes prescribe**: `typescript`
+is aliased to the `@typescript/typescript6` shim (real TS 6 nested as `@typescript/old`; it owns the `tsc6` bin and
+the `require('typescript')` API that `typescript-eslint` needs), and `@typescript/native` is TS 7 (`npm:typescript@^7.0.2`),
+which owns the bare `tsc` bin. So `npx tsc` = TS 7 = the build's type-check; `npx tsc6` = TS 6, only for confirming
+a failure is not a TS 7 regression. Don't collapse the pair: TS 7 ships no JS API, and `typescript-eslint` peers
+`typescript <6.1.0`. Retire the TS 6 alias when `typescript-eslint` publishes a release whose peer range admits
+TS 7 (gated on the TS 7.1 API, stable 2026-11-24; tracking: typescript-eslint/typescript-eslint#10940, QM ledger).
 
 `npm run rust:test` runs `cargo test`; CI (`.github/workflows/ci.yml`) runs `cargo test --all` (includes all
 workspace targets). Prefer `--all` locally when touching Rust to match the gate. CI runs the web job on Node 22
