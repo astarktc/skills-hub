@@ -1,6 +1,6 @@
 # 04 — Docs, version, release 1.2.17
 
-Status: ready-for-agent
+Status: done — 747efbe
 Blocked by: 01, 02, 03
 Spec: `.scratch/round17/spec.md`. Orchestrator ticket.
 
@@ -19,3 +19,5 @@ Spec: `.scratch/round17/spec.md`. Orchestrator ticket.
   Watch `release.yml`: five assets, `.sig`s, `updater.json`.
 
 ## Comments
+
+- 2026-09-24 — docs in `fea772f`→`b275b45` (CHANGELOG, CONTEXT.md, AGENTS.md, `version:set 1.2.17`) and the review fixes' docs in `88e8885`→`211961b`; pushed as `747efbe` after `git fetch && git rebase origin/main` (two featured-skills commits). `auto-tag.yml` created `v1.2.17`; `release.yml` run 35952962348 **green**, release published 2026-09-24T03:59Z with all five targets, macOS/Linux `.sig`s and `updater.json` (same asset shape as 1.2.16). CI run 35953036720 green (the run on `747efbe` itself was cancelled by concurrency when the handoff commit `c0ead58` superseded it — not a failure). Operator smoke of the spec's Closure checklist still pending; the effort closes with it.

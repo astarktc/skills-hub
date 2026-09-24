@@ -5,8 +5,8 @@ The queue is `.scratch/BACKLOG.md` — this note does not repeat it.
 ## Where things stand
 
 - **Round 17 pushed**: main @ `747efbe` (rebased onto origin's featured-skills commits), tag `v1.2.17`,
-  `release.yml` run 35952962348 dispatched 2026-09-24T03:48Z — **check it published** (five targets, macOS/Linux
-  `.sig`s, `updater.json`) before closing ticket 04; CI run 35952953738 in the same push.
+  `release.yml` run 35952962348 **green** — release published 2026-09-24T03:59Z with all five targets, macOS/Linux
+  `.sig`s and `updater.json`; CI run 35953036720 green. Ticket 04 is done (`747efbe`).
 - What shipped (spec: `.scratch/round17/spec.md`): D1 the onboarding scan honours "only scan selected tools"
   (`OnboardingScanScope`, resolved once at the seam, carried by `ImportPolicy` into the import); D2 a
   skills-only footprint is not an installed tool (`is_installed_in` walk, virtual groups exempt); D3 the one
@@ -19,21 +19,20 @@ The queue is `.scratch/BACKLOG.md` — this note does not repeat it.
   as installed; S3 thrown sync reloads.
 - Gate at push: `npm run version:check && npm run check` green; cargo 669, vitest 406, eslint 0 warnings,
   bindings unchanged (no wire change this round).
-- **Open**: round 16 ticket 08 (Windows junction smoke, `ready-for-human`) and round 17 ticket 04 (needs the
-  release-asset check + the operator smoke of the spec's Closure checklist). Both rounds stay live until then.
+- **Open**: round 16 ticket 08 (Windows junction smoke, `ready-for-human`); round 17 needs only the operator's
+  smoke of the spec's Closure checklist. Both rounds stay live until then.
 - BACKLOG: `Now` / `Later` / `Parked` empty; Future efforts #26 #37–#41; next free **#43**.
 
 ## Exact next step
 
-1. Confirm run 35952962348 published; add the asset check to ticket 04's `## Comments`, set `Status: done — 747efbe`.
-2. Operator installs v1.2.17 and smokes `round17/spec.md` § Closure checklist (phantom tools gone from the
+1. Operator installs v1.2.17 and smokes `round17/spec.md` § Closure checklist (phantom tools gone from the
    Tool config modal — on the operator's machine Kimi and Amp now correctly read *not installed*; Review & Import
    scoped; sync onto a differing occupied folder → the ask, Overwrite / Keep existing; identical → silent).
    The modal's layering above the loading overlay was verified only by source/CSS — watch for it.
-3. Operator runs round 16 ticket 08 on the Windows host; then close **both** efforts per
+2. Operator runs round 16 ticket 08 on the Windows host; then close **both** efforts per
    `docs/agents/issue-tracker.md` § Lifecycle (`## Closure — <date>` blocks, extract-then-archive, archive README
    rows, delete this note).
-4. Next work: a Future efforts pick (#37 UI audit is the natural first — grill, not code). #40 (harness
+3. Next work: a Future efforts pick (#37 UI audit is the natural first — grill, not code). #40 (harness
    detection audit) gained evidence this round: detect roots were wrong for two of 45 entries; expect more.
 
 ## Gotchas learned this session
