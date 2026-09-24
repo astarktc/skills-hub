@@ -19,6 +19,11 @@ type ModalProps = {
   closeDisabled?: boolean;
   /** Extra classes on the dialog box, e.g. "modal-delete" or "modal-lg". */
   className?: string;
+  /**
+   * Extra classes on the backdrop, e.g. "modal-backdrop-over-loading" for a
+   * confirmation raised while an action runs under the loading overlay.
+   */
+  backdropClassName?: string;
   /** Extra classes on the modal-body wrapper, e.g. "delete-body". */
   bodyClassName?: string;
   /** Renders a modal-footer when present. */
@@ -52,6 +57,7 @@ const Modal = ({
   showCloseButton,
   closeDisabled = false,
   className,
+  backdropClassName,
   bodyClassName,
   footer,
   footerClassName,
@@ -89,7 +95,11 @@ const Modal = ({
 
   return (
     <div
-      className="modal-backdrop"
+      className={
+        backdropClassName
+          ? `modal-backdrop ${backdropClassName}`
+          : "modal-backdrop"
+      }
       onClick={canClose ? onRequestClose : undefined}
     >
       <div

@@ -237,7 +237,9 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
       return;
     }
     await runAction({}, async () => {
-      const report = await syncSkillsToTools([toSyncItem(skill)], effectiveSyncTargetIds);
+      const report = await syncSkillsToTools(
+        [toSyncItem(skill)], effectiveSyncTargetIds, { overwriteIfSameContent: true },
+      );
       return applyOutcome(syncOutcome(report, { ...foldContext, action: "bulk" }));
     });
   }, [

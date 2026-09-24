@@ -296,10 +296,9 @@ export const resources = {
           "Current environment is not Tauri. Please run `npm run tauri dev`.",
         skillExistsInHubNamed:
           '"{{name}}" already exists in Hub. Go to My Skills to update it.',
-        targetExists:
-          "Target folder already exists. Please remove it and try again.",
+        targetExists: "Target folder already exists and was left in place.",
         targetExistsDetail:
-          "Target folder already exists: {{path}}. For safety it was not overwritten.",
+          "Target folder already exists: {{path}}. It was left in place.",
         toolNotInstalled:
           "The selected tool is not installed. Please refresh and retry.",
         toolNotWritable:
@@ -384,8 +383,7 @@ export const resources = {
         syncFailedTitle: "Sync failed: {{name}} -> {{tool}}",
         syncFailedInProjectTitle: "Sync failed in {{project}}: {{name}} -> {{tool}}",
         syncTargetExistsMessage:
-          "Target folder already exists: {{path}}.\nFor safety it was not overwritten.\n" +
-          "You can uncheck this tool or clean the folder first, then retry.",
+          "Target folder already exists: {{path}}.\nIt was left in place.",
         importFailedTitle: "Import failed: {{name}}",
         updateFailedTitle: "Update failed: {{name}}",
         skillGone: "{{name}} is no longer in your library",
@@ -628,6 +626,16 @@ export const resources = {
           "Another sync operation is running, so these statuses were not re-checked against disk. They may be out of date.",
         globalSynced:
           "This skill is already deployed globally for this tool. Assign it here only to manage it per-project.",
+      },
+      overwrite: {
+        title: "Folder already exists",
+        body_one:
+          "This folder already exists with different content. Overwrite it with the Skills Hub copy?",
+        body_other:
+          "These {{count}} folders already exist with different content. Overwrite them with the Skills Hub copies?",
+        confirm: "Overwrite",
+        cancel: "Keep existing",
+        waiting: "Waiting for your confirmation…",
       },
       sharedDir: {
         title: "Shared skills directory",
@@ -929,9 +937,8 @@ export const resources = {
         notTauri: "当前环境不是 Tauri，请用 `npm run tauri dev` 启动应用。",
         skillExistsInHubNamed:
           '「{{name}}」已存在于 Hub，可前往"我的 Skills"中更新。',
-        targetExists: "目标目录已存在，请先清理后重试。",
-        targetExistsDetail:
-          "目标目录已存在同名 Skill：{{path}}。为安全起见未覆盖。\n你可以：先手动清理该目录后重试。",
+        targetExists: "目标目录已存在，已保留原目录。",
+        targetExistsDetail: "目标目录已存在同名 Skill：{{path}}。已保留原目录。",
         toolNotInstalled: "未检测到该工具已安装，请刷新后重试。",
         toolNotWritable:
           "无法同步到 {{tool}}：目录 {{path}} 权限不足。请检查目录权限或以管理员身份运行。",
@@ -1008,7 +1015,7 @@ export const resources = {
         syncFailedTitle: "同步失败：{{name}} -> {{tool}}",
         syncFailedInProjectTitle: "{{project}} 中同步失败：{{name}} -> {{tool}}",
         syncTargetExistsMessage:
-          "目标目录已存在同名 Skill：{{path}}。为安全起见未覆盖。\n你可以：取消勾选该工具，或先手动清理该目录后重试。",
+          "目标目录已存在同名 Skill：{{path}}。\n已保留原目录。",
         importFailedTitle: "导入失败：{{name}}",
         updateFailedTitle: "更新失败：{{name}}",
         skillGone: "{{name}} 已不在你的技能库中",
@@ -1236,6 +1243,14 @@ export const resources = {
           "正在进行另一项同步操作，因此未重新核对这些状态与磁盘的一致性，它们可能已过时。",
         globalSynced:
           "该 Skill 已为该工具全局部署。仅当需要按项目管理时才需在此分配。",
+      },
+      overwrite: {
+        title: "目录已存在",
+        body_one: "该目录已存在且内容不同。是否用 Skills Hub 中的副本覆盖？",
+        body_other: "这 {{count}} 个目录已存在且内容不同。是否用 Skills Hub 中的副本覆盖？",
+        confirm: "覆盖",
+        cancel: "保留现有",
+        waiting: "等待你的确认…",
       },
       sharedDir: {
         title: "共用 skills 目录",

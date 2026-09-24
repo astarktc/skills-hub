@@ -424,3 +424,178 @@ describe("syncSkillsToTools", () => {
     );
   });
 });
+
+describe("syncSkillsToTools overwrite ask", () => {
+  const skills = [
+    { skill_id: "s1", name: "Skill One", source_path: "/repo/s1" },
+    { skill_id: "s2", name: "Skill Two", source_path: "/repo/s2" },
+  ];
+  const synced = (skill_id: string, tool_key: string): BatchTargetOutcome => ({
+    skill_id,
+    skill_name: skill_id,
+    tool_key,
+    status: {
+      status: "synced",
+      outcome: { mode_used: "symlink", target_path: `/t/${tool_key}/${skill_id}`, replaced: false },
+    },
+  });
+  const occupied = (skill_id: string, tool_key: string): BatchTargetOutcome => ({
+    skill_id,
+    skill_name: skill_id,
+    tool_key,
+    status: {
+      status: "failed",
+      error: { code: "TARGET_EXISTS", path: `/t/${tool_key}/${skill_id}` },
+    },
+  });
+  const syncCalls = () =>
+    mockInvoke.mock.calls.filter(([cmd]) => cmd === "syncSkillsToTools");
+
+  it("returns a report without occupied targets after one batch and no ask", async () => {
+    stubBackend({ syncReport: [synced("s1", "claude")] });
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+
+    let report: BatchTargetOutcome[] = [];
+    await act(async () => {
+      report = await result.current.syncSkillsToTools([skills[0]!], ["claude"]);
+    });
+    expect(report).toEqual([synced("s1", "claude")]);
+    expect(syncCalls()).toHaveLength(1);
+    expect(result.current.overwritePending).toBeNull();
+  });
+
+  it("raises the ask with the occupied rows and, confirmed, retries exactly those pairs", async () => {
+    const first = [
+      synced("s1", "claude"),
+      occupied("s1", "cursor"),
+      occupied("s2", "claude"),
+      synced("s2", "cursor"),
+    ];
+    const retry = [
+      synced("s1", "claude"), // cross pair, re-synced by the retry batch: dropped
+      synced("s1", "cursor"),
+      synced("s2", "claude"),
+      synced("s2", "cursor"),
+    ];
+    let batch = 0;
+    mockInvoke.mockImplementation((command) => {
+      switch (command) {
+        case "getSettings":
+          return Promise.resolve(appSettings());
+        case "getToolStatus":
+          return Promise.resolve(TOOL_STATUS);
+        case "syncSkillsToTools":
+          batch += 1;
+          return Promise.resolve(batch === 1 ? first : retry);
+        default:
+          return Promise.resolve(undefined);
+      }
+    });
+    const reporter = makeReporter();
+    const { result } = renderSync(reporter);
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+
+    let reportPromise!: Promise<BatchTargetOutcome[]>;
+    act(() => {
+      reportPromise = result.current.syncSkillsToTools(skills, ["claude", "cursor"], {
+        overwriteIfSameContent: true,
+      });
+    });
+    await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
+    expect(reporter.setActionMessage).toHaveBeenCalledWith("overwrite.waiting");
+    expect(result.current.overwritePending!.rows).toEqual([
+      { skillId: "s1", skillName: "s1", toolKey: "cursor", toolLabel: "CURSOR", path: "/t/cursor/s1" },
+      { skillId: "s2", skillName: "s2", toolKey: "claude", toolLabel: "CLAUDE", path: "/t/claude/s2" },
+    ]);
+
+    let report: BatchTargetOutcome[] = [];
+    await act(async () => {
+      result.current.overwritePending!.resolve(true);
+      report = await reportPromise;
+    });
+
+    const calls = syncCalls();
+    expect(calls).toHaveLength(2);
+    const [, retrySkills, retryTools, retryPolicy] = calls[1]!;
+    expect(retrySkills).toEqual(skills);
+    expect(retryTools).toEqual(["cursor", "claude"]);
+    expect(retryPolicy).toEqual({
+      overwrite: false,
+      overwrite_if_same_content: true,
+      overrides: [
+        { skill_id: "s1", tool: "cursor", overwrite: true },
+        { skill_id: "s2", tool: "claude", overwrite: true },
+      ],
+    });
+    // Asked rows replaced in place; the others are the first batch's rows.
+    expect(report).toEqual([
+      synced("s1", "claude"),
+      synced("s1", "cursor"),
+      synced("s2", "claude"),
+      synced("s2", "cursor"),
+    ]);
+    expect(result.current.overwritePending).toBeNull();
+  });
+
+  it("retries only the affected skills, carrying the caller's same-content rule", async () => {
+    let batch = 0;
+    mockInvoke.mockImplementation((command) => {
+      switch (command) {
+        case "getSettings":
+          return Promise.resolve(appSettings());
+        case "getToolStatus":
+          return Promise.resolve(TOOL_STATUS);
+        case "syncSkillsToTools":
+          batch += 1;
+          return Promise.resolve(
+            batch === 1
+              ? [synced("s1", "claude"), occupied("s2", "claude")]
+              : [synced("s2", "claude")],
+          );
+        default:
+          return Promise.resolve(undefined);
+      }
+    });
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+
+    let reportPromise!: Promise<BatchTargetOutcome[]>;
+    act(() => {
+      reportPromise = result.current.syncSkillsToTools(skills, ["claude"]);
+    });
+    await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
+    await act(async () => {
+      result.current.overwritePending!.resolve(true);
+      await reportPromise;
+    });
+    const [, retrySkills, , retryPolicy] = syncCalls()[1]!;
+    expect(retrySkills).toEqual([skills[1]]);
+    expect(retryPolicy).toEqual({
+      overwrite: false,
+      overwrite_if_same_content: false,
+      overrides: [{ skill_id: "s2", tool: "claude", overwrite: true }],
+    });
+  });
+
+  it("declined, returns the first report unchanged after one batch", async () => {
+    const first = [synced("s1", "claude"), occupied("s1", "cursor")];
+    stubBackend({ syncReport: first });
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+
+    let reportPromise!: Promise<BatchTargetOutcome[]>;
+    act(() => {
+      reportPromise = result.current.syncSkillsToTools([skills[0]!], ["claude", "cursor"]);
+    });
+    await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
+    let report: BatchTargetOutcome[] = [];
+    await act(async () => {
+      result.current.cancelOverwriteConfirmation();
+      report = await reportPromise;
+    });
+    expect(report).toEqual(first);
+    expect(syncCalls()).toHaveLength(1);
+    expect(result.current.overwritePending).toBeNull();
+  });
+});

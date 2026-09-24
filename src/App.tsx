@@ -23,6 +23,7 @@ import LocalPickModal from "./components/skills/modals/LocalPickModal";
 import ImportModal from "./components/skills/modals/ImportModal";
 import NewToolsModal from "./components/skills/modals/NewToolsModal";
 import SharedDirModal from "./components/skills/modals/SharedDirModal";
+import OverwriteModal from "./components/skills/modals/OverwriteModal";
 import ToolConfigModal from "./components/shared/ToolConfigModal";
 import SettingsPage from "./components/skills/SettingsPage";
 import ProjectsPage from "./components/projects/ProjectsPage";
@@ -438,6 +439,12 @@ function App() {
         pending={sync.sharedDirPending}
         loading={loading}
         onCancel={sync.cancelSharedDirConfirmation}
+        t={t}
+      />
+
+      <OverwriteModal
+        pending={sync.overwritePending}
+        onCancel={sync.cancelOverwriteConfirmation}
         t={t}
       />
 

@@ -681,9 +681,12 @@ describe("cancellation and non-report actions", () => {
       await result.current.handleSyncSkillToAllTools(setup.skills[0]);
     });
 
+    // Identical content is replaced silently, like every other sync path;
+    // only differing content reaches the seam's overwrite ask.
     expect(setup.sync.syncSkillsToTools).toHaveBeenCalledWith(
       [{ skill_id: "s1", name: "alpha", source_path: "/hub/alpha" }],
       ["claude", "pi"],
+      { overwriteIfSameContent: true },
     );
   });
 

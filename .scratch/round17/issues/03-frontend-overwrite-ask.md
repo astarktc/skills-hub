@@ -1,6 +1,6 @@
 # 03 — Overwrite ask on `TARGET_EXISTS` (D3, BACKLOG #42)
 
-Status: ready-for-agent
+Status: done — (this commit)
 Spec: `.scratch/round17/spec.md` — D3.
 
 ## Work
@@ -29,3 +29,5 @@ Spec: `.scratch/round17/spec.md` — D3.
   only those two rows replaced.
 
 ## Comments
+
+- 2026-09-23 — `useOverwriteConfirmation` + `OverwriteModal` (Modal shell gains `backdropClassName`; `.modal-backdrop-over-loading` z-index 2001); the seam splits into `invokeBatchSync` (the wire call) and `syncSkillsToTools` (batch → ask → retry with per-pair overrides → `mergeRetry`); `handleSyncSkillToAllTools` adopts the same-content rule; `errors.targetExists*` / `syncTargetExistsMessage` reworded (EN+ZH); `overwrite.*` keys with `_one/_other` plurals. Four seam tests (no ask / confirm merges exactly the asked rows / affected skills only with the caller's same-content flag / decline). vitest 397, eslint 0 warnings, build green.

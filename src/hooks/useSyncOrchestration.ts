@@ -9,6 +9,10 @@ import type {
 } from "../components/skills/types";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import {
+  useOverwriteConfirmation,
+  type OverwriteRow,
+} from "./useOverwriteConfirmation";
+import {
   useSharedDirConfirmation,
   type SharedDirTool,
 } from "./useSharedDirConfirmation";
@@ -36,6 +40,50 @@ function filterRelevantNewlyInstalled(
     return newlyInstalled.filter((id) => selectedTools.includes(id));
   }
   return newlyInstalled;
+}
+
+/** The rows of a batch report that settled as an occupied target. */
+function occupiedTargets(
+  report: BatchTargetOutcome[],
+  toolLabelById: Readonly<Record<string, string>>,
+): OverwriteRow[] {
+  const rows: OverwriteRow[] = [];
+  for (const result of report) {
+    if (
+      result.status.status === "failed" &&
+      result.status.error.code === "TARGET_EXISTS"
+    )
+      rows.push({
+        skillId: result.skill_id,
+        skillName: result.skill_name,
+        toolKey: result.tool_key,
+        toolLabel: toolLabelById[result.tool_key] ?? result.tool_key,
+        path: result.status.error.path,
+      });
+  }
+  return rows;
+}
+
+/**
+ * The first report with each asked (skill, tool) row replaced by the retry's
+ * row for that pair. Rows the retry produced for other pairs are dropped:
+ * the report stays faithful to the operator's action.
+ */
+function mergeRetry(
+  report: BatchTargetOutcome[],
+  asked: OverwriteRow[],
+  retry: BatchTargetOutcome[],
+): BatchTargetOutcome[] {
+  const key = (skillId: string, toolKey: string) => `${skillId}\n${toolKey}`;
+  const askedKeys = new Set(asked.map((row) => key(row.skillId, row.toolKey)));
+  const retried = new Map<string, BatchTargetOutcome>();
+  for (const result of retry) {
+    const k = key(result.skill_id, result.tool_key);
+    if (askedKeys.has(k)) retried.set(k, result);
+  }
+  return report.map(
+    (result) => retried.get(key(result.skill_id, result.tool_key)) ?? result,
+  );
 }
 
 export type SyncOrchestrationDeps = {
@@ -119,6 +167,8 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
   );
   const sharedDirConfirmation = useSharedDirConfirmation(sharedDirTools);
   const { request: requestSharedDirConfirmation } = sharedDirConfirmation;
+  const overwriteConfirmation = useOverwriteConfirmation();
+  const { request: requestOverwriteConfirmation } = overwriteConfirmation;
 
   const installedToolIds = useMemo(
     () => toolStatus?.installed ?? [],
@@ -222,7 +272,7 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const syncSkillsToTools = useCallback(
+  const invokeBatchSync = useCallback(
     async (
       skills: BatchSyncSkillDto[],
       toolIds: string[],
@@ -253,6 +303,57 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
       );
     },
     [setActionMessage, t, toolLabelById],
+  );
+
+  /**
+   * The one sync fan-out seam, with the overwrite ask: a batch that settled
+   * `TARGET_EXISTS` rows (a target occupied by *different* content — the
+   * caller's same-content rule already replaced identical content silently)
+   * raises one confirmation listing them. Confirmed, one more batch runs over
+   * the affected skills × tools with a per-pair override for each asked pair
+   * and the same same-content rule, and the asked rows are replaced in the
+   * report; declined, the report is returned as it settled. The confirm click
+   * is the operator action that authorises the second batch.
+   */
+  const syncSkillsToTools = useCallback(
+    async (
+      skills: BatchSyncSkillDto[],
+      toolIds: string[],
+      policy?: SyncPolicy,
+    ): Promise<BatchTargetOutcome[]> => {
+      const report = await invokeBatchSync(skills, toolIds, policy);
+      const occupied = occupiedTargets(report, toolLabelById);
+      if (occupied.length === 0) return report;
+
+      setActionMessage(t("overwrite.waiting"));
+      const confirmed = await requestOverwriteConfirmation(occupied);
+      if (!confirmed) return report;
+
+      const askedSkillIds = new Set(occupied.map((row) => row.skillId));
+      const askedToolIds = [...new Set(occupied.map((row) => row.toolKey))];
+      const overrides: BatchSyncOverrideDto[] = occupied.map((row) => ({
+        skill_id: row.skillId,
+        tool: row.toolKey,
+        overwrite: true,
+      }));
+      const retry = await invokeBatchSync(
+        skills.filter((skill) => askedSkillIds.has(skill.skill_id)),
+        askedToolIds,
+        {
+          overwrite: false,
+          overwriteIfSameContent: policy?.overwriteIfSameContent ?? false,
+          overrides,
+        },
+      );
+      return mergeRetry(report, occupied, retry);
+    },
+    [
+      invokeBatchSync,
+      requestOverwriteConfirmation,
+      setActionMessage,
+      t,
+      toolLabelById,
+    ],
   );
 
   const handleAutoSyncToggle = useCallback(
@@ -353,6 +454,8 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
     toolLabelById,
     sharedDirPending: sharedDirConfirmation.pending,
     cancelSharedDirConfirmation: sharedDirConfirmation.cancel,
+    overwritePending: overwriteConfirmation.pending,
+    cancelOverwriteConfirmation: overwriteConfirmation.cancel,
     requestSharedDirConfirmation,
     installedToolIds,
     isInstalled,
