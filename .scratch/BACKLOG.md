@@ -5,13 +5,15 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#42**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#43**.
 
 ## Now — evidence of unfinished work is strong
 
 (empty — every `Later`/`Parked` line was absorbed by `round16/spec.md` § Dispositions in its opening commit:
 items #12 #15 #22 #28 #35 #36 → tickets; item #18 → ticket 08; items #16 #17 #21 #23 #24 #25 #27 #29 dropped by
-name there; item #30 superseded by #37–#41 below; item #26 moved to Future efforts.)
+name there; item #30 superseded by #37–#41 below; item #26 moved to Future efforts. Item #42 — overwrite ask on
+`TARGET_EXISTS`, operator 2026-09-23 — was recorded and absorbed in the same commit by `round17/spec.md` D3 /
+`round17/issues/03`.)
 
 ## Later — real, not urgent
 
