@@ -342,6 +342,9 @@ read-only/no-run constraints in the task brief instead.
 
 - `README.md` — user-facing overview, supported-tools table, FAQ.
 - `CHANGELOG.md` — most reliable record of dependency/stack changes.
+- `docs/design-inputs/` — dated briefs derived from external research (upstream diffs, field surveys); BACKLOG items cite them by
+  § as their source pointer. The evidence behind each brief lives in the Quartermaster repo (Plane `QM-58`); fix a wrong claim
+  there and regenerate the brief, never the brief alone.
 
 ## Agent skills
 
