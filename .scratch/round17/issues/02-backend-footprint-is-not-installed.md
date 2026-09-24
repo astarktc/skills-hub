@@ -1,6 +1,6 @@
 # 02 — A skills-only footprint is not an installed tool (D2)
 
-Status: done — (this commit)
+Status: done — 32e674c
 Spec: `.scratch/round17/spec.md` — D2.
 
 ## Work

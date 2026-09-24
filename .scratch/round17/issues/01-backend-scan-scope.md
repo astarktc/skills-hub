@@ -1,6 +1,6 @@
 # 01 — Onboarding scan honours "only scan selected tools" (D1)
 
-Status: done — (this commit)
+Status: done — 32e674c
 Spec: `.scratch/round17/spec.md` — D1.
 
 ## Work
