@@ -111,8 +111,8 @@ health** channel (unlocatable source, fetch failure, Edit conflict) distinct fro
 
 ## Execution
 
-Children on Pi: implementation **Opus 5** (`anthropic/claude-opus-5`, thinking medium), reviews/critiques **Astra**
-(`openai-codex/gpt-6-astra`, high) and, for ticket 06's second critic, Opus 5 (high). Every child: state approach and
+Children on Pi: implementation **Opus 5.5** (`anthropic/claude-opus-5-5`, thinking medium), reviews/critiques **Astra**
+(`openai-codex/gpt-6-astra`, high) and, for ticket 06's second critic, Opus 5.5 (high). (Opus 5 → 5.5, operator 2026-09-25.) Every child: state approach and
 continue (pre-approved); `.scratch/` tracked; § Delegated children applies; `runtimeMode: full-access`; children brief
 their reviewer to fetch primary sources for registry facts. Ticket 06/07 children read `PRODUCT.md`, the surface brief
 and the prototypes before judging; they judge the *incumbent* app for findings, not the prototypes.

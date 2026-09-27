@@ -322,7 +322,8 @@ Run child agents on the **Pi harness** by default (`providerInstanceId: "pi"`) �
 use. Model routing within Pi (IDs as `orchestrator_capabilities` lists them):
 
 - **Fable** → `anthropic/claude-fable-5-1`.
-- **Opus** → `anthropic/claude-opus-5`.
+- **Opus** → `anthropic/claude-opus-5-5` (operator decision 2026-09-25: 5.5 replaces 5 everywhere; the Pi option is
+  `thinking`, lowest tier `low`).
 - **GPT-6 Astra** → `openai-codex/gpt-6-astra` (the OpenAI seat on multi-model review panels and the default for
   implementation children; requires a live `openai-codex` login in Pi).
 - **GPT-5.6** (other uses) → `openai-codex/gpt-5.6-sol` / `openai-codex/gpt-5.6-luna`. Luna is the cheapest model in

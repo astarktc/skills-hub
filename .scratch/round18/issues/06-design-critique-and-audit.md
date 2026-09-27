@@ -6,7 +6,7 @@ Spec: `.scratch/round18/spec.md` — D1, D5, D6, D10, ticket 06.
 
 ## Work
 
-Two children, different models (Astra high; Opus 5 high), same brief, no knowledge of each other, each producing
+Two children, different models (Astra high; Opus 5.5 high), same brief, no knowledge of each other, each producing
 one file: `.scratch/round18/review/critique-astra.md` / `critique-opus.md`. A third child (or the Astra child in a
 second pass) produces `audit.md`.
 
