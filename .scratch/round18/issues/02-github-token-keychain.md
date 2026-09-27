@@ -183,7 +183,9 @@ next launch").
 ## Review fixes (round 2)
 
 Fixes for `.scratch/round18/review/ticket-02-review.md` § "Re-review of bc84841", implemented 2026-09-27 by a
-delegated child on `main` @ `6740a10`; uncommitted, working tree only. Implemented as the orchestrator decided.
+delegated child on `main` @ `6740a10`; committed as `4f6e312`. Implemented as the orchestrator decided. Astra final check (ship): one
+non-blocking follow-up — the zeroing assertion in `core/tests/settings.rs` (~:768) also passes without `secure_delete`; tighten it
+with a page-spanning sentinel and a sensitivity check (BACKLOG candidate, not a release blocker).
 
 | Finding | What changed | Test that pins it |
 | --- | --- | --- |

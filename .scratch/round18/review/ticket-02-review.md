@@ -197,3 +197,58 @@ Verified against bundled SQLite's `OP_Checkpoint` implementation (`libsqlite3-sy
 - Targeted LSP probe: no reported diagnostics; one file confirmed clean and one unconfirmed (push-only server). The fresh TypeScript build is the definitive type-check evidence.
 
 **Goal-backward check:** ordinary migration now removes current/historical plaintext and frontend recovery is truthful, but required cleanup can still become unretryable or be falsely marked successful. Resolve B2a/B2b before shipping; the status nit is non-blocking. **Verdict: fix-then-ship.**
+
+## Final check of 4f6e312
+
+**Verdict: ship.** Both remaining production findings are closed. No new production regression found in this bounded review. Two non-blocking follow-ups remain: the live-byte test overclaims what its assertion proves, and the round-2 ticket repeats the stale pre-commit status.
+
+Reviewed exactly `4f6e312~1..4f6e312`, the preceding re-review above, and the ticket's **Review fixes (round 2)**. Rust source matched `4f6e312` before and after verification; concurrent fixture work was ignored. No product-source edits, staging, commits, app startup, operator-database access or real-keychain calls. Only this report was edited; source-free synthetic Rust probe binaries/logs live in ignored `review/evidence/`.
+
+### Per-finding disposition
+
+| Finding | Closed? | Evidence | Residual |
+| --- | --- | --- | --- |
+| **B2a — failed compaction loses retry signal** | **Yes** | `src-tauri/src/core/skill_store.rs:560–599`: secure DELETE and non-secret marker upsert share one transaction; compaction follows commit. Startup (`src-tauri/src/lib.rs:101–124`) finishes pending cleanup after schema setup and before migration. Save/Remove (`src-tauri/src/core/settings.rs:407–423`) either securely delete the pending row, including compaction, or finish an existing marker. Passing fault/retry and stale-marker Save/Remove tests verify row absence, durable marker, preserved keychain choice and eventual removal of historical bytes. | Cleanup can still fail, but it returns an error and retains a retry signal. No successful token-operation path was found that skips pending cleanup. The accepted B1 DELETE-failure residual and backup/snapshot exclusions are unchanged. See N3 for a test-strength caveat, not a production defect. |
+| **B2b — busy checkpoint counted as success** | **Yes** | `src-tauri/src/core/skill_store.rs:1606–1623` reads `(busy, log, checkpointed)` and errors before marker deletion when `busy != 0`. Bundled SQLite `OP_Checkpoint` (`libsqlite3-sys-0.37.0/sqlite3/sqlite3.c:103253–103287`) confirms that order and that `SQLITE_BUSY` becomes a successful query with column 0 = 1. The passing WAL regression test checks the specific checkpoint error, row absence, retained marker and surviving bytes, then releases the reader and verifies successful cleanup. | WAL is defensive, not enabled by the application. Real platform credential stores remain outside this review. |
+| **N2 — stale status** | **Earlier instance yes; repeated in round 2** | The preceding fix section names `bc84841`, but `.scratch/round18/issues/02-github-token-keychain.md:186` calls the now-committed round-2 fix “uncommitted, working tree only.” | Non-blocking: replace that phrase with `committed as 4f6e312`, or label it explicitly as historical pre-commit status. |
+
+### Adversarial checks
+
+- **Atomicity:** `unchecked_transaction` is a real SQLite transaction, not unchecked atomicity. Locked rusqlite 0.39.0 starts a transaction with rollback-on-drop; a failed DELETE, marker upsert, or commit cannot normally commit just the other statement. The production DELETE-trigger test covers the first failure. An independent bundled-rusqlite probe additionally blocked the **marker insert after DELETE**: the error rolled back deletion and left only the original token row, no marker (`4f6e312-atomicity-probe.log`). `with_conn` opens a fresh connection, so there is no outer transaction to interfere.
+- **Secure-delete timing:** the pragma is set on that same connection before `BEGIN` and remains enabled inside it. An independent overflow-value probe of the same DELETE + marker transaction confirmed both sentinel removal and **all-zero bytes at the sentinel's original file offset** with secure deletion on; with it off, the sentinel remained. See `4f6e312-overflow-probe.log`. This verifies the production ordering independently of the weak small-value assertion described below.
+- **Marker isolation:** settings SQL inspection found only exact-key value reads/upserts plus these new suffix-matched cleanup queries—no generic `SELECT key` settings enumeration. `load_settings`, tool-selection parsing and installed-tool tracking request their named keys. `migrate_legacy_db_if_needed` copies a database based on skills-table presence, never interprets settings rows. The marker therefore cannot become a tool selection, token or exposed setting. Current production has one secure-deletion key, the legacy token; no production writer recreates that plaintext row.
+- **Retry ordering:** schema completion precedes marker recovery; token migration follows it, before normal command access. With a legacy row, Save verifies its replacement before secure deletion, while Remove explicitly authorizes deletion; their shared compaction also settles old markers. Without a row they call `finish_pending_secure_cleanup`. Earlier credential/read/cleanup errors may leave work pending, but never return successful settlement. A cleanup failure at startup logs a warning and leaves the marker; subsequent `NothingToMigrate` does not erase it or claim `Migrated`.
+- **Real WAL snapshot:** `src-tauri/src/core/tests/settings.rs:845–847` does `BEGIN` **and a SELECT**, establishing a snapshot, not merely opening an unused deferred transaction. The `reader` remains live through migration and failure/marker/byte assertions and is dropped only at line 867. The failure asserts the checkpoint-specific diagnostic, so a failed DELETE or VACUUM cannot falsely satisfy this test.
+- **Fault hook:** both the call at `skill_store.rs:1601` and module at `:1629` are `#[cfg(test)]`; no fault state or branch exists in non-test builds. A rollback-journal reader already holding its read lock before DELETE does block that write's commit, making it unsuitable for isolating a later VACUUM failure. A reader entering **after commit** can block VACUUM (as the earlier review reproduced); the hook is a reasonable deterministic way to target that gap. Its flag is per-thread and consumed once.
+- **Error chain:** `.with_context` adds an anyhow context, not a stringified replacement error, preserving typed downcasts. `CommandError::from_anyhow` still downcasts the original signal; the existing context/tag regression test passed. Credential failures also propagate before the new cleanup wrapper. SQLite cleanup failures remain ordinary database errors, not fabricated credential errors.
+- **Other regressions:** no added non-test `unwrap()`/`expect()` calls; no wire changes. Failed compaction cannot restore plaintext just to obtain a retry signal.
+
+### N3 — non-blocking: the small live-value assertion does not prove zeroing
+
+**Where:** `src-tauri/src/core/tests/settings.rs:747–768`; corresponding claim in `.scratch/round18/issues/02-github-token-keychain.md:190`.
+
+The test correctly distinguishes `old` and `current` sentinels, but disappearance of the short current string is not proof that `secure_delete` zeroed it. A source-free probe using the same settings schema, freed-old-value setup and DELETE + marker SQL reported:
+
+```text
+secure=false, inside_tx_pragma=0, historical_remains=true, current_full_remains=false
+secure=true,  inside_tx_pragma=1, historical_remains=true, current_full_remains=false
+```
+
+The small marker insertion can overwrite the deleted cell even without secure deletion. Thus this assertion does not independently detect removal of the pragma. This is **not a reopened B2a**: the production pragma is correct, retry/compaction tests pass, and the independent overflow probe differentiates the two cases:
+
+```text
+overflow current: secure=false, sentinel_remains=true,  original_sentinel_offset_zeroed=false
+overflow current: secure=true,  sentinel_remains=false, original_sentinel_offset_zeroed=true
+```
+
+**Concrete follow-up:** pad the **current** token beyond a page with a unique sentinel at the tail (as the old-value helper already does), assert it exists before migration, then assert it is absent after the injected compaction failure. Prefer also checking its original byte range is zero. Verify sensitivity with secure deletion disabled; until then, qualify the ticket's “proves” claim. This coverage improvement does not block shipping the verified production fix.
+
+### Fresh verification and goal-backward check
+
+- `cd src-tauri && cargo test --all`: **706 passed, 0 failed**, plus main/doc tests; 11.77 s. Log: `evidence/4f6e312-rust-tests.log`.
+- `cd src-tauri && cargo clippy --all-targets -- -D warnings`: **passed**. Log: `evidence/4f6e312-clippy.log`.
+- `git diff --exit-code 4f6e312~1 4f6e312 -- src/bindings/index.ts`: **exit 0**; bindings byte-identical across the fix.
+- After tests regenerated bindings, `git diff --exit-code 4f6e312 -- src-tauri src/bindings/index.ts`: **exit 0**. Fixture-only concurrent changes are not attributed to this review.
+- Synthetic atomicity/secure-delete probes passed without accessing application data. These exercise the relevant SQL, not the private production method; the checked-in tests exercise the production migration/retry paths.
+
+**Goal-backward:** a failed post-DELETE cleanup now remains discoverable without plaintext, startup and explicit token operations can finish it, and a reader-blocked WAL checkpoint cannot report migration success or clear its marker. **Verdict: ship.**
