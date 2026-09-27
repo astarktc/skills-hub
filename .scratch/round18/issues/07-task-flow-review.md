@@ -1,6 +1,6 @@
 # 07 — Task-flow and state review of the six core flows
 
-Status: ready-for-agent
+Status: implemented
 Blocked by: 04
 Spec: `.scratch/round18/spec.md` — ticket 07.
 
@@ -17,3 +17,19 @@ invent no personas. Output `.scratch/round18/review/flows.md`: per flow, the sta
 concrete recommendation each gap implies for round 19 (with the D8 reserved features mapped onto the flows they
 serve). Read `src/lib/reportOutcome.ts` — the fold's precedence (conflict › failure › skipped › success) is the
 current presentation contract; judge it, don't ignore it.
+
+## Result
+
+`.scratch/round18/review/flows.md` (2026-09-26). Six flows modelled to the operator's outcome with force-driven state
+tables, ranked gaps and round-19 recommendations; D8 features mapped onto the flows they serve; a consolidated
+screen/state inventory with omission review; four pattern decisions (P1–P4); fixture gaps; 12 grill questions for
+ticket 09. Evidence boundary recorded: the operator is the only validated user; findings are heuristic + source-read
+hypotheses, observed in the fixture (`failures`, `first-run`, `latency=0|3`) or marked "described from code".
+Screenshots (gitignored): `.scratch/round18/evidence/flows/`.
+
+Headline findings: failures without a row (declined/failed first sync, failed acquisition, failed import) leave no
+trace once toasts close — outcome memory is session-only; overlay Cancel is honoured by only 5 commands; "Uninstall
+from tool directories" removed 68 deployments with no confirm and auto-sync re-deploys unsynced skills on the next
+Refresh; the fold's `conflict › failure` headline turned a run with 5 failures into "Refresh complete — invocation Edit
+conflicts need review"; auto-sync-off import deletes Tool copies behind an "Import & Sync" button; local skills show
+their central path instead of their (missing) source folder; Re-point accepts a different skill without preview.
