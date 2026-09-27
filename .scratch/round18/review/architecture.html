@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Architecture review — skills-hub src/ @ e4639fe</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose", flowchart: { htmlLabels: true } });
+</script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .serif { font-family: ui-serif, Georgia, "Times New Roman", serif; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .seam { border-left: 2px dashed #64748b; }
+  .leak { color: #dc2626; }
+  .deep { background: linear-gradient(135deg, #0f172a, #1e293b); color: #f8fafc; }
+  .deep pre.mermaid { background: #f8fafc; border-radius: 8px; padding: 12px; }
+  pre.mermaid { background: #ffffff; margin: 0; }
+  .box { border: 1px solid #cbd5e1; border-radius: 6px; padding: 4px 8px; background: #fff; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #334155; }
+  .box-deep { border: 3px solid #0f172a; background: #0f172a; color: #f8fafc; border-radius: 8px; padding: 10px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+  .box-leak { border: 1px solid #fca5a5; background: #fef2f2; color: #991b1b; border-radius: 6px; padding: 4px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  .faded { opacity: .45; }
+  .bar { height: 14px; border-radius: 3px; }
+  .iface { background: #fca5a5; }
+  .impl { background: #94a3b8; }
+  .iface-ok { background: #6ee7b7; }
+  .diagram { min-height: 220px; }
+  .label { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: #64748b; }
+</style>
+</head>
+<body class="bg-stone-50 text-slate-900">
+<main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+<header class="space-y-4">
+  <h1 class="serif text-4xl">Frontend architecture review</h1>
+  <p class="text-sm text-slate-600 mono">skills-hub · src/ @ e4639fe · round 18 ticket 05 · 2026-09-27</p>
+  <p class="text-sm text-slate-700 max-w-3xl">Ranked by leverage against the round-19 list (D8): bulk multi-select, group Deploy all, inspector project assignment, issues banner and chip, Synced N/M strip, health ladder, install summary, picker search, gated scan, title-bar update, fold and flat mode, ⌘K. This report stops before interfaces; ticket 09 picks. Text twin: <span class="mono">architecture.md</span>.</p>
+  <div class="flex flex-wrap gap-4 text-xs text-slate-600 items-center">
+    <span class="flex items-center gap-2"><span class="box">module</span> solid box = module</span>
+    <span class="flex items-center gap-2"><span class="seam h-5 inline-block"></span> dashed = seam</span>
+    <span class="flex items-center gap-2"><span class="box-leak">leak</span> red = leakage</span>
+    <span class="flex items-center gap-2"><span class="box-deep">deep</span> thick dark = deep module</span>
+    <span class="flex items-center gap-2"><span class="bar iface inline-block w-8"></span> interface <span class="bar impl inline-block w-8"></span> implementation</span>
+  </div>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+    <div class="rounded-lg border border-slate-200 bg-white p-3"><div class="label">className sites</div><div class="text-2xl serif">522</div><div class="text-slate-500">500 excluding dormant files</div></div>
+    <div class="rounded-lg border border-slate-200 bg-white p-3"><div class="label">tokens / var() reads</div><div class="text-2xl serif">38 / 518</div><div class="text-slate-500">24 colour literals left</div></div>
+    <div class="rounded-lg border border-slate-200 bg-white p-3"><div class="label">surface-state cells</div><div class="text-2xl serif">~14</div><div class="text-slate-500">in 5 modules</div></div>
+    <div class="rounded-lg border border-slate-200 bg-white p-3"><div class="label">Outcome executors</div><div class="text-2xl serif">5</div><div class="text-slate-500">hand-unpacked copies</div></div>
+  </div>
+</header>
+
+<section id="candidates" class="space-y-10">
+
+<!-- 1 -->
+<article id="c1" class="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2">
+    <span class="text-slate-400 serif text-2xl">1</span>
+    <h2 class="serif text-2xl">Deepen surface state: route, selection, inspector target and dialog</h2>
+  </div>
+  <div class="flex gap-2 text-xs"><span class="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5">Strong</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">in-process</span></div>
+  <ul class="mono text-sm text-slate-700 space-y-0.5">
+    <li>App.tsx 57–69, 84–86 (effectiveView), 128–200</li>
+    <li>hooks/useSkillLibrary.ts 79–94 · hooks/useAddSkillFlow.ts 82–83 · hooks/useSyncOrchestration.ts 120–121</li>
+    <li>hooks/useExploreState.ts 124–150 (forged ManagedSkill, id "")</li>
+    <li>precedent: components/projects/useProjectState.ts 32–36 (ProjectDialog union)</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3 diagram"><div class="label mb-2">Before: ~14 cells, no invariant</div>
+<pre class="mermaid">
+flowchart TB
+  App["App: activeView, exploreDetailSkill, showNotifications"]
+  Lib["useSkillLibrary: detailId, invocationEditId, deleteId, repointSel"]
+  Add["useAddSkillFlow: showAdd, showImport, git.visible, local.visible"]
+  Sync["useSyncOrchestration: showToolConfig, showNewTools, 2 confirm asks"]
+  Upd["useUpdateChecker: versionAvailable"]
+  App -. effectiveView patch .-&gt; Lib
+  App --&gt; Add
+  App --&gt; Sync
+  App --&gt; Upd
+  classDef leak stroke:#dc2626,stroke-width:2px
+  class App,Lib leak
+</pre></div>
+    <div class="rounded-lg border border-slate-200 p-3 diagram"><div class="label mb-2">After: one surface module</div>
+<pre class="mermaid">
+flowchart TB
+  S["Surface state: area, inspector target, selection, dialog"]
+  Card["Card / row"] --&gt; S
+  Rail["Bulk rail"] --&gt; S
+  K["Command palette"] --&gt; S
+  Side["Sidebar shell"] --&gt; S
+  S --&gt; W["World hooks keep data and actions"]
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a,stroke-width:3px
+  class S deep
+</pre></div>
+  </div>
+  <p><b>Problem.</b> What is on screen is scattered across about 14 independent cells. Two dialogs can both be open, and a stale detail id needs the <span class="mono">effectiveView</span> patch. Nothing represents a selection.</p>
+  <p><b>Solution.</b> One in-process module owns area, inspector target, selection and dialog as one discriminated value, extending the project world's existing <span class="mono">ProjectDialog</span> shape to the whole app.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700">
+    <li>Leverage: palette, bulk rail, inspector and shell all use one door</li>
+    <li>Locality: "two dialogs open" is fixed in one place</li>
+    <li>Explore preview stops forging a ManagedSkill</li>
+    <li>Tests: surface transitions tested through renderHook</li>
+  </ul>
+</article>
+
+<!-- 2 -->
+<article id="c2" class="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2"><span class="text-slate-400 serif text-2xl">2</span><h2 class="serif text-2xl">Deepen the skill action set: every verb acts on N skills through one door</h2></div>
+  <div class="flex gap-2 text-xs"><span class="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5">Strong</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">in-process</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">depends on 1</span></div>
+  <ul class="mono text-sm text-slate-700 space-y-0.5">
+    <li>hooks/useSkillLibrary.ts (31-member interface, 459–494)</li>
+    <li>App.tsx 293–335 · SkillsList.tsx 9–33 · SkillCard.tsx 36–60, 101–116</li>
+    <li>SkillDetailView.tsx 35–46 (reaches onRepoint only)</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram"><div class="label mb-3">Before: 11 callbacks, one skill each, mixed arg shapes</div>
+      <div class="flex gap-3 items-start">
+        <div class="space-y-1 text-[11px] mono">
+          <div class="box-leak">onUpdate(skill)</div><div class="box-leak">onRepoint(skill, kind)</div><div class="box-leak">onDetach(skill)</div><div class="box-leak">onRestore(skill)</div><div class="box-leak">onDelete(id)</div><div class="box-leak">onToggleTool(skill, tool)</div><div class="box-leak">onUnsync(id)</div><div class="box-leak">onSyncToAll(skill)</div><div class="box-leak">onInvocationClick(id)</div><div class="box-leak">onOpenDetail(skill)</div><div class="box-leak">copyToClipboard</div>
+        </div>
+        <div class="text-xs text-slate-500 pt-2">App → SkillsList → SkillCard<br/>detail gets 1 of 11<br/>bulk rail / palette: none</div>
+      </div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram"><div class="label mb-3">After: one action door over a skill set</div>
+      <div class="flex flex-col gap-3">
+        <div class="flex gap-2 flex-wrap"><span class="box">card</span><span class="box">inspector</span><span class="box">bulk rail</span><span class="box">palette</span><span class="box">group header</span></div>
+        <div class="seam pl-3 text-xs text-slate-500">one door: a verb plus a set of skills</div>
+        <div class="box-deep">Skill action set<div class="faded mt-2 normal-case tracking-normal text-[11px]">batching · confirm asks · sync-or-reload · fold choice · per-subject pending</div></div>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem.</b> The interface is as wide as the implementation: each handler is <span class="mono">runAction</span> plus <span class="mono">invokeTauri</span> plus <span class="mono">applyOutcome</span> for exactly one skill, although the sync seam already takes arrays.</p>
+  <p><b>Solution.</b> The skills world's verbs sit behind one door that takes a verb and a skill set. Card, inspector, bulk rail and palette are all callers of that door.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700">
+    <li>Leverage: bulk and group Deploy all are new callers</li>
+    <li>Locality: reload-on-throw rule lives once</li>
+    <li>Delete the 11-prop drill</li>
+    <li>Tests: one parametrised verb suite</li>
+  </ul>
+</article>
+
+<!-- 3 -->
+<article id="c3" class="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2"><span class="text-slate-400 serif text-2xl">3</span><h2 class="serif text-2xl">Deepen skill health and the source line into one pure fold</h2></div>
+  <div class="flex gap-2 text-xs"><span class="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5">Strong</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">in-process</span><span class="rounded-full bg-sky-100 text-sky-800 px-2 py-0.5">cheapest</span></div>
+  <ul class="mono text-sm text-slate-700 space-y-0.5">
+    <li>lib/skillPresentation.ts 69–145, 270–384</li>
+    <li>SkillCard.tsx 81–125 · SkillDetailView.tsx 461–475 (second source-line rule, no copy)</li>
+    <li>InvocationModeBadge.tsx 30–36 · syncStatus.ts</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3 diagram"><div class="label mb-2">Before: health composed inline, per surface</div>
+<pre class="mermaid">
+flowchart LR
+  P["skillPresentation pure helpers"]
+  Card["SkillCard: unlocatable + chips + source + copy"]
+  Det["SkillDetailView: own source ternary"]
+  Badge["InvocationModeBadge: conflict class"]
+  P --&gt; Card
+  P --&gt; Det
+  Card -.-&gt; Badge
+  classDef leak stroke:#dc2626,stroke-width:2px
+  class Card,Det leak
+</pre></div>
+    <div class="rounded-lg border border-slate-200 p-3 diagram"><div class="label mb-2">After: one fold, many readers</div>
+<pre class="mermaid">
+flowchart LR
+  F["Skill health and source fold"]
+  F --&gt; A["Card"]
+  F --&gt; B["Inspector ladder"]
+  F --&gt; C["Issues banner and chip"]
+  F --&gt; D["Synced N/M strip"]
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a,stroke-width:3px
+  class F deep
+</pre></div>
+  </div>
+  <p><b>Problem.</b> There is no single answer to "is this skill healthy, and why not?". The bake-off found no skill-level health channel, and the frontend has no module where one could live.</p>
+  <p><b>Solution.</b> A pure fold turns a Managed skill plus the Tool catalog into health rows (skill-level and target-level, with severity) and a source line (label, href, copy value, icon kind).</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700">
+    <li>Leverage: four D8 items read one fold</li>
+    <li>Locality: one severity precedence rule</li>
+    <li>Tests: extend skillPresentation.test.ts</li>
+  </ul>
+</article>
+
+<!-- 4 -->
+<article id="c4" class="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2"><span class="text-slate-400 serif text-2xl">4</span><h2 class="serif text-2xl">Styling: tokens plus a primitives module (D3, evaluated)</h2></div>
+  <div class="flex gap-2 text-xs"><span class="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5">Strong</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">in-process</span><span class="rounded-full bg-amber-100 text-amber-800 px-2 py-0.5">3 corrections to the premise</span></div>
+  <ul class="mono text-sm text-slate-700 space-y-0.5">
+    <li>index.css 1–95 · App.css (3,696) · components/shared/Modal.tsx</li>
+    <li>SettingsPage 63 · ExplorePage 45 · SkillDetailView 40 · AssignmentMatrix 37 · SkillCard 34 sites</li>
+    <li>SkillDetailView.tsx 389 (reads data-theme from DOM), 319–365 (hard-coded highlighter colours)</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram"><div class="label mb-3">Where ~500 class sites cluster (token counts at sites)</div>
+      <div class="space-y-1.5 text-[11px]">
+        <div class="flex items-center gap-2"><span class="w-28">btn*</span><div class="bar bg-emerald-400" style="width:133px"></div><span>133</span></div>
+        <div class="flex items-center gap-2"><span class="w-28">form field</span><div class="bar bg-emerald-400" style="width:70px"></div><span>~70</span></div>
+        <div class="flex items-center gap-2"><span class="w-28">chip / pill / badge</span><div class="bar bg-emerald-400" style="width:22px"></div><span>~20</span></div>
+        <div class="flex items-center gap-2"><span class="w-28">modal / tabs / check</span><div class="bar bg-emerald-400" style="width:25px"></div><span>~25</span></div>
+        <div class="flex items-center gap-2"><span class="w-28">explore-*</span><div class="bar bg-slate-300" style="width:45px"></div><span>45</span></div>
+        <div class="flex items-center gap-2"><span class="w-28">matrix-*</span><div class="bar bg-slate-300" style="width:27px"></div><span>27</span></div>
+        <div class="flex items-center gap-2"><span class="w-28">pick-* / detail-*</span><div class="bar bg-slate-300" style="width:51px"></div><span>51</span></div>
+        <div class="flex items-center gap-2"><span class="w-28">tree / notif / other</span><div class="bar bg-slate-300" style="width:100px"></div><span>~100</span></div>
+      </div>
+      <p class="text-[11px] text-slate-500 mt-3"><span class="inline-block w-3 h-3 bg-emerald-400 rounded-sm align-middle"></span> primitive-shaped (≈45–50%) · <span class="inline-block w-3 h-3 bg-slate-300 rounded-sm align-middle"></span> surface layout → utilities in JSX</p>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram"><div class="label mb-3">After: three places, one world</div>
+      <div class="space-y-2">
+        <div class="box-deep">@theme tokens — the world (dark first)<div class="faded normal-case tracking-normal text-[11px] mt-1">+ resolved theme exposed, not read from DOM</div></div>
+        <div class="box-deep">src/components/ui primitives<div class="faded normal-case tracking-normal text-[11px] mt-1">focus ring · disabled · pending · reduced motion · ARIA · shadcn behaviour</div></div>
+        <div class="box">surface layout = utilities in JSX</div>
+        <div class="box">prose layer: markdown + highlighter (guard exemption?)</div>
+      </div>
+    </div>
+  </div>
+  <div class="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-900 space-y-1">
+    <div><b>Correction 1.</b> Tokens already exist: 518 var() reads over 38 properties, and only 24 literals remain. Moving them to @theme is a relocation. The work is a new set of values for the world.</div>
+    <div><b>Correction 2.</b> App.css will not reach literal zero: the markdown-* prose layer (30 rules) and the highlighter theme remain. The CI guard needs a named exemption.</div>
+    <div><b>Correction 3.</b> Theme resolution is not a module. SkillDetailView reads data-theme from the DOM, so it goes stale when the theme changes.</div>
+    <div><b>AGENTS conflict.</b> "No component tests" means primitives can be verified only by types and visual review. Given the D5 hard gate, decide whether primitives get role/ARIA tests.</div>
+  </div>
+  <p><b>Verdict.</b> A primitives module is the right deep module for six shapes (Button, Field, Dialog, Chip, Checkbox/Switch, Tabs). Deletion test: Button alone would scatter across 133 sites. Depth comes from behaviour (focus, pending, ARIA), not only from variant/tone/size. Today's <span class="mono">Modal</span> leaks styling through 4 className props and lacks focus trap and focus return.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700">
+    <li>Leverage: every D8 surface builds on it</li>
+    <li>Locality: a11y fixed once per shape</li>
+    <li>D9 already sequences this first</li>
+  </ul>
+</article>
+
+<!-- 5 -->
+<article id="c5" class="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2"><span class="text-slate-400 serif text-2xl">5</span><h2 class="serif text-2xl">Deepen the library lens: query, sort, group, fold, mode, visible selection</h2></div>
+  <div class="flex gap-2 text-xs"><span class="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5">Strong</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">in-process</span></div>
+  <ul class="mono text-sm text-slate-700 space-y-0.5">
+    <li>App.tsx 68–72, 129–136 · FilterBar.tsx 12–30 · SkillsList.tsx 56–63</li>
+    <li>AssignmentMatrix.tsx 73–89 (own sort + group state), 118–135 (duplicated sort control)</li>
+    <li>lib/skillPresentation.ts 182–245 (the deep pure core) · pick modals (no search)</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3 diagram"><div class="label mb-2">Before: pure core, recomposed per surface</div>
+<pre class="mermaid">
+flowchart TB
+  Core["filterAndSortSkills + groupSkillsByRepo"]
+  A["App: query, sort, group, mode"] --&gt; Core
+  M["AssignmentMatrix: own sort, own group pref"] --&gt; Core
+  Pk["Pickers: no lens"]
+  Pal["Palette: none yet"]
+  classDef leak stroke:#dc2626,stroke-width:2px
+  class A,M leak
+</pre></div>
+    <div class="rounded-lg border border-slate-200 p-3 diagram"><div class="label mb-2">After: one lens, instantiated per list</div>
+<pre class="mermaid">
+flowchart TB
+  L["Library lens: query, sort, group, singleton fold, mode, prefs, visible selection"]
+  L --&gt; Core["pure core, unchanged"]
+  My["My Skills"] --&gt; L
+  Mx["Matrix"] --&gt; L
+  Pk["Pickers"] --&gt; L
+  Pal["Palette"] --&gt; L
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a,stroke-width:3px
+  class L deep
+</pre></div>
+  </div>
+  <p><b>Problem.</b> Two surfaces rebuild the same lens with their own state cells and sort control. Fold/flat mode, picker search and the palette would add three more copies.</p>
+  <p><b>Solution.</b> One stateful lens module per list surface, wrapping the existing pure core.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700"><li>Two callers today: real seam</li><li>Leverage: fold, flat, picker search, palette</li><li>Group Deploy all reads visible set</li></ul>
+</article>
+
+<!-- 6 -->
+<article id="c6" class="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2"><span class="text-slate-400 serif text-2xl">6</span><h2 class="serif text-2xl">Deepen the action lifecycle: one Outcome executor, per-subject pending</h2></div>
+  <div class="flex gap-2 text-xs"><span class="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5">Strong</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">in-process</span></div>
+  <ul class="mono text-sm text-slate-700 space-y-0.5">
+    <li>hooks/useStatusReporter.ts 185–260 (18 members), 392–427 (runAction)</li>
+    <li>Outcome unpacked: useSkillLibrary 181–193 · useAddSkillFlow 140–143, 302–306, 358–363 · useCandidatePick 220–227 · ProjectsPage 52–60 (drops warnings)</li>
+    <li>LoadingOverlay.tsx (full-screen for any action) · useProjectState pendingCells</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram"><div class="label mb-3">Before: cross-section of one pill toggle</div>
+      <div class="space-y-1 text-[11px]">
+        <div class="border-l-4 border-slate-400 pl-2 py-1 bg-slate-50">SkillCard click</div>
+        <div class="border-l-4 border-slate-400 pl-2 py-1 bg-slate-50">useSkillLibrary handler</div>
+        <div class="border-l-4 border-red-400 pl-2 py-1 bg-red-50">runAction → global loading → full-screen overlay</div>
+        <div class="border-l-4 border-slate-400 pl-2 py-1 bg-slate-50">invokeTauri + fold</div>
+        <div class="border-l-4 border-red-400 pl-2 py-1 bg-red-50">hand-unpacked Outcome (copy 1 of 5)</div>
+        <div class="border-l-4 border-red-400 pl-2 py-1 bg-red-50">setError(formatError) ×17 vs notifyError ×12</div>
+        <div class="border-l-4 border-slate-400 pl-2 py-1 bg-slate-50">loading prop → 19 components</div>
+      </div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram"><div class="label mb-3">After: one band</div>
+      <div class="space-y-2 text-[11px]">
+        <div class="border-l-4 border-slate-400 pl-2 py-1 bg-slate-50">caller: verb + subject</div>
+        <div class="box-deep">Action lifecycle<div class="faded normal-case tracking-normal mt-1">serialise · pending per subject · progress for streamed batches · run Outcome (errors, warnings, toast, completion)</div></div>
+        <div class="border-l-4 border-slate-400 pl-2 py-1 bg-slate-50">presentation chooses: inline pending or progress surface</div>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem.</b> Five copies of the Outcome executor exist, and one drops warnings. A single global flag drives a full-screen overlay for every action, while the project world built its own pending state instead.</p>
+  <p><b>Solution.</b> The reporter runs an Outcome itself, and the action lifecycle knows the action's subject and scale. The backend guard still serialises, so only the presentation moves.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700"><li>D6: frequent actions near-invisible</li><li>D8: bulk progress has a home</li><li>Delete 5 executor copies</li><li>Consistent with ADR-0001</li></ul>
+</article>
+
+<!-- 7 -->
+<article id="c7" class="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2"><span class="text-slate-400 serif text-2xl">7</span><h2 class="serif text-2xl">Give the project world an app lifetime and one skill catalog</h2></div>
+  <div class="flex gap-2 text-xs"><span class="rounded-full bg-amber-100 text-amber-800 px-2 py-0.5">Worth exploring</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">in-process</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">Strong if inspector assigns projects</span></div>
+  <ul class="mono text-sm text-slate-700 space-y-0.5">
+    <li>ProjectsPage.tsx 41–48 (useProjectState() inside the page)</li>
+    <li>useProjectState.ts 152, 238–255 (own ManagedSkill[], failure swallowed)</li>
+    <li>App.tsx 359–365 (mounted only on its route)</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3 diagram"><div class="label mb-2">Before</div>
+<pre class="mermaid">
+flowchart LR
+  App["App binder"] --&gt; Lib["useSkillLibrary: catalog A"]
+  App -. route mount only .-&gt; PP["ProjectsPage"]
+  PP --&gt; PS["useProjectState: catalog B"]
+  My["My Skills rows"] -. cannot reach .-&gt; PS
+  classDef leak stroke:#dc2626,stroke-width:2px
+  class PS,PP leak
+</pre></div>
+    <div class="rounded-lg border border-slate-200 p-3 diagram"><div class="label mb-2">After</div>
+<pre class="mermaid">
+flowchart LR
+  App["App binder"] --&gt; Lib["Skill library: the catalog"]
+  App --&gt; PW["Project world"]
+  Lib --&gt; PW
+  PP["ProjectsPage view"] --&gt; PW
+  Insp["Inspector assign"] --&gt; PW
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a,stroke-width:3px
+  class PW deep
+</pre></div>
+  </div>
+  <p><b>Problem.</b> Selection and matrix are lost on every navigation. A second catalog goes stale after an Update. Assignments cannot be reached from My Skills.</p>
+  <p><b>Solution.</b> Compose the project world in the binder like every other world, and have it read the library's catalog.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700"><li>Locality: one skill catalog</li><li>Leverage: inspector reuses ProjectViewDto path</li></ul>
+</article>
+
+<!-- 8 -->
+<article id="c8" class="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2"><span class="text-slate-400 serif text-2xl">8</span><h2 class="serif text-2xl">One app-update module</h2></div>
+  <div class="flex gap-2 text-xs"><span class="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5">Strong (small)</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">mock (updater plugin)</span></div>
+  <ul class="mono text-sm text-slate-700 space-y-0.5"><li>hooks/useUpdateChecker.ts · SettingsPage.tsx 8–16, 76–140 (second UpdateStatus machine) · App.tsx 541–609 (inlined modal)</li></ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram"><div class="label mb-3">Before: two machines, no shared state</div>
+      <div class="flex gap-3">
+        <div class="box-leak">useUpdateChecker<br/>check · notes · install</div>
+        <div class="box-leak">SettingsPage inline<br/>check · install · 7 states</div>
+      </div>
+      <div class="mt-3 text-xs text-slate-500">title-bar affordance (D8) would be a third</div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram"><div class="label mb-3">After</div>
+      <div class="box-deep">App update<div class="faded normal-case tracking-normal text-[11px] mt-1">status · version · notes · check · install · ignore</div></div>
+      <div class="flex gap-2 mt-3"><span class="box">settings</span><span class="box">title bar</span><span class="box">notice</span></div>
+    </div>
+  </div>
+  <p><b>Problem.</b> The same state machine is implemented twice, and a third consumer is planned.</p>
+  <p><b>Solution.</b> One update module, read by all three consumers.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700"><li>Settings machine becomes hook-tested</li><li>~60 lines leave the binder</li></ul>
+</article>
+
+<!-- 9 -->
+<article id="c9" class="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2"><span class="text-slate-400 serif text-2xl">9</span><h2 class="serif text-2xl">Native platform seam beside invokeTauri</h2></div>
+  <div class="flex gap-2 text-xs"><span class="rounded-full bg-amber-100 text-amber-800 px-2 py-0.5">Worth exploring</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">ports &amp; adapters</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">touches ticket 04</span></div>
+  <ul class="mono text-sm text-slate-700 space-y-0.5">
+    <li>folder picker ×5: useAddSkillFlow 255–271 · useSkillLibrary 397–411 · useSettingsState 196–213 · AddProjectModal 35–43 (no catch) · ProjectsPage 3, 218</li>
+    <li>Channel ×3 hooks · updater ×2 · webview zoom ×2</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3 diagram"><div class="label mb-2">Before: commands through the seam, plugins around it</div>
+<pre class="mermaid">
+flowchart LR
+  H["hooks and components"] --&gt; T["invokeTauri seam"]
+  H -. 12 direct imports .-&gt; D["plugin-dialog"]
+  H -. direct .-&gt; U["plugin-updater"]
+  H -. direct .-&gt; C["Channel and webview"]
+  classDef leak stroke:#dc2626,stroke-width:2px
+  class D,U,C leak
+</pre></div>
+    <div class="rounded-lg border border-slate-200 p-3 diagram"><div class="label mb-2">After: one crossing, two adapters</div>
+<pre class="mermaid">
+flowchart LR
+  H["hooks"] --&gt; P["Platform seam: commands, pickFolder, progress channel, updater, zoom"]
+  P --&gt; A1["Tauri adapter"]
+  P --&gt; A2["Fixture adapter"]
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a,stroke-width:3px
+  class P deep
+</pre></div>
+  </div>
+  <p><b>Problem.</b> The typed seam covers commands only. The folder picker exists 5 times, one copy leaves a rejection unhandled, and another accepts an array result that the others reject.</p>
+  <p><b>Solution.</b> A platform module beside lib/tauri.ts, so commands and plugins cross into Tauri at the same place.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700"><li>Two adapters: a real seam</li><li>Tests mock one module</li></ul>
+</article>
+
+<!-- 10 -->
+<article id="c10" class="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2"><span class="text-slate-400 serif text-2xl">10</span><h2 class="serif text-2xl">Add flow: expose intents, keep form state internal</h2></div>
+  <div class="flex gap-2 text-xs"><span class="rounded-full bg-amber-100 text-amber-800 px-2 py-0.5">Worth exploring</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">in-process</span></div>
+  <ul class="mono text-sm text-slate-700 space-y-0.5"><li>hooks/useAddSkillFlow.ts 503–533 (30 members), 484–501 (ref + counter + effect trigger)</li><li>App.tsx 389–430 (18 + 11 props)</li></ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram"><div class="label mb-3">Mass: interface vs implementation</div>
+      <div class="space-y-2 text-[11px]">
+        <div>Before <div class="bar iface" style="width:78%"></div><div class="bar impl mt-1" style="width:100%"></div></div>
+        <div class="text-slate-500">10 of 30 members are raw form value/setter pairs</div>
+        <div class="pt-2">After <div class="bar iface-ok" style="width:22%"></div><div class="bar impl mt-1" style="width:100%"></div></div>
+        <div class="text-slate-500">intents: open with source · install selection · review import</div>
+      </div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram"><div class="label mb-3">Explore install today</div>
+      <div class="space-y-1 text-[11px] mono">
+        <div class="box">setGitUrl(url)</div><div class="box">ref.current = url</div><div class="box">trigger++</div><div class="box-leak">effect (exhaustive-deps off) → handleCreateGit()</div>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem.</b> The form is exposed as its interface, and the one cross-world intent runs through a render-cycle trigger.</p>
+  <p><b>Solution.</b> The flow's interface becomes its intents, and the draft form becomes internal.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700"><li>Leverage: install summary, gated scan, picker search</li><li>Delete the trigger effect</li></ul>
+</article>
+
+<!-- 11 -->
+<article id="c11" class="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2"><span class="text-slate-400 serif text-2xl">11</span><h2 class="serif text-2xl">Split the Tool catalog out of sync orchestration</h2></div>
+  <div class="flex gap-2 text-xs"><span class="rounded-full bg-amber-100 text-amber-800 px-2 py-0.5">Worth exploring</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">in-process</span></div>
+  <ul class="mono text-sm text-slate-700 space-y-0.5"><li>hooks/useSyncOrchestration.ts 118–240, 435–457, 459–494 (30 members; isInstalled, installedToolIds unused outside)</li></ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram"><div class="label mb-3">Before: three concepts, one hook</div>
+      <div class="rounded-lg border-2 border-red-300 p-2 space-y-1 text-[11px]">
+        <div class="box">Tool catalog: status, labels, installedness</div>
+        <div class="box">Effective target set + Add-modal syncTargets</div>
+        <div class="box">Sync seam + overwrite / shared-dir asks + 2 modal flags</div>
+      </div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram"><div class="label mb-3">After</div>
+      <div class="flex gap-3 items-start">
+        <div class="box-deep">Tool catalog</div>
+        <div class="seam pl-3 text-[11px] text-slate-500">read by sync, library, add, projects, N/M strip</div>
+      </div>
+      <div class="box mt-3">Sync orchestration: target sets + seam</div>
+    </div>
+  </div>
+  <p><b>Problem.</b> A CONTEXT term (the Tool catalog) has no module of its own. Two target sets live side by side, with different reset rules.</p>
+  <p><b>Solution.</b> Make the Tool catalog its own module, and leave sync orchestration the target sets and the seam.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700"><li>Enable/disable and N/M strip read catalog</li><li>Delete two unused members</li></ul>
+</article>
+
+<!-- 12 -->
+<article id="c12" class="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2"><span class="text-slate-400 serif text-2xl">12</span><h2 class="serif text-2xl">Detail file browser fed a skill document</h2></div>
+  <div class="flex gap-2 text-xs"><span class="rounded-full bg-slate-200 text-slate-700 px-2 py-0.5">Speculative</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">in-process</span></div>
+  <ul class="mono text-sm text-slate-700 space-y-0.5"><li>SkillDetailView.tsx 56–175 (buildTree, getLang, 40-entry EXT_LANG — untestable in a component) · 371–445 · useExploreState.ts 124–150</li></ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 diagram"><div class="label mb-3">Before: call graph in one component</div>
+      <div class="rounded-lg border border-slate-300 p-2 text-[11px] space-y-1"><div class="box">SkillDetailView(ManagedSkill, invokeTauri prop)</div><div class="pl-4 space-y-1"><div class="box">buildTree</div><div class="box">getLang / EXT_LANG</div><div class="box">2 fetch effects</div><div class="box">render</div></div></div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 diagram"><div class="label mb-3">After: collapsed</div>
+      <div class="box-deep">File browser (hook + pure)<div class="faded normal-case tracking-normal text-[11px] mt-1 space-y-0.5"><div>buildTree · getLang · load</div></div></div>
+      <div class="box mt-3">view takes a skill document: name, description, source line, path</div>
+    </div>
+  </div>
+  <p><b>Why only Speculative.</b> It has one caller, and the inspector may not show files at all. The win is testability plus deleting the forged ManagedSkill.</p>
+</article>
+
+<!-- 13 -->
+<article id="c13" class="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2"><span class="text-slate-400 serif text-2xl">13</span><h2 class="serif text-2xl">The App.tsx binder's growth (evaluated: a symptom)</h2></div>
+  <div class="flex gap-2 text-xs"><span class="rounded-full bg-slate-200 text-slate-700 px-2 py-0.5">Speculative standalone</span><span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5">deletion test: pass-through</span></div>
+  <ul class="mono text-sm text-slate-700 space-y-0.5"><li>App.tsx 1–613: 245–609 JSX, ~60%, mostly 1:1 threading · 19× t={t} · SettingsPage gets 15 members 1:1 (336–358)</li></ul>
+  <div class="rounded-lg border border-slate-200 p-4">
+    <div class="label mb-3">Where App's 613 lines come from</div>
+    <div class="flex w-full h-8 rounded overflow-hidden text-[10px] text-white">
+      <div class="bg-slate-500 flex items-center justify-center" style="width:8%">imports</div>
+      <div class="bg-red-400 flex items-center justify-center" style="width:14%">view/modal state (c1)</div>
+      <div class="bg-emerald-600 flex items-center justify-center" style="width:10%">real composition</div>
+      <div class="bg-red-300 flex items-center justify-center" style="width:8%">reporter unpack (c6)</div>
+      <div class="bg-slate-400 flex items-center justify-center" style="width:37%">1:1 prop threading</div>
+      <div class="bg-red-400 flex items-center justify-center" style="width:12%">update modal (c8)</div>
+      <div class="bg-red-300 flex items-center justify-center" style="width:11%">form props (c10)</div>
+    </div>
+  </div>
+  <p><b>Finding.</b> The binder principle is sound, and its real composition is small (<span class="mono">handleSyncAllNewTools</span>, the Explore install from detail, view switching). The growth is candidates 1, 6, 8 and 10 leaking into it. Fix those and App shrinks; a separate "split App" refactor would only move lines.</p>
+</article>
+
+</section>
+
+<section class="rounded-2xl border border-slate-200 bg-white p-6 space-y-2">
+  <h2 class="serif text-xl">Evaluated, not candidates</h2>
+  <ul class="text-sm list-disc pl-5 text-slate-700">
+    <li><span class="mono">reportOutcome.ts</span> (639 lines, 1,218-line suite): deep. The friction is at its consumers (c6).</li>
+    <li><span class="mono">skillPresentation.ts</span>: deep and pure. It is where c3 and c5 grow.</li>
+    <li><span class="mono">useOverwriteConfirmation</span> / <span class="mono">useSharedDirConfirmation</span>: model deep modules (<span class="mono">request()</span> resolves to a boolean). Keep the ask pattern under shadcn Dialog.</li>
+    <li><span class="mono">SettingsPage</span> / <span class="mono">AssignmentMatrix</span> (449 each): their size is markup, absorbed by c4. Beyond that they need only c8 and c5.</li>
+  </ul>
+</section>
+
+<section id="top-recommendation" class="deep rounded-2xl p-8 space-y-3">
+  <div class="text-xs uppercase tracking-widest text-slate-400">Top recommendation</div>
+  <h2 class="serif text-3xl"><a href="#c1" class="underline decoration-slate-500">Surface state (1)</a>, grilled with <a href="#c2" class="underline decoration-slate-500">the action set (2)</a></h2>
+  <p class="text-slate-300 max-w-3xl">The round-19 world (sidebar, inspector beside the list, bulk rail, ⌘K) is defined by these two modules, every D8 item is a caller of one or both, and neither has a home today. <a href="#c3" class="underline">Candidate 3</a> is the cheapest parallel win. <a href="#c4" class="underline">Candidate 4</a> is sequenced first by D9 and does not conflict with them.</p>
+  <div class="text-sm text-slate-300 pt-2">
+    <div class="uppercase tracking-widest text-xs text-slate-400 mb-1">Open questions for ticket 09</div>
+    <ol class="list-decimal pl-5 space-y-0.5">
+      <li>Is the detail an inspector beside the list (a selection) or a route?</li>
+      <li>One selection across My Skills, matrix and palette, or one per surface?</li>
+      <li>Should surface state be addressable (a hash route) for fixture-mode deep links?</li>
+      <li>Should primitives get role/ARIA tests despite "no component tests"?</li>
+      <li>Is the prose layer exempt from the App.css-to-zero guard?</li>
+      <li>Keep one-action-at-a-time (c6 is presentation only) or allow concurrent inline actions?</li>
+      <li>Does project assignment from My Skills ship in round 19? If so, c7 becomes Strong.</li>
+      <li>Should the platform seam (c9) fold into ticket 04's door or sit beside it?</li>
+    </ol>
+  </div>
+</section>
+
+</main>
+</body>
+</html>
