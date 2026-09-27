@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.18] - 2026-09-27
+
+Round 18, phase A of the UI effort: the enablers and decisions ship; the new visual world is round 19 (1.3.0). Agents can now see the app, the GitHub token leaves the database, Augment syncs to the right folder, and the UI is English-only.
+
+### Security
+
+- The GitHub token now lives in the OS credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service) instead of the app database. An existing token moves automatically on the first launch of 1.2.18. The database copy is removed only after the keychain copy is verified, and it is removed securely: overwritten and the database compacted, so the plaintext no longer sits in the database file. This cannot erase copies made before the upgrade (backups, APFS / Time Machine snapshots, SSD remnants) — rotate the token on GitHub if that matters to you (#44). Saving or removing a token in Settings also removes any database copy still waiting to be migrated. Settings shows whether a token is saved, or that the keychain could not be read; a token can be replaced or removed but is never displayed.
+- Note (macOS): Skills Hub builds are ad-hoc signed, so after installing an update macOS may ask "Skills Hub wants to access … in your keychain" again. Choose **Always Allow**. If access is denied or the keychain is locked, GitHub requests run unauthenticated (60 req/hr) and saving a token reports an error. Nothing falls back to plaintext.
+- Note (Linux): storing a token requires a running Secret Service (GNOME Keyring, KWallet, …). If it was not running when Skills Hub started, start it and **restart Skills Hub** — the keychain connection is set up once per launch.
+
+### Fixed
+
+- Augment skills now sync to `~/.augment/skills` (Augment's documented skills dir) instead of `~/.augment/rules` (its rules dir). Skills already synced to the old location are moved automatically on first launch; a copy that was there is re-created as a link, so local edits made to that copy are not kept (#43).
+
+### Removed
+
+- The Chinese (中文) UI locale and the language switcher: Skills Hub is English-only. A previously saved language choice is ignored.
+
+### Internal
+
+- Dev: `npm run dev:fixture` runs the app in a plain browser against an in-memory fixture library (`?scenario=rich|empty|first-run|failures`, `?latency=0|3`) — dev-only and tree-shaken from release builds; the only way to drive or screenshot the app without touching the operator's real library.
+- `PRODUCT.md` (what the product is for), `docs/adr/0006-styling-architecture.md` (Tailwind v4 tokens + primitives over shadcn/Base UI, `App.css` ratchets to zero) and the round-18 findings under `.scratch/round18/review/` (frontend architecture, two blind design critiques, task-flow review) — the inputs to the round-19 spec.
+- `core/credentials.rs` (`CredentialStore`, keyring 4.2), `core/target_relocation.rs` (`ToolAdapter.former_relative_skills_dirs`), `SkillStore::delete_setting_securely`, typed `CREDENTIAL_STORE_UNAVAILABLE`; `AppSettings.github_token` → `github_token_set: boolean | null`.
+
 ## [1.2.17] - 2026-09-23
 
 Round 17: detection and the onboarding scan tell the truth, and a first sync onto an occupied folder asks.

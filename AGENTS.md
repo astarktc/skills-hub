@@ -59,7 +59,11 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   Any sync/install/delete action in `npm run tauri:dev` writes the operator's live global skills and
   creates/removes real symlinks under `~/.claude/skills`, `~/.pi/agent/skills`, etc.
   Do destructive testing only with explicit permission; the `central_repo_path` setting can repoint the
-  central repo, but the database path is not overridable.
+  central repo, but the database path is not overridable. **Fixture mode (`npm run dev:fixture`) is the only way to
+  run, drive or screenshot the app without touching the operator's library** — it also migrates nothing and asks the
+  keychain for nothing. The t3 `preview_*` tools need a served URL (`http://localhost:5175/?scenario=rich`), never
+  `file://`; in a hidden tab the page only runs while a `preview_evaluate` is in flight, so drive each flow inside one
+  evaluate, one call at a time, and force a repaint before a capture.
 - After an Xcode update every `cargo` build fails at link with "You have not agreed to the Xcode license
   agreements" — the operator runs `sudo xcodebuild -license accept`; there is no repo-side fix.
 - `.claude/skills/` and `.agents/skills/` are **hardlinked to each other** (same inodes) and gitignored —
