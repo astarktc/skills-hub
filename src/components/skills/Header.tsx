@@ -3,7 +3,6 @@ import { Bell, FolderKanban, Layers, Search, Settings } from "lucide-react";
 import type { TFunction } from "i18next";
 
 type HeaderProps = {
-  language: string;
   loading: boolean;
   activeView:
     | "myskills"
@@ -14,7 +13,6 @@ type HeaderProps = {
     | "explore-detail";
   /** Errors and warnings not yet seen in the notification panel. */
   unreadNotifications: number;
-  onToggleLanguage: () => void;
   onOpenNotifications: () => void;
   onOpenSettings: () => void;
   onViewChange: (view: "myskills" | "explore" | "projects") => void;
@@ -25,10 +23,8 @@ type HeaderProps = {
 const BADGE_MAX = 99;
 
 const Header = ({
-  language,
   activeView,
   unreadNotifications,
-  onToggleLanguage,
   onOpenNotifications,
   onOpenSettings,
   onViewChange,
@@ -75,9 +71,6 @@ const Header = ({
         </nav>
       </div>
       <div className="header-actions">
-        <button className="lang-btn" type="button" onClick={onToggleLanguage}>
-          {language === "en" ? t("languageShort.en") : t("languageShort.zh")}
-        </button>
         <button
           className="icon-btn notif-btn"
           type="button"

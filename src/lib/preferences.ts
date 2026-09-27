@@ -9,11 +9,9 @@ import {
   unionPreference,
 } from "./persistedPreference";
 
-export const languagePreference = unionPreference(
-  "skills-language",
-  ["en", "zh"] as const,
-  "en",
-);
+// Retired key: "skills-language" (the EN/ZH switcher, removed in 1.2.18 —
+// EN only, BACKLOG #61). Existing installs may still hold "zh" there; nothing
+// reads it any more. Never reuse the key for a different preference.
 
 export const groupByRepoPreference = booleanPreference("skills-groupByRepo");
 

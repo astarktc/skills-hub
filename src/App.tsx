@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import "./App.css";
 import { useTranslation } from "react-i18next";
 // The sanctioned second importer of the toast library: the binder mounts the
@@ -38,7 +38,6 @@ import { usePersistedPreference } from "./hooks/usePersistedPreference";
 import { filterAndSortSkills } from "./lib/skillPresentation";
 import {
   groupByRepoPreference,
-  languagePreference,
   viewModePreference,
 } from "./lib/preferences";
 import { invokeTauri, isTauri } from "./lib/tauri";
@@ -48,11 +47,7 @@ import type { ManagedSkill } from "./components/skills/types";
 // the per-world hooks (each returning that world's data + actions), and wires
 // their interfaces together. State logic lives in src/hooks/, not here.
 function App() {
-  const { t, i18n } = useTranslation();
-  const language = i18n.resolvedLanguage ?? i18n.language ?? "en";
-  const toggleLanguage = useCallback(() => {
-    void i18n.changeLanguage(language === "en" ? "zh" : "en");
-  }, [i18n, language]);
+  const { t } = useTranslation();
 
   // View/navigation state (stays in the binder: it is what App composes for).
   const [activeView, setActiveView] = useState<
@@ -70,11 +65,6 @@ function App() {
   const [groupByRepo, setGroupByRepo] =
     usePersistedPreference(groupByRepoPreference);
   const [viewMode, setViewMode] = usePersistedPreference(viewModePreference);
-
-  useEffect(() => {
-    if (language !== "en" && language !== "zh") return;
-    languagePreference.write(language);
-  }, [language]);
 
   // World hooks, wired in dependency order: reporter → sync → library →
   // settings/explore/addFlow. Hooks never import each other; every
@@ -257,11 +247,9 @@ function App() {
       />
 
       <Header
-        language={language}
         loading={loading}
         activeView={effectiveView}
         unreadNotifications={unreadCount}
-        onToggleLanguage={toggleLanguage}
         onOpenNotifications={handleOpenNotifications}
         onOpenSettings={handleOpenSettings}
         onViewChange={handleViewChange}
@@ -336,7 +324,6 @@ function App() {
         ) : effectiveView === "settings" ? (
           <SettingsPage
             isTauri={isTauri}
-            language={language}
             storagePath={settings.storagePath}
             gitCacheCleanupDays={settings.gitCacheCleanupDays}
             gitCacheTtlSecs={settings.gitCacheTtlSecs}
@@ -344,7 +331,6 @@ function App() {
             themePreference={settings.themePreference}
             zoomLevel={settings.zoomLevel}
             onPickStoragePath={settings.handlePickStoragePath}
-            onToggleLanguage={toggleLanguage}
             onThemeChange={settings.handleThemeChange}
             onZoomLevelChange={settings.handleZoomLevelChange}
             onGitCacheCleanupDaysChange={settings.handleGitCacheCleanupDaysChange}

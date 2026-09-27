@@ -234,7 +234,7 @@ describe("refreshOutcome: one precedence and completion policy", () => {
     },
   );
 
-  it("acquisition skips preserve both reasons; the batch summary is neutral in both locales", () => {
+  it("acquisition skips preserve both reasons; the batch summary is neutral", () => {
     const out = refreshOutcome(refreshReport([skippedGone, skippedStale]), ctx);
     expect(out.warnings).toEqual([
       { title: 'errors.refreshSkippedTitle {"name":"gone"}', message: "errors.refreshSkippedSkillGone" },
@@ -243,7 +243,6 @@ describe("refreshOutcome: one precedence and completion policy", () => {
     expect(out.completion).toEqual({ reload: true, closeModal: false, conflict: false });
     expect(out.toast).toEqual({ kind: "warning", message: 'status.refreshSummarySkipped {"refreshed":0,"failed":0,"skipped":2}' });
     expect(resources.en.translation.status.refreshSummarySkipped).toBe("{{refreshed}} skills refreshed, {{failed}} failed, {{skipped}} skipped.");
-    expect(resources.zh.translation.status.refreshSummarySkipped).toBe("已刷新 {{refreshed}} 个 Skills，{{failed}} 个失败，{{skipped}} 个已跳过。");
   });
 
   it("returns a repair id, never a callback or captured ManagedSkill", () => {
@@ -432,15 +431,13 @@ describe("removalOutcome", () => {
     expect(JSON.stringify(report)).toBe(before);
   });
 
-  it("delete succeeds for removed targets and has kept/retry copy in both locales", () => {
+  it("delete succeeds for removed targets and has kept/retry copy", () => {
     expect(deleteOutcome({ ...removal(false), central_removed: true, record_deleted: true }, ctx)).toEqual({
       toast: { kind: "success", message: "status.skillRemoved" },
       errors: [], warnings: [], completion: { reload: true, closeModal: true, conflict: false },
     });
     expect(resources.en.translation.errors.deleteKeptTargetTitle).toContain("{{tool}}");
-    expect(resources.zh.translation.errors.deleteKeptTargetTitle).toContain("{{tool}}");
     expect(resources.en.translation.status.skillDeleteKept).toBe("Skill kept: {{failed}} targets could not be removed. You can retry.");
-    expect(resources.zh.translation.status.skillDeleteKept).toBe("技能已保留：{{failed}} 个同步目标无法移除。你可以重试。");
   });
 
   it.each(["all", "skill", "toggle"] as const)(
@@ -773,21 +770,17 @@ describe("projectSyncOutcome", () => {
     });
   });
 
-  it("carries the new copy in both locales", () => {
+  it("carries the new copy", () => {
     const en = resources.en.translation.projects;
-    const zh = resources.zh.translation.projects;
-    for (const catalog of [en, zh]) {
-      expect(catalog.bulkAssignSuccess_other).toContain("{{count}}");
-      expect(catalog.bulkUnassignSuccess_other).toContain("{{count}}");
-      expect(catalog.bulkUnassignPartial).toContain("{{failed}}");
-      expect(catalog.resyncAllPartial).toContain("{{failed}}");
-      expect(catalog.resyncAllSuccess).toContain("{{synced}}");
-    }
+    expect(en.bulkAssignSuccess_other).toContain("{{count}}");
+    expect(en.bulkUnassignSuccess_other).toContain("{{count}}");
+    expect(en.bulkUnassignPartial).toContain("{{failed}}");
+    expect(en.resyncAllPartial).toContain("{{failed}}");
+    expect(en.resyncAllSuccess).toContain("{{synced}}");
     expect(en.bulkAssignSuccess_one).toBe("Assigned to {{count}} tool");
     expect(resources.en.translation.localSkillInvalid.insideToolDir).toBe(
       "This folder is a Tool's own skills copy — use Import instead",
     );
-    expect(resources.zh.translation.localSkillInvalid.insideToolDir).toBeTruthy();
   });
 });
 

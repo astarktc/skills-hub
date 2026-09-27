@@ -846,7 +846,6 @@
 
 .btn:disabled,
 .icon-btn:disabled,
-.lang-btn:disabled,
 .card-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
@@ -870,27 +869,6 @@
   background: var(--bg-element);
   color: var(--text-primary);
   transform: translateY(-1px);
-}
-
-.lang-btn {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  border: 1px solid var(--border-subtle);
-  font-family: var(--font-mono);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.lang-btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-element);
-  border-color: var(--text-tertiary);
 }
 
 /* Notification bell: the badge counts unread errors + warnings. */

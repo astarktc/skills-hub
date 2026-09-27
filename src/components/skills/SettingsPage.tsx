@@ -16,7 +16,6 @@ type UpdateStatus =
 
 type SettingsPageProps = {
   isTauri: boolean;
-  language: string;
   storagePath: string;
   gitCacheCleanupDays: number;
   gitCacheTtlSecs: number;
@@ -26,7 +25,6 @@ type SettingsPageProps = {
   zoomLevel: number;
   githubToken: string;
   onPickStoragePath: () => void;
-  onToggleLanguage: () => void;
   onThemeChange: (nextTheme: "system" | "light" | "dark") => void;
   onZoomLevelChange: (nextLevel: number) => void;
   onGitCacheCleanupDaysChange: (nextDays: number) => void;
@@ -40,7 +38,6 @@ type SettingsPageProps = {
 
 const SettingsPage = ({
   isTauri,
-  language,
   storagePath,
   gitCacheCleanupDays,
   gitCacheTtlSecs,
@@ -48,7 +45,6 @@ const SettingsPage = ({
   themePreference,
   zoomLevel,
   onPickStoragePath,
-  onToggleLanguage,
   onThemeChange,
   onZoomLevelChange,
   onGitCacheCleanupDaysChange,
@@ -152,37 +148,6 @@ const SettingsPage = ({
         <div className="detail-skill-name">{t("settings")}</div>
       </div>
       <div className="settings-page-body">
-        <div className="settings-field">
-          <label className="settings-label" htmlFor="settings-language">
-            {t("interfaceLanguage")}
-          </label>
-          <div className="settings-select-wrap">
-            <select
-              id="settings-language"
-              className="settings-select"
-              value={language}
-              onChange={(event) => {
-                if (event.target.value !== language) {
-                  onToggleLanguage();
-                }
-              }}
-            >
-              <option value="en">{t("languageOptions.en")}</option>
-              <option value="zh">{t("languageOptions.zh")}</option>
-            </select>
-            <svg
-              className="settings-select-caret"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              aria-hidden="true"
-            >
-              <path d="M6 9l6 6 6-6" />
-            </svg>
-          </div>
-        </div>
-
         <div className="settings-field">
           <label className="settings-label" id="settings-theme-label">
             {t("themeMode")}

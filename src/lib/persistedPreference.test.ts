@@ -7,7 +7,6 @@ import {
 import {
   groupByRepoPreference,
   ignoredUpdateVersionPreference,
-  languagePreference,
   projectsGroupByRepoPreference,
   showHiddenPreference,
   themePreference,
@@ -116,7 +115,6 @@ describe("unionPreference", () => {
 
 describe("app preference keys", () => {
   it("keeps every migrated storage key byte-identical", () => {
-    expect(languagePreference.key).toBe("skills-language");
     expect(groupByRepoPreference.key).toBe("skills-groupByRepo");
     expect(viewModePreference.key).toBe("skills-viewMode");
     expect(projectsGroupByRepoPreference.key).toBe(

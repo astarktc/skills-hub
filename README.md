@@ -5,7 +5,6 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 ## Documentation
 
 - English (default): `README.md` (this file)
-- 中文：[`docs/README.zh.md`](docs/README.zh.md)
 
 ## Key Features
 

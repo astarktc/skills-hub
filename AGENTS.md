@@ -111,7 +111,8 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   `pub(crate)` `*_unlocked` seams. The guard is non-reentrant, so **an entry point never calls another
   entry point** — composites call the unlocked seam. Readers that must not queue use `try_serialized`:
   the project listing's reconcile pass takes that door and reports `reconciled: false`.
-- **UI strings**: add keys to **both** `en` and `zh` in `src/i18n/resources.ts`. No hardcoded UI text.
+- **UI strings**: add keys to `en` in `src/i18n/resources.ts`; EN only (BACKLOG #61). No hardcoded UI text.
+  `src/i18n/resources.test.ts` fails on any literal `t("…")` key missing from `en`.
 - **New `core/` module**: declare it in `src-tauri/src/core/mod.rs`.
 - **DB schema change**: consider `migrate_legacy_db_if_needed` in `core/skill_store.rs` — a migration path exists.
 
@@ -277,7 +278,7 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   `true` (Cursor was copy-only until Cursor 2.5 fixed `~/.cursor/skills` symlink discovery — flipped in v-next
   ticket 38; the flag is the revert lever if a tool regresses). A capability describes **one entry**: a virtual
   group's capability is its own registry fact, not the AND of its constituents (decision: v-next ticket 36).
-- Never commit `.claude/`, `.agents/`, `.mcp.json`, or `docs/conversation-logs/` (all gitignored). `.scratch/` **is**
+- Never commit `.claude/`, `.agents/`, `.pi/`, `.mcp.json`, or `docs/conversation-logs/` (all gitignored). `.scratch/` **is**
   tracked; its `**/evidence/`, `**/worktrees/`, `*.log` and `*.diff` are not.
 - Removal goes through `artifact_removal`: `sync_engine::remove_path_any` is called only from that module, from
   `onboarding_import`'s original-removal step (paired with `ensure_path_within_tool_dirs`), and inside

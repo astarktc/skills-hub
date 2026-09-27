@@ -3,45 +3,62 @@ import { describe, expect, it } from "vitest";
 import { resources } from "./resources";
 
 /**
- * Locale parity guard: every user-facing string must exist in both catalogs.
+ * Catalog completeness guard: the UI is EN only (BACKLOG #61), so the one
+ * thing that can drift is a `t("…")` call naming a key the `en` catalog does
+ * not carry — i18next would render the raw key path instead of failing.
  *
- * i18next silently falls back to `en` for a missing `zh` key, so a divergence
- * ships as English text to a Chinese user instead of failing anywhere — this
- * test is the only enforcement (`errors.skillNotFoundInRepo` and the whole
- * `projects` namespace were EN-only until ticket 33).
+ * The scan covers every literal first argument of a `t(` call in `src/`
+ * (`t(…)`, `ctx.t(…)`, multi-line calls included). Template-literal keys
+ * (`t(\`tools.${key}\`)`) cannot be checked statically and are skipped.
  */
-function keyPaths(value: unknown, prefix = ""): string[] {
-  if (value === null || typeof value !== "object") return [prefix];
-  return Object.entries(value as Record<string, unknown>).flatMap(([key, v]) =>
-    keyPaths(v, prefix ? `${prefix}.${key}` : key),
-  );
+const sources = import.meta.glob<string>(
+  ["../**/*.{ts,tsx}", "!../**/*.test.{ts,tsx}", "!../bindings/**"],
+  { query: "?raw", import: "default", eager: true },
+);
+
+const T_CALL = /\bt\(\s*(["'])([^"'`$\s]+)\1/g;
+
+/** Resolve a dotted key; a plural key resolves through its `_one`/`_other` forms. */
+function hasKey(key: string): boolean {
+  let node: unknown = resources.en.translation;
+  const parts = key.split(".");
+  for (const [i, part] of parts.entries()) {
+    if (node === null || typeof node !== "object") return false;
+    const record = node as Record<string, unknown>;
+    if (part in record) {
+      node = record[part];
+      continue;
+    }
+    const isLast = i === parts.length - 1;
+    return isLast && (`${part}_one` in record || `${part}_other` in record);
+  }
+  return typeof node === "string";
 }
 
-const enKeys = keyPaths(resources.en.translation).sort();
-const zhKeys = keyPaths(resources.zh.translation).sort();
+function usedKeys(): Map<string, string> {
+  const keys = new Map<string, string>();
+  for (const [file, text] of Object.entries(sources)) {
+    for (const match of text.matchAll(T_CALL)) {
+      if (!keys.has(match[2])) keys.set(match[2], file);
+    }
+  }
+  return keys;
+}
 
-describe("i18n catalogs", () => {
-  it("has identical key sets in en and zh", () => {
-    const zhSet = new Set(zhKeys);
-    const enSet = new Set(enKeys);
-    expect({
-      missingInZh: enKeys.filter((k) => !zhSet.has(k)),
-      missingInEn: zhKeys.filter((k) => !enSet.has(k)),
-    }).toEqual({ missingInZh: [], missingInEn: [] });
+describe("i18n catalog", () => {
+  it("scans the source tree", () => {
+    // Guards the glob itself: an empty scan would make the next test vacuous.
+    expect(usedKeys().size).toBeGreaterThan(100);
   });
 
-  it("carries copy for every error key referenced by describeCommandError", () => {
-    // Spot-check the variants typed in ticket 33 (the compiler guards the
-    // code union; nothing guards that the i18n keys exist).
-    for (const key of [
-      "errors.unknownTool",
-      "errors.invalidPathMissing",
-      "errors.invalidPathNotADirectory",
-      "errors.invalidPath",
-      "projects.notFoundError",
-    ]) {
-      expect(enKeys, `en is missing ${key}`).toContain(key);
-      expect(zhKeys, `zh is missing ${key}`).toContain(key);
-    }
+  it("carries every literal t() key used in src/", () => {
+    const missing = [...usedKeys()]
+      .filter(([key]) => !hasKey(key))
+      .map(([key, file]) => `${key} (${file})`);
+    expect(missing).toEqual([]);
+  });
+
+  it("ships only the en catalog", () => {
+    expect(Object.keys(resources)).toEqual(["en"]);
   });
 });
