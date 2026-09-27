@@ -9,7 +9,7 @@ Spec: `.scratch/round18/spec.md` — D4, ticket 04.
   table). Add `src/fixtures/` with a `FixtureBackend` implementing **every** command name as a typed handler over an
   in-memory catalog (`satisfies Record<CommandName, …>` so a new command fails `npm run build`). Mutations mutate the
   catalog and answer the real report/view shapes (`{ report, skills }`, `ProjectViewDto`, `RemovalReport`, …);
-  the five `Channel`-streaming commands emit simulated progress events on a timer. `TARGET_EXISTS` rows, failures
+  the four `Channel`-streaming commands emit simulated progress events on a timer. `TARGET_EXISTS` rows, failures
   and skips must be producible so the overwrite ask and report folds fire.
 - Scenarios via `?scenario=rich|empty|first-run|failures` (default `rich`), built from `.scratch/round18/prototypes/
   BRIEF.md`'s fixture roster (60 skills, 7 tools, 3 projects) so prototypes and app show the same library.
@@ -25,7 +25,7 @@ Spec: `.scratch/round18/spec.md` — D4, ticket 04.
 
 ## Result
 
-Implemented (not committed). `npm run dev:fixture` serves the whole app on `http://localhost:5175/?scenario=…`
+Implemented in `5a72ebe`. `npm run dev:fixture` serves the whole app on `http://localhost:5175/?scenario=…`
 against an in-memory library; every surface was walked and captured in both themes with the t3 `preview_*` tools.
 
 ### What changed
@@ -143,3 +143,33 @@ pr-review … rate limit … (+10 more)", 17 notifications.
 5. `global_selected_tools_corrupt` (startup warning + `SETTING_CORRUPT`) is not in any scenario — it would block
    every sync; add a `?corrupt=1` flag if a reviewer needs that state.
 
+
+## Review fixes
+
+Settles `.scratch/round18/review/ticket-04-review.md` (S1–S7, N1, N2) plus the two fixture gaps the ticket-07 flow
+review raised (`.scratch/round18/review/flows.md` § Fixture gaps found: F2, F4). Only `src/fixtures/**` changed. Where a
+choice was needed the Rust producer was read and mirrored; it is named per row. Where this section conflicts with the
+§ Result prose above ("links skip, copies/errored rows re-materialise", "cancels a running Refresh (`CANCELLED`)"),
+this section wins.
+
+| Finding | Change (Rust producer mirrored) | Regression (`src/fixtures/backend.test.ts`) |
+| --- | --- | --- |
+| **S1** re-assert failures dropped | `reassert` runs the real `syncBatch` over `effectiveTargets()` minus the Tools already in Propagation's global outcomes (not intersected with detection), same-content policy, and converts outcomes: `TOOL_NOT_INSTALLED` → skipped `tool_not_installed`, any other skip (unwritable) → failed, failed → failed. `settleTargets` merges them into Refresh, Update **and** Re-point (`refresh.rs` `reassert_auto_sync_unlocked` / `merge_reassert`). Also closes the flows.md gap "re-assert does not produce `TARGET_EXISTS`" (prisma-review → Cursor). | *S1*: rich Update `zod-schema-first` → Cursor `TARGET_EXISTS` row, real `refreshOutcome` fold is not `success`; failures `prisma-review` → Windsurf skipped, Amp failed `TOOL_NOT_WRITABLE` once (no Kimi row), Cursor `TARGET_EXISTS`; Re-point merges re-assert rows. |
+| **S2** import deleted originals before takeover | Pre-emptive `dropForeign` loop removed. Auto-sync on leaves originals in place; the global batch's same-content replacement takes identical ones over (`replaced: true`), a failed/skipped target's original survives. Auto-sync off settles originals per variant in plan order: gone → removed, divergent → kept, unwritable → failed, else removed (`onboarding_import.rs` `sync_imported_unlocked` / `settle_original`). | *keeps an original whose takeover failed*: failures `commit-message` from Codex, tools `["codex"]` → forced `["amp"]`, Codex synced `replaced: true`, Amp skipped `TOOL_NOT_WRITABLE`, next plan still lists the Amp variant. |
+| **S3** import bypassed selection/dedupe | Tools = `policy.tools ?? effectiveTargets()` (a saved selection, empty included, is honoured) + forced identical Tools appended, through one `syncBatch` without a progress sink — shared-dir dedupe applies. Admission refusal for an unknown variant is now `NOT_FOUND onboarding_variant` (was `INVALID_PATH`), as `admit` raises it. | *saved non-empty selection* (pdf → `["claude_code"]` only); *saved empty selection* (tdd → only its identical Tools, all forced); *one report row per shared dir* (ego-browser, 7 Tools → 6 rows, Amp not Kimi). |
+| **S4** status-based link retry | `needsNewBytes(mode) = mode === "copy"` (every registry Tool supports symlinks) — never the stored status. Global rows handled per shared-dir group: absent members → `tool_not_installed`, no copy in the group → `link_follows_source` for all, else one write settling every member (failure = the sync engine's io error → `OTHER` permission-denied, not the batch's `TOOL_NOT_WRITABLE`; missing central → `INVALID_PATH missing`). Project rows: unknown tool / unavailable project / link skip, else sync (`propagation.rs` `needs_new_bytes`, `propagate_global_rows`, `propagate_one_assignment`). Seeds: rich `using-git-worktrees` Amp/Kimi errored rows are now **copies** (Refresh repairs them — the scenario's intent); failures `tdd` Amp/Kimi errored rows are copies (Propagation retries and fails them); failures `using-git-worktrees`' errored rows stay links. `SkillSpec.copyTools` added. | The old rich Refresh test's "every row synced" assertion is replaced by *re-materialises errored copies on Update; links follow the source* (copies synced, synced links skipped) and *leaves errored links alone and retries (and fails) errored copies* (failures: link rows `link_follows_source` and still `error`; tdd copies failed `OTHER`, still `error`). |
+| **S5** cancellation contract | Cancel flag reset at **operation entry** (Refresh/Update, Re-point, Git install, Explore clone — the four commands that `cancel.reset()`). Refresh stops dispatching once a cancel is observed and, if observed, applies nothing and answers every selected skill `failed CANCELLED` followed by the pre-settled skips (`refresh.rs` 217–237). Re-point: cancel observed at its acquisition → `CANCELLED` report row, source untouched (it runs through `refresh_managed_skills_with`). Git install / Explore clone: typed rejection `{ code: "CANCELLED" }`. | *S5* block, deterministic via an injected sleep armed to cancel on its n-th call: entry reset; early cancel (per-skill `CANCELLED`, skips last, no ticks, catalog unchanged); mid-acquisition cancel (two acquiring ticks, no apply, catalog unchanged); Update and Re-point `CANCELLED` rows with the skill unchanged; Git install and Explore clone reject `CANCELLED`, nothing installed. |
+| **S6** Git Add ignored the name | `installGitSelection(repoUrl, subpath, name)` finalizes `name ?? candidate.name`; the collision check sees the explicit name. | *finalizes under the explicit name, and collides on it* (`my-custom-name` returned and listed; `My-Custom-Name` → `SKILL_EXISTS`; `null` → manifest name). |
+| **S7** hashes contradict reconcile | `recordedHash(mode, status, current)` in `model.ts`: only a copy records a hash; synced/missing copy = current, stale copy = a distinct previous hash, pending/error/link = null. `syncAssignment` records null (every fixture sync lands a symlink) (`sync_status::next_status`, `project_sync::sync_assignment_target`). | `expectRecordedHashes` runs in every scenario's wire-invariant test and again after rich's Refresh-all: link/pending → null, synced copy = current, stale = non-null ≠ current. |
+| **N1** progress overstated | Refresh: acquiring ticks on completion; an acquisition failure (incl. `NOT_REFRESHABLE`, `SOURCE_PATH_MISSING`) gets no applying tick; admission skips (`skipped_acquisition`) and conflicts are apply-phase. Import: `admit` (group/variant lookup) before the applying tick; finalize failures (`SKILL_INVALID`, `SKILL_EXISTS`) still tick applying, as in `import_onboarding_selection`. Report order now matches Rust (dispatched outcomes, then skips). | *N1* block: failures Refresh applying ticks = exactly the skills that reached apply; failures import sequence `broken-skill:admitting, :applying, vanished:admitting, sql-review:admitting, :applying`. |
+| **N2** ticket wording | "five" → **four** `Channel` commands; "not committed" → implemented in `5a72ebe`. | — |
+| **F2** removal ignored unwritability | Artifact removal mirrors `artifact_removal::execute_unlocked`: one presence rule (global rows present; assignments present when `synced`/`stale` in an existing folder — a never-deployed row is removed trivially), one settlement rule — a present artifact under a locked path **or an unwritable parent dir** fails and its rows are kept `error`. Failures `prj-monorepo` gains a deployed `release-train` × `.agents/skills` assignment (the unwritable project tool). | *unsync from a shared unwritable dir* (docx × Amp → one failed target carrying Amp + Kimi rows, both kept `error`); *remove_project keeps the project and the row whose artifact stayed*. |
+| **F4** conflict data disagreed | The seed now holds one fact — `acquisition.upstreamInvocation` (what the source's manifest declares); `editConflict` is gone. Update replays the Edit by `skill_edits::replay_unlocked`: conflict iff upstream ≠ base and ≠ Edit; flag = upstream ≠ Edit ∧ (flag ∨ conflict); recorded base := upstream. `design-tokens` seeds an unconflicted Edit (user-only on user-and-model) with upstream now model-only, so card, detail and report all read model-only after the Update. | *the report's upstream becomes the card's base; the flag persists until convergence* (second, unchanged Update reports no conflict, card unchanged). |
+
+Behavioural consequence for demos: rich Refresh-all with re-assert no longer reports "All skills refreshed" — the
+Cursor-occupied `zod-schema-first` settles `TARGET_EXISTS` (as Rust would).
+
+Verification: `npx vitest run src/fixtures` → 36 passed (was 16). Gate `npm run lint && npm run test && npm run build`
+→ exit 0 (17 files / 449 tests). Tree-shake: `rm -rf dist && npm run build && grep -rlE
+"skills-hub-fixture-backend|fixtureInvoke|mockIPC" dist/ ; echo exit=$?` → `exit=1`. The running 5175 server serves
+the edited modules (HTTP 200); not re-walked in the browser.

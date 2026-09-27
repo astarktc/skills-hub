@@ -296,6 +296,7 @@ function rosterSpecs(): SkillSpec[] {
     if (name === "using-git-worktrees") {
       spec.synced = ["cursor", "claude_code", "codex", "pi"];
       spec.errored = ["amp", "kimi_cli"];
+      spec.copyTools = ["amp", "kimi_cli"];
     }
     specs.push(spec);
   }
@@ -315,9 +316,11 @@ function rosterSpecs(): SkillSpec[] {
 function rich(now: number): FixtureState {
   const state = baseState("rich", now);
   state.skills = rosterSpecs().map((spec, i) => makeSkill(spec, now, i));
-  // using-git-worktrees' Kimi/Amp rows failed their last propagation (the
-  // shared dir was read-only then); it is writable now, so a re-sync or
-  // Refresh recovers them. Refresh lands new revisions for a few skills.
+  // using-git-worktrees' Kimi/Amp rows are copies (an earlier symlink → copy
+  // fallback) whose last propagation failed (the shared dir was read-only
+  // then); it is writable now, so a Refresh re-materialises them. Only
+  // copies are rewritten by Propagation — an errored *link* row is left alone
+  // (`needs_new_bytes`). Refresh lands new revisions for a few skills.
   for (const name of ["using-git-worktrees", "vitest-migration", "tdd", "t3-orchestration", "react-perf-audit"]) {
     const skill = state.skills.find((s) => s.dto.name === name);
     if (skill) skill.acquisition.upstreamChanged = true;
@@ -451,7 +454,11 @@ function failures(now: number): FixtureState {
   );
   const git = (repo: string) => ({ kind: "git" as const, repo });
   const specs: SkillSpec[] = [
-    { name: "tdd", description: "Red-green-refactor, one failing test at a time", source: git("obra/superpowers"), synced: without("amp", "kimi_cli"), errored: ["amp", "kimi_cli"] },
+    // tdd's Amp/Kimi rows are copies in the unwritable shared dir: every
+    // Propagation retries and fails them. using-git-worktrees' errored rows
+    // are links: Propagation skips them (`link_follows_source`), a re-sync is
+    // the operator's repair.
+    { name: "tdd", description: "Red-green-refactor, one failing test at a time", source: git("obra/superpowers"), synced: without("amp", "kimi_cli"), errored: ["amp", "kimi_cli"], copyTools: ["amp", "kimi_cli"] },
     { name: "using-git-worktrees", description: "Isolate feature work in git worktrees", source: git("obra/superpowers"), synced: ["claude_code", "codex", "pi"], errored: ["amp", "kimi_cli", "cursor"] },
     { name: "frontend-design", description: "Build distinctive, production-grade frontend interfaces", source: git("anthropics/skills"), synced: without("amp", "kimi_cli"), acquisition: { upstreamChanged: true } },
     { name: "docx", description: "Create and edit Word documents with tracked changes", source: git("anthropics/skills"), synced: ALL, unlocatable: "central_missing" },
@@ -462,7 +469,10 @@ function failures(now: number): FixtureState {
     { name: "corp-conventions", description: "Company coding conventions", source: git("corp/private-skills"), synced: ["claude_code", "cursor"], acquisition: { fail: { code: "GIT_CLONE_FAILED", kind: "auth", detail: "fatal: Authentication failed for 'https://github.com/corp/private-skills/'" } } },
     { name: "mirror-tools", description: "Tools mirrored from an internal host", source: git("corp/mirror-tools"), synced: ["claude_code"], acquisition: { fail: { code: "GIT_CLONE_FAILED", kind: "tls", detail: "SSL certificate problem: self-signed certificate in certificate chain" } } },
     { name: "alias-skill", description: "Upstream points this skill at a path outside the repo", source: git("some-org/aliases"), synced: ["claude_code"], acquisition: { fail: { code: "SYMLINK_ESCAPES_REPO", subpath: "skills/alias-skill", target: "/etc/passwd" } } },
-    { name: "design-tokens", description: "Keep design tokens in sync across platforms", source: git("some-org/design-tokens"), synced: without("amp", "kimi_cli"), override: { mode: "user-only", conflict: true }, acquisition: { upstreamChanged: true, editConflict: { base_mode: "user-and-model", upstream_mode: "model-only", override_mode: "user-only" } } },
+    // An Edit (user-only) on a base of user-and-model; upstream now declares
+    // model-only, so the next Update reports the Edit conflict and records
+    // model-only as the base — card and report read the same upstream.
+    { name: "design-tokens", description: "Keep design tokens in sync across platforms", source: git("some-org/design-tokens"), synced: without("amp", "kimi_cli"), override: { mode: "user-only" }, acquisition: { upstreamChanged: true, upstreamInvocation: "model-only" } },
     { name: "flaky-upstream", description: "Upstream force-pushes during every refresh", source: git("some-org/flaky"), synced: ["claude_code", "codex"], acquisition: { skip: "stale_acquisition" } },
     { name: "store-hiccup", description: "Refreshes fine, then the re-assert hits a locked database", source: git("some-org/hiccup"), synced: ["claude_code"], acquisition: { upstreamChanged: true, reassertError: { code: "OTHER", message: "database is locked" } } },
     { name: "release-train", description: "Cut and ship a release train", source: git("acme/release-train"), synced: ["claude_code", "codex", "pi"], mode: "copy" },
@@ -486,6 +496,9 @@ function failures(now: number): FixtureState {
           { skill: "frontend-design", tool: "claude_code", status: "stale" },
           { skill: "frontend-design", tool: "windsurf", status: "missing", mode: "copy" },
           { skill: "release-train", tool: "claude_code", status: "pending" },
+          // Deployed before .agents/skills went read-only: removing the
+          // project (or unassigning it) fails and keeps the row (ADR-0002).
+          { skill: "release-train", tool: "agents_skills" },
           { skill: "docx", tool: "claude_code", status: "missing" },
           { skill: "design-tokens", tool: "claude_code", status: "stale" },
         ],

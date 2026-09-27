@@ -12,7 +12,6 @@ import type {
   CommandError,
   FeaturedSkillDto,
   GitignoreStatusDto,
-  InvocationEditConflict,
   InvocationMode,
   LocalSkillCandidate,
   ManagedSkillDto,
@@ -46,8 +45,12 @@ export type FixtureSkill = {
     upstreamChanged?: boolean;
     /** The auto-sync re-assert hits a store failure. */
     reassertError?: CommandError;
-    /** Upstream changed the Edited field to something else. */
-    editConflict?: InvocationEditConflict;
+    /**
+     * The invocation mode the source's manifest declares (default: the
+     * skill's current base). The one source of truth for Edit replay: the
+     * Refresh conflict row and the card's `base_mode` both derive from it.
+     */
+    upstreamInvocation?: InvocationMode;
   };
 };
 
@@ -308,6 +311,12 @@ export type SkillSpec = {
   /** Tools whose global target row is `error` (a failed propagation or removal). */
   errored?: string[];
   mode?: SyncMode;
+  /**
+   * Tools whose row is a `copy` (an earlier symlink → copy fallback), whatever
+   * `mode` says. Only copies need new bytes on Propagation (`needs_new_bytes`),
+   * so these are the rows a Refresh can repair — or fail on.
+   */
+  copyTools?: string[];
   invocation?: InvocationMode;
   /** An Edit of the invocation mode (`base` = what upstream says). */
   override?: { mode: InvocationMode; conflict?: boolean };
@@ -338,7 +347,7 @@ export function makeSkill(spec: SkillSpec, now: number, index: number): FixtureS
   const targets: SkillTargetDto[] = [];
   const row = (tool: string, status: SyncStatus): SkillTargetDto => ({
     tool,
-    mode: spec.mode ?? "symlink",
+    mode: spec.copyTools?.includes(tool) ? "copy" : (spec.mode ?? "symlink"),
     status,
     target_path: `${globalRoot(tool)}/${spec.name}`,
     synced_at: status === "synced" ? syncedAt : null,
@@ -410,21 +419,35 @@ export function makeProject(
       const skill = skills.find((s) => s.dto.name === a.skill);
       if (!skill) throw new Error(`fixture: unknown skill ${a.skill}`);
       const status = a.status ?? "synced";
+      const mode = a.mode ?? (status === "stale" ? "copy" : "symlink");
       return {
         id: `${spec.id}-asg-${i + 1}`,
         project_id: spec.id,
         skill_id: skill.dto.id,
         skill_name: skill.dto.name,
         tool: a.tool,
-        mode: a.mode ?? (status === "stale" ? "copy" : "symlink"),
+        mode,
         status,
         last_error: status === "error" ? (a.lastError ?? "sync failed") : null,
         synced_at: status === "pending" || status === "error" ? null : now - (5 + i) * HOUR,
-        content_hash: skill.contentHash || null,
+        content_hash: recordedHash(mode, status, skill.contentHash),
         created_at: created + i * HOUR,
       };
     }),
   };
+}
+
+/**
+ * The content identity a project assignment row records (Rust
+ * `project_sync::sync_assignment_target` + `sync_status::next_status`): only a
+ * copy records a hash — a link follows the central copy and records none; a
+ * row that never synced (pending/error) has none; a `stale` copy recorded a
+ * hash that differs from the current central one (that difference *is* the
+ * drift); every other deployed copy recorded the current one.
+ */
+export function recordedHash(mode: SyncMode, status: SyncStatus, current: string): string | null {
+  if (mode !== "copy" || status === "pending" || status === "error" || !current) return null;
+  return status === "stale" ? fingerprint(`${current}:previous revision`) : current;
 }
 
 export function defaultSettings(
