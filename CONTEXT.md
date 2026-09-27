@@ -28,6 +28,10 @@ _Avoid_: member tools, sub-tools
 Global tools whose skills directories resolve to the same location, so syncing to one member syncs to all. Owned by the backend; the frontend only presents it.
 _Avoid_: dir alias, linked tools
 
+**Former skills dir**:
+A global skills directory the registry once named for a Tool and has since corrected (Augment: `~/.augment/rules`, its rules dir, until 1.2.18; now `~/.augment/skills`). A registry fact per entry (`ToolAdapter::former_relative_skills_dirs`), empty for almost every Tool. Never scanned, never synced into; **Target relocation** (`core/target_relocation.rs`, once per launch under the Mutation guard) moves each global Sync target still recorded directly inside one into the current dir from the central copy — replacing an existing artifact there only when byte-identical — settles the row at the new path and removes the superseded artifact through `artifact_removal`'s fenced seam; an absent old artifact, a missing central copy or foreign bytes at the new path leave the row where it is, logged, retried next launch. A former dir stays inside the deletion rule so such a row can always be unsynced.
+_Avoid_: legacy path, old dir, migration (that word is the DB's)
+
 **Tool catalog**:
 The presentation-ready tool list for one scope (global or project) with installedness, shared-dir groups and virtual-group constituents already resolved against the operator's home. Assembled by the backend (`tool_adapters::global_tool_entries` / `project_tool_entries`); commands only map it to DTOs.
 _Avoid_: tool status (that's the DTO carrying a catalog), tool list

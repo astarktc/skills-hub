@@ -47,13 +47,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::core::{
-    errors::CommandError,
+    errors::{CommandError, SignalError},
     mutation_guard,
     project_sync::resolve_assignment_artifact,
     skill_store::{AssignmentTransition, ProjectRecord, SkillRecord, SkillStore, TargetTransition},
     sync_engine::remove_path_any,
     tool_adapters::{
-        adapter_by_key, adapters_sharing_skills_dir, ensure_path_within_tool_dirs, is_installed_in,
+        adapter_by_key, adapters_sharing_skills_dir, ensure_path_within_tool_dirs,
+        former_skills_dirs_in, is_installed_in, ToolAdapter,
     },
 };
 
@@ -590,6 +591,34 @@ fn settle_row_as_error(store: &SkillStore, row: &RowRef, error: &str) -> Result<
             store.transition_assignment(id, AssignmentTransition::SyncFailed { error })
         }
     }
+}
+
+/// Remove an artifact a global Sync target *used to* occupy, after its row
+/// was settled at the Tool's current skills dir (`core::target_relocation`).
+/// No row is touched: the row already describes the new artifact, so there
+/// is nothing to settle here — a failure is the caller's to log.
+///
+/// Fenced to `adapter`'s **former** skills dirs, the only place a relocation
+/// leaves an artifact behind; anything else is refused as
+/// `PathOutsideToolDirs`. Presence follows the module rule. Unlocked
+/// internal seam.
+pub(crate) fn remove_superseded_artifact_unlocked(
+    home: &Path,
+    adapter: &ToolAdapter,
+    path: &Path,
+) -> Result<()> {
+    let fenced = former_skills_dirs_in(home, adapter)
+        .iter()
+        .any(|dir| path.parent() == Some(dir.as_path()));
+    if !fenced {
+        anyhow::bail!(SignalError::PathOutsideToolDirs {
+            path: path.to_string_lossy().into_owned(),
+        });
+    }
+    if is_present(path) {
+        remove_path_any(path)?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

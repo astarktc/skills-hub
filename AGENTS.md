@@ -92,7 +92,8 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   review the `src/bindings/index.ts` diff for shape changes, then `npm run build`.
 - **New AI tool adapter**: add the `ToolId` variant (+ its `as_key` arm) and one `ToolAdapter` literal in
   the `TOOL_ADAPTERS` registry (`core/tool_adapters/mod.rs`) — every per-tool fact lives in that literal
-  (global/detect/project dirs, `group` for virtual-group membership, `supports_symlink`), **and** add a row
+  (global/detect/project dirs, `former_relative_skills_dirs` — usually `&[]`; a corrected global dir goes there so
+  Target relocation moves existing targets — `group` for virtual-group membership, `supports_symlink`), **and** add a row
   to the README supported-tools table, **and** extend the `project_relative_skills_dir_for_every_tool`
   table test (`core/tests/tool_adapters.rs`). Only `as_key`'s exhaustive match is compiler-enforced; registry
   completeness is test-enforced and the README table is not enforced at all — check it matches the `ToolId` variant

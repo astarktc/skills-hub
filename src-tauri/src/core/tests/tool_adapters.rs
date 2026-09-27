@@ -3,8 +3,8 @@ use std::fs;
 use crate::core::errors::SignalError;
 use crate::core::tool_adapters::{
     adapter_by_key, adapters_sharing_skills_dir, constituents_of, default_tool_adapters,
-    detect_dirs_in, ensure_path_within_tool_dirs, is_installed_in, scan_tool_dir, skills_dir_in,
-    tool_holding_path, ToolAdapter, ToolId, VirtualGroup,
+    detect_dirs_in, ensure_path_within_tool_dirs, former_skills_dirs_in, is_installed_in,
+    scan_tool_dir, skills_dir_in, tool_holding_path, ToolAdapter, ToolId, VirtualGroup,
 };
 
 #[test]
@@ -227,6 +227,7 @@ fn scan_tool_dir_skips_codex_system_and_includes_symlink_dir() {
         display_name: "Codex",
         group_label: None,
         relative_skills_dir: "ignored",
+        former_relative_skills_dirs: &[],
         relative_detect_dirs: &["ignored"],
         project_relative_skills_dir: "ignored",
         group: None,
@@ -260,6 +261,7 @@ fn scan_tool_dir_skips_app_support_path() {
         display_name: "Cursor",
         group_label: None,
         relative_skills_dir: "ignored",
+        former_relative_skills_dirs: &[],
         relative_detect_dirs: &["ignored"],
         project_relative_skills_dir: "ignored",
         group: None,
@@ -411,9 +413,57 @@ fn registry_keys_are_unique() {
     assert_eq!(keys.len(), n);
 }
 
+/// Augment's global skills dir is `~/.augment/skills` (docs.augmentcode.com/
+/// cli/skills, "Skill Locations"; add-skill agrees). `~/.augment/rules` is its
+/// *rules* dir; Skills Hub synced there until 1.2.18, so it is recorded as
+/// the former dir the startup relocation moves targets out of (#43).
+#[test]
+fn augment_global_skills_dir_is_augment_skills_and_rules_is_former() {
+    let home = tempfile::tempdir().unwrap();
+    let augment = adapter_by_key("augment").expect("augment adapter");
+    assert_eq!(
+        skills_dir_in(home.path(), augment),
+        home.path().join(".augment/skills")
+    );
+    assert_eq!(
+        former_skills_dirs_in(home.path(), augment),
+        vec![home.path().join(".augment/rules")]
+    );
+    assert_eq!(
+        detect_dirs_in(home.path(), augment),
+        vec![home.path().join(".augment")]
+    );
+    assert_eq!(augment.project_relative_skills_dir, ".augment/skills");
+}
+
+/// A former dir is a registry fact about a *correction*: it must never be a
+/// live skills dir of any Tool (relocation would then move a healthy target).
+#[test]
+fn no_former_skills_dir_is_a_current_skills_dir() {
+    for adapter in default_tool_adapters() {
+        for former in adapter.former_relative_skills_dirs {
+            assert!(
+                default_tool_adapters()
+                    .iter()
+                    .all(|a| a.relative_skills_dir != *former),
+                "{}'s former dir {former} is still some Tool's skills dir",
+                adapter.key()
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The deletion safety rule (`ensure_path_within_tool_dirs`)
 // ---------------------------------------------------------------------------
+
+#[test]
+fn a_path_inside_a_former_tool_skills_dir_is_allowed() {
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join(".augment/rules/some-skill");
+    ensure_path_within_tool_dirs(home.path(), &path)
+        .unwrap_or_else(|err| panic!("a former dir artifact is ours to remove: {err:#}"));
+}
 
 #[test]
 fn a_path_inside_any_tool_skills_dir_is_allowed() {

@@ -128,6 +128,25 @@ pub fn run() {
                 }
                 Err(err) => log::warn!("failed to resolve central repo path: {}", err),
             }
+            // Once per launch: global targets still recorded in a Tool's
+            // former skills dir (Augment's `~/.augment/rules` before 1.2.18)
+            // move to its current one. Idempotent; logs every row it moves or
+            // has to leave in place.
+            match core::environment::home_dir().and_then(|home| {
+                core::target_relocation::relocate_former_global_targets(
+                    &store,
+                    &home,
+                    core::clock::now_ms(),
+                )
+            }) {
+                Ok(summary) if summary.relocated + summary.left_in_place > 0 => log::info!(
+                    "target relocation: {} moved, {} left in place",
+                    summary.relocated,
+                    summary.left_in_place
+                ),
+                Ok(_) => {}
+                Err(err) => log::warn!("target relocation failed: {}", err),
+            }
             app.manage(store.clone());
             app.manage(Arc::new(CancelToken::new()));
 

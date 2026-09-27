@@ -40,6 +40,7 @@ pub mod skill_update;
 pub mod skills_search;
 pub mod sync_engine;
 pub mod sync_status;
+pub mod target_relocation;
 pub mod temp_cleanup;
 pub mod tool_adapters;
 pub mod unlocatable;
