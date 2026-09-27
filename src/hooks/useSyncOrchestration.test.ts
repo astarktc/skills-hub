@@ -79,7 +79,7 @@ function appSettings(overrides?: Partial<AppSettings>): AppSettings {
     central_repo_path: "/tmp/central",
     git_cache_cleanup_days: 30,
     git_cache_ttl_secs: 60,
-    github_token: "",
+    github_token_set: false,
     auto_sync_enabled: true,
     global_selected_tools: null,
     global_selected_tools_corrupt: false,

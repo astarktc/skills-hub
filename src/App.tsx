@@ -337,7 +337,7 @@ function App() {
             onGitCacheTtlSecsChange={settings.handleGitCacheTtlSecsChange}
             onClearGitCacheNow={settings.handleClearGitCacheNow}
             onOpenLogFolder={settings.handleOpenLogFolder}
-            githubToken={settings.githubToken}
+            githubTokenSet={settings.githubTokenSet}
             onGithubTokenChange={settings.handleGithubTokenChange}
             onBack={handleCloseSettings}
             t={t}

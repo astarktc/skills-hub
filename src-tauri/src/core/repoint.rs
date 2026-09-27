@@ -23,6 +23,7 @@ use std::path::Path;
 use anyhow::Result;
 
 use super::cancel_token::CancelToken;
+use super::credentials::CredentialStore;
 use super::environment::expand_home_path_in;
 use super::errors::SignalError;
 use super::git_acquisition::{parse_full_github_url, GithubApi, HttpGithubApi};
@@ -56,6 +57,7 @@ pub enum RepointTarget {
 pub fn repoint_skill_source(
     paths: &InstallerPaths,
     store: &SkillStore,
+    credentials: &dyn CredentialStore,
     skill_id: &str,
     target: RepointTarget,
     policy: RefreshPolicy,
@@ -63,7 +65,7 @@ pub fn repoint_skill_source(
     now: i64,
     on_progress: impl FnMut(RefreshProgress),
 ) -> Result<RefreshReport> {
-    let token = super::settings::github_token_or_none(store);
+    let token = super::settings::github_token_or_none(credentials);
     repoint_skill_source_with(
         paths,
         store,

@@ -90,6 +90,7 @@ fn refresh(f: &Fixture, policy: RefreshPolicy) -> crate::core::refresh::RefreshR
     refresh_managed_skills(
         &f.paths,
         &f.store,
+        &crate::core::credentials::MemoryStore::new(),
         RefreshSelection::All,
         policy,
         None,
@@ -110,6 +111,7 @@ fn a_refreshed_skill_gets_its_new_bytes_and_reports_its_targets() {
     let report = refresh_managed_skills(
         &f.paths,
         &f.store,
+        &crate::core::credentials::MemoryStore::new(),
         RefreshSelection::Ids(vec![f.skill_id.clone()]),
         RefreshPolicy::default(),
         None,
@@ -159,6 +161,7 @@ fn a_skill_that_fails_acquisition_is_reported_and_never_finalized() {
     let report = refresh_managed_skills(
         &f.paths,
         &f.store,
+        &crate::core::credentials::MemoryStore::new(),
         RefreshSelection::Ids(vec![f.skill_id.clone()]),
         RefreshPolicy::default(),
         None,
@@ -725,6 +728,7 @@ fn two_skills_from_one_repository_share_the_cache_without_corrupting_it() {
     let report = refresh_managed_skills(
         &f.paths,
         &f.store,
+        &crate::core::credentials::MemoryStore::new(),
         RefreshSelection::All,
         RefreshPolicy::default(),
         None,
@@ -884,6 +888,7 @@ fn a_single_update_of_an_imported_skill_is_refused_with_a_typed_condition() {
     let report = refresh_managed_skills(
         &f.paths,
         &f.store,
+        &crate::core::credentials::MemoryStore::new(),
         RefreshSelection::Ids(vec![imported_id.clone()]),
         RefreshPolicy::default(),
         None,

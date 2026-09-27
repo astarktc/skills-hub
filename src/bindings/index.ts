@@ -148,8 +148,12 @@ export type AppSettings = {
 	central_repo_path: string,
 	git_cache_cleanup_days: number,
 	git_cache_ttl_secs: number,
-	/**  Empty string when no token is stored. */
-	github_token: string,
+	/**
+	 *  Whether a GitHub token is stored. The secret itself never crosses the
+	 *  wire; a credential store that cannot be read reports `false` (logged)
+	 *  so the rest of Settings still loads.
+	 */
+	github_token_set: boolean,
 	auto_sync_enabled: boolean,
 	/**
 	 *  `None` = never configured (distinct from an empty selection). Keys
@@ -274,6 +278,8 @@ tool: string } | { code: "SETTING_CORRUPT";
 /**  Storage key of the setting that could not be parsed. */
 key: string; 
 /**  Parser diagnostic, not user copy. */
+detail: string } | { code: "CREDENTIAL_STORE_UNAVAILABLE"; 
+/**  The credential store's diagnostic, not user copy. */
 detail: string } | { code: "OTHER"; message: string };
 
 /**
@@ -809,7 +815,7 @@ export type SettingUpdate =
 { key: "git_cache_cleanup_days"; value: number } | 
 /**  Clamped into `GIT_CACHE_TTL_SECS_RANGE`. */
 { key: "git_cache_ttl_secs"; value: number } | 
-/**  Trimmed; blank clears the token. */
+/**  Trimmed and written to the `CredentialStore`; blank clears the token. */
 { key: "github_token"; value: string } | { key: "auto_sync_enabled"; value: boolean } | { key: "global_tool_config"; value: {
 	selected_tools: string[],
 	scan_selected_only: boolean,

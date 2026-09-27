@@ -76,6 +76,7 @@ fn refresh(f: &Fixture, policy: RefreshPolicy) -> RefreshReport {
     refresh_managed_skills(
         &f.paths,
         &f.store,
+        &crate::core::credentials::MemoryStore::new(),
         RefreshSelection::All,
         policy,
         None,
@@ -1182,6 +1183,7 @@ fn imported_to_local_stops_being_imported_and_becomes_refreshable() {
     let batch = refresh_managed_skills(
         &f.paths,
         &f.store,
+        &crate::core::credentials::MemoryStore::new(),
         RefreshSelection::All,
         RefreshPolicy::default(),
         None,

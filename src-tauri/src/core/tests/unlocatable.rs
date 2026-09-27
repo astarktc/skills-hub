@@ -64,6 +64,7 @@ fn update(f: &Fixture) -> RefreshReport {
     refresh_managed_skills(
         &f.paths,
         &f.store,
+        &crate::core::credentials::MemoryStore::new(),
         RefreshSelection::Ids(vec![f.skill_id.clone()]),
         RefreshPolicy::default(),
         None,

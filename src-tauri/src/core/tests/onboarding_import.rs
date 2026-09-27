@@ -826,6 +826,7 @@ fn import_without_a_policy_selection_follows_the_recorded_global_selection() {
     install_tool(&f, "codex");
     crate::core::settings::apply_setting(
         &f.store,
+        &crate::core::credentials::MemoryStore::new(),
         &f.paths.home,
         crate::core::settings::SettingUpdate::GlobalToolConfig {
             selected_tools: vec!["claude_code".to_string()],

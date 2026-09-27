@@ -47,6 +47,7 @@ impl Fixture {
         refresh_managed_skills_core(
             &self.paths,
             &self.store,
+            &crate::core::credentials::MemoryStore::new(),
             RefreshSelection::Ids(vec![self.id.clone()]),
             RefreshPolicy {
                 reassert_auto_sync: reassert,

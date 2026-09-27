@@ -100,6 +100,13 @@ pub enum SignalError {
     /// saving the setting again. `key` is the storage key; `detail` is the
     /// parser's diagnostic, not user copy. Owned by `core::settings`.
     SettingCorrupt { key: String, detail: String },
+    /// The OS credential store (macOS Keychain, Windows Credential Manager,
+    /// Linux Secret Service) refused or could not serve a read/write: a
+    /// locked or denied Keychain prompt, no Secret Service running. The
+    /// operator can cause and repair it; there is never a plaintext
+    /// fallback. `detail` is the store's diagnostic, not user copy. Owned by
+    /// `core::credentials`.
+    CredentialStoreUnavailable { detail: String },
 }
 
 impl fmt::Display for SignalError {
@@ -190,6 +197,9 @@ impl fmt::Display for SignalError {
             }
             SignalError::SettingCorrupt { key, detail } => {
                 write!(f, "stored setting {key} is corrupt: {detail}")
+            }
+            SignalError::CredentialStoreUnavailable { detail } => {
+                write!(f, "OS credential store unavailable: {detail}")
             }
         }
     }
@@ -335,6 +345,10 @@ pub enum CommandError {
         /// Storage key of the setting that could not be parsed.
         key: String,
         /// Parser diagnostic, not user copy.
+        detail: String,
+    },
+    CredentialStoreUnavailable {
+        /// The credential store's diagnostic, not user copy.
         detail: String,
     },
     Other {
@@ -490,6 +504,9 @@ impl From<SignalError> for CommandError {
             }
             SignalError::SettingCorrupt { key, detail } => {
                 CommandError::SettingCorrupt { key, detail }
+            }
+            SignalError::CredentialStoreUnavailable { detail } => {
+                CommandError::CredentialStoreUnavailable { detail }
             }
         }
     }

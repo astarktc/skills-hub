@@ -23,7 +23,8 @@ type SettingsPageProps = {
   bounds: SettingsBounds | null;
   themePreference: "system" | "light" | "dark";
   zoomLevel: number;
-  githubToken: string;
+  /** Whether a token is saved; the secret itself is never read back. */
+  githubTokenSet: boolean;
   onPickStoragePath: () => void;
   onThemeChange: (nextTheme: "system" | "light" | "dark") => void;
   onZoomLevelChange: (nextLevel: number) => void;
@@ -31,7 +32,8 @@ type SettingsPageProps = {
   onGitCacheTtlSecsChange: (nextSecs: number) => void;
   onClearGitCacheNow: () => void;
   onOpenLogFolder: () => void;
-  onGithubTokenChange: (token: string) => void;
+  /** Save (non-blank) or remove (blank); resolves true when it landed. */
+  onGithubTokenChange: (token: string) => Promise<boolean>;
   onBack: () => void;
   t: TFunction;
 };
@@ -51,23 +53,18 @@ const SettingsPage = ({
   onGitCacheTtlSecsChange,
   onClearGitCacheNow,
   onOpenLogFolder,
-  githubToken,
+  githubTokenSet,
   onGithubTokenChange,
   onBack,
   t,
 }: SettingsPageProps) => {
-  const [localToken, setLocalToken] = useState(githubToken);
-  // Sync the local editable copy when the githubToken prop changes, using the
-  // adjust-state-during-render pattern (React docs) instead of an effect so we
-  // don't synchronously setState inside an effect (satisfies
-  // react-hooks/set-state-in-effect). Behavior-preserving: localToken is reset
-  // to githubToken exactly when the prop changes, identical to the prior
-  // effect minus the extra commit.
-  const [prevGithubToken, setPrevGithubToken] = useState(githubToken);
-  if (githubToken !== prevGithubToken) {
-    setPrevGithubToken(githubToken);
-    setLocalToken(githubToken);
-  }
+  // A write-only draft: the saved token is never read back, so the input
+  // starts empty and clears once a save lands.
+  const [tokenDraft, setTokenDraft] = useState("");
+  const saveTokenDraft = useCallback(async () => {
+    if (tokenDraft.trim() === "") return;
+    if (await onGithubTokenChange(tokenDraft)) setTokenDraft("");
+  }, [onGithubTokenChange, tokenDraft]);
 
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
@@ -314,15 +311,34 @@ const SettingsPage = ({
               id="settings-github-token"
               className="settings-input mono"
               type="password"
+              autoComplete="off"
               placeholder={t("githubTokenPlaceholder")}
-              value={localToken}
-              onChange={(e) => setLocalToken(e.target.value)}
-              onBlur={() => {
-                if (localToken !== githubToken) {
-                  onGithubTokenChange(localToken);
-                }
+              value={tokenDraft}
+              onChange={(e) => setTokenDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void saveTokenDraft();
               }}
             />
+            <button
+              className="btn btn-secondary btn-sm"
+              type="button"
+              disabled={tokenDraft.trim() === ""}
+              onClick={() => void saveTokenDraft()}
+            >
+              {t("githubTokenSave")}
+            </button>
+            {githubTokenSet && (
+              <button
+                className="btn btn-secondary btn-sm"
+                type="button"
+                onClick={() => void onGithubTokenChange("")}
+              >
+                {t("githubTokenClear")}
+              </button>
+            )}
+          </div>
+          <div className="settings-helper">
+            {githubTokenSet ? t("githubTokenSet") : t("githubTokenUnset")}
           </div>
           <div className="settings-helper">{t("githubTokenHint")}</div>
         </div>

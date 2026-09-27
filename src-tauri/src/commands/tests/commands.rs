@@ -307,6 +307,7 @@ fn update_outcome_at_the_seam(
     let report = crate::core::refresh::refresh_managed_skills(
         paths,
         store,
+        &crate::core::credentials::MemoryStore::new(),
         crate::core::refresh::RefreshSelection::Ids(vec![skill_id.to_string()]),
         crate::core::refresh::RefreshPolicy::default(),
         None,

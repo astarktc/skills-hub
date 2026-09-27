@@ -533,6 +533,7 @@ fn update_supplies_a_real_hash_to_copy_assignments_and_reconcile_keeps_synced() 
     let report = refresh::refresh_managed_skills(
         &f.paths,
         &f.store,
+        &crate::core::credentials::MemoryStore::new(),
         refresh::RefreshSelection::Ids(vec![f.skill_id.clone()]),
         refresh::RefreshPolicy::default(),
         None,

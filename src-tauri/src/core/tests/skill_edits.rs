@@ -50,6 +50,7 @@ impl Fixture {
         refresh_managed_skills(
             &self.paths,
             &self.store,
+            &crate::core::credentials::MemoryStore::new(),
             RefreshSelection::Ids(vec![self.id.clone()]),
             RefreshPolicy::default(),
             None,
@@ -281,6 +282,7 @@ fn restore_and_repoint_replay_the_edit() {
     let report = crate::core::repoint::repoint_skill_source(
         &f.paths,
         &f.store,
+        &crate::core::credentials::MemoryStore::new(),
         &f.id,
         crate::core::repoint::RepointTarget::Local {
             path: new.to_string_lossy().into_owned(),

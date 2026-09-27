@@ -418,6 +418,7 @@ fn failed_local_repoint_preserves_source_and_old_bytes() {
         let report = crate::core::repoint::repoint_skill_source(
             &paths,
             &store,
+            &crate::core::credentials::MemoryStore::new(),
             &record.id,
             crate::core::repoint::RepointTarget::Local {
                 path: source.to_string_lossy().into_owned(),

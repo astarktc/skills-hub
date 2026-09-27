@@ -186,6 +186,11 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   `skill_store::default_db_path` take an `AppHandle` solely to call `app.path().app_cache_dir()`/`app_data_dir()`;
   and `SKILLS_HUB_*` **tuning env vars** (`git_fetcher.rs`: timeouts, libgit2 fallback, git executable;
   `sync_engine.rs`: IO profiling) are read where they apply — they tune behaviour, never locate skill data.
+  **The same rule covers secrets**: core never constructs the OS keychain adapter — every function that needs the
+  GitHub token takes `credentials: &dyn CredentialStore` (`core/credentials.rs`; `MemoryStore` in tests) and the
+  command seam builds the one `KeyringStore` (`commands::credential_store`). The token is the one setting that
+  never lives in the settings table or crosses the wire (`AppSettings.github_token_set` is a presence flag);
+  a store failure is the typed `CREDENTIAL_STORE_UNAVAILABLE`, never a plaintext fallback.
 - Sync uses a triple fallback: symlink → junction (Windows) → copy.
 - **Manifest** reads and byte-preserving invocation writes live in `core/manifest.rs`; discovery,
   finalize and Edit consume it. Persisted `InvocationLines` fields are a compatibility contract. Fences

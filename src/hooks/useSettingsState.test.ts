@@ -39,7 +39,7 @@ function appSettings(overrides?: Partial<AppSettings>): AppSettings {
     central_repo_path: "/home/op/.skillshub",
     git_cache_cleanup_days: 7,
     git_cache_ttl_secs: 12,
-    github_token: "ghp_stored",
+    github_token_set: true,
     auto_sync_enabled: true,
     global_selected_tools: null,
     global_selected_tools_corrupt: false,
@@ -70,7 +70,8 @@ function stubBackend(initial = appSettings()) {
             current = { ...current, git_cache_ttl_secs: update.value };
             break;
           case "github_token":
-            current = { ...current, github_token: update.value.trim() };
+            // The secret goes to the keychain; only presence echoes back.
+            current = { ...current, github_token_set: update.value.trim() !== "" };
             break;
           case "ui_zoom_level":
             current = { ...current, ui_zoom_level: update.value };
@@ -148,7 +149,7 @@ describe("useSettingsState load", () => {
     });
     expect(result.current.gitCacheCleanupDays).toBe(7);
     expect(result.current.gitCacheTtlSecs).toBe(12);
-    expect(result.current.githubToken).toBe("ghp_stored");
+    expect(result.current.githubTokenSet).toBe(true);
     expect(result.current.zoomLevel).toBe(1.25);
     expect(result.current.bounds).toEqual(BOUNDS);
 
@@ -194,15 +195,55 @@ describe("useSettingsState writes", () => {
     const { result } = renderSettings();
     await waitFor(() => expect(result.current.bounds).not.toBeNull());
 
-    // Backend normalises further (e.g. trims the token).
+    // Backend normalises further (a blank token clears it).
+    let landed: boolean | undefined;
     await act(async () => {
-      await result.current.handleGithubTokenChange("  ghp_new  ");
+      landed = await result.current.handleGithubTokenChange("   ");
     });
 
+    expect(landed).toBe(true);
+    expect(updateCalls()).toEqual([{ key: "github_token", value: "   " }]);
+    expect(result.current.githubTokenSet).toBe(false);
+  });
+
+  it("sets and replaces the token by presence only, never holding the secret", async () => {
+    stubBackend(appSettings({ github_token_set: false }));
+    const { result } = renderSettings();
+    await waitFor(() => expect(result.current.bounds).not.toBeNull());
+    expect(result.current.githubTokenSet).toBe(false);
+
+    await act(async () => {
+      await result.current.handleGithubTokenChange("ghp_new");
+    });
+    expect(result.current.githubTokenSet).toBe(true);
+    expect(JSON.stringify(result.current)).not.toContain("ghp_new");
+
+    await act(async () => {
+      await result.current.handleGithubTokenChange("ghp_replacement");
+    });
     expect(updateCalls()).toEqual([
-      { key: "github_token", value: "  ghp_new  " },
+      { key: "github_token", value: "ghp_new" },
+      { key: "github_token", value: "ghp_replacement" },
     ]);
-    expect(result.current.githubToken).toBe("ghp_new");
+    expect(result.current.githubTokenSet).toBe(true);
+  });
+
+  it("reports a keychain failure and keeps the previous presence", async () => {
+    stubBackend();
+    const reporter = makeReporter();
+    const { result } = renderSettings(reporter);
+    await waitFor(() => expect(result.current.bounds).not.toBeNull());
+
+    const failure = { code: "CREDENTIAL_STORE_UNAVAILABLE", detail: "locked" };
+    mockInvoke.mockRejectedValueOnce(failure);
+    let landed: boolean | undefined;
+    await act(async () => {
+      landed = await result.current.handleGithubTokenChange("");
+    });
+
+    expect(landed).toBe(false);
+    expect(reporter.setError).toHaveBeenCalledWith(`formatted:${String(failure)}`);
+    expect(result.current.githubTokenSet).toBe(true);
   });
 
   it("surfaces a failed write through the reporter and keeps other state", async () => {
@@ -227,7 +268,7 @@ describe("useSettingsState single-field adoption", () => {
     // edit. Its response snapshot still carries the old token, so adopting the
     // whole snapshot would roll the token back.
     let releaseTtlWrite: ((value: AppSettings) => void) | undefined;
-    const initial = appSettings({ github_token: "old-token" });
+    const initial = appSettings({ github_token_set: false });
     mockInvoke.mockImplementation((command, ...args) => {
       switch (command) {
         case "getSettings":
@@ -241,7 +282,7 @@ describe("useSettingsState single-field adoption", () => {
           }
           if (update.key === "github_token") {
             return Promise.resolve(
-              appSettings({ github_token: update.value, git_cache_ttl_secs: 5 }),
+              appSettings({ github_token_set: true, git_cache_ttl_secs: 5 }),
             );
           }
           return Promise.resolve(initial);
@@ -252,7 +293,8 @@ describe("useSettingsState single-field adoption", () => {
     });
 
     const { result } = renderSettings();
-    await waitFor(() => expect(result.current.githubToken).toBe("old-token"));
+    await waitFor(() => expect(result.current.bounds).not.toBeNull());
+    expect(result.current.githubTokenSet).toBe(false);
 
     // Start the slow TTL write, then complete a token write behind its back.
     let ttlWrite: Promise<void> | undefined;
@@ -262,16 +304,16 @@ describe("useSettingsState single-field adoption", () => {
     await act(async () => {
       await result.current.handleGithubTokenChange("new-token");
     });
-    expect(result.current.githubToken).toBe("new-token");
+    expect(result.current.githubTokenSet).toBe(true);
 
-    // The TTL response (which still says github_token: "old-token") lands last.
+    // The TTL response (which still says no token) lands last.
     await act(async () => {
-      releaseTtlWrite?.(appSettings({ github_token: "old-token", git_cache_ttl_secs: 5 }));
+      releaseTtlWrite?.(appSettings({ github_token_set: false, git_cache_ttl_secs: 5 }));
       await ttlWrite;
     });
 
     expect(result.current.gitCacheTtlSecs).toBe(5);
-    expect(result.current.githubToken).toBe("new-token");
+    expect(result.current.githubTokenSet).toBe(true);
   });
 });
 

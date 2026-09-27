@@ -100,6 +100,28 @@ pub fn run() {
             let store = SkillStore::new(db_path);
             store.ensure_schema().map_err(tauri::Error::from)?;
 
+            // Every launch until it succeeds: a pre-1.2.18 plaintext GitHub
+            // token row moves to the OS credential store. The row is deleted
+            // only after the keychain write reads back; a denied or locked
+            // keychain leaves it for the next launch. No row, no keychain call.
+            match core::settings::migrate_github_token_to_credential_store(
+                &store,
+                &commands::credential_store(),
+            ) {
+                Ok(core::settings::TokenMigration::NothingToMigrate) => {}
+                Ok(core::settings::TokenMigration::Migrated) => log::info!(
+                    "moved the GitHub token from the settings table to the OS credential store"
+                ),
+                Ok(core::settings::TokenMigration::DroppedBlank) => {
+                    log::info!("removed a blank GitHub token row from the settings table")
+                }
+                Err(err) => log::warn!(
+                    "GitHub token migration to the OS credential store failed; \
+                     the settings row is kept for the next launch: {:#}",
+                    err
+                ),
+            }
+
             // The central repo must exist before any install/sync flow runs.
             // This is app setup, not a getter side effect: `get_settings`
             // only reads.

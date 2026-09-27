@@ -72,7 +72,9 @@ export function useSettingsState({
   const [gitCacheTtlSecs, setGitCacheTtlSecs] = useState<number>(
     PRE_LOAD_PLACEHOLDERS.gitCacheTtlSecs,
   );
-  const [githubToken, setGithubToken] = useState<string>("");
+  // Presence only: the secret lives in the OS keychain and never crosses
+  // the wire back to the frontend.
+  const [githubTokenSet, setGithubTokenSet] = useState(false);
   // Clamp bounds come from the backend snapshot; null until loaded.
   const [bounds, setBounds] = useState<SettingsBounds | null>(null);
 
@@ -81,7 +83,7 @@ export function useSettingsState({
     setStoragePath(next.central_repo_path);
     setGitCacheCleanupDays(next.git_cache_cleanup_days);
     setGitCacheTtlSecs(next.git_cache_ttl_secs);
-    setGithubToken(next.github_token);
+    setGithubTokenSet(next.github_token_set);
     setZoomLevel(next.ui_zoom_level);
     setBounds(next.bounds);
   }, []);
@@ -111,7 +113,7 @@ export function useSettingsState({
           setGitCacheTtlSecs(next.git_cache_ttl_secs);
           break;
         case "github_token":
-          setGithubToken(next.github_token);
+          setGithubTokenSet(next.github_token_set);
           break;
         case "ui_zoom_level":
           setZoomLevel(next.ui_zoom_level);
@@ -249,14 +251,20 @@ export function useSettingsState({
     [bounds, formatError, setError, writeSetting],
   );
 
+  /**
+   * Save (non-blank) or remove (blank) the token. Resolves `true` when the
+   * keychain write landed, so the page can clear its input; presence is
+   * adopted from the backend echo, never assumed.
+   */
   const handleGithubTokenChange = useCallback(
-    async (nextToken: string) => {
-      setGithubToken(nextToken);
-      if (!isTauri) return;
+    async (nextToken: string): Promise<boolean> => {
+      if (!isTauri) return false;
       try {
         await writeSetting({ key: "github_token", value: nextToken });
+        return true;
       } catch (err) {
         setError(formatError(err));
+        return false;
       }
     },
     [formatError, setError, writeSetting],
@@ -317,7 +325,7 @@ export function useSettingsState({
     storagePath,
     gitCacheCleanupDays,
     gitCacheTtlSecs,
-    githubToken,
+    githubTokenSet,
     bounds,
     handlePickStoragePath,
     handleGitCacheCleanupDaysChange,

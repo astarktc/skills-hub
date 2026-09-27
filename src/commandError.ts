@@ -41,6 +41,7 @@ const COMMAND_ERROR_CODE_MAP = {
   NOT_REFRESHABLE: true,
   LOCAL_SOURCE_INSIDE_TOOL_DIR: true,
   SETTING_CORRUPT: true,
+  CREDENTIAL_STORE_UNAVAILABLE: true,
   OTHER: true,
 } as const satisfies Record<CommandError["code"], true>;
 
@@ -179,6 +180,10 @@ export function describeCommandError(
       // The copy names the repair (re-save under Configure Tools); the
       // storage key and parser message are diagnostics.
       return withDetail(t("errors.settingCorrupt"), `${e.key}: ${e.detail}`);
+    case "CREDENTIAL_STORE_UNAVAILABLE":
+      // The copy names the repair (unlock / allow access); the store's own
+      // diagnostic is a detail line. Never a plaintext fallback.
+      return withDetail(t("errors.credentialStoreUnavailable"), e.detail);
     case "OTHER":
       return e.message;
   }

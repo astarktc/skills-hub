@@ -246,6 +246,18 @@ describe("describeCommandError", () => {
     );
   });
 
+  it("tells the operator how to repair CREDENTIAL_STORE_UNAVAILABLE and keeps the store diagnostic as a detail line", () => {
+    expect(
+      describeCommandError(
+        {
+          code: "CREDENTIAL_STORE_UNAVAILABLE",
+          detail: "User interaction is not allowed.",
+        },
+        t,
+      ),
+    ).toBe("errors.credentialStoreUnavailable\n\nUser interaction is not allowed.");
+  });
+
   it("names the unknown tool key for UNKNOWN_TOOL", () => {
     expect(
       describeCommandError({ code: "UNKNOWN_TOOL", tool: "not-a-tool" }, t),

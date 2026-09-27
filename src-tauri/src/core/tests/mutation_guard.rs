@@ -327,6 +327,7 @@ fn refresh_finalize_and_propagation_is_serialized() {
         refresh::refresh_managed_skills(
             &paths,
             &store,
+            &crate::core::credentials::MemoryStore::new(),
             refresh::RefreshSelection::Ids(vec![skill_id]),
             refresh::RefreshPolicy::default(),
             None,

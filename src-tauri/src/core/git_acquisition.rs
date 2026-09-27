@@ -180,7 +180,8 @@ pub trait GithubApi {
 }
 
 /// The production adapter: real HTTP against api.github.com, optionally
-/// authenticated with the operator's token (`settings::github_token`).
+/// authenticated with the operator's token (`settings::github_token`, read
+/// from the OS credential store at the command seam's `CredentialStore`).
 pub struct HttpGithubApi {
     token: Option<String>,
 }

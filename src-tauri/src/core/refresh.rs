@@ -37,6 +37,7 @@ use std::sync::Mutex;
 use anyhow::Result;
 
 use super::cancel_token::CancelToken;
+use super::credentials::CredentialStore;
 use super::errors::{CommandError, SignalError};
 use super::git_acquisition::HttpGithubApi;
 use super::global_sync::{
@@ -142,20 +143,22 @@ pub struct RefreshReport {
 /// Mutation entry point: phase two serialises each skill's finalize +
 /// Propagation against every other Sync-target mutation. Acquisition is
 /// deliberately outside the guard.
+#[allow(clippy::too_many_arguments)]
 pub fn refresh_managed_skills(
     paths: &InstallerPaths,
     store: &SkillStore,
+    credentials: &dyn CredentialStore,
     selection: RefreshSelection,
     policy: RefreshPolicy,
     cancel: Option<&CancelToken>,
     now: i64,
     on_progress: impl FnMut(RefreshProgress),
 ) -> Result<RefreshReport> {
-    // Both DB-backed acquisition inputs are read once for the batch rather
-    // than per skill: the pool must not funnel through the store. A settings
-    // read that fails is not worth failing the batch for — no token is the
-    // shipped default.
-    let token = super::settings::github_token_or_none(store);
+    // Both acquisition inputs are read once for the batch rather than per
+    // skill: the pool must not funnel through the store or the keychain. A
+    // token read that fails is not worth failing the batch for — no token is
+    // the shipped default.
+    let token = super::settings::github_token_or_none(credentials);
     let ttl_ms = super::settings::git_cache_ttl_ms(store);
     refresh_managed_skills_with(
         paths,

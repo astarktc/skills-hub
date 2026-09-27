@@ -527,6 +527,15 @@ impl SkillStore {
         })
     }
 
+    /// Raw settings-table adapter; see [`SkillStore::get_setting`]. Deleting
+    /// an absent key is a no-op.
+    pub(super) fn delete_setting(&self, key: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
+            Ok(())
+        })
+    }
+
     pub fn upsert_skill(&self, record: &SkillRecord) -> Result<()> {
         self.with_conn(|conn| {
             conn.execute(

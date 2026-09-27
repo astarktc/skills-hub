@@ -8,13 +8,14 @@ use tauri::ipc::Channel;
 use tauri::{Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::core::artifact_removal::RemovalReport;
 use crate::core::cache_cleanup::cleanup_git_cache_dirs;
 use crate::core::cancel_token::CancelToken;
 use crate::core::clock::now_ms;
+use crate::core::credentials::KeyringStore;
 use crate::core::environment::{expand_home_path, home_dir};
 use crate::core::errors::SignalError;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
@@ -36,7 +37,8 @@ use crate::core::refresh::{
 };
 use crate::core::repoint::RepointTarget;
 use crate::core::settings::{
-    apply_setting, load_settings, record_installed_tools, AppSettings, SettingUpdate,
+    apply_setting, load_settings, onboarding_scan_selection, record_installed_tools, AppSettings,
+    SettingUpdate,
 };
 use crate::core::skill_catalog::{managed_skill_catalog, ManagedSkillEntry};
 use crate::core::skill_discovery::InvocationMode;
@@ -73,17 +75,19 @@ pub(crate) fn resolve_central_repo_path_for_app(
 /// with a saved selection scopes to it; otherwise every detected Tool (a
 /// corrupt selection reads as unsaved here — the sync path refuses it
 /// separately). Both the plan and the import that acts on it use this.
-fn onboarding_scan_scope(
-    store: &SkillStore,
-    home: &Path,
-) -> Result<OnboardingScanScope, anyhow::Error> {
-    let settings = load_settings(store, home)?;
-    Ok(match settings.global_selected_tools {
-        Some(selected) if settings.scan_selected_tools_only => {
-            OnboardingScanScope::Selected(selected)
-        }
-        _ => OnboardingScanScope::Installed,
+fn onboarding_scan_scope(store: &SkillStore) -> Result<OnboardingScanScope, anyhow::Error> {
+    Ok(match onboarding_scan_selection(store)? {
+        Some(selected) => OnboardingScanScope::Selected(selected),
+        None => OnboardingScanScope::Installed,
     })
+}
+
+/// The OS credential store the GitHub token lives in (Keychain / Credential
+/// Manager / Secret Service), constructed at the seam like
+/// `installer_paths` so core never reaches for it itself. Stateless; every
+/// read/write goes to the OS store.
+pub(crate) fn credential_store() -> KeyringStore {
+    KeyringStore::new()
 }
 
 fn settings_fallback_root(app: &tauri::AppHandle) -> Result<PathBuf, anyhow::Error> {
@@ -195,7 +199,7 @@ pub async fn get_onboarding_plan(
     tauri::async_runtime::spawn_blocking(move || {
         let home = home_dir()?;
         let central = resolve_central_repo_path_for_app(&app, &store)?;
-        let scope = onboarding_scan_scope(&store, &home)?;
+        let scope = onboarding_scan_scope(&store)?;
         build_onboarding_plan(&home, &central, &store, &scope)
     })
     .await
@@ -282,7 +286,7 @@ pub async fn get_settings(
 ) -> Result<AppSettings, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        load_settings(&store, &settings_fallback_root(&app)?)
+        load_settings(&store, &credential_store(), &settings_fallback_root(&app)?)
     })
     .await
     .map_err(CommandError::internal)?
@@ -307,7 +311,12 @@ pub async fn update_setting(
             ),
             other => other,
         };
-        apply_setting(&store, &settings_fallback_root(&app)?, update)
+        apply_setting(
+            &store,
+            &credential_store(),
+            &settings_fallback_root(&app)?,
+            update,
+        )
     })
     .await
     .map_err(CommandError::internal)?
@@ -365,7 +374,13 @@ pub async fn list_git_skills_cmd(
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let paths = installer_paths(&app, &store)?;
-        list_git_skills(&paths, &store, &repoUrl, targetName.as_deref())
+        list_git_skills(
+            &paths,
+            &store,
+            &credential_store(),
+            &repoUrl,
+            targetName.as_deref(),
+        )
     })
     .await
     .map_err(CommandError::internal)?
@@ -392,6 +407,7 @@ pub async fn install_git_selection(
         let result = install_git_skill_from_listing(
             &paths,
             &store,
+            &credential_store(),
             &repoUrl,
             crate::core::git_acquisition::GitSelection {
                 subpath: &subpath,
@@ -579,6 +595,7 @@ pub async fn refresh_managed_skills(
         let report = refresh_managed_skills_core(
             &paths,
             &store,
+            &credential_store(),
             selection,
             RefreshPolicy {
                 reassert_auto_sync: policy.reassert_auto_sync,
@@ -673,6 +690,7 @@ pub async fn repoint_skill_source(
         let report = crate::core::repoint::repoint_skill_source(
             &paths,
             &store,
+            &credential_store(),
             &skillId,
             target,
             crate::core::refresh::RefreshPolicy {
@@ -791,7 +809,7 @@ pub async fn import_onboarding_selection(
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let paths = installer_paths(&app, &store)?;
-        let scan_scope = onboarding_scan_scope(&store, &paths.home)?;
+        let scan_scope = onboarding_scan_scope(&store)?;
         let selections: Vec<ImportSelection> = selections
             .into_iter()
             .map(|s| ImportSelection {
@@ -1134,6 +1152,7 @@ pub async fn clone_explore_skill(
         let path = clone_for_explore_preview(
             &paths,
             &store,
+            &credential_store(),
             &sourceUrl,
             skillName.as_deref(),
             Some(&cancel),

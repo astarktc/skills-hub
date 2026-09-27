@@ -253,6 +253,7 @@ fn installs_local_skill_and_updates_from_source() {
     let report = crate::core::refresh::refresh_managed_skills(
         &paths,
         &store,
+        &crate::core::credentials::MemoryStore::new(),
         crate::core::refresh::RefreshSelection::Ids(vec![res.skill_id.clone()]),
         crate::core::refresh::RefreshPolicy::default(),
         None,
@@ -314,6 +315,7 @@ fn lists_and_installs_git_skills_without_network() {
     let candidates = super::list_git_skills(
         &paths,
         &store,
+        &crate::core::credentials::MemoryStore::new(),
         repo_dir.path().to_string_lossy().as_ref(),
         None,
     )
@@ -354,7 +356,14 @@ fn add_on_a_non_github_host_fetches_the_repository_once() {
     let listed_commit = commit_all(&repo, "add skills").to_string();
     let url = repo_dir.path().to_string_lossy().to_string();
 
-    let listing = super::list_git_skills(&paths, &store, &url, None).unwrap();
+    let listing = super::list_git_skills(
+        &paths,
+        &store,
+        &crate::core::credentials::MemoryStore::new(),
+        &url,
+        None,
+    )
+    .unwrap();
     assert!(listing.candidates.iter().any(|c| c.subpath == "skills/a"));
 
     fs::write(repo_dir.path().join("after-listing.txt"), "later").unwrap();
@@ -408,6 +417,7 @@ fn git_fetch_errors_on_multi_skills_repo_root() {
     let err = match super::clone_for_explore_preview(
         &paths,
         &store,
+        &crate::core::credentials::MemoryStore::new(),
         repo_dir.path().to_string_lossy().as_ref(),
         None,
         None,
@@ -665,6 +675,7 @@ fn git_fetch_detects_root_level_multi_skills() {
     let err = match super::clone_for_explore_preview(
         &paths,
         &store,
+        &crate::core::credentials::MemoryStore::new(),
         repo_dir.path().to_string_lossy().as_ref(),
         None,
         None,
@@ -702,12 +713,26 @@ fn list_git_skills_resolves_target_name() {
     commit_all(&repo, "add skills");
     let url = repo_dir.path().to_string_lossy().to_string();
 
-    let listing = super::list_git_skills(&paths, &store, &url, None).unwrap();
+    let listing = super::list_git_skills(
+        &paths,
+        &store,
+        &crate::core::credentials::MemoryStore::new(),
+        &url,
+        None,
+    )
+    .unwrap();
     assert_eq!(listing.candidates.len(), 2);
     assert!(listing.target_match.is_none());
 
     // skills.sh name vs SKILL.md name: containment resolves.
-    let listing = super::list_git_skills(&paths, &store, &url, Some("json-render-react")).unwrap();
+    let listing = super::list_git_skills(
+        &paths,
+        &store,
+        &crate::core::credentials::MemoryStore::new(),
+        &url,
+        Some("json-render-react"),
+    )
+    .unwrap();
     assert_eq!(
         listing.target_match,
         Some(CandidateMatch::Resolved {
@@ -715,7 +740,14 @@ fn list_git_skills_resolves_target_name() {
         })
     );
 
-    let listing = super::list_git_skills(&paths, &store, &url, Some("gamma")).unwrap();
+    let listing = super::list_git_skills(
+        &paths,
+        &store,
+        &crate::core::credentials::MemoryStore::new(),
+        &url,
+        Some("gamma"),
+    )
+    .unwrap();
     assert_eq!(listing.target_match, Some(CandidateMatch::None));
 }
 
@@ -746,6 +778,7 @@ fn list_git_skills_finds_root_level_skills() {
     let candidates = super::list_git_skills(
         &paths,
         &store,
+        &crate::core::credentials::MemoryStore::new(),
         repo_dir.path().to_string_lossy().as_ref(),
         None,
     )
@@ -817,6 +850,7 @@ fn list_git_skills_discovers_deeply_nested_via_recursive_fallback() {
     let candidates = super::list_git_skills(
         &paths,
         &store,
+        &crate::core::credentials::MemoryStore::new(),
         repo_dir.path().to_string_lossy().as_ref(),
         None,
     )
@@ -888,6 +922,7 @@ fn existing_shallow_repos_still_work() {
     let candidates = super::list_git_skills(
         &paths,
         &store,
+        &crate::core::credentials::MemoryStore::new(),
         repo_dir.path().to_string_lossy().as_ref(),
         None,
     )
@@ -1191,6 +1226,7 @@ fn list_git_skills_finds_root_skill_container_layout() {
     let candidates = super::list_git_skills(
         &paths,
         &store,
+        &crate::core::credentials::MemoryStore::new(),
         repo_dir.path().to_string_lossy().as_ref(),
         None,
     )
@@ -1226,9 +1262,15 @@ fn explore_preview_cache_hit_never_touches_git_cache() {
     fs::create_dir_all(&cached).unwrap();
     fs::write(cached.join("SKILL.md"), "---\nname: preview-skill\n---\n").unwrap();
 
-    let out =
-        super::clone_for_explore_preview(&paths, &store, source_url, Some("preview-skill"), None)
-            .unwrap();
+    let out = super::clone_for_explore_preview(
+        &paths,
+        &store,
+        &crate::core::credentials::MemoryStore::new(),
+        source_url,
+        Some("preview-skill"),
+        None,
+    )
+    .unwrap();
 
     assert_eq!(out, cached);
     assert!(
@@ -1255,7 +1297,14 @@ fn explore_preview_cache_miss_does_not_deadlock() {
     let handle = std::thread::spawn(move || {
         // Keep the temp roots alive for the duration of the call.
         let _keep = (dir, roots, repo_dir);
-        let res = super::clone_for_explore_preview(&paths, &store, &source_url, None, None);
+        let res = super::clone_for_explore_preview(
+            &paths,
+            &store,
+            &crate::core::credentials::MemoryStore::new(),
+            &source_url,
+            None,
+            None,
+        );
         let _ = tx.send(res.map(|p| p.join("SKILL.md").exists()));
     });
 
@@ -1433,7 +1482,7 @@ fn explore_preview_cancelled_acquisition_never_becomes_a_hit() {
 }
 
 #[test]
-fn settings_read_failure_does_not_block_listing_install_or_preview() {
+fn settings_and_credential_read_failures_do_not_block_listing_install_or_preview() {
     let (dir, store) = make_store();
     let (_roots, paths) = make_paths();
     let repo_dir = tempfile::tempdir().unwrap();
@@ -1445,15 +1494,18 @@ fn settings_read_failure_does_not_block_listing_install_or_preview() {
         .unwrap()
         .execute_batch("DROP TABLE settings;")
         .unwrap();
-    assert!(crate::core::settings::github_token(&store).is_err());
+    // A locked keychain degrades acquisition to unauthenticated, too.
+    let credentials = crate::core::credentials::MemoryStore::failing();
+    assert!(crate::core::settings::github_token(&credentials).is_err());
 
-    let listing = super::list_git_skills(&paths, &store, &url, None).unwrap();
+    let listing = super::list_git_skills(&paths, &store, &credentials, &url, None).unwrap();
     assert_eq!(listing.candidates.len(), 1);
     assert_eq!(listing.candidates[0].name, "solo");
     let installed =
         super::install_git_skill_from_selection(&paths, &store, &url, ".", None, None).unwrap();
     assert!(installed.central_path.join("SKILL.md").exists());
-    let preview = super::clone_for_explore_preview(&paths, &store, &url, None, None).unwrap();
+    let preview =
+        super::clone_for_explore_preview(&paths, &store, &credentials, &url, None, None).unwrap();
     assert!(preview.join("SKILL.md").exists());
 }
 

@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 
 use super::cancel_token::CancelToken;
 use super::central_repo::ensure_central_repo;
+use super::credentials::CredentialStore;
 use super::errors::SignalError;
 pub use super::git_acquisition::GitSourceResolution;
 use super::git_acquisition::{
@@ -248,13 +249,14 @@ pub struct GitSkillListing {
 pub fn list_git_skills(
     paths: &InstallerPaths,
     store: &SkillStore,
+    credentials: &dyn CredentialStore,
     repo_url: &str,
     target_name: Option<&str>,
 ) -> Result<GitSkillListing> {
     list_git_skills_with(
         repo_url,
         target_name,
-        &HttpGithubApi::new(super::settings::github_token_or_none(store)),
+        &HttpGithubApi::new(super::settings::github_token_or_none(credentials)),
         |parsed| {
             fetch_through_cache(
                 &paths.cache_dir,
@@ -351,7 +353,8 @@ pub fn install_git_skill_from_selection(
         subpath,
         name,
         cancel,
-        &HttpGithubApi::new(super::settings::github_token_or_none(store)),
+        // Fixtures carry no GitHub token.
+        &HttpGithubApi::new(None),
     )
 }
 
@@ -385,6 +388,7 @@ pub(crate) fn install_git_skill_from_selection_with(
 pub fn install_git_skill_from_listing(
     paths: &InstallerPaths,
     store: &SkillStore,
+    credentials: &dyn CredentialStore,
     repo_url: &str,
     selection: GitSelection,
     name: Option<String>,
@@ -397,7 +401,7 @@ pub fn install_git_skill_from_listing(
         selection,
         name,
         cancel,
-        &HttpGithubApi::new(super::settings::github_token_or_none(store)),
+        &HttpGithubApi::new(super::settings::github_token_or_none(credentials)),
     )
 }
 
@@ -488,6 +492,7 @@ static EXPLORE_CACHE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 pub fn clone_for_explore_preview(
     paths: &InstallerPaths,
     store: &SkillStore,
+    credentials: &dyn CredentialStore,
     source_url: &str,
     skill_name: Option<&str>,
     cancel: Option<&CancelToken>,
@@ -503,7 +508,7 @@ pub fn clone_for_explore_preview(
                 cancel,
                 allow_fast_path: true,
             },
-            &HttpGithubApi::new(super::settings::github_token_or_none(store)),
+            &HttpGithubApi::new(super::settings::github_token_or_none(credentials)),
         )
         .map(|_| ())
     })

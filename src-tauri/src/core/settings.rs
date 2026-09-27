@@ -11,7 +11,10 @@
 //! read, not a silent fallback to "every detected tool" (round 12 D1).
 //!
 //! Core never reads the environment: callers pass `fallback_root` (the
-//! operator's home in production) for the central repo default.
+//! operator's home in production) for the central repo default, and the
+//! `CredentialStore` the GitHub token lives in (the OS keychain in
+//! production). The token is the one setting not kept in the settings table;
+//! `migrate_github_token_to_credential_store` moves a pre-1.2.18 row there.
 
 use std::path::{Path, PathBuf};
 
@@ -20,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::central_repo::{ensure_central_repo, move_central_repo};
+use super::credentials::{self, CredentialStore};
 use super::errors::SignalError;
 use super::skill_store::SkillStore;
 use super::tool_adapters::{adapter_by_key, global_tool_entries, installed_keys};
@@ -29,7 +33,9 @@ mod keys {
     pub const CENTRAL_REPO_PATH: &str = "central_repo_path";
     pub const GIT_CACHE_CLEANUP_DAYS: &str = "git_cache_cleanup_days";
     pub const GIT_CACHE_TTL_SECS: &str = "git_cache_ttl_secs";
-    pub const GITHUB_TOKEN: &str = "github_token";
+    /// Pre-1.2.18 plaintext token row. Only the startup migration reads it;
+    /// the token now lives in the `CredentialStore`.
+    pub const LEGACY_GITHUB_TOKEN: &str = "github_token";
     pub const AUTO_SYNC_ENABLED: &str = "auto_sync_enabled";
     pub const GLOBAL_SELECTED_TOOLS: &str = "global_selected_tools_v1";
     pub const SCAN_SELECTED_TOOLS_ONLY: &str = "scan_selected_tools_only";
@@ -108,8 +114,10 @@ pub struct AppSettings {
     pub central_repo_path: String,
     pub git_cache_cleanup_days: i64,
     pub git_cache_ttl_secs: i64,
-    /// Empty string when no token is stored.
-    pub github_token: String,
+    /// Whether a GitHub token is stored. The secret itself never crosses the
+    /// wire; a credential store that cannot be read reports `false` (logged)
+    /// so the rest of Settings still loads.
+    pub github_token_set: bool,
     pub auto_sync_enabled: bool,
     /// `None` = never configured (distinct from an empty selection). Keys
     /// the Tool registry no longer knows are pruned on read (round 12 D2).
@@ -138,7 +146,7 @@ pub enum SettingUpdate {
     GitCacheCleanupDays(i64),
     /// Clamped into `GIT_CACHE_TTL_SECS_RANGE`.
     GitCacheTtlSecs(i64),
-    /// Trimmed; blank clears the token.
+    /// Trimmed and written to the `CredentialStore`; blank clears the token.
     GithubToken(String),
     AutoSyncEnabled(bool),
     GlobalToolConfig {
@@ -157,7 +165,11 @@ pub enum SettingUpdate {
 
 /// Read and parse every setting. Only a storage failure is an error;
 /// malformed values parse to their defaults.
-pub fn load_settings(store: &SkillStore, fallback_root: &Path) -> Result<AppSettings> {
+pub fn load_settings(
+    store: &SkillStore,
+    credentials: &dyn CredentialStore,
+    fallback_root: &Path,
+) -> Result<AppSettings> {
     let global_selection = read_tool_selection(store, keys::GLOBAL_SELECTED_TOOLS)?;
     Ok(AppSettings {
         central_repo_path: resolve_central_repo_path(store, fallback_root)?
@@ -165,7 +177,13 @@ pub fn load_settings(store: &SkillStore, fallback_root: &Path) -> Result<AppSett
             .to_string(),
         git_cache_cleanup_days: git_cache_cleanup_days(store),
         git_cache_ttl_secs: git_cache_ttl_secs(store),
-        github_token: github_token(store)?.unwrap_or_default(),
+        github_token_set: match github_token(credentials) {
+            Ok(token) => token.is_some(),
+            Err(err) => {
+                log::warn!("[settings] cannot read GitHub token presence: {err:#}");
+                false
+            }
+        },
         auto_sync_enabled: read_bool(store, keys::AUTO_SYNC_ENABLED, DEFAULT_AUTO_SYNC_ENABLED)?,
         global_selected_tools: global_selection.configured(),
         global_selected_tools_corrupt: matches!(global_selection, StoredSelection::Corrupt { .. }),
@@ -177,6 +195,21 @@ pub fn load_settings(store: &SkillStore, fallback_root: &Path) -> Result<AppSett
         ui_zoom_level: ui_zoom_level(store),
         bounds: BOUNDS,
     })
+}
+
+/// The saved Tool selection an onboarding scan is scoped to: `Some` when
+/// "only scan selected tools" is on and a selection is saved; `None` means
+/// every detected Tool (a corrupt selection reads as unsaved here — the sync
+/// path refuses it separately). Reads only the settings table, never the
+/// credential store.
+pub fn onboarding_scan_selection(store: &SkillStore) -> Result<Option<Vec<String>>> {
+    let selection = read_tool_selection(store, keys::GLOBAL_SELECTED_TOOLS)?.configured();
+    let scan_selected_only = read_bool(
+        store,
+        keys::SCAN_SELECTED_TOOLS_ONLY,
+        DEFAULT_SCAN_SELECTED_TOOLS_ONLY,
+    )?;
+    Ok(selection.filter(|_| scan_selected_only))
 }
 
 /// Resolve the central skills repo root: the explicit override wins;
@@ -219,18 +252,19 @@ pub fn git_cache_ttl_ms(store: &SkillStore) -> i64 {
     git_cache_ttl_secs(store).saturating_mul(1000)
 }
 
-/// GitHub token, trimmed; `None` when unset or blank.
-pub fn github_token(store: &SkillStore) -> Result<Option<String>> {
-    Ok(store
-        .get_setting(keys::GITHUB_TOKEN)?
+/// GitHub token from the credential store, trimmed; `None` when unset or
+/// blank. A store failure is `SignalError::CredentialStoreUnavailable`.
+pub fn github_token(credentials: &dyn CredentialStore) -> Result<Option<String>> {
+    Ok(credentials
+        .get(credentials::keys::GITHUB_TOKEN)?
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty()))
 }
 
-/// Acquisition can continue unauthenticated when settings cannot be read.
-/// The Settings page keeps using `github_token` so it still surfaces failures.
-pub fn github_token_or_none(store: &SkillStore) -> Option<String> {
-    match github_token(store) {
+/// Acquisition can continue unauthenticated when the token cannot be read.
+/// Writes go through `apply_setting`, which surfaces store failures.
+pub fn github_token_or_none(credentials: &dyn CredentialStore) -> Option<String> {
+    match github_token(credentials) {
         Ok(token) => token,
         Err(err) => {
             log::warn!("[settings] cannot read GitHub token; continuing unauthenticated: {err:#}");
@@ -286,6 +320,7 @@ pub fn effective_global_tool_targets(store: &SkillStore, home: &Path) -> Result<
 /// one.
 pub fn apply_setting(
     store: &SkillStore,
+    credentials: &dyn CredentialStore,
     fallback_root: &Path,
     update: SettingUpdate,
 ) -> Result<AppSettings> {
@@ -307,9 +342,10 @@ pub fn apply_setting(
                 &GIT_CACHE_TTL_SECS_RANGE.clamp(secs).to_string(),
             )?;
         }
-        SettingUpdate::GithubToken(token) => {
-            write_str(store, keys::GITHUB_TOKEN, token.trim())?;
-        }
+        SettingUpdate::GithubToken(token) => match token.trim() {
+            "" => credentials.delete(credentials::keys::GITHUB_TOKEN)?,
+            token => credentials.set(credentials::keys::GITHUB_TOKEN, token)?,
+        },
         SettingUpdate::AutoSyncEnabled(enabled) => {
             write_bool(store, keys::AUTO_SYNC_ENABLED, enabled)?;
         }
@@ -341,7 +377,48 @@ pub fn apply_setting(
             write_str(store, keys::UI_ZOOM_LEVEL, &effective.to_string())?;
         }
     }
-    load_settings(store, fallback_root)
+    load_settings(store, credentials, fallback_root)
+}
+
+/// Outcome of the one-time move of the plaintext token row to the
+/// credential store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenMigration {
+    /// No legacy row: already migrated, or never set.
+    NothingToMigrate,
+    /// The row held a token; it is now in the credential store (read back
+    /// and verified) and the row is gone.
+    Migrated,
+    /// The row was blank; it was deleted without touching the store.
+    DroppedBlank,
+}
+
+/// Move a pre-1.2.18 `github_token` settings row into `credentials`.
+/// Runs at every startup and is idempotent: the row is deleted only after the
+/// store write has been read back unchanged, so any store failure (a denied
+/// or locked Keychain prompt, no Secret Service) leaves the row untouched for
+/// the next launch and surfaces `SignalError::CredentialStoreUnavailable`.
+pub fn migrate_github_token_to_credential_store(
+    store: &SkillStore,
+    credentials: &dyn CredentialStore,
+) -> Result<TokenMigration> {
+    let Some(raw) = store.get_setting(keys::LEGACY_GITHUB_TOKEN)? else {
+        return Ok(TokenMigration::NothingToMigrate);
+    };
+    let token = raw.trim();
+    if token.is_empty() {
+        store.delete_setting(keys::LEGACY_GITHUB_TOKEN)?;
+        return Ok(TokenMigration::DroppedBlank);
+    }
+    credentials.set(credentials::keys::GITHUB_TOKEN, token)?;
+    let read_back = credentials.get(credentials::keys::GITHUB_TOKEN)?;
+    if read_back.as_deref() != Some(token) {
+        bail!(SignalError::CredentialStoreUnavailable {
+            detail: "token read back from the credential store did not match the write".to_string(),
+        });
+    }
+    store.delete_setting(keys::LEGACY_GITHUB_TOKEN)?;
+    Ok(TokenMigration::Migrated)
 }
 
 /// Point the central repo at `new_base` (must be absolute), creating it and

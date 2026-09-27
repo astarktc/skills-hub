@@ -1,13 +1,14 @@
 use std::path::PathBuf;
 
+use crate::core::credentials::{CredentialStore, MemoryStore};
 use crate::core::errors::SignalError;
 use crate::core::settings::{
     apply_setting, effective_global_tool_targets, featured_skills_cache, git_cache_cleanup_days,
-    git_cache_ttl_secs, github_token, load_settings, record_installed_tools,
-    resolve_central_repo_path, set_featured_skills_cache, ui_zoom_level, SettingUpdate,
-    DEFAULT_AUTO_SYNC_ENABLED, DEFAULT_GIT_CACHE_CLEANUP_DAYS, DEFAULT_GIT_CACHE_TTL_SECS,
-    DEFAULT_SCAN_SELECTED_TOOLS_ONLY, DEFAULT_UI_ZOOM_LEVEL, GIT_CACHE_CLEANUP_DAYS_RANGE,
-    GIT_CACHE_TTL_SECS_RANGE, UI_ZOOM_LEVEL_RANGE,
+    git_cache_ttl_secs, github_token, load_settings, migrate_github_token_to_credential_store,
+    record_installed_tools, resolve_central_repo_path, set_featured_skills_cache, ui_zoom_level,
+    SettingUpdate, TokenMigration, DEFAULT_AUTO_SYNC_ENABLED, DEFAULT_GIT_CACHE_CLEANUP_DAYS,
+    DEFAULT_GIT_CACHE_TTL_SECS, DEFAULT_SCAN_SELECTED_TOOLS_ONLY, DEFAULT_UI_ZOOM_LEVEL,
+    GIT_CACHE_CLEANUP_DAYS_RANGE, GIT_CACHE_TTL_SECS_RANGE, UI_ZOOM_LEVEL_RANGE,
 };
 use crate::core::skill_store::{SkillRecord, SkillStore};
 
@@ -32,7 +33,7 @@ fn raw(store: &SkillStore, key: &str, value: &str) {
 fn load_on_empty_store_yields_defaults_and_bounds() {
     let (dir, store) = make_store();
     let home = dir.path().join("home");
-    let s = load_settings(&store, &home).unwrap();
+    let s = load_settings(&store, &MemoryStore::new(), &home).unwrap();
 
     assert_eq!(
         s.central_repo_path,
@@ -40,7 +41,7 @@ fn load_on_empty_store_yields_defaults_and_bounds() {
     );
     assert_eq!(s.git_cache_cleanup_days, DEFAULT_GIT_CACHE_CLEANUP_DAYS);
     assert_eq!(s.git_cache_ttl_secs, DEFAULT_GIT_CACHE_TTL_SECS);
-    assert_eq!(s.github_token, "");
+    assert!(!s.github_token_set);
     assert_eq!(s.auto_sync_enabled, DEFAULT_AUTO_SYNC_ENABLED);
     assert_eq!(s.global_selected_tools, None);
     assert!(!s.global_selected_tools_corrupt);
@@ -119,27 +120,45 @@ fn github_token_reads_trimmed_and_empty_as_none() {
         ("ghp_abc", Some("ghp_abc".to_string())),
         ("  ghp_abc\n", Some("ghp_abc".to_string())),
     ] {
-        let (_dir, store) = make_store();
-        raw(&store, "github_token", stored);
-        assert_eq!(github_token(&store).unwrap(), expected, "raw {stored:?}");
+        let credentials = MemoryStore::new();
+        credentials.set("github_token", stored).unwrap();
         assert_eq!(
-            super::github_token_or_none(&store),
+            github_token(&credentials).unwrap(),
             expected,
-            "raw {stored:?}"
+            "stored {stored:?}"
+        );
+        assert_eq!(
+            super::github_token_or_none(&credentials),
+            expected,
+            "stored {stored:?}"
         );
     }
+    assert_eq!(github_token(&MemoryStore::new()).unwrap(), None);
 }
 
 #[test]
-fn token_read_failure_degrades_only_for_acquisition_not_settings_page() {
+fn token_read_failure_is_typed_degrades_for_acquisition_and_settings_presence() {
+    let (dir, store) = make_store();
+    let credentials = MemoryStore::failing();
+    let err = github_token(&credentials).unwrap_err();
+    assert!(matches!(
+        err.downcast_ref::<SignalError>(),
+        Some(SignalError::CredentialStoreUnavailable { .. })
+    ));
+    assert_eq!(super::github_token_or_none(&credentials), None);
+    // The rest of Settings still loads; presence reads as unset.
+    let s = load_settings(&store, &credentials, dir.path()).unwrap();
+    assert!(!s.github_token_set);
+}
+
+#[test]
+fn settings_table_failure_still_fails_load() {
     let (dir, store) = make_store();
     rusqlite::Connection::open(dir.path().join("test.db"))
         .unwrap()
         .execute_batch("DROP TABLE settings;")
         .unwrap();
-    assert!(github_token(&store).is_err());
-    assert!(load_settings(&store, dir.path()).is_err());
-    assert_eq!(super::github_token_or_none(&store), None);
+    assert!(load_settings(&store, &MemoryStore::new(), dir.path()).is_err());
 }
 
 #[test]
@@ -157,7 +176,9 @@ fn auto_sync_enabled_parses_bools_and_defaults_on_garbage() {
     ] {
         raw(&store, "auto_sync_enabled", stored);
         assert_eq!(
-            load_settings(&store, home).unwrap().auto_sync_enabled,
+            load_settings(&store, &MemoryStore::new(), home)
+                .unwrap()
+                .auto_sync_enabled,
             expected,
             "raw {stored:?}"
         );
@@ -176,7 +197,7 @@ fn scan_selected_tools_only_parses_bools_and_defaults_on_garbage() {
     ] {
         raw(&store, "scan_selected_tools_only", stored);
         assert_eq!(
-            load_settings(&store, home)
+            load_settings(&store, &MemoryStore::new(), home)
                 .unwrap()
                 .scan_selected_tools_only,
             expected,
@@ -205,7 +226,7 @@ fn global_selected_tools_parses_json_and_flags_corrupt_rows() {
         ("[1,2]", None, true),
     ] {
         raw(&store, "global_selected_tools_v1", stored);
-        let s = load_settings(&store, home).unwrap();
+        let s = load_settings(&store, &MemoryStore::new(), home).unwrap();
         assert_eq!(s.global_selected_tools, expected, "raw {stored:?}");
         assert_eq!(s.global_selected_tools_corrupt, corrupt, "raw {stored:?}");
     }
@@ -221,7 +242,9 @@ fn global_selected_tools_prunes_keys_the_registry_no_longer_knows() {
         r#"["ghost","claude_code","retired_tool"]"#,
     );
     assert_eq!(
-        load_settings(&store, &home).unwrap().global_selected_tools,
+        load_settings(&store, &MemoryStore::new(), &home)
+            .unwrap()
+            .global_selected_tools,
         Some(vec!["claude_code".to_string()])
     );
     assert_eq!(
@@ -342,7 +365,9 @@ fn central_repo_path_override_wins_and_blank_is_unset() {
     );
     assert_eq!(resolve_central_repo_path(&store, &home).unwrap(), custom);
     assert_eq!(
-        load_settings(&store, &home).unwrap().central_repo_path,
+        load_settings(&store, &MemoryStore::new(), &home)
+            .unwrap()
+            .central_repo_path,
         custom.to_string_lossy().to_string()
     );
 
@@ -365,7 +390,13 @@ fn apply_git_cache_cleanup_days_clamps_and_round_trips() {
     let (dir, store) = make_store();
     let home = dir.path();
     for (input, expected) in [(45, 45), (-10, 0), (99999, 3650), (0, 0), (3650, 3650)] {
-        let s = apply_setting(&store, home, SettingUpdate::GitCacheCleanupDays(input)).unwrap();
+        let s = apply_setting(
+            &store,
+            &MemoryStore::new(),
+            home,
+            SettingUpdate::GitCacheCleanupDays(input),
+        )
+        .unwrap();
         assert_eq!(s.git_cache_cleanup_days, expected, "input {input}");
         assert_eq!(git_cache_cleanup_days(&store), expected, "input {input}");
     }
@@ -376,7 +407,13 @@ fn apply_git_cache_ttl_secs_clamps_and_round_trips() {
     let (dir, store) = make_store();
     let home = dir.path();
     for (input, expected) in [(120, 120), (-1, 0), (7200, 3600)] {
-        let s = apply_setting(&store, home, SettingUpdate::GitCacheTtlSecs(input)).unwrap();
+        let s = apply_setting(
+            &store,
+            &MemoryStore::new(),
+            home,
+            SettingUpdate::GitCacheTtlSecs(input),
+        )
+        .unwrap();
         assert_eq!(s.git_cache_ttl_secs, expected, "input {input}");
         assert_eq!(git_cache_ttl_secs(&store), expected, "input {input}");
     }
@@ -393,29 +430,149 @@ fn apply_ui_zoom_level_clamps_and_rejects_non_finite() {
         (f64::NAN, DEFAULT_UI_ZOOM_LEVEL),
         (f64::INFINITY, DEFAULT_UI_ZOOM_LEVEL),
     ] {
-        let s = apply_setting(&store, home, SettingUpdate::UiZoomLevel(input)).unwrap();
+        let s = apply_setting(
+            &store,
+            &MemoryStore::new(),
+            home,
+            SettingUpdate::UiZoomLevel(input),
+        )
+        .unwrap();
         assert_eq!(s.ui_zoom_level, expected, "input {input}");
         assert_eq!(ui_zoom_level(&store), expected, "input {input}");
     }
 }
 
 #[test]
-fn apply_github_token_trims_and_clears() {
+fn apply_github_token_writes_the_credential_store_not_the_settings_row() {
     let (dir, store) = make_store();
     let home = dir.path();
+    let credentials = MemoryStore::new();
 
     let s = apply_setting(
         &store,
+        &credentials,
         home,
         SettingUpdate::GithubToken("  ghp_secret \n".to_string()),
     )
     .unwrap();
-    assert_eq!(s.github_token, "ghp_secret");
-    assert_eq!(github_token(&store).unwrap().as_deref(), Some("ghp_secret"));
+    assert!(s.github_token_set);
+    assert_eq!(
+        credentials.get("github_token").unwrap().as_deref(),
+        Some("ghp_secret")
+    );
+    assert_eq!(store.get_setting("github_token").unwrap(), None);
 
-    let s = apply_setting(&store, home, SettingUpdate::GithubToken("   ".to_string())).unwrap();
-    assert_eq!(s.github_token, "");
-    assert_eq!(github_token(&store).unwrap(), None);
+    let s = apply_setting(
+        &store,
+        &credentials,
+        home,
+        SettingUpdate::GithubToken("   ".to_string()),
+    )
+    .unwrap();
+    assert!(!s.github_token_set);
+    assert_eq!(credentials.get("github_token").unwrap(), None);
+    assert_eq!(store.get_setting("github_token").unwrap(), None);
+}
+
+#[test]
+fn apply_github_token_store_failure_is_typed_and_writes_nothing() {
+    let (dir, store) = make_store();
+    let err = apply_setting(
+        &store,
+        &MemoryStore::failing(),
+        dir.path(),
+        SettingUpdate::GithubToken("ghp_secret".to_string()),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err.downcast_ref::<SignalError>(),
+        Some(SignalError::CredentialStoreUnavailable { .. })
+    ));
+    assert_eq!(store.get_setting("github_token").unwrap(), None);
+}
+
+#[test]
+fn token_migration_moves_the_row_then_deletes_it_and_is_idempotent() {
+    let (_dir, store) = make_store();
+    let credentials = MemoryStore::new();
+    raw(&store, "github_token", "  ghp_legacy\n");
+
+    assert_eq!(
+        migrate_github_token_to_credential_store(&store, &credentials).unwrap(),
+        TokenMigration::Migrated
+    );
+    assert_eq!(
+        credentials.get("github_token").unwrap().as_deref(),
+        Some("ghp_legacy")
+    );
+    assert_eq!(store.get_setting("github_token").unwrap(), None);
+
+    assert_eq!(
+        migrate_github_token_to_credential_store(&store, &credentials).unwrap(),
+        TokenMigration::NothingToMigrate
+    );
+    assert_eq!(
+        credentials.get("github_token").unwrap().as_deref(),
+        Some("ghp_legacy")
+    );
+}
+
+#[test]
+fn token_migration_drops_a_blank_row_without_touching_the_store() {
+    let (_dir, store) = make_store();
+    // A failing store proves the blank path never calls it.
+    let credentials = MemoryStore::failing();
+    raw(&store, "github_token", "   ");
+    assert_eq!(
+        migrate_github_token_to_credential_store(&store, &credentials).unwrap(),
+        TokenMigration::DroppedBlank
+    );
+    assert_eq!(store.get_setting("github_token").unwrap(), None);
+}
+
+#[test]
+fn token_migration_store_failure_keeps_the_row() {
+    let (_dir, store) = make_store();
+    raw(&store, "github_token", "ghp_legacy");
+    let err =
+        migrate_github_token_to_credential_store(&store, &MemoryStore::failing()).unwrap_err();
+    assert!(matches!(
+        err.downcast_ref::<SignalError>(),
+        Some(SignalError::CredentialStoreUnavailable { .. })
+    ));
+    assert_eq!(
+        store.get_setting("github_token").unwrap().as_deref(),
+        Some("ghp_legacy")
+    );
+}
+
+/// A store that accepts writes but reads back something else (a stale or
+/// foreign entry) must not let the migration delete the row.
+#[test]
+fn token_migration_read_back_mismatch_keeps_the_row() {
+    struct Lossy;
+    impl CredentialStore for Lossy {
+        fn get(&self, _key: &str) -> anyhow::Result<Option<String>> {
+            Ok(Some("something-else".to_string()))
+        }
+        fn set(&self, _key: &str, _value: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn delete(&self, _key: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+    let (_dir, store) = make_store();
+    raw(&store, "github_token", "ghp_legacy");
+    let err = migrate_github_token_to_credential_store(&store, &Lossy).unwrap_err();
+    assert!(matches!(
+        err.downcast_ref::<SignalError>(),
+        Some(SignalError::CredentialStoreUnavailable { .. })
+    ));
+    assert_eq!(
+        store.get_setting("github_token").unwrap().as_deref(),
+        Some("ghp_legacy")
+    );
 }
 
 #[test]
@@ -423,10 +580,18 @@ fn apply_auto_sync_round_trips() {
     let (dir, store) = make_store();
     let home = dir.path();
     for value in [false, true, false] {
-        let s = apply_setting(&store, home, SettingUpdate::AutoSyncEnabled(value)).unwrap();
+        let s = apply_setting(
+            &store,
+            &MemoryStore::new(),
+            home,
+            SettingUpdate::AutoSyncEnabled(value),
+        )
+        .unwrap();
         assert_eq!(s.auto_sync_enabled, value);
         assert_eq!(
-            load_settings(&store, home).unwrap().auto_sync_enabled,
+            load_settings(&store, &MemoryStore::new(), home)
+                .unwrap()
+                .auto_sync_enabled,
             value
         );
     }
@@ -440,6 +605,7 @@ fn apply_global_tool_config_round_trips_and_keeps_empty_selection() {
     let selected = vec!["claude_code".to_string(), "cursor".to_string()];
     let s = apply_setting(
         &store,
+        &MemoryStore::new(),
         home,
         SettingUpdate::GlobalToolConfig {
             selected_tools: selected.clone(),
@@ -453,6 +619,7 @@ fn apply_global_tool_config_round_trips_and_keeps_empty_selection() {
     // Empty selection is a deliberate choice, distinct from "never configured".
     let s = apply_setting(
         &store,
+        &MemoryStore::new(),
         home,
         SettingUpdate::GlobalToolConfig {
             selected_tools: vec![],
@@ -472,6 +639,7 @@ fn apply_global_tool_config_refuses_an_unknown_tool_key_and_leaves_the_row() {
 
     let err = apply_setting(
         &store,
+        &MemoryStore::new(),
         home,
         SettingUpdate::GlobalToolConfig {
             selected_tools: vec!["claude_code".to_string(), "ghost".to_string()],
@@ -493,7 +661,7 @@ fn apply_global_tool_config_refuses_an_unknown_tool_key_and_leaves_the_row() {
         Some(r#"["claude_code"]"#)
     );
     assert_eq!(
-        load_settings(&store, home)
+        load_settings(&store, &MemoryStore::new(), home)
             .unwrap()
             .scan_selected_tools_only,
         DEFAULT_SCAN_SELECTED_TOOLS_ONLY
@@ -505,6 +673,7 @@ fn apply_central_repo_path_requires_absolute_path() {
     let (dir, store) = make_store();
     let err = apply_setting(
         &store,
+        &MemoryStore::new(),
         dir.path(),
         SettingUpdate::CentralRepoPath("relative/dir".to_string()),
     )
@@ -521,6 +690,7 @@ fn apply_central_repo_path_creates_dir_and_persists() {
 
     let s = apply_setting(
         &store,
+        &MemoryStore::new(),
         &home,
         SettingUpdate::CentralRepoPath(target.to_string_lossy().to_string()),
     )
@@ -563,6 +733,7 @@ fn apply_central_repo_path_moves_managed_skills() {
     let new_base = dir.path().join("moved");
     apply_setting(
         &store,
+        &MemoryStore::new(),
         &home,
         SettingUpdate::CentralRepoPath(new_base.to_string_lossy().to_string()),
     )
@@ -583,6 +754,7 @@ fn apply_central_repo_path_same_path_is_a_noop_move() {
     let base = home.join(".skillshub");
     let s = apply_setting(
         &store,
+        &MemoryStore::new(),
         &home,
         SettingUpdate::CentralRepoPath(base.to_string_lossy().to_string()),
     )
