@@ -1,0 +1,986 @@
+<!doctype html>
+<!-- PROTOTYPE — round 18 visual-world bake-off: "The Patch Bay". Throwaway. My Skills surface only.
+     Opens by double-click (file://). Fixture data inline; all state in memory; no persistence. -->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skills Hub — Patch Bay prototype</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<style type="text/tailwindcss">
+/* ─── Tokens ─────────────────────────────────────────────────────────────────────────────
+   One graticule: 4px base (Tailwind --spacing), 1U = 36px row. Every rail/header/row is a
+   multiple of 4. Two neutral depths (ground = rack, face = panel). One cord colour. Three LEDs. */
+@theme static {
+  --color-*: initial;
+  --color-ground: #0f1114;      /* rack ground: rails, gutters between panels */
+  --color-face: #171a1f;        /* panel face: rows, inspector */
+  --color-hover: #1d2127;       /* state: pointer over a row */
+  --color-lift: #232830;        /* state: the row whose back is open in the inspector */
+  --color-rule: #262b33;        /* hairline */
+  --color-rule-strong: #353b45; /* control outlines */
+  --color-ink: #e3e6eb;         /* primary text */
+  --color-ink-2: #9ba2ad;       /* secondary text (6.4:1 on face) */
+  --color-label: #8c939e;       /* engraved caps (5.5:1 on face) */
+  --color-ash: #666d78;         /* unlit jack ring / inert (3.2:1 on face, non-text) */
+  --color-cord: #a594ff;        /* the one cord colour: patched, selected, primary */
+  --color-cord-ink: #0f1114;    /* text on cord */
+  --color-ok: #3ddc84;
+  --color-stale: #f5b400;
+  --color-fault: #ff5d5d;
+  --color-fault-ink: #0f1114;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --text-label: 11px;  --text-label--line-height: 16px;   /* engraved caps only */
+  --text-meta: 12px;   --text-meta--line-height: 16px;
+  --text-body: 13px;   --text-body--line-height: 20px;
+  --text-title: 15px;  --text-title--line-height: 20px;
+
+  --spacing: 4px;
+  --radius-ctl: 2px;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* Light: the same rack in brushed aluminium — derived, not redesigned. Unlayered, so it wins. */
+html[data-theme="light"] {
+  --color-ground: #d8dce1;
+  --color-face: #eef0f3;
+  --color-hover: #e4e7eb;
+  --color-lift: #dde1e6;
+  --color-rule: #cdd2d8;
+  --color-rule-strong: #b3bac3;
+  --color-ink: #15181c;
+  --color-ink-2: #4a515b;
+  --color-label: #555c66;
+  --color-ash: #7d848e;
+  --color-cord: #5a44dc;
+  --color-cord-ink: #ffffff;
+  --color-ok: #188a4a;
+  --color-stale: #a87800;
+  --color-fault: #c62f2f;
+  --color-fault-ink: #ffffff;
+}
+
+@layer base {
+  html { color-scheme: dark; }
+  html[data-theme="light"] { color-scheme: light; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--color-ground); color: var(--color-ink);
+    font-family: var(--font-sans); font-size: var(--text-body); line-height: var(--text-body--line-height);
+    font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; overflow: hidden;
+  }
+  ::selection { background: color-mix(in oklab, var(--color-cord) 35%, transparent); color: var(--color-ink); }
+  input, button { font: inherit; color: inherit; }
+  input { caret-color: var(--color-cord); }
+  input[type="checkbox"] { accent-color: var(--color-cord); width: 14px; height: 14px; margin: 0; cursor: pointer; }
+  * { scrollbar-color: var(--color-rule-strong) transparent; }
+  code, .mono { font-family: var(--font-mono); font-size: var(--text-meta); }
+  :focus-visible { outline: 2px solid var(--color-cord); outline-offset: -2px; }
+  svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+}
+
+@layer components {
+  /* ─ Frame ─ */
+  .app { display: grid; grid-template-rows: 48px minmax(0, 1fr); height: 100vh; }
+  .body { display: grid; grid-template-columns: minmax(0, 1fr) 480px; min-height: 0; }
+  .rackcol { display: grid; grid-template-rows: 40px minmax(0, 1fr) 28px; min-height: 0; position: relative; border-right: 1px solid var(--color-rule); }
+
+  /* ─ Engraved label: the only place caps + tracking appear ─ */
+  .eng { font-size: var(--text-label); line-height: var(--text-label--line-height); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-label); }
+
+  /* ─ Top rail ─ */
+  .rail { display: flex; align-items: center; gap: 16px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--color-rule); background: var(--color-ground); }
+  .mark { display: flex; align-items: center; gap: 8px; font-weight: 600; white-space: nowrap; }
+  .tabs { display: flex; height: 48px; }
+  .tab { height: 48px; padding: 0 12px; background: none; border: 0; color: var(--color-ink-2); cursor: pointer; font-weight: 500; }
+  .tab:hover { color: var(--color-ink); }
+  .tab[aria-selected="true"] { color: var(--color-ink); box-shadow: inset 0 -2px 0 var(--color-ink); }
+  .search { flex: 1; max-width: 400px; display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; background: var(--color-face); border: 1px solid var(--color-rule-strong); border-radius: var(--radius-ctl); color: var(--color-ink-2); }
+  .search:focus-within { border-color: var(--color-cord); }
+  .search input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--color-ink); }
+  .search input::placeholder { color: var(--color-ink-2); }
+  kbd { font-family: var(--font-mono); font-size: 11px; line-height: 16px; padding: 0 4px; border: 1px solid var(--color-rule-strong); border-radius: var(--radius-ctl); color: var(--color-ink-2); }
+
+  /* ─ Controls: one vocabulary ─ */
+  .btn { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px; border: 1px solid var(--color-rule-strong); border-radius: var(--radius-ctl); background: transparent; color: var(--color-ink); font-weight: 500; white-space: nowrap; cursor: pointer; }
+  .btn:hover { background: var(--color-hover); }
+  .btn:disabled { color: var(--color-ash); cursor: default; background: transparent; }
+  .btn-ghost { border-color: transparent; }
+  .btn-primary { background: var(--color-cord); border-color: var(--color-cord); color: var(--color-cord-ink); }
+  .btn-primary:hover { background: color-mix(in oklab, var(--color-cord) 88%, var(--color-ink)); }
+  .btn-danger { background: var(--color-fault); border-color: var(--color-fault); color: var(--color-fault-ink); }
+  .btn-danger:hover { background: color-mix(in oklab, var(--color-fault) 88%, var(--color-ink)); }
+  .ibtn { display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: var(--radius-ctl); background: none; color: var(--color-ink-2); cursor: pointer; }
+  .ibtn:hover { background: var(--color-hover); color: var(--color-ink); }
+  .btn-link { background: none; border: 0; padding: 0; color: var(--color-ink); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--color-ash); cursor: pointer; }
+  .btn-link:hover { text-decoration-color: var(--color-ink); }
+
+  /* Bypass switch: a standard switch, neutral when on — the cord is reserved for connections. */
+  .sw { position: relative; width: 28px; height: 16px; flex: none; border-radius: 8px; border: 1px solid var(--color-ash); background: transparent; cursor: pointer; padding: 0; }
+  .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--color-ash); }
+  .sw[aria-checked="true"] { background: var(--color-ink-2); border-color: var(--color-ink-2); }
+  .sw[aria-checked="true"]::after { transform: translateX(12px); background: var(--color-face); }
+
+  /* Segmented filter control — squared, never pills */
+  .seg { display: flex; height: 28px; border: 1px solid var(--color-rule-strong); border-radius: var(--radius-ctl); }
+  .seg > button { display: inline-flex; align-items: center; gap: 8px; padding: 0 12px; border: 0; background: none; color: var(--color-ink-2); cursor: pointer; font-weight: 500; }
+  .seg > button + button { border-left: 1px solid var(--color-rule-strong); }
+  .seg > button:hover { color: var(--color-ink); background: var(--color-hover); }
+  .seg > button[aria-pressed="true"] { color: var(--color-ink); background: var(--color-lift); }
+  .seg .n { color: var(--color-ink-2); }
+  .seg > button[aria-pressed="true"] .n { color: var(--color-ink); }
+
+  /* ─ LEDs (state only) and jacks (connections) ─ */
+  .led { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .led.ok { background: var(--color-ok); } .led.stale { background: var(--color-stale); } .led.faulted { background: var(--color-fault); }
+  .led.off { box-shadow: inset 0 0 0 1px var(--color-ash); }
+
+  .jk { position: relative; display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px var(--color-ash); color: var(--color-cord); }
+  .jk::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: currentColor; opacity: 0; transition: opacity 100ms var(--ease-out); }
+  .jk.patched::after, .jk.stale::after, .jk.faulted::after { opacity: 1; }
+  .jk.stale { color: var(--color-stale); }
+  .jk.faulted { color: var(--color-fault); }
+  .strip { display: inline-flex; gap: 4px; }
+
+  /* ─ Filter bar ─ */
+  .fbar { display: flex; align-items: center; gap: 12px; padding: 0 12px; border-bottom: 1px solid var(--color-rule); background: var(--color-ground); min-width: 0; }
+  .issues { display: flex; align-items: center; gap: 8px; margin-left: auto; white-space: nowrap; color: var(--color-ink-2); min-width: 0; }
+  .issues b { color: var(--color-ink); font-weight: 500; }
+
+  /* ─ The rack ─ */
+  .rack { overflow: auto; min-height: 0; background: var(--color-ground); outline: none; }
+  .rack.has-bulk { padding-bottom: 48px; }
+  .grid-cols { display: grid; grid-template-columns: 36px 200px minmax(0, 1fr) 128px 96px 48px 36px; align-items: center; }
+  .flat .grid-cols { grid-template-columns: 36px 200px minmax(0, 1fr) 176px 128px 96px 48px 36px; }
+  .grid-cols > * { min-width: 0; padding: 0 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .grid-cols > .c-check, .grid-cols > .c-more { padding: 0; display: grid; place-items: center; }
+  .grid-cols > .c-sync { padding: 0 8px; display: flex; align-items: center; gap: 8px; }
+  .grid-cols > .c-on { padding: 0; display: grid; place-items: center; }
+
+  .colhead { position: sticky; top: 0; z-index: 3; height: 28px; background: var(--color-ground); border-bottom: 1px solid var(--color-rule); }
+  .panel { margin-top: 4px; background: var(--color-face); border-top: 1px solid var(--color-rule); border-bottom: 1px solid var(--color-rule); }
+  .panel:first-of-type { margin-top: 0; border-top: 0; }
+  .phead { position: sticky; top: 28px; z-index: 2; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto auto; align-items: center; height: 36px; padding-right: 8px; background: var(--color-face); border-bottom: 1px solid var(--color-rule); cursor: default; }
+  .phead .c-check { display: grid; place-items: center; }
+  .pname { display: flex; align-items: center; gap: 8px; min-width: 0; padding-left: 4px; }
+  .pname .chev { color: var(--color-ink-2); }
+  .pname strong { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pname .count { color: var(--color-ink-2); }
+  .psum { display: flex; align-items: center; gap: 12px; padding: 0 12px; color: var(--color-ink-2); white-space: nowrap; }
+  .psum span { display: inline-flex; align-items: center; gap: 4px; }
+  .phead.collapsed { border-bottom-color: transparent; }
+
+  .row { height: 36px; border-bottom: 1px solid var(--color-rule); background: var(--color-face); cursor: default; scroll-margin-top: 64px; scroll-margin-bottom: 56px; }
+  .panel .row:last-child { border-bottom: 0; }
+  .row:hover { background: var(--color-hover); }
+  .row.open { background: var(--color-lift); }
+  .row[aria-selected="true"] { background: color-mix(in oklab, var(--color-cord) 13%, var(--color-face)); }
+  .row[aria-selected="true"]:hover { background: color-mix(in oklab, var(--color-cord) 17%, var(--color-face)); }
+  .row .nm { font-weight: 500; }
+  .row.open .nm { font-weight: 600; }
+  .row .c-name { display: flex; align-items: center; gap: 8px; }
+  .row .c-name .nm { overflow: hidden; text-overflow: ellipsis; }
+  .row .edit-mark { color: var(--color-ink-2); display: inline-flex; }
+  .row .edit-mark svg.i { width: 12px; height: 12px; }
+  .row .c-desc { color: var(--color-ink-2); }
+  .row .src { font-family: var(--font-mono); font-size: var(--text-meta); color: var(--color-ink-2); margin-right: 8px; }
+  .row .c-source { font-family: var(--font-mono); font-size: var(--text-meta); color: var(--color-ink-2); }
+  .row .num { color: var(--color-ink); }
+  .row .c-scope { color: var(--color-ink-2); }
+  .row .c-scope b { color: var(--color-ink); font-weight: 500; }
+  .row.bypassed .nm, .row.bypassed .num { color: var(--color-ink-2); }
+  .row .c-more .ibtn { width: 24px; height: 24px; }
+  @media (hover: hover) { .row .c-more .ibtn { opacity: 0; } .row:hover .c-more .ibtn, .row:focus-within .c-more .ibtn, .row.open .c-more .ibtn { opacity: 1; } }
+
+  .empty { padding: 48px 24px; text-align: center; color: var(--color-ink-2); }
+  .empty strong { display: block; color: var(--color-ink); font-weight: 600; margin-bottom: 4px; }
+
+  /* ─ Rack foot + legend ─ */
+  .foot { display: flex; align-items: center; gap: 16px; padding: 0 12px; border-top: 1px solid var(--color-rule); background: var(--color-ground); color: var(--color-ink-2); font-size: var(--text-meta); white-space: nowrap; overflow: hidden; }
+  .foot .event { color: var(--color-ink); overflow: hidden; text-overflow: ellipsis; }
+  .legend { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+
+  /* ─ Bulk rail: rises from the foot ─ */
+  .bulk { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--color-face); border-top: 1px solid var(--color-cord); visibility: hidden; pointer-events: none; }
+  .bulk.up { visibility: visible; pointer-events: auto; }
+  .bulk .count { font-weight: 600; margin-right: 8px; white-space: nowrap; }
+  .bulk .hint { margin-left: auto; color: var(--color-ink-2); font-size: var(--text-meta); white-space: nowrap; display: flex; gap: 12px; align-items: center; }
+
+  /* ─ Inspector: the panel's back ─ */
+  .insp { background: var(--color-face); overflow: auto; min-height: 0; display: flex; flex-direction: column; }
+  .insp-head { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border-bottom: 1px solid var(--color-rule); }
+  .insp-title { margin: 0; font-size: var(--text-title); line-height: var(--text-title--line-height); font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .insp-desc { margin: 4px 0 0; color: var(--color-ink-2); }
+  .insp-head .tools { display: flex; align-items: center; gap: 4px; margin-left: auto; height: 20px; }
+  .sec { border-bottom: 1px solid var(--color-rule); padding: 0 16px 16px; }
+  .sec-h { display: flex; align-items: center; gap: 8px; height: 36px; }
+  .sec-h .right { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+  .srcline { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 4px 0 8px; border: 1px solid var(--color-rule); border-radius: var(--radius-ctl); background: var(--color-ground); }
+  .srcline code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-ink); }
+  .srcline .ibtn { width: 24px; height: 24px; }
+  .health { display: flex; align-items: center; gap: 8px; min-height: 20px; }
+  .health .sub { color: var(--color-ink-2); }
+
+  .jgrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border: 1px solid var(--color-rule); border-radius: var(--radius-ctl); user-select: none; touch-action: none; }
+  .jcell { display: grid; grid-template-rows: 32px 32px; justify-items: center; align-items: center; padding: 0 2px; border: 0; background: var(--color-ground); cursor: pointer; }
+  .jcell + .jcell { border-left: 1px solid var(--color-rule); }
+  .jcell:hover { background: var(--color-hover); }
+  .jcell:disabled { cursor: default; background: var(--color-ground); }
+  .jcell .jl { align-self: end; font-size: var(--text-meta); line-height: 14px; color: var(--color-ink-2); text-align: center; overflow-wrap: anywhere; }
+  .jcell.lit .jl { color: var(--color-ink); }
+  .jack { position: relative; width: 16px; height: 16px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--color-ash); color: var(--color-cord); }
+  .jack::after { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: currentColor; opacity: 0; transition: opacity 100ms var(--ease-out); }
+  .jack.patched, .jack.stale, .jack.faulted { box-shadow: inset 0 0 0 1px currentColor; }
+  .jack.patched::after, .jack.stale::after, .jack.faulted::after { opacity: 1; }
+  .jack.stale { color: var(--color-stale); }
+  .jack.faulted { color: var(--color-fault); }
+  .readout { margin-top: 8px; display: flex; align-items: center; gap: 8px; height: 20px; color: var(--color-ink-2); overflow: hidden; white-space: nowrap; }
+  .readout code { overflow: hidden; text-overflow: ellipsis; color: var(--color-ink); }
+  .faults { margin-top: 8px; border: 1px solid var(--color-rule); border-radius: var(--radius-ctl); }
+  .fault { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; padding: 8px 8px 8px 12px; }
+  .fault + .fault { border-top: 1px solid var(--color-rule); }
+  .fault .what b { font-weight: 600; }
+  .fault .what code { color: var(--color-ink); }
+  .fault .why { color: var(--color-ink-2); }
+  .hintline { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--color-ink-2); font-size: var(--text-meta); }
+  .hintline span { display: inline-flex; align-items: center; gap: 4px; }
+
+  .prow { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 12px; align-items: center; height: 36px; border-bottom: 1px solid var(--color-rule); cursor: pointer; }
+  .prow:last-child { border-bottom: 0; }
+  .prow code { color: var(--color-ink-2); }
+  .insp-foot { display: flex; gap: 8px; padding: 16px; }
+  .insp-empty { padding: 48px 24px; color: var(--color-ink-2); text-align: center; }
+
+  /* ─ Menus (fixed: escape the scroll container) ─ */
+  .menu { position: fixed; z-index: 20; min-width: 200px; padding: 4px; background: var(--color-face); border: 1px solid var(--color-rule-strong); border-radius: var(--radius-ctl); box-shadow: 0 4px 12px rgb(0 0 0 / 0.35); }
+  html[data-theme="light"] .menu { box-shadow: 0 4px 12px rgb(20 24 30 / 0.14); }
+  .menu[hidden] { display: none; }
+  .menu button { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px; border: 0; border-radius: var(--radius-ctl); background: none; color: var(--color-ink); text-align: left; cursor: pointer; }
+  .menu button:hover, .menu button:focus-visible { background: var(--color-hover); outline: none; }
+  .menu hr { border: 0; border-top: 1px solid var(--color-rule); margin: 4px 0; }
+  .menu .danger { color: var(--color-fault); }
+
+  [hidden] { display: none !important; }
+  .placeholder { display: grid; place-items: center; height: 100%; padding: 24px; color: var(--color-ink-2); text-align: center; background: var(--color-ground); }
+  .placeholder strong { display: block; color: var(--color-ink); margin-bottom: 4px; }
+
+  /* ─ The one structural collapse: below 1200px the inspector becomes a sheet ─ */
+  @media (max-width: 1199px) {
+    .body { grid-template-columns: minmax(0, 1fr); }
+    .rackcol { border-right: 0; }
+    .insp { position: fixed; top: 48px; right: 0; bottom: 0; width: min(440px, 100vw); z-index: 10; border-left: 1px solid var(--color-rule-strong); box-shadow: -12px 0 32px rgb(0 0 0 / 0.35); visibility: hidden; }
+    html[data-theme="light"] .insp { box-shadow: -12px 0 32px rgb(20 24 30 / 0.14); }
+    .insp.sheet-open { visibility: visible; }
+    .issues .long { display: none; }
+  }
+  @media (min-width: 1200px) { .sheet-only { display: none !important; } }
+  @media (prefers-reduced-motion: reduce) {
+    .jk::after, .jack::after { transition: none !important; }
+  }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="rail">
+    <div class="mark">
+      <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="1"/><rect x="3" y="13" width="18" height="7" rx="1"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>
+      Skills Hub
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Sections" id="tabs"></nav>
+    <label class="search">
+      <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="q" type="search" placeholder="Search skills, descriptions, sources" aria-label="Search skills" autocomplete="off" spellcheck="false">
+      <kbd>/</kbd>
+    </label>
+    <div class="flex items-center gap-1 ml-auto">
+      <button class="btn" type="button" id="add"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg>Add skill</button>
+      <button class="ibtn" type="button" title="Refresh all sources" aria-label="Refresh all sources" id="refresh"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
+      <button class="ibtn" type="button" id="theme" aria-label="Switch theme" title="Switch theme"></button>
+      <button class="ibtn" type="button" title="Settings" aria-label="Settings"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg></button>
+    </div>
+  </header>
+  <div class="body" id="body">
+    <section class="rackcol" id="rackcol">
+      <div class="fbar" id="fbar"></div>
+      <div class="rack" id="rack" role="grid" aria-multiselectable="true" aria-label="Skills"></div>
+      <footer class="foot" id="foot"></footer>
+      <div class="bulk" id="bulk" role="toolbar" aria-label="Bulk actions"></div>
+    </section>
+    <aside class="insp" id="insp" aria-label="Skill inspector"></aside>
+  </div>
+  <div class="placeholder" id="ph" hidden><div><strong><span id="ph-name"></span> is outside this prototype</strong>It covers My Skills only. <button type="button" class="btn-link" id="ph-back">Back to My Skills</button></div></div>
+</div>
+<div class="menu" id="menu" role="menu" hidden></div>
+
+<script>
+/* ═════════════════════════ Fixture ═════════════════════════ */
+const TOOLS = [
+  { id: 'claude', name: 'Claude Code', dir: '~/.claude/skills' },
+  { id: 'codex',  name: 'Codex',       dir: '~/.codex/skills' },
+  { id: 'pi',     name: 'Pi',          dir: '~/.pi/agent/skills' },
+  { id: 'cursor', name: 'Cursor',      dir: '~/.cursor/skills' },
+  { id: 'kimi',   name: 'Kimi',        dir: '~/.kimi/skills' },
+  { id: 'amp',    name: 'Amp',         dir: '~/.config/amp/skills' },
+  { id: 'gemini', name: 'Gemini CLI',  dir: '~/.gemini/skills' },
+];
+const PROJECTS = [
+  { id: 'skills-hub',    path: '~/Projects/skills-hub' },
+  { id: 'quartermaster', path: '~/Projects/quartermaster' },
+  { id: 'agent-skills',  path: '~/Projects/agent-skills' },
+];
+const SOURCES = {
+  'mattpocock/skills':        { line: n => `github.com/mattpocock/skills/tree/main/skills/${n}` },
+  'anthropics/skills':        { line: n => `github.com/anthropics/skills/tree/main/${n}` },
+  'obra/superpowers':         { line: n => `github.com/obra/superpowers/tree/main/skills/${n}` },
+  'vercel-labs/agent-skills': { line: n => `github.com/vercel-labs/agent-skills/tree/main/skills/${n}` },
+  'alexstark/handoff':        { line: () => 'github.com/alexstark/handoff' },
+  'ego-browser/skill':        { line: () => 'github.com/ego-browser/skill' },
+  'pi-lens':                  { line: () => '~/Projects/pi-lens/skill', local: true },
+  't3-code/orchestration':    { line: () => 'github.com/t3-code/orchestration' },
+  'some-org/ui-ux-pro-max':   { line: () => 'github.com/some-org/ui-ux-pro-max' },
+};
+const FAULT_TEXT = {
+  TARGET_EXISTS: { why: 'A different skill already occupies this path.', fix: 'Overwrite' },
+  TOOL_NOT_WRITABLE: { why: "The tool's skills directory is not writable.", fix: 'Retry' },
+};
+
+let uid = 0;
+function sk(source, name, desc, o = {}) {
+  const targets = {}, faults = {};
+  TOOLS.forEach(t => targets[t.id] = o.disabled ? 'unpatched' : 'patched');
+  (o.off || []).forEach(t => targets[t] = 'unpatched');
+  Object.entries(o.fault || {}).forEach(([t, code]) => { targets[t] = 'faulted'; faults[t] = code; });
+  return { id: 's' + (uid++), source, name, desc, enabled: !o.disabled, stale: !!o.stale, edited: !!o.edited,
+           targets, faults, projects: o.projects || [] };
+}
+const M = 'mattpocock/skills', A = 'anthropics/skills', O = 'obra/superpowers', V = 'vercel-labs/agent-skills';
+const SKILLS = [
+  sk(M, 'ts-error-fixer', 'Diagnose and fix TypeScript errors by category'),
+  sk(M, 'vitest-migration', 'Migrate a Jest suite to Vitest without behaviour drift', { stale: true, off: ['kimi', 'gemini'] }),
+  sk(M, 'react-perf-audit', 'Profile React renders and remove wasted work', { projects: ['skills-hub', 'quartermaster'] }),
+  sk(M, 'zod-schema-first', 'Model data with Zod first, derive the types after', { fault: { cursor: 'TARGET_EXISTS' } }),
+  sk(M, 'prisma-review', 'Review Prisma schemas and migrations for footguns', { disabled: true }),
+  sk(M, 'ts-generics-coach', 'Explain and tighten generic signatures step by step'),
+  sk(M, 'tsconfig-doctor', "Audit tsconfig flags against the project's runtime", { edited: true }),
+  sk(M, 'node-esm-migrate', 'Move a CommonJS package to native ESM'),
+  sk(M, 'type-narrowing', 'Replace casts with narrowing and type guards'),
+  sk(M, 'discriminated-unions', 'Model state as discriminated unions, not boolean flags', { edited: true }),
+  sk(M, 'react-hook-form-patterns', 'Build typed forms with React Hook Form and a resolver', { off: ['gemini'] }),
+  sk(M, 'tanstack-query-setup', 'Set up TanStack Query with typed keys and cache rules'),
+  sk(M, 'eslint-flat-config', 'Convert a legacy ESLint config to flat config'),
+  sk(M, 'pnpm-workspaces', 'Structure a pnpm monorepo with a shared tsconfig', { off: ['kimi'] }),
+  sk(M, 'api-route-typing', 'Type Next.js route handlers end to end'),
+  sk(M, 'error-boundary-kit', 'Add React error boundaries with typed fallbacks'),
+  sk(M, 'strict-null-checks', 'Turn on strictNullChecks in an existing codebase'),
+  sk(M, 'ts-branded-types', 'Use branded types for IDs and units of measure'),
+  sk(M, 'node-stream-utils', 'Compose Node streams with pipeline and backpressure'),
+  sk(M, 'vite-plugin-author', 'Write and test a Vite plugin', { off: ['amp'] }),
+  sk(M, 'react-server-components', 'Split client and server components correctly'),
+  sk(M, 'ts-perf-trace', 'Trace slow type-checks with --generateTrace'),
+  sk(M, 'json-schema-to-ts', 'Generate TypeScript types from JSON Schema'),
+  sk(M, 'zustand-slices', 'Split a Zustand store into typed slices'),
+  sk(M, 'playwright-fixtures', 'Build typed Playwright fixtures for end-to-end tests'),
+  sk(M, 'msw-handlers', 'Mock network calls in tests with MSW handlers'),
+  sk(M, 'tsdoc-writer', 'Write TSDoc that renders well in editors'),
+  sk(M, 'changeset-release', 'Version and release packages with Changesets'),
+
+  sk(A, 'docx', 'Create and edit Word documents with tracked changes'),
+  sk(A, 'pdf', 'Extract, fill and assemble PDF documents'),
+  sk(A, 'pptx', 'Build and edit PowerPoint decks from structured content'),
+  sk(A, 'xlsx', 'Read, write and recalculate spreadsheets with formulas'),
+  sk(A, 'frontend-design', 'Design distinctive, production-grade frontend interfaces', { projects: ['skills-hub'] }),
+  sk(A, 'mcp-builder', 'Build MCP servers that expose tools to agents'),
+  sk(A, 'webapp-testing', 'Test local web apps with Playwright and screenshots'),
+  sk(A, 'canvas-design', 'Compose visual art and posters on a canvas'),
+  sk(A, 'artifacts-builder', 'Build multi-file HTML artifacts with React and Tailwind'),
+
+  sk(O, 'brainstorming', 'Refine a rough idea into a design through questions'),
+  sk(O, 'tdd', 'Write the failing test first, then the code', { stale: true }),
+  sk(O, 'systematic-debugging', 'Find the root cause before proposing a fix'),
+  sk(O, 'verification-before-completion', 'Prove the work with fresh output before claiming done'),
+  sk(O, 'writing-plans', 'Write implementation plans an engineer can follow cold'),
+  sk(O, 'executing-plans', 'Execute a written plan in reviewed batches'),
+  sk(O, 'subagent-driven-development', 'Dispatch a fresh subagent per task with review between'),
+  sk(O, 'condition-based-waiting', 'Replace arbitrary sleeps with condition polling'),
+  sk(O, 'root-cause-tracing', 'Trace a bug backward through the call stack to its trigger'),
+  sk(O, 'defense-in-depth', 'Validate at every layer data passes through'),
+  sk(O, 'using-git-worktrees', 'Isolate feature work in a git worktree', { off: ['gemini'], fault: { kimi: 'TOOL_NOT_WRITABLE', amp: 'TOOL_NOT_WRITABLE' } }),
+  sk(O, 'finishing-a-development-branch', 'Decide how to integrate finished work: merge, PR or discard'),
+
+  sk(V, 'react-best-practices', 'Apply React and Next.js performance guidelines'),
+  sk(V, 'composition-patterns', 'Refactor boolean-prop components into compositions'),
+  sk(V, 'web-design-guidelines', 'Review UI code against web interface guidelines'),
+  sk(V, 'next-app-router', 'Structure routes, layouts and loading states in the App Router'),
+  sk(V, 'edge-runtime', 'Write handlers that run within Edge runtime limits'),
+  sk(V, 'turbo-monorepo', 'Configure Turborepo pipelines and remote caching'),
+
+  sk('alexstark/handoff', 'handoff', 'Compact the session into a handoff note for the next agent'),
+  sk('ego-browser/skill', 'ego-browser', "Drive the user's browser for web tasks and QA"),
+  sk('pi-lens', 'pi-lens', 'Query diagnostics and navigate code through the lens index'),
+  sk('t3-code/orchestration', 't3-orchestration', 'Delegate child tasks and manage threads in T3 Code', { stale: true }),
+  sk('some-org/ui-ux-pro-max', 'ui-ux-pro-max', 'Look up UI styles, palettes and UX guidelines', { edited: true }),
+];
+
+/* ═════════════════════════ State ═════════════════════════ */
+const st = {
+  tab: 'skills', view: 'grouped', filter: 'all', q: '',
+  collapsed: new Set(), selected: new Set(),
+  focusKey: null, openId: null, sheetOpen: false,
+  confirmDelete: false, event: '', readout: null,
+};
+const INDIVIDUAL = 'Individual sources';
+const narrow = matchMedia('(max-width: 1199px)');
+const $ = s => document.querySelector(s);
+const byId = id => SKILLS.find(s => s.id === id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+const srcCount = src => SKILLS.filter(s => s.source === src).length;
+const groupOf = s => srcCount(s.source) === 1 ? INDIVIDUAL : s.source;
+const sourceLabel = s => SOURCES[s.source].local ? SOURCES[s.source].line(s.name) : s.source;
+function tally(s) { let p = 0, f = 0; TOOLS.forEach(t => { if (s.targets[t.id] === 'patched') p++; if (s.targets[t.id] === 'faulted') f++; }); return { p, f }; }
+function health(s) { if (!s.enabled) return 'bypassed'; if (tally(s).f) return 'faulted'; if (s.stale) return 'stale'; return 'ok'; }
+function jackState(s, tid) {
+  if (!s.enabled) return 'unpatched';
+  const v = s.targets[tid];
+  return v === 'patched' && s.stale ? 'stale' : v;
+}
+const STATE_WORD = { unpatched: 'unpatched', patched: 'patched', stale: 'stale', faulted: 'faulted' };
+function matches(s) {
+  const h = health(s);
+  if (st.filter === 'issues' && !(h === 'faulted' || h === 'stale')) return false;
+  if (st.filter === 'edited' && !s.edited) return false;
+  if (st.filter === 'bypassed' && s.enabled) return false;
+  if (st.q) { const q = st.q.toLowerCase(); if (!(s.name + ' ' + s.desc + ' ' + s.source).toLowerCase().includes(q)) return false; }
+  return true;
+}
+function groups() {
+  const order = [], map = new Map();
+  SKILLS.forEach(s => { const g = groupOf(s); if (!map.has(g)) { map.set(g, []); if (g !== INDIVIDUAL) order.push(g); } map.get(g).push(s); });
+  if (map.has(INDIVIDUAL)) order.push(INDIVIDUAL);
+  return order.map(name => ({ name, all: map.get(name), rows: map.get(name).filter(matches) }));
+}
+
+/* ═════════════════════════ Icons ═════════════════════════ */
+const I = {
+  chevD: '<path d="m6 9 6 6 6-6"/>', chevR: '<path d="m9 18 6-6-6-6"/>',
+  more: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  pencil: '<path d="M21.17 6.81a1 1 0 0 0-3.98-3.98L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/><path d="m15 5 4 4"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>', x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  plug: '<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>',
+  panels: '<rect width="18" height="7" x="3" y="3" rx="1"/><rect width="18" height="7" x="3" y="14" rx="1"/>',
+  list: '<path d="M3 6h.01M3 12h.01M3 18h.01M8 6h13M8 12h13M8 18h13"/>',
+  folder: '<path d="M12 10v6M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>',
+  trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  update: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2m-7.07-17.07 1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+};
+const ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${I[n]}</svg>`;
+
+/* ═════════════════════════ Render: rail + filter bar + foot ═════════════════════════ */
+function renderTabs() {
+  $('#tabs').innerHTML = [['skills', 'My Skills'], ['explore', 'Explore'], ['projects', 'Projects']]
+    .map(([k, l]) => `<button class="tab" role="tab" type="button" data-tab="${k}" aria-selected="${st.tab === k}">${l}</button>`).join('');
+  const dark = document.documentElement.dataset.theme === 'dark';
+  $('#theme').innerHTML = ic(dark ? 'sun' : 'moon');
+  $('#theme').title = dark ? 'Switch to light' : 'Switch to dark';
+}
+function renderFbar() {
+  const n = {
+    all: SKILLS.length,
+    issues: SKILLS.filter(s => ['faulted', 'stale'].includes(health(s))).length,
+    edited: SKILLS.filter(s => s.edited).length,
+    bypassed: SKILLS.filter(s => !s.enabled).length,
+  };
+  const faultSkills = SKILLS.filter(s => health(s) === 'faulted').length;
+  const faultTargets = SKILLS.reduce((a, s) => a + (s.enabled ? tally(s).f : 0), 0);
+  const stale = SKILLS.filter(s => health(s) === 'stale').length;
+  const chip = (k, l) => `<button type="button" data-filter="${k}" aria-pressed="${st.filter === k}">${k === 'issues' && n.issues ? '<i class="led faulted" aria-hidden="true"></i>' : ''}${l} <span class="n">${n[k]}</span></button>`;
+  const issues = n.issues ? `<span class="issues">
+      <b>${n.issues} skills have sync issues</b>
+      <span class="long inline-flex items-center gap-1"><i class="led faulted"></i>${faultTargets} faulted targets in ${faultSkills}</span>
+      <span class="long inline-flex items-center gap-1"><i class="led stale"></i>${stale} stale</span>
+      <button type="button" class="btn-link" data-filter="issues">View issues</button></span>`
+    : `<span class="issues"><i class="led ok"></i>Every enabled skill is healthy</span>`;
+  $('#fbar').innerHTML = `
+    <div class="seg" role="group" aria-label="Filter">${chip('all', 'All')}${chip('issues', 'Issues')}${chip('edited', 'Edited')}${chip('bypassed', 'Bypassed')}</div>
+    ${issues}
+    <div class="seg" role="group" aria-label="Layout">
+      <button type="button" data-view="grouped" aria-pressed="${st.view === 'grouped'}" title="Group by source" aria-label="Group by source">${ic('panels')}</button>
+      <button type="button" data-view="flat" aria-pressed="${st.view === 'flat'}" title="Flat list with a source column" aria-label="Flat list">${ic('list')}</button>
+    </div>`;
+}
+function renderFoot() {
+  $('#foot').innerHTML = `
+    <span>${SKILLS.length} skills · ${TOOLS.length} tools · ${PROJECTS.length} projects</span>
+    ${st.event ? `<span class="event" role="status">${esc(st.event)}</span>` : '<span role="status"></span>'}
+    <span class="legend" aria-label="Target states">
+      <span><i class="jk"></i>unpatched</span><span><i class="jk patched"></i>patched</span>
+      <span><i class="jk stale"></i>stale</span><span><i class="jk faulted"></i>faulted</span>
+    </span>`;
+}
+
+/* ═════════════════════════ Render: rack ═════════════════════════ */
+function stripTitle(s) {
+  if (!s.enabled) return 'Bypassed: no targets are materialised';
+  const { p, f } = tally(s);
+  return `Synced ${p}/${TOOLS.length}${s.stale ? ' · stale: upstream update available' : ''}\n` +
+    TOOLS.map(t => `${t.name}: ${STATE_WORD[jackState(s, t.id)]}${s.faults[t.id] ? ' (' + s.faults[t.id] + ')' : ''}`).join('\n');
+}
+function scopeCell(s) {
+  if (!s.enabled) return '<span title="Bypassed">—</span>';
+  const n = s.projects.length;
+  return n ? `<span title="Global, and ${n} project${n > 1 ? 's' : ''}: ${s.projects.join(', ')}">Global <b>+${n}</b></span>` : 'Global';
+}
+function rowHTML(s, g) {
+  const key = 'r:' + s.id, { p } = tally(s), sel = st.selected.has(s.id);
+  const inline = g === INDIVIDUAL && st.view === 'grouped' ? `<span class="src">${esc(sourceLabel(s))}</span>` : '';
+  return `<div class="row grid-cols ${s.id === st.openId ? 'open' : ''} ${s.enabled ? '' : 'bypassed'}" role="row" data-nav data-key="${key}" data-id="${s.id}"
+      tabindex="${st.focusKey === key ? 0 : -1}" aria-selected="${sel}" aria-label="${esc(s.name)}, ${health(s)}, synced ${p} of ${TOOLS.length}">
+    <div class="c-check"><input type="checkbox" tabindex="-1" data-act="select" aria-label="Select ${esc(s.name)}" ${sel ? 'checked' : ''}></div>
+    <div class="c-name"><span class="nm">${esc(s.name)}</span>${s.edited ? `<span class="edit-mark" title="Edited locally: replayed on every update">${ic('pencil')}</span>` : ''}</div>
+    <div class="c-desc">${inline}${esc(s.desc)}</div>
+    ${st.view === 'flat' ? `<div class="c-source" title="${esc(sourceLabel(s))}">${esc(sourceLabel(s))}</div>` : ''}
+    <div class="c-sync" title="${esc(stripTitle(s))}"><span class="strip">${TOOLS.map(t => `<i class="jk ${jackState(s, t.id)}"></i>`).join('')}</span><span class="num">${s.enabled ? p + '/' + TOOLS.length : '—'}</span></div>
+    <div class="c-scope">${scopeCell(s)}</div>
+    <div class="c-on"><button type="button" class="sw" role="switch" tabindex="-1" data-act="toggle" aria-checked="${s.enabled}" aria-label="${s.enabled ? 'Disable' : 'Enable'} ${esc(s.name)}" title="${s.enabled ? 'Enabled: click to bypass' : 'Bypassed: click to enable'}"></button></div>
+    <div class="c-more"><button type="button" class="ibtn" tabindex="-1" data-act="menu" aria-label="More actions for ${esc(s.name)}">${ic('more')}</button></div>
+  </div>`;
+}
+function summary(all) {
+  const c = { ok: 0, stale: 0, faulted: 0, bypassed: 0 };
+  all.forEach(s => c[health(s)]++);
+  return [['ok', 'ok'], ['stale', 'stale'], ['faulted', 'faulted'], ['bypassed', 'off']]
+    .filter(([k]) => c[k]).map(([k, w]) => `<span><i class="led ${k === 'bypassed' ? 'off' : k}"></i>${c[k]} ${w === 'off' ? 'bypassed' : w}</span>`).join('');
+}
+function colheadHTML() {
+  const vis = visibleRows();
+  const all = vis.length && vis.every(s => st.selected.has(s.id));
+  return `<div class="colhead grid-cols" role="row">
+    <div class="c-check"><input type="checkbox" tabindex="-1" data-act="select-all" aria-label="Select all visible" ${all ? 'checked' : ''}></div>
+    <div class="eng">Skill</div><div class="eng">Description</div>
+    ${st.view === 'flat' ? '<div class="eng">Source</div>' : ''}
+    <div class="eng" title="Lit jacks: patched targets out of ${TOOLS.length} installed tools">Synced</div>
+    <div class="eng">Scope</div><div class="eng" style="padding:0;text-align:center">On</div><div></div>
+  </div>`;
+}
+function visibleRows() {
+  if (st.view === 'flat') return SKILLS.filter(matches);
+  return groups().flatMap(g => st.collapsed.has(g.name) ? [] : g.rows);
+}
+function renderRack() {
+  const rack = $('#rack');
+  const hadFocus = rack.contains(document.activeElement);
+  rack.classList.toggle('flat', st.view === 'flat');
+  rack.classList.toggle('has-bulk', st.selected.size > 0);
+  let html = colheadHTML();
+  const shown = SKILLS.filter(matches);
+  if (!shown.length) {
+    html += `<div class="empty"><strong>No skills match${st.q ? ` “${esc(st.q)}”` : ' this filter'}</strong>
+      Clear the search or pick another filter. <button type="button" class="btn-link" data-act="clear-filters">Show all skills</button></div>`;
+  } else if (st.view === 'flat') {
+    html += `<div class="panel">${shown.map(s => rowHTML(s, null)).join('')}</div>`;
+  } else {
+    groups().filter(g => g.rows.length).forEach(g => {
+      const col = st.collapsed.has(g.name), key = 'g:' + g.name;
+      const selN = g.rows.filter(s => st.selected.has(s.id)).length;
+      const countText = g.rows.length === g.all.length ? g.all.length : `${g.rows.length} of ${g.all.length}`;
+      html += `<section class="panel" aria-label="${esc(g.name)}">
+        <div class="phead ${col ? 'collapsed' : ''}" role="row" data-nav data-key="${esc(key)}" data-group="${esc(g.name)}" tabindex="${st.focusKey === key ? 0 : -1}" aria-expanded="${!col}">
+          <div class="c-check"><input type="checkbox" tabindex="-1" data-act="select-group" aria-label="Select all in ${esc(g.name)}" ${selN && selN === g.rows.length ? 'checked' : ''} data-indet="${selN > 0 && selN < g.rows.length}"></div>
+          <div class="pname" data-act="collapse">${ic(col ? 'chevR' : 'chevD', 'chev')}<strong>${esc(g.name)}</strong><span class="count">${countText}</span></div>
+          <div class="psum">${summary(g.all)}</div>
+          <button type="button" class="btn btn-ghost" tabindex="-1" data-act="deploy" title="Patch every enabled skill in ${esc(g.name)} to every installed tool">${ic('plug')}Deploy all</button>
+        </div>
+        ${col ? '' : g.rows.map(s => rowHTML(s, g.name)).join('')}
+      </section>`;
+    });
+  }
+  rack.innerHTML = html;
+  rack.querySelectorAll('[data-indet="true"]').forEach(el => el.indeterminate = true);
+  const vis = visibleRows(), someSel = vis.some(s => st.selected.has(s.id)), allSel = vis.length && vis.every(s => st.selected.has(s.id));
+  const sa = rack.querySelector('[data-act="select-all"]'); if (sa) sa.indeterminate = someSel && !allSel;
+  // roving tabindex fallback: make sure one nav item is tabbable
+  if (!rack.querySelector('[data-nav][tabindex="0"]')) { const f = rack.querySelector('[data-nav]'); if (f) f.tabIndex = 0; }
+  if (hadFocus && st.focusKey) { const el = rack.querySelector(`[data-key="${CSS.escape(st.focusKey)}"]`); if (el) el.focus({ preventScroll: true }); }
+}
+
+/* ═════════════════════════ Render: bulk rail ═════════════════════════ */
+function renderBulk() {
+  const n = st.selected.size, b = $('#bulk');
+  b.classList.toggle('up', n > 0);
+  if (!n) { st.confirmDelete = false; return; }
+  const sel = [...st.selected].map(byId);
+  const allOff = sel.every(s => !s.enabled);
+  b.innerHTML = st.confirmDelete
+    ? `<span class="count">Delete ${n} skill${n > 1 ? 's' : ''}?</span>
+       <span class="text-ink-2">Their targets in every tool and project are removed.</span>
+       <span class="hint"><button type="button" class="btn" data-bulk="cancel-delete">Cancel</button><button type="button" class="btn btn-danger" data-bulk="delete-confirm">${ic('trash')}Delete ${n}</button></span>`
+    : `<button type="button" class="ibtn" data-bulk="clear" aria-label="Clear selection" title="Clear selection (Esc)">${ic('x')}</button>
+       <span class="count">${n} selected</span>
+       <button type="button" class="btn btn-primary" data-bulk="sync">${ic('plug')}Sync to tools</button>
+       <button type="button" class="btn" data-bulk="assign" aria-haspopup="menu">${ic('folder')}Assign to project</button>
+       <button type="button" class="btn btn-ghost" data-bulk="${allOff ? 'enable' : 'disable'}">${ic('power')}${allOff ? 'Enable' : 'Disable'}</button>
+       <button type="button" class="btn btn-ghost" data-bulk="delete">${ic('trash')}Delete</button>
+       <span class="hint"><span><kbd>x</kbd> select</span><span><kbd>Esc</kbd> clear</span></span>`;
+}
+
+/* ═════════════════════════ Render: inspector (the panel's back) ═════════════════════════ */
+function readoutFor(s, tid) {
+  const t = TOOLS.find(t => t.id === tid), js = jackState(s, tid);
+  return `${t.name} → <code>${esc(t.dir)}/${esc(s.name)}</code> · ${STATE_WORD[js]}${s.faults[tid] && js === 'faulted' ? ': ' + s.faults[tid] : ''}`;
+}
+function renderInsp() {
+  const el = $('#insp'), s = byId(st.openId);
+  el.classList.toggle('sheet-open', st.sheetOpen);
+  if (!s) {
+    el.innerHTML = `<div class="insp-empty">Select a skill to inspect its source, targets and projects.<br><span class="text-meta">Arrow keys or <kbd>j</kbd>/<kbd>k</kbd> move through the rack.</span></div>`;
+    return;
+  }
+  const h = health(s), { p, f } = tally(s);
+  const healthLine = {
+    ok: `<i class="led ok"></i><span>Healthy</span><span class="sub">· synced to ${p} of ${TOOLS.length} tools</span>`,
+    stale: `<i class="led stale"></i><span>Stale</span><span class="sub">· upstream has a newer revision</span>`,
+    faulted: `<i class="led faulted"></i><span>Faulted</span><span class="sub">· ${f} of ${TOOLS.length} targets failed</span>`,
+    bypassed: `<i class="led off"></i><span>Bypassed</span><span class="sub">· no targets are materialised</span>`,
+  }[h];
+  const firstFault = TOOLS.find(t => s.targets[t.id] === 'faulted');
+  const ro = st.readout && st.readout.id === s.id ? st.readout.tool : (firstFault ? firstFault.id : null);
+  const faults = s.enabled ? TOOLS.filter(t => s.targets[t.id] === 'faulted') : [];
+  el.innerHTML = `
+    <div class="insp-head">
+      <div class="min-w-0">
+        <h2 class="insp-title">${esc(s.name)}${s.edited ? `<span class="edit-mark text-ink-2 inline-flex" title="Edited locally: replayed on every update">${ic('pencil')}</span>` : ''}</h2>
+        <p class="insp-desc">${esc(s.desc)}</p>
+      </div>
+      <div class="tools">
+        <button type="button" class="sw" role="switch" data-iact="toggle" aria-checked="${s.enabled}" aria-label="${s.enabled ? 'Enabled' : 'Bypassed'}" title="${s.enabled ? 'Enabled: click to bypass' : 'Bypassed: click to enable'}"></button>
+        <button type="button" class="ibtn" data-iact="menu" aria-label="More actions">${ic('more')}</button>
+        <button type="button" class="ibtn sheet-only" data-iact="close" aria-label="Close inspector">${ic('x')}</button>
+      </div>
+    </div>
+    <section class="sec">
+      <div class="sec-h"><span class="eng">Source</span></div>
+      <div class="srcline"><code title="${esc(SOURCES[s.source].line(s.name))}">${esc(SOURCES[s.source].line(s.name))}</code>
+        <button type="button" class="ibtn" data-iact="copy" aria-label="Copy source" title="Copy source">${ic('copy')}</button></div>
+    </section>
+    <section class="sec">
+      <div class="sec-h"><span class="eng">Health</span>
+        ${s.stale && s.enabled ? `<span class="right"><button type="button" class="btn btn-primary" data-iact="update">${ic('update')}Update</button></span>` : ''}</div>
+      <div class="health">${healthLine}</div>
+    </section>
+    <section class="sec">
+      <div class="sec-h"><span class="eng">Targets</span><span class="text-ink-2 text-meta">${s.enabled ? `${p}/${TOOLS.length} patched` : 'bypassed'}</span>
+        <span class="right">
+          <button type="button" class="btn btn-ghost" data-iact="patch-all" ${!s.enabled || p + f === TOOLS.length ? 'disabled' : ''}>Patch all</button>
+          <button type="button" class="btn btn-ghost" data-iact="unpatch-all" ${!s.enabled || p + f === 0 ? 'disabled' : ''}>Unpatch all</button>
+        </span></div>
+      <div class="jgrid" id="jgrid" role="group" aria-label="Targets: one jack per installed tool">
+        ${TOOLS.map((t, i) => { const js = jackState(s, t.id); return `
+          <button type="button" class="jcell ${js !== 'unpatched' ? 'lit' : ''}" data-tool="${t.id}" data-i="${i}" ${s.enabled ? '' : 'disabled'}
+            tabindex="${i === 0 ? 0 : -1}" aria-pressed="${js !== 'unpatched'}" aria-label="${t.name}: ${STATE_WORD[js]}${s.faults[t.id] && js === 'faulted' ? ', ' + s.faults[t.id] : ''}">
+            <span class="jl">${t.name}</span><span class="jack ${js}"></span></button>`; }).join('')}
+      </div>
+      <div class="readout" id="readout">${ro ? readoutFor(s, ro) : `<span>Point at a jack to read its target path</span>`}</div>
+      ${faults.length ? `<div class="faults">${faults.map(t => { const code = s.faults[t.id], ft = FAULT_TEXT[code]; return `
+        <div class="fault"><i class="led faulted"></i>
+          <div class="what min-w-0"><b>${t.name}</b> <code>${code}</code><div class="why">${ft.why}</div></div>
+          <button type="button" class="btn" data-iact="fix" data-tool="${t.id}">${ft.fix}</button></div>`; }).join('')}</div>` : ''}
+      <div class="hintline">
+        <span><i class="jk"></i>unpatched</span><span><i class="jk patched"></i>patched</span><span><i class="jk stale"></i>stale</span><span><i class="jk faulted"></i>faulted</span>
+        <span class="ml-auto">Click a jack to patch · drag or shift-click for several</span>
+      </div>
+    </section>
+    <section class="sec">
+      <div class="sec-h"><span class="eng">Projects</span><span class="text-ink-2 text-meta">${s.projects.length} of ${PROJECTS.length}</span></div>
+      ${PROJECTS.map(pr => `<label class="prow"><input type="checkbox" data-iact="project" data-project="${pr.id}" ${s.projects.includes(pr.id) ? 'checked' : ''} ${s.enabled ? '' : 'disabled'}>
+        <span>${pr.id}</span><code>${pr.path}</code></label>`).join('')}
+    </section>
+    <div class="insp-foot">
+      <button type="button" class="btn" data-iact="edit">${ic('pencil')}Edit</button>
+      <button type="button" class="btn btn-ghost" data-iact="repoint">${ic('link')}Re-point</button>
+    </div>`;
+}
+
+function render() { renderTabs(); if (st.tab !== 'skills') return; renderFbar(); renderRack(); renderBulk(); renderInsp(); renderFoot(); }
+
+/* ═════════════════════════ Mutations ═════════════════════════ */
+function note(msg) { st.event = msg; }
+function setTarget(s, tid, mode) {
+  if (!s.enabled) return false;
+  const cur = s.targets[tid];
+  if (mode === 'patch' && cur === 'unpatched') { s.targets[tid] = 'patched'; return true; }
+  if (mode === 'unpatch' && cur !== 'unpatched') { s.targets[tid] = 'unpatched'; delete s.faults[tid]; return true; }
+  return false;
+}
+function deploy(list) {
+  let n = 0; list.forEach(s => TOOLS.forEach(t => { if (setTarget(s, t.id, 'patch')) n++; }));
+  const f = list.reduce((a, s) => a + (s.enabled ? tally(s).f : 0), 0);
+  return `Patched ${n} target${n === 1 ? '' : 's'}${f ? ` · ${f} still faulted` : ''}`;
+}
+function openSkill(id, { focusInspector = false } = {}) {
+  st.openId = id; st.readout = null;
+  if (narrow.matches) st.sheetOpen = true;
+  render();
+  if (focusInspector || narrow.matches) { const j = $('#jgrid .jcell'); (j && !j.disabled ? j : $('#insp .sw')).focus(); }
+}
+
+/* ═════════════════════════ Rack interactions ═════════════════════════ */
+const navItems = () => [...$('#rack').querySelectorAll('[data-nav]')];
+function focusKey(key, { follow = true } = {}) {
+  st.focusKey = key;
+  const el = $('#rack').querySelector(`[data-key="${CSS.escape(key)}"]`);
+  if (!el) return;
+  $('#rack').querySelectorAll('[data-nav]').forEach(n => n.tabIndex = n === el ? 0 : -1);
+  el.focus({ preventScroll: true }); el.scrollIntoView({ block: 'nearest' });
+  // Wide layout: the inspector is the back of the focused row, so it follows focus.
+  if (follow && el.dataset.id && !narrow.matches && st.openId !== el.dataset.id) {
+    st.openId = el.dataset.id; st.readout = null;
+    $('#rack').querySelectorAll('.row.open').forEach(r => r.classList.remove('open'));
+    el.classList.add('open'); renderInsp();
+  }
+}
+function toggleSelect(id) { st.selected.has(id) ? st.selected.delete(id) : st.selected.add(id); }
+function toggleGroupSelect(name) {
+  const g = groups().find(g => g.name === name); if (!g) return;
+  const all = g.rows.every(s => st.selected.has(s.id));
+  g.rows.forEach(s => all ? st.selected.delete(s.id) : st.selected.add(s.id));
+}
+function toggleCollapse(name) { st.collapsed.has(name) ? st.collapsed.delete(name) : st.collapsed.add(name); st.focusKey = 'g:' + name; }
+
+$('#rack').addEventListener('click', e => {
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  const nav = e.target.closest('[data-nav]');
+  if (act === 'clear-filters') { st.filter = 'all'; st.q = ''; $('#q').value = ''; return render(); }
+  if (act === 'select-all') { const vis = visibleRows(); const all = vis.every(s => st.selected.has(s.id)); vis.forEach(s => all ? st.selected.delete(s.id) : st.selected.add(s.id)); return render(); }
+  if (!nav) return;
+  st.focusKey = nav.dataset.key;
+  const g = nav.dataset.group;
+  if (g) {
+    if (act === 'select-group') { toggleGroupSelect(g); return render(); }
+    if (act === 'deploy') { note(`${g}: ` + deploy(groups().find(x => x.name === g).all)); return render(); }
+    toggleCollapse(g); render(); return $('#rack').querySelector(`[data-key="${CSS.escape(st.focusKey)}"]`)?.focus({ preventScroll: true });
+  }
+  const s = byId(nav.dataset.id);
+  if (act === 'select') { toggleSelect(s.id); render(); return nav.isConnected || $('#rack').querySelector(`[data-key="${CSS.escape(st.focusKey)}"]`)?.focus({ preventScroll: true }); }
+  if (act === 'toggle') { s.enabled = !s.enabled; note(`${s.name} ${s.enabled ? 'enabled' : 'bypassed'}`); return render(); }
+  if (act === 'menu') { return openRowMenu(s, e.target.closest('button')); }
+  openSkill(s.id);
+  $('#rack').querySelector(`[data-key="${CSS.escape(st.focusKey)}"]`)?.focus({ preventScroll: true });
+});
+
+document.addEventListener('keydown', e => {
+  const tag = e.target.tagName;
+  const typing = tag === 'INPUT' && e.target.type !== 'checkbox' || tag === 'TEXTAREA';
+  if (!$('#menu').hidden) return menuKeys(e);
+  if (e.key === '/' && !typing) { e.preventDefault(); $('#q').focus(); $('#q').select(); return; }
+  if (typing) { if (e.key === 'Escape') { e.target.blur(); focusKey(st.focusKey || navItems()[0]?.dataset.key, { follow: false }); } if (e.key === 'ArrowDown') { e.preventDefault(); focusKey(st.focusKey || navItems()[0]?.dataset.key); } return; }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+  if (e.key === 'Escape') {
+    if (st.confirmDelete) { st.confirmDelete = false; return renderBulk(); }
+    if (st.sheetOpen) { st.sheetOpen = false; renderInsp(); return focusKey(st.focusKey, { follow: false }); }
+    if (st.selected.size) { st.selected.clear(); return render(); }
+    return;
+  }
+  const inRack = $('#rack').contains(e.target) || e.target === document.body;
+  if (!inRack) return;
+  const items = navItems(); if (!items.length) return;
+  let idx = items.findIndex(n => n.dataset.key === st.focusKey);
+  const cur = items[idx];
+  if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); return focusKey(items[Math.min(items.length - 1, idx + 1)].dataset.key); }
+  if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); return focusKey(items[Math.max(0, idx - 1)].dataset.key); }
+  if (e.key === 'Home') { e.preventDefault(); return focusKey(items[0].dataset.key); }
+  if (e.key === 'End') { e.preventDefault(); return focusKey(items[items.length - 1].dataset.key); }
+  if (!cur) return;
+  if (cur.dataset.group) {
+    const g = cur.dataset.group;
+    if (e.key === 'Enter' || (e.key === 'ArrowLeft' && !st.collapsed.has(g)) || (e.key === 'ArrowRight' && st.collapsed.has(g))) { e.preventDefault(); toggleCollapse(g); return render(); }
+    if (e.key === 'x' || e.key === ' ') { e.preventDefault(); toggleGroupSelect(g); return render(); }
+    return;
+  }
+  const s = byId(cur.dataset.id);
+  if (e.key === 'x' || e.key === ' ') { e.preventDefault(); toggleSelect(s.id); return render(); }
+  if (e.key === 'Enter') { e.preventDefault(); return openSkill(s.id, { focusInspector: true }); }
+  if (e.key === 'ArrowLeft' && st.view === 'grouped') { e.preventDefault(); return focusKey('g:' + groupOf(s)); }
+});
+
+/* ═════════════════════════ Filter bar, rail ═════════════════════════ */
+$('#fbar').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.filter) st.filter = b.dataset.filter === st.filter && b.dataset.filter !== 'all' ? 'all' : b.dataset.filter;
+  if (b.dataset.view) st.view = b.dataset.view;
+  render();
+});
+$('#q').addEventListener('input', e => { st.q = e.target.value.trim(); render(); });
+$('#theme').addEventListener('click', () => { const r = document.documentElement; r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark'; renderTabs(); });
+$('#tabs').addEventListener('click', e => {
+  const b = e.target.closest('[data-tab]'); if (!b) return;
+  st.tab = b.dataset.tab;
+  const on = st.tab === 'skills';
+  $('#body').hidden = !on; $('#ph').hidden = on;
+  if (!on) $('#ph-name').textContent = st.tab === 'explore' ? 'Explore' : 'Projects';
+  render();
+});
+$('#ph-back').addEventListener('click', () => $('#tabs [data-tab="skills"]').click());
+$('#refresh').addEventListener('click', () => { note('Refresh all: 60 sources checked · 3 stale'); renderFoot(); });
+$('#add').addEventListener('click', () => { note('Add skill opens the add flow (not part of this prototype)'); renderFoot(); });
+
+/* ═════════════════════════ Bulk rail ═════════════════════════ */
+$('#bulk').addEventListener('click', e => {
+  const b = e.target.closest('[data-bulk]'); if (!b) return;
+  const sel = [...st.selected].map(byId), n = sel.length;
+  switch (b.dataset.bulk) {
+    case 'clear': st.selected.clear(); break;
+    case 'sync': note(`${n} skills: ` + deploy(sel)); break;
+    case 'assign': return openMenu(b, PROJECTS.map(p => ({ label: p.id, icon: 'folder', run: () => { sel.forEach(s => { if (!s.projects.includes(p.id)) s.projects.push(p.id); }); note(`Assigned ${n} skills to ${p.id}`); render(); } })));
+    case 'disable': sel.forEach(s => s.enabled = false); note(`Bypassed ${n} skills`); break;
+    case 'enable': sel.forEach(s => s.enabled = true); note(`Enabled ${n} skills`); break;
+    case 'delete': st.confirmDelete = true; renderBulk(); return $('#bulk [data-bulk="cancel-delete"]').focus();
+    case 'cancel-delete': st.confirmDelete = false; break;
+    case 'delete-confirm':
+      sel.forEach(s => SKILLS.splice(SKILLS.indexOf(s), 1));
+      if (st.selected.has(st.openId)) st.openId = null;
+      st.selected.clear(); st.confirmDelete = false; note(`Deleted ${n} skills and removed their targets`); break;
+  }
+  render();
+});
+
+/* ═════════════════════════ Inspector: jack grid (signature) ═════════════════════════ */
+const insp = $('#insp');
+let drag = null, lastJack = null;
+function paintJack(cell, s) {
+  const tid = cell.dataset.tool, js = jackState(s, tid);
+  cell.classList.toggle('lit', js !== 'unpatched');
+  cell.setAttribute('aria-pressed', js !== 'unpatched');
+  cell.setAttribute('aria-label', `${TOOLS.find(t => t.id === tid).name}: ${STATE_WORD[js]}`);
+  cell.querySelector('.jack').className = 'jack ' + js;
+  $('#readout').innerHTML = readoutFor(s, tid); st.readout = { id: s.id, tool: tid };
+}
+function applyJack(cell, mode) {
+  const s = byId(st.openId);
+  if (setTarget(s, cell.dataset.tool, mode)) paintJack(cell, s);
+}
+function settleJacks(msg) { note(msg); renderRack(); renderFbar(); renderFoot(); /* inspector counts/faults refresh */
+  const focusedTool = document.activeElement?.dataset?.tool; renderInsp();
+  if (focusedTool) insp.querySelector(`.jcell[data-tool="${focusedTool}"]`)?.focus(); }
+insp.addEventListener('pointerdown', e => {
+  const cell = e.target.closest('.jcell'); if (!cell || cell.disabled || e.button !== 0) return;
+  e.preventDefault(); cell.focus();
+  const s = byId(st.openId), mode = s.targets[cell.dataset.tool] === 'unpatched' ? 'patch' : 'unpatch';
+  if (e.shiftKey && lastJack != null) {
+    const a = Math.min(lastJack, +cell.dataset.i), b = Math.max(lastJack, +cell.dataset.i);
+    insp.querySelectorAll('.jcell').forEach(c => { if (+c.dataset.i >= a && +c.dataset.i <= b) applyJack(c, mode); });
+    lastJack = +cell.dataset.i;
+    return settleJacks(`${s.name}: ${mode === 'patch' ? 'patched' : 'unpatched'} ${b - a + 1} targets`);
+  }
+  drag = { mode, visited: new Set([cell.dataset.tool]), s };
+  applyJack(cell, mode); lastJack = +cell.dataset.i;
+  $('#jgrid').setPointerCapture(e.pointerId);
+});
+insp.addEventListener('pointermove', e => {
+  const cell = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('.jcell');
+  if (!drag) { if (cell && !cell.disabled) { const s = byId(st.openId); $('#readout').innerHTML = readoutFor(s, cell.dataset.tool); } return; }
+  if (!cell || cell.disabled || drag.visited.has(cell.dataset.tool)) return;
+  drag.visited.add(cell.dataset.tool); applyJack(cell, drag.mode); lastJack = +cell.dataset.i;
+});
+const endDrag = () => { if (!drag) return; const { mode, visited, s } = drag; drag = null;
+  settleJacks(`${s.name}: ${mode === 'patch' ? 'patched' : 'pulled'} ${[...visited].map(t => TOOLS.find(x => x.id === t).name).join(', ')}`); };
+insp.addEventListener('pointerup', endDrag);
+insp.addEventListener('pointercancel', endDrag);
+insp.addEventListener('focusin', e => { const c = e.target.closest?.('.jcell'); if (c) { const s = byId(st.openId); $('#readout').innerHTML = readoutFor(s, c.dataset.tool); } });
+insp.addEventListener('keydown', e => {
+  const cell = e.target.closest('.jcell');
+  if (!cell) return;
+  const cells = [...insp.querySelectorAll('.jcell')], i = cells.indexOf(cell);
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    e.preventDefault(); const n = cells[(i + (e.key === 'ArrowRight' ? 1 : -1) + cells.length) % cells.length];
+    cells.forEach(c => c.tabIndex = c === n ? 0 : -1); n.focus();
+  }
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault(); const s = byId(st.openId), tid = cell.dataset.tool;
+    const mode = s.targets[tid] === 'unpatched' ? 'patch' : 'unpatch';
+    applyJack(cell, mode); lastJack = i;
+    settleJacks(`${s.name}: ${mode === 'patch' ? 'patched' : 'pulled'} ${TOOLS[i].name}`);
+  }
+});
+insp.addEventListener('click', e => {
+  const b = e.target.closest('[data-iact]'); if (!b) return;
+  const s = byId(st.openId); if (!s) return;
+  switch (b.dataset.iact) {
+    case 'toggle': s.enabled = !s.enabled; note(`${s.name} ${s.enabled ? 'enabled' : 'bypassed'}`); render(); return insp.querySelector('.sw').focus();
+    case 'close': st.sheetOpen = false; renderInsp(); return focusKey(st.focusKey, { follow: false });
+    case 'menu': return openRowMenu(s, b);
+    case 'copy': navigator.clipboard?.writeText(SOURCES[s.source].line(s.name)).catch(() => {}); b.innerHTML = ic('check'); setTimeout(() => { b.innerHTML = ic('copy'); }, 1200); return;
+    case 'update': s.stale = false; note(`${s.name} updated to the upstream revision · edits replayed`); break;
+    case 'patch-all': note(`${s.name}: ` + deploy([s])); break;
+    case 'unpatch-all': TOOLS.forEach(t => setTarget(s, t.id, 'unpatch')); note(`${s.name}: every target pulled`); break;
+    case 'fix': {
+      const tid = b.dataset.tool, code = s.faults[tid], name = TOOLS.find(t => t.id === tid).name;
+      if (code === 'TARGET_EXISTS') { s.targets[tid] = 'patched'; delete s.faults[tid]; note(`${s.name}: overwrote the existing folder in ${name}`); }
+      else note(`${s.name}: ${name} is still not writable. Check permissions on ${TOOLS.find(t => t.id === tid).dir}`);
+      break;
+    }
+    case 'project': {
+      const pid = b.dataset.project;
+      s.projects = b.checked ? [...s.projects, pid] : s.projects.filter(x => x !== pid);
+      note(`${s.name} ${b.checked ? 'assigned to' : 'removed from'} ${pid}`);
+      renderRack(); renderFoot(); return;
+    }
+    case 'edit': note(`Edit ${s.name}: opens the editor (not part of this prototype)`); renderFoot(); return;
+    case 'repoint': note(`Re-point ${s.name}: opens the source picker (not part of this prototype)`); renderFoot(); return;
+  }
+  render();
+});
+
+/* ═════════════════════════ Menus ═════════════════════════ */
+let menuReturn = null;
+function openMenu(anchor, items) {
+  const m = $('#menu');
+  m.innerHTML = items.map((it, i) => it === '-' ? '<hr>' : `<button type="button" role="menuitem" data-i="${i}" class="${it.danger ? 'danger' : ''}">${ic(it.icon)}${esc(it.label)}</button>`).join('');
+  m.hidden = false;
+  const r = anchor.getBoundingClientRect(), mr = m.getBoundingClientRect();
+  const top = r.bottom + 4 + mr.height > innerHeight ? r.top - 4 - mr.height : r.bottom + 4;
+  m.style.top = top + 'px'; m.style.left = Math.max(8, Math.min(innerWidth - mr.width - 8, r.right - mr.width)) + 'px';
+  menuReturn = anchor; m._items = items;
+  m.querySelector('button').focus();
+}
+function closeMenu() { $('#menu').hidden = true; if (menuReturn?.isConnected) menuReturn.focus(); else focusKey(st.focusKey, { follow: false }); menuReturn = null; }
+function menuKeys(e) {
+  const btns = [...$('#menu').querySelectorAll('button')], i = btns.indexOf(document.activeElement);
+  if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); return closeMenu(); }
+  if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); btns[(i + 1) % btns.length].focus(); }
+  if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); btns[(i - 1 + btns.length) % btns.length].focus(); }
+}
+$('#menu').addEventListener('click', e => { const b = e.target.closest('[data-i]'); if (!b) return; const it = $('#menu')._items[+b.dataset.i]; $('#menu').hidden = true; menuReturn = null; it.run(); });
+document.addEventListener('pointerdown', e => { if (!$('#menu').hidden && !e.target.closest('#menu')) closeMenu(); });
+function openRowMenu(s, anchor) {
+  openMenu(anchor, [
+    ...(s.stale && s.enabled ? [{ label: 'Update from upstream', icon: 'update', run: () => { s.stale = false; note(`${s.name} updated · edits replayed`); render(); } }] : []),
+    { label: 'Open inspector', icon: 'panels', run: () => openSkill(s.id, { focusInspector: true }) },
+    { label: 'Edit', icon: 'pencil', run: () => { note(`Edit ${s.name}: opens the editor (not part of this prototype)`); renderFoot(); } },
+    { label: 'Re-point source', icon: 'link', run: () => { note(`Re-point ${s.name} (not part of this prototype)`); renderFoot(); } },
+    { label: 'Copy source', icon: 'copy', run: () => { navigator.clipboard?.writeText(SOURCES[s.source].line(s.name)).catch(() => {}); note('Source copied'); renderFoot(); } },
+    '-',
+    { label: 'Delete…', icon: 'trash', danger: true, run: () => { st.selected = new Set([s.id]); st.confirmDelete = true; render(); $('#bulk [data-bulk="cancel-delete"]').focus(); } },
+  ]);
+}
+
+narrow.addEventListener('change', () => { if (!narrow.matches) st.sheetOpen = false; render(); });
+
+/* ═════════════════════════ Boot ═════════════════════════ */
+st.openId = SKILLS.find(s => s.name === 'zod-schema-first').id;
+st.focusKey = 'r:' + st.openId;
+render();
+</script>
+</body>
+</html>

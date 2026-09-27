@@ -5,17 +5,14 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#61**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#63**.
 
 ## Now — evidence of unfinished work is strong
 
-- **#43 Augment global skills dir is `.augment/skills`, not `.augment/rules`** (`tool_adapters/mod.rs:292-295`; upstream fixed it
-  in v0.5.0 `00c41cc`) — why Review & Import never saw `~/.augment/skills` during the QM-192 sweep. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §A1.
-- **#44 GitHub token is a plaintext settings row** (`core/settings.rs:32,112`) → OS keychain behind a `CredentialStore` trait with a
-  memory adapter for tests; one-time migration of the row. Upstream's `core/github_token.rs` + `device_sync/credentials.rs:14-18`
-  is a clean port. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §A2.
+(empty — #43 and #44 were absorbed by `round18/spec.md` tickets 01 and 02, 2026-09-24.)
 
-(Earlier dispositions: every pre-round-16 `Later`/`Parked` line was absorbed by `round16/spec.md` § Dispositions — items #12 #15 #22
+(Earlier dispositions: #43 #44 → `round18/issues/01`, `02`. #37 opened as the round 18 → 19 UI effort (`round18/spec.md`); the
+§E borrows, #46 #47 #49 #52 and #39's group-level deploy are **reserved for the round 19 spec** and stay listed until it opens. every pre-round-16 `Later`/`Parked` line was absorbed by `round16/spec.md` § Dispositions — items #12 #15 #22
 #28 #35 #36 → tickets; #18 → ticket 08; #16 #17 #21 #23 #24 #25 #27 #29 dropped by name there; #30 superseded by #37–#41; #26 moved
 to Future efforts. #42 (overwrite ask on `TARGET_EXISTS`) was absorbed by `round17/spec.md` D3 / `round17/issues/03`. Items #43–#60
 were seeded 2026-09-24 from the upstream/field survey in `docs/design-inputs/` — each carries its § pointer; re-verify against the
@@ -33,6 +30,10 @@ code before scheduling.)
   outside one module (we construct clients in several). The proxy feature it guards upstream is not wanted. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §B4.
 - **#49 Aggregate issues banner** "N skills have sync issues → View issues" + an `Issues` chip in `FilterBar` — one derived count over
   data we already hold; seed of the doctor view. Absorbs into #37 if that effort opens first. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §E1.
+- **#62 Passive upstream update check** — a read-only "check upstream" that compares the recorded SHA with the remote (Contents API /
+  `ls-remote`) and surfaces `Update available` on the row and in the inspector without acquiring or applying; Refresh (all) stays the
+  apply step. Decide the anchor with #59 (branch commit vs subtree SHA) before building. Source: round 18 bake-off, both prototypes
+  rendered a state the backend cannot produce (`.scratch/round18/spec.md` § Bake-off).
 - **#50 `PreparedDirReplacement` mechanics** behind `finalize_update`'s backup and Propagation's copy re-materialisation — port the
   staging/backup/rollback, drop its read-time compare-and-swap hash (ADR-0005). Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §B6.
 
@@ -43,6 +44,9 @@ code before scheduling.)
 - **#59 Subtree-SHA update anchor** (record the skill subdirectory's tree SHA, not the branch commit, so monorepo commits elsewhere
   never trigger a refresh or an Edit-conflict check) — changes what "upstream changed" means for every git row; decide with #26.
   Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §C9.
+- **#61 Broaden localisation** to the top ~5 languages via machine translation, once the copy pass (round 19 `clarify`) has settled EN.
+  ZH was removed in round 18 (unverifiable upstream inheritance; `git show <sha>:src/i18n/resources.ts` recovers it). Source: operator,
+  2026-09-24, `round18/issues/03`.
 - **#60 Smaller peer-derived ideas, one line so they stay findable**: provenance backfill for imported skills from `npx skills`
   lockfiles (§C10); `metadata.targets` frontmatter as per-harness routing (§C11); per-tool "hold at previous central copy" pin (§C12);
   web mode from the CLI binary after #54 (§E10). Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md`.

@@ -1,0 +1,1206 @@
+<!doctype html>
+<!-- PROTOTYPE (round 18, world: The Tracker List). Throwaway. Answers: does a Linear-style tracker list carry the real
+     library at a glance, dense and AA-legible, dark first? Fixture data is inline; nothing persists. -->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skills Hub — My Skills (prototype · Tracker List)</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<style type="text/tailwindcss">
+@theme static {
+  /* dark is the designed-first theme; light overrides live in @layer base below */
+  --color-ground: #0e0f12;        /* app ground: list surface */
+  --color-panel: #15171b;         /* second neutral layer: nav, detail, group headers, palette */
+  --color-raise: #1d2025;         /* hover / focus cursor */
+  --color-raise-2: #252930;       /* pressed segment, bulk bar */
+  --color-line: #262a31;          /* structural hairline */
+  --color-line-soft: #1b1e23;     /* row separator hairline */
+  --color-line-strong: #343942;   /* control borders, unlit segments */
+  --color-fg: #e6e7ea;
+  --color-fg-2: #a6abb4;
+  --color-fg-3: #858b95;
+  --color-accent: #9690ff;        /* iris: selection, focus ring, primary */
+  --color-accent-strong: #6a61e8; /* primary button fill (white text on it) */
+  --color-accent-tint: rgb(150 144 255 / 0.13);
+  --color-accent-tint-2: rgb(150 144 255 / 0.2);
+  --color-on-accent: #ffffff;
+  --color-ok: #3ddc84;
+  --color-ok-dot: #29875a;        /* synced is the default state: quieter than stale/failed so anomalies pop */
+  --color-stale: #f5b400;
+  --color-fail: #ff6b6b;
+  --color-tip: #2b2f37;
+  --color-scrim: rgb(5 6 8 / 0.5);
+  --color-switch-on: #7d838d;     /* neutral 'on': a column of 58 switches must not shout */
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --text-xs: 0.75rem;   --text-xs--line-height: 1rem;      /* 12 / 16 meta, kbd, counts */
+  --text-sm: 0.8125rem; --text-sm--line-height: 1.25rem;   /* 13 / 20 body, rows */
+  --text-md: 0.875rem;  --text-md--line-height: 1.25rem;   /* 14 / 20 titles, palette input */
+  --text-lg: 1rem;      --text-lg--line-height: 1.5rem;    /* 16 / 24 detail title */
+
+  --spacing: 4px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 120ms;
+  --row: 36px;
+}
+
+@layer base {
+  [data-theme="light"] {
+    --color-ground: #fcfcfd;
+    --color-panel: #f3f4f6;
+    --color-raise: #eceef1;
+    --color-raise-2: #e3e6ea;
+    --color-line: #e1e3e8;
+    --color-line-soft: #e9ebee;
+    --color-switch-on: #8a9099;
+    --color-line-strong: #cdd1d8;
+    --color-fg: #16181d;
+    --color-fg-2: #494e57;
+    --color-fg-3: #646a74;
+    --color-accent: #5a4fdc;
+    --color-accent-strong: #5a4fdc;
+    --color-accent-tint: rgb(90 79 220 / 0.09);
+    --color-accent-tint-2: rgb(90 79 220 / 0.15);
+    --color-ok: #16a35a;
+    --color-ok-dot: #16a35a;
+    --color-stale: #b77f00;
+    --color-fail: #c22e2e;
+    --color-tip: #1d2026;
+    --color-scrim: rgb(20 22 28 / 0.18);
+  }
+  html { color-scheme: dark; }
+  html[data-theme="light"] { color-scheme: light; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--color-ground); color: var(--color-fg);
+    font-family: var(--font-sans); font-size: var(--text-sm); line-height: var(--text-sm--line-height);
+    -webkit-font-smoothing: antialiased; overflow: hidden;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+  ::selection { background: var(--color-accent-tint-2); color: var(--color-fg); }
+  input { caret-color: var(--color-accent); }
+  :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+  .ic { flex: none; display: block; }
+  .num { font-variant-numeric: tabular-nums; }
+  .mono { font-family: var(--font-mono); font-size: var(--text-xs); }
+  [hidden] { display: none !important; }
+}
+
+@layer components {
+  /* ---------- shell ---------- */
+  .app { display: grid; grid-template-columns: 200px minmax(0, 1fr) auto; height: 100vh; }
+  .nav { background: var(--color-panel); border-right: 1px solid var(--color-line); display: flex; flex-direction: column; padding: 8px; gap: 2px; min-height: 0; }
+  .brand { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px; font-weight: 600; font-size: var(--text-md); }
+  .brand svg { color: var(--color-fg-2); }
+  .nav-search { height: 32px; margin: 4px 0 8px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border: 1px solid var(--color-line); border-radius: var(--radius-md); color: var(--color-fg-3); background: var(--color-ground); text-align: left; }
+  .nav-search .lbl { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .nav-item { height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: var(--radius-md); color: var(--color-fg-2); text-align: left; width: 100%; }
+  .nav-item .ic { color: var(--color-fg-3); }
+  .nav-item[aria-current="page"] { background: var(--color-raise); color: var(--color-fg); }
+  .nav-item[aria-current="page"] .ic { color: var(--color-fg); }
+  .nav-item .count { margin-left: auto; color: var(--color-fg-3); font-size: var(--text-xs); }
+  .nav-foot { margin-top: auto; display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--color-line); padding-top: 8px; }
+  @media (hover: hover) and (pointer: fine) {
+    .nav-item:hover, .nav-search:hover { background: var(--color-raise); color: var(--color-fg); }
+  }
+
+  .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; container-type: inline-size; container-name: list; }
+
+  /* ---------- header + filter bar ---------- */
+  .bar { height: 44px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--color-line); }
+  .bar h1 { font-size: var(--text-md); font-weight: 600; margin: 0; display: flex; align-items: baseline; gap: 8px; }
+  .bar h1 .num { font-size: var(--text-sm); font-weight: 400; color: var(--color-fg-3); }
+  .issues { display: flex; align-items: center; gap: 8px; color: var(--color-fg-2); min-width: 0; white-space: nowrap; }
+  .issues .sep { width: 1px; height: 16px; background: var(--color-line); }
+  .link { color: var(--color-fg); font-weight: 500; text-decoration: underline; text-decoration-color: var(--color-line-strong); text-underline-offset: 3px; border-radius: var(--radius-sm); }
+  .filters { height: 40px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--color-line); }
+  .search { position: relative; width: 240px; flex: none; }
+  .search .ic { position: absolute; left: 8px; top: 6px; color: var(--color-fg-3); pointer-events: none; }
+  .search input { width: 100%; height: 28px; padding: 0 28px 0 30px; border: 1px solid var(--color-line); border-radius: var(--radius-md); background: transparent; color: var(--color-fg); font: inherit; outline: none; }
+  .search input::placeholder { color: var(--color-fg-3); }
+  .search input:focus-visible { border-color: var(--color-accent); outline: none; box-shadow: 0 0 0 1px var(--color-accent); }
+  .search .kbd { position: absolute; right: 6px; top: 5px; }
+
+  .segctl { display: inline-flex; height: 28px; padding: 2px; gap: 2px; border: 1px solid var(--color-line); border-radius: var(--radius-md); flex: none; }
+  .segctl button { height: 22px; padding: 0 8px; border-radius: var(--radius-sm); color: var(--color-fg-2); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .segctl button .num { color: var(--color-fg-3); font-size: var(--text-xs); }
+  .segctl button[aria-pressed="true"] { background: var(--color-raise-2); color: var(--color-fg); }
+  .segctl button[aria-pressed="true"] .num { color: var(--color-fg-2); }
+  @media (hover: hover) and (pointer: fine) { .segctl button:hover { color: var(--color-fg); } }
+
+  .btn { height: 28px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; border-radius: var(--radius-md); border: 1px solid var(--color-line-strong); color: var(--color-fg); font-weight: 500; white-space: nowrap; flex: none; }
+  .btn .ic { color: var(--color-fg-2); }
+  .btn-ghost { border-color: transparent; color: var(--color-fg-2); }
+  .btn-sm { height: 24px; padding: 0 8px; }
+  .btn-primary { background: var(--color-accent-strong); border-color: transparent; color: var(--color-on-accent); }
+  .btn-primary .ic { color: var(--color-on-accent); }
+  .btn-icon { width: 28px; padding: 0; justify-content: center; }
+  .btn:disabled { color: var(--color-fg-3); cursor: default; }
+  @media (hover: hover) and (pointer: fine) {
+    .btn:not(.btn-primary):not(:disabled):hover { background: var(--color-raise); color: var(--color-fg); }
+    .btn-primary:hover { filter: brightness(1.08); }
+  }
+  .kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; border: 1px solid var(--color-line-strong); border-radius: var(--radius-sm); color: var(--color-fg-3); font-size: var(--text-xs); line-height: 1; font-family: var(--font-sans); font-variant-numeric: tabular-nums; }
+
+  /* ---------- list ---------- */
+  .scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding-bottom: 72px; }
+  .list { --cols: 28px 20px 240px minmax(0, 1fr) 84px 60px 40px 28px; }
+  .list.flat { --cols: 28px 20px 240px minmax(0, 1fr) 176px 84px 60px 40px 28px; }
+  .row, .ghead, .colhead { display: grid; grid-template-columns: var(--cols); align-items: center; height: var(--row); padding: 0 8px 0 4px; }
+  .row { border-bottom: 1px solid var(--color-line-soft); cursor: default; outline: none; scroll-margin-top: var(--row); scroll-margin-bottom: 80px; }
+  .row.is-cursor { background: var(--color-raise); }
+  .row.is-sel { background: var(--color-accent-tint); }
+  .row.is-sel.is-cursor { background: var(--color-accent-tint-2); }
+  .row:focus-visible, .ghead:focus-visible { outline: 1px solid var(--color-accent); outline-offset: -1px; }
+  @media (hover: hover) and (pointer: fine) { .row:not(.is-sel):not(.is-cursor):hover { background: color-mix(in srgb, var(--color-raise) 60%, transparent); } }
+
+  .cell-check { display: flex; justify-content: center; }
+  .cell-check input { width: 14px; height: 14px; margin: 0; accent-color: var(--color-accent-strong); opacity: 0; }
+  .row:hover .cell-check input, .row.is-cursor .cell-check input, .row.is-sel .cell-check input, .has-sel .cell-check input,
+  .ghead:hover .cell-check input, .ghead:focus-visible .cell-check input { opacity: 1; }
+
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
+  .dot.synced { background: var(--color-ok-dot); }
+  .dot.stale { background: var(--color-stale); }
+  .dot.failed { background: var(--color-fail); }
+  .dot.disabled { box-shadow: inset 0 0 0 1.5px var(--color-fg-3); }
+  .cell-status { display: flex; justify-content: center; }
+
+  .cell-name { display: flex; align-items: center; gap: 6px; min-width: 0; padding-right: 12px; font-weight: 500; }
+  .cell-name .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cell-name .ic { color: var(--color-fg-3); }
+  .row.is-off .cell-name { color: var(--color-fg-3); font-weight: 400; }
+  .cell-desc { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--color-fg-3); padding-right: 16px; }
+  .cell-desc .tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cell-desc .src { flex: none; color: var(--color-fg-2); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cell-source { color: var(--color-fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 16px; }
+
+  .cell-targets { display: flex; align-items: center; gap: 8px; }
+  .segs { display: flex; gap: 1px; }
+  .segs i { width: 3px; height: 12px; border-radius: 1px; background: var(--color-line-strong); }
+  .segs i.on { background: var(--color-fg-2); }
+  .segs i.fail { background: var(--color-fail); }
+  .cell-targets .num { font-size: var(--text-xs); color: var(--color-fg-2); width: 24px; }
+  .row.is-off .cell-targets .num { color: var(--color-fg-3); }
+
+  .cell-scope { display: flex; align-items: center; gap: 4px; color: var(--color-fg-3); font-size: var(--text-xs); }
+  .cell-scope .pj { display: flex; align-items: center; gap: 2px; color: var(--color-fg-2); margin-left: 4px; }
+
+  .switch { position: relative; width: 26px; height: 16px; border-radius: 8px; background: var(--color-line-strong); flex: none; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--color-fg-3); transition: transform var(--dur-fast) var(--ease-out); }
+  .switch[aria-checked="true"] { background: var(--color-switch-on); }
+  .switch:disabled { opacity: 0.4; }
+  .switch[aria-checked="true"]::after { transform: translateX(10px); background: var(--color-ground); }
+  .cell-switch { display: flex; justify-content: center; }
+
+  .more { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); color: var(--color-fg-3); opacity: 0; }
+  .row:hover .more, .row.is-cursor .more { opacity: 1; }
+  @media (hover: hover) and (pointer: fine) { .more:hover { background: var(--color-raise-2); color: var(--color-fg); } }
+
+  /* group header: second neutral layer, sticky, same grid */
+  .ghead { position: sticky; top: 0; z-index: 2; background: var(--color-panel); border-bottom: 1px solid var(--color-line); cursor: default; outline: none; }
+  .ghead + .ghead, .row + .ghead { border-top: 1px solid var(--color-line); }
+  .ghead.is-cursor { background: var(--color-raise); }
+  .ghead .chev { display: flex; justify-content: center; color: var(--color-fg-3); }
+  .ghead .chev .ic { transition: transform var(--dur-fast) var(--ease-out); }
+  .ghead[aria-expanded="true"] .chev .ic { transform: rotate(90deg); }
+  .ghead .gname { display: flex; align-items: baseline; gap: 8px; font-weight: 600; min-width: 0; padding-right: 12px; }
+  .ghead .gname .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ghead .gname .num { font-weight: 400; color: var(--color-fg-3); }
+  .ghead .gsum { display: flex; align-items: center; gap: 12px; color: var(--color-fg-2); font-size: var(--text-xs); white-space: nowrap; overflow: hidden; }
+  .ghead .gsum span { display: inline-flex; align-items: center; gap: 6px; }
+  .ghead .gact { grid-column: 5 / -1; justify-self: end; }
+  .flat .ghead .gact { grid-column: 6 / -1; }
+
+  .colhead { position: sticky; top: 0; z-index: 2; background: var(--color-panel); border-bottom: 1px solid var(--color-line); color: var(--color-fg-3); font-size: var(--text-xs); font-weight: 500; }
+
+  .empty { padding: 48px 24px; text-align: center; color: var(--color-fg-2); }
+  .empty p { margin: 0 0 12px; }
+
+  @container list (max-width: 820px) {
+    .list.flat { --cols: 28px 20px 200px 0 minmax(0, 1fr) 84px 60px 40px 28px; }
+    .list.flat .cell-desc, .list.flat .colhead .h-desc { visibility: hidden; padding: 0; }
+  }
+
+  /* ---------- footer ---------- */
+  .foot { height: 28px; flex: none; display: flex; align-items: center; gap: 16px; padding: 0 12px 0 16px; border-top: 1px solid var(--color-line); color: var(--color-fg-3); font-size: var(--text-xs); }
+  .foot .msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-fg-2); }
+  .legend { display: flex; align-items: center; gap: 12px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; color: var(--color-fg-2); }
+  .legend .dot { width: 7px; height: 7px; }
+
+  /* ---------- bulk bar ---------- */
+  .bulk { position: absolute; left: 50%; bottom: 40px; z-index: 5; display: flex; align-items: center; gap: 2px; height: 40px; padding: 0 4px 0 12px;
+          background: var(--color-raise-2); border: 1px solid var(--color-line-strong); border-radius: var(--radius-lg);
+          box-shadow: 0 6px 16px rgb(0 0 0 / 0.35), 0 1px 2px rgb(0 0 0 / 0.2);
+          transform: translate(-50%, 0); opacity: 1;
+          transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); white-space: nowrap; }
+  .bulk.is-hidden { opacity: 0; transform: translate(-50%, 8px); pointer-events: none; }
+  .bulk .cnt { display: flex; align-items: center; gap: 8px; font-weight: 500; padding-right: 8px; margin-right: 4px; border-right: 1px solid var(--color-line-strong); height: 24px; }
+  .bulk .cnt i { width: 14px; height: 14px; border-radius: 3px; background: var(--color-accent-strong); display: flex; align-items: center; justify-content: center; color: var(--color-on-accent); }
+  .bulk .btn { border-color: transparent; }
+  .bulk .kbd { margin: 0 4px 0 8px; }
+  [data-theme="light"] .bulk { box-shadow: 0 6px 16px rgb(20 22 28 / 0.12), 0 1px 2px rgb(20 22 28 / 0.08); }
+
+  /* ---------- detail ---------- */
+  .detail { width: 360px; background: var(--color-panel); border-left: 1px solid var(--color-line); display: flex; flex-direction: column; min-height: 0; }
+  .d-head { height: 44px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 16px; border-bottom: 1px solid var(--color-line); }
+  .d-head h2 { margin: 0; font-size: var(--text-lg); line-height: var(--text-lg--line-height); font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -0.005em; }
+  .d-body { flex: 1; min-height: 0; overflow: auto; }
+  .d-sec { padding: 12px 16px 16px; border-bottom: 1px solid var(--color-line); }
+  .d-sec:last-child { border-bottom: 0; }
+  .d-desc { color: var(--color-fg-2); margin: 0 0 12px; }
+  .d-src { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px 0 8px; border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-ground); }
+  .d-src .ic { color: var(--color-fg-3); }
+  .d-src .mono { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-fg-2); }
+  .d-src .btn { width: 24px; height: 24px; }
+  .d-title { height: 24px; display: flex; align-items: center; gap: 8px; margin-bottom: 4px; color: var(--color-fg-3); font-size: var(--text-xs); font-weight: 500; }
+  .d-title .num { margin-left: auto; color: var(--color-fg-2); }
+  .props { display: grid; grid-template-columns: 96px minmax(0, 1fr); }
+  .props dt { height: 28px; display: flex; align-items: center; color: var(--color-fg-3); }
+  .props dd { margin: 0; min-height: 28px; display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .props dd .mono { color: var(--color-fg-2); }
+  .d-actions { display: flex; gap: 8px; margin-top: 12px; }
+  .trow { display: grid; grid-template-columns: minmax(0, 1fr) auto 36px; align-items: center; min-height: var(--row); border-bottom: 1px solid var(--color-line-soft); column-gap: 8px; }
+  .trow:last-child { border-bottom: 0; }
+  .trow .tname { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .trow .tstate { font-size: var(--text-xs); color: var(--color-fg-3); }
+  .trow .tstate.failed { color: var(--color-fail); font-weight: 500; }
+  .trow .terr { grid-column: 1 / -1; padding: 0 0 10px 16px; margin-top: -4px; font-size: var(--text-xs); color: var(--color-fg-2); display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+  .trow .terr .mono { color: var(--color-fg-2); }
+  .trow .switch { justify-self: end; }
+  .prow { display: flex; align-items: center; gap: 10px; height: var(--row); border-bottom: 1px solid var(--color-line-soft); }
+  .prow:last-child { border-bottom: 0; }
+  .prow input { width: 14px; height: 14px; margin: 0; accent-color: var(--color-accent-strong); }
+  .prow .mono { margin-left: auto; color: var(--color-fg-3); }
+  .d-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--color-fg-3); padding: 24px; text-align: center; }
+  .d-empty p { margin: 0; max-width: 28ch; }
+
+  @media (max-width: 1180px) {
+    .detail { position: fixed; top: 0; right: 0; bottom: 0; width: 380px; z-index: 20; box-shadow: -12px 0 32px rgb(0 0 0 / 0.4); }
+    [data-theme="light"] .detail { box-shadow: -12px 0 32px rgb(20 22 28 / 0.14); }
+    .detail.is-closed { display: none; }
+  }
+
+  /* ---------- palette ---------- */
+  .scrim { position: fixed; inset: 0; z-index: 40; background: var(--color-scrim); opacity: 1; transition: opacity var(--dur-fast) var(--ease-out); }
+  .pal { position: fixed; z-index: 41; top: 14vh; left: 50%; width: 600px; max-width: calc(100vw - 48px); background: var(--color-panel);
+         border: 1px solid var(--color-line-strong); border-radius: var(--radius-lg); overflow: hidden;
+         box-shadow: 0 12px 32px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.25);
+         transform: translateX(-50%); transform-origin: 50% 0; opacity: 1;
+         transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); }
+  [data-theme="light"] .pal { box-shadow: 0 12px 32px rgb(20 22 28 / 0.16), 0 2px 6px rgb(20 22 28 / 0.08); }
+  .pal.is-entering { opacity: 0; transform: translateX(-50%) translateY(-4px) scale(0.98); }
+  .scrim.is-entering { opacity: 0; }
+  .pal-in { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 14px; border-bottom: 1px solid var(--color-line); }
+  .pal-in .ic { color: var(--color-fg-3); }
+  .pal-in input { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; color: var(--color-fg); font: inherit; font-size: var(--text-md); outline: none; }
+  .pal-in input::placeholder { color: var(--color-fg-3); }
+  .crumb { flex: none; height: 22px; padding: 0 8px; display: inline-flex; align-items: center; gap: 4px; border-radius: var(--radius-sm); background: var(--color-raise-2); color: var(--color-fg-2); font-size: var(--text-xs); font-weight: 500; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pal-list { max-height: min(400px, 56vh); overflow: auto; padding: 4px; }
+  .pal-sec { height: 28px; display: flex; align-items: center; padding: 0 10px; color: var(--color-fg-3); font-size: var(--text-xs); font-weight: 500; }
+  .pal-item { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 10px; height: var(--row); padding: 0 10px; border-radius: var(--radius-md); color: var(--color-fg); cursor: default; }
+  .pal-item .ic { color: var(--color-fg-3); }
+  .pal-item .lb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pal-item .lb mark { background: none; color: var(--color-fg); font-weight: 700; text-decoration: underline; text-decoration-color: var(--color-accent); text-underline-offset: 3px; }
+  .pal-item .mt { display: flex; align-items: center; gap: 6px; color: var(--color-fg-3); font-size: var(--text-xs); }
+  .pal-item[aria-selected="true"] { background: var(--color-raise-2); }
+  .pal-item[aria-selected="true"] .ic { color: var(--color-fg); }
+  .pal-item.is-inert { color: var(--color-fg-2); }
+  .pal-item .ck { width: 14px; height: 14px; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--color-line-strong); display: flex; align-items: center; justify-content: center; }
+  .pal-item .ck.on { background: var(--color-accent-strong); box-shadow: none; color: var(--color-on-accent); }
+  .pal-item .ck.some { box-shadow: inset 0 0 0 1px var(--color-accent); }
+  .pal-item .ck.some::after { content: ""; width: 6px; height: 2px; background: var(--color-accent); border-radius: 1px; }
+  .pal-empty { padding: 24px; text-align: center; color: var(--color-fg-2); }
+  .pal-foot { min-height: 36px; display: flex; align-items: center; gap: 16px; padding: 8px 14px; border-top: 1px solid var(--color-line); color: var(--color-fg-3); font-size: var(--text-xs); }
+  .pal-foot span { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* ---------- tooltip ---------- */
+  .tip { position: fixed; z-index: 60; max-width: 300px; padding: 6px 8px; border-radius: var(--radius-md); background: var(--color-tip); color: #e6e7ea; font-size: var(--text-xs); line-height: 16px; white-space: pre-line; pointer-events: none; box-shadow: 0 4px 12px rgb(0 0 0 / 0.3); opacity: 0; transition: opacity 80ms linear; }
+  .tip.is-on { opacity: 1; }
+  .tip b { font-weight: 600; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bulk, .pal, .scrim, .switch::after, .ghead .chev .ic, .tip { transition: none; }
+  }
+}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <nav class="nav" aria-label="Primary">
+    <div class="brand"><span id="brandMark"></span>Skills Hub</div>
+    <button class="nav-search" type="button" data-cmd="palette" aria-label="Search and commands (⌘K)"><span data-i="search"></span><span class="lbl">Search or run…</span><span class="kbd">⌘K</span></button>
+    <button class="nav-item" type="button" aria-current="page" data-nav="skills"><span data-i="layers"></span>My Skills<span class="count num" id="navCount"></span></button>
+    <button class="nav-item" type="button" data-nav="explore"><span data-i="compass"></span>Explore</button>
+    <button class="nav-item" type="button" data-nav="projects"><span data-i="folders"></span>Projects<span class="count num">3</span></button>
+    <div class="nav-foot">
+      <button class="nav-item" type="button" data-cmd="theme" id="themeBtn"></button>
+      <button class="nav-item" type="button" data-cmd="shortcuts"><span data-i="keyboard"></span>Shortcuts<span class="count"><span class="kbd">?</span></span></button>
+      <button class="nav-item" type="button" data-nav="settings"><span data-i="settings"></span>Settings</button>
+    </div>
+  </nav>
+
+  <main class="main" id="main">
+    <header class="bar">
+      <h1>My Skills <span class="num" id="totalCount"></span></h1>
+      <div class="issues" id="issues"></div>
+      <div class="ml-auto flex items-center gap-2">
+        <button class="btn btn-ghost" type="button" data-cmd="refresh"><span data-i="refresh"></span>Refresh all</button>
+        <button class="btn btn-primary" type="button" data-cmd="add"><span data-i="plus"></span>Add skill</button>
+      </div>
+    </header>
+    <div class="filters" role="toolbar" aria-label="Filter and display">
+      <label class="search"><span data-i="search"></span><input id="q" type="text" placeholder="Filter skills" aria-label="Filter skills" autocomplete="off" spellcheck="false"><span class="kbd">/</span></label>
+      <div class="segctl" id="filterSeg" role="group" aria-label="Show"></div>
+      <div class="segctl ml-auto" id="modeSeg" role="group" aria-label="Layout"></div>
+    </div>
+    <div class="scroll" id="scroll">
+      <div class="list" id="list" aria-label="Skills"></div>
+    </div>
+    <div class="bulk is-hidden" id="bulk" role="toolbar" aria-label="Bulk actions" inert></div>
+    <footer class="foot">
+      <div class="msg" id="msg" aria-live="polite"></div>
+      <div class="legend" id="legend"></div>
+    </footer>
+  </main>
+
+  <aside class="detail" id="detail" aria-label="Skill detail"></aside>
+</div>
+
+<div id="palRoot" hidden>
+  <div class="scrim" id="scrim"></div>
+  <div class="pal" id="pal" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="pal-in"><span data-i="search"></span><span class="crumb" id="crumb" hidden></span>
+      <input id="palInput" type="text" role="combobox" aria-expanded="true" aria-controls="palList" aria-autocomplete="list" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="pal-list" id="palList" role="listbox" aria-label="Results"></div>
+    <div class="pal-foot"><span><span class="kbd">↑</span><span class="kbd">↓</span>move</span><span><span class="kbd">↵</span>run</span><span id="palBackHint"><span class="kbd">⌫</span>back</span><span><span class="kbd">esc</span>close</span></div>
+  </div>
+</div>
+<div class="tip" id="tip" role="tooltip"></div>
+
+<script>
+/* ================= icons (Lucide paths, 24 grid, rendered at 16px, stroke 1.75) ================= */
+const P = {
+  search: '<circle cx="11" cy="11" r="7.5"/><path d="m20.5 20.5-4.3-4.3"/>',
+  layers: '<path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
+  compass: '<path d="m16.24 7.76-1.8 5.41a2 2 0 0 1-1.27 1.27L7.76 16.24l1.8-5.41a2 2 0 0 1 1.27-1.27z"/><circle cx="12" cy="12" r="10"/>',
+  folders: '<path d="M20 17a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3.9a2 2 0 0 1-1.69-.9l-.81-1.2a2 2 0 0 0-1.67-.9H8a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2Z"/><path d="M2 8v11a2 2 0 0 0 2 2h14"/>',
+  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  folderPlus: '<path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  settings: '<path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  keyboard: '<path d="M10 8h.01"/><path d="M12 12h.01"/><path d="M14 8h.01"/><path d="M16 12h.01"/><path d="M18 8h.01"/><path d="M6 8h.01"/><path d="M7 16h10"/><path d="M8 12h.01"/><rect width="20" height="16" x="2" y="4" rx="2"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  chevron: '<path d="m9 18 6-6-6-6"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+  more: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  pencil: '<path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  send: '<path d="M14.54 21.69a.5.5 0 0 0 .94-.03l6.5-19a.5.5 0 0 0-.64-.64l-19 6.5a.5.5 0 0 0-.02.94l7.93 3.18a2 2 0 0 1 1.11 1.11z"/><path d="m21.85 2.15-10.94 10.94"/>',
+  trash: '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>',
+  power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>',
+  git: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v1a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9"/><path d="M6 9v6"/>',
+  hdd: '<path d="M22 12H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><path d="M6 16h.01"/><path d="M10 16h.01"/>',
+  up: '<circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4"/><path d="M12 16V8"/>',
+  list: '<path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M8 6h13"/>',
+  tree: '<path d="M21 12h-8"/><path d="M21 6H8"/><path d="M21 18h-8"/><path d="M3 6v4c0 1.1.9 2 2 2h3"/><path d="M3 10v6c0 1.1.9 2 2 2h3"/>',
+  alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  arrowRight: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+  cornerLeft: '<path d="M9 10 4 15l5 5"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/>',
+  select: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/>',
+  collapse: '<path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/>',
+  expand: '<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>',
+  mark: '<path d="M4 7h10"/><path d="M4 12h16"/><path d="M4 17h7"/><circle cx="18" cy="7" r="2"/><circle cx="15" cy="17" r="2"/>',
+};
+const icon = (n, size = 16) => `<svg class="ic" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[n]}</svg>`;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ================= fixture ================= */
+const TOOLS = [
+  { id: 'claude', name: 'Claude Code', dir: '~/.claude/skills' },
+  { id: 'codex', name: 'Codex', dir: '~/.codex/skills' },
+  { id: 'pi', name: 'Pi', dir: '~/.pi/agent/skills' },
+  { id: 'cursor', name: 'Cursor', dir: '~/.cursor/skills' },
+  { id: 'kimi', name: 'Kimi', dir: '~/.kimi/skills' },
+  { id: 'amp', name: 'Amp', dir: '~/.config/amp/skills' },
+  { id: 'gemini', name: 'Gemini CLI', dir: '~/.gemini/skills' },
+];
+const PROJECTS = [
+  { id: 'skills-hub', path: '~/Projects/skills-hub' },
+  { id: 'quartermaster', path: '~/Projects/quartermaster' },
+  { id: 'agent-skills', path: '~/Projects/agent-skills' },
+];
+const ERR = {
+  TARGET_EXISTS: (t, s) => ({ text: `A different skill already exists at ${t.dir}/${s.name}.`, fix: 'Overwrite and retry' }),
+  TOOL_NOT_WRITABLE: (t) => ({ text: `${t.dir} is not writable by Skills Hub.`, fix: 'Retry' }),
+};
+
+const SKILLS = [];
+function add(repo, name, desc, o = {}) {
+  const local = o.local;
+  const targets = {};
+  for (const t of TOOLS) targets[t.id] = o.disabled ? 'off' : (o.fail && o.fail[t.id]) ? 'failed' : (o.off || []).includes(t.id) ? 'off' : 'synced';
+  SKILLS.push({
+    id: name, name, desc, repo,
+    url: local ? local : o.url || `github.com/${repo}`,
+    kind: local ? 'local' : 'git',
+    targets, errors: { ...(o.fail || {}) },
+    stale: !!o.stale, enabled: !o.disabled, edited: !!o.edited,
+    projects: o.projects || [], ago: o.ago || '2h ago',
+  });
+}
+const mp = (n, d, o) => add('mattpocock/skills', n, d, { url: `github.com/mattpocock/skills/tree/main/skills/${n}`, ...o });
+mp('ts-error-fixer', 'Diagnose and fix TypeScript errors by category', { ago: '2h ago' });
+mp('vitest-migration', 'Migrate a Jest suite to Vitest, config and mocks included', { stale: true, off: ['kimi', 'gemini'], ago: '6d ago' });
+mp('react-perf-audit', 'Find wasted renders and heavy effects in React trees', { projects: ['skills-hub', 'agent-skills'] });
+mp('zod-schema-first', 'Derive types from Zod schemas, never the reverse', { fail: { cursor: 'TARGET_EXISTS' }, ago: '14m ago' });
+mp('prisma-review', 'Review Prisma schemas and queries for N+1 and drift', { disabled: true, ago: '3w ago' });
+mp('ts-generics-coach', 'Explain and tighten generic signatures step by step');
+mp('type-safe-env', 'Validate environment variables at startup, typed');
+mp('strict-tsconfig', 'Adopt strict compiler flags one error class at a time', { edited: true, ago: '1d ago' });
+mp('branded-types', 'Model IDs and units as branded nominal types');
+mp('discriminated-unions', 'Replace boolean flag soup with tagged unions');
+mp('ts-reset-setup', 'Install ts-reset and fix the fallout', { off: ['gemini'] });
+mp('tsup-library-build', 'Ship a dual ESM/CJS library with tsup');
+mp('node-esm-migration', 'Move a Node package from CommonJS to ESM');
+mp('react-server-components', 'Split server and client components correctly');
+mp('react-hook-form-zod', 'Wire React Hook Form to Zod resolvers');
+mp('tanstack-query-patterns', 'Query keys, invalidation and optimistic updates', { edited: true, ago: '3d ago' });
+mp('effect-ts-intro', 'Introduce Effect gradually into an existing codebase', { off: ['amp'] });
+mp('trpc-router-review', 'Review tRPC routers for input validation and errors');
+mp('drizzle-migrations', 'Generate and review Drizzle migrations safely');
+mp('monorepo-tsconfig-refs', 'Set up project references across a monorepo');
+mp('changesets-release', 'Version and publish packages with Changesets');
+mp('eslint-flat-config', 'Migrate to ESLint flat config with typed rules');
+mp('playwright-e2e', 'Write stable Playwright tests without sleeps');
+mp('msw-api-mocking', 'Mock HTTP at the network layer with MSW');
+mp('xstate-machines', 'Model UI flows as XState machines', { off: ['kimi'] });
+mp('openapi-to-types', 'Generate typed clients from an OpenAPI spec');
+mp('json-schema-to-zod', 'Convert JSON Schema documents into Zod');
+mp('ts-performance-trace', 'Profile slow type-checks with --generateTrace');
+
+const an = (n, d, o) => add('anthropics/skills', n, d, { url: `github.com/anthropics/skills/tree/main/${n}`, ago: '5h ago', ...o });
+an('docx', 'Create, edit and analyse Word documents with tracked changes');
+an('pdf', 'Extract, fill, split and merge PDF documents');
+an('pptx', 'Build and edit PowerPoint decks from an outline');
+an('xlsx', 'Read, write and chart spreadsheets with formulas intact');
+an('frontend-design', 'Distinctive, production-grade frontend interfaces', { projects: ['skills-hub'] });
+an('mcp-builder', 'Scaffold and test Model Context Protocol servers');
+an('webapp-testing', 'Drive local web apps with Playwright to verify behaviour');
+an('canvas-design', 'Compose posters and visual art as PNG and PDF');
+an('artifacts-builder', 'Build multi-component HTML artifacts with React');
+
+const ob = (n, d, o) => add('obra/superpowers', n, d, { url: `github.com/obra/superpowers/tree/main/skills/${n}`, ago: '1d ago', ...o });
+ob('brainstorming', 'Refine a rough idea into a design through questions');
+ob('tdd', 'Red, green, refactor: write the failing test first', { stale: true, ago: '9d ago' });
+ob('systematic-debugging', 'Four-phase root-cause process before any fix');
+ob('verification-before-completion', 'Run the proving command before claiming done');
+ob('writing-plans', 'Turn a design into bite-sized implementation tasks');
+ob('executing-plans', 'Work a plan in batches with review checkpoints');
+ob('subagent-driven-development', 'Dispatch a fresh subagent per task, review between');
+ob('condition-based-waiting', 'Replace arbitrary timeouts with condition polling');
+ob('root-cause-tracing', 'Trace a bug backwards through the call stack');
+ob('defense-in-depth', 'Validate at every layer the data passes through');
+ob('using-git-worktrees', 'Isolated workspaces with safe directory selection', { fail: { kimi: 'TOOL_NOT_WRITABLE', amp: 'TOOL_NOT_WRITABLE' }, off: ['gemini'], ago: '14m ago' });
+ob('finishing-a-development-branch', 'Merge, open a PR or discard once work is complete');
+
+const vl = (n, d, o) => add('vercel-labs/agent-skills', n, d, { url: `github.com/vercel-labs/agent-skills/tree/main/skills/${n}`, ago: '2d ago', ...o });
+vl('react-best-practices', 'React and Next.js performance rules from Vercel');
+vl('composition-patterns', 'Compound components over boolean prop sprawl');
+vl('web-design-guidelines', 'Review UI against the Web Interface Guidelines');
+vl('next-app-router', 'App Router layouts, loading states and caching');
+vl('edge-runtime', 'Write handlers that run on the Edge runtime');
+vl('turbo-monorepo', 'Configure Turborepo pipelines and remote caching');
+
+add('alexstark/handoff', 'handoff', 'Compact a session into a handoff note for the next agent', { url: 'github.com/alexstark/handoff', ago: '4h ago' });
+add('ego-browser/skill', 'ego-browser', 'Operate a logged-in Chromium alongside the user', { url: 'github.com/ego-browser/skill', ago: '1d ago' });
+add('~/Projects/pi-lens/skill', 'pi-lens', 'LSP diagnostics and ast-grep search for agents', { local: '~/Projects/pi-lens/skill', off: ['codex', 'cursor', 'kimi', 'amp', 'gemini'], ago: '20m ago' });
+add('t3-code/orchestration', 't3-orchestration', 'Delegate, schedule and launch T3 Code threads', { url: 'github.com/t3-code/orchestration', stale: true, ago: '8d ago' });
+add('some-org/ui-ux-pro-max', 'ui-ux-pro-max', 'Design intelligence: styles, palettes and type pairings', { url: 'github.com/some-org/ui-ux-pro-max', edited: true, ago: '2d ago' });
+
+/* ================= derived ================= */
+const nSynced = (s) => TOOLS.filter((t) => s.targets[t.id] === 'synced').length;
+const nFailed = (s) => TOOLS.filter((t) => s.targets[t.id] === 'failed').length;
+const stateOf = (s) => !s.enabled ? 'disabled' : nFailed(s) ? 'failed' : s.stale ? 'stale' : 'synced';
+const STATE = {
+  synced: { label: 'Synced', def: 'Every chosen target is up to date with the source.' },
+  stale: { label: 'Stale', def: 'An upstream update is available; targets still hold the older version.' },
+  failed: { label: 'Failed', def: 'At least one target failed with a typed error. Open the skill to recover.' },
+  disabled: { label: 'Disabled', def: 'Kept in the library, removed from every tool.' },
+};
+const hasIssue = (s) => ['failed', 'stale'].includes(stateOf(s));
+const INDIV = '__individual';
+function groupsOf(skills) {
+  const bySrc = new Map();
+  for (const s of skills) { if (!bySrc.has(s.repo)) bySrc.set(s.repo, []); bySrc.get(s.repo).push(s); }
+  const groups = []; const indiv = [];
+  for (const [repo, list] of bySrc) (list.length > 1 ? groups.push({ id: repo, name: repo, skills: list }) : indiv.push(...list));
+  if (indiv.length) groups.push({ id: INDIV, name: 'Individual sources', skills: indiv });
+  return groups;
+}
+// group membership is fixed by the full library, not by the current filter
+function groupIdOf(s) { return SKILLS.filter((x) => x.repo === s.repo).length > 1 ? s.repo : INDIV; }
+
+/* ================= state ================= */
+const state = {
+  theme: 'dark', mode: 'grouped', filter: 'all', query: '',
+  collapsed: new Set(), selected: new Set(), anchor: null,
+  cursor: 's:zod-schema-first', detail: 'zod-schema-first',
+};
+const byId = (id) => SKILLS.find((s) => s.id === id);
+const $ = (id) => document.getElementById(id);
+
+function passes(s) {
+  if (state.filter === 'issues' && !hasIssue(s)) return false;
+  if (state.filter === 'edited' && !s.edited) return false;
+  if (state.filter === 'disabled' && s.enabled) return false;
+  const q = state.query.trim().toLowerCase();
+  if (q && !(s.name + ' ' + s.desc + ' ' + s.repo).toLowerCase().includes(q)) return false;
+  return true;
+}
+/** Visible, keyboard-traversable items in order: group headers and rows. */
+function visibleItems() {
+  const items = [];
+  const shown = SKILLS.filter(passes);
+  if (state.mode === 'flat') {
+    [...shown].sort((a, b) => a.name.localeCompare(b.name)).forEach((s) => items.push({ key: 's:' + s.id, skill: s }));
+    return items;
+  }
+  const all = groupsOf(SKILLS);
+  for (const g of all) {
+    const members = g.skills.filter(passes);
+    if (!members.length) continue;
+    items.push({ key: 'g:' + g.id, group: g, members });
+    if (!state.collapsed.has(g.id)) members.forEach((s) => items.push({ key: 's:' + s.id, skill: s, group: g }));
+  }
+  return items;
+}
+
+/* ================= render: list ================= */
+function targetsTip(s) {
+  const on = TOOLS.filter((t) => s.targets[t.id] === 'synced').map((t) => t.name);
+  const fail = TOOLS.filter((t) => s.targets[t.id] === 'failed').map((t) => `${t.name} — ${s.errors[t.id]}`);
+  const off = TOOLS.filter((t) => s.targets[t.id] === 'off').map((t) => t.name);
+  let tip = `Synced to ${on.length} of ${TOOLS.length} installed tools`;
+  if (on.length) tip += `\n${on.join(', ')}`;
+  if (fail.length) tip += `\nFailed: ${fail.join('; ')}`;
+  if (off.length) tip += `\nNot synced: ${off.join(', ')}`;
+  return tip;
+}
+function segsHTML(s) {
+  return '<span class="segs" aria-hidden="true">' + TOOLS.map((t) => `<i class="${s.targets[t.id] === 'synced' ? 'on' : s.targets[t.id] === 'failed' ? 'fail' : ''}"></i>`).join('') + '</span>';
+}
+function scopeHTML(s) {
+  if (!s.enabled) return `<span class="cell-scope" data-tip="Disabled — no targets">—</span>`;
+  const pj = s.projects.length;
+  const tip = pj ? `Global, and ${pj} project${pj > 1 ? 's' : ''}: ${s.projects.join(', ')}` : 'Global — synced to tool skill directories';
+  return `<span class="cell-scope" data-tip="${esc(tip)}">${icon('globe')}${pj ? `<span class="pj">${icon('folder')}<span class="num">${pj}</span></span>` : ''}</span>`;
+}
+function rowHTML(s, item) {
+  const st = stateOf(s);
+  const key = 's:' + s.id;
+  const cls = ['row', state.cursor === key ? 'is-cursor' : '', state.selected.has(s.id) ? 'is-sel' : '', s.enabled ? '' : 'is-off'].join(' ');
+  const indiv = item.group && item.group.id === INDIV;
+  const flat = state.mode === 'flat';
+  const srcLabel = s.kind === 'local' ? s.url : s.repo;
+  return `<div class="${cls}" role="row" tabindex="${state.cursor === key ? 0 : -1}" data-key="${key}" aria-selected="${state.selected.has(s.id)}" aria-label="${esc(s.name)}, ${STATE[st].label}, synced ${nSynced(s)} of ${TOOLS.length}">
+    <span class="cell-check"><input type="checkbox" tabindex="-1" data-act="sel" aria-label="Select ${esc(s.name)}" ${state.selected.has(s.id) ? 'checked' : ''}></span>
+    <span class="cell-status" data-tip="${esc(STATE[st].label + ' — ' + STATE[st].def)}"><i class="dot ${st}"></i></span>
+    <span class="cell-name"><span class="nm">${esc(s.name)}</span>${s.edited ? `<span data-tip="Edited — local changes are replayed on every update">${icon('pencil', 14)}</span>` : ''}</span>
+    <span class="cell-desc">${indiv && !flat ? `<span class="src mono">${esc(srcLabel)}</span>` : ''}<span class="tx">${esc(s.desc)}</span></span>
+    ${flat ? `<span class="cell-source mono">${esc(srcLabel)}</span>` : ''}
+    <span class="cell-targets" data-tip="${esc(targetsTip(s))}">${segsHTML(s)}<span class="num">${nSynced(s)}/${TOOLS.length}</span></span>
+    ${scopeHTML(s)}
+    <span class="cell-switch"><button class="switch" type="button" role="switch" tabindex="-1" data-act="enable" aria-checked="${s.enabled}" aria-label="${s.enabled ? 'Disable' : 'Enable'} ${esc(s.name)}" data-tip="${s.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}"></button></span>
+    <button class="more" type="button" tabindex="-1" data-act="more" aria-label="Actions for ${esc(s.name)}" data-tip="Actions  ⌘K">${icon('more')}</button>
+  </div>`;
+}
+function summaryHTML(members) {
+  const c = { synced: 0, stale: 0, failed: 0, disabled: 0 };
+  members.forEach((s) => c[stateOf(s)]++);
+  return ['synced', 'stale', 'failed', 'disabled'].filter((k) => c[k]).map((k) => `<span><i class="dot ${k}"></i><span class="num">${c[k]}</span> ${k}</span>`).join('');
+}
+function gheadHTML(item) {
+  const g = item.group, key = 'g:' + g.id;
+  const open = !state.collapsed.has(g.id);
+  const allSel = item.members.every((s) => state.selected.has(s.id));
+  return `<div class="ghead ${state.cursor === key ? 'is-cursor' : ''}" role="row" tabindex="${state.cursor === key ? 0 : -1}" data-key="${key}" aria-expanded="${open}" aria-label="${esc(g.name)}, ${item.members.length} skills">
+    <span class="cell-check"><input type="checkbox" tabindex="-1" data-act="gsel" aria-label="Select all in ${esc(g.name)}" ${allSel ? 'checked' : ''}></span>
+    <span class="chev" data-act="collapse">${icon('chevron')}</span>
+    <span class="gname" data-act="collapse"><span class="t">${esc(g.name)}</span><span class="num">${item.members.length}</span></span>
+    <span class="gsum">${summaryHTML(item.members)}</span>
+    <span class="gact"><button class="btn btn-ghost btn-sm" type="button" data-act="deploy" data-tip="Sync every enabled skill in ${esc(g.name)} to all ${TOOLS.length} tools">${icon('send')}Deploy all</button></span>
+  </div>`;
+}
+function renderList() {
+  const list = $('list');
+  list.className = 'list' + (state.mode === 'flat' ? ' flat' : '') + (state.selected.size ? ' has-sel' : '');
+  list.setAttribute('role', 'grid');
+  list.setAttribute('aria-multiselectable', 'true');
+  const items = visibleItems();
+  if (!items.length) {
+    list.innerHTML = `<div class="empty"><p>No skills match “${esc(state.query || STATE_FILTER_LABEL[state.filter])}”.</p><button class="btn" type="button" data-cmd="clearFilters">Clear filters</button></div>`;
+    return;
+  }
+  let html = '';
+  if (state.mode === 'flat') html += `<div class="colhead" role="row"><span></span><span></span><span>Name</span><span class="h-desc">Description</span><span>Source</span><span>Targets</span><span>Scope</span><span>On</span><span></span></div>`;
+  for (const it of items) html += it.group && !it.skill ? gheadHTML(it) : rowHTML(it.skill, it);
+  list.innerHTML = html;
+}
+const STATE_FILTER_LABEL = { all: 'All', issues: 'Issues', edited: 'Edited', disabled: 'Disabled' };
+
+/* ================= render: chrome ================= */
+function renderChrome() {
+  const total = SKILLS.length;
+  $('totalCount').textContent = total;
+  $('navCount').textContent = total;
+  const failedSkills = SKILLS.filter((s) => stateOf(s) === 'failed');
+  const staleSkills = SKILLS.filter((s) => stateOf(s) === 'stale');
+  const failedTargets = failedSkills.reduce((n, s) => n + nFailed(s), 0);
+  const n = failedSkills.length + staleSkills.length;
+  $('issues').innerHTML = n ? `<span class="sep"></span>
+      <span class="flex items-center gap-2"><i class="dot failed"></i><span class="num">${failedTargets}</span> failed target${failedTargets === 1 ? '' : 's'}</span>
+      <span class="flex items-center gap-2"><i class="dot stale"></i><span class="num">${staleSkills.length}</span> stale</span>
+      <span class="text-fg-3">·</span>
+      <button class="link" type="button" data-cmd="issues">${state.filter === 'issues' ? 'Show all skills' : `View ${n} skill${n === 1 ? '' : 's'} with issues`}</button>`
+    : `<span class="sep"></span><span class="flex items-center gap-2"><i class="dot synced"></i>Everything is in sync</span>`;
+
+  const counts = { all: total, issues: n, edited: SKILLS.filter((s) => s.edited).length, disabled: SKILLS.filter((s) => !s.enabled).length };
+  $('filterSeg').innerHTML = Object.keys(STATE_FILTER_LABEL).map((k) => `<button type="button" data-filter="${k}" aria-pressed="${state.filter === k}">${k === 'issues' ? `<i class="dot ${counts.issues ? 'failed' : 'synced'}"></i>` : ''}${STATE_FILTER_LABEL[k]}<span class="num">${counts[k]}</span></button>`).join('');
+  $('modeSeg').innerHTML = `<button type="button" data-mode="grouped" aria-pressed="${state.mode === 'grouped'}" data-tip="Group by source">${icon('tree')}Grouped</button><button type="button" data-mode="flat" aria-pressed="${state.mode === 'flat'}" data-tip="One list with a source column">${icon('list')}Flat</button>`;
+  $('themeBtn').innerHTML = state.theme === 'dark' ? `${icon('sun')}Light theme` : `${icon('moon')}Dark theme`;
+  $('legend').innerHTML = ['synced', 'stale', 'failed', 'disabled'].map((k) => `<span data-tip="${esc(STATE[k].label + ' — ' + STATE[k].def)}"><i class="dot ${k}"></i>${k}</span>`).join('');
+  if (!$('msg').dataset.live) $('msg').textContent = `${total} skills · ${TOOLS.length} tools · ${PROJECTS.length} projects`;
+
+  const bulk = $('bulk');
+  const k = state.selected.size;
+  if (k) {
+    bulk.innerHTML = `<span class="cnt"><i>${icon('check', 12)}</i><span class="num">${k}</span> selected</span>
+      <button class="btn btn-sm" type="button" data-bulk="sync">${icon('send')}Sync to tools</button>
+      <button class="btn btn-sm" type="button" data-bulk="assign">${icon('folderPlus')}Assign to project</button>
+      <button class="btn btn-sm" type="button" data-bulk="disable">${icon('power')}Disable</button>
+      <button class="btn btn-sm" type="button" data-bulk="delete">${icon('trash')}Delete</button>
+      <span class="kbd" data-tip="All bulk actions are in the command palette">⌘K</span>
+      <button class="btn btn-sm btn-icon" type="button" data-bulk="clear" aria-label="Clear selection" data-tip="Clear selection  esc">${icon('x')}</button>`;
+    bulk.classList.remove('is-hidden'); bulk.inert = false;
+  } else { bulk.classList.add('is-hidden'); bulk.inert = true; }
+}
+
+/* ================= render: detail ================= */
+function renderDetail() {
+  const d = $('detail');
+  const s = state.detail && byId(state.detail);
+  d.classList.toggle('is-closed', !s);
+  if (!s) {
+    d.innerHTML = `<div class="d-empty">${icon('layers')}<p>Select a skill to see its source, targets and projects.</p><p class="flex items-center gap-1"><span class="kbd">j</span><span class="kbd">k</span> move · <span class="kbd">↵</span> open</p></div>`;
+    return;
+  }
+  const st = stateOf(s);
+  const nf = nFailed(s);
+  const health = st === 'failed' ? `${nf} target${nf > 1 ? 's' : ''} failed` : st === 'stale' ? 'Update available' : st === 'disabled' ? 'Disabled' : 'Synced';
+  d.innerHTML = `
+    <div class="d-head"><i class="dot ${st}" data-tip="${esc(STATE[st].label + ' — ' + STATE[st].def)}"></i><h2>${esc(s.name)}</h2>
+      <button class="btn btn-ghost btn-icon" type="button" data-d="more" aria-label="Actions" data-tip="Actions  ⌘K">${icon('more')}</button>
+      <button class="btn btn-ghost btn-icon" type="button" data-d="close" aria-label="Close detail" data-tip="Close  esc">${icon('x')}</button></div>
+    <div class="d-body">
+      <section class="d-sec">
+        <p class="d-desc">${esc(s.desc)}</p>
+        <div class="d-src">${icon(s.kind === 'local' ? 'hdd' : 'git')}<span class="mono" title="${esc(s.url)}">${esc(s.url)}</span><button class="btn btn-ghost btn-icon" type="button" data-d="copy" aria-label="Copy source" data-tip="Copy source">${icon('copy')}</button></div>
+        <dl class="props" style="margin:12px 0 0">
+          <dt>Health</dt><dd><i class="dot ${st}"></i>${health}</dd>
+          <dt>Upstream</dt><dd>${s.kind === 'local' ? 'Local folder — read on Refresh' : s.stale ? '<span>New commit on <span class="mono">main</span></span>' : 'Up to date'}</dd>
+          <dt>Edits</dt><dd>${s.edited ? `${icon('pencil', 14)}Local edits, replayed on update` : '<span class="text-fg-3">None</span>'}</dd>
+          <dt>Last synced</dt><dd class="num">${esc(s.ago)}</dd>
+        </dl>
+        <div class="d-actions">
+          ${s.stale ? `<button class="btn" type="button" data-d="update">${icon('up')}Update</button>` : ''}
+          ${nf ? `<button class="btn" type="button" data-d="retry">${icon('refresh')}Retry failed</button>` : ''}
+          <button class="btn" type="button" data-d="edit">${icon('pencil')}Edit</button>
+          <button class="btn btn-ghost" type="button" data-d="toggle">${icon('power')}${s.enabled ? 'Disable' : 'Enable'}</button>
+        </div>
+      </section>
+      <section class="d-sec" aria-label="Targets">
+        <div class="d-title">Targets ${segsHTML(s)}<span class="num">${nSynced(s)}/${TOOLS.length}</span></div>
+        ${TOOLS.map((t) => {
+          const v = s.targets[t.id];
+          const e = v === 'failed' ? ERR[s.errors[t.id]](t, s) : null;
+          return `<div class="trow"><span class="tname"><i class="dot ${v === 'synced' ? 'synced' : v === 'failed' ? 'failed' : 'disabled'}"></i>${t.name}</span>
+            <span class="tstate ${v === 'failed' ? 'failed' : ''}">${v === 'synced' ? 'Symlink' : v === 'failed' ? s.errors[t.id] : 'Not synced'}</span>
+            <button class="switch" type="button" role="switch" data-tool="${t.id}" aria-checked="${v !== 'off'}" aria-label="Sync to ${t.name}" ${s.enabled ? '' : 'disabled'}></button>
+            ${e ? `<div class="terr"><span>${esc(e.text)}</span><button class="btn btn-sm" type="button" data-retry="${t.id}">${icon('refresh')}${e.fix}</button></div>` : ''}</div>`;
+        }).join('')}
+      </section>
+      <section class="d-sec" aria-label="Projects">
+        <div class="d-title">Projects<span class="num">${s.projects.length}/${PROJECTS.length}</span></div>
+        ${PROJECTS.map((p) => `<label class="prow"><input type="checkbox" data-proj="${p.id}" ${s.projects.includes(p.id) ? 'checked' : ''} ${s.enabled ? '' : 'disabled'}>${p.id}<span class="mono">${p.path}</span></label>`).join('')}
+      </section>
+    </div>`;
+}
+
+function render({ keepFocus = true } = {}) {
+  const hadListFocus = keepFocus && document.activeElement && document.activeElement.closest && document.activeElement.closest('#list');
+  renderChrome(); renderList(); renderDetail(); hydrateIcons();
+  const items = visibleItems();
+  if (!items.find((i) => i.key === state.cursor)) state.cursor = items[0] ? items[0].key : null;
+  if (hadListFocus || (keepFocus === 'force')) focusCursor();
+}
+function hydrateIcons() { document.querySelectorAll('[data-i]').forEach((el) => { el.outerHTML = icon(el.dataset.i); }); }
+function cursorEl() { return state.cursor && $('list').querySelector(`[data-key="${CSS.escape(state.cursor)}"]`); }
+function focusCursor() {
+  const el = cursorEl(); if (!el) return;
+  $('list').querySelectorAll('[tabindex="0"]').forEach((x) => x !== el && x.setAttribute('tabindex', '-1'));
+  el.setAttribute('tabindex', '0');
+  el.focus({ preventScroll: true });
+  el.scrollIntoView({ block: 'nearest' });
+}
+
+/* ================= status line ================= */
+let msgTimer;
+function say(text) {
+  const m = $('msg'); m.textContent = text; m.dataset.live = '1';
+  clearTimeout(msgTimer); msgTimer = setTimeout(() => { delete m.dataset.live; renderChrome(); }, 5000);
+}
+
+/* ================= mutations (in memory) ================= */
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+function setEnabled(ids, on) {
+  ids.map(byId).forEach((s) => {
+    if (on === s.enabled) return;
+    if (!on) { s.prev = { ...s.targets }; TOOLS.forEach((t) => (s.targets[t.id] = 'off')); }
+    else { s.targets = s.prev || Object.fromEntries(TOOLS.map((t) => [t.id, 'synced'])); }
+    s.enabled = on;
+  });
+}
+function syncTo(ids, toolIds) {
+  let n = 0;
+  ids.map(byId).forEach((s) => { if (!s.enabled) return; toolIds.forEach((t) => { if (s.targets[t] === 'off') { s.targets[t] = 'synced'; n++; } }); });
+  return n;
+}
+function retry(s, toolId) {
+  (toolId ? [toolId] : TOOLS.map((t) => t.id)).forEach((t) => { if (s.targets[t] === 'failed') { s.targets[t] = 'synced'; delete s.errors[t]; } });
+  s.ago = 'just now';
+}
+function toggleProject(ids, pid) {
+  const list = ids.map(byId).filter((s) => s.enabled);
+  const all = list.every((s) => s.projects.includes(pid));
+  list.forEach((s) => { s.projects = all ? s.projects.filter((p) => p !== pid) : [...new Set([...s.projects, pid])]; });
+  return all ? 'unassigned from' : 'assigned to';
+}
+function removeSkills(ids) {
+  ids.forEach((id) => { const i = SKILLS.findIndex((s) => s.id === id); if (i >= 0) SKILLS.splice(i, 1); state.selected.delete(id); });
+  if (state.detail && !byId(state.detail)) state.detail = null;
+}
+function deployGroup(gid) {
+  const g = groupsOf(SKILLS).find((x) => x.id === gid);
+  const ids = g.skills.filter((s) => s.enabled).map((s) => s.id);
+  const n = syncTo(ids, TOOLS.map((t) => t.id));
+  const f = g.skills.reduce((k, s) => k + nFailed(s), 0);
+  say(`Deployed ${g.name}: ${plural(ids.length, 'skill')} to ${TOOLS.length} tools · ${plural(n, 'new target')}${f ? ` · ${plural(f, 'target')} still failing` : ''}`);
+}
+function jumpTo(id) {
+  const s = byId(id); if (!s) return;
+  if (!passes(s)) { state.filter = 'all'; state.query = ''; $('q').value = ''; }
+  state.collapsed.delete(groupIdOf(s));
+  state.cursor = 's:' + id; state.detail = id;
+  render({ keepFocus: 'force' });
+}
+
+/* ================= keyboard & pointer: list ================= */
+function move(delta, extend) {
+  const items = visibleItems(); if (!items.length) return;
+  let i = items.findIndex((x) => x.key === state.cursor);
+  i = i < 0 ? 0 : Math.max(0, Math.min(items.length - 1, i + delta));
+  const prev = state.cursor;
+  state.cursor = items[i].key;
+  if (extend) {
+    [prev, state.cursor].forEach((k) => k && k.startsWith('s:') && state.selected.add(k.slice(2)));
+  }
+  if (state.detail && state.cursor.startsWith('s:')) state.detail = state.cursor.slice(2);
+  render({ keepFocus: 'force' });
+}
+function toggleSel(id) { state.selected.has(id) ? state.selected.delete(id) : state.selected.add(id); state.anchor = id; }
+function toggleGroupSel(gid) {
+  const it = visibleItems().find((x) => x.key === 'g:' + gid) || { members: groupsOf(SKILLS).find((g) => g.id === gid).skills };
+  const all = it.members.every((s) => state.selected.has(s.id));
+  it.members.forEach((s) => (all ? state.selected.delete(s.id) : state.selected.add(s.id)));
+}
+function toggleCollapse(gid) { state.collapsed.has(gid) ? state.collapsed.delete(gid) : state.collapsed.add(gid); }
+
+$('list').addEventListener('click', (e) => {
+  const rowEl = e.target.closest('[data-key]'); if (!rowEl) return;
+  const key = rowEl.dataset.key; const act = e.target.closest('[data-act]')?.dataset.act;
+  if (key.startsWith('g:')) {
+    const gid = key.slice(2); state.cursor = key;
+    if (act === 'deploy') deployGroup(gid);
+    else if (act === 'gsel') toggleGroupSel(gid);
+    else toggleCollapse(gid);
+    return render({ keepFocus: 'force' });
+  }
+  const id = key.slice(2); state.cursor = key;
+  if (act === 'sel') toggleSel(id);
+  else if (act === 'enable') { const s = byId(id); setEnabled([id], !s.enabled); say(`${s.name} ${s.enabled ? 'enabled — synced back to its targets' : 'disabled — removed from every tool'}`); }
+  else if (act === 'more') { render({ keepFocus: 'force' }); return openPalette([{ type: 'skill', id }]); }
+  else if (e.metaKey || e.ctrlKey) toggleSel(id);
+  else if (e.shiftKey && state.anchor) {
+    const rows = visibleItems().filter((x) => x.skill).map((x) => x.skill.id);
+    const [a, b] = [rows.indexOf(state.anchor), rows.indexOf(id)].sort((x, y) => x - y);
+    rows.slice(a, b + 1).forEach((r) => state.selected.add(r));
+  } else { state.detail = id; state.anchor = id; }
+  render({ keepFocus: 'force' });
+});
+$('list').addEventListener('mousedown', (e) => { if (e.shiftKey) e.preventDefault(); });
+
+const typing = (el) => el && (el.tagName === 'INPUT' && el.type === 'text' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+document.addEventListener('keydown', (e) => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); return palOpen ? closePalette() : openPalette(); }
+  if (palOpen) return; // palette owns the keyboard
+  const t = document.activeElement;
+  if (t === $('q')) {
+    if (e.key === 'Escape') { e.preventDefault(); if (t.value) { t.value = ''; state.query = ''; render({ keepFocus: false }); } else focusCursor(); }
+    else if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); focusCursor(); }
+    return;
+  }
+  if (typing(t)) return;
+  const inDetail = t && t.closest && t.closest('#detail');
+  const k = e.key;
+  if (k === '/' ) { e.preventDefault(); $('q').focus(); $('q').select(); return; }
+  if (k === '?') { e.preventDefault(); return openPalette([{ type: 'shortcuts' }]); }
+  if (k === 'Escape') {
+    e.preventDefault(); hideTip();
+    if (state.detail) { state.detail = null; render({ keepFocus: 'force' }); return focusCursor(); }
+    if (state.selected.size) { state.selected.clear(); return render({ keepFocus: 'force' }); }
+    return;
+  }
+  if (inDetail && !['j', 'k'].includes(k)) return; // let buttons/checkboxes in the detail behave natively
+  if (k === 'j' || k === 'ArrowDown' || k === 'J') { e.preventDefault(); return move(1, e.shiftKey); }
+  if (k === 'k' || k === 'ArrowUp' || k === 'K') { e.preventDefault(); return move(-1, e.shiftKey); }
+  if (mod && k.toLowerCase() === 'a') {
+    e.preventDefault(); visibleItems().filter((x) => x.skill).forEach((x) => state.selected.add(x.skill.id)); return render({ keepFocus: 'force' });
+  }
+  if (!state.cursor) return;
+  const isG = state.cursor.startsWith('g:'); const id = state.cursor.slice(2);
+  if (k === 'x' || k === ' ') { e.preventDefault(); isG ? toggleGroupSel(id) : toggleSel(id); return render({ keepFocus: 'force' }); }
+  if (k === 'Enter') {
+    e.preventDefault();
+    if (isG) toggleCollapse(id); else state.detail = id;
+    return render({ keepFocus: 'force' });
+  }
+  if (k === 'ArrowLeft' || k === 'h') {
+    e.preventDefault();
+    if (isG) state.collapsed.add(id); else if (state.mode === 'grouped') state.cursor = 'g:' + groupIdOf(byId(id));
+    return render({ keepFocus: 'force' });
+  }
+  if ((k === 'ArrowRight' || k === 'l') && isG) { e.preventDefault(); state.collapsed.delete(id); return render({ keepFocus: 'force' }); }
+});
+
+/* ================= chrome events ================= */
+document.addEventListener('click', (e) => {
+  const c = e.target.closest('[data-cmd]'); if (c) runCmd(c.dataset.cmd);
+  const f = e.target.closest('[data-filter]'); if (f) { state.filter = f.dataset.filter; render({ keepFocus: false }); }
+  const m = e.target.closest('[data-mode]'); if (m) { state.mode = m.dataset.mode; render({ keepFocus: false }); }
+  const n = e.target.closest('[data-nav]'); if (n && n.dataset.nav !== 'skills') say(`${n.textContent.trim()} is outside this prototype — only My Skills is built.`);
+  const b = e.target.closest('[data-bulk]'); if (b) bulkAction(b.dataset.bulk);
+});
+$('q').addEventListener('input', (e) => { state.query = e.target.value; render({ keepFocus: false }); });
+
+function runCmd(cmd) {
+  if (cmd === 'palette') return openPalette();
+  if (cmd === 'shortcuts') return openPalette([{ type: 'shortcuts' }]);
+  if (cmd === 'theme') { state.theme = state.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = state.theme; return render(); }
+  if (cmd === 'refresh') { const n = SKILLS.filter((s) => s.stale).length; return say(`Refreshed ${SKILLS.length} skills from their sources · ${plural(n, 'update')} available`); }
+  if (cmd === 'add') return openPalette([{ type: 'add' }]);
+  if (cmd === 'issues') { state.filter = state.filter === 'issues' ? 'all' : 'issues'; return render({ keepFocus: false }); }
+  if (cmd === 'clearFilters') { state.filter = 'all'; state.query = ''; $('q').value = ''; return render({ keepFocus: false }); }
+}
+function bulkAction(a) {
+  const ids = [...state.selected];
+  if (a === 'clear') { state.selected.clear(); return render(); }
+  if (a === 'sync') return openPalette([{ type: 'sync', ids }]);
+  if (a === 'assign') return openPalette([{ type: 'assign', ids }]);
+  if (a === 'delete') return openPalette([{ type: 'delete', ids }]);
+  if (a === 'disable') { setEnabled(ids, false); say(`Disabled ${plural(ids.length, 'skill')} — removed from every tool`); return render(); }
+}
+
+$('detail').addEventListener('click', (e) => {
+  const s = byId(state.detail); if (!s) return;
+  const d = e.target.closest('[data-d]')?.dataset.d;
+  const tool = e.target.closest('[data-tool]')?.dataset.tool;
+  const rt = e.target.closest('[data-retry]')?.dataset.retry;
+  if (d === 'close') { state.detail = null; render({ keepFocus: 'force' }); return focusCursor(); }
+  if (d === 'more') return openPalette([{ type: 'skill', id: s.id }]);
+  if (d === 'copy') { navigator.clipboard?.writeText(s.url).catch(() => {}); const b = e.target.closest('button'); b.innerHTML = icon('check'); say(`Copied ${s.url}`); setTimeout(() => (b.innerHTML = icon('copy')), 1200); return; }
+  if (d === 'update') { s.stale = false; s.ago = 'just now'; say(`Updated ${s.name} from ${s.repo}${s.edited ? ' · local edits replayed' : ''}`); }
+  if (d === 'retry') { retry(s); say(`Retried ${s.name} · all targets synced`); }
+  if (d === 'edit') say(`Edit opens ${s.name}/SKILL.md in the editor — not wired in this prototype.`);
+  if (d === 'toggle') setEnabled([s.id], !s.enabled);
+  if (tool) { s.targets[tool] = s.targets[tool] === 'off' ? 'synced' : 'off'; delete s.errors[tool]; }
+  if (rt) { retry(s, rt); say(`${TOOLS.find((t) => t.id === rt).name}: ${s.name} synced`); }
+  if (d || tool || rt) render();
+});
+$('detail').addEventListener('change', (e) => {
+  const p = e.target.dataset.proj; if (!p) return;
+  const s = byId(state.detail); const verb = toggleProject([s.id], p); say(`${s.name} ${verb} ${p}`); render();
+});
+
+/* ================= tooltip ================= */
+let tipTimer, lastTipAt = 0; const tip = $('tip');
+function showTip(el) {
+  const txt = el.dataset.tip; if (!txt) return;
+  tip.textContent = txt;
+  const r = el.getBoundingClientRect();
+  tip.style.left = '0px'; tip.style.top = '0px'; tip.classList.add('is-on');
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  let x = Math.min(Math.max(8, r.left + r.width / 2 - tw / 2), innerWidth - tw - 8);
+  let y = r.bottom + 6; if (y + th > innerHeight - 8) y = r.top - th - 6;
+  tip.style.left = x + 'px'; tip.style.top = y + 'px';
+  lastTipAt = Date.now();
+}
+function hideTip() { clearTimeout(tipTimer); if (tip.classList.contains('is-on')) lastTipAt = Date.now(); tip.classList.remove('is-on'); }
+document.addEventListener('mouseover', (e) => {
+  const el = e.target.closest('[data-tip]'); if (!el) return;
+  clearTimeout(tipTimer);
+  tipTimer = setTimeout(() => showTip(el), Date.now() - lastTipAt < 600 ? 0 : 450);
+});
+document.addEventListener('mouseout', (e) => { const el = e.target.closest('[data-tip]'); if (el && !el.contains(e.relatedTarget)) hideTip(); });
+document.addEventListener('scroll', hideTip, true);
+
+/* ================= command palette ================= */
+let palOpen = false, pages = [], active = 0, flatItems = [];
+function fuzzy(q, text) {
+  const t = text.toLowerCase(); q = q.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!q) return { score: 0, idx: [] };
+  let ti = 0, score = 0, prev = -2; const idx = [];
+  for (const ch of q) {
+    if (ch === ' ') { continue; }
+    const f = t.indexOf(ch, ti); if (f < 0) return null;
+    let s = 1;
+    if (f === prev + 1) s += 5;
+    if (f === 0 || /[\s\-\/_.:·]/.test(t[f - 1])) s += 7;
+    s -= Math.min(f - ti, 6) * 0.25;
+    score += s; idx.push(f); prev = f; ti = f + 1;
+  }
+  const qn = q.replace(/ /g, '').length;
+  const acronym = idx.every((i) => i === 0 || /[\s\-\/_.:\u00b7]/.test(t[i - 1]));
+  if (!acronym && idx.length > 1 && idx[idx.length - 1] - idx[0] + 1 > Math.max(qn * 1.8, qn + 4)) return null; // too scattered to be intended
+  if (t.includes(q)) score += 12;
+  return { score: score - t.length * 0.01, idx };
+}
+function highlight(label, idx) {
+  if (!idx || !idx.length) return esc(label);
+  const set = new Set(idx); let out = '';
+  [...label].forEach((c, i) => (out += set.has(i) ? `<mark>${esc(c)}</mark>` : esc(c)));
+  return out.replace(/<\/mark><mark>/g, '');
+}
+const dotIcon = (st) => `<span class="flex justify-center"><i class="dot ${st}"></i></span>`;
+
+function skillActions(s) {
+  const st = stateOf(s); const ids = [s.id];
+  const a = [
+    { label: 'Open details', icon: 'arrowRight', kbd: '↵', run: () => jumpTo(s.id) },
+    s.stale && { label: 'Update from source', icon: 'up', run: () => { s.stale = false; s.ago = 'just now'; say(`Updated ${s.name}${s.edited ? ' · local edits replayed' : ''}`); } },
+    nFailed(s) && { label: `Retry ${plural(nFailed(s), 'failed target')}`, icon: 'refresh', run: () => { retry(s); say(`Retried ${s.name} · all targets synced`); } },
+    { label: 'Edit SKILL.md', icon: 'pencil', run: () => say(`Edit opens ${s.name}/SKILL.md — not wired in this prototype.`) },
+    { label: 'Copy source', icon: 'copy', meta: s.url, run: () => { navigator.clipboard?.writeText(s.url).catch(() => {}); say(`Copied ${s.url}`); } },
+    { label: 'Sync to tools…', icon: 'send', run: () => ({ page: { type: 'sync', ids } }) },
+    { label: 'Assign to project…', icon: 'folderPlus', run: () => ({ page: { type: 'assign', ids } }) },
+    { label: state.selected.has(s.id) ? 'Deselect' : 'Select', icon: 'select', kbd: 'x', run: () => toggleSel(s.id) },
+    { label: s.enabled ? 'Disable' : 'Enable', icon: 'power', run: () => { setEnabled(ids, !s.enabled); say(`${s.name} ${s.enabled ? 'enabled' : 'disabled'}`); } },
+    { label: 'Delete…', icon: 'trash', run: () => ({ page: { type: 'delete', ids } }) },
+  ].filter(Boolean);
+  a.forEach((x) => (x.kind = s.name));
+  return a;
+}
+function selectionActions(ids) {
+  const skills = ids.map(byId);
+  const stale = skills.filter((s) => s.stale);
+  return [
+    { label: 'Sync selection to tools…', icon: 'send', run: () => ({ page: { type: 'sync', ids } }) },
+    { label: 'Assign selection to project…', icon: 'folderPlus', run: () => ({ page: { type: 'assign', ids } }) },
+    stale.length && { label: `Update ${plural(stale.length, 'stale skill')}`, icon: 'up', run: () => { stale.forEach((s) => { s.stale = false; s.ago = 'just now'; }); say(`Updated ${plural(stale.length, 'skill')}`); } },
+    { label: 'Enable selection', icon: 'power', run: () => { setEnabled(ids, true); say(`Enabled ${plural(ids.length, 'skill')}`); } },
+    { label: 'Disable selection', icon: 'power', run: () => { setEnabled(ids, false); say(`Disabled ${plural(ids.length, 'skill')} — removed from every tool`); } },
+    { label: 'Delete selection…', icon: 'trash', run: () => ({ page: { type: 'delete', ids } }) },
+    { label: 'Clear selection', icon: 'x', kbd: 'esc', run: () => state.selected.clear() },
+  ].filter(Boolean).map((x) => ({ ...x, kind: `${ids.length} selected` }));
+}
+function libraryActions() {
+  const groups = groupsOf(SKILLS);
+  const issues = SKILLS.filter(hasIssue).length;
+  return [
+    { label: 'Add skill…', icon: 'plus', run: () => ({ page: { type: 'add' } }) },
+    { label: 'Refresh all sources', icon: 'refresh', run: () => runCmd('refresh') },
+    { label: `Show skills with issues`, icon: 'alert', meta: String(issues), run: () => { state.filter = 'issues'; } },
+    { label: 'Show edited skills', icon: 'pencil', run: () => { state.filter = 'edited'; } },
+    { label: 'Show disabled skills', icon: 'power', run: () => { state.filter = 'disabled'; } },
+    { label: 'Show all skills', icon: 'layers', run: () => { state.filter = 'all'; state.query = ''; $('q').value = ''; } },
+    { label: state.mode === 'grouped' ? 'Switch to flat list' : 'Switch to grouped list', icon: state.mode === 'grouped' ? 'list' : 'tree', run: () => { state.mode = state.mode === 'grouped' ? 'flat' : 'grouped'; } },
+    { label: 'Collapse all groups', icon: 'collapse', run: () => groups.forEach((g) => state.collapsed.add(g.id)) },
+    { label: 'Expand all groups', icon: 'expand', run: () => state.collapsed.clear() },
+    { label: 'Select all visible', icon: 'select', kbd: '⌘A', run: () => visibleItems().filter((x) => x.skill).forEach((x) => state.selected.add(x.skill.id)) },
+    ...groups.map((g) => ({ label: `Deploy all — ${g.name}`, icon: 'send', meta: String(g.skills.length), run: () => deployGroup(g.id) })),
+  ].map((x) => ({ ...x, kind: 'Library' }));
+}
+function navActions() {
+  return [
+    { label: state.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme', icon: state.theme === 'dark' ? 'sun' : 'moon', run: () => runCmd('theme') },
+    { label: 'Keyboard shortcuts', icon: 'keyboard', kbd: '?', run: () => ({ page: { type: 'shortcuts' } }) },
+    { label: 'Go to Explore', icon: 'compass', run: () => say('Explore is outside this prototype — only My Skills is built.') },
+    { label: 'Go to Projects', icon: 'folders', run: () => say('Projects is outside this prototype — only My Skills is built.') },
+    { label: 'Open Settings', icon: 'settings', run: () => say('Settings is outside this prototype — only My Skills is built.') },
+  ].map((x) => ({ ...x, kind: 'Go' }));
+}
+function skillItems() {
+  return SKILLS.map((s) => ({ label: s.name, icon: null, lead: dotIcon(stateOf(s)), meta: groupIdOf(s) === INDIV ? (s.kind === 'local' ? s.url : s.repo) : s.repo, keywords: s.desc, kind: 'Skill', run: () => jumpTo(s.id) }));
+}
+/** Sections for a page. With a query, everything on the root page is ranked into one list. */
+function sectionsFor(page) {
+  if (page.type === 'skill') { const s = byId(page.id); return [{ title: s.name, items: skillActions(s) }]; }
+  if (page.type === 'sync') {
+    const skills = page.ids.map(byId).filter((s) => s.enabled);
+    return [{ title: `Sync ${plural(page.ids.length, 'skill')} to…`, items: [
+      { label: `All ${TOOLS.length} installed tools`, icon: 'send', run: () => { const n = syncTo(page.ids, TOOLS.map((t) => t.id)); say(`Synced ${plural(skills.length, 'skill')} to all tools · ${plural(n, 'new target')}`); } },
+      ...TOOLS.map((t) => {
+        const on = skills.filter((s) => s.targets[t.id] !== 'off').length;
+        return { label: t.name, lead: `<span class="ck ${on === skills.length && on ? 'on' : on ? 'some' : ''}">${on === skills.length && on ? icon('check', 12) : ''}</span>`, meta: t.dir, run: () => { const n = syncTo(page.ids, [t.id]); say(`${t.name}: ${plural(n, 'new target')}`); } };
+      }),
+    ] }];
+  }
+  if (page.type === 'assign') {
+    const skills = page.ids.map(byId).filter((s) => s.enabled);
+    return [{ title: `Assign ${plural(page.ids.length, 'skill')} to project`, items: PROJECTS.map((p) => {
+      const n = skills.filter((s) => s.projects.includes(p.id)).length;
+      return { label: p.id, lead: `<span class="ck ${n && n === skills.length ? 'on' : n ? 'some' : ''}">${n && n === skills.length ? icon('check', 12) : ''}</span>`, meta: p.path, run: () => { const v = toggleProject(page.ids, p.id); say(`${plural(skills.length, 'skill')} ${v} ${p.id}`); } };
+    }) }];
+  }
+  if (page.type === 'delete') {
+    const n = page.ids.length;
+    const targets = page.ids.map(byId).reduce((k, s) => k + TOOLS.filter((t) => s.targets[t.id] !== 'off').length, 0);
+    return [{ title: `Delete ${plural(n, 'skill')}? Removes ${plural(targets, 'target')} from tool directories.`, items: [
+      { label: `Delete ${n === 1 ? byId(page.ids[0]).name : plural(n, 'skill')}`, icon: 'trash', run: () => { removeSkills(page.ids); say(`Deleted ${plural(n, 'skill')} · ${plural(targets, 'target')} removed`); } },
+      { label: 'Cancel', icon: 'x', kbd: 'esc', run: () => ({ back: true }) },
+    ] }];
+  }
+  if (page.type === 'add') return [{ title: 'Add a skill', items: [
+    { label: 'From a GitHub URL…', icon: 'git', run: () => say('Add from GitHub opens the Add flow — not wired in this prototype.') },
+    { label: 'From a local folder…', icon: 'hdd', run: () => say('Add from folder opens a folder picker — not wired in this prototype.') },
+    { label: 'Browse the Explore catalog', icon: 'compass', run: () => say('Explore is outside this prototype — only My Skills is built.') },
+  ] }];
+  if (page.type === 'shortcuts') return [{ title: 'Keyboard shortcuts', items: [
+    ['Open command palette', '⌘K'], ['Move down / up', 'j k'], ['Extend selection', '⇧J ⇧K'], ['Select row', 'x'], ['Select all visible', '⌘A'],
+    ['Open detail · toggle group', '↵'], ['Collapse group / go to group', '←'], ['Expand group', '→'], ['Filter skills', '/'], ['Close detail · clear selection', 'esc'],
+  ].map(([label, kbd]) => ({ label, kbd, inert: true, run: () => ({ stay: true }) })) }];
+  // root
+  const secs = [];
+  if (state.selected.size) secs.push({ title: `Selection · ${state.selected.size}`, items: selectionActions([...state.selected]), boost: 4 });
+  const cur = state.cursor && state.cursor.startsWith('s:') && byId(state.cursor.slice(2));
+  if (cur) secs.push({ title: cur.name, items: skillActions(cur) });
+  secs.push({ title: 'Library', items: libraryActions() });
+  secs.push({ title: 'Go', items: navActions() });
+  secs.push({ title: 'Skills', items: skillItems(), onlyWhenQuery: true });
+  return secs;
+}
+function openPalette(stack) {
+  hideTip();
+  pages = stack && stack.length ? stack : [{ type: 'root' }];
+  if (pages[0].type !== 'root') pages = [{ type: 'root' }, ...pages];
+  palOpen = true; active = 0;
+  const root = $('palRoot'); root.hidden = false;
+  $('pal').classList.add('is-entering'); $('scrim').classList.add('is-entering');
+  requestAnimationFrame(() => requestAnimationFrame(() => { $('pal').classList.remove('is-entering'); $('scrim').classList.remove('is-entering'); }));
+  $('palInput').value = '';
+  renderPalette();
+  $('palInput').focus();
+}
+function closePalette(refocus = true) {
+  palOpen = false; $('palRoot').hidden = true;
+  render({ keepFocus: false });
+  if (refocus) focusCursor();
+}
+function renderPalette() {
+  const page = pages[pages.length - 1];
+  const q = $('palInput').value;
+  const crumb = $('crumb');
+  const crumbText = page.type === 'root' ? '' : page.type === 'skill' ? byId(page.id)?.name : page.type === 'shortcuts' ? 'Shortcuts' : page.type === 'add' ? 'Add skill' : `${plural(page.ids.length, 'skill')}`;
+  crumb.hidden = !crumbText; crumb.textContent = crumbText || '';
+  $('palBackHint').hidden = pages.length < 2;
+  $('palInput').placeholder = page.type === 'root' ? (state.selected.size ? `Run a command on ${state.selected.size} selected, or search skills…` : 'Run a command or jump to a skill…') : 'Filter…';
+
+  const secs = sectionsFor(page).filter((s) => !(s.onlyWhenQuery && !q.trim()));
+  flatItems = [];
+  let html = '';
+  if (q.trim()) {
+    const ranked = [];
+    secs.forEach((sec) => sec.items.forEach((it) => {
+      const m = fuzzy(q, it.label) || (it.keywords && fuzzy(q, it.label + ' ' + it.keywords));
+      if (m) ranked.push({ it, m: m.idx.every((i) => i < it.label.length) ? m : { ...m, idx: [] }, score: m.score + (sec.boost || 0) });
+    }));
+    ranked.sort((a, b) => b.score - a.score);
+    if (page.type !== 'root' && secs[0]) html += `<div class="pal-sec">${esc(secs[0].title)}</div>`;
+    ranked.slice(0, 60).forEach((r) => { html += itemHTML(r.it, r.m.idx, flatItems.length, page.type === 'root'); flatItems.push(r.it); });
+  } else {
+    secs.forEach((sec) => {
+      html += `<div class="pal-sec">${esc(sec.title)}</div>`;
+      sec.items.forEach((it) => { html += itemHTML(it, [], flatItems.length, false); flatItems.push(it); });
+    });
+  }
+  if (!flatItems.length) html = `<div class="pal-empty">Nothing matches “${esc(q)}”. Try a skill name or a verb such as sync, assign, deploy.</div>`;
+  active = Math.min(active, Math.max(0, flatItems.length - 1));
+  $('palList').innerHTML = html;
+  markActive(false);
+}
+function itemHTML(it, idx, i, showKind) {
+  const lead = it.lead || (it.icon ? icon(it.icon) : '<span></span>');
+  const meta = [it.meta ? `<span class="${/[~\/]/.test(it.meta) ? 'mono' : 'num'}">${esc(it.meta)}</span>` : '', showKind && it.kind ? `<span>${esc(it.kind)}</span>` : '', it.kbd ? it.kbd.split(' ').map((k) => `<span class="kbd">${esc(k)}</span>`).join('') : ''].filter(Boolean).join('<span aria-hidden="true">·</span>');
+  return `<div class="pal-item ${it.inert ? 'is-inert' : ''}" role="option" id="pi-${i}" data-i="${i}" aria-selected="false">${lead}<span class="lb">${highlight(it.label, idx)}</span><span class="mt">${meta}</span></div>`;
+}
+function markActive(scroll = true) {
+  $('palList').querySelectorAll('.pal-item').forEach((el) => el.setAttribute('aria-selected', String(+el.dataset.i === active)));
+  const el = $('pi-' + active);
+  $('palInput').setAttribute('aria-activedescendant', el ? el.id : '');
+  if (el && scroll) el.scrollIntoView({ block: 'nearest' });
+}
+function execute(i) {
+  const it = flatItems[i]; if (!it) return;
+  const r = it.run() || {};
+  if (r.stay) return;
+  if (r.back) { pages.pop(); $('palInput').value = ''; active = 0; return renderPalette(); }
+  if (r.page) { pages.push(r.page); $('palInput').value = ''; active = 0; return renderPalette(); }
+  closePalette(!it.label.startsWith('Open details') && !it.kind?.startsWith?.('Skill'));
+  if (it.kind === 'Skill' || it.label === 'Open details') focusCursor();
+}
+$('palInput').addEventListener('input', () => { active = 0; renderPalette(); });
+$('palInput').addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) { e.preventDefault(); active = Math.min(flatItems.length - 1, active + 1); markActive(); }
+  else if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p')) { e.preventDefault(); active = Math.max(0, active - 1); markActive(); }
+  else if (e.key === 'Enter') { e.preventDefault(); execute(active); }
+  else if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
+  else if (e.key === 'Backspace' && !e.target.value && pages.length > 1) { e.preventDefault(); pages.pop(); active = 0; renderPalette(); }
+  else if (e.key === 'Tab') e.preventDefault();
+});
+$('palList').addEventListener('mousemove', (e) => { const el = e.target.closest('.pal-item'); if (el && +el.dataset.i !== active) { active = +el.dataset.i; markActive(false); } });
+$('palList').addEventListener('click', (e) => { const el = e.target.closest('.pal-item'); if (el) execute(+el.dataset.i); });
+$('palList').addEventListener('mousedown', (e) => e.preventDefault());
+$('scrim').addEventListener('click', () => closePalette());
+
+/* ================= boot ================= */
+document.getElementById('brandMark').outerHTML = icon('mark');
+render({ keepFocus: false });
+requestAnimationFrame(() => focusCursor());
+window.__proto = { state, render, SKILLS, openPalette, closePalette };
+</script>
+</body>
+</html>
