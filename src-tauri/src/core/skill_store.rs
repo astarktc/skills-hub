@@ -527,11 +527,37 @@ impl SkillStore {
         })
     }
 
-    /// Raw settings-table adapter; see [`SkillStore::get_setting`]. Deleting
-    /// an absent key is a no-op.
-    pub(super) fn delete_setting(&self, key: &str) -> Result<()> {
+    /// Delete a settings row that held a secret so its bytes leave the
+    /// database file, not just the table. Deleting an absent key is a no-op
+    /// (the compaction still runs).
+    ///
+    /// A plain `DELETE` only unlinks the row: its content stays in the freed
+    /// page until reused, and earlier values of the row (previous upserts)
+    /// may sit in freelist pages. So, on this one connection:
+    /// `secure_delete = ON` zeroes the deleted content
+    /// (<https://www.sqlite.org/pragma.html#pragma_secure_delete>), then
+    /// `VACUUM` rebuilds the file so no freed page keeps a historical copy
+    /// (<https://www.sqlite.org/lang_vacuum.html>). The store uses the default
+    /// rollback journal, which SQLite deletes at commit; should the database
+    /// ever be in WAL mode, the WAL is checkpointed and truncated too.
+    ///
+    /// Limits: this cannot reach copies outside the live file — backups,
+    /// APFS / Time Machine snapshots, other legacy-identifier database copies,
+    /// or flash-storage remnants.
+    ///
+    /// Any failure is an error. When the DELETE succeeded but the compaction
+    /// failed, the row is already gone (and its live bytes zeroed) — only
+    /// historical copies may remain.
+    pub(super) fn delete_setting_securely(&self, key: &str) -> Result<()> {
         self.with_conn(|conn| {
+            conn.pragma_update(None, "secure_delete", true)?;
             conn.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
+            conn.execute_batch("VACUUM;")?;
+            let journal_mode: String =
+                conn.query_row("PRAGMA journal_mode;", [], |row| row.get(0))?;
+            if journal_mode.eq_ignore_ascii_case("wal") {
+                conn.query_row("PRAGMA wal_checkpoint(TRUNCATE);", [], |_| Ok(()))?;
+            }
             Ok(())
         })
     }

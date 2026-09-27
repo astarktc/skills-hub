@@ -23,8 +23,15 @@ type SettingsPageProps = {
   bounds: SettingsBounds | null;
   themePreference: "system" | "light" | "dark";
   zoomLevel: number;
-  /** Whether a token is saved; the secret itself is never read back. */
-  githubTokenSet: boolean;
+  /**
+   * Whether a token is saved; `null` when the keychain could not be read.
+   * The secret itself is never read back.
+   */
+  githubTokenSet: boolean | null;
+  /** The write-only Save input (never prefilled from the backend). */
+  githubTokenDraft: string;
+  /** A Save/Remove is in flight: input and buttons are disabled. */
+  githubTokenPending: boolean;
   onPickStoragePath: () => void;
   onThemeChange: (nextTheme: "system" | "light" | "dark") => void;
   onZoomLevelChange: (nextLevel: number) => void;
@@ -32,8 +39,11 @@ type SettingsPageProps = {
   onGitCacheTtlSecsChange: (nextSecs: number) => void;
   onClearGitCacheNow: () => void;
   onOpenLogFolder: () => void;
-  /** Save (non-blank) or remove (blank); resolves true when it landed. */
-  onGithubTokenChange: (token: string) => Promise<boolean>;
+  onGithubTokenDraftChange: (draft: string) => void;
+  /** Save the draft; a no-op while a token mutation is pending. */
+  onGithubTokenSave: () => Promise<void>;
+  /** Remove the saved token; a no-op while a token mutation is pending. */
+  onGithubTokenRemove: () => Promise<void>;
   onBack: () => void;
   t: TFunction;
 };
@@ -54,18 +64,14 @@ const SettingsPage = ({
   onClearGitCacheNow,
   onOpenLogFolder,
   githubTokenSet,
-  onGithubTokenChange,
+  githubTokenDraft,
+  githubTokenPending,
+  onGithubTokenDraftChange,
+  onGithubTokenSave,
+  onGithubTokenRemove,
   onBack,
   t,
 }: SettingsPageProps) => {
-  // A write-only draft: the saved token is never read back, so the input
-  // starts empty and clears once a save lands.
-  const [tokenDraft, setTokenDraft] = useState("");
-  const saveTokenDraft = useCallback(async () => {
-    if (tokenDraft.trim() === "") return;
-    if (await onGithubTokenChange(tokenDraft)) setTokenDraft("");
-  }, [onGithubTokenChange, tokenDraft]);
-
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
@@ -313,32 +319,40 @@ const SettingsPage = ({
               type="password"
               autoComplete="off"
               placeholder={t("githubTokenPlaceholder")}
-              value={tokenDraft}
-              onChange={(e) => setTokenDraft(e.target.value)}
+              value={githubTokenDraft}
+              disabled={githubTokenPending}
+              onChange={(e) => onGithubTokenDraftChange(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") void saveTokenDraft();
+                if (e.key === "Enter") void onGithubTokenSave();
               }}
             />
             <button
               className="btn btn-secondary btn-sm"
               type="button"
-              disabled={tokenDraft.trim() === ""}
-              onClick={() => void saveTokenDraft()}
+              disabled={githubTokenPending || githubTokenDraft.trim() === ""}
+              onClick={() => void onGithubTokenSave()}
             >
               {t("githubTokenSave")}
             </button>
-            {githubTokenSet && (
+            {/* Unknown presence keeps Remove: it surfaces the typed error
+                if the keychain is still unavailable. */}
+            {githubTokenSet !== false && (
               <button
                 className="btn btn-secondary btn-sm"
                 type="button"
-                onClick={() => void onGithubTokenChange("")}
+                disabled={githubTokenPending}
+                onClick={() => void onGithubTokenRemove()}
               >
                 {t("githubTokenClear")}
               </button>
             )}
           </div>
           <div className="settings-helper">
-            {githubTokenSet ? t("githubTokenSet") : t("githubTokenUnset")}
+            {githubTokenSet === null
+              ? t("githubTokenUnknown")
+              : githubTokenSet
+                ? t("githubTokenSet")
+                : t("githubTokenUnset")}
           </div>
           <div className="settings-helper">{t("githubTokenHint")}</div>
         </div>

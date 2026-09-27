@@ -13,6 +13,22 @@ fn git_repoint_refusal_crosses_the_wire_as_a_typed_error() {
 }
 
 #[test]
+fn credential_store_failure_crosses_the_wire_as_a_typed_error() {
+    let signal = SignalError::CredentialStoreUnavailable {
+        detail: "keychain locked".into(),
+    };
+    let error = CommandError::from_anyhow(
+        anyhow::Error::new(signal)
+            .context("save GitHub token")
+            .context("update setting"),
+    );
+    assert_eq!(
+        serde_json::to_value(error).unwrap(),
+        serde_json::json!({ "code": "CREDENTIAL_STORE_UNAVAILABLE", "detail": "keychain locked" })
+    );
+}
+
+#[test]
 fn from_anyhow_recovers_signal_errors_through_context() {
     let err = anyhow::Error::new(SignalError::MultiSkills).context("install skill");
     assert!(matches!(

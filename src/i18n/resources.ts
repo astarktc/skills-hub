@@ -133,6 +133,11 @@ export const resources = {
         "Optional. Set a GitHub personal access token to increase API rate limits from 60/hr to 5,000/hr. It is stored in your system keychain, never in the app database.",
       githubTokenSet: "A token is saved. Enter a new one to replace it.",
       githubTokenUnset: "No token saved.",
+      githubTokenUnknown:
+        "Could not access the system keychain, so it is unknown whether a token is saved. Unlock the keychain and allow Skills Hub access; you can still save or remove a token. On Linux, start your desktop's secret service (GNOME Keyring, KWallet, …) and restart Skills Hub.",
+      githubTokenUnconfirmedTitle: "GitHub token change not confirmed",
+      githubTokenUnconfirmedMessage:
+        "The keychain accepted the change, but Skills Hub could not read it back to confirm it. Unlock the keychain and allow Skills Hub access; on Linux, start your desktop's secret service and restart Skills Hub.",
       githubTokenSave: "Save token",
       githubTokenClear: "Remove token",
       appUpdates: "App updates",
@@ -349,7 +354,7 @@ export const resources = {
         settingCorrupt:
           "Your saved tool selection could not be read, so nothing was synced. Open Configure Tools and save your selection to repair it.",
         credentialStoreUnavailable:
-          "Could not access the system keychain, so the GitHub token was not read or saved. Unlock the keychain (or start your desktop's secret service) and allow Skills Hub access, then try again.",
+          "Could not access the system keychain, so the GitHub token was not read or saved. Unlock the keychain and allow Skills Hub access, then try again. On Linux, start your desktop's secret service (GNOME Keyring, KWallet, …) and restart Skills Hub — retrying without a restart cannot reach it.",
         settingCorruptStartup:
           "Your saved tool selection could not be read. Syncs are paused until you open Configure Tools and save your selection.",
         syncSkippedNotInstalledTitle: "Skipped {{tool}}: not detected",

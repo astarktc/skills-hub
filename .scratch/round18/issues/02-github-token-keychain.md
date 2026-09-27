@@ -30,7 +30,9 @@ Spec: `.scratch/round18/spec.md` — ticket 02.
 
 ## Result
 
-Implemented 2026-09-27 by a delegated child (uncommitted; working tree only).
+Implemented 2026-09-27 by a delegated child; committed as `2b60c7f`. (Corrected after review N2: this line
+originally said "uncommitted; working tree only", true only before the commit.) Superseded in part by
+**Review fixes** below.
 
 ### What changed
 
@@ -119,5 +121,57 @@ No command added/renamed; no arity change on the wire. (At the time of the final
   "moved the GitHub token…", `sqlite3 skills_hub.db "select * from settings where key='github_token'"` → empty, and
   Keychain Access shows service `com.skillshub.app` / account `github_token`.
 - Linux/Windows keychain adapters compile only on their CI runners; not built locally.
-- AGENTS.md/CONTEXT.md do not yet mention the credential store rule ("core never constructs `KeyringStore`; the command
-  seam's `credential_store()` does") — orchestrator's call whether to add it to "Core never resolves filesystem roots…".
+- ~~AGENTS.md/CONTEXT.md do not yet mention the credential store rule~~ (corrected after review N2): `2b60c7f` added it
+  to AGENTS.md "Core never resolves filesystem roots…" ("The same rule covers secrets…"). CONTEXT.md does not mention it.
+
+## Review fixes
+
+Fixes for `.scratch/round18/review/ticket-02-review.md` (review of `2b60c7f`), implemented 2026-09-27 by a delegated
+child on `main` @ `a3672bc`; uncommitted, working tree only. Implemented as the orchestrator decided.
+
+| Finding | What changed | Test that pins it |
+| --- | --- | --- |
+| **B1** — a pending migration overrode a later Save/Remove | `settings::apply_setting`'s `GithubToken` arm → new private `set_github_token`. If a legacy `github_token` row is pending: Save = `set` → read back (shared `verify_stored_github_token`, also used by the migration) → secure-delete row; Remove = `delete` → secure-delete row. Every failure propagates. A row that cannot be removed fails the operation, even though the keychain already holds what the operator asked for. The row then survives, so the next launch's migration is the remaining risk, reported and not hidden. With no pending row, a read-back failure is not an error: presence reads `None` (S1). | `core::settings::tests::save_after_failed_migration_settles_the_row_so_restart_keeps_the_new_token` (a), `remove_after_partial_migration_settles_the_row_so_restart_stays_empty` (b), `legacy_row_cleanup_failure_fails_save_and_remove` (c, via a `BEFORE DELETE` trigger), `save_with_pending_row_and_denied_read_back_fails_and_keeps_the_row` |
+| **B2** — plain DELETE left the plaintext in freed pages | `SkillStore::delete_setting` (plain) is replaced by `delete_setting_securely(key)`. On one connection it runs `PRAGMA secure_delete = ON` → DELETE → `VACUUM`, then `PRAGMA wal_checkpoint(TRUNCATE)` if `journal_mode` is `wal`. The store never enables WAL: it uses the default rollback journal, which is deleted at commit. The WAL branch is only a defensive guard. Both the migration (including its blank-row path) and B1's settlement use it. The migration returns `Migrated` only after the cleanup succeeds. Limits are documented on the method and the migration. | `token_migration_removes_the_plaintext_from_the_database_bytes`: file-backed DB with two synthetic sentinels (an earlier value plus the current row). It checks that the sentinel is on disk before migration, then that neither sentinel is in `test.db`/`-journal`/`-wal`/`-shm` afterwards and the row is logically gone. Sensitivity was checked by temporarily removing `secure_delete` + `VACUUM`: the test then fails with "still present in test.db". Also `token_migration_cleanup_failure_is_an_error_not_migrated`. B1 (a) also asserts that the legacy sentinel is gone from disk. |
+| **S1** — unreadable reported as absent | `AppSettings.github_token_set: bool` → `Option<bool>` (wire `boolean \| null`, regenerated binding; no `?`). `None` = store unreadable (logged); the rest of Settings loads. `useSettingsState.githubTokenSet: boolean \| null`. `SettingsPage`: `null` shows `githubTokenUnknown` (actionable recovery copy), Save stays available, and Remove is shown (`githubTokenSet !== false`). If a Save/Remove echo does not confirm the expected presence, the hook calls `notify("warning", githubTokenUnconfirmedTitle, …Message)`, makes no success claim, and keeps the draft. | Rust: `token_read_failure_is_typed_degrades_for_acquisition_and_reads_as_unknown_presence` (was: expected `false`), `existing_token_with_denied_read_reports_unknown_presence`, `save_with_denied_read_back_reports_unknown_presence`. Hook: "reports an unreadable keychain as unknown presence, not absent", "warns, keeps the draft and claims nothing when a save cannot be read back" |
+| **S2** — Linux: in-process retry cannot recover | `errors.credentialStoreUnavailable` now says to unlock the keychain and allow access, and on Linux to start the secret service **and restart Skills Hub**. It adds that retrying without a restart cannot reach the service. `KeyringStore::entry`: when `Entry::new` fails with `NoDefaultStore` and `keyring::Entry::store_status()` is `Err` (verified in keyring 4.2.0 `src/v1.rs`: `pub fn store_status() -> &'static Result<()>`, the cached `SET_CREDENTIAL_STORE_RESULT`), `detail` carries the original initialisation error plus "(restart required after fixing)". | Copy only; the real adapter stays untested by design, because no test may touch the keychain. Linux runtime is not verifiable here. |
+| **S3** — slow Save clobbered a newer draft; overlapping writes | The draft moved from `SettingsPage` into `useSettingsState` (`githubTokenDraft`, `handleGithubTokenDraftChange`). Token mutations are single-flight: a ref gate plus `githubTokenPending` state. While pending, `handleGithubTokenSave`/`handleGithubTokenRemove` (and so Enter) are no-ops; the page disables the input, Save and Remove. Save clears the draft only if the echo confirms and the draft still equals the value that was sent. The old `handleGithubTokenChange(token): Promise<boolean>` API is gone. | Hook: "ignores Save/Remove while a token write is pending and keeps a newer draft" (deferred promise: A pending → draft B + Save + Remove ignored → A resolves → draft B kept → next Save sends B and clears) |
+| **N1** — coverage | set ok → get errors: `token_migration_read_back_denied_keeps_the_row` and the S1/B1 tests (`MemoryStore::set_reads_fail`, a new scripted failure mode: writes land, reads are denied). DB cleanup failure: the B1(c) and B2 cleanup tests. `onboarding_scan_selection_table`: flag off / on / default × selection absent / `[]` / valid / corrupt. Command seam: `commands::tests::credential_store_failure_crosses_the_wire_as_a_typed_error` (two `anyhow` contexts → `{ code: "CREDENTIAL_STORE_UNAVAILABLE", detail }`). | as listed |
+| **N2** — stale descriptions | `useSettingsState.ts` `writeSetting` doc no longer says the token writes on every keystroke. This ticket's Result no longer says "uncommitted" or that AGENTS.md lacks the credential rule. | — |
+
+Also: the startup comment and warn log in `lib.rs` now describe the secure cleanup ("a remaining settings row is retried
+next launch").
+
+### CHANGELOG lines (amended — replace the three lines above in ticket 10's 1.2.18 block)
+
+- Security: the GitHub token now lives in the OS credential store (macOS Keychain, Windows Credential Manager, Linux
+  Secret Service) instead of the app database. An existing token moves automatically on the first launch of 1.2.18.
+  The database copy is removed only after the keychain copy is verified, and it is removed securely: overwritten, and
+  the database compacted, so the plaintext no longer sits in the database file. This cannot erase copies made before
+  the upgrade: backups, APFS / Time Machine snapshots, or SSD remnants. Rotate the token on GitHub if that matters to
+  you (#44). Saving or removing a token in Settings also removes any database copy still waiting to be migrated.
+  Settings shows whether a token is saved, or that the keychain could not be read. A token can be replaced or
+  removed but is never displayed.
+- Note (macOS): Skills Hub builds are ad-hoc signed, so after installing an update macOS may ask "Skills Hub wants to
+  access … in your keychain" again. Choose **Always Allow**. If access is denied or the keychain is locked, GitHub
+  requests run unauthenticated (60 req/hr) and saving a token reports an error. Nothing falls back to plaintext.
+- Note (Linux): storing a token requires a running Secret Service (GNOME Keyring, KWallet, …). If it was not running
+  when Skills Hub started, start it and **restart Skills Hub**: the keychain connection is set up once per launch.
+
+### Open questions
+
+- A database that an **unreleased** `2b60c7f` dev build already migrated (e.g. an operator `tauri:dev` run) used the
+  plain DELETE, so the token's bytes may remain in freed pages. That migration left no row, so the new migration never
+  runs `VACUUM` on it. A one-off `sqlite3 skills_hub.db 'VACUUM;'` fixes it (the operator's call). Released 1.2.17
+  databases are unaffected: they still hold the row, and the new migration cleans it.
+- B1(c) residual: if the legacy row cannot be deleted, the next launch's migration will write that row's token over
+  the operator's explicit choice. The operation reports the failure. A row that cannot be deleted means the database
+  is not writable, which blocks most of the app anyway.
+- `VACUUM` needs an exclusive lock. Startup runs before any command. From Settings it waits out other writers under
+  the 5 s `busy_timeout`, and a timeout surfaces as an error (row kept or zeroed, retry via Save).
+
+### Verification
+
+- `npm run version:check && npm run check` → exit 0: `Version OK (1.2.17)`; lint clean; vitest **17 files / 429
+  tests**; `tsc -b && vite build` ok; `cargo fmt --check` clean; clippy `-D warnings` clean; `cargo test` **703
+  passed, 0 failed** (bindings regenerated: `github_token_set: boolean | null`).

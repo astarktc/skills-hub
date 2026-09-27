@@ -15,6 +15,8 @@
 #[cfg(test)]
 use std::collections::HashMap;
 #[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(test)]
 use std::sync::Mutex;
 
 use anyhow::Result;
@@ -55,8 +57,19 @@ impl KeyringStore {
         Self
     }
 
+    /// `keyring`'s v1 wrapper initialises the platform store once per process
+    /// and caches the result (`Entry::store_status`); a failed initialisation
+    /// (no Secret Service on Linux) makes every later `Entry::new` answer the
+    /// generic `NoDefaultStore` without retrying — recovery needs an app
+    /// restart. The cached initialisation error is the useful diagnostic, so
+    /// it is preferred for `detail`.
     fn entry(key: &str) -> Result<keyring::Entry> {
-        keyring::Entry::new(SERVICE, key).map_err(unavailable)
+        keyring::Entry::new(SERVICE, key).map_err(|err| match keyring::Entry::store_status() {
+            Err(init) if matches!(err, keyring::Error::NoDefaultStore) => unavailable(format!(
+                "credential store initialisation failed (restart required after fixing): {init}"
+            )),
+            _ => unavailable(err),
+        })
     }
 }
 
@@ -82,12 +95,15 @@ impl CredentialStore for KeyringStore {
 }
 
 /// In-process store for tests. `failing()` builds one whose every call
-/// fails like a locked keychain.
+/// fails like a locked keychain; `set_reads_fail(true)` scripts a store whose
+/// writes land but whose reads are denied (a keychain that accepts the item
+/// and then refuses the read prompt).
 #[cfg(test)]
 #[derive(Debug, Default)]
 pub struct MemoryStore {
     entries: Mutex<HashMap<String, String>>,
     fail: bool,
+    fail_reads: AtomicBool,
 }
 
 #[cfg(test)]
@@ -98,15 +114,30 @@ impl MemoryStore {
 
     pub fn failing() -> Self {
         Self {
-            entries: Mutex::default(),
             fail: true,
+            ..Self::default()
         }
+    }
+
+    /// Toggle read denial; writes and deletes keep working.
+    pub fn set_reads_fail(&self, fail: bool) {
+        self.fail_reads.store(fail, Ordering::SeqCst);
     }
 
     fn check(&self) -> Result<()> {
         if self.fail {
             anyhow::bail!(SignalError::CredentialStoreUnavailable {
                 detail: "memory store configured to fail".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    fn check_read(&self) -> Result<()> {
+        self.check()?;
+        if self.fail_reads.load(Ordering::SeqCst) {
+            anyhow::bail!(SignalError::CredentialStoreUnavailable {
+                detail: "memory store configured to deny reads".to_string(),
             });
         }
         Ok(())
@@ -120,7 +151,7 @@ impl MemoryStore {
 #[cfg(test)]
 impl CredentialStore for MemoryStore {
     fn get(&self, key: &str) -> Result<Option<String>> {
-        self.check()?;
+        self.check_read()?;
         Ok(self.entries().get(key).cloned())
     }
 

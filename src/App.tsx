@@ -338,7 +338,11 @@ function App() {
             onClearGitCacheNow={settings.handleClearGitCacheNow}
             onOpenLogFolder={settings.handleOpenLogFolder}
             githubTokenSet={settings.githubTokenSet}
-            onGithubTokenChange={settings.handleGithubTokenChange}
+            githubTokenDraft={settings.githubTokenDraft}
+            githubTokenPending={settings.githubTokenPending}
+            onGithubTokenDraftChange={settings.handleGithubTokenDraftChange}
+            onGithubTokenSave={settings.handleGithubTokenSave}
+            onGithubTokenRemove={settings.handleGithubTokenRemove}
             onBack={handleCloseSettings}
             t={t}
           />

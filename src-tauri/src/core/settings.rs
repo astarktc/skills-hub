@@ -114,10 +114,11 @@ pub struct AppSettings {
     pub central_repo_path: String,
     pub git_cache_cleanup_days: i64,
     pub git_cache_ttl_secs: i64,
-    /// Whether a GitHub token is stored. The secret itself never crosses the
-    /// wire; a credential store that cannot be read reports `false` (logged)
-    /// so the rest of Settings still loads.
-    pub github_token_set: bool,
+    /// Whether a GitHub token is stored: `Some(true)` set, `Some(false)`
+    /// unset, `None` when the credential store could not be read (logged) —
+    /// unreadable is not absent, and the rest of Settings still loads. The
+    /// secret itself never crosses the wire.
+    pub github_token_set: Option<bool>,
     pub auto_sync_enabled: bool,
     /// `None` = never configured (distinct from an empty selection). Keys
     /// the Tool registry no longer knows are pruned on read (round 12 D2).
@@ -178,10 +179,10 @@ pub fn load_settings(
         git_cache_cleanup_days: git_cache_cleanup_days(store),
         git_cache_ttl_secs: git_cache_ttl_secs(store),
         github_token_set: match github_token(credentials) {
-            Ok(token) => token.is_some(),
+            Ok(token) => Some(token.is_some()),
             Err(err) => {
                 log::warn!("[settings] cannot read GitHub token presence: {err:#}");
-                false
+                None
             }
         },
         auto_sync_enabled: read_bool(store, keys::AUTO_SYNC_ENABLED, DEFAULT_AUTO_SYNC_ENABLED)?,
@@ -342,10 +343,7 @@ pub fn apply_setting(
                 &GIT_CACHE_TTL_SECS_RANGE.clamp(secs).to_string(),
             )?;
         }
-        SettingUpdate::GithubToken(token) => match token.trim() {
-            "" => credentials.delete(credentials::keys::GITHUB_TOKEN)?,
-            token => credentials.set(credentials::keys::GITHUB_TOKEN, token)?,
-        },
+        SettingUpdate::GithubToken(token) => set_github_token(store, credentials, &token)?,
         SettingUpdate::AutoSyncEnabled(enabled) => {
             write_bool(store, keys::AUTO_SYNC_ENABLED, enabled)?;
         }
@@ -380,6 +378,50 @@ pub fn apply_setting(
     load_settings(store, credentials, fallback_root)
 }
 
+/// Save (non-blank, trimmed) or remove (blank) the GitHub token, then settle
+/// any pending legacy settings row in the same operation: a row a failed
+/// startup migration left behind would otherwise overwrite this explicit
+/// choice on the next launch (or keep the old plaintext around).
+///
+/// Replacement: `set`, then — only when a legacy row is pending — read the
+/// new value back and securely delete the row. Removal: `delete`, then
+/// securely delete any pending row. Every failure propagates; in particular
+/// a row that cannot be removed fails the operation even though the
+/// keychain already holds what the operator asked for (the next launch's
+/// migration would then still act on the row — the remaining risk, reported
+/// rather than hidden). With no legacy row, a read-back failure is not an
+/// error here: `load_settings` reports presence as unknown (`None`).
+fn set_github_token(
+    store: &SkillStore,
+    credentials: &dyn CredentialStore,
+    token: &str,
+) -> Result<()> {
+    let legacy_row_pending = store.get_setting(keys::LEGACY_GITHUB_TOKEN)?.is_some();
+    match token.trim() {
+        "" => credentials.delete(credentials::keys::GITHUB_TOKEN)?,
+        token => {
+            credentials.set(credentials::keys::GITHUB_TOKEN, token)?;
+            if legacy_row_pending {
+                verify_stored_github_token(credentials, token)?;
+            }
+        }
+    }
+    if legacy_row_pending {
+        store.delete_setting_securely(keys::LEGACY_GITHUB_TOKEN)?;
+    }
+    Ok(())
+}
+
+/// Read the token back and require it to equal what was just written.
+fn verify_stored_github_token(credentials: &dyn CredentialStore, expected: &str) -> Result<()> {
+    if github_token(credentials)?.as_deref() != Some(expected) {
+        bail!(SignalError::CredentialStoreUnavailable {
+            detail: "token read back from the credential store did not match the write".to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Outcome of the one-time move of the plaintext token row to the
 /// credential store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -387,7 +429,8 @@ pub enum TokenMigration {
     /// No legacy row: already migrated, or never set.
     NothingToMigrate,
     /// The row held a token; it is now in the credential store (read back
-    /// and verified) and the row is gone.
+    /// and verified) and the row is gone — securely deleted, database
+    /// compacted.
     Migrated,
     /// The row was blank; it was deleted without touching the store.
     DroppedBlank,
@@ -398,6 +441,12 @@ pub enum TokenMigration {
 /// store write has been read back unchanged, so any store failure (a denied
 /// or locked Keychain prompt, no Secret Service) leaves the row untouched for
 /// the next launch and surfaces `SignalError::CredentialStoreUnavailable`.
+///
+/// The row is removed with `SkillStore::delete_setting_securely`, so the
+/// plaintext leaves the live database file (not just the table); a failed
+/// cleanup is an error, never `Migrated`. Copies outside the live file —
+/// backups, filesystem snapshots, storage remnants — are out of reach.
+/// An explicit Save/Remove settles a pending row too (`set_github_token`).
 pub fn migrate_github_token_to_credential_store(
     store: &SkillStore,
     credentials: &dyn CredentialStore,
@@ -407,17 +456,12 @@ pub fn migrate_github_token_to_credential_store(
     };
     let token = raw.trim();
     if token.is_empty() {
-        store.delete_setting(keys::LEGACY_GITHUB_TOKEN)?;
+        store.delete_setting_securely(keys::LEGACY_GITHUB_TOKEN)?;
         return Ok(TokenMigration::DroppedBlank);
     }
     credentials.set(credentials::keys::GITHUB_TOKEN, token)?;
-    let read_back = credentials.get(credentials::keys::GITHUB_TOKEN)?;
-    if read_back.as_deref() != Some(token) {
-        bail!(SignalError::CredentialStoreUnavailable {
-            detail: "token read back from the credential store did not match the write".to_string(),
-        });
-    }
-    store.delete_setting(keys::LEGACY_GITHUB_TOKEN)?;
+    verify_stored_github_token(credentials, token)?;
+    store.delete_setting_securely(keys::LEGACY_GITHUB_TOKEN)?;
     Ok(TokenMigration::Migrated)
 }
 

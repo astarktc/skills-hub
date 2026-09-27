@@ -102,8 +102,10 @@ pub fn run() {
 
             // Every launch until it succeeds: a pre-1.2.18 plaintext GitHub
             // token row moves to the OS credential store. The row is deleted
-            // only after the keychain write reads back; a denied or locked
-            // keychain leaves it for the next launch. No row, no keychain call.
+            // only after the keychain write reads back, and securely (zeroed +
+            // VACUUM) so the plaintext leaves the database file; a denied or
+            // locked keychain leaves it for the next launch. No row, no
+            // keychain call.
             match core::settings::migrate_github_token_to_credential_store(
                 &store,
                 &commands::credential_store(),
@@ -117,7 +119,7 @@ pub fn run() {
                 }
                 Err(err) => log::warn!(
                     "GitHub token migration to the OS credential store failed; \
-                     the settings row is kept for the next launch: {:#}",
+                     a remaining settings row is retried next launch: {:#}",
                     err
                 ),
             }

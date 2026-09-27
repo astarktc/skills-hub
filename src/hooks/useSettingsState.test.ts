@@ -89,12 +89,13 @@ function stubBackend(initial = appSettings()) {
 
 function makeReporter(): Pick<
   StatusReporter,
-  "setError" | "setSuccessToastMessage" | "formatError"
+  "setError" | "setSuccessToastMessage" | "formatError" | "notify"
 > {
   return {
     setError: vi.fn(),
     setSuccessToastMessage: vi.fn(),
     formatError: vi.fn((err: unknown) => `formatted:${String(err)}`),
+    notify: vi.fn(),
   };
 }
 
@@ -106,6 +107,18 @@ function renderSettings(reporter = makeReporter()) {
       onManagedSkillsChanged: vi.fn(async () => {}),
     }),
   );
+}
+
+type SettingsResult = { current: ReturnType<typeof useSettingsState> };
+
+/** Type a draft, then press Save (two acts: the save reads the new draft). */
+async function saveToken(result: SettingsResult, draft: string) {
+  act(() => {
+    result.current.handleGithubTokenDraftChange(draft);
+  });
+  await act(async () => {
+    await result.current.handleGithubTokenSave();
+  });
 }
 
 const updateCalls = () =>
@@ -195,14 +208,12 @@ describe("useSettingsState writes", () => {
     const { result } = renderSettings();
     await waitFor(() => expect(result.current.bounds).not.toBeNull());
 
-    // Backend normalises further (a blank token clears it).
-    let landed: boolean | undefined;
+    // Remove sends a blank value; presence comes from the backend echo.
     await act(async () => {
-      landed = await result.current.handleGithubTokenChange("   ");
+      await result.current.handleGithubTokenRemove();
     });
 
-    expect(landed).toBe(true);
-    expect(updateCalls()).toEqual([{ key: "github_token", value: "   " }]);
+    expect(updateCalls()).toEqual([{ key: "github_token", value: "" }]);
     expect(result.current.githubTokenSet).toBe(false);
   });
 
@@ -212,15 +223,13 @@ describe("useSettingsState writes", () => {
     await waitFor(() => expect(result.current.bounds).not.toBeNull());
     expect(result.current.githubTokenSet).toBe(false);
 
-    await act(async () => {
-      await result.current.handleGithubTokenChange("ghp_new");
-    });
+    await saveToken(result, "ghp_new");
     expect(result.current.githubTokenSet).toBe(true);
+    // The draft clears once the save is confirmed: the hook holds no secret.
+    expect(result.current.githubTokenDraft).toBe("");
     expect(JSON.stringify(result.current)).not.toContain("ghp_new");
 
-    await act(async () => {
-      await result.current.handleGithubTokenChange("ghp_replacement");
-    });
+    await saveToken(result, "ghp_replacement");
     expect(updateCalls()).toEqual([
       { key: "github_token", value: "ghp_new" },
       { key: "github_token", value: "ghp_replacement" },
@@ -236,14 +245,101 @@ describe("useSettingsState writes", () => {
 
     const failure = { code: "CREDENTIAL_STORE_UNAVAILABLE", detail: "locked" };
     mockInvoke.mockRejectedValueOnce(failure);
-    let landed: boolean | undefined;
     await act(async () => {
-      landed = await result.current.handleGithubTokenChange("");
+      await result.current.handleGithubTokenRemove();
     });
-
-    expect(landed).toBe(false);
     expect(reporter.setError).toHaveBeenCalledWith(`formatted:${String(failure)}`);
     expect(result.current.githubTokenSet).toBe(true);
+
+    // A failed save keeps the draft for a retry.
+    mockInvoke.mockRejectedValueOnce(failure);
+    await saveToken(result, "ghp_retry");
+    expect(result.current.githubTokenDraft).toBe("ghp_retry");
+    expect(result.current.githubTokenPending).toBe(false);
+  });
+
+  it("reports an unreadable keychain as unknown presence, not absent", async () => {
+    stubBackend(appSettings({ github_token_set: null }));
+    const { result } = renderSettings();
+    await waitFor(() => expect(result.current.bounds).not.toBeNull());
+    expect(result.current.githubTokenSet).toBeNull();
+  });
+
+  it("warns, keeps the draft and claims nothing when a save cannot be read back", async () => {
+    stubBackend(appSettings({ github_token_set: false }));
+    const reporter = makeReporter();
+    const { result } = renderSettings(reporter);
+    await waitFor(() => expect(result.current.bounds).not.toBeNull());
+
+    // The keychain accepted the write, but the follow-up read was denied.
+    mockInvoke.mockResolvedValueOnce(appSettings({ github_token_set: null }));
+    await saveToken(result, "ghp_unverified");
+
+    expect(result.current.githubTokenSet).toBeNull();
+    expect(result.current.githubTokenDraft).toBe("ghp_unverified");
+    expect(reporter.notify).toHaveBeenCalledWith(
+      "warning",
+      "githubTokenUnconfirmedTitle",
+      "githubTokenUnconfirmedMessage",
+    );
+    expect(reporter.setSuccessToastMessage).not.toHaveBeenCalled();
+    expect(reporter.setError).not.toHaveBeenCalled();
+  });
+});
+
+describe("useSettingsState token single-flight", () => {
+  it("ignores Save/Remove while a token write is pending and keeps a newer draft", async () => {
+    stubBackend(appSettings({ github_token_set: false }));
+    const { result } = renderSettings();
+    await waitFor(() => expect(result.current.bounds).not.toBeNull());
+
+    // Hold the first token write open (a keychain prompt).
+    let release: ((value: AppSettings) => void) | undefined;
+    mockInvoke.mockImplementationOnce(
+      () =>
+        new Promise<AppSettings>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    act(() => {
+      result.current.handleGithubTokenDraftChange("ghp_A");
+    });
+    let first: Promise<void> | undefined;
+    act(() => {
+      first = result.current.handleGithubTokenSave();
+    });
+    expect(result.current.githubTokenPending).toBe(true);
+
+    // While A is pending: a newer draft, a second Save and a Remove.
+    act(() => {
+      result.current.handleGithubTokenDraftChange("ghp_B");
+    });
+    await act(async () => {
+      await result.current.handleGithubTokenSave();
+      await result.current.handleGithubTokenRemove();
+    });
+    expect(updateCalls()).toEqual([{ key: "github_token", value: "ghp_A" }]);
+
+    await act(async () => {
+      release?.(appSettings({ github_token_set: true }));
+      await first;
+    });
+
+    expect(result.current.githubTokenPending).toBe(false);
+    expect(result.current.githubTokenSet).toBe(true);
+    // A landed, but the input now holds B, which was never sent: keep it.
+    expect(result.current.githubTokenDraft).toBe("ghp_B");
+
+    // After settling, the next Save goes through and clears its own draft.
+    await act(async () => {
+      await result.current.handleGithubTokenSave();
+    });
+    expect(updateCalls()).toEqual([
+      { key: "github_token", value: "ghp_A" },
+      { key: "github_token", value: "ghp_B" },
+    ]);
+    expect(result.current.githubTokenDraft).toBe("");
   });
 
   it("surfaces a failed write through the reporter and keeps other state", async () => {
@@ -301,9 +397,7 @@ describe("useSettingsState single-field adoption", () => {
     await act(async () => {
       ttlWrite = result.current.handleGitCacheTtlSecsChange(5);
     });
-    await act(async () => {
-      await result.current.handleGithubTokenChange("new-token");
-    });
+    await saveToken(result, "new-token");
     expect(result.current.githubTokenSet).toBe(true);
 
     // The TTL response (which still says no token) lands last.

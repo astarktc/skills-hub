@@ -149,11 +149,12 @@ export type AppSettings = {
 	git_cache_cleanup_days: number,
 	git_cache_ttl_secs: number,
 	/**
-	 *  Whether a GitHub token is stored. The secret itself never crosses the
-	 *  wire; a credential store that cannot be read reports `false` (logged)
-	 *  so the rest of Settings still loads.
+	 *  Whether a GitHub token is stored: `Some(true)` set, `Some(false)`
+	 *  unset, `None` when the credential store could not be read (logged) —
+	 *  unreadable is not absent, and the rest of Settings still loads. The
+	 *  secret itself never crosses the wire.
 	 */
-	github_token_set: boolean,
+	github_token_set: boolean | null,
 	auto_sync_enabled: boolean,
 	/**
 	 *  `None` = never configured (distinct from an empty selection). Keys

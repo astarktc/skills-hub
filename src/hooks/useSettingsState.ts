@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AppSettings,
   SettingUpdate,
@@ -32,7 +32,7 @@ export type SettingsStateDeps = {
   t: TranslateFn;
   reporter: Pick<
     StatusReporter,
-    "setError" | "setSuccessToastMessage" | "formatError"
+    "setError" | "setSuccessToastMessage" | "formatError" | "notify"
   >;
   /** Called after the central repo moves so the skill list reloads. */
   onManagedSkillsChanged: () => Promise<void>;
@@ -59,7 +59,7 @@ export function useSettingsState({
   reporter,
   onManagedSkillsChanged,
 }: SettingsStateDeps) {
-  const { setError, setSuccessToastMessage, formatError } = reporter;
+  const { setError, setSuccessToastMessage, formatError, notify } = reporter;
   const [themePreference, setThemePreference] = useState<
     "system" | "light" | "dark"
   >(() => storedThemePreference.read());
@@ -73,8 +73,17 @@ export function useSettingsState({
     PRE_LOAD_PLACEHOLDERS.gitCacheTtlSecs,
   );
   // Presence only: the secret lives in the OS keychain and never crosses
-  // the wire back to the frontend.
-  const [githubTokenSet, setGithubTokenSet] = useState(false);
+  // the wire back to the frontend. `null` = the keychain could not be read
+  // (unknown, not absent).
+  const [githubTokenSet, setGithubTokenSet] = useState<boolean | null>(false);
+  // The write-only Save input. Held here (not in the page) so the
+  // single-flight rule below owns it and is testable without rendering.
+  const [githubTokenDraft, setGithubTokenDraft] = useState("");
+  // One token mutation at a time: keychain calls can wait on an OS prompt,
+  // and overlapping Save/Remove would race their presence echoes. The ref
+  // gates synchronously; the state drives the disabled UI.
+  const githubTokenInFlight = useRef(false);
+  const [githubTokenPending, setGithubTokenPending] = useState(false);
   // Clamp bounds come from the backend snapshot; null until loaded.
   const [bounds, setBounds] = useState<SettingsBounds | null>(null);
 
@@ -92,8 +101,8 @@ export function useSettingsState({
    * Write one setting and adopt the backend's echo of *that field only* (plus
    * the bounds, which are constants).
    *
-   * Writes are independent and can overlap — the token field writes on every
-   * keystroke while a slider is being dragged, and the zoom hotkey fires
+   * Writes are independent and can overlap — a token Save can wait on a
+   * keychain prompt while a cache knob is edited, and the zoom hotkey fires
    * unprompted. Adopting the whole snapshot here would replay this response's
    * now-stale values for the other fields over newer local edits. The echo is
    * still adopted rather than the requested value, because the backend clamps.
@@ -252,22 +261,51 @@ export function useSettingsState({
   );
 
   /**
-   * Save (non-blank) or remove (blank) the token. Resolves `true` when the
-   * keychain write landed, so the page can clear its input; presence is
-   * adopted from the backend echo, never assumed.
+   * Save (non-blank) or remove (blank) the token — single-flight: while one
+   * mutation is pending, further Save/Remove calls are ignored (the page also
+   * disables the input and buttons). Presence is adopted from the backend
+   * echo, never assumed. A save clears the draft only when the echo confirms
+   * the token and the draft is still the value that was sent. An echo that
+   * cannot confirm the change (the keychain accepted the write but its read
+   * came back unknown) is a warning, not a success, and keeps the draft.
    */
-  const handleGithubTokenChange = useCallback(
-    async (nextToken: string): Promise<boolean> => {
-      if (!isTauri) return false;
+  const submitGithubToken = useCallback(
+    async (value: string) => {
+      if (!isTauri || githubTokenInFlight.current) return;
+      githubTokenInFlight.current = true;
+      setGithubTokenPending(true);
       try {
-        await writeSetting({ key: "github_token", value: nextToken });
-        return true;
+        const next = await writeSetting({ key: "github_token", value });
+        const expected = value.trim() !== "";
+        if (next.github_token_set !== expected) {
+          notify(
+            "warning",
+            t("githubTokenUnconfirmedTitle"),
+            t("githubTokenUnconfirmedMessage"),
+          );
+          return;
+        }
+        if (expected) {
+          setGithubTokenDraft((current) => (current === value ? "" : current));
+        }
       } catch (err) {
         setError(formatError(err));
-        return false;
+      } finally {
+        githubTokenInFlight.current = false;
+        setGithubTokenPending(false);
       }
     },
-    [formatError, setError, writeSetting],
+    [formatError, notify, setError, t, writeSetting],
+  );
+
+  const handleGithubTokenSave = useCallback(async () => {
+    if (githubTokenDraft.trim() === "") return;
+    await submitGithubToken(githubTokenDraft);
+  }, [githubTokenDraft, submitGithubToken]);
+
+  const handleGithubTokenRemove = useCallback(
+    () => submitGithubToken(""),
+    [submitGithubToken],
   );
 
   const handleClearGitCacheNow = useCallback(async () => {
@@ -326,11 +364,15 @@ export function useSettingsState({
     gitCacheCleanupDays,
     gitCacheTtlSecs,
     githubTokenSet,
+    githubTokenDraft,
+    githubTokenPending,
     bounds,
     handlePickStoragePath,
     handleGitCacheCleanupDaysChange,
     handleGitCacheTtlSecsChange,
-    handleGithubTokenChange,
+    handleGithubTokenDraftChange: setGithubTokenDraft,
+    handleGithubTokenSave,
+    handleGithubTokenRemove,
     handleClearGitCacheNow,
     handleOpenLogFolder,
     handleThemeChange,
