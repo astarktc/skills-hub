@@ -7,6 +7,8 @@ Canonical agent context for every harness. `CLAUDE.md` imports this file.
 
 ```bash
 npm run dev              # Vite dev server (port 5173, strict; VITE_DEV_PORT=5174 overrides — tauri:dev follows it)
+npm run dev:fixture      # the app in a plain browser on an in-memory library (src/fixtures/, dev-only, tree-shaken from
+                         #   production) — http://localhost:5175/?scenario=rich|empty|first-run|failures; touches nothing on disk
 npm run tauri:dev        # Tauri dev window (frontend + backend) — see live-data warning below
 npm run build            # tsc -b (TypeScript 7) && vite build
 npm run lint             # ESLint

@@ -9,15 +9,25 @@
 //
 // Invocation fails loudly when the app runs outside a Tauri webview (plain
 // `npm run dev` in a browser) instead of hanging on a missing IPC bridge.
+//
+// Fixture mode (`npm run dev:fixture`, dev-only): `VITE_MOCK_BACKEND` is a
+// compile-time constant (`vite.config.ts`), so production builds fold every
+// branch below to false and the dynamically imported fixture backend
+// (`src/fixtures/`) never enters the bundle. In fixture mode the app counts
+// as running in Tauri: `src/fixtures` answers commands and stands in for the
+// webview's native IPC before the first render (`src/main.tsx`).
 
 import { commands } from "../bindings";
 
+const fixtureMode = import.meta.env.VITE_MOCK_BACKEND === "1";
+
 export const isTauri =
-  typeof window !== "undefined" &&
-  Boolean(
-    (window as { __TAURI__?: unknown }).__TAURI__ ||
-      (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__,
-  );
+  fixtureMode ||
+  (typeof window !== "undefined" &&
+    Boolean(
+      (window as { __TAURI__?: unknown }).__TAURI__ ||
+        (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__,
+    ));
 
 /** The generated command table: `keyof Commands` is the set of valid names. */
 export type Commands = typeof commands;
@@ -36,6 +46,11 @@ export const invokeTauri: InvokeTauri = <K extends CommandName>(
   ...args: Parameters<Commands[K]>
 ) => {
   type Result = ReturnType<Commands[K]>;
+  if (fixtureMode) {
+    return import("../fixtures").then(({ fixtureInvoke }) =>
+      fixtureInvoke(command, ...args),
+    ) as Result;
+  }
   if (!isTauri) {
     return Promise.reject(new Error("Tauri API is not available")) as Result;
   }

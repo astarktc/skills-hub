@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --strictPort",
+    "dev:fixture": "vite --mode fixture --port 5175 --strictPort",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",
