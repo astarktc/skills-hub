@@ -24,3 +24,24 @@ rows. Do **not** propose a new look — the world is decided; propose what each 
 Audit brief: impeccable `audit` (`reference/audit.md`) — keyboard completion of the six core flows, focus
 visibility, AA contrast both themes (compute, don't eyeball), reduced-motion, 960×640 behaviour, tab order in
 modals, ARIA on custom controls. Output `audit.md` as a table: surface · check · pass/fail · evidence path.
+
+## Result — Opus
+
+File: `.scratch/round18/review/critique-opus.md`. Screenshots (local, gitignored):
+`.scratch/round18/evidence/critique-opus/` (44 PNGs). Whole app **17/40 (Poor)**; per surface from My Skills 13/40
+to Settings 29/40. Both raw-key leaks confirmed and placed (Import "Found in claude_code" ×31; matrix headers
+`CLAUDE_CODE`/`AGENTS_SKILLS`/`PI`/`WINDSURF` plus the cell aria-labels).
+
+Top 5:
+
+1. **P0** — "Uninstall from tool directories" (My Skills toolbar) removes every Sync target in the library in one
+   click. It asks for no confirmation, gives no counts and offers no undo, and auto-sync stays on.
+2. **P0** — My Skills misreports state. A central-missing skill shows 7 green pills. Skills whose upstream fetch
+   fails look healthy. Failed targets are colour-only and can hide in "+N more". Healthy is loud and exceptions are
+   quiet.
+3. **P1** — A tool-pill click or the link icon silently undeploys, with no confirmation or undo. The pill vanishes,
+   so it cannot be clicked back.
+4. **P1** — Skill detail shows no deployment truth: no targets, health, projects or fixes. It is a file viewer that
+   replaces the list, where the contract needs an inspector.
+5. **P1** — Modal as first thought. Add stacks 4 dialogs at the overwrite ask. Refresh (all) blocks the app under
+   "Installing Skills…". One Esc closes every stacked dialog, and there is no focus trap or return.
