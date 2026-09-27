@@ -14,7 +14,11 @@
 //! operator's home in production) for the central repo default, and the
 //! `CredentialStore` the GitHub token lives in (the OS keychain in
 //! production). The token is the one setting not kept in the settings table;
-//! `migrate_github_token_to_credential_store` moves a pre-1.2.18 row there.
+//! `migrate_github_token_to_credential_store` moves a pre-1.2.18 row there,
+//! deleting the row securely (zeroed + compacted). A compaction that fails
+//! after the row's deletion committed is an error, and a non-secret
+//! cleanup-pending marker (`SkillStore::delete_setting_securely`) makes
+//! startup and the next token Save/Remove finish it.
 
 use std::path::{Path, PathBuf};
 
@@ -391,6 +395,11 @@ pub fn apply_setting(
 /// migration would then still act on the row — the remaining risk, reported
 /// rather than hidden). With no legacy row, a read-back failure is not an
 /// error here: `load_settings` reports presence as unknown (`None`).
+///
+/// With no legacy row, the operation still finishes any secure cleanup an
+/// earlier deletion left pending (`SkillStore::finish_pending_secure_cleanup`:
+/// the row is gone but its compaction failed); a failure there fails the
+/// operation too.
 fn set_github_token(
     store: &SkillStore,
     credentials: &dyn CredentialStore,
@@ -407,7 +416,10 @@ fn set_github_token(
         }
     }
     if legacy_row_pending {
+        // Compacts, which also completes any earlier pending cleanup.
         store.delete_setting_securely(keys::LEGACY_GITHUB_TOKEN)?;
+    } else {
+        store.finish_pending_secure_cleanup()?;
     }
     Ok(())
 }
@@ -430,7 +442,13 @@ pub enum TokenMigration {
     NothingToMigrate,
     /// The row held a token; it is now in the credential store (read back
     /// and verified) and the row is gone — securely deleted, database
-    /// compacted.
+    /// compacted. Returned only when the compaction succeeded: if the row's
+    /// deletion committed but the compaction failed, the migration is an
+    /// error instead (the keychain holds the verified token, the row is gone,
+    /// and a non-secret cleanup-pending marker makes the next startup's
+    /// `SkillStore::finish_pending_secure_cleanup` — or the next token
+    /// Save/Remove — finish it; that startup's migration then reports
+    /// `NothingToMigrate`).
     Migrated,
     /// The row was blank; it was deleted without touching the store.
     DroppedBlank,
@@ -444,7 +462,9 @@ pub enum TokenMigration {
 ///
 /// The row is removed with `SkillStore::delete_setting_securely`, so the
 /// plaintext leaves the live database file (not just the table); a failed
-/// cleanup is an error, never `Migrated`. Copies outside the live file —
+/// cleanup is an error, never `Migrated`, and is retried through the cleanup
+/// marker (see `TokenMigration::Migrated`) — never by restoring the
+/// plaintext row. Copies outside the live file —
 /// backups, filesystem snapshots, storage remnants — are out of reach.
 /// An explicit Save/Remove settles a pending row too (`set_github_token`).
 pub fn migrate_github_token_to_credential_store(

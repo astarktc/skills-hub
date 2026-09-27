@@ -127,7 +127,7 @@ No command added/renamed; no arity change on the wire. (At the time of the final
 ## Review fixes
 
 Fixes for `.scratch/round18/review/ticket-02-review.md` (review of `2b60c7f`), implemented 2026-09-27 by a delegated
-child on `main` @ `a3672bc`; uncommitted, working tree only. Implemented as the orchestrator decided.
+child on `main` @ `a3672bc`; committed as `bc84841`. Implemented as the orchestrator decided.
 
 | Finding | What changed | Test that pins it |
 | --- | --- | --- |
@@ -168,10 +168,33 @@ next launch").
   the operator's explicit choice. The operation reports the failure. A row that cannot be deleted means the database
   is not writable, which blocks most of the app anyway.
 - `VACUUM` needs an exclusive lock. Startup runs before any command. From Settings it waits out other writers under
-  the 5 s `busy_timeout`, and a timeout surfaces as an error (row kept or zeroed, retry via Save).
+  the 5 s `busy_timeout`, and a timeout surfaces as an error. If the DELETE itself failed, the row is kept and the
+  next launch or Save/Remove retries it. If the DELETE committed but the compaction failed, the row is gone (its live
+  bytes zeroed) and the non-secret `github_token.cleanup_pending` marker, committed in the DELETE's transaction, makes
+  the next launch (`SkillStore::finish_pending_secure_cleanup`, before the migration) or the next token Save/Remove
+  finish the compaction — see **Review fixes (round 2)**.
 
 ### Verification
 
 - `npm run version:check && npm run check` → exit 0: `Version OK (1.2.17)`; lint clean; vitest **17 files / 429
   tests**; `tsc -b && vite build` ok; `cargo fmt --check` clean; clippy `-D warnings` clean; `cargo test` **703
   passed, 0 failed** (bindings regenerated: `github_token_set: boolean | null`).
+
+## Review fixes (round 2)
+
+Fixes for `.scratch/round18/review/ticket-02-review.md` § "Re-review of bc84841", implemented 2026-09-27 by a
+delegated child on `main` @ `6740a10`; uncommitted, working tree only. Implemented as the orchestrator decided.
+
+| Finding | What changed | Test that pins it |
+| --- | --- | --- |
+| **B2a** — a compaction failing after the DELETE lost its retry signal | `SkillStore::delete_setting_securely(key)`: `PRAGMA secure_delete = ON` (set before the transaction, so it covers it), then ONE transaction: DELETE the row + upsert the non-secret marker `<key>.cleanup_pending` = `1`; commit; then the shared private `compact_and_clear_cleanup_markers` (`VACUUM`, the checked WAL checkpoint, and only then a plain delete of every `*.cleanup_pending` marker). New `SkillStore::finish_pending_secure_cleanup() -> Result<bool>`: with any marker present, compacts and clears; otherwise does nothing. Called at startup in `lib.rs` right after `ensure_schema`, before the token migration (logs info/warn), and by `set_github_token` when no legacy row is pending (with a row pending, the secure delete's own compaction covers it). The migration returns `Migrated` only after the compaction succeeded; otherwise it errors, the next startup finishes the cleanup and the migration then reports `NothingToMigrate`. Plaintext is never restored. Documented on the method, `TokenMigration::Migrated`, the migration and the module doc. | `failed_compaction_keeps_a_marker_that_the_next_startup_completes`: an earlier token left in freelist pages + the current row; a `#[cfg(test)]` per-thread fault (`skill_store::compaction_fault`) fails the compaction → migration errors, row gone, marker `1`, keychain holds the current token, the live row's bytes are already zeroed (proves `secure_delete` was in force inside the transaction), the historical copy is still on disk; then startup order (`finish_pending_secure_cleanup` → `true`, migration → `NothingToMigrate`) → marker gone, no sentinel in any DB file, keychain unchanged. A fault hook rather than a busy reader here: in rollback-journal mode a reader holding its lock before the deletion blocks the DELETE's commit, not the `VACUUM`. `save_and_remove_finish_a_stale_cleanup_marker`: stale marker + freed sentinel bytes, no legacy row → Save, then Remove, each clears the marker and the bytes. `token_migration_cleanup_failure_is_an_error_not_migrated` now also asserts no marker after a failed DELETE (atomicity). |
+| **B2b** — a busy WAL checkpoint counted as completed erasure | The checkpoint's result row `(busy, log, checkpointed)` is read; `busy != 0` is an error ("WAL checkpoint could not complete …") and the marker stays. | `busy_wal_checkpoint_is_an_error_and_the_retry_completes_it`: file-backed DB switched to WAL, a real reader holding a pre-deletion snapshot → migration errors after the 5 s busy timeout, row gone, marker kept, token bytes still on disk; reader released → `finish_pending_secure_cleanup` → marker gone, no sentinel in `test.db`/`-wal`/`-shm`/`-journal`. |
+| **N2 follow-up** — stale status | § Review fixes now names commit `bc84841`; Open questions' "retry via Save" now describes the marker mechanism. | — |
+
+Sensitivity: disabling the `busy` check fails the B2b test; dropping the `finish_pending_secure_cleanup` call from
+`set_github_token` fails the stale-marker test ("marker left by \"ghp_B\""). Both restored.
+
+Verification: `npm run version:check` → `Version OK (1.2.17)`; `cargo fmt --check` clean; clippy `-D warnings`
+clean; `cargo test --all` **706 passed, 0 failed**; `npm run check` exit 0 (vitest **17 files / 446 tests**, which
+includes a concurrent child's `src/fixtures/**` work in this tree). `git diff --exit-code -- src/bindings/index.ts`
+→ exit 0 (no wire change).

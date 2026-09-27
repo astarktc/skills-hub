@@ -125,3 +125,75 @@ There is no pending-state guard. While saving draft A awaits IPC/keychain access
 - Complete erasure from historical backups, snapshots, other legacy-identifier database copies or storage-device remnants. B2 establishes recoverable plaintext in the **current** migrated DB, without relying on those broader concerns.
 - Visual/UI smoke and native IPC prompt interaction. Unit tests verify hook logic; S3 is a code-level asynchronous interleaving, not a recorded UI reproduction.
 - The implementer's historical gate run or whether generated bindings were originally hand-edited. Fresh gates and a fresh generator comparison are the evidence above.
+
+## Re-review of bc84841
+
+**Verdict: fix-then-ship.** B1, S1–S3 and the requested N1 coverage are closed. B2's happy path is fixed, but post-DELETE failure recovery and WAL checkpoint completion are not. N2's original statements are corrected, with one new stale status nit.
+
+Reviewed `bc84841~1..bc84841` (`bc8484135d8adb8fee49c1efca5bc7e1385552e8`) against the prior findings, the ticket's **Review fixes**, and the orchestrator's stated decisions—not alternative credential-store designs. Read `git show` and the diff. Source/bindings matched that commit before and after verification. No product source edits, staging, commits, app startup, browser work, real-keychain calls or operator-database access. Only this report is edited; synthetic probe binaries/logs are in ignored `review/evidence/`. Concurrent ticket-04 review output is unrelated.
+
+### Per-finding disposition
+
+| Finding | Closed? | Evidence | Residual risk |
+| --- | --- | --- | --- |
+| **B1** | **Yes, as decided** | `core/settings.rs:394–413`: Save checks for the legacy row, writes and verifies the replacement before secure cleanup; Remove deletes the keychain item before cleanup. Every error propagates. Passing tests at `core/tests/settings.rs:733,772,805,854` cover replacement/restart, partial-migration removal/restart, read denial and failed row deletion. | If keychain deletion succeeds but DELETE fails, the old row can still resurrect the token on restart. This is explicitly documented in `settings.rs:378–393` and the ticket's B1(c) residual; the action returns an error, not success. This is the accepted behavior, not a reopened B1. Compaction failure is separately B2 below. |
+| **B2** | **No—partial** | `core/skill_store.rs:551–563` correctly sets `secure_delete=ON` **before DELETE on the same connection**, then VACUUMs. Migration returns `Migrated` only after that call returns. The file-backed raw-byte test at `core/tests/settings.rs:642` passes. | A failure after DELETE loses the cleanup retry signal; a busy WAL checkpoint is silently accepted. See B2a/B2b below. |
+| **S1** | **Yes** | `settings.rs:121,181–187`, generated `src/bindings/index.ts:157`: `Option<bool>` / required `boolean \| null`. Hook adopts null unchanged and warns/keeps the draft on an unconfirmed echo (`useSettingsState.ts:272–297`). `SettingsPage.tsx:339–356` handles null before boolean rendering and retains Remove. Rust and hook denial tests pass. | No post-load path found coercing null to false. The initial pre-load placeholder is false, not a coercion of an unreadable response. Ticket-04's `fixtures/model.ts:438` false remains type-valid. |
+| **S2** | **Yes (source/copy)** | `credentials.rs:66–73` preserves `Entry::store_status()`'s initialization diagnostic for `NoDefaultStore`. Rechecked keyring 4.2.0 `src/v1.rs:47–68,107`. Recovery strings and the amended Linux release note say restart. | Actual Linux cold-start/service-start/restart behavior was not exercised; no real credential store was accessed. |
+| **S3** | **Yes** | Hook ref gate is synchronous; pending state disables input/Save/Remove (`SettingsPage.tsx:323,332,343`), and Enter reaches the same gated action. Functional draft update clears only the submitted unchanged value. Deferred test `useSettingsState.test.ts:291–346` asserts exactly one A submission while both Save and Remove are attempted, then asserts B survives A's completion and is sent only by the subsequent Save. | No new overlap/draft-loss regression found. |
+| **N1** | **Yes, requested cases** | Set-success/read-error tests at `core/tests/settings.rs:711,805,829`; DELETE-failure tests at `:686,854`; off/on × absent/empty/valid/corrupt selection table at `:903`. `commands/tests/commands.rs:16–29` wraps the signal in two anyhow contexts and asserts the **serialized JSON tag and detail**, not just its Rust variant. | DELETE-trigger failure does not exercise a failure after DELETE or the WAL busy status. Those missing cases expose B2a/B2b. |
+| **N2** | **Original fixes yes; small follow-up** | Hook comment now describes explicit Save. Original Result and AGENTS.md statements are corrected. | `.scratch/round18/issues/02-github-token-keychain.md:130` newly labels the fix itself “uncommitted, working tree only”; replace with `bc84841` or explicitly mark it as the pre-commit historical state. Non-blocking documentation nit. |
+
+Paths in the table beginning `core/` or `commands/` are under `src-tauri/src/`.
+
+### Remaining findings
+
+#### B2a — P1 · Failed compaction becomes permanently ineligible for retry
+
+**Where:** `src-tauri/src/core/skill_store.rs:554–555`, `src-tauri/src/core/settings.rs:399–410,454–455`.
+
+DELETE autocommits before VACUUM. If VACUUM fails (busy database, disk/resource failure, interruption), the immediate call correctly errors, but the legacy row is already gone. The next startup returns `NothingToMigrate`; later Save/Remove also skip cleanup because `legacy_row_pending` is false. Historical plaintext in freed pages can therefore remain indefinitely in the **live** database. This is not the explicitly excluded backup/snapshot/device-remnant risk, nor merely a database previously touched by the unreleased plain-DELETE build. The ticket's `:170–171` assertion “retry via Save” is false for this case.
+
+**Connection/concurrency check:** `with_conn` (`skill_store.rs:1456–1467`) opens a fresh connection per call; there is no enclosing transaction or connection pool mutex. VACUUM is legal here. SQLite serializes active writers and obtains the locks required by VACUUM; the application does **not** reserve the writer across the autocommit DELETE→VACUUM gap. Other connections/readers can enter that gap. The existing `concurrent_readers_and_writers_all_succeed` test (`core/tests/skill_store.rs:1852`) passed, but runs ordinary upsert/read pairs, not secure cleanup or VACUUM.
+
+**Fresh reproduction:** stdin-compiled Rust probe linked to the project's bundled rusqlite. In a synthetic rollback-journal database, inserted/replaced a synthetic legacy value to leave historical bytes, ran the cleanup's exact PRAGMA→DELETE order, then let an independent reader hold a transaction before VACUUM. With the production 5-second timeout:
+
+```text
+concurrent reader: vacuum=Err(... DatabaseBusy ... "database is locked"); elapsed=5.17619375s; row_count=0; old_bytes=true
+reader released: next migration skips=true, old_bytes=true
+explicit VACUUM retry: old_bytes=false
+```
+
+The probe exercises the SQL sequence and evaluates the row-presence retry condition; it does not call the private production method. An independent injected VACUUM failure produced the same missing-row/remaining-bytes state. Evidence: `evidence/bc84841-vacuum-reader-probe.log` and `evidence/bc84841-cleanup-probe.log`. Synthetic DBs were deleted.
+
+**Concrete fix:** persist a non-secret cleanup-pending marker atomically with the legacy-row deletion, and have startup and explicit token operations finish pending compaction/checkpointing even when the token row is absent. Clear that marker only after the required cleanup succeeds. Do not restore plaintext merely to obtain a retry signal. Add a post-DELETE/VACUUM-failure test that releases the fault, retries with no legacy row, verifies historical bytes disappear, and verifies the chosen keychain value is untouched. Correct the ticket's retry claim.
+
+#### B2b — P2 · A busy WAL checkpoint is treated as completed erasure
+
+**Where:** `src-tauri/src/core/skill_store.rs:558–559`.
+
+`PRAGMA wal_checkpoint(TRUNCATE)` reports contention in its **result row** (first column `1`); this is not a rusqlite query error. The closure `|_| Ok(())` discards that status, so the method and migration report success even when old token frames remain readable in the WAL.
+
+**Fresh reproduction:** synthetic WAL DB, reader retaining a pre-delete snapshot, then the exact secure-delete→VACUUM→checkpoint sequence:
+
+```text
+wal checkpoint_row=(1, 10, 5), production_row_mapper=Ok(()), token_in_wal=true
+```
+
+Verified against bundled SQLite's `OP_Checkpoint` implementation (`libsqlite3-sys-0.37.0/sqlite3/sqlite3.c:103264`): `SQLITE_BUSY` becomes `SQLITE_OK` plus result-column `1`. The application does not enable WAL today, so this is conditional, not a claim that default installations use WAL. Nevertheless, the explicitly required WAL branch cannot claim cleanup completion on this result.
+
+**Concrete fix:** inspect the checkpoint status and propagate incomplete/busy cleanup as an error; retain the non-secret pending marker from B2a so a later retry can finish it. Test with a WAL reader held through the first attempt, then released, and assert no `Migrated` on the busy attempt and no synthetic token bytes after successful retry.
+
+### Other regression checks and fresh verification
+
+- Migration of a nonblank row still requires a successful keychain write and matching read-back before deleting it. Blank rows intentionally require no keychain write. Explicit removal intentionally authorizes deleting the row without a replacement write. No new unverified nonblank migration-delete path found.
+- Skipping value read-back when no legacy row is pending follows the orchestrator's decision; the settings read returns null on access failure and the hook warns/retains the draft. No new hole found in that accepted policy.
+- No new non-test `unwrap`/`expect` calls found. New `MemoryStore` helpers remain test-only.
+- `cd src-tauri && cargo test --all`: **703 passed**, zero failures; main/doc tests passed. Full output: `evidence/bc84841-rust-tests.log`.
+- `npm run test`: **17 files / 429 tests passed**.
+- `npm run build`: **TypeScript build and Vite passed**; existing chunk-size/mixed-import warnings only.
+- `cd src-tauri && cargo clippy --all-targets -- -D warnings`: **passed**.
+- `git diff --exit-code bc84841 -- src src-tauri`: **clean**, including freshly generated bindings.
+- Targeted LSP probe: no reported diagnostics; one file confirmed clean and one unconfirmed (push-only server). The fresh TypeScript build is the definitive type-check evidence.
+
+**Goal-backward check:** ordinary migration now removes current/historical plaintext and frontend recovery is truthful, but required cleanup can still become unretryable or be falsely marked successful. Resolve B2a/B2b before shipping; the status nit is non-blocking. **Verdict: fix-then-ship.**

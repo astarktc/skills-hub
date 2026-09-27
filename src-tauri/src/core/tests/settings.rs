@@ -638,6 +638,34 @@ fn block_legacy_row_delete(dir: &tempfile::TempDir) {
         .unwrap();
 }
 
+const CLEANUP_MARKER: &str = "github_token.cleanup_pending";
+
+fn cleanup_marker(store: &SkillStore) -> Option<String> {
+    store.get_setting(CLEANUP_MARKER).unwrap()
+}
+
+/// Leave `sentinel` in freed pages the way an unsecured deletion does:
+/// insert it under `key`, then DELETE it with `secure_delete` off. Padded
+/// past a page so the bytes land in overflow pages, which go to the freelist
+/// (a small freed cell is reused by the very next small insert).
+fn leave_freed_bytes(dir: &tempfile::TempDir, key: &str, sentinel: &str) {
+    let conn = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
+    conn.pragma_update(None, "secure_delete", false).unwrap();
+    let value = format!("{}{sentinel}", "x".repeat(16 * 1024));
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+        rusqlite::params![key, value],
+    )
+    .unwrap();
+    conn.execute("DELETE FROM settings WHERE key = ?1", [key])
+        .unwrap();
+    drop(conn);
+    assert!(
+        db_files_contain(dir, sentinel),
+        "precondition: {sentinel} left in freed pages"
+    );
+}
+
 #[test]
 fn token_migration_removes_the_plaintext_from_the_database_bytes() {
     let (dir, store) = make_store();
@@ -703,6 +731,152 @@ fn token_migration_cleanup_failure_is_an_error_not_migrated() {
         store.get_setting("github_token").unwrap().as_deref(),
         Some("ghp_legacy")
     );
+    // The DELETE and the marker share one transaction: a failed DELETE
+    // leaves no marker either.
+    assert_eq!(cleanup_marker(&store), None);
+}
+
+/// B2a: the row's deletion committed but the compaction failed. The
+/// migration is an error (never `Migrated`), the verified keychain copy
+/// stays, and the non-secret marker survives so the next startup finishes
+/// the cleanup although no legacy row is left to trigger it.
+#[test]
+fn failed_compaction_keeps_a_marker_that_the_next_startup_completes() {
+    let (dir, store) = make_store();
+    let old = "SENTINEL_OLD_ghp_1111111111111111";
+    let current = "SENTINEL_NEW_ghp_2222222222222222";
+    // An earlier token left in a freed region by a pre-1.2.18 change.
+    leave_freed_bytes(&dir, "github_token", old);
+    raw(&store, "github_token", current);
+    let credentials = MemoryStore::new();
+
+    crate::core::skill_store::compaction_fault::fail_next();
+    let err = migrate_github_token_to_credential_store(&store, &credentials).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("compaction fault injected by test"),
+        "{err:#}"
+    );
+    assert_eq!(store.get_setting("github_token").unwrap(), None);
+    assert_eq!(cleanup_marker(&store).as_deref(), Some("1"));
+    assert_eq!(
+        credentials.get("github_token").unwrap().as_deref(),
+        Some(current)
+    );
+    // `secure_delete` was in force inside the transaction: the live row's
+    // bytes are zeroed. The earlier value in a freed region is what the
+    // compaction still owes.
+    assert!(!db_files_contain(&dir, current), "live row not zeroed");
+    assert!(
+        db_files_contain(&dir, old),
+        "precondition: a historical copy awaits the compaction"
+    );
+
+    // Next startup: pending cleanup first, then the migration.
+    assert!(store.finish_pending_secure_cleanup().unwrap());
+    assert_eq!(
+        migrate_github_token_to_credential_store(&store, &credentials).unwrap(),
+        TokenMigration::NothingToMigrate
+    );
+    assert_eq!(cleanup_marker(&store), None);
+    for sentinel in [old, current] {
+        assert!(
+            !db_files_contain(&dir, sentinel),
+            "{sentinel} still on disk"
+        );
+    }
+    assert_eq!(
+        credentials.get("github_token").unwrap().as_deref(),
+        Some(current)
+    );
+    // Nothing left to do on the launch after that.
+    assert!(!store.finish_pending_secure_cleanup().unwrap());
+}
+
+/// B2a: an explicit Save or Remove finishes a pending cleanup even when no
+/// legacy row is pending.
+#[test]
+fn save_and_remove_finish_a_stale_cleanup_marker() {
+    let (dir, store) = make_store();
+    let credentials = MemoryStore::new();
+    for (update, sentinel) in [
+        ("ghp_B", "SENTINEL_SAVE_ghp_3333333333333333"),
+        ("", "SENTINEL_REMOVE_ghp_4444444444444444"),
+    ] {
+        leave_freed_bytes(&dir, "github_token", sentinel);
+        raw(&store, CLEANUP_MARKER, "1");
+
+        apply_setting(
+            &store,
+            &credentials,
+            dir.path(),
+            SettingUpdate::GithubToken(update.to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(cleanup_marker(&store), None, "marker left by {update:?}");
+        assert!(
+            !db_files_contain(&dir, sentinel),
+            "{sentinel} still on disk after {update:?}"
+        );
+    }
+    assert_eq!(credentials.get("github_token").unwrap(), None);
+}
+
+/// B2b: in WAL mode, a checkpoint that a reader keeps from finishing
+/// reports `busy` in its result row, not as a query error. That is an
+/// incomplete cleanup: an error that keeps the marker, completed once the
+/// reader lets go.
+#[test]
+fn busy_wal_checkpoint_is_an_error_and_the_retry_completes_it() {
+    let (dir, store) = make_store();
+    let db = dir.path().join("test.db");
+    let mode: String = rusqlite::Connection::open(&db)
+        .unwrap()
+        .query_row("PRAGMA journal_mode = WAL;", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode, "wal");
+    let old = "SENTINEL_OLD_ghp_5555555555555555";
+    let current = "SENTINEL_NEW_ghp_6666666666666666";
+    raw(&store, "github_token", old);
+    raw(&store, "github_token", current);
+    let credentials = MemoryStore::new();
+
+    // A reader holding a pre-deletion snapshot across the first attempt.
+    let reader = rusqlite::Connection::open(&db).unwrap();
+    reader.execute_batch("BEGIN;").unwrap();
+    let _: i64 = reader
+        .query_row("SELECT COUNT(*) FROM settings", [], |row| row.get(0))
+        .unwrap();
+
+    let err = migrate_github_token_to_credential_store(&store, &credentials).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("WAL checkpoint could not complete"),
+        "{err:#}"
+    );
+    assert_eq!(store.get_setting("github_token").unwrap(), None);
+    assert_eq!(cleanup_marker(&store).as_deref(), Some("1"));
+    assert_eq!(
+        credentials.get("github_token").unwrap().as_deref(),
+        Some(current)
+    );
+    assert!(
+        db_files_contain(&dir, current) || db_files_contain(&dir, old),
+        "precondition: the busy checkpoint left token bytes on disk"
+    );
+
+    drop(reader);
+    assert!(store.finish_pending_secure_cleanup().unwrap());
+    assert_eq!(cleanup_marker(&store), None);
+    for sentinel in [old, current] {
+        assert!(
+            !db_files_contain(&dir, sentinel),
+            "{sentinel} still in {:?}",
+            db_file_bytes(&dir)
+                .iter()
+                .map(|(p, _)| p.clone())
+                .collect::<Vec<_>>()
+        );
+    }
 }
 
 /// A migration whose keychain write landed but whose read-back was denied

@@ -100,11 +100,25 @@ pub fn run() {
             let store = SkillStore::new(db_path);
             store.ensure_schema().map_err(tauri::Error::from)?;
 
+            // Finish a secure deletion (the token row below) whose compaction
+            // failed on an earlier launch or Save/Remove: the row is gone, but a
+            // non-secret cleanup-pending marker records that historical copies
+            // may still sit in freed pages. No marker, no work.
+            match store.finish_pending_secure_cleanup() {
+                Ok(false) => {}
+                Ok(true) => log::info!("finished a pending secure cleanup of the settings table"),
+                Err(err) => log::warn!(
+                    "pending secure cleanup of the settings table failed; retried next launch: {:#}",
+                    err
+                ),
+            }
+
             // Every launch until it succeeds: a pre-1.2.18 plaintext GitHub
             // token row moves to the OS credential store. The row is deleted
             // only after the keychain write reads back, and securely (zeroed +
             // VACUUM) so the plaintext leaves the database file; a denied or
-            // locked keychain leaves it for the next launch. No row, no
+            // locked keychain leaves it for the next launch, and a failed
+            // compaction leaves the cleanup marker handled above. No row, no
             // keychain call.
             match core::settings::migrate_github_token_to_credential_store(
                 &store,
@@ -119,7 +133,7 @@ pub fn run() {
                 }
                 Err(err) => log::warn!(
                     "GitHub token migration to the OS credential store failed; \
-                     a remaining settings row is retried next launch: {:#}",
+                     a remaining settings row or cleanup is retried next launch: {:#}",
                     err
                 ),
             }

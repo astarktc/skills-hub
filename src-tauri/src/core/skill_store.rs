@@ -547,19 +547,54 @@ impl SkillStore {
     ///
     /// Any failure is an error. When the DELETE succeeded but the compaction
     /// failed, the row is already gone (and its live bytes zeroed) — only
-    /// historical copies may remain.
+    /// historical copies may remain, until the retry below.
+    ///
+    /// Retry signal: the DELETE and a non-secret marker row
+    /// `<key>.cleanup_pending` = `1` commit in one transaction, and the marker
+    /// is removed only after the compaction succeeded. A compaction that fails
+    /// (busy database, disk error, a WAL checkpoint that could not finish)
+    /// leaves the marker, so [`Self::finish_pending_secure_cleanup`] — run at
+    /// startup and by every token Save/Remove — completes it later even
+    /// though the row is gone. Plaintext is never restored to obtain a retry.
     pub(super) fn delete_setting_securely(&self, key: &str) -> Result<()> {
         self.with_conn(|conn| {
+            // Per connection; set before the transaction so it is in force
+            // for the DELETE inside it.
             conn.pragma_update(None, "secure_delete", true)?;
-            conn.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
-            conn.execute_batch("VACUUM;")?;
-            let journal_mode: String =
-                conn.query_row("PRAGMA journal_mode;", [], |row| row.get(0))?;
-            if journal_mode.eq_ignore_ascii_case("wal") {
-                conn.query_row("PRAGMA wal_checkpoint(TRUNCATE);", [], |_| Ok(()))?;
-            }
-            Ok(())
+            let tx = conn.unchecked_transaction()?;
+            tx.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, '1')
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![format!("{key}{CLEANUP_PENDING_SUFFIX}")],
+            )?;
+            tx.commit()?;
+            compact_and_clear_cleanup_markers(conn)
         })
+        .with_context(|| format!("secure deletion of settings row {key:?} did not complete"))
+    }
+
+    /// Finish a secure deletion whose compaction failed earlier: when any
+    /// `*.cleanup_pending` marker row exists (see
+    /// [`Self::delete_setting_securely`]), compact the database and clear the
+    /// markers. Returns whether a pending cleanup was completed; with no
+    /// marker it does nothing. A failed compaction is an error and keeps the
+    /// markers for the next attempt.
+    pub fn finish_pending_secure_cleanup(&self) -> Result<bool> {
+        self.with_conn(|conn| {
+            let pending: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM settings WHERE key GLOB ?1",
+                params![format!("*{CLEANUP_PENDING_SUFFIX}")],
+                |row| row.get(0),
+            )?;
+            if pending == 0 {
+                return Ok(false);
+            }
+            conn.pragma_update(None, "secure_delete", true)?;
+            compact_and_clear_cleanup_markers(conn)?;
+            Ok(true)
+        })
+        .context("pending secure cleanup of the settings table did not complete")
     }
 
     pub fn upsert_skill(&self, record: &SkillRecord) -> Result<()> {
@@ -1550,6 +1585,63 @@ fn db_has_any_skills(db_path: &Path) -> Result<bool> {
 
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM skills;", [], |row| row.get(0))?;
     Ok(count > 0)
+}
+
+/// Suffix of the non-secret marker row that records an unfinished secure
+/// deletion (`SkillStore::delete_setting_securely`).
+const CLEANUP_PENDING_SUFFIX: &str = ".cleanup_pending";
+
+/// Rebuild the file so no freed page keeps a deleted value (`VACUUM`), and
+/// in WAL mode checkpoint and truncate the WAL — failing when the
+/// checkpoint reports it could not finish (its result row's `busy` column is
+/// `1`; that is not a query error). Only then delete every cleanup marker:
+/// the markers hold no secret, so a plain delete suffices. Must run outside
+/// a transaction (`VACUUM` refuses one).
+fn compact_and_clear_cleanup_markers(conn: &Connection) -> Result<()> {
+    #[cfg(test)]
+    if compaction_fault::take() {
+        anyhow::bail!("compaction fault injected by test");
+    }
+    conn.execute_batch("VACUUM;")?;
+    let journal_mode: String = conn.query_row("PRAGMA journal_mode;", [], |row| row.get(0))?;
+    if journal_mode.eq_ignore_ascii_case("wal") {
+        let (busy, log, checkpointed): (i64, i64, i64) =
+            conn.query_row("PRAGMA wal_checkpoint(TRUNCATE);", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?;
+        if busy != 0 {
+            anyhow::bail!(
+                "WAL checkpoint could not complete (busy; {checkpointed} of {log} frames checkpointed)"
+            );
+        }
+    }
+    conn.execute(
+        "DELETE FROM settings WHERE key GLOB ?1",
+        params![format!("*{CLEANUP_PENDING_SUFFIX}")],
+    )?;
+    Ok(())
+}
+
+/// Test-only fault injection for the compaction step. In rollback-journal
+/// mode a real busy reader cannot fail `VACUUM` alone: a reader holding its
+/// lock before the deletion blocks the DELETE's commit instead. Per thread,
+/// so parallel tests do not see each other's fault.
+#[cfg(test)]
+pub(crate) mod compaction_fault {
+    use std::cell::Cell;
+
+    thread_local! {
+        static FAIL_NEXT: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Make the next compaction on this thread fail.
+    pub(crate) fn fail_next() {
+        FAIL_NEXT.with(|flag| flag.set(true));
+    }
+
+    pub(super) fn take() -> bool {
+        FAIL_NEXT.with(|flag| flag.replace(false))
+    }
 }
 
 #[cfg(test)]
