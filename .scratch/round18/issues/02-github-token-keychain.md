@@ -16,7 +16,12 @@ Spec: `.scratch/round18/spec.md` — ticket 02.
   a **presence flag** (`github_token_set: bool`) — the frontend never needs the secret back; update
   `SettingsPage.tsx` + `useSettingsState.ts` + i18n accordingly (EN only after ticket 03; coordinate).
 - **Migration**: on startup (where `migrate_legacy_db_if_needed` runs), if the `github_token` settings row exists,
-  move it into the keychain and delete the row; log once. Idempotent.
+  write it to the keychain, **read it back**, and only then delete the row; log once. Idempotent. Operator decision
+  2026-09-24: migrate automatically, no opt-in button.
+- macOS gotcha: ad-hoc-signed builds change signature every release, so the "Skills Hub wants to access…"
+  Keychain prompt can recur after updates. Use one stable service name (`com.skillshub.app`) and account
+  (`github_token`); a denied/locked prompt yields the typed error below and leaves the settings row untouched. Note
+  the prompt in CHANGELOG.
 - Errors: keychain failure is a typed `CommandError` variant (`CREDENTIAL_STORE_UNAVAILABLE { detail }`) with a
   `describeCommandError` branch — the operator can cause it (locked keychain, no secret service). Never fall back
   to plaintext silently.

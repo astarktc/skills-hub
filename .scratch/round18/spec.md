@@ -69,6 +69,9 @@ critiques, an accessibility audit and a task-flow review exist as findings; #43,
 - **D9 Sequencing**: round-19 children run **sequentially** on the styling hotspots (`App.css`/`@theme`,
   `src/components/ui/`); parallelism only across disjoint surfaces after the world ticket lands.
 - **D10 Explore** gets a full critique like the other surfaces (operator: "could be better").
+- **D11 Versioning**: round 18 ships as **1.2.18**; round 19 (the new world + workflow features) ships as **1.3.0**.
+- **D12 Token migration is automatic** on first launch of 1.2.18 (no opt-in); the row is deleted only after the
+  keychain write is read back (ticket 02).
 
 ## Bake-off (2026-09-24)
 
