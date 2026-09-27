@@ -116,6 +116,10 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   `src/i18n/resources.test.ts` fails on any literal `t("…")` key missing from `en`.
 - **New `core/` module**: declare it in `src-tauri/src/core/mod.rs`.
 - **DB schema change**: consider `migrate_legacy_db_if_needed` in `core/skill_store.rs` — a migration path exists.
+- **New or changed UI primitive** (`src/components/ui/`, ADR-0006): its `variant` / `tone` / `size` values are its
+  whole styling interface — document each in `DESIGN.md` in the same change; a styling need props cannot express
+  becomes a new documented variant, never a call-site `className` override (`className` is layout only). New
+  tokens go in `src/styles/theme.css` alone, with a dark and a light value.
 
 ## Ambiguity resolution
 
@@ -176,7 +180,14 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   `tool_adapters::ensure_path_within_tool_dirs`). See `docs/adr/0001-tagged-command-error-contract.md`.
 - **`src/components/Layout.tsx` and `src/pages/Dashboard.tsx` are dormant by design** — imported by nothing under `src/`.
   Leave them alone unless explicitly wiring them up.
-- Styles live in `src/App.css` / `src/index.css`. There are no CSS Modules — don't add the pattern.
+- **Styling is Tailwind v4 per `docs/adr/0006-styling-architecture.md`**: tokens only in `src/styles/theme.css`
+  (`@theme`), utilities in JSX via `cn()`, recurring shapes through the primitives in `src/components/ui/`
+  (shadcn on Base UI, restyled to our tokens), no raw colours. `src/App.css` is legacy and only shrinks: never add a
+  rule to it (the world ticket's one legacy-alias block excepted), and a surface counts as migrated once its files reference no class `App.css` defines. The only other
+  stylesheets are `src/index.css` and `src/styles/prose.css` (rendered Markdown / code, token-only). No CSS
+  Modules, no new `.css` files. Read the resolved theme from the settings world, never from `data-theme` on the DOM.
+  (The round-19 world ticket lands `theme.css`, `prose.css`, `components/ui/` and the `styles:check` guard; until
+  then, style new code with utilities over the existing `index.css` variables.)
 - Path handling must support `~` expansion (`core/environment.rs::expand_home_path_in(home, input)`).
 - **Core never resolves filesystem roots from the environment.** `core/environment.rs` is the only core caller
   of `dirs::home_dir()`; every other core function takes explicit roots (`home: &Path`, `InstallerPaths { home,

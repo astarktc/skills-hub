@@ -148,3 +148,23 @@ _Avoid_: project health, overall status
 **Project sync report**:
 The per-assignment outcome list every project-scope sync answers with — turning an assignment on (a batch of one), bulk assign, and resync of one or every project (`ProjectSyncReport { items }`, each item naming the assignment row when one exists, the skill, the Tool, and `synced` / `already_assigned` / `failed { error }`). A sync failure inside a freshly created row is reported *with* that row's id: the row is kept with Sync status `error` (the red cell) and the operator hears about it. Failures are typed `CommandError` values classified where the row settles; counters are derived by the frontend fold, never carried. The removal side (turning an assignment off, bulk unassign, dropping a Tool) answers with an Artifact removal report instead.
 _Avoid_: resync summary, bulk assign errors, sync counts
+
+**World**:
+One area of app state and the actions on it, owned by one hook (the skills world, the project world, the settings world); the app composes the worlds and passes their state down.
+_Avoid_: store, slice, context
+
+**Visual world**:
+The single visual language every surface is drawn in — palette, type, spacing, radii and motion — expressed entirely through Design tokens and Primitives, in both Themes (`docs/adr/0006-styling-architecture.md`).
+_Avoid_: world (unqualified — that is a state area), skin, style, design system
+
+**Theme**:
+The resolved rendering of the Visual world, light or dark; the operator's preference may also be system, which the settings world resolves. Dark is designed first; light is derived from it.
+_Avoid_: mode, colour scheme, world
+
+**Design token**:
+A named design value (a colour role, size, radius, duration) with one value per Theme; the only way a surface expresses the Visual world.
+_Avoid_: token (unqualified — the GitHub token is a credential), CSS variable, hard-coded colour
+
+**Primitive**:
+A reusable interface building block (button, field, dialog, menu, checkbox, switch, tabs, chip, …) whose `variant`, `tone` and `size` are its entire styling interface, and which owns its focus, disabled and pending states, motion and accessibility wiring.
+_Avoid_: component (too broad), widget, shadcn component
