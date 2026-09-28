@@ -1,6 +1,6 @@
 # 06 — Two independent design critiques + accessibility audit
 
-Status: ready-for-agent
+Status: implemented
 Blocked by: 04
 Spec: `.scratch/round18/spec.md` — D1, D5, D6, D10, ticket 06.
 
@@ -45,3 +45,22 @@ Top 5:
    replaces the list, where the contract needs an inspector.
 5. **P1** — Modal as first thought. Add stacks 4 dialogs at the overwrite ask. Refresh (all) blocks the app under
    "Installing Skills…". One Esc closes every stacked dialog, and there is no focus trap or return.
+
+## Result — audit
+
+2026-09-27 — `.scratch/round18/review/audit.md` contains the D5 conformance-style table, independently collected
+DOM/contrast/trusted-key evidence, 14 minimum-window screenshots under `.scratch/round18/evidence/audit/`, and
+concrete round-19 primitive/surface requirements. **All five D5 clauses fail today**; this is not a conformance
+certificate. Ticket Status is unchanged.
+
+Confirmed blockers: Add's seven Tool checkboxes are `display:none`; the Project selector has no keyboard selection
+entry point; Shift-Tab escapes Add onto a background Remove button; one Escape closes Add and its picker;
+mutation/dialog closure repeatedly loses focus to BODY. Measured contrast failures include light tertiary text
+2.56:1, dark Explore Installed text 1.82:1 and success-toast text 4.26:1. Sonner has a reduced-motion rule, but the
+app's own motion does not (22 `transition: all`). The minimum-window layout fits many sampled controls but does not
+perform the required structural collapse.
+
+Limits are explicit: individual trusted-key activations used programmatic starting focus, not six uninterrupted
+keyboard-only runs; no screen reader/native WebView testing or real reduced-motion=true emulation; late preview
+failures left some failure-state/zoom/screenshots unverified. Initial native focus-ring samples are not misreported
+as settled pixel proof. No source edits, commits, staging, archival or live-library actions.
