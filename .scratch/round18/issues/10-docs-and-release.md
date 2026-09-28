@@ -1,6 +1,6 @@
 # 10 — Docs, CHANGELOG, `version:set 1.2.18`, release
 
-Status: implemented
+Status: implemented (see Result)
 Blocked by: 01, 02, 03, 04
 Spec: `.scratch/round18/spec.md` — ticket 10.
 
@@ -16,7 +16,7 @@ Spec: `.scratch/round18/spec.md` — ticket 10.
 
 ## Result
 
-Status: implemented (release building)
+Status: implemented — v1.2.18 released (5 targets + updater.json green, run 36358980829; CI 36359005648 green)
 
 - CHANGELOG 1.2.18 block and AGENTS.md gotcha: `3d31fbc`. Version bump: `5218b12` (`npm run version:set 1.2.18`, gate green:
   version:check OK, vitest 17/449, cargo test --all, clippy, fmt, build). Pushed to origin/main as `ae7b8a7` (head) on 2026-09-27;

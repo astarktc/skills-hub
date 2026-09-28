@@ -5,7 +5,7 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#63**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#64**.
 
 ## Now — evidence of unfinished work is strong
 
@@ -20,6 +20,7 @@ code before scheduling.)
 
 ## Later — real, not urgent
 
+- **#63 Tighten the secure-deletion zeroing test** — `core/tests/settings.rs` (~:768) asserts live bytes are zeroed but also passes without `secure_delete` (VACUUM alone hides it); use a page-spanning sentinel and a sensitivity check so `secure_delete` is pinned on its own. Source: Astra final check of `4f6e312`, `.scratch/round18/review/ticket-02-review.md` § Final check.
 - **#45 Four adapter rows to copy verbatim** — `deepseek_harness`, `zcode`, `codewhale`, `workbuddy` — plus three path changes to
   *verify first* (Antigravity `.gemini/config/skills`, Kimi `.kimi-code/skills`, Cline `.agents/skills`); keep our Amp detect. Absorbs
   into #40 if that effort opens first. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §A3–A4.
