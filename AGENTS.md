@@ -347,11 +347,13 @@ use. Model routing within Pi (IDs as `orchestrator_capabilities` lists them):
 
 - **Fable** → `anthropic/claude-fable-5-1`.
 - **Opus** → `anthropic/claude-opus-5-5` (operator decision 2026-09-25: 5.5 replaces 5 everywhere; the Pi option is
-  `thinking`, lowest tier `low`).
-- **GPT-6 Astra** → `openai-codex/gpt-6-astra` (the OpenAI seat on multi-model review panels and the default for
-  implementation children; requires a live `openai-codex` login in Pi).
-- **GPT-5.6** (other uses) → `openai-codex/gpt-5.6-sol` / `openai-codex/gpt-5.6-luna`. Luna is the cheapest model in
-  the catalog: only for very basic, tightly-scoped tasks, and always with high thinking.
+  `thinking`, lowest tier `low`). Round 19 (operator 2026-09-27): **Opus 5.5 runs `high` across the board** for
+  implementation children.
+- **GPT-6 Astra** → `openai-codex/gpt-6-astra` (the OpenAI seat on multi-model review panels, adversarial reviews and
+  audits; requires a live `openai-codex` login in Pi).
+- **GPT-6** (other uses) → `openai-codex/gpt-6-sol` / `openai-codex/gpt-6-luna` (operator 2026-09-27: the 5.6 family is
+  retired; use 6). Luna is the cheapest model in the catalog: only for very basic, tightly-scoped tasks (e.g. a
+  mechanical single-surface class migration), and always with high thinking.
 - **Cortex** gateways: only when Alex asks for them.
 
 The routing above is the default; confirm with Alex per session — it shifts with 5-hour and weekly usage limits.

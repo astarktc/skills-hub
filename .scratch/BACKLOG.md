@@ -9,10 +9,9 @@ Numbers are stable: never renumber; retire by deleting the line (history keeps i
 
 ## Now — evidence of unfinished work is strong
 
-(empty — #43 and #44 were absorbed by `round18/spec.md` tickets 01 and 02, 2026-09-24.)
+(empty — #39 #46 #47 #49 #52 and the §E borrows were absorbed by `round19/spec.md` on 2026-09-27: #52 → tickets 01 + 13, #49 → 11, #39 → 11, #47 → 16, #46 → 05 + 21. Earlier: #43 #44 → `round18/issues/01`, `02`.)
 
-(Earlier dispositions: #43 #44 → `round18/issues/01`, `02`. #37 opened as the round 18 → 19 UI effort (`round18/spec.md`); the
-§E borrows, #46 #47 #49 #52 and #39's group-level deploy are **reserved for the round 19 spec** and stay listed until it opens. every pre-round-16 `Later`/`Parked` line was absorbed by `round16/spec.md` § Dispositions — items #12 #15 #22
+(Earlier dispositions: #43 #44 → `round18/issues/01`, `02`. #37 opened as the round 18 → 19 UI effort (`round18/spec.md`, `round19/spec.md`). every pre-round-16 `Later`/`Parked` line was absorbed by `round16/spec.md` § Dispositions — items #12 #15 #22
 #28 #35 #36 → tickets; #18 → ticket 08; #16 #17 #21 #23 #24 #25 #27 #29 dropped by name there; #30 superseded by #37–#41; #26 moved
 to Future efforts. #42 (overwrite ask on `TARGET_EXISTS`) was absorbed by `round17/spec.md` D3 / `round17/issues/03`. Items #43–#60
 were seeded 2026-09-24 from the upstream/field survey in `docs/design-inputs/` — each carries its § pointer; re-verify against the
@@ -24,13 +23,8 @@ code before scheduling.)
 - **#45 Four adapter rows to copy verbatim** — `deepseek_harness`, `zcode`, `codewhale`, `workbuddy` — plus three path changes to
   *verify first* (Antigravity `.gemini/config/skills`, Kimi `.kimi-code/skills`, Cline `.agents/skills`); keep our Amp detect. Absorbs
   into #40 if that effort opens first. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §A3–A4.
-- **#46 `SKILL.md`-gated onboarding scan** — `scan_tool_dir` (`tool_adapters/mod.rs:888-926`) lists every subdirectory; the local
-  pickers already apply the rule (1.2.13). Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §B1.
-- **#47 Search in `GitPickModal` / `LocalPickModal`**, installing only the checked candidates that match the filter. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §B2.
 - **#48 Network-boundary lint** — a build-failing script that finds every `reqwest::Client` / `git2::FetchOptions` / `Repository::clone`
   outside one module (we construct clients in several). The proxy feature it guards upstream is not wanted. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §B4.
-- **#49 Aggregate issues banner** "N skills have sync issues → View issues" + an `Issues` chip in `FilterBar` — one derived count over
-  data we already hold; seed of the doctor view. Absorbs into #37 if that effort opens first. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §E1.
 - **#62 Passive upstream update check** — a read-only "check upstream" that compares the recorded SHA with the remote (Contents API /
   `ls-remote`) and surfaces `Update available` on the row and in the inspector without acquiring or applying; Refresh (all) stays the
   apply step. Decide the anchor with #59 (branch commit vs subtree SHA) before building. Source: round 18 bake-off, both prototypes
@@ -59,19 +53,12 @@ code before scheduling.)
   Design references (2026-09-24): Skillfile's `pin`/`diff`/`resolve` patch overlay — still the only structured one in the field;
   SkillDock's per-hunk diff / revert / push-back as the owned-skill upstream-PR path; upstream's `device_sync/merge.rs` +
   `text_merge.rs` as a pure three-way planner. `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §C13–C14.
-- **#37 Overall UI audit** — usability, user-friendliness, design quality across the app (the `impeccable` skill
-  is the natural vehicle). Source: operator, 2026-09-22. Borrow list from upstream v0.8–v0.10 (list view, "Synced 3/7", sidebar,
-  sticky install summary, detail health dot, a `UI-DESIGN-GUIDELINES.md` of our own): `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §E.
 - **#38 Add skills via `npx skill add …`-style commands**, not only GitHub repo URLs. Source: operator, 2026-09-22.
-- **#39 Repo-level skill deployment from the My Skills page.** Source: operator, 2026-09-22.
 - **#40 Harness-specific detection/deployment audit** — what does and doesn't exist per Tool (e.g. `openai.yaml`
   deployment for Codex). Source: operator, 2026-09-22. Detection half is #56; adapter rows are #45. Upstream still has the
   skills-only-footprint bug we fixed in 1.2.17 — keep `is_installed_in` when copying rows (`docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §A4).
 - **#41 Repo scan finds both a Codex and a Claude Code variant of one skill** — keep both, collapse, or
   something else; needs analysis, likely absorbs part of #40. Source: operator, 2026-09-22.
-- **#52 Skill enable/disable that keeps the target map and project assignments** (a `disabled` transition, rows kept, Propagation
-  reports `Skipped`) **+ multi-select bulk actions on My Skills** — one effort; the reversible un-deploy QM-147 needs. Source:
-  `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §C1–C2.
 - **#53 Scheduled `Refresh (all)`** via the OS scheduler — port upstream's `system_scheduler.rs` builders; needs a headless entry and
   a cross-process lock (Mutation guard is process-wide only). Not upstream's `auto_update.rs`. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §B3, §E6.
 - **#54 `skillshub` CLI (or MCP) on the Rust core, sharing the DB** — sessions, the session-end audit and a Mac over SSH act without
