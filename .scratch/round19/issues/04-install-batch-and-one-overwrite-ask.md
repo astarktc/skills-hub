@@ -1,6 +1,6 @@
 # 04 — One install batch command for Add; `TARGET_EXISTS` consolidated across Add, re-assert and import
 
-Status: ready-for-agent
+Status: implemented
 Blocked by: 01
 Spec: `.scratch/round19/spec.md` — D12, D20 (grill Q10, Q14). Source: `flows.md` Flow 1 gaps 2, 6; `critique-astra` F06.
 
@@ -67,7 +67,123 @@ Astra @ high: guard ordering per candidate, no partial-finalize leak on cancel, 
 
 ## Result
 
-(child fills in)
+Implemented 2026-09-29 (child, Opus 5.5), shared tree with ticket 09 (coordinated over intercom: 09 routed Enable
+through the new seam in `useSkillActions`, switched the add-flow publish sites to `applyOutcome`, and added
+`installSelection` to `CANCELLABLE_COMMANDS` / `cancel: "installSelection"` on the three install actions).
+
+### Backend
+
+- **`core/install_batch.rs`** (new, `core/mod.rs`) + command **`install_selection(request, onProgress)`**
+  (`commands/mod.rs`, registered beside `install_git_selection` / `install_local_selection` — **ticket 16 deletes
+  those two** once the Add surface stops calling nothing else; today no frontend path calls them).
+  - Input `InstallRequest { source: InstallSource::{ git { url, resolution }, local { root } }, candidates:
+    [{ subpath, name_override }], tools, overwrite_if_same_content, overrides: [{ skill_name, tool, decision }],
+    deploy }` (overrides keyed by skill *name* — no id before install; applied in the first pass).
+  - Per candidate: **acquire outside the guard** (`installer::stage_git_selection` / `stage_local_selection` →
+    `StagedInstall`, a `StagingDir` RAII — git bytes still only through `git_acquisition::acquire`), then
+    **finalize + first sync in one `mutation_guard::serialized` section** via `sync_skills_to_tools_unlocked`
+    (same-content policy + the request's decisions). `installer.rs` was split into stage + finalize; the old doors
+    call both halves (behaviour unchanged).
+  - Report `InstallBatchReport { candidates: [{ subpath, name, status }] }`, `status` = `installed { skill:
+    InstallResult, targets: BatchTargetOutcome[] }` | `failed { error }` | `cancelled` (own unit variant, wire
+    `{ "status": "cancelled" }`, maps 1:1 onto 03's `InstallSettlement`). `InstallResult` now crosses as itself.
+  - **Cancel**: checked before each candidate and again after its acquisition (staged bytes dropped → no partial
+    finalize); an acquisition that fails with `CANCELLED` is `cancelled`, not `failed`; a finalized candidate always
+    completes its sync. Progress `InstallProgressDto { index, total, name }` → "Adding (i/n) name".
+- **Ask facts on every `TARGET_EXISTS`**: `sync_engine::TargetExistsError` gains `occupant: Occupant { modified_at,
+  same_content }`, observed where the collision is raised (`Occupant::observe` — mtime + `content_identity::
+  same_content(Directory(source), target)`), so every producer carries it by construction. `GlobalSyncError::
+  TargetExists` and `CommandError::TargetExists { path, modifiedAt, sameContent }` carry it (global batch, install,
+  re-assert, import, Enable, project assign/resync/Enable/Propagation).
+- **Retry doors**: `enable_skill_targets(scope, overrides)` (core `enable_targets_with`; `enable_targets` kept as the
+  test door) — Keep → `Declined` + `disabled` marker, Overwrite replaces; **`resolve_project_collisions(decisions:
+  AssignmentDecision[])`** (`project_sync::resolve_collisions`, guarded entry point) — Overwrite re-syncs with
+  overwrite, Keep → row `disabled` (owning nothing) reported new `ProjectSyncOutcomeStatus::Declined`; a gone /
+  disabled / owning row answers `Failed NotFound` / `Skipped` / `AlreadyAssigned`.
+- **Import double report gone**: a divergent sibling sitting at a target's path is reported once, as that pair's
+  `TARGET_EXISTS` row (dropped from `originals`); a divergent copy in a non-target Tool stays `kept_divergent`.
+- Re-assert rows needed no pair-identity change (skill from the outcome, Tool from `PropagationScope::Global`).
+
+### Retry decision (recorded)
+
+**The ask's retry is `sync_skills_to_tools` with per-pair overrides**, not a second `install_selection`: after the
+first pass every candidate that can collide is already a Managed skill, so the retry is an ordinary sync batch over
+the asked skills × Tools; its rows replace the asked ones *inside the install report* (`mergeInstallRetry`), so the
+action keeps **one ask and one report shape** and the retry is idempotent (a re-sync of an already-synced pair is a
+no-op link check). Enable retries through the same scope + overrides; project rows through
+`resolve_project_collisions`.
+
+### Frontend
+
+- `src/lib/overwriteAsk.ts` (new, pure): `OverwriteRow { skillId, skillName, toolKey, toolLabel, path, modifiedAt,
+  sameContent, scope: {kind:'global'} | {kind:'project', projectId} }`, `OverwriteChoice`, row builders
+  (`globalCollisionRows`, `projectCollisionRows`, `installTargets`), `globalOverrides`, merges (`mergeGlobalRetry`,
+  `mergeInstallRetry`, `mergeProjectRetry`), `overwriteRowKey`.
+- **Ask data shape** (`useSurfaceState.ts`): `AskRequest { kind: 'overwrite', rows: OverwriteRow[] }`; answers are
+  typed per kind — `AskAnswerOf<'overwrite'> = 'confirmed' | 'declined' | 'dismissed' | { choices:
+  OverwriteChoice[] }` (row order); `confirmed`/`declined` = all overwrite / all keep. `ask()` is generic.
+- `useSyncOrchestration`: `requestOverwriteConfirmation(rows) → OverwriteChoice[] | 'dismissed'`;
+  `resolveGlobalCollisions(report, skills, policy)` (the ask + retry half of `syncSkillsToTools`, now per-row);
+  `settleProjectCollisions(report) → { report, resolved }`; `enableSkillTargets(scope) → EnableReport` (one ask over
+  global + project rows). Dismissed → nothing sent.
+- `useAddSkillFlow`: `installBatch(source, picks)` — one `installSelection`, one ask over every candidate's collisions,
+  retry, merge, `installBatchSettlements` → `installOutcome` (fold untouched except the new adapter
+  `installBatchSettlements(report, { deploy, tools })` in `reportOutcome.ts`); a thrown retry is reported and the
+  batch settles as first answered. Single git/local installs go through the same batch. `useCandidatePick`: the
+  source adapter is `installSource(ctx, picked)`, the dep `installBatch` (no per-candidate loop, no `deploy`).
+- Project world: `useProjectState(deps?: { settleCollisions })` — toggle-on / assign / resync / resync-all pass their
+  report through it and re-read the view when a retry ran; App: `useProjectState({ settleCollisions:
+  sync.settleProjectCollisions })`. `projectSyncOutcome` folds `declined` as a quiet note (was counted failed).
+- `OverwriteModal`: rows show skill → Tool, path, "Modified 3d ago · differs from the skill"; >1 row gets a per-row
+  Keep/Overwrite `Segmented`; footer "Keep existing" (all keep) + "Overwrite" / "Apply choices" (mixed). i18n
+  `installBatch.step`, `overwriteAsk.*` (end of `en.translation`).
+
+### Fixture
+
+`installSelection` (latency per candidate: git 650 ms / local 400 ms × `latency`; cancel between candidates and after
+acquisition), `resolveProjectCollisions`, `enableSkillTargets(scope, overrides)`, every `TARGET_EXISTS` carries
+`modifiedAt` (3 days before the clock) + `sameContent`. `failures` seeds repo **`acme/collide-kit`**
+(lint-staged-rules · commit-helper · changelog-writer) with Claude Code occupants for two of them. Round-18 gap
+(prisma-review → Cursor/Codex re-assert) verified present and now tested. Walked on 5175 `?scenario=failures`: Add →
+collide-kit → Install selected → **one ask, two rows** with facts; Keep row 2 + Apply → "3 installed · 3 targets failed
+· 1 kept existing" (+ note "changelog-writer: kept your existing Claude Code folder"; the 3 failures are the seeded
+unwritable Amp/Kimi dir). Screenshot: `/Users/alexstark/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mumyrurk-be9f2f3c.png`.
+
+### Tests
+
+- Rust `core/tests/install_batch.rs` (9): `a_batch_of_three_with_one_collision_answers_one_report_and_writes_nothing_through_it`,
+  `retrying_the_collision_with_overwrite_replaces_the_folder`, `retrying_the_collision_with_keep_records_the_pair_disabled`,
+  `a_request_override_settles_the_collision_in_the_first_pass`,
+  `cancel_during_the_second_candidate_reports_the_rest_cancelled_and_finalizes_nothing_of_them`,
+  `a_failed_candidate_is_report_data_and_the_rest_proceed`, `deploy_off_installs_without_targets`,
+  `a_git_source_installs_through_the_listing_resolution`, `the_report_crosses_the_wire_with_cancelled_as_its_own_kind`.
+  `core/tests/skill_disable.rs`: `an_enable_collision_is_askable_and_its_overwrite_retry_replaces_the_folder`,
+  `an_enable_collision_kept_stays_disabled_and_reads_declined`, `a_project_collision_resolves_with_overwrite_or_keep`,
+  `a_reassert_collision_row_is_askable_and_retried_through_the_sync_batch`. Updated: `onboarding_import`
+  `auto_sync_on_keeps_a_sibling_that_diverged_after_planning` (reported once, with facts), `global_sync` occupant
+  assertions, `skill_health` project collision carries facts.
+- Vitest: `lib/overwriteAsk.test.ts` (4); `fixtures/backend.test.ts` "ticket 04" (8: one report / two askable rows,
+  retry Overwrite+Keep, request override, cancel tail, failed candidate, re-assert facts, Enable retry, project
+  Overwrite/Keep); `useSyncOrchestration.test.ts` "the one overwrite ask across producers" (4: per-row choices,
+  project ask + resolve, dismissed project ask, Enable global+project one ask); `useAddSkillFlow.test.ts` (one batch
+  request shapes, one ask per Add batch, thrown retry, refusal as a report row); `useCandidatePick.test.ts` (one batch
+  call, cancelled tail folded); `useSurfaceState.test.ts` (per-row answer); `reportOutcome.test.ts` (settlements adapter,
+  project declined).
+
+### Gate
+
+`npm run version:check` → Version OK (1.2.18). `npm run check` → exit 0 (lint, styles:check, vitest 32 files / 690
+tests, build, rustfmt, clippy `-D warnings`, `cargo test` 789 passed; bindings regenerated).
+
+### For 16 (Add surface)
+
+Delete `install_git_selection` / `install_local_selection` (+ `InstallResultDto`, the fixture handlers, `S6` fixture
+test) from `collect_commands!`; build on `useAddSkillFlow.installBatch` + `installBatchSettlements` for the stepped
+surface (per-candidate rows are already in the report: installed rows ticked off, failed rows retryable by re-sending
+those candidates). The ask is already the only nested layer. Ticket 21 decides whether Import review's Replace raises
+this ask (the import report's `replaced` `TARGET_EXISTS` rows are askable via `resolveGlobalCollisions`; the import
+hook does not route them yet — out of this ticket's minimum). `confirm-dialog.tsx` / ADR-0006 l.98 still name the
+deleted `useOverwriteConfirmation` (ui/ and docs out of bounds here).
 
 ## Comments
 

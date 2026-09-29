@@ -39,3 +39,7 @@ them → Enable re-syncs; select-all → Disable on all Tools confirmation shows
 ## Result
 
 (child fills in)
+
+## Comments
+
+- 2026-09-29 — from ticket 09: the door (`useSkillActions.run(verb, skills | ids | "all", opts)`) exists; a verb called without its confirming option opens its dialog. Count-bearing confirmations need a new ask kind in `useSurfaceState` (04 owned the ask kinds this round; add `{kind:'confirm-count', …}` here). The toolbar's library-wide Disable still has no confirmation until this ticket lands. Ticket 03 left project/removal/disable-all/delete/enable toasts on their old sentences — move them to the count line here with the rail.

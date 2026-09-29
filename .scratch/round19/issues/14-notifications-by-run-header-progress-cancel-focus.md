@@ -40,3 +40,7 @@ reduced-motion emulation via CSS coverage (no `animation` without a `motion-redu
 ## Result
 
 (child fills in)
+
+## Comments
+
+- 2026-09-29 — from tickets 03/09/10: `useNotificationHistory.recordRun(headline, entries)` is called by the reporter's `applyOutcome` (one block per run); the reporter exposes `pending { kind, id? }` and the batch `{ label, done, total, cancellable }` — the `LoadingOverlay` still renders it; replace with the header progress here. `useAppUpdate` feeds the passive title-bar affordance. Focus gap to close: an overwrite ask opened mid-action and then closed does not return focus to the triggering control.
