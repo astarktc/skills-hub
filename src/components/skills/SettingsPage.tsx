@@ -3,6 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { AppUpdate } from "../../hooks/useAppUpdate";
 import type { SettingsBounds } from "./types";
+import { Switch } from "@/components/ui/switch";
 
 type SettingsPageProps = {
   isTauri: boolean;
@@ -42,6 +43,11 @@ type SettingsPageProps = {
   onGithubTokenSave: () => Promise<void>;
   /** Remove the saved token; a no-op while a token mutation is pending. */
   onGithubTokenRemove: () => Promise<void>;
+  /** Auto-sync (moved here from the My Skills toolbar; its pane is ticket 20's). */
+  autoSyncEnabled: boolean;
+  onAutoSyncChange: (enabled: boolean) => void;
+  /** Why the toggle is disabled while an action runs (D19), or null. */
+  autoSyncBlockedReason: string | null;
   onBack: () => void;
   t: TFunction;
 };
@@ -68,6 +74,9 @@ const SettingsPage = ({
   onGithubTokenDraftChange,
   onGithubTokenSave,
   onGithubTokenRemove,
+  autoSyncEnabled,
+  onAutoSyncChange,
+  autoSyncBlockedReason,
   onBack,
   t,
 }: SettingsPageProps) => {
@@ -134,6 +143,25 @@ const SettingsPage = ({
             >
               {t("themeOptions.dark")}
             </button>
+          </div>
+        </div>
+
+        <div className="settings-field">
+          <label className="settings-label" id="settings-auto-sync-label">
+            {t("settingsAutoSync")}
+          </label>
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={autoSyncEnabled}
+              onCheckedChange={onAutoSyncChange}
+              disabled={autoSyncBlockedReason !== null}
+              title={autoSyncBlockedReason ?? undefined}
+              aria-labelledby="settings-auto-sync-label"
+              aria-describedby="settings-auto-sync-hint"
+            />
+          </div>
+          <div className="settings-helper" id="settings-auto-sync-hint">
+            {t("settingsAutoSyncHint")}
           </div>
         </div>
 

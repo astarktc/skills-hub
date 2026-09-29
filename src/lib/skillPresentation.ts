@@ -825,3 +825,195 @@ export const SKILL_OUTCOME_LABEL_KEY = {
   restore_failed: "skillHealth.restoreFailed",
   import_failed: "skillHealth.importFailed",
 } as const satisfies Record<SkillOutcomeKind, string>;
+
+// ---------------------------------------------------------------------------
+// My Skills: the Synced strip, the library's exceptions, the filter chips
+// and a source group's state (ticket 11). Every one reads the health fold or
+// the target rows; nothing here composes health by hand.
+// ---------------------------------------------------------------------------
+
+/** The fold's rows need no labels here; only the source line would. */
+const KEY_ONLY: Translate = (key) => key;
+
+/**
+ * One mark's state on the Synced strip (D22: read-only). Shape carries it —
+ * filled synced, hollow not synced, × failed / missing / broken, half-filled
+ * stale, slashed disabled — colour only reinforces.
+ */
+export type StripMarkState =
+  | "synced"
+  | "not_synced"
+  | "failed"
+  | "missing"
+  | "stale"
+  | "disabled"
+  | "broken";
+
+/** The accessible name of each mark (`strip.*`, `{{tool}}` = the Tool label). */
+export const STRIP_MARK_NAME_KEY = {
+  synced: "strip.synced",
+  not_synced: "strip.notSynced",
+  pending: "strip.pending",
+  failed: "strip.failed",
+  failed_first: "strip.failedFirst",
+  missing: "strip.missing",
+  stale: "strip.stale",
+  disabled: "strip.disabled",
+  skill_disabled: "strip.skillDisabled",
+  broken: "strip.broken",
+} as const;
+
+export type StripMark = {
+  tool: string;
+  /** The Tool catalog's label — never a raw key. */
+  label: string;
+  state: StripMarkState;
+  /** Which sentence names it (`STRIP_MARK_NAME_KEY`). */
+  nameKey: keyof typeof STRIP_MARK_NAME_KEY;
+  /** False when detection no longer sees the Tool. */
+  detected: boolean;
+};
+
+export type SyncedStrip = {
+  marks: StripMark[];
+  /** Marks holding a deployed copy (synced or stale) — the N of N/M. */
+  synced: number;
+  /** The M of N/M: every Tool the strip shows. */
+  total: number;
+  /** Every mark synced: the strip goes quiet (healthy is silent). */
+  complete: boolean;
+};
+
+/**
+ * The Synced strip: one mark per Tool of the effective target set (in the
+ * order given — the registry's), then any Tool the skill still has a row
+ * for outside that set, so a failure is never hidden. A skill disabled at
+ * skill grain shows every mark disabled; a skill whose central copy is
+ * missing never shows a filled mark (its links dangle: `broken`).
+ */
+export function syncedStrip(
+  skill: {
+    disabled_at: number | null;
+    unlocatable: UnlocatableState | null;
+    targets: readonly Pick<SkillTargetDto, "tool" | "status" | "synced_at">[];
+  },
+  tools: readonly { id: string; label: string }[],
+  context: { labelOf: (tool: string) => string; isDetected: (tool: string) => boolean },
+): SyncedStrip {
+  const byTool = new Map(skill.targets.map((target) => [target.tool, target]));
+  const order = tools.map((tool) => ({ id: tool.id, label: tool.label }));
+  const shown = new Set(order.map((tool) => tool.id));
+  for (const target of skill.targets) {
+    if (shown.has(target.tool)) continue;
+    shown.add(target.tool);
+    order.push({ id: target.tool, label: context.labelOf(target.tool) });
+  }
+  const centralMissing = skill.unlocatable === "central_missing";
+  const marks = order.map(({ id, label }): StripMark => {
+    const mark = (state: StripMarkState, nameKey: StripMark["nameKey"]): StripMark => ({
+      tool: id,
+      label,
+      state,
+      nameKey,
+      detected: context.isDetected(id),
+    });
+    if (skill.disabled_at !== null) return mark("disabled", "skill_disabled");
+    const target = byTool.get(id);
+    if (!target) return mark("not_synced", "not_synced");
+    switch (target.status) {
+      case "disabled":
+        return mark("disabled", "disabled");
+      case "error":
+        return mark("failed", target.synced_at === null ? "failed_first" : "failed");
+      case "missing":
+        return mark("missing", "missing");
+      case "pending":
+        return mark("not_synced", "pending");
+      case "stale":
+        return centralMissing ? mark("broken", "broken") : mark("stale", "stale");
+      case "synced":
+        return centralMissing ? mark("broken", "broken") : mark("synced", "synced");
+    }
+  });
+  const synced = marks.filter((mark) => mark.state === "synced" || mark.state === "stale").length;
+  return {
+    marks,
+    synced,
+    total: marks.length,
+    complete: marks.length > 0 && marks.every((mark) => mark.state === "synced"),
+  };
+}
+
+/** A skill has an issue when its loudest health row is failed or stale. */
+export function skillHasIssues(skill: SkillHealthFields): boolean {
+  const { severity } = skillHealth(skill, { t: KEY_ONLY });
+  return severity === "failed" || severity === "stale";
+}
+
+/**
+ * The header's exception summary: failed and stale Sync targets across the
+ * library (the fold's target rows), and how many skills have an issue — the
+ * count the Issues chip shows.
+ */
+export type LibraryExceptions = {
+  failedTargets: number;
+  staleTargets: number;
+  skillsWithIssues: number;
+};
+
+export function libraryExceptions(skills: readonly SkillHealthFields[]): LibraryExceptions {
+  let failedTargets = 0;
+  let staleTargets = 0;
+  let skillsWithIssues = 0;
+  for (const skill of skills) {
+    const { rows, severity } = skillHealth(skill, { t: KEY_ONLY });
+    for (const row of rows) {
+      if (row.kind === "targets_failed" || row.kind === "targets_missing") failedTargets += row.count;
+      if (row.kind === "targets_stale") staleTargets += row.count;
+    }
+    if (severity === "failed" || severity === "stale") skillsWithIssues += 1;
+  }
+  return { failedTargets, staleTargets, skillsWithIssues };
+}
+
+/** The My Skills filter chips (All · Issues · Edited · Disabled). */
+export type SkillFilter = "all" | "issues" | "edited" | "disabled";
+
+/**
+ * Each chip's rule. Issues is exactly the header summary's count; Edited is
+ * a skill with a direct Edit (an invocation override); Disabled is either
+ * grain (the skill, or any of its Tools).
+ */
+export const SKILL_FILTERS: Readonly<Record<Exclude<SkillFilter, "all">, (skill: SkillHealthFields) => boolean>> = {
+  issues: skillHasIssues,
+  edited: (skill) => skill.invocation_override !== null,
+  disabled: (skill) =>
+    skill.disabled_at !== null || skill.targets.some((target) => target.status === "disabled"),
+};
+
+/**
+ * A source group's state line: how many of its skills are failed, stale,
+ * not deployed or disabled (zeros are dropped by the caller), and how many
+ * its Deploy all would act on (Enable the disabled, sync the never
+ * deployed — the door's `deployGroup` rule).
+ */
+export type GroupState = {
+  failed: number;
+  stale: number;
+  notDeployed: number;
+  disabled: number;
+  deployable: number;
+};
+
+export function groupState(skills: readonly SkillHealthFields[]): GroupState {
+  const state: GroupState = { failed: 0, stale: 0, notDeployed: 0, disabled: 0, deployable: 0 };
+  for (const skill of skills) {
+    const { rows, severity } = skillHealth(skill, { t: KEY_ONLY });
+    if (severity === "failed") state.failed += 1;
+    else if (severity === "stale") state.stale += 1;
+    if (rows.some((row) => row.kind === "not_deployed")) state.notDeployed += 1;
+    if (skill.disabled_at !== null) state.disabled += 1;
+    if (deployAction(skill).kind !== "deployed") state.deployable += 1;
+  }
+  return state;
+}

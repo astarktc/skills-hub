@@ -1,7 +1,15 @@
 {
   "$comment": "Baseline for scripts/check-styles.mjs (ADR-0006 §6). appCssCeiling: App.css's non-blank, non-comment line count — lower it in the same change that shrinks App.css; null once App.css is deleted. migrated: files whose surface has migrated (they may reference no App.css class) — append, never remove. rawColourExempt: files excused from the raw-colour rule, each with its reason.",
-  "appCssCeiling": 3038,
-  "migrated": [],
+  "appCssCeiling": 2316,
+  "migrated": [
+    "src/App.tsx",
+    "src/components/shell/AppSidebar.tsx",
+    "src/components/skills/LibraryHeader.tsx",
+    "src/components/skills/FilterBar.tsx",
+    "src/components/skills/SkillsList.tsx",
+    "src/components/skills/SkillRow.tsx",
+    "src/components/skills/SyncedStrip.tsx"
+  ],
   "rawColourExempt": [
     {
       "file": "src/components/Layout.tsx",

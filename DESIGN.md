@@ -162,6 +162,7 @@ Re-measure them after any change to `faint`, `primary`, `stale` or the grounds.
 | Spacing | Tailwind's 4 px base | — |
 | Elevation | `shadow-sm`, `shadow-lg` (floating layers only) | — |
 | Motion | 120 ms; `ease-out` = `cubic-bezier(0.16, 1, 0.3, 1)` | `duration-(--motion-fast)`, default transition |
+| Shell breakpoint | 1200 px (`--breakpoint-shell: 75rem`; see [Layout](#layout)) | `shell:` / `max-shell:` |
 
 The Tailwind palette (`red-500`, `gray-900`, …) is removed (`--color-*: initial`). A palette utility therefore
 generates nothing, and `styles:check` fails it anyway.
@@ -324,7 +325,7 @@ above). `useStatusReporter` owns toast lifetime; the binder mounts the one `<Toa
   **≤ 120 ms**, on `ease-out` (`cubic-bezier(0.16, 1, 0.3, 1)`).
 - **What does not move**: dialogs, popovers, menus and tooltips appear and leave instantly.
 - **Hover and press** change colour instantly in the primitives, which use no `transition: all`. Legacy `App.css`
-  still carries 22 `transition: all` declarations (mostly 200 ms) until its surfaces migrate (ticket 15 and the
+  still carries 14 `transition: all` declarations (22 before My Skills migrated; mostly 200 ms) until its surfaces migrate (ticket 15 and the
   surface tickets); reduced motion already zeroes them.
 - **Reduced motion.** `prefers-reduced-motion: reduce` removes all motion. The base layer zeroes every transition and
   animation, legacy App.css loops included, and primitives also carry `motion-reduce:` / `motion-safe:`. Spinners
@@ -358,9 +359,91 @@ above). `useStatusReporter` owns toast lifetime; the binder mounts the one `<Toa
 ## Layout
 
 - **Minimum window**: 960 × 640 (`tauri.conf.json`).
-- **Breakpoint**: one structural collapse at **~1200 px** (spec D23). The exact value is measured and recorded here
-  by ticket 11: _TBD (ticket 11)_. Below it the inspector becomes a sheet, the sidebar an icon rail, and the
-  Projects list a header select.
+- **Breakpoint**: one structural collapse at **1200 px** (`--breakpoint-shell: 75rem` in `theme.css`, the
+  `max-shell:` variant; spec D23). Below it the sidebar is a 56 px icon rail (ticket 11), the inspector a sheet
+  (ticket 12) and the Projects list a header select (ticket 17).
+- **How 1200 was measured** (ticket 11, fixture `failures`, 2026-09-29): the 36 px row's fixed columns (checkbox
+  32 · strip 8 marks × 16 + N/M 40 = 168 · scope 24 · switch 40 · overflow 32 · six 12 px gaps · 24 px padding)
+  take 392 px; name and description share the rest 1.5 : 1. The widest name-plus-exception-marks cell in the
+  fixture is **347 px** (`scratchpad` with two marks). At 1200 with the 200 px sidebar the list pane is 970 px and
+  the name column exactly 347 px; one pixel narrower it would truncate, so the sidebar folds to the rail there,
+  which returns 144 px (1199 → pane 1113, name 433). At the 960 minimum the rail leaves an 874 px pane (name
+  289 px: only a two-mark row truncates, with its full name as the hover title); no horizontal scroll at either
+  size. Below a 768 px *list pane* (a container query, `@max-3xl`) the description column goes.
+
+## My Skills (the first migrated surface, ticket 11)
+
+Composed from the primitives and tokens only; no variant was added. Files: `components/shell/AppSidebar.tsx`,
+`components/skills/{LibraryHeader,FilterBar,SkillsList,SkillRow,SyncedStrip}.tsx`.
+
+- **Shell.** Sidebar 200 px on `card` (`sidebar` tokens): the areas My Skills · Explore · Projects, then at the
+  foot Notifications (unread count as a `solid accent` Badge) · Theme (a menu) · Keyboard shortcuts (a popover) ·
+  Settings. Items are 32 px; the current area has `aria-current="page"`, a `raised` ground and an iris icon
+  (6.01 dark / 5.04 light on `raised`). In the icon rail every label stays in the accessibility tree (`sr-only`)
+  and is the hover title.
+- **Header row** (48 px): title (`lg`, the `data-surface-heading` focus target) + count (`faint`) · the
+  exception summary · a status region reserved for ticket 14's progress · Configure Tools (`ghost`) · Refresh
+  all (`outline`) · **Add skill** (`solid accent`, the one primary). The summary reads the health fold over the
+  whole library: "N failed targets" (`failed` text) · "N stale" (`stale` text) · "View N skills with issues"
+  (`ghost accent` Button that presses the Issues chip). Zero parts are dropped; a healthy library shows nothing.
+  A skill has an issue when its loudest fold row is failed or stale — the Issues chip keeps exactly those.
+- **Filter bar** (40 px): search (`Input sm`, labelled "Search skills" through a Field; `/` focuses it, Escape
+  clears it) · Chips All · Issues · Edited · Disabled with their counts (`faint`) · Segmented Grouped / Flat · one
+  "Sort and view" menu (radio groups). Auto-sync moved to Settings; library-wide Disable is the bulk rail's
+  (ticket 13) — nothing library-wide is one click away.
+- **Row** (36 px, `h-row`, `border` hairline, `card` on hover, `raised` when selected): checkbox · name
+  (`sm` medium; the Tab stop that opens the skill) + Edit pencil (`ghost icon-sm`, only when overridden) +
+  **exception marks** (soft Badges: `failed` with a ⊗ icon, `stale` with a ⚠ icon, `neutral` for "Not
+  deployed"; skill-level rows first, then target-level, in the fold's order; Disabled rows stay silent because the
+  strip and switch say them) · description (`muted-foreground`; in Flat and in "Individual sources" preceded by
+  the source in `font-mono xs faint`) · **Synced strip** + N/M · scope (globe when some target is live) ·
+  Switch `sm` (= skill-grain Disable / Enable through the door) · overflow (`ghost icon-sm` → DropdownMenu:
+  a "Fix" group of the fold's repairs, then Update, Change source…, Detach, Edit invocation…, Remove).
+  Clicking anywhere but a control opens the skill.
+- **Group header** (36 px, sticky, `card`): source icon · name (`h2`, links to the repo) · count · state
+  summary ("1 failed · 2 stale · 1 not deployed · 1 disabled", state-coloured words) · **Deploy all**
+  (`ghost sm`; disabled with a reason when every skill is deployed). Sources with one skill fold into
+  "Individual sources"; no source pill repeats inside a group.
+- **Card view** (Auto / Dense grid) renders the same anatomy on a `card` tile with the same strip — a stop-gap
+  until round 19b designs the grid (F07's clipping is gone: marks never clip).
+
+### The Synced strip
+
+One 12 px mark per Tool of the effective target set (registry order), then any Tool the skill still has a row
+for outside that set. It is **read-only** (D22): each mark is `role="img"` with its own name, and the row opens the
+skill. Shape carries the state; colour only reinforces it; the strip was checked in grayscale
+(`.scratch/round19/evidence/11/*-grayscale.png`).
+
+| Mark | Shape | Colour | Accessible name | Dark / light on background · card · raised |
+|---|---|---|---|---|
+| synced | filled dot | `muted-foreground`; `input` when every mark is synced (the quiet N/N strip) | "Cursor: synced" | 8.31 · 7.78 · 7.08 / 8.16 · 7.60 · 7.20; quiet 3.90 · 3.65 · 3.32 / 3.78 · 3.52 · 3.33 |
+| not synced | hollow ring | `input` | "Amp: not synced" ("…not synced yet" for a pending row) | 3.90 · 3.65 · 3.32 / 3.78 · 3.52 · 3.33 |
+| stale | half-filled ring | `stale` | "Codex: stale — the copy differs from the skill" | 10.41 · 9.75 · 8.88 / 5.62 · 5.23 · 4.95 (token table) |
+| failed / missing | × | `failed` | "Amp: failed — the last sync did not complete" ("…first sync…", "…the deployed copy is gone") | 6.91 · 6.47 · 5.89 / 5.50 · 5.12 · 4.85 |
+| broken | × | `failed` | "Pi: broken — the central copy is missing" | as failed |
+| disabled | slashed ring | `faint` | "Codex: disabled" / "…disabled — the skill is off everywhere" | 6.12 · 5.73 · 5.22 / 6.09 · 5.67 · 5.37 |
+
+- A Tool detection no longer sees is named "Windsurf (not detected): …"; a label is always the Tool catalog's.
+- A skill whose **central copy is missing never shows a filled mark**: a synced or stale row is `broken` (its link
+  dangles). A skill disabled at skill grain shows every mark disabled and its switch off.
+- N/M: N counts synced and stale marks (a deployed copy exists), M every mark; `faint` when complete.
+- The strip is near-invisible at N/N by *colour step*, not below 3:1: the quiet marks drop from
+  `muted-foreground` to `input`, the lowest non-text token that still identifies a mark on its own.
+
+### Empty and first-run
+
+- **Empty library** (`?scenario=empty`): the shell stays; the header keeps only Configure Tools; the body is one
+  heading, one sentence, and the next step — **Add from GitHub** (`solid accent`), Add from a folder
+  (`outline`), Browse Explore (`ghost`). No filter bar, no Refresh.
+- **Discovered skills** (`?scenario=first-run`): a quiet `card` row at the top of the list (inbox icon, neutral
+  words, no amber) — "Skills already in your Tools · 12 skills sit in your Tools' folders…" — with **Review N
+  discovered skills**. While the discovery outweighs the library (N ≥ library size) Review is the one
+  `solid accent` action and Add skill steps back to `outline`; otherwise Review is `outline accent` and the list's
+  real issues lead. In an empty library with discoveries, Review leads the empty state's buttons.
+- **The rare delight** (D6; implemented with Import's migration, ticket 21): when an import of ≥ 10 skills
+  completes, the imported rows' strips light mark by mark, left to right, 20 ms apart (opacity 0 → 1, each
+  ≤ 120 ms, `ease-out`), once, and the header summary reads "12 skills imported · all synced" for one run.
+  Nothing else moves; reduced motion shows the settled strip at once.
 
 ## Migration rule
 

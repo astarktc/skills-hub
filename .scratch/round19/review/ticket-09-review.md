@@ -150,3 +150,105 @@ mixed group / no targets: ["enable"] pending= null
 The test setup/operations are specified in S4/S7/S8 for conversion into permanent regression tests. Browser verification used the already-running **fixture** `http://localhost:5175/?scenario=failures`, a dedicated T3 preview tab, each flow driven within `preview_evaluate`; inspected grouped Delete's settled focus and a refused second project-cell toggle. Grouping preference restored; review tab closed. No real library access.
 
 **Goal-backward check:** an action door exists and the common happy paths pass, but it does not yet guarantee one mutation admission, one consolidated decision/report per operator action, or usable target-health repairs. Fix B1–B3 before accepting 09; retain explicit ownership for S4–S9 and the already-recorded 11/12/13/14 presentation follow-ups.
+
+## Re-review — 2026-09-29
+
+**Verdict: fix-then-ship — B2 and S4–S9 closed; B1 has a narrower blocked-control/picker remainder; B3's one-ask/one-run mechanics are fixed but its new combined fold loses outcomes (B3-R1).** Two remaining acceptance blockers, detailed below; no recurrence of 04's ownership or cancelled-install defects.
+
+Reviewed **`df7cfc8` against `6d7b6f4`**, not HEAD or ticket 11's concurrent working files. Used a detached `/tmp/r19-recheck`, with shared dependencies/build cache but committed source and worktree-local binding export. All temporary reverts/probe assertions were restored, the clean worktree was removed, and main source was untouched. No nested agents, live Tauri/library run, commit, archive or move.
+
+### B1 — OPEN in part: mutation admission fixed; Add's Browse and disabled reasons are unfinished
+
+**Closed and pinned:** all ten tested project mutations now enter `runAction`; the real reporter/project-world hook tests hold a cell toggle and assert **zero other backend commands**, including registration, Edit ignore write, path update, configure, remove, both resyncs, another cell and row assign/unassign. `handleUpdatePath` also refuses before opening its picker. Matrix/list/Edit wire `blockedReason`; cell memo comparisons include it. This closes the original unsafe mutation bypass. No second mutation escaping the reporter was found.
+
+**Remaining acceptance gap:** the “folder picker not opened while blocked” rule was implemented for Update path, but not Add Project's Browse:
+
+- `src/components/projects/useProjectActions.ts:226–235`: `handlePickProjectFolder` calls `pickFolder` unconditionally.
+- `src/components/projects/AddProjectModal.tsx:89–95`: Browse has no `disabled` condition; only Register uses `loading` (`:129`). A cell mutation has no batch overlay, and ProjectList still lets the operator open Add, so this is reachable during the held mutation.
+- `ProjectsPage.tsx:234,254,274` passes only `loading` to Add/Tool config/Remove. Their disabled mutation buttons have no running-reason title or description. Edit and the matrix received the reason; these three dialogs did not. This is the remaining D19 “disabled **with the reason**” gap, not another claim of an unguarded disk write.
+
+**Fresh failing probe:** add `["Add Project Browse while blocked", r => r.current.actions.handlePickProjectFolder()]` to the held-toggle table in `useProjectActions.test.ts`. Backend call count stays zero, but the existing `expect(pickFolder).not.toHaveBeenCalled()` fails: **1 call, `{ title: "projects.pathLabel" }`**. The committed ten cases do not exercise this entry point. Scratch-only assertion removed afterwards.
+
+**Fix before acceptance:** gate Add's picker as well as Update path's; disable Browse while blocked. Pass the actual `blockedReason` to the project dialogs and expose it on their disabled submit controls. Preserve read-only browsing and the existing mutation admission rule. Extend the hook test with Browse and inspect the prop wiring (no product-component JSX tests required). This is a narrow finish, not a request to redesign the project world.
+
+### B2 — CLOSED: every reviewed Update-family producer reaches the one ask
+
+`useSkillActions.settleRefresh` routes Update/Restore/Re-point and Refresh-all; Edit passes its Propagation part. `settleCollisionParts` collects their global/project collisions before asking. `settleClaims` retains `(scope, project?, skill, Tool)` identity, uses exact Tool-set sync batches and one project decision list, and merges only answered pairs. Keep becomes a quiet declined result; retry failure stays a failure; dismissal returns the original failures with no retry.
+
+**Tests vs path:** the real-sync-world door tests cover Update/Restore/Re-point with a global re-assert and a project Propagation collision, assert one ask, exact request payloads, catalog and project refresh, no stale target-error entry, one run and cleared pending. Separate tests cover dismissed Update, Refresh-all Keep and Edit. Pure adapters cover the report merges/declined notes. I added temporary call-order assertions to the three parameterized cases: **sync/project retries < `getManagedSkills` < `refreshView("p1")` < `refreshOutcome`**; all **3 passed**. The permanent tests pin the calls but not that full order; retaining those ordering assertions would strengthen them, not fix a current code bug. The shared `settleParts` orders the reads before Edit/Refresh folding too.
+
+The successful project-row elision is judged below, not mistaken for an unhandled collision. If a read/retry throws, `runAction` still frees pending. No normal dismissed-ask/pending leak or queue/`uncancellable` deadlock was found.
+
+### B3 — mechanics CLOSED; B3-R1 OPEN: the consolidation drops Enable's summary and outcome tone/counts
+
+**What is fixed and pinned:** Deploy collects Enable and first-sync reports before one ask; multi-Tool Retry groups exact Tool sets before one ask; multi-skill project assignment collects every per-skill report before calling `settleCollisions` once. The door calls `applyOutcome` once on each of these paths. Real door tests assert one ask and one run for Deploy/Retry; the project-world test pins one merged settlement and one view read, and the door's project case folds/applies that returned report once. The latter test is a mocked settlement seam, not a full native-project-dialog test.
+
+**New blocking regression introduced by this fix:** `src/hooks/useSkillActions.ts:617–621` combines the sync fold first and Enable second. `src/lib/reportOutcome.ts:997–1024` retains **only the first toast's message**, promotes its tone only for another part's errors, and copies only the other part's notes/entries. An Enable success exists only in its toast, so it vanishes. An Enable decline has `toast: null` plus a note; its declined count/tone vanish. An Enable failure retains its error row but is absent from the composite headline's failure count. One `recordRun` is not proof of one **complete** report (D10/D11).
+
+**Executed reproduction using the real pure folds** (the same composition as the door): fresh sync has one synced target; Enable has one target whose status varies. `combineOutcomes(syncOutcome(fresh, { action: "bulk", t }), enableOutcome(enabled, { t }))` produced:
+
+| Enable result | Actual combined headline / tone | Missing information |
+| --- | --- | --- |
+| one synced target | `1 synced`, **success**, no detail | The enabled target/success summary disappears entirely. |
+| one `declined` target | `1 synced`, **success**, kept-folder note only in detail | No declined count; success tone instead of declined. |
+| one failed target | `1 synced`, failure/warning; error row retained | No failure count in the composite headline. |
+
+This also affects the existing two-collision Deploy test: its first-pass sync covers two targets and Enable covers one, but asserting only one run/no errors cannot detect the missing Enable result.
+
+**Fresh failing regression probe:** in `reportOutcome.test.ts`, compose a one-target successful `syncOutcome` and a one-target declined `enableOutcome`; assert `combined.toast.tone === "declined"` and that its headline includes the declined count. The first assertion fails: **expected `declined`, received `success`**. The committed `combineOutcomes` tests only pin “first toast wins, errors retone, notes survive”; they encode the lossy strategy rather than the complete operator-action contract. Scratch probe removed afterwards.
+
+**Fix before acceptance:** fold the full Deploy action once from typed settled reports/counts (or retain structured counts/tone in Outcomes before combining), preserving units for global/project targets and Enable. Emit one composite headline with all done/failed/skipped/declined contributions, then choose tone across all contributions; keep all errors/warnings/notes and one run. Do not parse localized toast strings or merely append a second success toast. Add pure tests for Enable success/decline/skip/failure + fresh-sync success, and strengthen the real Deploy test to assert report contents/counts, not only the run-id cardinality.
+
+**04's changed retry test is sound:** it now requires exact `s1/cursor` and `s2/claude` batches rather than replaying the four-pair product, while a separate test preserves one batch for identical Tool sets. That is a safety improvement, not weakening the one-ask/one-run guarantee. The additional IPCs are an explicit API compromise, not invisible fan-out correctness.
+
+### Should-fix closure
+
+| Finding | Rechecked result and evidence |
+| --- | --- |
+| **S4 — CLOSED** | Mixed group/no targets computes runnable work first, enables the disabled part, records the undeployed warning and reloads. Dedicated door test asserts Enable, warning and one reload. B3-R1 separately covers truthful aggregation when both parts run. |
+| **S5 — CLOSED** | Failed/missing/stale repairs map to `retryTargets`, pass `row.tools`, and Retry includes stale. Imported/detached/local/git corpus and the real-sync imported-stale test pin central-to-target sync, zero upstream Update calls. Skill-grain Disable offers finishing Disable, not futile ordinary retry. |
+| **S6 — CLOSED** | `displayOrder` → `lens.displayed` → App's `order`; grouped interleaved-repo test pins alpha → gamma, not beta. Verified against the commit, not ticket 11's working renderer. |
+| **S7 — CLOSED** | Reporter exposes cancellation copy from `pending.cancelling`; both streamed progress and direct `setActionMessage` leave it intact while the numerical count advances. Dedicated real-reporter test passes. |
+| **S8 — CLOSED for the reported lifetime/navigation failures** | Cleanup wakes queued reads without running their bodies; `stillWanted` is checked on admission. Four reporter tests cover ordered mutation→reads, unmount, invalid intent and rejection; Explore's tests cover generation/area before and after the request. App supplies live area predicates to Explore/import review. `uncancellable` does not release the mutation slot or wake the queue. |
+| **S9 — CLOSED** | Add/picker/import now await `applyOutcome` with handlers; picker completion no longer goes through `afterBatch`. Tests assert completion true/false and reload→notification→close ordering. The real reporter's executor tests pin its half independently of the Add test doubles. |
+
+The rejected shared-dir confirmation is also caught, reported and treated as “no”; its new test asserts zero mutation commands. 04-F2's real-reporter cancellation tests are green and failed when the action-boundary checks were removed in the scratch worktree. 04-F1's admission test likewise fails without its fix; the failed-removal ownership guard remains intact.
+
+### Four command-API compromises — release judgments
+
+These are **acceptable for 1.3.0 with a BACKLOG note**, with the restrictions below; none excuses B1 or B3-R1. The queue is owned by the parent, so this review records the proposed follow-up here/in the ticket rather than editing a fifth file.
+
+1. **Per-skill assign/unassign commands — accept bounded debt.** The outer action admission spans the loop; target fan-out remains backend-owned inside each command; asks/folds are consolidated. A later multi-skill command should carry settled partial reports even if a later skill has a whole-command/store failure. Do not claim the one-command-per-action ideal is currently satisfied.
+2. **Enable + sync as two commands — accept the API compromise.** Partitions are disjoint and remain in one lifecycle action; no atomic cross-partition transaction was promised. **Block the current lossy fold**, not shipment on a new combined command. Record a follow-up for the combined backend surface.
+3. **Successful answered project row elided from Update/Edit report — accept temporarily.** `resolveProjectCollisions` does not return a sync mode; synthesizing one would be false. These current folds count target failures, while actual deployment/ownership comes from the re-read catalog/project views. Failed retries and explicit Keeps are retained as error/declined data. Follow up with a lossless typed settled-target representation before any consumer treats the shortened array as a complete target audit.
+4. **Enable retries the same scope — accept with a narrowing follow-up.** `enable_skill` reselects remaining **disabled** rows. First-pass successes are synced; project collisions are now error/non-owner and excluded from that retry, then resolved by exact project decisions. A pair-grain retry is already its one Tool/shared-directory scope. This does not reproduce the old foreign-folder ownership bug. Prefer a dedicated answered-pair Enable API eventually; preserve tests that unrelated completed pairs stay untouched.
+
+### Fresh verification and cleanup
+
+From `/tmp/r19-recheck` at `df7cfc8`, run initially and again **after restoring all scratch changes**:
+
+```text
+cd src-tauri && cargo test install_batch && cargo test skill_disable && cargo test project_sync && cargo test sync_engine && cargo test export_bindings
+  PASS — 10 / 33 / 36 / 8 / 1 tests.
+npx vitest run src/hooks src/lib src/components/projects src/fixtures
+  PASS — 25 files / 664 tests (final run 4.35 s).
+```
+
+Rust used `CARGO_TARGET_DIR=/Users/alexstark/Projects/skills-hub/src-tauri/target`; the node_modules symlink was dependency reuse only. Extra commands:
+
+```text
+cd src-tauri && cargo test the_collision_fact_reads_the_stored_identity_like_the_policy && cargo test target_relocation
+  PASS — 1 / 14 tests.
+npx vitest run src/hooks/useSkillActions.test.ts -t 'answered pairs are retried'
+  PASS — 3 tests with temporary retry/read/fold call-order assertions.
+npx vitest run src/components/projects/useProjectActions.test.ts src/lib/reportOutcome.test.ts -t RECHECK
+  EXPECTED FAIL — the two added residual probes above: picker called once; success instead of declined tone.
+bun run - <<'TS' … TS
+  Real syncOutcome/enableOutcome/combineOutcomes probe: the three results in B3-R1's table.
+```
+
+Sensitivity commands/results for 04's fixes are recorded in `ticket-04-review.md` § Re-review: **F1 and F5 each fail their committed Rust regression without the fix; F2 fails both git/local tests without its boundary checks**. These are expected negative-control failures, distinct from the two residual probes which fail on the unmodified reviewed implementation.
+
+`git diff --exit-code df7cfc8 -- src/bindings/index.ts` passed after export. SHA-256: `3c1dc65c846f260a88e7907ff4f692279edf2dccb375c1db6b1b6cf20da02c0a`. Scratch worktree diff/status were clean before removal; `git worktree list` afterwards lists only the main checkout. No full release gate or new visual audit claimed.
+
+**Goal-backward check:** one mutation admission and one consolidated ask are now real. Finish the blocked picker/reason contract and preserve every Deploy outcome in its single report before accepting ticket 09. No passed area needs reopening for those fixes.

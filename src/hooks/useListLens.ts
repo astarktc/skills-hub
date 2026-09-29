@@ -34,13 +34,20 @@ export type ListLensOptions<T extends LensItem> = {
   foldSingletons?: boolean;
   /** The surface's selection (surface state); the lens answers its visible subset. */
   selection?: ReadonlySet<string>;
+  /**
+   * Named filters (the surface's chips), each a predicate over one item;
+   * `filter` picks one, "all" none. Pass a module constant: the counts are
+   * memoised on its identity.
+   */
+  filters?: Readonly<Record<string, (item: T) => boolean>>;
 };
 
 /**
  * The list lens: "which skills am I looking at, and how". One instance per
  * list surface (My Skills, the assignment matrix; the pickers and the
  * palette later). It owns the query, the sort, grouping (Grouped/Flat, with
- * the optional singleton fold), the view mode and their persistence; the
+ * the optional singleton fold), the named filters (chips), the view mode
+ * and their persistence; the
  * folds themselves are the pure functions in `skillPresentation.ts`.
  */
 export function useListLens<T extends LensItem>({
@@ -50,16 +57,26 @@ export function useListLens<T extends LensItem>({
   viewModePreference,
   foldSingletons = false,
   selection,
+  filters,
 }: ListLensOptions<T>) {
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<string>("all");
   const [sort, setSort] = useState<SortMode>("name");
   const [groupByRepo, setGroupByRepo] = usePersistedPreference(groupByRepoPreference);
   const [viewMode, setViewMode] = usePersistedPreference(viewModePreference ?? LIST_ONLY);
 
-  const visible = useMemo(
-    () => filterAndSortSkills([...items], { query, sort }),
-    [items, query, sort],
-  );
+  const predicate = filter === "all" ? undefined : filters?.[filter];
+  const visible = useMemo(() => {
+    const sorted = filterAndSortSkills([...items], { query, sort });
+    return predicate ? sorted.filter(predicate) : sorted;
+  }, [items, predicate, query, sort]);
+
+  /** How many items each filter keeps, over the whole list (not the query). */
+  const filterCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: items.length };
+    for (const [name, keep] of Object.entries(filters ?? {})) counts[name] = items.filter(keep).length;
+    return counts;
+  }, [filters, items]);
 
   const { local, ungrouped, individual } = labels;
   /** null = Flat. */
@@ -89,6 +106,9 @@ export function useListLens<T extends LensItem>({
     () => ({
       query,
       setQuery,
+      filter,
+      setFilter,
+      filterCounts,
       sort,
       setSort,
       groupByRepo,
@@ -100,7 +120,20 @@ export function useListLens<T extends LensItem>({
       displayed,
       visibleSelection,
     }),
-    [displayed, groupByRepo, groups, query, setGroupByRepo, setViewMode, sort, viewMode, visible, visibleSelection],
+    [
+      displayed,
+      filter,
+      filterCounts,
+      groupByRepo,
+      groups,
+      query,
+      setGroupByRepo,
+      setViewMode,
+      sort,
+      viewMode,
+      visible,
+      visibleSelection,
+    ],
   );
 }
 

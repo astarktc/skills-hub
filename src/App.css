@@ -45,158 +45,9 @@
   --font-ui: var(--font-sans);
 }
 
-.skills-app {
-  height: 100%;
-  background: var(--bg-app);
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.skills-header {
-  height: 56px;
-  padding: 0 24px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg-header);
-  backdrop-filter: blur(12px);
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  height: 100%;
-}
-
-.brand-area {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-/* Navigation Tabs */
-.nav-tabs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 100%;
-}
-
-.nav-tab {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 14px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  border: none;
-  background: none;
-  position: relative;
-  transition: color 0.2s;
-  font-family: inherit;
-}
-
-.nav-tab:hover {
-  color: var(--text-secondary);
-}
-
-.nav-tab.active {
-  color: var(--accent-primary);
-  font-weight: 600;
-}
-
-.nav-tab.active::after {
-  content: "";
-  position: absolute;
-  bottom: 0;
-  left: 8px;
-  right: 8px;
-  height: 2px;
-  background: var(--accent-primary);
-  border-radius: 2px 2px 0 0;
-}
-
-.logo-icon {
-  width: 36px;
-  height: 36px;
-  display: block;
-  object-fit: contain;
-  border-radius: 8px;
-}
-
-.brand-text-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.brand-text {
-  font-weight: 700;
-  font-size: 20px;
-  letter-spacing: -0.03em;
-  background: linear-gradient(to right, var(--text-primary), var(--text-primary));
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
 .brand-subtitle {
   font-size: 12px;
   color: var(--text-secondary);
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.skills-main {
-  flex: 1;
-  overflow: hidden;
-  background: var(--bg-app);
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.dashboard-stack {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.filter-bar {
-  padding: 20px 32px 0 32px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.filter-bar-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.filter-bar-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-left: auto;
 }
 
 .sort-btn {
@@ -218,41 +69,6 @@
   margin-right: 4px;
 }
 
-.search-container {
-  position: relative;
-}
-
-.search-input {
-  background: var(--bg-panel);
-  border: 1px solid var(--input);
-  border-radius: var(--radius-md);
-  height: 36px;
-  padding: 0 12px 0 36px;
-  color: var(--text-primary);
-  width: 280px;
-  font-size: 13px;
-  transition: all 0.2s;
-  font-family: var(--font-ui);
-}
-
-.search-input:focus {
-  outline: none;
-  border-color: var(--accent-primary);
-  background: var(--bg-app);
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent-primary) 12%, transparent);
-}
-
-.search-icon-abs {
-  position: absolute;
-  left: 12px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 16px;
-  height: 16px;
-  color: var(--text-tertiary);
-  pointer-events: none;
-}
-
 .status-row {
   display: flex;
   align-items: center;
@@ -271,355 +87,17 @@
   font-size: 13px;
 }
 
-.skills-list {
-  padding: 16px 32px 32px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
-  flex: 1;
-  min-height: 0;
-}
-
-.skills-grid {
-  display: grid !important;
-  gap: 12px;
-}
-
-.skills-grid--auto-grid {
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-}
-
-.skills-grid--dense-grid {
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-}
-
-.skills-group-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.skills-grid .skill-card {
-  grid-template-columns: 36px 1fr;
-  grid-template-rows: auto auto;
-  gap: 8px 12px;
-}
-
-.skills-grid .skill-icon {
-  width: 36px;
-  height: 36px;
-  font-size: 16px;
-}
-
-.skills-grid .skill-actions-col {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-direction: row;
-  justify-content: flex-end;
-  gap: 4px;
-}
-
-.skills-grid .skill-main {
-  grid-column: 2;
-  min-width: 0;
-}
-
-.skills-grid .skill-desc {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.skills-grid .tool-matrix {
-  flex-wrap: wrap;
-}
-
-.skills-grid .skill-meta-row {
-  flex-wrap: wrap;
-}
-
-.skills-grid .repo-pill {
-  max-width: 100%;
-}
-
-.skills-grid--dense-grid .skill-card {
-  grid-template-columns: 1fr;
-  padding: 12px;
-}
-
-.skills-grid--dense-grid .skill-icon {
-  display: none;
-}
-
-.skills-grid--dense-grid .skill-main {
-  grid-column: 1;
-}
-
-.skills-grid--dense-grid .skill-meta-row {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-
-.skills-grid--dense-grid .skill-meta-row .dot {
-  display: none;
-}
-
-.skills-grid--dense-grid .tool-matrix .tool-pill {
-  font-size: 10px;
-  padding: 1px 6px;
-}
-
-.discovered-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: var(--warning-soft-bg);
-  border: 1px dashed var(--warning-soft-border);
-  border-radius: var(--radius-lg);
-  padding: 12px 20px;
-}
-
-.banner-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.banner-icon {
-  width: 32px;
-  height: 32px;
-  background: var(--warning-soft-bg);
-  border-radius: var(--radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--status-warning);
-}
-
-.banner-title {
-  font-weight: 600;
-  color: var(--text-primary);
-  font-size: 14px;
-}
-
-.banner-subtitle {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.skill-card {
-  background: var(--bg-app);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  padding: 16px 20px;
-  display: grid;
-  grid-template-columns: 48px 1fr auto;
-  gap: 20px;
-  align-items: center;
-  transition: all 0.2s;
-  position: relative;
-}
-
-.skill-card:hover {
-  border-color: var(--border-strong);
-  background: var(--bg-panel);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
-  z-index: 1;
-}
-
-.skill-icon {
-  width: 48px;
-  height: 48px;
-  background: var(--bg-element);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-secondary);
-  font-size: 20px;
-  transition: all 0.2s;
-}
-
-.skill-card:hover .skill-icon {
-  color: var(--text-primary);
-  border-color: var(--border-strong);
-  background: var(--bg-panel);
-}
-
-.skill-main {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  justify-content: center;
-}
-
-.skill-header-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-/* Icon-only invocation-mode badge; the default mode stays quiet. */
-.invocation-badge {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  gap: 3px;
-  height: 18px;
-  padding: 0 4px;
-  border-radius: 4px;
-  font-family: var(--font-ui);
-  font-size: 10px;
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-  position: relative;
-  background: var(--bg-element);
-  color: var(--text-tertiary);
-  border: 1px solid var(--border-subtle);
-}
-
-.invocation-badge:hover:not(:disabled) {
-  border-color: var(--text-secondary);
-  color: var(--text-primary);
-}
-
-.invocation-badge:focus-visible {
-  outline: 2px solid var(--text-primary);
-  outline-offset: 3px;
-}
-
-.invocation-badge:disabled { cursor: not-allowed; opacity: 0.6; }
-.invocation-badge.overridden::after {
-  content: "";
-  position: absolute;
-  width: 6px;
-  height: 6px;
-  right: -3px;
-  top: -3px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.invocation-badge.overridden.conflict {
-  background: var(--warning-soft-bg);
-  border-color: var(--warning-soft-border);
-  color: var(--text-primary);
-}
-.invocation-badge.conflict::after { background: var(--warning-soft-border); }
-
 .invocation-edit-options { border: 0; padding: 0; margin: 0; min-width: 0; }
 .invocation-edit-option { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; cursor: pointer; }
 .invocation-edit-option input { margin-top: 4px; flex-shrink: 0; }
 .invocation-edit-option .helper-text { display: block; }
 .invocation-edit-warning { padding: 12px; border: 1px solid var(--warning-soft-border); border-radius: 6px; background: var(--warning-soft-bg); }
 
-.invocation-badge.user-and-model {
-  background: var(--bg-element);
-  border-color: var(--border-subtle);
-  color: var(--text-tertiary);
-}
-
-.invocation-badge.user-only {
-  background: var(--accent-soft-bg);
-  border-color: var(--accent-soft-border);
-  color: var(--text-secondary);
-}
-
-.invocation-badge.model-only {
-  background: var(--warning-soft-bg);
-  border-color: var(--warning-soft-border);
-  color: var(--text-secondary);
-}
-
 .skill-name {
   font-weight: 600;
   color: var(--text-primary);
   font-size: 15px;
   letter-spacing: -0.01em;
-}
-
-.skill-desc {
-  font-size: 13px;
-  color: var(--text-secondary);
-  line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  margin-top: 2px;
-}
-
-.skill-meta-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 4px;
-}
-
-.skill-source {
-  font-family: var(--font-ui);
-  font-size: 12px;
-  color: var(--text-tertiary);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.skill-source.time {
-  white-space: nowrap;
-}
-
-.repo-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-secondary);
-  font-weight: 500;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-element);
-  transition: all 0.2s;
-}
-
-.repo-pill.copyable {
-  cursor: pointer;
-}
-
-.repo-pill.copyable:hover {
-  color: var(--text-primary);
-  border-color: var(--border-strong);
-  background: var(--bg-element-hover);
-}
-
-.repo-pill:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.repo-pill .copy-icon {
-  display: inline-flex;
-  align-items: center;
-  opacity: 0;
-  transform: translateX(-2px);
-  transition: all 0.2s;
-  color: var(--text-tertiary);
-}
-
-.repo-pill.copyable:hover .copy-icon {
-  opacity: 1;
-  transform: translateX(0);
-  color: var(--text-secondary);
 }
 
 .dot {
@@ -637,101 +115,6 @@
 .tool-matrix.collapsed {
   flex-wrap: nowrap;
   overflow: hidden;
-}
-
-.tool-pill {
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  transition: all 0.2s;
-  border: 1px solid var(--border-subtle);
-  font-family: var(--font-ui);
-  background: var(--bg-panel);
-  color: var(--text-secondary);
-}
-
-.tool-pill.active {
-  background: var(--bg-panel);
-  color: var(--status-success);
-  border-color: var(--status-success);
-}
-
-.tool-pill.active:hover {
-  border-color: var(--status-success);
-  transform: translateY(-1px);
-}
-
-.tool-pill.active.error {
-  background: var(--danger-soft-bg);
-  color: var(--status-error);
-  border-color: var(--status-error);
-}
-
-.tool-pill.active.error:hover {
-  border-color: var(--status-error);
-}
-
-.tool-pill.active.error .status-badge {
-  background: var(--status-error);
-  box-shadow: none;
-}
-
-.tool-pill.inactive {
-  background: var(--bg-element);
-  color: var(--text-tertiary);
-  border-color: transparent;
-}
-
-.tool-pill.inactive:hover {
-  color: var(--text-secondary);
-  background: var(--bg-element-hover);
-}
-
-/* A Sync target row whose Tool detection no longer sees: muted, but it keeps
-   its unsync affordance so the orphan is removable one tool at a time. */
-.tool-pill.undetected {
-  background: var(--bg-element);
-  color: var(--text-tertiary);
-  border-style: dashed;
-  border-color: var(--border-strong);
-}
-
-.tool-pill.undetected:hover {
-  color: var(--text-secondary);
-  border-color: var(--text-tertiary);
-}
-
-.tool-pill.undetected .status-badge {
-  background: var(--text-tertiary);
-  box-shadow: none;
-}
-
-.tool-pill.disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  border: 1px dashed var(--border-strong);
-  background: transparent;
-  color: var(--text-tertiary);
-}
-
-.tool-pill.more-badge {
-  background: var(--bg-element);
-  color: var(--text-tertiary);
-  border: 1px solid var(--border-subtle);
-  font-size: 11px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.tool-pill.more-badge:hover {
-  background: var(--bg-element-hover);
-  color: var(--text-secondary);
 }
 
 .tool-pill-toggle {
@@ -771,14 +154,6 @@
   box-shadow: 0 0 0 2px var(--success-soft-border);
 }
 
-.skill-actions-col {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  align-self: center;
-}
-
 .card-btn {
   height: 32px;
   width: 32px;
@@ -800,24 +175,6 @@
   border-color: var(--border-subtle);
   transform: translateY(-1px);
   box-shadow: var(--shadow-sm);
-}
-
-.card-btn.primary-action {
-  color: var(--accent-primary);
-  background: var(--accent-soft-bg);
-  border-color: var(--accent-soft-border);
-}
-
-.card-btn.primary-action:hover {
-  background: var(--accent-primary);
-  color: var(--accent-primary-fg);
-  border-color: var(--accent-primary);
-}
-
-.card-btn.danger-action:hover {
-  color: var(--status-error);
-  background: var(--danger-soft-bg);
-  border-color: var(--danger-soft-border);
 }
 
 .empty {
@@ -869,17 +226,6 @@
   background: var(--bg-element);
 }
 
-.btn-warning {
-  background: var(--status-warning);
-  border-color: var(--status-warning);
-  color: var(--accent-primary-fg);
-  height: 32px;
-}
-
-.btn-warning:hover {
-  opacity: 0.9;
-}
-
 .btn-danger {
   background: var(--danger-soft-bg);
   color: var(--status-error);
@@ -896,50 +242,6 @@
 .card-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-}
-
-.icon-btn {
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.2s;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-app);
-}
-
-.icon-btn:hover {
-  background: var(--bg-element);
-  color: var(--text-primary);
-  transform: translateY(-1px);
-}
-
-/* Notification bell: the badge counts unread errors + warnings. */
-.notif-btn {
-  position: relative;
-}
-
-.notif-badge {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: var(--status-error);
-  color: var(--accent-primary-fg);
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 18px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-  box-shadow: 0 0 0 2px var(--bg-app);
-  pointer-events: none;
 }
 
 .modal-backdrop {
@@ -2805,25 +2107,6 @@
   animation: spin 0.8s linear infinite;
 }
 
-/* ── Clickable skill name in card ── */
-.skill-name.clickable {
-  cursor: pointer;
-  transition: color 0.15s;
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  font-weight: 600;
-  font-size: 15px;
-  letter-spacing: -0.01em;
-  color: var(--text-primary);
-  text-align: left;
-}
-
-.skill-name.clickable:hover {
-  color: var(--accent-primary);
-}
-
 /* === Projects Tab === */
 
 .projects-page {
@@ -3354,45 +2637,8 @@
   overflow: hidden;
 }
 
-.auto-sync-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.auto-sync-toggle input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent-primary);
-  cursor: pointer;
-}
-
-.auto-sync-label {
-  color: var(--text-secondary);
-}
-
-.unsync-all-btn {
-  white-space: nowrap;
-  font-size: 13px;
-}
-
 .matrix-cell.missing {
   background: var(--danger-soft-bg-strong);
-}
-
-.card-btn.secondary-action {
-  color: var(--text-tertiary);
-}
-.card-btn.secondary-action:hover:not(:disabled) {
-  color: var(--text-primary);
-  background: var(--bg-element);
-}
-.card-btn.secondary-action:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
 }
 
 /* Project missing-path warning styles */
@@ -3446,39 +2692,10 @@
   color: var(--text-secondary);
   white-space: nowrap;
 }
-.repo-group {
-  margin-bottom: 12px;
-}
-.repo-group-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px 6px 8px;
-  font-size: 18px;
-  font-weight: 1000;
-  color: var(--text-primary);
-  border-bottom: 2px solid var(--border-color);
-  margin-bottom: 6px;
-  background: var(--bg-panel);
-  border-radius: 6px 6px 0 0;
-}
+
 .repo-group-icon {
   color: var(--text-secondary);
   flex-shrink: 0;
-}
-.repo-group-link {
-  color: var(--text-primary);
-  text-decoration: none;
-}
-.repo-group-link:hover {
-  text-decoration: underline;
-  color: var(--accent-primary);
-}
-.repo-group-header .repo-count {
-  font-weight: 400;
-  color: var(--text-tertiary);
-  font-size: 12px;
-  margin-left: auto;
 }
 
 /* Assignment matrix sort/group controls */
@@ -3510,55 +2727,3 @@
   gap: 6px;
 }
 
-/* Unlocatable skill: the badge row under the source line, with its repairs
-   (Re-point / Detach / Restore) and Remove as small text buttons. */
-.skill-unlocatable {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.unlocatable-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--status-warning);
-  background: var(--warning-soft-bg);
-  border: 1px solid var(--warning-soft-border);
-  white-space: nowrap;
-}
-
-.unlocatable-action {
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  color: var(--text-secondary);
-  background: var(--bg-element);
-  border: 1px solid var(--border-subtle);
-  transition: all 0.2s;
-}
-
-.unlocatable-action:hover {
-  color: var(--text-primary);
-  border-color: var(--border-strong);
-}
-
-.unlocatable-action.danger:hover {
-  color: var(--status-error);
-  background: var(--danger-soft-bg);
-  border-color: var(--danger-soft-border);
-}
-
-.unlocatable-action:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}

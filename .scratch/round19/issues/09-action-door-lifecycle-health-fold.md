@@ -345,3 +345,40 @@ test assertions; 09 made one-line switches in those hooks and edited only the re
     One early scripted attempt saw the ask close ~180 ms after opening before any input; two instrumented reruns
     (immediately after load and 4 s after) kept it open without input for 2 s+ — treated as an automation artifact,
     not reproduced.
+
+### 2026-09-29 — bounded committed re-review (Astra): fix-then-ship
+
+Reviewed `df7cfc8` vs `6d7b6f4`, in a detached scratch worktree, not ticket 11's concurrent edits. Full evidence and fixes:
+`.scratch/round19/review/ticket-09-review.md` § Re-review — 2026-09-29. **B2 and S4–S9 closed.** One ask/one run
+mechanics of B3 are now correct; two narrower acceptance blockers remain:
+
+- **B1 remainder:** every tested project mutation is admitted/refused correctly (ten held-toggle cases send zero
+  commands); Update path refuses its picker. But **Add Project Browse** still calls `pickFolder` while blocked
+  (`useProjectActions.ts:226`, `AddProjectModal.tsx:89`), and Add/Tool-config/Remove submit controls receive only
+  `loading`, not the running reason. A scratch hook regression held a cell mutation, called `handlePickProjectFolder`,
+  and failed the no-picker assertion: one call with `{ title: "projects.pathLabel" }`. Gate/disable Browse and thread
+  the reason through those dialogs. This is not a claim that a second disk mutation escapes the repaired reporter.
+- **B3-R1 (new aggregation regression):** `combineOutcomes` retains the first (sync) toast, dropping Enable's success
+  summary and its declined/skipped counts/tone. Real-fold repro: one fresh target synced + one Enable target kept →
+  **success-tone “1 synced”**, with no declined count (only a detail note); both successful → Enable disappears;
+  Enable failure keeps its error row but contributes no failure count to the headline. Scratch regression expected
+  declined tone and received success. Fold typed settled reports/counts once for the whole Deploy action, preserve
+  every contribution, and test the headline/tone as well as the single run-id. Do not parse toast strings or add a
+  second toast.
+
+B2 verification included temporary assertions proving retries → catalog read → touched project view → fold for
+Update/Restore/Re-point (3 pass); committed tests also cover Refresh-all Keep, Edit and dismissal. Pair-set batching
+legitimately replaces 04's unsafe Cartesian retry and still groups identical Tool sets. F1 ownership and F2 Add-cancel
+sensitivity checks pass/fail as intended; no pending leak or read-queue/uncancellable deadlock found in the reviewed paths.
+
+**API-debt judgment for the parent to queue in BACKLOG:** accept for 1.3.0 (1) per-skill assign/unassign commands under
+one outer action, followed later by a multi-skill command preserving partial reports; (2) Enable+sync as two disjoint
+commands under one action, later a combined surface; (3) eliding successful answered project Propagation rows while
+folds count only failures and views are re-read, later a lossless typed settlement; (4) re-running Enable's scope,
+which currently reselects disabled rows and leaves successful/project-error rows out, later a pair-exact retry API.
+These explicit exceptions to the one-command ideal **do not defer B3-R1's lossy operator report**.
+
+Fresh final restored-snapshot gates: Rust requested filters **10 / 33 / 36 / 8 / 1**; Vitest **25 files / 664 tests**;
+extra stored-identity/relocation Rust **1 / 14**. Bindings unchanged. Two residual scratch probes fail on the reviewed
+implementation as described; both were removed. Scratch worktree restored clean and removed. Only review/ticket
+appendices edited in main; no commit, archive, move or status advancement.

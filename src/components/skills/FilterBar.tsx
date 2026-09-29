@@ -1,133 +1,155 @@
-import { memo } from "react";
-import {
-  LayoutList,
-  Plus,
-  RefreshCw,
-  Search,
-  Wrench,
-} from "lucide-react";
+import { memo, useEffect, useRef } from "react";
+import { Search, SlidersHorizontal } from "lucide-react";
 import type { TFunction } from "i18next";
+import { Button } from "@/components/ui/button";
+import { Chip } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Field, FieldLabel, Input } from "@/components/ui/field";
+import { Segmented, SegmentedItem } from "@/components/ui/segmented";
 import type { ListLens, ViewMode } from "../../hooks/useListLens";
-import LensSortControl from "../shared/LensSortControl";
-import type { SkillActions } from "../../hooks/useSkillActions";
+import type { SkillFilter, SortMode } from "../../lib/skillPresentation";
 
 type FilterBarProps = {
-  /** My Skills' list lens: query, sort, Grouped/Flat and view mode. */
+  /** My Skills' list lens: query, filter chips, sort, Grouped/Flat and view mode. */
   lens: ListLens;
-  /** Why the toolbar's verbs are disabled while an action runs (one at a time, D19), or null. */
-  blockedReason: string | null;
-  /** Opens the Local / Git add modal — the same flow Explore's Manual button uses. */
-  onAddSkill: () => void;
-  autoSyncEnabled: boolean;
-  onAutoSyncChange: (enabled: boolean) => void;
-  /** The skill action door: Refresh and library-wide Disable go through it. */
-  actions: Pick<SkillActions, "run">;
-  onConfigureTools: () => void;
   t: TFunction;
 };
 
-const FilterBar = ({
-  lens,
-  blockedReason,
-  onAddSkill,
-  autoSyncEnabled,
-  onAutoSyncChange,
-  actions,
-  onConfigureTools,
-  t,
-}: FilterBarProps) => {
-  const { viewMode, setViewMode } = lens;
-  const blocked = blockedReason !== null;
-  const titled = (title: string) => blockedReason ?? title;
+const FILTERS: readonly SkillFilter[] = ["all", "issues", "edited", "disabled"];
+
+const SORT_LABEL_KEY: Record<SortMode, string> = {
+  name: "sortName",
+  updated: "sortUpdated",
+  added: "sortAdded",
+};
+
+const VIEW_LABEL_KEY: Record<ViewMode, string> = {
+  list: "viewList",
+  "auto-grid": "viewAutoGrid",
+  "dense-grid": "viewDenseGrid",
+};
+
+/** Typing into these must never be stolen by the `/` shortcut. */
+const isEditable = (target: EventTarget | null) =>
+  target instanceof HTMLElement &&
+  (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+
+/**
+ * The My Skills filter bar, all through the list lens: search (`/` focuses
+ * it), the chips All · Issues · Edited · Disabled, Grouped / Flat, and one
+ * Sort and view menu. Policy (auto-sync) and library-wide verbs live
+ * elsewhere (Settings; the bulk rail).
+ */
+const FilterBar = ({ lens, t }: FilterBarProps) => {
+  const searchRef = useRef<HTMLInputElement>(null);
+  const { query, setQuery, filter, setFilter, filterCounts } = lens;
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented) return;
+      if (isEditable(event.target)) return;
+      // A layer above the list owns the keyboard.
+      if (document.querySelector("[role='dialog'], [role='alertdialog'], [role='menu']")) return;
+      event.preventDefault();
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
-    <div className="filter-bar">
-      <div className="filter-bar-left">
-        <LensSortControl sort={lens.sort} onSortChange={lens.setSort} t={t} />
-        <label className="group-by-repo-toggle" title={t("groupByRepo")}>
-          <input
-            type="checkbox"
-            checked={lens.groupByRepo}
-            onChange={(e) => lens.setGroupByRepo(e.target.checked)}
-          />
-          <span className="group-by-repo-label">{t("groupByRepo")}</span>
-        </label>
-        <button className="btn btn-secondary sort-btn" type="button">
-          <span className="sort-label">{t("viewMode")}:</span>
-          {viewMode === "list"
-            ? t("viewList")
-            : viewMode === "auto-grid"
-              ? t("viewAutoGrid")
-              : t("viewDenseGrid")}
-          <LayoutList size={12} />
-          <select
-            aria-label={t("viewMode")}
-            value={viewMode}
-            onChange={(event) => setViewMode(event.target.value as ViewMode)}
-          >
-            <option value="list">{t("viewList")}</option>
-            <option value="auto-grid">{t("viewAutoGrid")}</option>
-            <option value="dense-grid">{t("viewDenseGrid")}</option>
-          </select>
-        </button>
+    <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-2">
+      <Field className="flex-row items-center gap-2">
+        <FieldLabel>
+          <Search className="size-4 text-muted-foreground" aria-hidden="true" />
+          <span className="sr-only">{t("library.searchLabel")}</span>
+        </FieldLabel>
+        <Input
+          ref={searchRef}
+          type="search"
+          size="sm"
+          className="w-52"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && query) {
+              event.preventDefault();
+              setQuery("");
+            }
+          }}
+          placeholder={t("library.searchPlaceholder")}
+          aria-keyshortcuts="/"
+        />
+      </Field>
+
+      <div role="group" aria-label={t("library.filterGroup")} className="flex items-center gap-1.5">
+        {FILTERS.map((key) => (
+          <Chip key={key} pressed={filter === key} onPressedChange={() => setFilter(key)}>
+            {t(`library.filters.${key}`)}{" "}
+            <span className="text-faint tabular-nums">{filterCounts[key] ?? 0}</span>
+          </Chip>
+        ))}
       </div>
-      <div className="filter-bar-right">
-        <button
-          className="btn btn-primary"
-          type="button"
-          onClick={onAddSkill}
-          disabled={blocked}
-          title={blockedReason ?? undefined}
+
+      <div className="ml-auto flex items-center gap-2">
+        <Segmented
+          aria-label={t("library.grouping")}
+          value={lens.groupByRepo ? "grouped" : "flat"}
+          onValueChange={(value) => lens.setGroupByRepo(value === "grouped")}
         >
-          <Plus size={14} />
-          {t("addSkillButton")}
-        </button>
-        <label className="auto-sync-toggle" title={t("autoSyncToggle")}>
-          <input
-            type="checkbox"
-            checked={autoSyncEnabled}
-            onChange={(e) => onAutoSyncChange(e.target.checked)}
-            disabled={blocked}
-          />
-          <span className="auto-sync-label">{t("autoSyncToggle")}</span>
-        </label>
-        <button
-          className="btn btn-secondary"
-          type="button"
-          onClick={onConfigureTools}
-          disabled={blocked}
-          title={titled(t("configureTools"))}
-        >
-          <Wrench size={14} />
-          {t("configureTools")}
-        </button>
-        <button
-          className="btn btn-secondary unsync-all-btn"
-          type="button"
-          onClick={() => void actions.run("disable", "all")}
-          disabled={blocked}
-          title={titled(t("unsyncAll"))}
-        >
-          {t("unsyncAll")}
-        </button>
-        <div className="search-container">
-          <Search size={16} className="search-icon-abs" />
-          <input
-            className="search-input"
-            value={lens.query}
-            onChange={(event) => lens.setQuery(event.target.value)}
-            placeholder={t("searchPlaceholder")}
-          />
-        </div>
-        <button
-          className="btn btn-secondary"
-          type="button"
-          onClick={() => void actions.run("update", "all")}
-          disabled={blocked}
-          title={blockedReason ?? undefined}
-        >
-          <RefreshCw size={14} />
-          {t("refresh")}
-        </button>
+          <SegmentedItem value="grouped">{t("library.grouped")}</SegmentedItem>
+          <SegmentedItem value="flat">{t("library.flat")}</SegmentedItem>
+        </Segmented>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                aria-label={`${t("library.display")}: ${t(SORT_LABEL_KEY[lens.sort])}`}
+              />
+            }
+          >
+            <SlidersHorizontal />
+            {t(SORT_LABEL_KEY[lens.sort])}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-44">
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>{t("library.sortBy")}</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={lens.sort} onValueChange={(value) => lens.setSort(value as SortMode)}>
+                {(Object.keys(SORT_LABEL_KEY) as SortMode[]).map((mode) => (
+                  <DropdownMenuRadioItem key={mode} value={mode}>
+                    {t(SORT_LABEL_KEY[mode])}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>{t("library.view")}</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={lens.viewMode}
+                onValueChange={(value) => lens.setViewMode(value as ViewMode)}
+              >
+                {(Object.keys(VIEW_LABEL_KEY) as ViewMode[]).map((mode) => (
+                  <DropdownMenuRadioItem key={mode} value={mode}>
+                    {t(VIEW_LABEL_KEY[mode])}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );

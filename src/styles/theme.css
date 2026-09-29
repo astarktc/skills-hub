@@ -221,6 +221,10 @@
 
   /* rows, headers and palette items; `h-row` */
   --spacing-row: 36px;
+  /* the one structural collapse (D23, measured in DESIGN.md § Layout):
+     below it the sidebar is an icon rail (`max-shell:`), the inspector a
+     sheet, the Projects list a header select */
+  --breakpoint-shell: 75rem;
 
   /* motion: ≤ 120 ms, opacity/transform only; reduced motion removes it */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);

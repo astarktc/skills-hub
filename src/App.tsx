@@ -4,10 +4,12 @@ import { useTranslation } from "react-i18next";
 // The binder mounts the token-themed Toaster once; useStatusReporter makes
 // every toast call and owns toast lifetime.
 import { Toaster } from "@/components/ui/sonner";
+import { mainLandmarkFocus } from "@/components/ui/focus-fallback";
 import ExplorePage from "./components/skills/ExplorePage";
 import FilterBar from "./components/skills/FilterBar";
 import SkillDetailView, { type DetailSubject } from "./components/skills/SkillDetailView";
-import Header from "./components/skills/Header";
+import AppSidebar from "./components/shell/AppSidebar";
+import LibraryHeader from "./components/skills/LibraryHeader";
 import LoadingOverlay from "./components/skills/LoadingOverlay";
 import SkillsList from "./components/skills/SkillsList";
 import NotificationsModal from "./components/shared/NotificationsModal";
@@ -47,7 +49,8 @@ import {
   viewModePreference,
 } from "./lib/preferences";
 import { invokeTauri, isTauri } from "./lib/tauri";
-import { describeRefusal } from "./lib/actionLifecycle";
+import { describeRefusal, resolveFocusTarget } from "./lib/actionLifecycle";
+import { SKILL_FILTERS, libraryExceptions } from "./lib/skillPresentation";
 import type { ManagedSkill } from "./components/skills/types";
 
 // App is the binder: it owns only i18n, composes the surface module (what is
@@ -112,7 +115,8 @@ function App() {
     isReviewWanted: reviewIsWanted,
   });
 
-  // My Skills' list lens: query, sort, Grouped/Flat, view mode.
+  // My Skills' list lens: query, filter chips, sort, Grouped/Flat (single-
+  // skill sources fold into "Individual sources"), view mode.
   const lens = useListLens({
     items: library.managedSkills,
     labels: {
@@ -122,8 +126,31 @@ function App() {
     },
     groupByRepoPreference,
     viewModePreference,
+    foldSingletons: true,
+    filters: SKILL_FILTERS,
     selection: surface.selection.skills,
   });
+
+  // The header's exception summary: the health fold over the whole library.
+  const exceptions = useMemo(() => libraryExceptions(library.managedSkills), [library.managedSkills]);
+
+  // The Synced strip's Tools: the effective target set, in registry order,
+  // labelled by the Tool catalog (never a raw key).
+  const { tools: catalogTools, toolLabelById, installedToolIds } = catalog;
+  const { effectiveSyncTargetIds: stripTargetIds } = sync;
+  const stripTools = useMemo(() => {
+    const wanted = new Set(stripTargetIds);
+    const known = catalogTools.filter((tool) => wanted.has(tool.id));
+    const knownIds = new Set(known.map((tool) => tool.id));
+    const unknown = stripTargetIds
+      .filter((id) => !knownIds.has(id))
+      .map((id) => ({ id, label: toolLabelById[id] ?? id }));
+    return [...known.map((tool) => ({ id: tool.id, label: tool.label })), ...unknown];
+  }, [catalogTools, stripTargetIds, toolLabelById]);
+  const labelOfTool = useCallback((id: string) => toolLabelById[id] ?? id, [toolLabelById]);
+  const isToolDetected = useCallback((id: string) => installedToolIds.includes(id), [installedToolIds]);
+  const { toggle: toggleSelection } = surface;
+  const toggleSkillSelection = useCallback((id: string) => toggleSelection("skills", id), [toggleSelection]);
 
   // The skill action door: every verb on a skill (card, detail, toolbar,
   // new-tools notice) goes through its one handle. Delete's focus rule reads
@@ -222,12 +249,66 @@ function App() {
     [focus, open, selectedProjectId],
   );
 
+  // Opening a skill from its row moves focus into what replaced the list
+  // (the detail's first control until ticket 12's inspector), never <body>.
+  const openedFromRow = useRef(false);
   const handleOpenDetail = useCallback(
     (skill: ManagedSkill) => {
+      openedFromRow.current = true;
       focus({ kind: "skill", id: skill.id });
     },
     [focus],
   );
+
+  // Leaving a skill — Back, Escape or browser history — returns focus to its
+  // row (D21: the sheet closes → the focused row), when focus was left inside
+  // the closed detail (now <body>).
+  const focusedSkillId = focused?.kind === "skill" ? focused.id : null;
+  const handleCloseDetail = unfocus;
+  const lastFocusedSkill = useRef<string | null>(null);
+  useEffect(() => {
+    const left = lastFocusedSkill.current;
+    lastFocusedSkill.current = focusedSkillId;
+    if (focusedSkillId) {
+      const fromRow = openedFromRow.current;
+      openedFromRow.current = false;
+      // From the row, or arriving by history with focus lost to <body>.
+      if (!fromRow && document.activeElement && document.activeElement !== document.body) return;
+      const main = document.querySelector("main");
+      (main?.querySelector<HTMLElement>("button, a[href]") ?? mainLandmarkFocus())?.focus();
+      return;
+    }
+    if (!left || (document.activeElement && document.activeElement !== document.body)) return;
+    resolveFocusTarget({ kind: "row", skillId: left })?.focus();
+  }, [focusedSkillId]);
+  const layerOpen = surface.stack.length > 0;
+  useEffect(() => {
+    if (!focusedSkillId || layerOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (document.querySelector("[role='dialog'], [role='alertdialog'], [role='menu']")) return;
+      handleCloseDetail();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focusedSkillId, handleCloseDetail, layerOpen]);
+
+  const { handleOpenAdd, setAddModalTab } = addFlow;
+  const handleAddGit = useCallback(() => {
+    setAddModalTab("git");
+    handleOpenAdd();
+  }, [handleOpenAdd, setAddModalTab]);
+  const handleAddLocal = useCallback(() => {
+    setAddModalTab("local");
+    handleOpenAdd();
+  }, [handleOpenAdd, setAddModalTab]);
+  const handleOpenExplore = useCallback(() => handleViewChange("explore"), [handleViewChange]);
+  const { setFilter: setLensFilter } = lens;
+  const handleViewIssues = useCallback(() => setLensFilter("issues"), [setLensFilter]);
+  const librarySize = library.managedSkills.length;
+  // Reviewing discovered skills is the first task while the discovery
+  // outweighs the library (first run); it then carries the one primary.
+  const discoveryLeads = (addFlow.plan?.group_count ?? 0) >= Math.max(1, librarySize);
 
   const { handleExploreInstall } = addFlow;
   const handleExploreInstallFromDetail = useCallback(() => {
@@ -279,7 +360,7 @@ function App() {
   const overwriteAsk = surface.pendingAsk("overwrite");
 
   return (
-    <div className="skills-app">
+    <div className="flex h-full overflow-hidden bg-background text-foreground">
       {/* Toast lifetime is owned by useStatusReporter, per kind. Errors
           never auto-dismiss, so the visible stack is raised above sonner's
           default of 3: a fourth open error shows without hovering. */}
@@ -291,22 +372,24 @@ function App() {
         t={t}
       />
 
-      <Header
+      <AppSidebar
         activeArea={area}
+        onViewChange={handleViewChange}
+        onOpenSettings={handleOpenSettings}
         unreadNotifications={unreadCount}
         onOpenNotifications={handleOpenNotifications}
-        onOpenSettings={handleOpenSettings}
-        onViewChange={handleViewChange}
+        themePreference={settings.themePreference}
+        onThemeChange={settings.handleThemeChange}
         t={t}
       />
 
-      <main className="skills-main">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {detailSubject ? (
           <SkillDetailView
             subject={detailSubject}
             actions={actions}
             blockedReason={blockedReason}
-            onBack={unfocus}
+            onBack={detailSubject.kind === "managed" ? handleCloseDetail : unfocus}
             invokeTauri={invokeTauri}
             notify={notify}
             t={t}
@@ -317,31 +400,40 @@ function App() {
             }
           />
         ) : area === "skills" ? (
-          <div className="dashboard-stack">
-            <FilterBar
-              lens={lens}
+          <>
+            <LibraryHeader
+              librarySize={librarySize}
+              exceptions={exceptions}
+              onViewIssues={handleViewIssues}
               blockedReason={blockedReason}
-              onAddSkill={addFlow.handleOpenAdd}
-              autoSyncEnabled={sync.autoSyncEnabled}
-              onAutoSyncChange={sync.handleAutoSyncToggle}
-              actions={actions}
+              onRefreshAll={() => void run("update", "all")}
               onConfigureTools={sync.handleOpenToolConfig}
+              onAddSkill={handleOpenAdd}
+              addIsPrimary={!discoveryLeads}
               t={t}
             />
+            {librarySize > 0 ? <FilterBar lens={lens} t={t} /> : null}
             <SkillsList
-              plan={addFlow.plan}
               lens={lens}
-              installedTools={catalog.installedTools}
-              allTools={catalog.tools}
+              librarySize={librarySize}
+              plan={addFlow.plan}
+              stripTools={stripTools}
+              labelOf={labelOfTool}
+              isDetected={isToolDetected}
+              selection={surface.selection.skills}
+              onToggleSelect={toggleSkillSelection}
               pending={pending}
               blockedReason={blockedReason}
-              onReviewImport={addFlow.handleReviewImport}
               actions={actions}
-              onOpenDetail={handleOpenDetail}
-              copyToClipboard={copyToClipboard}
+              onOpen={handleOpenDetail}
+              onReviewImport={addFlow.handleReviewImport}
+              discoveryLeads={discoveryLeads}
+              onAddGit={handleAddGit}
+              onAddLocal={handleAddLocal}
+              onExplore={handleOpenExplore}
               t={t}
             />
-          </div>
+          </>
         ) : area === "settings" ? (
           <SettingsPage
             isTauri={isTauri}
@@ -365,6 +457,9 @@ function App() {
             onGithubTokenDraftChange={settings.handleGithubTokenDraftChange}
             onGithubTokenSave={settings.handleGithubTokenSave}
             onGithubTokenRemove={settings.handleGithubTokenRemove}
+            autoSyncEnabled={sync.autoSyncEnabled}
+            onAutoSyncChange={sync.handleAutoSyncToggle}
+            autoSyncBlockedReason={blockedReason}
             onBack={handleCloseSettings}
             t={t}
           />

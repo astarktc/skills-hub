@@ -225,3 +225,65 @@ TS
 ```
 
 Exit 0, 3905 ms: `installed / cancelled / cancelled`, first candidate's collision preserved, `tailPresent: 0`.
+
+## Re-review — 2026-09-29
+
+**Verdict: ship — F1–F5 closed in `df7cfc8`.** This accepts ticket 04's fixes, not the whole release: ticket 09 still has the narrower B1/B3 residuals documented in its re-review below. No new ticket-04 blocker found.
+
+Reviewed the **commit**, not the concurrent ticket-11 working tree: `git show df7cfc8 --stat` and `git diff 6d7b6f4 df7cfc8 -- <reviewed paths>`, with reads/tests in a detached `/tmp/r19-recheck` at `df7cfc8`. Scratch sensitivity changes were restored; the worktree was clean and removed with `git worktree remove`. No main-checkout source edits, live-library access, commits, archives or moves.
+
+### Finding closure and test sensitivity
+
+- **F1 — CLOSED.** `project_sync::first_sync_assignments_unlocked` admits a disabled assignment before first sync; `skill_store::AssignmentTransition::EnableAdmitted` uses `WHERE status = 'disabled'` and clears only ownership/hash. A failed-removal `error` row keeps its ownership, including when the transition is called directly. The resolver still refuses to overwrite genuinely owned rows. `a_project_collision_resolves_with_overwrite_or_keep` now tests **two arrangements × both choices**, including previously synced → successful Disable → foreign occupant → Enable collision. Keep asserts `synced_at = None`, disabled status and foreign bytes surviving resync, Propagation and Delete. Overwrite asserts `synced_at = Some(NOW + 5)` and subsequent Delete removing the newly owned artifact. `enable_admission_keeps_the_ownership_of_a_failed_removal` pins the SQL status condition; the fixture F1 test mirrors the previously owned arrangement.
+  - **Fresh sensitivity:** omitted only the admission call in the scratch worktree; the committed regression failed at `core/tests/skill_disable.rs:1309`, “a collided Enable leaves a non-owner, not the historical owner”. Restoring the commit returns the suite to green.
+  - **Relocation:** it is global-only; project assignments do not enter it. `target_relocation.rs:84–88` skips disabled and non-owning global rows. Fresh `cargo test target_relocation` passes the disabled/non-owner/foreign-folder cases (14 tests), in addition to the Keep marker tests in `skill_disable`. No path from the project Keep to relocation was found.
+- **F2 — CLOSED.** Both listing continuations check `cancelRequested()` before installing **or opening the picker**; `installBatch` checks again after awaiting channel creation, immediately before the command that resets the token. The ask/retry is under `uncancellable`. The real-reporter Add tests defer git/local listing, cancel, resolve it, assert **zero `installSelection` calls**, then prove a fresh Add installs; the batch test keeps the cancelled tail and asserts `pending.cancellable === false` during retry.
+  - **Fresh sensitivity:** disabled those action-boundary checks only in the scratch copy. Both committed git/local tests failed: expected 0 install commands, received 1. Restored code passes. This is a behavioral regression pin, not just a mocked `cancelCurrentOperation` assertion.
+- **F3 — CLOSED.** All four production callers pass stored identity: `global_sync.rs:127–133`, `project_sync.rs:123–133`, `propagation.rs:295–301`, `target_relocation.rs:198–204` use `Source::Managed`; `Occupant::observe` consumes that identity. Fresh `the_collision_fact_reads_the_stored_identity_like_the_policy` passes stored A / central B / target B → false, unknown identity → false, and identical stored identity → silent first-pass replacement. The behavioral test drives global sync; the other three caller arguments were source-checked, not claimed as four new integration tests.
+- **F4 — CLOSED.** Fixture `importGroup` filters originals by the actual `TARGET_EXISTS` paths after sync (`backend.ts:1378–1387`). The committed F4 test asserts one collision/no duplicate original when Gemini is a target, and retains the divergent-original warning when it is not. Passed in the requested fixture suite.
+- **F5 — CLOSED.** Cancellation is rechecked **inside** the guard before consuming staging. `cancel_while_waiting_for_the_guard_finalizes_nothing` holds the real guard and asserts no row, central/staging leftovers or target, with both outcomes cancelled. Removing the inside-lock check made that committed test fail with `alpha: Installed`; restored code passes. After finalize starts the settlement path contains no cancellation checkpoint, so its first sync completes. The test's 150 ms queue allowance is less deterministic than an explicit barrier, but it was sensitive to this regression in the fresh run.
+
+### The 04/09 integration boundary
+
+- **09-B2 is closed:** Refresh/Update/Restore/Re-point/Edit collect Propagation/re-assert rows, settle one ask and retry exact global/project pair identities. `settleParts` awaits retries, re-reads the catalog and touched project views, then the caller folds. Beyond the committed tests, temporary call-order assertions on the Update/Restore/Re-point cases passed **retry → catalog read → project-view read → fold** (3 tests). Dismissal sends no retry; `runAction`'s `finally` releases pending.
+- **04's retry test change is legitimate.** The old skills × Tools retry could mutate unasked cross-pairs; the new test requires `s1/cursor` and `s2/claude` in separate exact batches, with the unchanged rows preserved. A second test still requires skills with the same Tool set to share a batch. This strengthens the mutation-scope guarantee, while explicitly relaxing the IPC-count goal until a pair-list backend API exists; it does not relax one ask/one report.
+- **Cancellation/lifetime seam:** reporter tests pin persistent “Cancelling…” after progress and direct message updates, queue disposal on unmount, ordered reads, stale `stillWanted` refusal and rejection cleanup. `uncancellable` changes only cancellability, not slot ownership or read-queue admission. No dismissed-ask/pending or read-queue deadlock found in these paths.
+
+### Command-API compromise judgments
+
+Acceptable for **1.3.0 with an explicit BACKLOG follow-up**, not claims that the one-command ideal is already met:
+
+1. **Per-skill project assignment commands:** acceptable bounded debt; one outer lifecycle admission and one merged ask/fold. Add a backend multi-skill command later, preserving settled partial reports on whole-command failure.
+2. **Enable then first-sync as two commands:** acceptable API shape for disjoint partitions under one lifecycle slot. **The current combined report is not acceptable**: see 09-B3-R1; that reporting fix is blocking independently of adding a combined command.
+3. **Successful answered project Propagation row dropped:** acceptable temporarily because the current Update/Edit folds count target failures, not target successes; the actual catalog/view is re-read. Never synthesize a sync mode. Follow up with a lossless typed settlement/report adapter.
+4. **Enable retry re-runs its scope:** acceptable here: skill Enable selects the remaining disabled rows, not the first pass's successful rows or collided project `error` rows; project answers use their exact decisions separately. Retain the ownership gates and narrow the retry API later.
+
+The parent owns adding those queue entries; this bounded review edits only the two reviews/tickets. See the ticket-09 re-review for the two remaining acceptance blockers, rather than assigning them twice.
+
+### Fresh commands and results
+
+From `/tmp/r19-recheck`; Rust reused the build cache via `CARGO_TARGET_DIR=/Users/alexstark/Projects/skills-hub/src-tauri/target` (source and exported bindings remained in the detached worktree):
+
+```text
+cd src-tauri && cargo test install_batch && cargo test skill_disable && cargo test project_sync && cargo test sync_engine && cargo test export_bindings
+  PASS: 10 / 33 / 36 / 8 / 1 tests, repeated after restoring all scratch reverts.
+npx vitest run src/hooks src/lib src/components/projects src/fixtures
+  PASS: 25 files, 664 tests, repeated after restoring scratch probes.
+cd src-tauri && cargo test the_collision_fact_reads_the_stored_identity_like_the_policy && cargo test target_relocation
+  PASS: 1 / 14 tests.
+cargo test a_project_collision_resolves_with_overwrite_or_keep   [admission omitted, scratch only]
+  EXPECTED FAIL: 1 test, exit 101.
+cargo test cancel_while_waiting_for_the_guard_finalizes_nothing   [post-lock check omitted]
+  EXPECTED FAIL: 1 test, exit 101.
+npx vitest run src/hooks/useAddSkillFlow.test.ts -t 'Cancel pressed while the listing'
+  EXPECTED FAIL with boundary checks omitted: 2 tests, exit 1.
+npx vitest run src/hooks/useSkillActions.test.ts -t 'answered pairs are retried'
+  PASS with extra retry/read/fold ordering assertions: 3 tests.
+git diff --exit-code df7cfc8 -- src/bindings/index.ts
+  PASS: regenerated bindings identical to the reviewed commit.
+```
+
+Binding SHA-256: `3c1dc65c846f260a88e7907ff4f692279edf2dccb375c1db6b1b6cf20da02c0a`.
+The two **additional failing residual probes** for 09 are documented there. No full release gate or new visual audit is claimed.
+
+**Goal-backward check:** Keep now protects the foreign artifact through later operations; Overwrite acquires ownership; a cancelled discovery cannot start installation. The specific 04 blockers are actually closed, with sensitive regressions.

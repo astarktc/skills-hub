@@ -128,4 +128,21 @@ describe("useListLens", () => {
     rerender({ selection: undefined });
     expect(result.current.visibleSelection).toEqual([]);
   });
+
+  it("applies a named filter (a chip) with the query, and counts each over the whole list", () => {
+    const FILTERS = { local: (item: LensItem) => item.source_ref === null, acme: (item: LensItem) => Boolean(item.source_ref?.includes("acme")) };
+    const { result } = render({ filters: FILTERS });
+    expect(result.current.filter).toBe("all");
+    expect(result.current.filterCounts).toEqual({ all: 4, local: 1, acme: 2 });
+
+    act(() => result.current.setFilter("acme"));
+    expect(result.current.visible.map((s) => s.name)).toEqual(["alpha", "gamma"]);
+    act(() => result.current.setQuery("gam"));
+    expect(result.current.visible.map((s) => s.name)).toEqual(["gamma"]);
+    // The counts are the list's, not the query's.
+    expect(result.current.filterCounts.acme).toBe(2);
+
+    act(() => result.current.setFilter("all"));
+    expect(result.current.visible.map((s) => s.name)).toEqual(["gamma"]);
+  });
 });

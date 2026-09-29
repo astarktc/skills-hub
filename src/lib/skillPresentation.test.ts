@@ -9,7 +9,11 @@ import {
   filterAndSortSkills,
   formatRelativeTime,
   groupSkillsByRepo,
+  groupState,
   importedSourceLine,
+  libraryExceptions,
+  SKILL_FILTERS,
+  syncedStrip,
   INDIVIDUAL_GROUP_KEY,
   repoInfo,
   repointCurrentSource,
@@ -787,5 +791,124 @@ describe("skillHealth (the fold)", () => {
   it("the stored row carries its typed error and when it settled", () => {
     const fold = skillHealth({ ...healthy, health: { kind: "fetch_failed", error: failure, at: 42 } }, { t });
     expect(fold.rows[0]).toMatchObject({ error: failure, at: 42, scope: "skill" });
+  });
+});
+
+describe("My Skills folds (ticket 11)", () => {
+  type Fields = Parameters<typeof skillHealth>[0];
+  const base: Fields = {
+    source_type: "git",
+    source_ref: "https://github.com/acme/tools",
+    central_path: "/hub/alpha",
+    imported_from_tool: null,
+    unlocatable: null,
+    refreshable: true,
+    detachable: false,
+    disabled_at: null,
+    health: null,
+    invocation_override: null,
+    targets: [],
+  };
+  const row = (tool: string, status: SkillTargetDto["status"], synced_at: number | null = 1) => ({ tool, status, synced_at });
+  const TOOLS = [
+    { id: "cursor", label: "Cursor" },
+    { id: "claude_code", label: "Claude Code" },
+    { id: "amp", label: "Amp" },
+  ];
+  const context = {
+    labelOf: (id: string) => ({ windsurf: "Windsurf" })[id] ?? id,
+    isDetected: (id: string) => id !== "windsurf",
+  };
+  const strip = (fields: Partial<Fields>) => syncedStrip({ ...base, ...fields }, TOOLS, context);
+  const states = (fields: Partial<Fields>) => strip(fields).marks.map((mark) => mark.state);
+
+  describe("syncedStrip", () => {
+    it("one mark per Tool of the set, in its order; each target state has its own mark", () => {
+      const fold = strip({
+        targets: [row("amp", "error"), row("cursor", "synced"), row("claude_code", "stale")],
+      });
+      expect(fold.marks.map((mark) => [mark.tool, mark.label, mark.state])).toEqual([
+        ["cursor", "Cursor", "synced"],
+        ["claude_code", "Claude Code", "stale"],
+        ["amp", "Amp", "failed"],
+      ]);
+      expect([fold.synced, fold.total, fold.complete]).toEqual([2, 3, false]);
+    });
+
+    it.each([
+      ["no row", [], "not_synced", "not_synced"],
+      ["pending", [row("cursor", "pending", null)], "not_synced", "pending"],
+      ["synced", [row("cursor", "synced")], "synced", "synced"],
+      ["stale", [row("cursor", "stale")], "stale", "stale"],
+      ["missing", [row("cursor", "missing")], "missing", "missing"],
+      ["error after a sync", [row("cursor", "error")], "failed", "failed"],
+      ["a failed first sync", [row("cursor", "error", null)], "failed", "failed_first"],
+      ["pair-disabled", [row("cursor", "disabled", null)], "disabled", "disabled"],
+    ] as const)("%s → %s", (_, targets, state, nameKey) => {
+      const [mark] = strip({ targets: [...targets] }).marks;
+      expect([mark.state, mark.nameKey]).toEqual([state, nameKey]);
+    });
+
+    it("a Tool the skill has a row for outside the set is appended, labelled, never hidden", () => {
+      const fold = strip({ targets: [row("windsurf", "error")] });
+      expect(fold.marks.at(-1)).toMatchObject({ tool: "windsurf", label: "Windsurf", state: "failed", detected: false });
+      expect(fold.total).toBe(4);
+    });
+
+    it("a central-missing skill never shows a filled mark: its links are broken", () => {
+      const fold = strip({
+        unlocatable: "central_missing",
+        targets: [row("cursor", "synced"), row("claude_code", "stale"), row("amp", "error")],
+      });
+      expect(fold.marks.map((mark) => mark.state)).toEqual(["broken", "broken", "failed"]);
+      expect(fold.synced).toBe(0);
+    });
+
+    it("a skill disabled at skill grain shows every mark disabled", () => {
+      const fold = strip({ disabled_at: 9, targets: [row("cursor", "disabled"), row("amp", "disabled")] });
+      expect(fold.marks.every((mark) => mark.state === "disabled" && mark.nameKey === "skill_disabled")).toBe(true);
+    });
+
+    it("pair-grain Disable marks only that Tool", () => {
+      expect(states({ targets: [row("cursor", "disabled"), row("claude_code", "synced")] })).toEqual([
+        "disabled",
+        "synced",
+        "not_synced",
+      ]);
+    });
+
+    it("N/N is complete (the quiet strip); an empty set has no marks", () => {
+      const all = strip({ targets: TOOLS.map((tool) => row(tool.id, "synced")) });
+      expect([all.synced, all.total, all.complete]).toEqual([3, 3, true]);
+      const none = syncedStrip(base, [], context);
+      expect([none.total, none.complete]).toEqual([0, false]);
+    });
+  });
+
+  describe("libraryExceptions, the chips and a group's state", () => {
+    const failure = { code: "OTHER", message: "x" } as const;
+    const library: Fields[] = [
+      { ...base, targets: [row("cursor", "synced")] }, // healthy
+      { ...base, targets: [row("cursor", "error"), row("amp", "missing")] }, // 2 failed targets
+      { ...base, targets: [row("cursor", "stale")] }, // 1 stale
+      { ...base, health: { kind: "fetch_failed", error: failure, at: 1 }, targets: [row("cursor", "synced")] },
+      { ...base, disabled_at: 3, targets: [row("cursor", "disabled")] }, // muted
+      { ...base, targets: [] }, // not deployed: muted
+      { ...base, invocation_override: { conflict: false }, targets: [row("cursor", "synced"), row("amp", "disabled")] },
+    ];
+
+    it("counts failed and stale targets and the skills with an issue", () => {
+      expect(libraryExceptions(library)).toEqual({ failedTargets: 2, staleTargets: 1, skillsWithIssues: 3 });
+    });
+
+    it("the Issues chip keeps exactly the summary's skills; Edited and Disabled their own", () => {
+      expect(library.filter(SKILL_FILTERS.issues).length).toBe(libraryExceptions(library).skillsWithIssues);
+      expect(library.map(SKILL_FILTERS.edited)).toEqual([false, false, false, false, false, false, true]);
+      expect(library.map(SKILL_FILTERS.disabled)).toEqual([false, false, false, false, true, false, true]);
+    });
+
+    it("a group's state counts by loudest severity, and Deploy all acts on the undeployed", () => {
+      expect(groupState(library)).toEqual({ failed: 1, stale: 2, notDeployed: 1, disabled: 1, deployable: 2 });
+    });
   });
 });

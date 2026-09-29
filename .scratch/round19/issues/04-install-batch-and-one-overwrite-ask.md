@@ -267,3 +267,28 @@ AGENTS.md updated in three places: the install batch's cancel checkpoints, the r
 Gate: `npm run version:check` → Version OK (1.2.18); `npm run check` → exit 0 (lint 0 errors / 1 pre-existing warning
 in `useStatusReporter.ts:375` `idleWaitersRef` cleanup — ticket 09's code, not touched here; vitest 32 files / 712
 tests; build; rustfmt; clippy; `cargo test` 792 passed). Bindings byte-stable (`69dce91d…`).
+
+### 2026-09-29 — bounded committed re-review (Astra): ship
+
+Reviewed `df7cfc8` vs `6d7b6f4` in a detached scratch worktree, ignoring the concurrent ticket-11 working tree.
+See `.scratch/round19/review/ticket-04-review.md` § Re-review — 2026-09-29. **F1–F5 closed.** The previously owned
+project assignment now loses ownership only on successful-Disable admission; Keep survives resync/Propagation/Delete,
+Overwrite records a new timestamp, and failed-removal error rows keep ownership. Cancel during git/local listing sends
+zero installs; retry withdraws Cancel. Stored identity reaches all four callers; fixture divergent originals report once;
+Cancel while waiting for the guard finalizes nothing.
+
+Fresh sensitivity checks: removing admission makes F1's committed Rust regression fail; removing the post-lock cancel
+check makes F5 fail; removing the Add boundary checks makes both F2 git/local tests fail. Restored snapshot passes the
+requested Rust filters **10 / 33 / 36 / 8 / 1** and Vitest **25 files / 664 tests**. Extra stored-identity/relocation
+Rust checks pass **1 / 14**. Binding export unchanged. The worktree was restored clean and removed; no main source edit,
+commit, move, archive or status advancement.
+
+04/09 seam: B2's exact-pair retries and retry→catalog→project-view→fold ordering verified (3 strengthened temporary
+ordering tests passed). Replacing the Cartesian retry test with exact Tool-set batches is legitimate: safer mutation
+scope, still one ask/report. **This does not accept all of 09:** its re-review retains B1's Add Browse/disabled-reason
+remainder and B3-R1's lossy combined Deploy report.
+
+The four recorded command-API compromises are acceptable for 1.3.0 with a parent-owned BACKLOG note: multi-skill project
+command, combined Enable+sync command, lossless typed answered-target representation, narrowed Enable retry. Do not
+reintroduce unasked cross-pair writes to regain one IPC. The current B3-R1 reporting defect must be fixed now, not
+rolled into that API debt; detailed judgments are in both appended reviews.
