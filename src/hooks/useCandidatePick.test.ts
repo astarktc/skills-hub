@@ -4,7 +4,7 @@
 // names), and batch-install error collection. Reporter and deploy tail
 // enter as mocked dependency interfaces.
 
-import { act, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as folds from "../lib/reportOutcome";
 import type { InstallResultDto } from "../components/skills/types";
@@ -13,6 +13,7 @@ import {
   type CandidatePickDeps,
   type CandidatePickSource,
 } from "./useCandidatePick";
+import { useSurfaceState } from "./useSurfaceState";
 import {
   ActionExit,
   type ActionHandle,
@@ -73,7 +74,7 @@ function makeDeps(overrides?: { takenNames?: string[]; loading?: boolean }) {
     (created: InstallResultDto) => Promise<folds.InstallDeployment>
   >(async () => ({ status: "disabled" }));
   const afterBatch = vi.fn(async () => {});
-  const deps: CandidatePickDeps = {
+  const deps: Omit<CandidatePickDeps, "surface"> = {
     t,
     reporter: {
       loading: overrides?.loading ?? false,
@@ -97,6 +98,7 @@ function makeSource(overrides?: Partial<CandidatePickSource<Cand, string>>) {
   >(async (_ctx, c) => installed(c.name));
   const resetForm = vi.fn();
   const source: CandidatePickSource<Cand, string> = {
+    dialogKind: "gitPick",
     customName: "",
     selectable: (c) => c.valid,
     installOne,
@@ -109,12 +111,24 @@ function makeSource(overrides?: Partial<CandidatePickSource<Cand, string>>) {
 beforeEach(() => {
   vi.clearAllMocks();
 });
+afterEach(cleanup);
+
+/** The picker as the add flow composes it: its visibility is a surface layer. */
+function renderPick(
+  source: CandidatePickSource<Cand, string>,
+  deps: Omit<CandidatePickDeps, "surface">,
+) {
+  return renderHook(() => {
+    const surface = useSurfaceState();
+    return useCandidatePick(source, { ...deps, surface });
+  });
+}
 
 describe("useCandidatePick selection", () => {
   it("starts hidden and empty", () => {
     const { deps } = makeDeps();
     const { source } = makeSource();
-    const { result } = renderHook(() => useCandidatePick(source, deps));
+    const { result } = renderPick(source, deps);
 
     expect(result.current.visible).toBe(false);
     expect(result.current.candidates).toEqual([]);
@@ -124,7 +138,7 @@ describe("useCandidatePick selection", () => {
   it("open preselects the selectable candidates and shows the picker", () => {
     const { deps } = makeDeps();
     const { source } = makeSource();
-    const { result } = renderHook(() => useCandidatePick(source, deps));
+    const { result } = renderPick(source, deps);
 
     act(() =>
       result.current.open("/base", [
@@ -140,7 +154,7 @@ describe("useCandidatePick selection", () => {
   it("without a selectable rule every candidate is preselected", () => {
     const { deps } = makeDeps();
     const { source } = makeSource({ selectable: undefined });
-    const { result } = renderHook(() => useCandidatePick(source, deps));
+    const { result } = renderPick(source, deps);
 
     act(() =>
       result.current.open("/base", [
@@ -155,7 +169,7 @@ describe("useCandidatePick selection", () => {
   it("toggle and toggleAll respect the selectable rule", () => {
     const { deps } = makeDeps();
     const { source } = makeSource();
-    const { result } = renderHook(() => useCandidatePick(source, deps));
+    const { result } = renderPick(source, deps);
     act(() =>
       result.current.open("/base", [
         cand("alpha", "alpha"),
@@ -189,7 +203,7 @@ describe("useCandidatePick selection", () => {
   it("close hides but keeps the candidates; cancel discards them", () => {
     const { deps } = makeDeps();
     const { source } = makeSource();
-    const { result } = renderHook(() => useCandidatePick(source, deps));
+    const { result } = renderPick(source, deps);
     act(() => result.current.open("/base", [cand("alpha", "alpha")]));
 
     act(() => result.current.close());
@@ -207,7 +221,7 @@ describe("useCandidatePick selection", () => {
   it("close and cancel are no-ops while an action is running", () => {
     const { deps } = makeDeps({ loading: true });
     const { source } = makeSource();
-    const { result } = renderHook(() => useCandidatePick(source, deps));
+    const { result } = renderPick(source, deps);
     act(() => result.current.open("/base", [cand("alpha", "alpha")]));
 
     act(() => result.current.close());
@@ -222,7 +236,7 @@ describe("useCandidatePick validation", () => {
   it("rejects an empty selection", async () => {
     const { deps, setError } = makeDeps();
     const { source, installOne } = makeSource();
-    const { result } = renderHook(() => useCandidatePick(source, deps));
+    const { result } = renderPick(source, deps);
     act(() => result.current.open("/base", [cand("alpha", "alpha")]));
     act(() => result.current.toggleAll(false));
 
@@ -235,7 +249,7 @@ describe("useCandidatePick validation", () => {
   it("rejects a custom name for a multi-selection", async () => {
     const { deps, setError } = makeDeps();
     const { source, installOne } = makeSource({ customName: "mine" });
-    const { result } = renderHook(() => useCandidatePick(source, deps));
+    const { result } = renderPick(source, deps);
     act(() =>
       result.current.open("/base", [
         cand("alpha", "alpha"),
@@ -252,7 +266,7 @@ describe("useCandidatePick validation", () => {
   it("rejects duplicate names within the selection", async () => {
     const { deps, setError } = makeDeps();
     const { source, installOne } = makeSource();
-    const { result } = renderHook(() => useCandidatePick(source, deps));
+    const { result } = renderPick(source, deps);
     act(() =>
       result.current.open("/base", [
         cand("alpha", "one/alpha"),
@@ -271,7 +285,7 @@ describe("useCandidatePick validation", () => {
   it("rejects a taken candidate name in a multi-selection", async () => {
     const { deps, setError } = makeDeps({ takenNames: ["beta"] });
     const { source, installOne } = makeSource();
-    const { result } = renderHook(() => useCandidatePick(source, deps));
+    const { result } = renderPick(source, deps);
     act(() =>
       result.current.open("/base", [
         cand("alpha", "alpha"),
@@ -290,7 +304,7 @@ describe("useCandidatePick validation", () => {
   it("checks the custom name (not the candidate name) for a single selection", async () => {
     const { deps, setError } = makeDeps({ takenNames: ["mine"] });
     const { source, installOne } = makeSource({ customName: " mine " });
-    const { result } = renderHook(() => useCandidatePick(source, deps));
+    const { result } = renderPick(source, deps);
     act(() => result.current.open("/base", [cand("alpha", "alpha")]));
 
     await act(() => result.current.install());
@@ -309,7 +323,7 @@ describe("useCandidatePick batch install", () => {
     const { source, installOne, resetForm } = makeSource({
       customName: " custom ",
     });
-    const { result } = renderHook(() => useCandidatePick(source, deps));
+    const { result } = renderPick(source, deps);
     act(() =>
       result.current.open("/base", [
         cand("alpha", "alpha"),
@@ -339,7 +353,7 @@ describe("useCandidatePick batch install", () => {
   it("passes no name for a multi-selection", async () => {
     const { deps } = makeDeps();
     const { source, installOne } = makeSource();
-    const { result } = renderHook(() => useCandidatePick(source, deps));
+    const { result } = renderPick(source, deps);
     act(() =>
       result.current.open("/base", [
         cand("alpha", "alpha"),
@@ -371,7 +385,7 @@ describe("useCandidatePick batch install", () => {
         ? { status: "no-targets" }
         : { status: "disabled" },
     );
-    const { result } = renderHook(() => useCandidatePick(source, deps));
+    const { result } = renderPick(source, deps);
     act(() =>
       result.current.open("/base", [
         cand("alpha", "alpha"),
@@ -397,7 +411,7 @@ it.each([false, true])("picker executes fold completion=%s and publishes its out
   const { source, resetForm } = makeSource();
   const outcome: folds.Outcome = { toast: { kind: "warning", message: "fold" }, errors: [{ title: "error", message: "detail" }], warnings: [], completion: { reload: complete, closeModal: complete, conflict: false } };
   const fold = vi.spyOn(folds, "installOutcome").mockReturnValue(outcome);
-  const { result } = renderHook(() => useCandidatePick(source, deps));
+  const { result } = renderPick(source, deps);
   act(() => result.current.open("/base", [cand("alpha", "alpha")]));
   await act(async () => { await result.current.install(); });
   expect(fold).toHaveBeenCalledTimes(1);

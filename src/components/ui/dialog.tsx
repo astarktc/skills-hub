@@ -12,6 +12,7 @@ import {
   setLayerPopup,
 } from "./layer-stack";
 import { Button } from "./button";
+import { mainLandmarkFocus } from "./focus-fallback";
 
 /**
  * Dialog — the one modal shell (ADR-0006 §2; replaces `Modal.tsx`).
@@ -19,7 +20,9 @@ import { Button } from "./button";
  * What it owns so call sites do not:
  *   - focus: moved in on open, trapped while open, returned on close to the
  *     element that opened it — or, when that element is gone, to the
- *     caller's `fallbackFocus`, then to the layer beneath;
+ *     caller's `fallbackFocus`, then to the layer beneath, then to the main
+ *     landmark (`mainLandmarkFocus`) — never to `<body>` while the app has
+ *     a main landmark;
  *   - a background that is `inert` (not only aria-hidden) while open;
  *   - Escape and outside press dismiss the **top** layer only, and only when
  *     `dismissible`;
@@ -128,10 +131,14 @@ type DialogContentProps = Omit<
   showCloseButton?: boolean;
   /**
    * Where focus goes on close. Default: the element that had focus when the
-   * dialog opened; if it is gone, `fallbackFocus`, then the layer beneath.
+   * dialog opened; if it is gone, `fallbackFocus`, then the layer beneath,
+   * then the main landmark.
    */
   finalFocus?: FocusTarget;
-  /** Focus target when the opener no longer exists (e.g. a deleted row). */
+  /**
+   * Focus target when the opener no longer exists (e.g. a deleted row).
+   * Pass it wherever the dialog's action can remove its opener.
+   */
   fallbackFocus?: () => HTMLElement | null;
   /** Layout only (never colour or type). */
   className?: string;
@@ -164,7 +171,7 @@ function DialogContent({
       if (finalFocus) return finalFocus.current;
       const target = openerRef.current;
       if (target?.isConnected && !target.closest("[inert]")) return target;
-      return fallbackFocus?.() ?? popupBelow(layerId) ?? true;
+      return fallbackFocus?.() ?? popupBelow(layerId) ?? mainLandmarkFocus() ?? true;
     },
     [fallbackFocus, finalFocus, layerId],
   );

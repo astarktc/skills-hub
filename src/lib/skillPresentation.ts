@@ -9,6 +9,8 @@
 import type {
   InvocationMode,
   RepointTarget,
+  SkillHealth,
+  SkillOutcomeKind,
   SkillTargetDto,
   ToolOption,
   UnlocatableState,
@@ -59,6 +61,9 @@ export type RepoGroup<T> = {
 };
 
 export const LOCAL_GROUP_KEY = "__local__";
+
+/** The folded group of sources that hold one skill each (`foldSingletons`). */
+export const INDIVIDUAL_GROUP_KEY = "__individual__";
 
 /**
  * The skill's Provenance as the UI needs it: `git` (an external repo),
@@ -177,11 +182,15 @@ function looksLikeGitRef(ref: string): boolean {
 
 /**
  * Fold skills into repo groups, alphabetically by label, with the local
- * group always last.
+ * group always last. With `foldSingletons`, every repo that holds exactly
+ * one skill folds into one "Individual sources" group (`labels.individual`),
+ * placed after the repo groups and before the local group, its skills in
+ * input order (the lens's sort).
  */
 export function groupSkillsByRepo<T extends Pick<SkillPresentationFields, "source_ref">>(
   skills: T[],
-  labels: { local: string; ungrouped: string },
+  labels: { local: string; ungrouped: string; individual?: string },
+  options: { foldSingletons?: boolean } = {},
 ): RepoGroup<T>[] {
   const map = new Map<string, { href: string | null; skills: T[] }>();
   for (const skill of skills) {
@@ -193,15 +202,33 @@ export function groupSkillsByRepo<T extends Pick<SkillPresentationFields, "sourc
     if (entry) entry.skills.push(skill);
     else map.set(key, { href: repo?.href ?? null, skills: [skill] });
   }
-  const entries: RepoGroup<T>[] = [...map.entries()].map(([key, entry]) => ({
-    key,
-    label: key === LOCAL_GROUP_KEY ? labels.local : key || labels.ungrouped,
-    href: entry.href,
-    skills: entry.skills,
-  }));
+  const isSingleton = (key: string) =>
+    Boolean(options.foldSingletons) &&
+    key !== LOCAL_GROUP_KEY &&
+    map.get(key)?.skills.length === 1;
+  const entries: RepoGroup<T>[] = [...map.entries()]
+    .filter(([key]) => !isSingleton(key))
+    .map(([key, entry]) => ({
+      key,
+      label: key === LOCAL_GROUP_KEY ? labels.local : key || labels.ungrouped,
+      href: entry.href,
+      skills: entry.skills,
+    }));
+  const rank = (key: string) =>
+    key === LOCAL_GROUP_KEY ? 2 : key === INDIVIDUAL_GROUP_KEY ? 1 : 0;
+  const singles = [...map.entries()].filter(([key]) => isSingleton(key));
+  if (singles.length > 0) {
+    const members = new Set(singles.map(([, entry]) => entry.skills[0]));
+    entries.push({
+      key: INDIVIDUAL_GROUP_KEY,
+      label: labels.individual ?? labels.ungrouped,
+      href: null,
+      skills: skills.filter((skill) => members.has(skill)),
+    });
+  }
   entries.sort((a, b) => {
-    if (a.key === LOCAL_GROUP_KEY && b.key !== LOCAL_GROUP_KEY) return 1;
-    if (b.key === LOCAL_GROUP_KEY && a.key !== LOCAL_GROUP_KEY) return -1;
+    const byRank = rank(a.key) - rank(b.key);
+    if (byRank !== 0) return byRank;
     return a.label.toLowerCase().localeCompare(b.label.toLowerCase());
   });
   return entries;
@@ -436,3 +463,23 @@ export function deployAction(skill: {
   if (disabledTargets < skill.targets.length) return { kind: "deployed" };
   return disabledTargets > 0 ? { kind: "enable", disabledTargets } : { kind: "sync" };
 }
+
+/**
+ * Skill health: the skill's stored last outcome (`ManagedSkill.health`,
+ * written by the backend where the outcome settled), or `null` when healthy.
+ * A stub: ticket 09's fold adds severity and the source line; every reader
+ * goes through this one function so that fold lands in one place.
+ */
+export function skillHealth(skill: { health: SkillHealth | null }): SkillHealth | null {
+  return skill.health;
+}
+
+/** The one-line label of each stored outcome kind (`skillHealth.*`). */
+export const SKILL_OUTCOME_LABEL_KEY = {
+  fetch_failed: "skillHealth.fetchFailed",
+  edit_conflict: "skillHealth.editConflict",
+  delete_incomplete: "skillHealth.deleteIncomplete",
+  repoint_failed: "skillHealth.repointFailed",
+  restore_failed: "skillHealth.restoreFailed",
+  import_failed: "skillHealth.importFailed",
+} as const satisfies Record<SkillOutcomeKind, string>;

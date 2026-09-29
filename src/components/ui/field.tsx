@@ -1,14 +1,20 @@
 import * as React from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { disabledState } from "./styles";
+import { FieldContext, type FieldContextValue, useFieldControlProps } from "./field-context";
+import { disabledState, fieldFocusRing } from "./styles";
 
 /**
- * Field — label, control (Input / Textarea / Select), helper text and error,
- * wired so no call site has to: the label is associated with the control
- * (`htmlFor` ↔ `id`), helper and error are the control's
+ * Field — label, control (Input / Textarea / Select / Checkbox), helper text
+ * and error, wired so no call site has to: the label is associated with the
+ * control (`htmlFor` ↔ `id`), helper and error are the control's
  * `aria-describedby`, and `invalid` sets `aria-invalid`. A placeholder is
  * never the label.
+ *
+ * The Field owns the control id: the control reports the id it actually
+ * renders (its own `id` prop when given, else a generated one) and the label
+ * points at that id — an explicit `id` never severs the association. One
+ * control per Field; a group of checkboxes is a `FieldSet` with a legend.
  *
  *   <Field invalid={Boolean(error)}>
  *     <FieldLabel>Repository URL</FieldLabel>
@@ -17,18 +23,6 @@ import { disabledState } from "./styles";
  *     <FieldError>{error}</FieldError>
  *   </Field>
  */
-
-type FieldContextValue = {
-  controlId: string;
-  descriptionId: string | null;
-  errorId: string | null;
-  invalid: boolean;
-  disabled: boolean;
-  registerDescription: (present: boolean) => void;
-  registerError: (present: boolean) => void;
-};
-
-const FieldContext = React.createContext<FieldContextValue | null>(null);
 
 type FieldProps = Omit<React.ComponentProps<"div">, "className"> & {
   invalid?: boolean;
@@ -47,9 +41,13 @@ function Field({
   const baseId = React.useId();
   const [hasDescription, setHasDescription] = React.useState(false);
   const [hasError, setHasError] = React.useState(false);
+  const generatedControlId = `${baseId}-control`;
+  const [registeredControlId, setRegisteredControlId] = React.useState<string | null>(null);
   const value = React.useMemo<FieldContextValue>(
     () => ({
-      controlId: `${baseId}-control`,
+      controlId: registeredControlId ?? generatedControlId,
+      generatedControlId,
+      registerControlId: setRegisteredControlId,
       descriptionId: hasDescription ? `${baseId}-description` : null,
       errorId: hasError ? `${baseId}-error` : null,
       invalid,
@@ -57,7 +55,7 @@ function Field({
       registerDescription: setHasDescription,
       registerError: setHasError,
     }),
-    [baseId, disabled, hasDescription, hasError, invalid],
+    [baseId, disabled, generatedControlId, hasDescription, hasError, invalid, registeredControlId],
   );
   return (
     <FieldContext.Provider value={value}>
@@ -143,34 +141,10 @@ function FieldError({
   );
 }
 
-/** Wires a control to its Field; explicit props always win. */
-function useFieldControlProps<
-  P extends {
-    id?: string;
-    disabled?: boolean;
-    "aria-describedby"?: string;
-    "aria-invalid"?: React.AriaAttributes["aria-invalid"];
-  },
->(props: P): P {
-  const field = React.useContext(FieldContext);
-  if (!field) return props;
-  const describedBy =
-    [props["aria-describedby"], field.descriptionId, field.invalid ? field.errorId : null]
-      .filter(Boolean)
-      .join(" ") || undefined;
-  return {
-    ...props,
-    id: props.id ?? field.controlId,
-    disabled: props.disabled ?? (field.disabled || undefined),
-    "aria-describedby": describedBy,
-    "aria-invalid": props["aria-invalid"] ?? (field.invalid || undefined),
-  };
-}
-
 const controlBase = [
   "w-full min-w-0 rounded-md border border-input bg-transparent px-2.5 text-sm text-foreground",
   "placeholder:text-faint",
-  "outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring",
+  fieldFocusRing,
   "aria-invalid:border-destructive",
   disabledState,
 ];

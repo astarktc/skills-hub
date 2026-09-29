@@ -10,7 +10,7 @@ use super::{
     central_repo::ensure_central_repo,
     clock::now_ms,
     content_identity,
-    errors::SignalError,
+    errors::{CommandError, SignalError},
     git_acquisition::{
         acquire, parse_github_url, AcquireRequest, Acquired, GitSource, GithubApi, SkillIntent,
     },
@@ -18,6 +18,7 @@ use super::{
     installer::{ensure_installable_skill_dir, InstallerPaths},
     propagation::{propagate_unlocked, PropagationReport},
     provenance::{is_refreshable, Provenance},
+    skill_health::{self, OutcomeFamily, SkillOutcomeKind},
     skill_store::{SkillRecord, SkillStore},
     sync_engine::copy_dir_recursive,
 };
@@ -104,6 +105,11 @@ impl UpdateRequest {
         })
     }
 
+    /// The skill this request settles.
+    pub(crate) fn skill_id(&self) -> &str {
+        &self.expected.id
+    }
+
     /// Direct Edit: no bytes to acquire and no source change; the central copy
     /// is settled in place under the guard (`clear` drops the Edit row).
     pub(crate) fn edit(record: SkillRecord, clear: bool) -> Self {
@@ -171,6 +177,7 @@ pub(crate) fn apply_unlocked(
         current.imported_from_tool = None;
     }
     let now = now_ms();
+    let direct_edit = matches!(request.bytes, UpdateBytes::EditInPlace { .. });
     let (updated, edit_conflict) = match request.bytes {
         UpdateBytes::EditInPlace { clear } => {
             super::skill_edits::settle_direct_unlocked(store, &current, clear)?;
@@ -184,6 +191,7 @@ pub(crate) fn apply_unlocked(
         UpdateBytes::LocalFolder { staged } => settle_staged(store, &current, staged, None)?,
     };
     let propagation = propagate_unlocked(store, paths, &updated.id, now)?;
+    settle_health(store, &updated.id, direct_edit, edit_conflict.as_ref());
     Ok(ApplyOutcome::Updated(UpdateOutcome {
         skill_id: updated.id,
         name: updated.name,
@@ -192,6 +200,45 @@ pub(crate) fn apply_unlocked(
         propagation,
         edit_conflict,
     }))
+}
+
+/// Skill health at a settled Update (see `core::skill_health`). A direct Edit
+/// is the Edit family's success. An Update whose replay reported a conflict
+/// records `edit_conflict`; otherwise it is the Update family's success, and
+/// also the Edit family's once the Edit row no longer conflicts (convergence,
+/// or no Edit at all). An Update that failed never reaches here: its caller
+/// classifies the error where it settles (`refresh`).
+fn settle_health(
+    store: &SkillStore,
+    skill_id: &str,
+    direct_edit: bool,
+    edit_conflict: Option<&super::skill_edits::InvocationEditConflict>,
+) {
+    if direct_edit {
+        skill_health::note_success(store, skill_id, OutcomeFamily::Edit);
+        return;
+    }
+    if let Some(conflict) = edit_conflict {
+        skill_health::note_outcome(
+            store,
+            skill_id,
+            SkillOutcomeKind::EditConflict,
+            &CommandError::EditConflict {
+                base_mode: conflict.base_mode,
+                upstream_mode: conflict.upstream_mode,
+                override_mode: conflict.override_mode,
+            },
+        );
+        return;
+    }
+    skill_health::note_success(store, skill_id, OutcomeFamily::Update);
+    match store.get_skill_edit(skill_id, super::skill_store::SkillEditKind::InvocationMode) {
+        Ok(edit) if !edit.as_ref().is_some_and(|edit| edit.conflict) => {
+            skill_health::note_success(store, skill_id, OutcomeFamily::Edit)
+        }
+        Ok(_) => {}
+        Err(err) => log::warn!("reading the Edit of skill {skill_id} failed: {err:#}"),
+    }
 }
 
 /// Land staged bytes through finalize's failure-atomic window, replaying the

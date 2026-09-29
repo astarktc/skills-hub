@@ -7,6 +7,7 @@ import {
   DialogContent,
   DialogFooter,
 } from '@/components/ui/dialog'
+import { mainLandmarkFocus } from '@/components/ui/focus-fallback'
 
 type DeleteModalProps = {
   open: boolean
@@ -33,7 +34,7 @@ const DeleteModal = ({
         if (!next) onRequestClose()
       }}
     >
-      <DialogContent aria-labelledby={titleId}>
+      <DialogContent aria-labelledby={titleId} fallbackFocus={mainLandmarkFocus}>
         <DialogBody>
           <div className="delete-title" id={titleId}>
             <TriangleAlert size={20} />

@@ -96,7 +96,7 @@ function Stacked() {
   );
 }
 
-function RemovesItsOpener() {
+function RemovesItsOpener({ withFallback = true }: { withFallback?: boolean }) {
   const [open, setOpen] = useState(false);
   const [rowExists, setRowExists] = useState(true);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -111,7 +111,7 @@ function RemovesItsOpener() {
         </button>
       ) : null}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent fallbackFocus={() => heading.current}>
+        <DialogContent fallbackFocus={withFallback ? () => heading.current : undefined}>
           <DialogHeader>
             <DialogTitle>Delete?</DialogTitle>
           </DialogHeader>
@@ -246,6 +246,29 @@ describe("Dialog", () => {
         screen.getByRole("heading", { name: "Library" }),
       ),
     );
+  });
+});
+
+describe("Dialog without a fallback, when its lone opener is removed", () => {
+  it("returns focus to the main landmark, never to <body>", async () => {
+    render(
+      <main aria-label="Library surface">
+        <RemovesItsOpener withFallback={false} />
+      </main>,
+    );
+    const opener = screen.getByRole("button", { name: "Delete row" });
+    opener.focus();
+    fireEvent.click(opener);
+    await openedDialog("Delete?");
+
+    fireEvent.click(screen.getByRole("button", { name: "Yes, delete" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const main = screen.getByRole("main", { name: "Library surface" });
+    await waitFor(() => expect(document.activeElement).toBe(main));
+    expect(document.activeElement).not.toBe(document.body);
+    // Programmatically focusable, never a Tab stop.
+    expect(main.getAttribute("tabindex")).toBe("-1");
   });
 });
 

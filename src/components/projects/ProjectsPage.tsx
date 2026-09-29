@@ -1,4 +1,4 @@
-import { memo, useCallback } from "react";
+import { memo, useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
@@ -22,6 +22,12 @@ import type {
   NotifyErrorFn,
   NotifyFn,
 } from "../../hooks/useStatusReporter";
+import {
+  useFocusReconciliation,
+  type SurfaceState,
+} from "../../hooks/useSurfaceState";
+
+const PROJECT_DIALOGS = ["projectAdd", "projectEdit", "projectToolConfig", "projectRemove"] as const;
 
 type ProjectsPageProps = {
   /** The reporter's notification entry point, handed down by the binder. */
@@ -36,6 +42,22 @@ type ProjectsPageProps = {
    * before this world's own tool status has loaded (round 14 D4).
    */
   toolLabelById: Record<string, string>;
+  /**
+   * The surface module: the focused project (`#/projects/<id>`) and this
+   * world's dialogs.
+   */
+  surface: Pick<
+    SurfaceState,
+    | "route"
+    | "selection"
+    | "focused"
+    | "focus"
+    | "reconcile"
+    | "layer"
+    | "openDialog"
+    | "closeDialog"
+    | "dismissDialog"
+  >;
 };
 
 const ProjectsPage = ({
@@ -43,9 +65,43 @@ const ProjectsPage = ({
   notifyError,
   showActionErrors,
   toolLabelById,
+  surface,
 }: ProjectsPageProps) => {
   const { t } = useTranslation();
   const state = useProjectState();
+  const { focus, openDialog, closeDialog, dismissDialog } = surface;
+
+  // The focused project is the surface's (hash-addressable); this world
+  // loads the matrix for it. An id that is not (or no longer) a project
+  // clears itself once the list has loaded.
+  const focusedProjectId =
+    surface.focused?.kind === "project" ? surface.focused.id : null;
+  const projectIds = useMemo(
+    () =>
+      state.projectsLoading || state.loadFailed
+        ? null
+        : state.projects.map((project) => project.id),
+    [state.loadFailed, state.projects, state.projectsLoading],
+  );
+  useFocusReconciliation(surface, "project", projectIds);
+  const { selectProject, selectedProjectId } = state;
+  useEffect(() => {
+    if (!focusedProjectId || focusedProjectId === selectedProjectId) return;
+    if (!projectIds?.includes(focusedProjectId)) return;
+    selectProject(focusedProjectId).catch(notifyError);
+  }, [focusedProjectId, notifyError, projectIds, selectProject, selectedProjectId]);
+
+  // This world's dialogs render only on this page: leaving it withdraws them.
+  useEffect(
+    () => () => {
+      for (const kind of PROJECT_DIALOGS) dismissDialog(kind);
+    },
+    [dismissDialog],
+  );
+  const handleSelectProject = useCallback(
+    (id: string) => focus({ kind: "project", id }),
+    [focus],
+  );
 
   // Per-target outcomes (removal under ADR-0002, project sync) are report
   // data: the fold decides the entries and the toast; this only shows them
@@ -66,14 +122,15 @@ const ProjectsPage = ({
         // The ignore intent rides along with registration; the hook hands
         // it to the backend once the tool set is confirmed.
         const project = await state.registerProject(path, gitignore);
+        focus({ kind: "project", id: project.id });
         await state.selectProject(project.id);
-        state.openDialog({ kind: "toolConfig" });
+        openDialog({ kind: "projectToolConfig" });
         await state.loadToolStatus();
       } catch (err) {
         notifyError(err);
       }
     },
-    [notifyError, state],
+    [focus, notifyError, openDialog, state],
   );
 
   const handleToolConfigConfirm = useCallback(
@@ -84,58 +141,55 @@ const ProjectsPage = ({
         const completion = applyOutcome(
           projectRemovalOutcome(report, { t, toolLabelById, action: "configureTools" }),
         );
-        if (completion.closeModal) state.closeDialog();
+        if (completion.closeModal) dismissDialog("projectToolConfig");
       } catch (err) {
         notifyError(err);
       }
     },
-    [applyOutcome, notifyError, state, t, toolLabelById],
+    [applyOutcome, dismissDialog, notifyError, state, t, toolLabelById],
   );
 
-  const dialog = state.dialog;
-  const dialogProjectId =
-    dialog?.kind === "edit" || dialog?.kind === "remove"
-      ? dialog.projectId
-      : null;
+  const editDialog = surface.layer("projectEdit");
+  const removeDialog = surface.layer("projectRemove");
 
   const handleRemoveProject = useCallback(async () => {
-    if (dialog?.kind !== "remove") return;
+    if (!removeDialog) return;
     try {
-      const report = await state.removeProject(dialog.projectId);
+      const report = await state.removeProject(removeDialog.projectId);
       const completion = applyOutcome(
         projectRemovalOutcome(report, { t, toolLabelById, action: "removeProject" }),
       );
-      if (completion.closeModal) state.closeDialog();
+      if (completion.closeModal) dismissDialog("projectRemove");
     } catch (err) {
       notifyError(err);
     }
-  }, [applyOutcome, dialog, notifyError, state, t, toolLabelById]);
+  }, [applyOutcome, dismissDialog, notifyError, removeDialog, state, t, toolLabelById]);
 
   const handlePromptRemove = useCallback(
     (id: string) => {
-      state.openDialog({ kind: "remove", projectId: id });
+      openDialog({ kind: "projectRemove", projectId: id });
     },
-    [state],
+    [openDialog],
   );
 
   const handlePromptEdit = useCallback(
     (id: string) => {
-      state.openDialog({ kind: "edit", projectId: id });
+      openDialog({ kind: "projectEdit", projectId: id });
     },
-    [state],
+    [openDialog],
   );
 
   const handleEditSave = useCallback(
     async (projectId: string, gitignore: IgnoreUpdateOptions) => {
       try {
         await state.updateGitignore(projectId, gitignore);
-        state.closeDialog();
+        dismissDialog("projectEdit");
         notify("success", t("projects.configureProject"));
       } catch (err) {
         notifyError(err);
       }
     },
-    [notify, notifyError, state, t],
+    [dismissDialog, notify, notifyError, state, t],
   );
 
   const handleResyncProject = useCallback(async () => {
@@ -209,8 +263,8 @@ const ProjectsPage = ({
 
   const handleConfigureToolsFromToolbar = useCallback(async () => {
     await state.loadToolStatus();
-    state.openDialog({ kind: "toolConfig" });
-  }, [state]);
+    openDialog({ kind: "projectToolConfig" });
+  }, [openDialog, state]);
 
   const handleUpdatePath = useCallback(
     async (projectId: string) => {
@@ -239,7 +293,7 @@ const ProjectsPage = ({
           <p className="projects-empty-body">{t("projects.emptyBody")}</p>
           <button
             className="btn btn-primary"
-            onClick={() => state.openDialog({ kind: "add" })}
+            onClick={() => openDialog({ kind: "projectAdd" })}
           >
             {t("projects.emptyAction")}
           </button>
@@ -248,18 +302,18 @@ const ProjectsPage = ({
         <div className="projects-layout">
           <ProjectList
             projects={state.projects}
-            selectedProjectId={state.selectedProjectId}
+            selectedProjectId={focusedProjectId}
             loading={state.projectsLoading}
             loadFailed={state.loadFailed}
-            onSelectProject={state.selectProject}
-            onAddProject={() => state.openDialog({ kind: "add" })}
+            onSelectProject={handleSelectProject}
+            onAddProject={() => openDialog({ kind: "projectAdd" })}
             onEditProject={handlePromptEdit}
             onRemoveProject={handlePromptRemove}
             onUpdatePath={handleUpdatePath}
             t={t}
           />
           <section className="matrix-panel">
-            {!state.selectedProjectId ? (
+            {!focusedProjectId || !state.selectedProjectId ? (
               <div className="matrix-placeholder">
                 {t("projects.selectProject")}
               </div>
@@ -292,25 +346,25 @@ const ProjectsPage = ({
       )}
 
       <AddProjectModal
-        open={dialog?.kind === "add"}
+        open={surface.layer("projectAdd") !== null}
         loading={false}
         projects={state.projects}
         onRegister={handleAddProject}
-        onRequestClose={state.closeDialog}
+        onRequestClose={() => closeDialog("projectAdd")}
         t={t}
       />
 
       <EditProjectModal
-        open={dialog?.kind === "edit"}
-        project={state.projects.find((p) => p.id === dialogProjectId) ?? null}
+        open={editDialog !== null}
+        project={state.projects.find((p) => p.id === editDialog?.projectId) ?? null}
         onSave={handleEditSave}
         loadStatus={state.getGitignoreStatus}
-        onRequestClose={state.closeDialog}
+        onRequestClose={() => closeDialog("projectEdit")}
         t={t}
       />
 
       <ToolConfigModal
-        open={dialog?.kind === "toolConfig"}
+        open={surface.layer("projectToolConfig") !== null}
         loading={false}
         toolStatus={state.toolStatus}
         savedSelection={
@@ -324,19 +378,19 @@ const ProjectsPage = ({
         onConfirm={handleToolConfigConfirm}
         onRequestClose={() => {
           state.discardPendingIgnore();
-          state.closeDialog();
+          closeDialog("projectToolConfig");
         }}
         t={t}
       />
 
       <RemoveProjectModal
-        open={dialog?.kind === "remove"}
+        open={removeDialog !== null}
         loading={false}
         projectName={
-          state.projects.find((p) => p.id === dialogProjectId)?.name ?? null
+          state.projects.find((p) => p.id === removeDialog?.projectId)?.name ?? null
         }
         onConfirm={handleRemoveProject}
-        onRequestClose={state.closeDialog}
+        onRequestClose={() => closeDialog("projectRemove")}
         t={t}
       />
     </div>

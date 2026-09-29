@@ -19,7 +19,9 @@ use crate::core::credentials::KeyringStore;
 use crate::core::environment::{expand_home_path, home_dir};
 use crate::core::errors::SignalError;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
-use crate::core::global_sync::{BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome};
+use crate::core::global_sync::{
+    BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome, OverrideDecision,
+};
 use crate::core::installer::{
     clone_for_explore_preview, install_git_skill_from_listing, install_local_skill_from_selection,
     list_git_skills, list_local_skills, GitSkillListing, InstallResult, InstallerPaths,
@@ -432,13 +434,14 @@ pub struct BatchSyncSkillDto {
     pub source_path: String,
 }
 
-/// Force-overwrite for one (skill, tool) pair; applies to any target tool
-/// sharing the named tool's skills dir.
+/// The operator's answer to one pair's `TARGET_EXISTS` ask — overwrite the
+/// folder, or keep it (the pair is recorded `disabled`); applies to any
+/// target tool sharing the named tool's skills dir.
 #[derive(Debug, Clone, Deserialize, Type)]
 pub struct BatchSyncOverrideDto {
     pub skill_id: String,
     pub tool: String,
-    pub overwrite: bool,
+    pub decision: OverrideDecision,
 }
 
 #[derive(Debug, Clone, Deserialize, Type)]
@@ -493,7 +496,7 @@ pub async fn sync_skills_to_tools(
                 .map(|o| BatchOverride {
                     skill_id: o.skill_id,
                     tool_key: o.tool,
-                    overwrite: o.overwrite,
+                    decision: o.decision,
                 })
                 .collect(),
         };
@@ -754,6 +757,10 @@ pub struct OnboardingSelectionDto {
     pub group_name: String,
     pub chosen_path: String,
     pub name: Option<String>,
+    /// Managed-name group only: replace the Tools' copies with the Managed
+    /// skill. Absent/false = no decision — the group is skipped.
+    #[serde(default)]
+    pub replace: bool,
 }
 
 /// What happens to the originals: sync the imported skill to `tools`
@@ -764,6 +771,9 @@ pub struct ImportPolicyDto {
     pub auto_sync: bool,
     #[serde(default)]
     pub tools: Option<Vec<String>>,
+    /// Auto-sync off: remove the byte-identical originals, or leave them.
+    /// Required — the frontend states the operator's per-run choice.
+    pub remove_originals: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Type)]
@@ -805,6 +815,7 @@ pub async fn import_onboarding_selection(
                 group_name: s.group_name,
                 chosen_path: PathBuf::from(s.chosen_path),
                 name: s.name,
+                replace: s.replace,
             })
             .collect();
         let report = import_onboarding_selection_core(
@@ -813,6 +824,7 @@ pub async fn import_onboarding_selection(
             &selections,
             &ImportPolicy {
                 auto_sync: policy.auto_sync,
+                remove_originals: policy.remove_originals,
                 tools: policy.tools,
                 scan_scope,
             },
@@ -873,6 +885,9 @@ pub struct ManagedSkillDto {
     /// Whether Detach would be accepted (backend-owned rule: a `local` skill
     /// whose central copy is present); the UI offers Detach only when `true`.
     pub detachable: bool,
+    /// Skill health: the stored last outcome of a skill-level operation
+    /// (see **Skill health** in `CONTEXT.md`), null when healthy.
+    pub health: Option<crate::core::skill_health::SkillHealth>,
 }
 
 #[derive(Debug, Serialize, Type)]
@@ -980,6 +995,7 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
             refreshable,
             unlocatable,
             detachable,
+            health,
         } = entry;
         ManagedSkillDto {
             id: skill.id,
@@ -1009,6 +1025,7 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
             refreshable,
             unlocatable,
             detachable,
+            health,
         }
     }
 }

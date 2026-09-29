@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::core::errors::SignalError;
+use crate::core::skill_discovery::{manifest_validity, InvalidManifestReason};
 
 pub mod catalog;
 
@@ -955,8 +956,28 @@ fn sole_entry(dir: &Path) -> Option<std::ffi::OsString> {
     sole
 }
 
-pub fn scan_tool_dir(tool: &ToolAdapter, dir: &Path) -> Result<Vec<DetectedSkill>> {
-    let mut results = Vec::new();
+/// One Tool skills dir, scanned: the entries that are skills, and the ones
+/// that look like skill folders but are not (`SKILL.md` missing or unusable).
+#[derive(Clone, Debug, Default)]
+pub struct ToolDirScan {
+    pub skills: Vec<DetectedSkill>,
+    pub invalid: Vec<InvalidSkillDir>,
+}
+
+/// A directory in a Tool's skills dir whose manifest the gate refused.
+#[derive(Clone, Debug)]
+pub struct InvalidSkillDir {
+    pub entry: DetectedSkill,
+    pub reason: InvalidManifestReason,
+}
+
+/// List a Tool's skills dir, gated on the manifest (#46): a subdirectory is a
+/// skill only when its `SKILL.md` parses to a valid manifest (the strict read
+/// install admission uses); every other visible subdirectory is reported in
+/// `invalid` with the typed reason. A hidden directory that is not a skill is
+/// not a candidate at all and is not reported.
+pub fn scan_tool_dir(tool: &ToolAdapter, dir: &Path) -> Result<ToolDirScan> {
+    let mut results = ToolDirScan::default();
     if !dir.exists() {
         return Ok(results);
     }
@@ -985,13 +1006,20 @@ pub fn scan_tool_dir(tool: &ToolAdapter, dir: &Path) -> Result<Vec<DetectedSkill
         {
             continue;
         }
-        results.push(DetectedSkill {
+        let validity = manifest_validity(&path);
+        let hidden = name.starts_with('.');
+        let entry = DetectedSkill {
             tool: tool.id.clone(),
             name,
             path,
             is_link,
             link_target,
-        });
+        };
+        match validity.invalid_reason() {
+            None => results.skills.push(entry),
+            Some(_) if hidden => {}
+            Some(reason) => results.invalid.push(InvalidSkillDir { entry, reason }),
+        }
     }
 
     Ok(results)

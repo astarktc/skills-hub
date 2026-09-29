@@ -130,6 +130,12 @@ fixture app, through the alias block:
 | Search placeholder | 3.36 light | 5.73 | 5.67 |
 | Import review "Match" / "Conflict" | 3.07 / 4.41 light | 9.41 / 6.39 | 5.03 / 4.94 |
 
+Legacy identifying input boundaries (`.search-input`, `.input` in Add / Re-point, `.settings-input`,
+`.settings-select`, `.explore-search-input`) draw their edge in `input`, not the decorative `border` (ticket-07
+review B2: they measured 1.33 / 1.25). Rendered edge against its outside ground, dark / light, 2026-09-29: Library
+search 3.90 / 3.78, Add `.input` 3.65 / 3.87, Settings select and input 3.90 / 3.78, Explore search 3.90 / 3.78;
+focused (the `accent-primary` iris edge) ≥ 6.61 / ≥ 5.71; disabled keeps the same edge.
+
 The lowest passing pairs anywhere are:
 
 - `faint` on the legacy hover ground `--bg-element-hover`: 4.60 dark, 4.68 light;
@@ -218,7 +224,12 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
 
 `Field` · `FieldLabel` · `Input` · `Textarea` · `Select` · `FieldDescription` · `FieldError` · `FieldSet` / `FieldLegend`.
 
-- The label is always associated with the control (`htmlFor` ↔ `id`).
+- The label is always associated with the control (`htmlFor` ↔ `id`). The Field owns the control id: the control
+  reports the id it renders — its own `id` prop when given, else a generated one — and the label points at it, so an
+  explicit `id` never severs the association. One control per Field.
+- Controls: `Input`, `Textarea`, `Select` and `Checkbox`. Inside a Field a Checkbox renders the Field's id on its form
+  input; the label points at it, and Base UI names the `role="checkbox"` element from that label
+  (`aria-labelledby`). A group of checkboxes is a `FieldSet` with a `FieldLegend`.
 - Helper and error text form the control's `aria-describedby`.
 - `invalid` sets `aria-invalid` and a `destructive` edge.
 - A placeholder is never the label. Placeholders are `faint`.
@@ -247,7 +258,12 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
 
 - **Focus.** It moves focus in on open (Base UI; `initialFocus` accepts a ref or a function of the interaction type)
   and traps it while open. On close it returns focus to the element that opened it. If that element is gone, focus
-  goes to `fallbackFocus()`, then to the layer beneath. Focus never lands on `<body>`.
+  goes to `fallbackFocus()`, then to the layer beneath, then to the app's main landmark (`mainLandmarkFocus`,
+  `ui/focus-fallback.ts`: `<main>` made programmatically focusable with `tabindex="-1"`, never a Tab stop). While the
+  app renders a `<main>`, focus does not land on `<body>`.
+- **Where the opener can disappear** (a removal: Delete skill, Remove project), the dialog passes `fallbackFocus`.
+  Today both removal dialogs pass `mainLandmarkFocus`; the row-level target (the next row, then the list heading) is
+  ticket 09's surface lifecycle, which will supply it through the same prop.
 - **Background.** Everything behind the top layer is `inert`, not only `aria-hidden`: the app and every lower layer's
   popup.
 - **Dismissal.** Escape and outside press dismiss **the top layer only**, and only when `dismissible`. A
@@ -273,6 +289,11 @@ These are floating surfaces on `popover` with a `border` and `shadow-lg`. All th
 Escape closes them and returns focus to the trigger.
 
 - **DropdownMenu** items are 32 px tall. `variant="destructive"` both words the action and tints it.
+  - The item holding keyboard focus draws the ring **inset** (`insetFocusRing`: 2 px `ring`, offset −2 px, so the
+    scrolling popup cannot clip it): 6.01 / 5.04 against the highlight ground, 6.61 / 5.86 against `popover`. The
+    highlight ground alone (`accent` on `popover`, 1.10 / 1.16) is never the cue. A pointer highlight shows the
+    ground only.
+  - `DropdownMenuLabel` names a group and must sit inside a `DropdownMenuGroup` (Base UI throws otherwise).
 - **Tooltip** is a hint on an inverted surface. It is never the only carrier of a name or a state.
 
 ### Toaster (`sonner.tsx`)
@@ -283,10 +304,16 @@ above). `useStatusReporter` owns toast lifetime; the binder mounts the one `<Toa
 
 ## Focus ring
 
-- One ring everywhere: a **2 px `ring` outline, offset 2 px** (1 px for text fields), on `:focus-visible` only.
+- One ring everywhere: a **2 px solid `ring` outline, offset 2 px** (1 px for text fields, −2 px inside menu items),
+  on `:focus-visible` only.
+- **The style is explicit.** Tailwind 4's `outline-none` sets `--tw-outline-style: none` and `outline-2` draws
+  `outline-style: var(--tw-outline-style)`, so every ring carries `focus-visible:outline-solid` (`focusRing`,
+  `fieldFocusRing`, `insetFocusRing` in `ui/styles.ts`). `ui/focus-ring.test.tsx` resolves each primitive's rendered
+  classes against CSS compiled by the installed Tailwind; a trusted-keyboard run measured `solid 2px` on every
+  primitive in both themes (ticket 07, 2026-09-29).
 - **No transition**: the ring never animates in.
 - It measures ≥ 5.04:1 against every ground in both themes.
-- Primitives draw it through `focusRing` (`ui/styles.ts`). The base layer (`index.css`) gives every other element the
+- Primitives draw it through the ring constants in `ui/styles.ts`. The base layer (`index.css`) gives every other element the
   same ring, legacy surfaces included.
 - A legacy rule that removes the outline must replace it with an `accent-primary` (iris) edge. Every current one
   does.
@@ -296,7 +323,9 @@ above). `useStatusReporter` owns toast lifetime; the binder mounts the one `<Toa
 - **What moves**: only the ⌘K palette, the bulk rail and the switch thumb. The motion is opacity and transform only,
   **≤ 120 ms**, on `ease-out` (`cubic-bezier(0.16, 1, 0.3, 1)`).
 - **What does not move**: dialogs, popovers, menus and tooltips appear and leave instantly.
-- **Hover and press** change colour instantly. There is no `transition: all`.
+- **Hover and press** change colour instantly in the primitives, which use no `transition: all`. Legacy `App.css`
+  still carries 22 `transition: all` declarations (mostly 200 ms) until its surfaces migrate (ticket 15 and the
+  surface tickets); reduced motion already zeroes them.
 - **Reduced motion.** `prefers-reduced-motion: reduce` removes all motion. The base layer zeroes every transition and
   animation, legacy App.css loops included, and primitives also carry `motion-reduce:` / `motion-safe:`. Spinners
   (`pending`, the progress overlay) stop under reduce.
@@ -340,10 +369,17 @@ above). `useStatusReporter` owns toast lifetime; the binder mounts the one `<Toa
 - The same change lowers `appCssCeiling` by the lines it deleted. `npm run styles:check` (part of `npm run check` and
   CI) fails when:
   - `App.css` grows, or shrinks without the ceiling being lowered;
-  - a migrated file, or any file in `components/ui/`, uses a legacy class;
+  - a migrated file, or any file in `components/ui/`, uses a legacy class — read from the TypeScript AST, following
+    constants, objects, conditionals, templates and helpers in the file and through named relative / `@/` imports;
   - a new stylesheet appears;
-  - `prose.css` leaks outside `.prose` or holds a colour literal;
-  - a raw colour or palette utility enters `src/**/*.{ts,tsx}`.
+  - `prose.css` leaks outside `.prose` (nesting resolved; `.prose + x` / `.prose ~ x` leak) or holds a colour literal,
+    `var()` fallbacks included;
+  - a raw colour or palette utility enters `src/**/*.{ts,tsx}` — arbitrary values (`bg-[#…]`, `bg-[red]`,
+    `[color:red]`) and colour literals in inline `style` objects included.
+- The guard runs its own regression suite first (`scripts/check-styles.test.mjs`): each rule's violations must exit 1
+  against a temp copy, the clean copy exit 0.
+- `className` on a primitive is layout-only **by convention**; the guard does not enforce it (review S1 note). Review
+  call sites for visual overrides.
 - **The alias block** at the top of `App.css` maps every legacy custom property (`--bg-app`, `--text-secondary`,
   `--accent-*`, `--status-*`, …) onto these tokens, so un-migrated surfaces already render in the new palette. It
   was the last addition `App.css` received. It is deleted together with the last legacy rule.

@@ -95,6 +95,48 @@ impl Validity {
             Validity::MissingSkillMd => Some("missing_skill_md"),
         }
     }
+
+    /// The typed reason an invalid candidate crosses the wire with; `None`
+    /// when valid. Same vocabulary as [`Validity::reason`].
+    pub fn invalid_reason(self) -> Option<InvalidManifestReason> {
+        match self {
+            Validity::Valid => None,
+            Validity::MissingSkillMd => Some(InvalidManifestReason::MissingSkillMd),
+            Validity::InvalidSkillMd("read_failed") => Some(InvalidManifestReason::ReadFailed),
+            Validity::InvalidSkillMd("missing_name") => Some(InvalidManifestReason::MissingName),
+            // `invalid_frontmatter`, and any token a future parser adds
+            // before this mapping learns it: the manifest is unusable.
+            Validity::InvalidSkillMd(_) => Some(InvalidManifestReason::InvalidFrontmatter),
+        }
+    }
+}
+
+/// Why a directory is not a usable skill, typed for the wire (the onboarding
+/// plan lists such directories disabled, with the reason in words).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum InvalidManifestReason {
+    /// No `SKILL.md` in the directory.
+    MissingSkillMd,
+    /// A `SKILL.md` exists but could not be read.
+    ReadFailed,
+    /// The `SKILL.md` has no complete `---` frontmatter block.
+    InvalidFrontmatter,
+    /// The frontmatter has no `name`.
+    MissingName,
+}
+
+/// The strict manifest verdict for one directory: its `SKILL.md` exists and
+/// parses with a `name` ([`Validity::Valid`]), or why not. The gate the
+/// onboarding scan applies to every entry of a Tool's skills dir.
+pub(crate) fn manifest_validity(dir: &Path) -> Validity {
+    match find_skill_md(dir) {
+        Some(skill_md) => match parse_skill_md_with_reason(&skill_md) {
+            Ok(_) => Validity::Valid,
+            Err(reason) => Validity::InvalidSkillMd(reason),
+        },
+        None => Validity::MissingSkillMd,
+    }
 }
 
 /// One skill candidate found under a discovery root.

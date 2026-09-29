@@ -1,7 +1,6 @@
-import React, { memo, useMemo, useState } from "react";
+import React, { memo, useMemo } from "react";
 import {
   TriangleAlert,
-  ArrowUpDown,
   GitBranch,
   Globe,
   RefreshCw,
@@ -15,13 +14,10 @@ import type {
 } from "./types";
 import type { ManagedSkill } from "../skills/types";
 import { SYNC_STATUS_CLASS } from "../../syncStatus";
-import {
-  filterAndSortSkills,
-  formatRelativeTime,
-  groupSkillsByRepo,
-} from "../../lib/skillPresentation";
+import { formatRelativeTime } from "../../lib/skillPresentation";
 import { projectsGroupByRepoPreference } from "../../lib/preferences";
-import { usePersistedPreference } from "../../hooks/usePersistedPreference";
+import { useListLens } from "../../hooks/useListLens";
+import LensSortControl from "../shared/LensSortControl";
 
 export type AssignmentMatrixProps = {
   project: ProjectDto | null;
@@ -70,23 +66,17 @@ const AssignmentMatrix = ({
     return max > 0 ? max : null;
   }, [assignments]);
 
-  const [sortBy, setSortBy] = useState<"name" | "updated" | "added">("name");
-  const [groupByRepo, setGroupByRepo] = usePersistedPreference(
-    projectsGroupByRepoPreference,
-  );
-
-  const sortedSkills = useMemo(
-    () => filterAndSortSkills(skills, { query: "", sort: sortBy }),
-    [skills, sortBy],
-  );
-
-  const skillGroups = useMemo(() => {
-    if (!groupByRepo) return null;
-    return groupSkillsByRepo(sortedSkills, {
+  // The matrix's own list lens (its Grouped/Flat persists under its own key).
+  const lens = useListLens({
+    items: skills,
+    labels: {
       local: t("localGroup"),
       ungrouped: t("ungrouped"),
-    });
-  }, [groupByRepo, sortedSkills, t]);
+      individual: t("individualSources"),
+    },
+    groupByRepoPreference: projectsGroupByRepoPreference,
+  });
+  const { groupByRepo, groups: skillGroups, visible: sortedSkills } = lens;
 
   const assignmentMap = useMemo(() => {
     const map = new Map<string, ProjectSkillAssignmentDto>();
@@ -119,31 +109,12 @@ const AssignmentMatrix = ({
           <span className="matrix-toolbar-sync-time">{lastSyncDisplay}</span>
         </div>
         <div className="matrix-toolbar-filters">
-          <button className="btn btn-secondary btn-sm sort-btn" type="button">
-            <span className="sort-label">{t("filterSort")}:</span>
-            {sortBy === "name"
-              ? t("sortName")
-              : sortBy === "added"
-                ? t("sortAdded")
-                : t("sortUpdated")}
-            <ArrowUpDown size={12} />
-            <select
-              aria-label={t("filterSort")}
-              value={sortBy}
-              onChange={(e) =>
-                setSortBy(e.target.value as "name" | "updated" | "added")
-              }
-            >
-              <option value="name">{t("sortName")}</option>
-              <option value="updated">{t("sortUpdated")}</option>
-              <option value="added">{t("sortAdded")}</option>
-            </select>
-          </button>
+          <LensSortControl sort={lens.sort} onSortChange={lens.setSort} compact t={t} />
           <label className="group-by-repo-toggle">
             <input
               type="checkbox"
               checked={groupByRepo}
-              onChange={(e) => setGroupByRepo(e.target.checked)}
+              onChange={(e) => lens.setGroupByRepo(e.target.checked)}
             />
             <span className="group-by-repo-label">{t("groupByRepo")}</span>
           </label>

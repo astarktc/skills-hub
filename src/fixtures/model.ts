@@ -12,11 +12,13 @@ import type {
   CommandError,
   FeaturedSkillDto,
   GitignoreStatusDto,
+  InvalidManifestReason,
   InvocationMode,
   LocalSkillCandidate,
   ManagedSkillDto,
   OnlineSkillDto,
   ProjectSkillAssignmentDto,
+  SkillOutcomeKind,
   SkillTargetDto,
   SyncMode,
   SyncStatus,
@@ -61,6 +63,11 @@ export type ForeignDir = {
   /** Content fingerprint; equal fingerprints mean byte-identical. */
   fingerprint: string;
   linkTarget: string | null;
+  /**
+   * Its `SKILL.md` fails the scan's manifest gate (Rust `scan_tool_dir`):
+   * listed in the plan's `invalid`, never in a group. Absent = valid.
+   */
+  invalid?: InvalidManifestReason;
 };
 
 export type FixtureProject = {
@@ -318,6 +325,13 @@ export type SkillSpec = {
   /** Tools whose global target row is `disabled` (the per-Tool grain of Disable). */
   disabled?: string[];
   /**
+   * Tools whose first sync failed (D9): an `error` row that never
+   * materialised, so it owns nothing (`synced_at` null).
+   */
+  failedFirstSync?: string[];
+  /** The skill's stored last outcome (Skill health), settled `hoursAgo`. */
+  health?: { kind: SkillOutcomeKind; error: CommandError; hoursAgo?: number };
+  /**
    * Disabled at skill grain: `disabled_at` is set and every global target and
    * project assignment of the skill is `disabled` (off everywhere).
    */
@@ -377,6 +391,7 @@ export function makeSkill(spec: SkillSpec, now: number, index: number): FixtureS
     );
   for (const tool of spec.errored ?? []) targets.push(row(tool, "error"));
   for (const tool of spec.disabled ?? []) targets.push(row(tool, "disabled"));
+  for (const tool of spec.failedFirstSync ?? []) targets.push({ ...row(tool, "error"), synced_at: null });
   const refreshable = kind !== "imported";
   return {
     dto: {
@@ -401,6 +416,9 @@ export function makeSkill(spec: SkillSpec, now: number, index: number): FixtureS
       refreshable,
       unlocatable: spec.unlocatable ?? null,
       detachable: kind === "local" && !centralGone,
+      health: spec.health
+        ? { kind: spec.health.kind, error: spec.health.error, at: now - (spec.health.hoursAgo ?? 2) * HOUR }
+        : null,
     },
     files,
     contentHash: centralGone ? "" : hashFiles(files),

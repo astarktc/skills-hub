@@ -7,7 +7,7 @@
 // mocked at the invokeTauri module
 // seam; sync and library worlds enter as mocked dependency interfaces.
 
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   CandidateMatch,
@@ -39,7 +39,16 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { invokeTauri, type CommandName, type Commands } from "../lib/tauri";
-import { useAddSkillFlow } from "./useAddSkillFlow";
+import { useAddSkillFlow as useAddSkillFlowHook } from "./useAddSkillFlow";
+import { useSurfaceState } from "./useSurfaceState";
+
+/** The deps a test supplies; the surface module is composed in, as App does. */
+type FlowDeps = Omit<AddSkillFlowDeps, "surface">;
+/** The flow as App composes it: its dialogs are surface layers. */
+function useAddSkillFlow(deps: FlowDeps) {
+  const surface = useSurfaceState();
+  return useAddSkillFlowHook({ ...deps, surface });
+}
 import {
   ActionExit,
   type ActionHandle,
@@ -61,8 +70,10 @@ const t = (key: string, opts?: Record<string, unknown>) =>
 
 const EMPTY_PLAN = {
   total_tools_scanned: 0,
-  total_skills_found: 0,
+  group_count: 0,
+  copy_count: 0,
   groups: [],
+  invalid: [],
 };
 
 function gitCandidate(name: string, subpath: string): GitSkillCandidate {
@@ -184,7 +195,7 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
     isSkillNameTaken: vi.fn((name: string) => taken.has(name.toLowerCase())),
     loadManagedSkills: vi.fn().mockResolvedValue(undefined),
   };
-  const deps: AddSkillFlowDeps = { t, reporter, sync, library };
+  const deps: FlowDeps = { t, reporter, sync, library };
   return { deps, reporter, sync, library };
 }
 
@@ -571,11 +582,15 @@ describe("useAddSkillFlow local flow", () => {
 describe("useAddSkillFlow import flow", () => {
   const PLAN: OnboardingPlan = {
     total_tools_scanned: 1,
-    total_skills_found: 1,
+    group_count: 1,
+    copy_count: 1,
+    invalid: [],
     groups: [
       {
         name: "alpha",
         has_conflict: false,
+        name_is_managed: false,
+        managed_skill_id: null,
         variants: [
           {
             tool: "claude",
@@ -671,7 +686,7 @@ describe("useAddSkillFlow import flow", () => {
       },
     ]);
     // goose is selected but not installed and still named; cursor is deselected.
-    expect(policy).toEqual({ auto_sync: true, tools: ["claude", "goose"] });
+    expect(policy).toEqual({ auto_sync: true, tools: ["claude", "goose"], remove_originals: true });
     expect(setup.reporter.notify).toHaveBeenCalledWith("success", "status.importCompleted", undefined);
     expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([]);
     expect(result.current.showImportModal).toBe(false);
@@ -683,11 +698,15 @@ describe("useAddSkillFlow import flow", () => {
     // is never what the app copies when the directory is also in the group.
     const linked: OnboardingPlan = {
       total_tools_scanned: 2,
-      total_skills_found: 2,
+      group_count: 1,
+      copy_count: 2,
+      invalid: [],
       groups: [
         {
           name: "alpha",
           has_conflict: false,
+          name_is_managed: false,
+          managed_skill_id: null,
           variants: [
             {
               tool: "claude",
@@ -735,7 +754,7 @@ describe("useAddSkillFlow import flow", () => {
     await runImport(setup);
 
     const [, , policy] = importCall()!;
-    expect(policy).toEqual({ auto_sync: false, tools: null });
+    expect(policy).toEqual({ auto_sync: false, tools: null, remove_originals: true });
   });
 
   it("Review always reviews a plan fetched now, never the banner's cached one", async () => {
@@ -744,7 +763,7 @@ describe("useAddSkillFlow import flow", () => {
     // reviewed plan must be current.
     const widened = {
       ...PLAN,
-      groups: [...PLAN.groups, { name: "beta", has_conflict: false, variants: [
+      groups: [...PLAN.groups, { name: "beta", has_conflict: false, name_is_managed: false, managed_skill_id: null, variants: [
         { tool: "cursor", name: "beta", path: "/home/.cursor/skills/beta", fingerprint: "f2", is_link: false, link_target: null },
       ] }],
     };
@@ -766,17 +785,17 @@ describe("useAddSkillFlow import flow", () => {
   it("reloads the plan when the saved tool configuration changes", async () => {
     // A narrowed scope can empty the plan (the banner disappears) and a
     // widened one can populate it: the banner follows the configuration.
-    const empty = { ...PLAN, total_skills_found: 0, groups: [] };
+    const empty = { ...PLAN, group_count: 0, copy_count: 0, groups: [] };
     stubImportBackend([() => Promise.resolve(empty), () => Promise.resolve(PLAN)]);
     const setup = makeDeps();
-    const { result, rerender } = renderHook((deps: AddSkillFlowDeps) => useAddSkillFlow(deps), {
+    const { result, rerender } = renderHook((deps: FlowDeps) => useAddSkillFlow(deps), {
       initialProps: setup.deps,
     });
     await waitFor(() => expect(result.current.plan).not.toBeNull());
-    expect(result.current.plan!.total_skills_found).toBe(0);
+    expect(result.current.plan!.group_count).toBe(0);
 
     rerender({ ...setup.deps, sync: { ...setup.sync, scanScopeRevision: 1 } });
-    await waitFor(() => expect(result.current.plan!.total_skills_found).toBe(PLAN.total_skills_found));
+    await waitFor(() => expect(result.current.plan!.group_count).toBe(PLAN.group_count));
     expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "getOnboardingPlan")).toHaveLength(2);
   });
 
@@ -815,6 +834,9 @@ describe("useAddSkillFlow import flow", () => {
   });
 });
 afterEach(() => vi.restoreAllMocks());
+// No vitest globals: unmount explicitly so a surface's window listeners never
+// outlive its test.
+afterEach(cleanup);
 
 it.each(["git", "local"] as const)("%s install applies fold completion instead of assuming success", async (source) => {
   for (const complete of [false, true]) {

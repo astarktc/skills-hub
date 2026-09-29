@@ -209,12 +209,36 @@ fn adapters_sharing_skills_dir_groups_amp_and_kimi() {
     assert!(keys.contains("kimi_cli"));
 }
 
+/// A skill folder whose `SKILL.md` passes the gate.
+fn valid_skill(dir: &std::path::Path, name: &str) {
+    fs::create_dir_all(dir.join(name)).unwrap();
+    fs::write(
+        dir.join(name).join("SKILL.md"),
+        format!("---\nname: {name}\n---\nbody\n"),
+    )
+    .unwrap();
+}
+
+fn plain_adapter(id: ToolId) -> ToolAdapter {
+    ToolAdapter {
+        id,
+        display_name: "Test",
+        group_label: None,
+        relative_skills_dir: "ignored",
+        former_relative_skills_dirs: &[],
+        relative_detect_dirs: &["ignored"],
+        project_relative_skills_dir: "ignored",
+        group: None,
+        supports_symlink: true,
+    }
+}
+
 #[test]
 fn scan_tool_dir_skips_codex_system_and_includes_symlink_dir() {
     let dir = tempfile::tempdir().unwrap();
 
-    fs::create_dir_all(dir.path().join("a")).unwrap();
-    fs::create_dir_all(dir.path().join(".system")).unwrap();
+    valid_skill(dir.path(), "a");
+    valid_skill(dir.path(), ".system");
     fs::write(dir.path().join("not-a-dir"), b"x").unwrap();
 
     #[cfg(unix)]
@@ -235,14 +259,15 @@ fn scan_tool_dir_skips_codex_system_and_includes_symlink_dir() {
     };
 
     let out = scan_tool_dir(&tool, dir.path()).unwrap();
-    let names: Vec<String> = out.iter().map(|s| s.name.clone()).collect();
+    let names: Vec<String> = out.skills.iter().map(|s| s.name.clone()).collect();
 
     assert!(names.contains(&"a".to_string()));
     assert!(!names.contains(&".system".to_string()));
+    assert!(out.invalid.is_empty(), "{:?}", out.invalid);
 
     #[cfg(unix)]
     {
-        let link = out.iter().find(|s| s.name == "link-a").unwrap();
+        let link = out.skills.iter().find(|s| s.name == "link-a").unwrap();
         assert!(link.is_link);
         assert!(link.link_target.is_some());
     }
@@ -254,7 +279,8 @@ fn scan_tool_dir_skips_app_support_path() {
     let root = dir
         .path()
         .join("Library/Application Support/com.tauri.dev/skills");
-    std::fs::create_dir_all(root.join("foo")).unwrap();
+    valid_skill(&root, "foo");
+    std::fs::create_dir_all(root.join("no-manifest")).unwrap();
 
     let tool = ToolAdapter {
         id: ToolId::Cursor,
@@ -269,7 +295,62 @@ fn scan_tool_dir_skips_app_support_path() {
     };
 
     let out = scan_tool_dir(&tool, &root).unwrap();
-    assert!(out.is_empty());
+    assert!(out.skills.is_empty());
+    assert!(
+        out.invalid.is_empty(),
+        "an ignored path is not reported either"
+    );
+}
+
+/// #46: the scan admits a directory only when its `SKILL.md` parses to a
+/// valid manifest; every other visible directory is reported with the typed
+/// reason, and a hidden non-skill directory is not a candidate at all.
+#[test]
+fn scan_tool_dir_admits_only_valid_manifests_and_reports_the_rest() {
+    use crate::core::skill_discovery::InvalidManifestReason;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    valid_skill(root, "good");
+    // Case-insensitive manifest lookup, as install admission.
+    fs::create_dir_all(root.join("lower")).unwrap();
+    fs::write(root.join("lower/skill.md"), "---\nname: lower\n---\n").unwrap();
+    fs::create_dir_all(root.join("no-manifest")).unwrap();
+    fs::write(root.join("no-manifest/notes.txt"), "x").unwrap();
+    fs::create_dir_all(root.join("no-name")).unwrap();
+    fs::write(
+        root.join("no-name/SKILL.md"),
+        "---\ndescription: nameless\n---\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("no-frontmatter")).unwrap();
+    fs::write(root.join("no-frontmatter/SKILL.md"), "# just prose\n").unwrap();
+    fs::create_dir_all(root.join(".git")).unwrap();
+
+    let out = scan_tool_dir(&plain_adapter(ToolId::ClaudeCode), root).unwrap();
+
+    let mut admitted: Vec<&str> = out.skills.iter().map(|s| s.name.as_str()).collect();
+    admitted.sort_unstable();
+    assert_eq!(admitted, vec!["good", "lower"]);
+
+    let mut invalid: Vec<(&str, InvalidManifestReason)> = out
+        .invalid
+        .iter()
+        .map(|i| (i.entry.name.as_str(), i.reason))
+        .collect();
+    invalid.sort_by_key(|(name, _)| *name);
+    assert_eq!(
+        invalid,
+        vec![
+            ("no-frontmatter", InvalidManifestReason::InvalidFrontmatter),
+            ("no-manifest", InvalidManifestReason::MissingSkillMd),
+            ("no-name", InvalidManifestReason::MissingName),
+        ]
+    );
+    assert!(
+        out.invalid.iter().all(|i| i.entry.path.starts_with(root)),
+        "each invalid entry names its path"
+    );
 }
 
 /// Every Tool's project-scope dir and project-scope label override, as a

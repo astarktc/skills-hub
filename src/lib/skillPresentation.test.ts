@@ -7,6 +7,7 @@ import {
   formatRelativeTime,
   groupSkillsByRepo,
   importedSourceLine,
+  INDIVIDUAL_GROUP_KEY,
   repoInfo,
   repointKind,
   skillSourceLabel,
@@ -187,6 +188,32 @@ describe("groupSkillsByRepo", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].label).toBe("https://example.com/team/x.git");
     expect(groups[0].href).toBeNull();
+  });
+
+  it("folds single-skill repos into one Individual sources group, in input order", () => {
+    const input = [
+      skill({ name: "loner-z", source_type: "git", source_ref: "https://github.com/zoo/z" }),
+      skill({ name: "local-one" }),
+      skill({ name: "alpha", source_type: "git", source_ref: "https://github.com/acme/alpha" }),
+      skill({ name: "alpha-two", source_type: "git", source_ref: "https://github.com/acme/alpha" }),
+      skill({ name: "loner-b", source_type: "git", source_ref: "https://github.com/bee/b" }),
+    ];
+    const labels = { local: "Local", ungrouped: "Ungrouped", individual: "Individual sources" };
+    const groups = groupSkillsByRepo(input, labels, { foldSingletons: true });
+
+    expect(groups.map((g) => g.label)).toEqual(["acme/alpha", "Individual sources", "Local"]);
+    expect(groups[1].key).toBe(INDIVIDUAL_GROUP_KEY);
+    expect(groups[1].href).toBeNull();
+    expect(groups[1].skills.map((s) => s.name)).toEqual(["loner-z", "loner-b"]);
+    // The local group never folds, even with one skill.
+    expect(groups[2].skills.map((s) => s.name)).toEqual(["local-one"]);
+    // Off by default: every repo keeps its own group.
+    expect(groupSkillsByRepo(input, labels).map((g) => g.label)).toEqual([
+      "acme/alpha",
+      "bee/b",
+      "zoo/z",
+      "Local",
+    ]);
   });
 });
 

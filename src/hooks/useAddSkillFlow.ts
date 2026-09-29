@@ -14,6 +14,7 @@ import { invokeTauri, isTauri } from "../lib/tauri";
 import { useCandidatePick } from "./useCandidatePick";
 import type { SkillLibrary } from "./useSkillLibrary";
 import type { SyncOrchestration } from "./useSyncOrchestration";
+import type { DialogDoor } from "./useSurfaceState";
 import type {
   StatusReporter,
   TranslateFn,
@@ -40,6 +41,11 @@ export type AddSkillFlowDeps = {
     | "tools"
   >;
   library: Pick<SkillLibrary, "isSkillNameTaken" | "loadManagedSkills">;
+  /** The surface module: Add, Import and the two pickers are its dialogs. */
+  surface: Pick<
+    DialogDoor,
+    "isOpen" | "openDialog" | "pushDialog" | "closeDialog" | "dismissDialog"
+  >;
 };
 
 /**
@@ -52,6 +58,7 @@ export function useAddSkillFlow({
   reporter,
   sync,
   library,
+  surface,
 }: AddSkillFlowDeps) {
   const {
     loading,
@@ -79,8 +86,9 @@ export function useAddSkillFlow({
   const [variantChoice, setVariantChoice] = useState<Record<string, string>>(
     {},
   );
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [showImportModal, setShowImportModal] = useState(false);
+  const { isOpen, openDialog, closeDialog, dismissDialog } = surface;
+  const showAddModal = isOpen("addSkill");
+  const showImportModal = isOpen("import");
   const [addModalTab, setAddModalTab] = useState<"local" | "git">("git");
   const [localPath, setLocalPath] = useState("");
   const [localName, setLocalName] = useState("");
@@ -138,13 +146,14 @@ export function useAddSkillFlow({
 
   /** After any install (single or batch): the add modal is done, the library has changed. */
   const finishInstall = useCallback(async (completion: Outcome["completion"]) => {
-    if (completion.closeModal) setShowAddModal(false);
+    if (completion.closeModal) dismissDialog("addSkill");
     if (completion.reload) await refreshWithoutFailingAction(loadManagedSkills);
-  }, [loadManagedSkills, refreshWithoutFailingAction]);
+  }, [dismissDialog, loadManagedSkills, refreshWithoutFailingAction]);
 
   const pickDeps = {
     t,
     reporter,
+    surface,
     isSkillNameTaken,
     deploy: deployNewSkill,
     toolLabelById,
@@ -154,6 +163,7 @@ export function useAddSkillFlow({
   /** Git picker: candidates of one repo URL (the picker's context). */
   const git = useCandidatePick<GitSkillCandidate, string>(
     {
+      dialogKind: "gitPick",
       customName: gitName,
       installOne: (repoUrl, candidate, name) =>
         invokeTauri("installGitSelection", repoUrl, candidate.subpath, name, candidate.resolution),
@@ -168,6 +178,7 @@ export function useAddSkillFlow({
   /** Local picker: candidates under one base path (the picker's context). */
   const local = useCandidatePick<LocalSkillCandidate, string>(
     {
+      dialogKind: "localPick",
       customName: localName,
       selectable: (candidate) => candidate.valid,
       installOne: (basePath, candidate, name) =>
@@ -220,24 +231,16 @@ export function useAddSkillFlow({
   }, [loadPlan, scanScopeRevision]);
 
   const handleOpenAdd = useCallback(() => {
-    setShowAddModal(true);
-  }, []);
+    openDialog({ kind: "addSkill" });
+  }, [openDialog]);
 
   /** Modals stay put while an action runs (the overlay owns the screen). */
-  const closeUnlessLoading = useCallback(
-    (setShow: (open: boolean) => void) => {
-      if (!loading) setShow(false);
-    },
-    [loading],
-  );
-  const handleCloseAdd = useCallback(
-    () => closeUnlessLoading(setShowAddModal),
-    [closeUnlessLoading],
-  );
-  const handleCloseImport = useCallback(
-    () => closeUnlessLoading(setShowImportModal),
-    [closeUnlessLoading],
-  );
+  const handleCloseAdd = useCallback(() => {
+    if (!loading) closeDialog("addSkill");
+  }, [closeDialog, loading]);
+  const handleCloseImport = useCallback(() => {
+    if (!loading) closeDialog("import");
+  }, [closeDialog, loading]);
 
   /**
    * Review always reviews a plan fetched now: the import re-derives the
@@ -248,9 +251,9 @@ export function useAddSkillFlow({
   const handleReviewImport = useCallback(async () => {
     const result = await loadPlan();
     if (result) {
-      setShowImportModal(true);
+      openDialog({ kind: "import" });
     }
-  }, [loadPlan]);
+  }, [loadPlan, openDialog]);
 
   const handlePickLocalPath = useCallback(async () => {
     try {
@@ -351,6 +354,10 @@ export function useAddSkillFlow({
         {
           auto_sync: autoSyncEnabled,
           tools: autoSyncEnabled ? getSelectedIds() : null,
+          // Today's policy until the review offers the per-run choice
+          // (ticket 21): auto-sync off removes the byte-identical
+          // originals; auto-sync on ignores it (the sync takes them over).
+          remove_originals: true,
         },
         onProgress,
       );
@@ -359,7 +366,7 @@ export function useAddSkillFlow({
         await loadManagedSkills();
         await fetchPlan();
       });
-      if (outcome.completion.closeModal) setShowImportModal(false);
+      if (outcome.completion.closeModal) dismissDialog("import");
       publishOutcome(outcome);
     });
   };

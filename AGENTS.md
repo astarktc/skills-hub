@@ -139,7 +139,17 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   sync seam) — **world** hooks never import each other at runtime (type-only imports of another hook's
   types, narrowed with `Pick<>`, are the established pattern for declaring deps). A world may be built
   from smaller building-block hooks it owns (e.g. `useAddSkillFlow` instantiates `useCandidatePick`
-  twice); those are internal to that world, not a cross-world seam. After a mutation, the **project**
+  twice); those are internal to that world, not a cross-world seam. **What is on screen is one module,
+  `src/hooks/useSurfaceState.ts`** (created first in App, passed to worlds as a narrowed door): the area,
+  the focused subject, per-surface selection and the dialog stack (one union across worlds). World hooks
+  keep data and actions and *ask* it to open/close (`openDialog`, `pushDialog` for a nested step, `ask`
+  for a confirmation, `offerDialog` for a startup announcement, `focus`) — no world keeps a visibility
+  flag or a "which skill is this modal about" cell. Only area + focused subject reach `location.hash`
+  (`#/skills/<id>`, `#/projects/<id>`, `#/explore`, `#/settings/<pane>`); dialogs, selection and drafts
+  never do. A catalog owner calls `useFocusReconciliation` so a focused/selected id that leaves it
+  clears itself. **Query, sort, grouping and view mode are the list lens, `src/hooks/useListLens.ts`**,
+  one instance per list surface (My Skills in App, the matrix in `AssignmentMatrix`), persisting through
+  `preferences.ts`; its folds stay pure in `skillPresentation.ts`. After a mutation, the **project**
   world applies what the mutation returned — a `ProjectViewDto` fed to `useProjectState::applyView`, no
   success-path refetch tail, only a failure-path `refreshView`. The **skills** world replaces its entire
   catalog from `{ report, skills }` after Update, Restore, Re-point and Edit — even when the returned
@@ -164,7 +174,10 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   the generated `commands` table: a wrong name, missing/extra arg, or wrong arg type fails
   `npm run build`); raw `@tauri-apps/api/core` `invoke` appears nowhere outside `src/bindings/index.ts`.
   Test stubs cast the mock to `(command: CommandName, ...args: unknown[]) => Promise<unknown>` and
-  switch on the camelCase command name. Components get no JSX tests by design.
+  switch on the camelCase command name. Components get no JSX tests by design. **One exception (round-19 D2):**
+  the primitives' `src/components/ui/*.test.tsx` render them to pin their role/ARIA/focus contract (names, states,
+  focus in/out, layer stack, label association) and `focus-ring.test.tsx` resolves their classes against compiled
+  Tailwind — never product surfaces, never pixels or copy.
 - **`commands/` is wiring only** (DTO conversion, error formatting); business logic goes in `core/`, which is
   independently testable. Async commands wrap sync work in `tauri::async_runtime::spawn_blocking`.
 - **Error wire contract** — commands return `Result<T, CommandError>` (`core/errors.rs`, beside `SignalError`),
@@ -238,7 +251,12 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
     overwrite policy (batch default + per-(skill,tool) overrides), DB record fan-out. The frontend seam
     (`useSyncOrchestration.syncSkillsToTools`) owns the **overwrite ask**: every call site passes
     `overwriteIfSameContent: true` (identical content is replaced silently); `TARGET_EXISTS` rows raise one
-    confirmation and, confirmed, one retry batch with per-pair `overrides` whose rows replace the asked ones.
+    confirmation and one retry batch with per-pair `overrides` (`decision: "overwrite"` confirmed, `"keep"` declined —
+    the backend records a kept pair `disabled`) whose rows replace the asked ones. An unanswered `TARGET_EXISTS` records
+    no row; any other failed first sync records an `error` row that owns nothing (D9).
+  - Skill health (`core/skill_health.rs`): the skill row's stored last outcome, written by core **where the outcome
+    settles** (refresh / skill_update / artifact_removal / onboarding_import) with the report row's `CommandError`,
+    never for a `?`-propagated error or a cancellation; a success clears only its own family.
   - Update / Refresh (all) → `refresh_managed_skills` (`core/refresh.rs`): acquire every skill (bounded
     pool of 4, std threads), then `skill_update::apply_unlocked` admits and settles each under the
     guard (finalize + Edit replay + Propagation; ADR-0004), plus the `reassert_auto_sync` policy. A single

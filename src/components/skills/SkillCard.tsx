@@ -13,6 +13,7 @@ import {
 import { SiGithub } from "@icons-pack/react-simple-icons";
 import type { TFunction } from "i18next";
 import type { CopyToClipboardFn } from "../../hooks/useStatusReporter";
+import { describeCommandError } from "../../commandError";
 import InvocationModeBadge from "./InvocationModeBadge";
 import type { ManagedSkill, SkillTargetDto, ToolOption } from "./types";
 import {
@@ -20,6 +21,8 @@ import {
   formatRelativeTime,
   importedSourceLine,
   repoInfo,
+  skillHealth,
+  SKILL_OUTCOME_LABEL_KEY,
   skillSourceLabel,
   skillToolChips,
   sourceKind,
@@ -109,6 +112,9 @@ const SkillCard = ({
     detach: () => onDetach(skill),
     restore: () => onRestore(skill),
   };
+  // The stored last outcome (Skill health), shown as one plain line until
+  // tickets 09/11 give it its fold, chip and ladder.
+  const health = skillHealth(skill);
   const repairs = unlocatableRepairs(skill).map((repair) => ({
     key: repair,
     label: t(UNLOCATABLE_REPAIR_KEY[repair]),
@@ -243,6 +249,20 @@ const SkillCard = ({
             >
               {t("remove")}
             </button>
+          </div>
+        ) : null}
+        {health ? (
+          <div
+            className="skill-meta-row"
+            role="status"
+            title={describeCommandError(health.error, t) ?? undefined}
+          >
+            <div className="skill-source">
+              {t("skillHealth.line", {
+                outcome: t(SKILL_OUTCOME_LABEL_KEY[health.kind]),
+                time: formatRelativeTime(health.at, t),
+              })}
+            </div>
           </div>
         ) : null}
         <div

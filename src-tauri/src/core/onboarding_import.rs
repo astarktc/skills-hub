@@ -30,11 +30,21 @@
 //!   as `forced_tools` so the UI can say why a deselected Tool received a
 //!   link. A divergent sibling is neither force-included nor overwritten:
 //!   it is left in place and reported, exactly as on the auto-sync-off path.
-//! * **Auto-sync off**: every original of the group (the chosen variant's own
-//!   path included — it now lives in the central repo) is removed *only* when
-//!   it is byte-identical to the finalized central copy. A divergent sibling
-//!   is left in place and reported: sharing a name never proved it was the
-//!   same skill.
+//! * **Auto-sync off**: the operator decides per run (`remove_originals`).
+//!   When true, every original of the group (the chosen variant's own path
+//!   included — it now lives in the central repo) is removed *only* when it
+//!   is byte-identical to the finalized central copy; when false, nothing is
+//!   touched and each identical original is reported `LeftInPlace`. Either
+//!   way a divergent sibling is left in place and reported: sharing a name
+//!   never proved it was the same skill.
+//! * **Managed-name groups** (the plan's `name_is_managed`): never finalized
+//!   — the name is taken. Without the operator's `replace` the group is
+//!   `Skipped` with a typed reason and nothing is touched. With it, the
+//!   Managed skill is synced to every Tool of the group through the global
+//!   sync batch's same-content policy: an identical copy is replaced, a
+//!   divergent one answers the pair's `TARGET_EXISTS` row — the askable row
+//!   the frontend's one overwrite ask retries with an Overwrite override. A
+//!   plan is never an authorization to force-overwrite.
 //!
 //! Continue-and-report: a group that fails admission or finalize is a
 //! per-group `Failed` outcome and the rest of the batch proceeds; per-target
@@ -69,13 +79,22 @@ pub struct ImportSelection {
     pub chosen_path: PathBuf,
     /// Operator-supplied name; the group name is used when absent.
     pub name: Option<String>,
+    /// For a managed-name group: replace the Tools' copies with the Managed
+    /// skill. `false` is "no decision" — the group is skipped. Ignored for a
+    /// group whose name is not managed.
+    pub replace: bool,
 }
 
 /// The batch's policy: what happens to the originals.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ImportPolicy {
-    /// On: sync the imported skill to `tools`. Off: remove the originals.
+    /// On: sync the imported skill to `tools`. Off: settle the originals
+    /// per `remove_originals`.
     pub auto_sync: bool,
+    /// Auto-sync off: remove the byte-identical originals (`true`) or leave
+    /// them and report them `LeftInPlace` (`false`). Ignored when auto-sync
+    /// is on — the sync batch takes the identical originals over.
+    pub remove_originals: bool,
     /// Tools to sync to when `auto_sync` is on; `None` means every installed
     /// Tool. Ignored when `auto_sync` is off.
     pub tools: Option<Vec<String>>,
@@ -108,8 +127,11 @@ pub struct ImportProgress<'a> {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum OriginalStatus {
     /// Byte-identical to the central copy (or already gone) — removed
-    /// (auto-sync off).
+    /// (auto-sync off, `remove_originals`).
     Removed,
+    /// Byte-identical to the central copy and left where it was because the
+    /// operator chose not to remove originals (auto-sync off).
+    LeftInPlace,
     /// Content differs from the central copy, so it was left in place
     /// (either policy).
     KeptDivergent,
@@ -137,12 +159,33 @@ pub enum ImportGroupStatus {
         /// order they were appended to the target set; empty when the
         /// policy already named every one of them or auto-sync is off.
         forced_tools: Vec<String>,
-        /// Originals settled: every variant when auto-sync is off; only the
-        /// divergent siblings (kept in place) when auto-sync is on.
+        /// Originals settled, per Tool: every variant still present when
+        /// auto-sync is off (removed, left in place or kept divergent); only
+        /// the divergent siblings (kept in place) when auto-sync is on — the
+        /// identical ones are the `targets`.
         originals: Vec<OriginalOutcome>,
     },
+    /// A managed-name group the operator chose to replace: the Managed
+    /// skill was synced to every Tool holding a copy. A divergent copy is a
+    /// `TARGET_EXISTS` target row — askable, never force-overwritten here.
+    Replaced {
+        skill_id: String,
+        skill_name: String,
+        targets: Vec<BatchTargetOutcome>,
+    },
+    /// Not imported by design; nothing of this group was touched.
+    Skipped { reason: ImportSkipReason },
     /// Admission or finalize failed; nothing of this group was touched.
     Failed { error: CommandError },
+}
+
+/// Why a selected group was not imported, when that is not a failure.
+#[derive(Debug, serde::Serialize, specta::Type)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum ImportSkipReason {
+    /// A Managed skill already holds the group's name and the selection
+    /// carried no `replace` decision.
+    NameManaged { skill_id: String },
 }
 
 #[derive(Debug, serde::Serialize, specta::Type)]
@@ -182,18 +225,27 @@ pub fn import_onboarding_selection(
             phase: ImportPhase::Admitting,
         });
 
+        let applying = ImportProgress {
+            index: index + 1,
+            total,
+            group_name: &selection.group_name,
+            phase: ImportPhase::Applying,
+        };
         let status = match admit(&plan.groups, selection) {
-            Ok(group) => {
-                on_progress(ImportProgress {
-                    index: index + 1,
-                    total,
-                    group_name: &selection.group_name,
-                    phase: ImportPhase::Applying,
-                });
+            Ok(Admission::Import(group)) => {
+                on_progress(applying);
                 mutation_guard::serialized(|| {
                     apply_one_unlocked(paths, store, selection, group, policy, now)
                 })
             }
+            Ok(Admission::Replace { group, skill_id }) => {
+                on_progress(applying);
+                mutation_guard::serialized(|| {
+                    replace_with_managed_unlocked(paths, store, group, skill_id, now)
+                })
+            }
+            // Decided at admission: nothing to apply, no applying tick.
+            Ok(Admission::Skip(reason)) => ImportGroupStatus::Skipped { reason },
             Err(error) => ImportGroupStatus::Failed {
                 error: CommandError::from_anyhow(error),
             },
@@ -207,12 +259,26 @@ pub fn import_onboarding_selection(
     Ok(report)
 }
 
+/// What admission decided for one selection.
+enum Admission<'a> {
+    /// Finalize the chosen variant as a new Managed skill.
+    Import(&'a OnboardingGroup),
+    /// The name is managed and the operator chose Replace: sync the Managed
+    /// skill over the group's copies.
+    Replace {
+        group: &'a OnboardingGroup,
+        skill_id: &'a str,
+    },
+    /// Nothing to apply.
+    Skip(ImportSkipReason),
+}
+
 /// Resolve the selection against the freshly built plan and check the chosen
 /// variant is admissible. Reads only.
 fn admit<'a>(
     groups: &'a [OnboardingGroup],
     selection: &ImportSelection,
-) -> Result<&'a OnboardingGroup, anyhow::Error> {
+) -> Result<Admission<'a>, anyhow::Error> {
     let group = groups
         .iter()
         .find(|group| group.name == selection.group_name)
@@ -234,7 +300,83 @@ fn admit<'a>(
     }
     // Skill discovery owns the admission rule: no `SKILL.md`, no skill.
     require_skill_md(&selection.chosen_path)?;
-    Ok(group)
+    // A managed name is decided here, never by finalize's collision. An
+    // operator-supplied different name is an ordinary import (finalize still
+    // refuses a name that is taken).
+    let keeps_group_name = selection
+        .name
+        .as_deref()
+        .is_none_or(|name| name == group.name);
+    match group.managed_skill_id.as_deref() {
+        Some(skill_id) if keeps_group_name && selection.replace => {
+            Ok(Admission::Replace { group, skill_id })
+        }
+        Some(skill_id) if keeps_group_name => Ok(Admission::Skip(ImportSkipReason::NameManaged {
+            skill_id: skill_id.to_string(),
+        })),
+        _ => Ok(Admission::Import(group)),
+    }
+}
+
+/// Replace every copy in a managed-name group with the Managed skill: one
+/// global sync batch over the group's Tools, same-content policy, no
+/// override. An identical copy is replaced in place; a divergent one is the
+/// pair's `TARGET_EXISTS` row (the frontend's overwrite ask retries it with
+/// an Overwrite override through `sync_skills_to_tools`). The caller holds
+/// the mutation guard.
+fn replace_with_managed_unlocked(
+    paths: &InstallerPaths,
+    store: &SkillStore,
+    group: &OnboardingGroup,
+    skill_id: &str,
+    now: i64,
+) -> ImportGroupStatus {
+    let record = match store.get_skill_by_id(skill_id) {
+        Ok(Some(record)) => record,
+        Ok(None) => {
+            return ImportGroupStatus::Failed {
+                error: CommandError::from_anyhow(anyhow::anyhow!(SignalError::NotFound {
+                    kind: "skill".to_string(),
+                    id: skill_id.to_string(),
+                })),
+            }
+        }
+        Err(error) => {
+            return ImportGroupStatus::Failed {
+                error: CommandError::from_anyhow(error),
+            }
+        }
+    };
+    let mut tools: Vec<String> = Vec::new();
+    for variant in &group.variants {
+        if !tools.contains(&variant.tool) {
+            tools.push(variant.tool.clone());
+        }
+    }
+    let skills = [BatchSkill {
+        skill_id: record.id.clone(),
+        skill_name: record.name.clone(),
+        source_path: PathBuf::from(&record.central_path),
+    }];
+    let batch_policy = BatchPolicy {
+        overwrite: false,
+        overwrite_if_same_content: true,
+        overrides: Vec::new(),
+    };
+    let targets = sync_skills_to_tools_unlocked(
+        &paths.home,
+        store,
+        &skills,
+        &tools,
+        &batch_policy,
+        now,
+        |_| {},
+    );
+    ImportGroupStatus::Replaced {
+        skill_id: record.id,
+        skill_name: record.name,
+        targets,
+    }
 }
 
 /// Finalize one group's chosen variant and settle its originals. The caller
@@ -273,18 +415,39 @@ fn apply_one_unlocked(
             group
                 .variants
                 .iter()
-                .map(|variant| {
-                    settle_original(
-                        &paths.home,
-                        store,
-                        &installed.skill_id,
-                        &variant.path,
-                        &variant.tool,
-                    )
+                .filter_map(|variant| {
+                    if policy.remove_originals {
+                        Some(settle_original(
+                            &paths.home,
+                            store,
+                            &installed.skill_id,
+                            &variant.path,
+                            &variant.tool,
+                        ))
+                    } else {
+                        leave_original(store, &installed.skill_id, &variant.path, &variant.tool)
+                    }
                 })
                 .collect(),
         )
     };
+    // Finalised, then an original could not be settled: that settles here as
+    // the new skill's health (its targets' failures are their own `error`
+    // rows).
+    if let Some(error) = originals
+        .iter()
+        .find_map(|original| match &original.status {
+            OriginalStatus::Failed { error } => Some(error),
+            _ => None,
+        })
+    {
+        super::skill_health::note_outcome(
+            store,
+            &installed.skill_id,
+            super::skill_health::SkillOutcomeKind::ImportFailed,
+            error,
+        );
+    }
 
     ImportGroupStatus::Imported {
         skill_id: installed.skill_id,
@@ -392,6 +555,28 @@ fn chosen_variant<'a>(
         .variants
         .iter()
         .find(|variant| variant.path == selection.chosen_path)
+}
+
+/// Auto-sync off, originals kept: touch nothing and say what stays —
+/// `LeftInPlace` when byte-identical to the central copy, `KeptDivergent`
+/// otherwise. An original already gone is not reported: nothing is left.
+fn leave_original(
+    store: &SkillStore,
+    skill_id: &str,
+    path: &Path,
+    tool: &str,
+) -> Option<OriginalOutcome> {
+    path.symlink_metadata().ok()?;
+    let status = if content_identity::same_content(Source::Managed { store, skill_id }, path) {
+        OriginalStatus::LeftInPlace
+    } else {
+        OriginalStatus::KeptDivergent
+    };
+    Some(OriginalOutcome {
+        path: path.to_path_buf(),
+        tool: tool.to_string(),
+        status,
+    })
 }
 
 /// Auto-sync off: remove one original, but only when it is byte-identical to

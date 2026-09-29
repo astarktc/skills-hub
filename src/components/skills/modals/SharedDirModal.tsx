@@ -4,7 +4,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import type { SharedDirPending } from '../../../hooks/useSharedDirConfirmation'
 
 type SharedDirModalProps = {
-  /** The one pending shared-dir confirmation, from useSharedDirConfirmation. */
+  /** The one pending shared-dir ask (`surface.pendingAsk('sharedDir')`). */
   pending: SharedDirPending | null
   loading: boolean
   onCancel: () => void
@@ -18,7 +18,7 @@ const SharedDirModal = ({ pending, loading, onCancel, t }: SharedDirModalProps) 
       title={t('sharedDir.title')}
       confirmLabel={t('sharedDir.confirm')}
       cancelLabel={t('sharedDir.cancel')}
-      onConfirm={() => pending?.resolve(true)}
+      onConfirm={() => pending?.answer('confirmed')}
       onCancel={onCancel}
       cancelDisabled={loading}
       confirmDisabled={loading || !pending}

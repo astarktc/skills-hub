@@ -207,14 +207,14 @@ impl fmt::Display for SignalError {
 
 impl std::error::Error for SignalError {}
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::core::global_sync::GlobalSyncError;
 
 /// Why a GitHub clone/fetch failed, classified backend-side from the error
 /// chain (the backend has the chain; the frontend owns the copy).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub enum GitCloneFailureKind {
     Tls,
@@ -228,8 +228,10 @@ pub enum GitCloneFailureKind {
     Unknown,
 }
 
-/// Structured command failure crossing the IPC seam.
-#[derive(Debug, Clone, Serialize, Type)]
+/// Structured command failure crossing the IPC seam. `Deserialize` because a
+/// settled failure is also stored as this JSON (`skills.last_outcome_error`,
+/// see `core::skill_health`) and read back into the catalog.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(
     tag = "code",
     rename_all = "SCREAMING_SNAKE_CASE",
@@ -358,6 +360,15 @@ pub enum CommandError {
         /// The credential store's diagnostic, not user copy.
         detail: String,
     },
+    /// An Update replayed the operator's invocation Edit onto new upstream
+    /// bytes whose own invocation mode disagrees with both the Edit's base
+    /// and its override: the Edit was kept and needs review. Settled by
+    /// `skill_update::apply_unlocked` as the skill's `edit_conflict` health.
+    EditConflict {
+        base_mode: crate::core::manifest::InvocationMode,
+        upstream_mode: crate::core::manifest::InvocationMode,
+        override_mode: crate::core::manifest::InvocationMode,
+    },
     Other {
         message: String,
     },
@@ -395,6 +406,17 @@ impl CommandError {
             Ok(sync_err) => return CommandError::from(sync_err),
             Err(err) => err,
         };
+        // `sync_engine`'s typed collision, wherever it sits in the chain: a
+        // project first sync / resync / Enable meeting a folder in the way is
+        // the same `TARGET_EXISTS` the global batch reports.
+        if let Some(exists) = err
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<crate::core::sync_engine::TargetExistsError>())
+        {
+            return CommandError::TargetExists {
+                path: exists.target.to_string_lossy().into_owned(),
+            };
+        }
 
         let full = format!("{:#}", err);
         let root = err.root_cause().to_string();

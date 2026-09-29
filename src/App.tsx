@@ -1,4 +1,4 @@
-import { useCallback, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo } from "react";
 import "./App.css";
 import { useTranslation } from "react-i18next";
 // The binder mounts the token-themed Toaster once; useStatusReporter makes
@@ -9,7 +9,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import ExplorePage from "./components/skills/ExplorePage";
 import FilterBar from "./components/skills/FilterBar";
-import SkillDetailView from "./components/skills/SkillDetailView";
+import SkillDetailView, { type DetailSubject } from "./components/skills/SkillDetailView";
 import Header from "./components/skills/Header";
 import LoadingOverlay from "./components/skills/LoadingOverlay";
 import SkillsList from "./components/skills/SkillsList";
@@ -34,8 +34,13 @@ import { useSkillLibrary } from "./hooks/useSkillLibrary";
 import { useStatusReporter } from "./hooks/useStatusReporter";
 import { useSyncOrchestration } from "./hooks/useSyncOrchestration";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
-import { usePersistedPreference } from "./hooks/usePersistedPreference";
-import { filterAndSortSkills } from "./lib/skillPresentation";
+import { useListLens } from "./hooks/useListLens";
+import {
+  useFocusReconciliation,
+  useSurfaceState,
+  type Area,
+  type ExplorePreview,
+} from "./hooks/useSurfaceState";
 import {
   groupByRepoPreference,
   viewModePreference,
@@ -43,43 +48,33 @@ import {
 import { invokeTauri, isTauri } from "./lib/tauri";
 import type { ManagedSkill } from "./components/skills/types";
 
-// App is the binder: it owns only i18n and view/navigation state, composes
-// the per-world hooks (each returning that world's data + actions), and wires
-// their interfaces together. State logic lives in src/hooks/, not here.
+// App is the binder: it owns only i18n, composes the surface module (what is
+// on screen) and the per-world hooks (each returning that world's data +
+// actions), and wires their interfaces together. State logic lives in
+// src/hooks/, not here.
 function App() {
   const { t } = useTranslation();
   const updateTitleId = useId();
 
-  // View/navigation state (stays in the binder: it is what App composes for).
-  const [activeView, setActiveView] = useState<
-    | "myskills"
-    | "explore"
-    | "detail"
-    | "settings"
-    | "projects"
-    | "explore-detail"
-  >("myskills");
-  const [exploreDetailSkill, setExploreDetailSkill] = useState<ManagedSkill | null>(null);
-  const [showNotifications, setShowNotifications] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [sortBy, setSortBy] = useState<"name" | "updated" | "added">("name");
-  const [groupByRepo, setGroupByRepo] =
-    usePersistedPreference(groupByRepoPreference);
-  const [viewMode, setViewMode] = usePersistedPreference(viewModePreference);
+  // Surface state first: every world asks it to open and close surfaces.
+  const surface = useSurfaceState();
 
   // World hooks, wired in dependency order: reporter → sync → library →
   // settings/explore/addFlow. Hooks never import each other; every
   // cross-world need flows through the interfaces passed here.
   const reporter = useStatusReporter(t);
-  const updates = useUpdateChecker({ reporter });
-  const sync = useSyncOrchestration({ t, reporter });
-  const library = useSkillLibrary({ t, reporter, sync });
-  const effectiveView = activeView === "detail" && !library.detailSkill ? "myskills" : activeView;
+  const updates = useUpdateChecker({ reporter, surface });
+  const sync = useSyncOrchestration({ t, reporter, surface });
+  const library = useSkillLibrary({ t, reporter, sync, surface });
+  // A focused or selected skill that leaves the catalog clears itself.
+  useFocusReconciliation(surface, "skill", library.managedSkillIds);
 
-  const openExploreDetail = useCallback((skill: ManagedSkill) => {
-    setExploreDetailSkill(skill);
-    setActiveView("explore-detail");
-  }, []);
+  const { area, focused, focus, unfocus, open, openDialog, closeDialog, dismissDialog } =
+    surface;
+  const openExplorePreview = useCallback(
+    (preview: ExplorePreview) => focus({ kind: "explore", ref: preview }),
+    [focus],
+  );
 
   const settings = useSettingsState({
     t,
@@ -89,9 +84,22 @@ function App() {
   const explore = useExploreState({
     t,
     reporter,
-    onOpenExploreDetail: openExploreDetail,
+    onOpenPreview: openExplorePreview,
   });
-  const addFlow = useAddSkillFlow({ t, reporter, sync, library });
+  const addFlow = useAddSkillFlow({ t, reporter, sync, library, surface });
+
+  // My Skills' list lens: query, sort, Grouped/Flat, view mode.
+  const lens = useListLens({
+    items: library.managedSkills,
+    labels: {
+      local: t("localGroup"),
+      ungrouped: t("ungrouped"),
+      individual: t("individualSources"),
+    },
+    groupByRepoPreference,
+    viewModePreference,
+    selection: surface.selection.skills,
+  });
 
   const {
     loading,
@@ -117,74 +125,73 @@ function App() {
     updateNow,
   } = updates;
 
-  const visibleSkills = useMemo(
-    () =>
-      filterAndSortSkills(library.managedSkills, {
-        query: searchQuery,
-        sort: sortBy,
-      }),
-    [library.managedSkills, searchQuery, sortBy],
-  );
-
   const handleOpenSettings = useCallback(() => {
-    setActiveView("settings");
-  }, []);
+    open("settings");
+  }, [open]);
 
   const handleCloseSettings = useCallback(() => {
-    setActiveView("myskills");
-  }, []);
+    open("skills");
+  }, [open]);
 
   // Opening the history marks it read.
   const handleOpenNotifications = useCallback(() => {
     markAllRead();
-    setShowNotifications(true);
-  }, [markAllRead]);
+    openDialog({ kind: "notifications" });
+  }, [markAllRead, openDialog]);
 
   const handleCloseNotifications = useCallback(() => {
-    setShowNotifications(false);
-  }, []);
+    closeDialog("notifications");
+  }, [closeDialog]);
 
+  // Explore loads its lists whenever it becomes the area — from the tab, a
+  // link or Back alike.
   const { loadFeaturedSkills, loadHiddenSkills } = explore;
-  const { openDetail, closeDetail } = library;
-  const detailSkill = effectiveView === "explore-detail"
-    ? exploreDetailSkill : library.detailSkill;
-  const handleViewChange = useCallback(
-    (view: "myskills" | "explore" | "projects") => {
-      setActiveView(view);
-      if (view === "explore") {
-        loadFeaturedSkills();
-        loadHiddenSkills();
-      }
-      if (view === "myskills") {
-        closeDetail();
-      }
-    },
-    [closeDetail, loadFeaturedSkills, loadHiddenSkills],
+  useEffect(() => {
+    if (area !== "explore") return;
+    void (async () => {
+      await Promise.all([loadFeaturedSkills(), loadHiddenSkills()]);
+    })();
+    // Keyed on the area alone: `loadFeaturedSkills` changes identity once
+    // its list lands, which must not trigger a second hidden-list fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [area]);
+
+  // What the detail shows: the focused Managed skill, or the Explore preview.
+  const focusedSkill =
+    focused?.kind === "skill"
+      ? (library.managedSkills.find((skill) => skill.id === focused.id) ?? null)
+      : null;
+  const explorePreview = focused?.kind === "explore" ? focused.ref : null;
+  const detailSubject = useMemo<DetailSubject | null>(
+    () =>
+      explorePreview
+        ? { kind: "explore", preview: explorePreview }
+        : focusedSkill
+          ? { kind: "managed", skill: focusedSkill }
+          : null,
+    [explorePreview, focusedSkill],
   );
 
-  const handleOpenDetail = useCallback((skill: ManagedSkill) => {
-    openDetail(skill.id);
-    setActiveView("detail");
-  }, [openDetail]);
+  const handleViewChange = useCallback(
+    (next: Exclude<Area, "settings">) => {
+      open(next);
+    },
+    [open],
+  );
 
-  const handleBackToList = useCallback(() => {
-    closeDetail();
-    setActiveView("myskills");
-  }, [closeDetail]);
-
-  const handleBackToExplore = useCallback(() => {
-    setExploreDetailSkill(null);
-    setActiveView("explore");
-  }, []);
+  const handleOpenDetail = useCallback(
+    (skill: ManagedSkill) => {
+      focus({ kind: "skill", id: skill.id });
+    },
+    [focus],
+  );
 
   const { handleExploreInstall } = addFlow;
   const handleExploreInstallFromDetail = useCallback(() => {
-    if (!detailSkill?.source_ref) return;
-    const sourceUrl = detailSkill.source_ref;
-    handleExploreInstall(sourceUrl);
-    setExploreDetailSkill(null);
-    setActiveView("explore");
-  }, [detailSkill, handleExploreInstall]);
+    if (!explorePreview) return;
+    handleExploreInstall(explorePreview.sourceUrl);
+    unfocus();
+  }, [explorePreview, handleExploreInstall, unfocus]);
 
   // "Sync all to the new tools" spans two worlds — enable the targets (sync)
   // and push every managed skill (library) — so the binder composes it.
@@ -192,7 +199,6 @@ function App() {
     relevantNewlyInstalled,
     effectiveSyncTargetIds,
     enableTargetsFor,
-    setShowNewToolsModal,
   } = sync;
   const { syncAllManagedToTools } = library;
   const handleSyncAllNewTools = useCallback(() => {
@@ -203,7 +209,7 @@ function App() {
     const targets = relevantNewlyInstalled.filter((id) =>
       effectiveSyncTargetIds.includes(id),
     );
-    setShowNewToolsModal(false);
+    dismissDialog("newTools");
     // Zero work is reported, never silent: every newly detected tool sat
     // outside the operator's selection, so nothing was deployed.
     if (targets.length === 0) {
@@ -213,25 +219,18 @@ function App() {
     enableTargetsFor(targets);
     void syncAllManagedToTools(targets);
   }, [
+    dismissDialog,
     effectiveSyncTargetIds,
     enableTargetsFor,
     notify,
     relevantNewlyInstalled,
-    setShowNewToolsModal,
     t,
     syncAllManagedToTools,
   ]);
 
-  const handleSortChange = useCallback(
-    (value: "name" | "updated" | "added") => {
-      setSortBy(value);
-    },
-    [],
-  );
-
-  const handleSearchChange = useCallback((value: string) => {
-    setSearchQuery(value);
-  }, []);
+  // The two asks render from the surface stack and answer through it.
+  const sharedDirAsk = surface.pendingAsk("sharedDir");
+  const overwriteAsk = surface.pendingAsk("overwrite");
 
   return (
     <div className="skills-app">
@@ -249,7 +248,7 @@ function App() {
 
       <Header
         loading={loading}
-        activeView={effectiveView}
+        activeArea={area}
         unreadNotifications={unreadCount}
         onOpenNotifications={handleOpenNotifications}
         onOpenSettings={handleOpenSettings}
@@ -258,52 +257,37 @@ function App() {
       />
 
       <main className="skills-main">
-        {(effectiveView === "detail" || effectiveView === "explore-detail") &&
-        detailSkill ? (
+        {detailSubject ? (
           <SkillDetailView
-            skill={detailSkill}
+            subject={detailSubject}
             onRepoint={library.handleRepointSkill}
             actionLoading={loading}
-            onBack={
-              effectiveView === "explore-detail"
-                ? handleBackToExplore
-                : handleBackToList
-            }
+            onBack={unfocus}
             invokeTauri={invokeTauri}
             notify={notify}
             t={t}
-            isExplorePreview={effectiveView === "explore-detail"}
             onInstall={
-              effectiveView === "explore-detail"
+              detailSubject.kind === "explore"
                 ? handleExploreInstallFromDetail
                 : undefined
             }
           />
-        ) : effectiveView === "myskills" ? (
+        ) : area === "skills" ? (
           <div className="dashboard-stack">
             <FilterBar
-              sortBy={sortBy}
-              searchQuery={searchQuery}
+              lens={lens}
               loading={loading}
-              onSortChange={handleSortChange}
-              onSearchChange={handleSearchChange}
               onAddSkill={addFlow.handleOpenAdd}
               onRefresh={library.handleRefresh}
               autoSyncEnabled={sync.autoSyncEnabled}
               onAutoSyncChange={sync.handleAutoSyncToggle}
               onUnsyncAll={library.handleUnsyncAll}
               onConfigureTools={sync.handleOpenToolConfig}
-              groupByRepo={groupByRepo}
-              onGroupByRepoChange={setGroupByRepo}
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
               t={t}
             />
             <SkillsList
               plan={addFlow.plan}
-              visibleSkills={visibleSkills}
-              groupByRepo={groupByRepo}
-              viewMode={viewMode}
+              lens={lens}
               installedTools={sync.installedTools}
               allTools={sync.tools}
               loading={loading}
@@ -322,7 +306,7 @@ function App() {
               t={t}
             />
           </div>
-        ) : effectiveView === "settings" ? (
+        ) : area === "settings" ? (
           <SettingsPage
             isTauri={isTauri}
             storagePath={settings.storagePath}
@@ -347,8 +331,9 @@ function App() {
             onBack={handleCloseSettings}
             t={t}
           />
-        ) : effectiveView === "projects" ? (
+        ) : area === "projects" ? (
           <ProjectsPage
+            surface={surface}
             notify={notify}
             notifyError={notifyError}
             showActionErrors={showActionErrors}
@@ -418,7 +403,7 @@ function App() {
       ) : null}
 
       <NotificationsModal
-        open={showNotifications}
+        open={surface.isOpen("notifications")}
         notifications={notifications}
         onRequestClose={handleCloseNotifications}
         onClear={clearNotifications}
@@ -427,20 +412,19 @@ function App() {
       />
 
       <SharedDirModal
-        pending={sync.sharedDirPending}
+        pending={sharedDirAsk}
         loading={loading}
-        onCancel={sync.cancelSharedDirConfirmation}
+        onCancel={() => sharedDirAsk?.answer("declined")}
         t={t}
       />
 
       <OverwriteModal
-        pending={sync.overwritePending}
-        onCancel={sync.cancelOverwriteConfirmation}
+        pending={overwriteAsk}
         t={t}
       />
 
       <ToolConfigModal
-        open={sync.showToolConfigModal}
+        open={surface.isOpen("toolConfig")}
         loading={loading}
         toolStatus={sync.toolStatus}
         savedSelection={sync.globalSelectedTools}
@@ -457,7 +441,7 @@ function App() {
       />
 
       <NewToolsModal
-        open={Boolean(sync.showNewToolsModal && sync.newlyInstalledToolsText)}
+        open={surface.isOpen("newTools") && Boolean(sync.newlyInstalledToolsText)}
         loading={loading}
         toolsLabelText={sync.newlyInstalledToolsText}
         onLater={sync.handleCloseNewTools}
@@ -492,7 +476,7 @@ function App() {
       ) : null}
 
       <DeleteModal
-        open={Boolean(library.pendingDeleteId)}
+        open={surface.isOpen("deleteSkill")}
         loading={loading}
         skillName={library.pendingDeleteSkill?.name ?? null}
         onRequestClose={library.handleCloseDelete}
@@ -530,7 +514,7 @@ function App() {
       />
 
       <Dialog
-        open={Boolean(updateAvailableVersion)}
+        open={surface.isOpen("update") && Boolean(updateAvailableVersion)}
         dismissible={!updateInstalling}
         onOpenChange={(next) => {
           if (!next) dismissUpdate();

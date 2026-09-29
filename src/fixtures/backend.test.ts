@@ -164,7 +164,7 @@ describe("rich", () => {
     const retry = await handlers.syncSkillsToTools(
       batch,
       ["cursor"],
-      { overrides: [{ skill_id: zod.id, tool: "cursor", overwrite: true }] },
+      { overrides: [{ skill_id: zod.id, tool: "cursor", decision: "overwrite" }] },
       sink().channel
     );
     expect(retry[0].status).toMatchObject({ status: "synced", outcome: { replaced: true } });
@@ -437,10 +437,77 @@ describe("first-run and empty", () => {
     expect(plan.groups.length).toBeGreaterThanOrEqual(10);
     expect(plan.groups.some((g) => g.has_conflict)).toBe(true);
 
+    // Two managed-name groups and one invalid manifest (the review's cases).
+    const managed = plan.groups.filter((g) => g.name_is_managed).map((g) => g.name);
+    expect(managed).toEqual(["frontend-design", "tdd"]);
+    expect(plan.invalid).toEqual([
+      { tool: "cursor", name: "broken-skill", path: "/Users/alex/.cursor/skills/broken-skill", reason: "invalid_frontmatter" },
+    ]);
+    expect(plan.groups.some((g) => g.name === "broken-skill")).toBe(false);
+    expect(plan.group_count).toBe(plan.groups.length);
+    expect(plan.copy_count).toBe(plan.groups.reduce((n, g) => n + g.variants.length, 0));
+    expect(plan.copy_count).toBeGreaterThan(plan.group_count);
+
+    const before = (await handlers.getManagedSkills()).length;
     const selections = plan.groups.map((g) => ({ group_name: g.name, chosen_path: g.variants[0].path, name: null }));
-    const report = await handlers.importOnboardingSelection(selections, { auto_sync: true, tools: null }, sink().channel );
-    expect(report.groups.every((g) => g.status.status === "imported")).toBe(true);
-    expect(await handlers.getManagedSkills()).toHaveLength(plan.groups.length);
+    const report = await handlers.importOnboardingSelection(selections, { auto_sync: true, tools: null, remove_originals: true }, sink().channel );
+    const byStatus = (s: string) => report.groups.filter((g) => g.status.status === s).map((g) => g.group_name);
+    expect(byStatus("skipped")).toEqual(managed);
+    expect(byStatus("imported")).toHaveLength(plan.groups.length - managed.length);
+    expect(await handlers.getManagedSkills()).toHaveLength(before + plan.groups.length - managed.length);
+  });
+
+  it("first-run: Replace syncs the managed skill over identical copies and asks for divergent ones", async () => {
+    const { handlers } = backendFor("first-run");
+    const plan = await handlers.getOnboardingPlan();
+    const replace = (name: string) => {
+      const group = plan.groups.find((g) => g.name === name)!;
+      return { group_name: name, chosen_path: group.variants[0].path, name: null, replace: true };
+    };
+    const report = await handlers.importOnboardingSelection(
+      [replace("frontend-design"), replace("tdd")],
+      { auto_sync: false, tools: null, remove_originals: false },
+      sink().channel,
+    );
+    const [identical, divergent] = report.groups.map((g) => g.status);
+    if (identical.status !== "replaced" || divergent.status !== "replaced") throw new Error("expected replaced");
+    const byTool = (targets: typeof identical.targets) =>
+      [...targets].sort((a, b) => a.tool_key.localeCompare(b.tool_key));
+    expect(byTool(identical.targets).map((o) => [o.tool_key, o.status.status])).toEqual([
+      ["claude_code", "synced"],
+      ["cursor", "synced"],
+    ]);
+    // Askable: TARGET_EXISTS rows naming (skill, Tool), never overwritten here.
+    expect(byTool(divergent.targets).map((o) => o.status)).toEqual(
+      ["claude_code", "codex", "pi"].map((tool) => ({
+        status: "failed",
+        error: { code: "TARGET_EXISTS", path: `${globalRoot(tool)}/tdd` },
+      })),
+    );
+    expect(divergent.targets.every((o) => o.skill_id === divergent.skill_id)).toBe(true);
+    const after = await handlers.getOnboardingPlan();
+    expect(after.groups.some((g) => g.name === "frontend-design")).toBe(false);
+    expect(after.groups.find((g) => g.name === "tdd")?.variants).toHaveLength(3);
+  });
+
+  it("remove_originals: auto-sync off leaves the originals when false, removes them when true", async () => {
+    for (const remove of [false, true]) {
+      const { handlers } = backendFor("first-run");
+      const group = (await handlers.getOnboardingPlan()).groups.find((g) => g.name === "systematic-debugging")!;
+      const report = await handlers.importOnboardingSelection(
+        [{ group_name: group.name, chosen_path: group.variants[0].path, name: null }],
+        { auto_sync: false, tools: null, remove_originals: remove },
+        sink().channel,
+      );
+      const status = report.groups[0].status;
+      if (status.status !== "imported") throw new Error(`expected imported, got ${status.status}`);
+      expect(status.originals.map((o) => [o.tool, o.status.status])).toEqual([
+        ["claude_code", remove ? "removed" : "left_in_place"],
+        ["pi", remove ? "removed" : "left_in_place"],
+      ]);
+      const after = (await handlers.getOnboardingPlan()).groups.find((g) => g.name === group.name);
+      expect(after?.variants.length ?? 0).toBe(remove ? 0 : 2);
+    }
   });
 
   it("empty has nothing managed and nothing to import", async () => {
@@ -511,7 +578,7 @@ describe("S2/S3: onboarding import goes through the global sync batch", () => {
     const codex = group.variants.find((v) => v.tool === "codex")!;
     const report = await handlers.importOnboardingSelection(
       [{ group_name: group.name, chosen_path: codex.path, name: null }],
-      { auto_sync: true, tools: ["codex"] },
+      { auto_sync: true, tools: ["codex"], remove_originals: true },
       sink().channel,
     );
     const status = report.groups[0].status;
@@ -531,7 +598,7 @@ describe("S2/S3: onboarding import goes through the global sync batch", () => {
     const group = (await handlers.getOnboardingPlan()).groups.find((g) => g.name === "pdf")!;
     const report = await handlers.importOnboardingSelection(
       [{ group_name: "pdf", chosen_path: group.variants[0].path, name: null }],
-      { auto_sync: true, tools: null },
+      { auto_sync: true, tools: null, remove_originals: true },
       sink().channel,
     );
     const status = report.groups[0].status;
@@ -543,16 +610,16 @@ describe("S2/S3: onboarding import goes through the global sync batch", () => {
   it("honours a saved empty selection: only identical originals' Tools are synced", async () => {
     const { handlers } = backendFor("first-run");
     await handlers.updateSetting({ key: "global_tool_config", value: { selected_tools: [], scan_selected_only: false } });
-    const group = (await handlers.getOnboardingPlan()).groups.find((g) => g.name === "tdd")!;
+    const group = (await handlers.getOnboardingPlan()).groups.find((g) => g.name === "web-design-guidelines")!;
     const report = await handlers.importOnboardingSelection(
-      [{ group_name: "tdd", chosen_path: group.variants[0].path, name: null }],
-      { auto_sync: true, tools: null },
+      [{ group_name: group.name, chosen_path: group.variants[0].path, name: null }],
+      { auto_sync: true, tools: null, remove_originals: true },
       sink().channel,
     );
     const status = report.groups[0].status;
     if (status.status !== "imported") throw new Error(`expected imported, got ${status.status}`);
-    expect(status.forced_tools.sort()).toEqual(["claude_code", "codex", "pi"]);
-    expect(status.targets.map((o) => o.tool_key).sort()).toEqual(["claude_code", "codex", "pi"]);
+    expect(status.forced_tools.sort()).toEqual(["codex", "cursor"]);
+    expect(status.targets.map((o) => o.tool_key).sort()).toEqual(["codex", "cursor"]);
   });
 
   it("makes one physical attempt (one report row) per shared skills dir", async () => {
@@ -560,7 +627,7 @@ describe("S2/S3: onboarding import goes through the global sync batch", () => {
     const group = (await handlers.getOnboardingPlan()).groups.find((g) => g.name === "ego-browser")!;
     const report = await handlers.importOnboardingSelection(
       [{ group_name: "ego-browser", chosen_path: group.variants[0].path, name: null }],
-      { auto_sync: true, tools: null },
+      { auto_sync: true, tools: null, remove_originals: true },
       sink().channel,
     );
     const status = report.groups[0].status;
@@ -671,26 +738,35 @@ describe("N1: progress ticks only the work that reached each phase", () => {
     expect(applying).not.toContain("pr-review");
   });
 
-  it("Import: no applying tick for a refused admission; apply failures still tick", async () => {
+  it("Import: no applying tick for a refused admission or a managed-name skip; apply failures still tick", async () => {
     const { handlers } = backendFor("failures");
     const plan = await handlers.getOnboardingPlan();
+    expect(plan.invalid.map((i) => i.name)).toEqual(["broken-skill"]);
     const pick = (name: string) => ({ group_name: name, chosen_path: plan.groups.find((g) => g.name === name)!.variants[0].path, name: null });
+    const tddId = plan.groups.find((g) => g.name === "tdd")!.managed_skill_id;
     const progress = sink<{ phase: string; group_name: string }>();
     const report = await handlers.importOnboardingSelection(
-      [pick("broken-skill"), { group_name: "vanished", chosen_path: "/nowhere", name: null }, pick("sql-review")],
-      { auto_sync: false, tools: null },
+      [
+        pick("tdd"),
+        { group_name: "vanished", chosen_path: "/nowhere", name: null },
+        { ...pick("sql-review"), name: "tdd" },
+        pick("commit-message"),
+      ],
+      { auto_sync: false, tools: null, remove_originals: true },
       progress.channel,
     );
     expect(progress.ticks.map((tick) => `${tick.group_name}:${tick.phase}`)).toEqual([
-      "broken-skill:admitting",
-      "broken-skill:applying",
+      "tdd:admitting",
       "vanished:admitting",
       "sql-review:admitting",
       "sql-review:applying",
+      "commit-message:admitting",
+      "commit-message:applying",
     ]);
     expect(report.groups.map((g) => g.status)).toEqual([
-      { status: "failed", error: { code: "SKILL_INVALID", reason: "missing_name" } },
+      { status: "skipped", reason: { reason: "name_managed", skill_id: tddId } },
       { status: "failed", error: { code: "NOT_FOUND", kind: "onboarding_group", id: "vanished" } },
+      { status: "failed", error: { code: "SKILL_EXISTS", name: "tdd" } },
       expect.objectContaining({ status: "imported" }),
     ]);
   });
@@ -823,7 +899,11 @@ describe("ticket-01 review: ownership, partial Disable, artifact presence", () =
   });
 
   it("F1-R1: a failed project Enable leaves the row error with no owner; no removal or re-sync takes the folder", async () => {
-    const collision = { status: "failed", error: { code: "OTHER", message: expect.stringContaining("target already exists") } };
+    // Typed like the global batch's collision (ticket 02).
+    const collision = {
+      status: "failed",
+      error: { code: "TARGET_EXISTS", path: "/Users/alex/Projects/fresh/.claude/skills/prisma-review" },
+    };
     type Act = (
       handlers: FixtureHandlers,
       ids: { skill: string; project: string },
@@ -912,5 +992,163 @@ describe("F4: one source of truth for invocation-Edit conflicts", () => {
     if (again.status !== "refreshed") throw new Error(`expected refreshed, got ${again.status}`);
     expect(again.edit_conflict).toBeNull();
     expect(second.skills.find((s) => s.id === tokens.id)!.invocation_override).toEqual(card.invocation_override);
+  });
+});
+
+describe("D9: Skill health and the failed / declined first sync (ticket 02)", () => {
+  const KINDS = ["fetch_failed", "edit_conflict", "delete_incomplete", "repoint_failed", "restore_failed", "import_failed"];
+
+  it("the failures scenario seeds every outcome kind, each with a typed error", async () => {
+    const { handlers } = backendFor("failures");
+    const skills = await handlers.getManagedSkills();
+    const seeded = skills.flatMap((s) => (s.health ? [s.health.kind] : []));
+    expect([...new Set(seeded)].sort()).toEqual([...KINDS].sort());
+    for (const s of skills) {
+      if (!s.health) continue;
+      expect(typeof s.health.error.code).toBe("string");
+      expect(s.health.at).toBeLessThanOrEqual(NOW);
+    }
+    // A failed first sync's rows own nothing.
+    const canvas = await byName(handlers, "json-canvas");
+    expect(canvas.targets.filter((t) => t.status === "error")).toEqual([
+      expect.objectContaining({ tool: "amp", synced_at: null }),
+      expect.objectContaining({ tool: "kimi_cli", synced_at: null }),
+    ]);
+  });
+
+  it("a failed Update records fetch_failed with the row's error; the next success clears it", async () => {
+    const { handlers, state } = backendFor("failures");
+    const pr = state.skills.find((s) => s.dto.name === "pr-review")!;
+    pr.dto.health = null;
+    const failed = await handlers.updateManagedSkill(pr.dto.id, { reassert_auto_sync: false }, sink().channel);
+    const row = failed.report.skills[0].status;
+    if (row.status !== "failed") throw new Error(row.status);
+    const card = failed.skills.find((s) => s.id === pr.dto.id)!;
+    expect(card.health).toEqual({ kind: "fetch_failed", error: row.error, at: NOW });
+
+    pr.acquisition.fail = undefined;
+    const ok = await handlers.updateManagedSkill(pr.dto.id, { reassert_auto_sync: false }, sink().channel);
+    expect(ok.skills.find((s) => s.id === pr.dto.id)!.health).toBeNull();
+  });
+
+  it("a failed Restore records restore_failed; a cancelled Refresh records nothing", async () => {
+    const { handlers, state } = backendFor("failures");
+    const scratch = state.skills.find((s) => s.dto.name === "scratchpad")!;
+    scratch.dto.health = null;
+    const { skills } = await handlers.updateManagedSkill(scratch.dto.id, { reassert_auto_sync: false }, sink().channel);
+    expect(skills.find((s) => s.id === scratch.dto.id)!.health).toMatchObject({
+      kind: "restore_failed",
+      error: { code: "SOURCE_PATH_MISSING" },
+    });
+
+    const cancelling = cancellingBackend("failures");
+    const pr = cancelling.state.skills.find((s) => s.dto.name === "pr-review")!;
+    pr.dto.health = null;
+    cancelling.armCancel(1);
+    const report = await cancelling.handlers.refreshManagedSkills([pr.dto.id], { reassert_auto_sync: false }, sink().channel);
+    expect(report.skills[0].status).toEqual({ status: "failed", error: { code: "CANCELLED" } });
+    expect(pr.dto.health).toBeNull();
+  });
+
+  it("a Re-point that fails after validation records repoint_failed; a refused target records nothing", async () => {
+    const { handlers, state } = backendFor("failures");
+    const zod = state.skills.find((s) => s.dto.name === "zod-schema-first")!;
+    await expect(
+      handlers.repointSkillSource(zod.dto.id, { kind: "git", url: "not a url" }, { reassert_auto_sync: false }),
+    ).rejects.toMatchObject({ code: "INVALID_GITHUB_URL" });
+    expect(zod.dto.health).toBeNull();
+
+    const { report } = await handlers.repointSkillSource(
+      zod.dto.id,
+      { kind: "git", url: "https://github.com/corp/private-skills" },
+      { reassert_auto_sync: false },
+    );
+    const row = report.skills[0].status;
+    if (row.status !== "failed") throw new Error(row.status);
+    expect(zod.dto.health).toEqual({ kind: "repoint_failed", error: row.error, at: NOW });
+  });
+
+  it("an Update's Edit conflict records edit_conflict; saving the Edit clears it", async () => {
+    const { handlers, state } = backendFor("failures");
+    const tokens = state.skills.find((s) => s.dto.name === "design-tokens")!;
+    const first = await handlers.updateManagedSkill(tokens.dto.id, { reassert_auto_sync: false }, sink().channel);
+    expect(first.skills.find((s) => s.id === tokens.dto.id)!.health).toEqual({
+      kind: "edit_conflict",
+      error: { code: "EDIT_CONFLICT", baseMode: "user-and-model", upstreamMode: "model-only", overrideMode: "user-only" },
+      at: NOW,
+    });
+    // An unchanged Update keeps the unresolved conflict.
+    await handlers.updateManagedSkill(tokens.dto.id, { reassert_auto_sync: false }, sink().channel);
+    expect(tokens.dto.health?.kind).toBe("edit_conflict");
+    const saved = await handlers.setSkillInvocationOverride(tokens.dto.id, "user-only");
+    expect(saved.skills.find((s) => s.id === tokens.dto.id)!.health).toBeNull();
+  });
+
+  it("a kept Delete records delete_incomplete with the failed target's error", async () => {
+    const { handlers, state } = backendFor("failures");
+    const train = state.skills.find((s) => s.dto.name === "release-train")!;
+    train.dto.health = null;
+    const report = await handlers.deleteManagedSkill(train.dto.id);
+    expect(report.record_deleted).toBe(false);
+    const failed = report.targets.find((t) => t.status.status === "failed")!;
+    if (failed.status.status !== "failed") throw new Error("expected a failed target");
+    expect(train.dto.health).toEqual({ kind: "delete_incomplete", error: failed.status.error, at: NOW });
+  });
+
+  it("an import that finalised but could not remove an original records import_failed", async () => {
+    const { handlers, state } = backendFor("failures");
+    const plan = await handlers.getOnboardingPlan();
+    const group = plan.groups.find((g) => g.name === "commit-message")!;
+    const chosen = group.variants.find((v) => v.tool === "codex")!;
+    const report = await handlers.importOnboardingSelection(
+      [{ group_name: group.name, chosen_path: chosen.path, name: null }],
+      { auto_sync: false, tools: null, remove_originals: true },
+      sink().channel,
+    );
+    const status = report.groups[0].status;
+    if (status.status !== "imported") throw new Error(status.status);
+    const failed = status.originals.find((o) => o.status.status === "failed")!;
+    if (failed.status.status !== "failed") throw new Error("expected a failed original");
+    const skill = state.skills.find((s) => s.dto.id === status.skill_id)!;
+    expect(skill.dto.health).toEqual({ kind: "import_failed", error: failed.status.error, at: NOW });
+  });
+
+  it("a failed first sync records error rows that own nothing; TARGET_EXISTS records none until decided", async () => {
+    const { handlers, state } = backendFor("failures");
+    const zod = state.skills.find((s) => s.dto.name === "zod-schema-first")!;
+    const batch = [{ skill_id: zod.dto.id, name: zod.dto.name, source_path: zod.dto.central_path }];
+
+    const unwritable = await handlers.syncSkillsToTools(batch, ["amp"], { overwrite_if_same_content: true }, sink().channel);
+    expect(unwritable[0].status).toMatchObject({ status: "skipped", error: { code: "TOOL_NOT_WRITABLE" } });
+    for (const tool of ["amp", "kimi_cli"]) {
+      expect(zod.dto.targets.find((t) => t.tool === tool)).toMatchObject({ status: "error", synced_at: null });
+    }
+
+    const asked = await handlers.syncSkillsToTools(batch, ["cursor"], { overwrite_if_same_content: true }, sink().channel);
+    expect(asked[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS" } });
+    expect(zod.dto.targets.some((t) => t.tool === "cursor")).toBe(false);
+
+    const kept = await handlers.syncSkillsToTools(
+      batch,
+      ["cursor"],
+      { overwrite_if_same_content: true, overrides: [{ skill_id: zod.dto.id, tool: "cursor", decision: "keep" }] },
+      sink().channel,
+    );
+    expect(kept[0].status).toEqual({ status: "skipped", error: { code: "TARGET_DISABLED", tool: "cursor" } });
+    expect(zod.dto.targets.find((t) => t.tool === "cursor")).toMatchObject({ status: "disabled", synced_at: null });
+    expect(state.foreign.some((f) => f.tool === "cursor" && f.name === "zod-schema-first")).toBe(true);
+
+    // Delete never takes the kept folder: the marker owns nothing.
+    await handlers.deleteManagedSkill(zod.dto.id);
+    expect(state.foreign.some((f) => f.tool === "cursor" && f.name === "zod-schema-first")).toBe(true);
+  });
+
+  it("an Enable meeting a folder in the way keeps the pair disabled", async () => {
+    const { handlers, state } = backendFor("failures");
+    const zod = state.skills.find((s) => s.dto.name === "zod-schema-first")!;
+    await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: zod.dto.id, tool: "cursor" });
+    const report = await handlers.enableSkillTargets({ kind: "skill_tool", skill_id: zod.dto.id, tool: "cursor" });
+    expect(report.global[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS" } });
+    expect(zod.dto.targets.find((t) => t.tool === "cursor")).toMatchObject({ status: "disabled", synced_at: null });
   });
 });

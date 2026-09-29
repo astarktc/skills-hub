@@ -255,7 +255,7 @@ fn v10_migration_adds_disabled_at_to_a_v9_database() {
             .expect("open")
             .query_row("PRAGMA user_version;", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 10);
+        assert_eq!(version, super::SCHEMA_VERSION);
         assert_eq!(store.skill_disabled_at("legacy").unwrap(), None);
         store.set_skill_disabled_at("legacy", Some(42)).unwrap();
         assert_eq!(store.skill_disabled_at("legacy").unwrap(), Some(42));

@@ -1029,6 +1029,52 @@ describe("importOutcome", () => {
       errors: 0,
       warnings: 0,
     },
+    {
+      name: "original left in place by choice",
+      status: imported({
+        originals: [
+          { tool: "claude", path: "/original", status: { status: "left_in_place" } },
+        ],
+      }),
+      errors: 0,
+      warnings: 0,
+    },
+    {
+      name: "managed name without a decision",
+      status: {
+        status: "skipped",
+        reason: { reason: "name_managed", skill_id: "s1" },
+      } as ImportGroupStatus,
+      errors: 0,
+      warnings: 1,
+    },
+    {
+      name: "replaced over an identical copy",
+      status: {
+        status: "replaced",
+        skill_id: "s1",
+        skill_name: "git",
+        targets: [syncReport[0]],
+      } as ImportGroupStatus,
+      errors: 0,
+      warnings: 0,
+    },
+    {
+      name: "replace answered TARGET_EXISTS",
+      status: {
+        status: "replaced",
+        skill_id: "s1",
+        skill_name: "git",
+        targets: [
+          {
+            ...syncReport[0],
+            status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/copy" } },
+          },
+        ],
+      } as ImportGroupStatus,
+      errors: 1,
+      warnings: 0,
+    },
   ])("$name", ({ status, errors, warnings }) => {
     const out = importOutcome(importReport(status), ctx);
     expect(out.errors).toHaveLength(errors);

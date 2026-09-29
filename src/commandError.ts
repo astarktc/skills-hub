@@ -4,7 +4,7 @@
 // via i18n; nothing else in the frontend should inspect command failures.
 
 import type { CommandError } from "./bindings";
-import { toolLabel } from "./lib/skillPresentation";
+import { INVOCATION_LABEL_KEY, toolLabel } from "./lib/skillPresentation";
 
 type TranslateFn = (key: string, opts?: Record<string, unknown>) => string;
 
@@ -43,6 +43,7 @@ const COMMAND_ERROR_CODE_MAP = {
   LOCAL_SOURCE_INSIDE_TOOL_DIR: true,
   SETTING_CORRUPT: true,
   CREDENTIAL_STORE_UNAVAILABLE: true,
+  EDIT_CONFLICT: true,
   OTHER: true,
 } as const satisfies Record<CommandError["code"], true>;
 
@@ -189,6 +190,13 @@ export function describeCommandError(
       // The copy names the repair (unlock / allow access); the store's own
       // diagnostic is a detail line. Never a plaintext fallback.
       return withDetail(t("errors.credentialStoreUnavailable"), e.detail);
+    case "EDIT_CONFLICT":
+      // Stored as a skill's health: upstream changed its own invocation
+      // setting after the operator overrode it; the override was kept.
+      return t("errors.editConflict", {
+        upstream: t(INVOCATION_LABEL_KEY[e.upstreamMode]),
+        override: t(INVOCATION_LABEL_KEY[e.overrideMode]),
+      });
     case "OTHER":
       return e.message;
   }

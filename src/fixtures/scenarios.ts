@@ -5,7 +5,8 @@
 //                Sync states — so the prototypes and the app show one library.
 // - `empty`      configured app, nothing managed, nothing to import.
 // - `first-run`  never configured: no selection, every Tool newly detected,
-//                a sizeable onboarding plan waiting to be imported.
+//                a sizeable onboarding plan waiting to be imported — two of
+//                its names already managed, one manifest invalid.
 // - `failures`   failure-heavy: per-target errors, TARGET_EXISTS, skipped
 //                rows, Unlocatable skills, failing acquisitions, a missing
 //                project folder, and Disabled targets at both grains.
@@ -431,6 +432,28 @@ function firstRun(now: number): FixtureState {
       state.foreign.push(foreign(tool, name, divergent ? `${name} variant ${i}` : `${name} body`, linkBack));
     });
   }
+  // Two names Skills Hub already manages (the review's Replace / Leave
+  // groups): `tdd`'s copies are someone's fork, so Replace answers askable
+  // TARGET_EXISTS rows; `frontend-design`'s copies are byte-identical to the
+  // managed skill, so Replace links them silently.
+  state.skills = [
+    makeSkill(
+      { name: "tdd", description: "Test-driven development, red-green-refactor", source: { kind: "git", repo: "mattpocock/skills" } },
+      now,
+      0,
+    ),
+    makeSkill(
+      { name: "frontend-design", description: "Distinctive production-grade frontends", source: { kind: "imported", fromTool: "claude_code" } },
+      now,
+      1,
+    ),
+  ];
+  const frontendDesign = state.skills[1];
+  for (const dir of state.foreign) {
+    if (dir.name === "frontend-design") dir.fingerprint = frontendDesign.contentHash;
+  }
+  // A manifest the scan's gate refuses: listed disabled, never importable.
+  state.foreign.push({ ...foreign("cursor", "broken-skill", "no frontmatter at all"), invalid: "invalid_frontmatter" });
   return state;
 }
 
@@ -464,9 +487,14 @@ function failures(now: number): FixtureState {
     { name: "frontend-design", description: "Build distinctive, production-grade frontend interfaces", source: git("anthropics/skills"), synced: without("amp", "kimi_cli"), acquisition: { upstreamChanged: true } },
     { name: "docx", description: "Create and edit Word documents with tracked changes", source: git("anthropics/skills"), synced: ALL, unlocatable: "central_missing" },
     { name: "local-notes", description: "Keep running notes in the project's docs folder", source: { kind: "local", path: `${HOME}/Projects/notes-skill` }, synced: ["claude_code", "pi"], unlocatable: "source_missing" },
-    { name: "scratchpad", description: "A scratch skill that lived in a deleted folder", source: { kind: "local", path: `${HOME}/Downloads/scratchpad` }, synced: ["claude_code"], unlocatable: "source_missing", centralGone: true },
-    { name: "pr-review", description: "Review a pull request against the team checklist", source: git("mattpocock/skills"), synced: without("amp", "kimi_cli"), acquisition: { fail: RATE_LIMITED } },
-    { name: "deprecated-helper", description: "Helper removed upstream last month", source: git("mattpocock/skills"), synced: ["claude_code", "codex"], acquisition: { fail: { code: "GITHUB_SKILL_NOT_FOUND", url: "https://github.com/mattpocock/skills/tree/main/skills/deprecated-helper" } } },
+    // Skill health (D9) is seeded on the skills whose last operation failed
+    // exactly as their state says it would: scratchpad's Restore cannot find
+    // its source, pr-review's Update was rate-limited, deprecated-helper's
+    // Re-point to the private repo was refused, release-train's Delete kept
+    // the locked Claude Code copy.
+    { name: "scratchpad", description: "A scratch skill that lived in a deleted folder", source: { kind: "local", path: `${HOME}/Downloads/scratchpad` }, synced: ["claude_code"], unlocatable: "source_missing", centralGone: true, health: { kind: "restore_failed", error: { code: "SOURCE_PATH_MISSING", path: `${HOME}/Downloads/scratchpad` }, hoursAgo: 30 } },
+    { name: "pr-review", description: "Review a pull request against the team checklist", source: git("mattpocock/skills"), synced: without("amp", "kimi_cli"), acquisition: { fail: RATE_LIMITED }, health: { kind: "fetch_failed", error: RATE_LIMITED, hoursAgo: 2 } },
+    { name: "deprecated-helper", description: "Helper removed upstream last month", source: git("mattpocock/skills"), synced: ["claude_code", "codex"], acquisition: { fail: { code: "GITHUB_SKILL_NOT_FOUND", url: "https://github.com/mattpocock/skills/tree/main/skills/deprecated-helper" } }, health: { kind: "repoint_failed", error: { code: "GIT_CLONE_FAILED", kind: "auth", detail: "remote: Repository not found.\nfatal: Authentication failed for 'https://github.com/corp/private-skills/'" }, hoursAgo: 5 } },
     { name: "corp-conventions", description: "Company coding conventions", source: git("corp/private-skills"), synced: ["claude_code", "cursor"], acquisition: { fail: { code: "GIT_CLONE_FAILED", kind: "auth", detail: "fatal: Authentication failed for 'https://github.com/corp/private-skills/'" } } },
     { name: "mirror-tools", description: "Tools mirrored from an internal host", source: git("corp/mirror-tools"), synced: ["claude_code"], acquisition: { fail: { code: "GIT_CLONE_FAILED", kind: "tls", detail: "SSL certificate problem: self-signed certificate in certificate chain" } } },
     { name: "alias-skill", description: "Upstream points this skill at a path outside the repo", source: git("some-org/aliases"), synced: ["claude_code"], acquisition: { fail: { code: "SYMLINK_ESCAPES_REPO", subpath: "skills/alias-skill", target: "/etc/passwd" } } },
@@ -476,7 +504,7 @@ function failures(now: number): FixtureState {
     { name: "design-tokens", description: "Keep design tokens in sync across platforms", source: git("some-org/design-tokens"), synced: without("amp", "kimi_cli"), override: { mode: "user-only" }, acquisition: { upstreamChanged: true, upstreamInvocation: "model-only" } },
     { name: "flaky-upstream", description: "Upstream force-pushes during every refresh", source: git("some-org/flaky"), synced: ["claude_code", "codex"], acquisition: { skip: "stale_acquisition" } },
     { name: "store-hiccup", description: "Refreshes fine, then the re-assert hits a locked database", source: git("some-org/hiccup"), synced: ["claude_code"], acquisition: { upstreamChanged: true, reassertError: { code: "OTHER", message: "database is locked" } } },
-    { name: "release-train", description: "Cut and ship a release train", source: git("acme/release-train"), synced: ["claude_code", "codex", "pi"], mode: "copy" },
+    { name: "release-train", description: "Cut and ship a release train", source: git("acme/release-train"), synced: ["claude_code", "codex", "pi"], mode: "copy", health: { kind: "delete_incomplete", error: { code: "OTHER", message: `Permission denied (os error 13): ${globalRoot("claude_code")}/release-train` }, hoursAgo: 1 } },
     { name: "legacy-lint", description: "Imported from Cursor during onboarding", source: { kind: "imported", fromTool: "cursor" }, synced: ["cursor", "claude_code"] },
     { name: "mystery-skill", description: "Imported; the Tool it came from was not recorded", source: { kind: "imported", fromTool: null }, synced: ["claude_code"] },
     { name: "windsurf-rules", description: "Synced to Windsurf before it was uninstalled", source: git("some-org/windsurf-rules"), synced: ["windsurf", "claude_code"] },
@@ -488,6 +516,13 @@ function failures(now: number): FixtureState {
     // rows and its quartermaster assignment are all `disabled`.
     { name: "noisy-linter", description: "Lint on every keystroke; switched off where it gets in the way", source: git("some-org/noisy-linter"), synced: ["claude_code", "pi"], disabled: ["codex", "cursor"] },
     { name: "retired-playbook", description: "An incident playbook kept for reference, off everywhere", source: git("some-org/playbooks"), synced: ["claude_code", "codex"], skillDisabled: true },
+    // Skill health, the other kinds (appended, so earlier ids are stable):
+    // an Update kept the Edit over a disagreeing upstream; an import whose
+    // original sat in the unwritable shared dir; a first sync into that dir
+    // failed and recorded `error` rows that own nothing (D9).
+    { name: "api-style", description: "House style for REST and RPC endpoints", source: git("some-org/api-style"), synced: ["claude_code", "codex"], invocation: "model-only", override: { mode: "user-only", conflict: true }, health: { kind: "edit_conflict", error: { code: "EDIT_CONFLICT", baseMode: "user-and-model", upstreamMode: "model-only", overrideMode: "user-only" }, hoursAgo: 20 } },
+    { name: "shell-aliases", description: "Imported from Amp; the original could not be removed", source: { kind: "imported", fromTool: "amp" }, synced: ["claude_code"], health: { kind: "import_failed", error: { code: "OTHER", message: `Permission denied (os error 13): ${globalRoot("amp")}/shell-aliases` }, hoursAgo: 48 } },
+    { name: "json-canvas", description: "Read and write JSON Canvas files", source: git("some-org/json-canvas"), synced: ["claude_code", "pi"], failedFirstSync: ["amp", "kimi_cli"] },
   ];
   state.skills = specs.map((spec, i) => makeSkill(spec, now, i));
   state.projects = [
@@ -556,14 +591,15 @@ function failures(now: number): FixtureState {
     foreign("codex", "prisma-review", "codex prisma"),
     foreign("gemini_cli", "frontend-design", "gemini frontend"),
     foreign("claude_code", "ts-reset", "a hand-written ts-reset"),
-    // Onboarding: a name taken by a Managed skill (SKILL_EXISTS on import),
-    // a conflicting group, and an original in the unwritable shared dir.
+    // Onboarding: a name taken by a Managed skill (a managed-name group),
+    // a conflicting group, an original in the unwritable shared dir, and an
+    // invalid manifest (listed apart by the scan's gate).
     foreign("pi", "tdd", "pi's tdd fork"),
     foreign("claude_code", "sql-review", "sql review A"),
     foreign("gemini_cli", "sql-review", "sql review B"),
     foreign("amp", "commit-message", "commit-message v1"),
     foreign("codex", "commit-message", "commit-message v1"),
-    foreign("cursor", "broken-skill", "no frontmatter at all"),
+    { ...foreign("cursor", "broken-skill", "no frontmatter at all"), invalid: "invalid_frontmatter" },
   ];
   return state;
 }
@@ -579,5 +615,3 @@ export function buildScenario(name: ScenarioName, now = Date.now()): FixtureStat
   return BUILDERS[name](now);
 }
 
-/** Onboarding groups whose import finalize fails (bad manifest). */
-export const BROKEN_IMPORT_NAMES = new Set(["broken-skill"]);

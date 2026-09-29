@@ -3,6 +3,7 @@
 
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { Checkbox } from "./checkbox";
 import {
   Field,
   FieldDescription,
@@ -81,5 +82,53 @@ describe("Field", () => {
       </Field>,
     );
     expect(screen.getByRole("combobox", { name: "Sort" })).toBeTruthy();
+  });
+
+  it("follows an explicit control id: the label points at the id the input renders", () => {
+    render(
+      <Field>
+        <FieldLabel>URL</FieldLabel>
+        <Input id="repo-url" />
+      </Field>,
+    );
+    const input = screen.getByRole("textbox", { name: "URL" }) as HTMLInputElement;
+    expect(input.id).toBe("repo-url");
+    expect(input.labels?.length).toBe(1);
+    expect(input.labels?.[0].getAttribute("for")).toBe("repo-url");
+  });
+
+  it("labels the generated-id input exactly once", () => {
+    render(
+      <Field>
+        <FieldLabel>Name</FieldLabel>
+        <Input />
+      </Field>,
+    );
+    const input = screen.getByRole("textbox", { name: "Name" }) as HTMLInputElement;
+    expect(input.labels?.length).toBe(1);
+  });
+
+  it("names a Checkbox composed inside a Field from the FieldLabel", () => {
+    render(
+      <Field>
+        <FieldLabel>Cursor</FieldLabel>
+        <Checkbox />
+      </Field>,
+    );
+    const box = screen.getByRole("checkbox", { name: "Cursor" });
+    const labelId = box.getAttribute("aria-labelledby");
+    expect(labelId).toBeTruthy();
+    expect(document.getElementById(labelId ?? "")?.textContent).toBe("Cursor");
+  });
+
+  it("names a Checkbox with an explicit id inside a Field", () => {
+    render(
+      <Field>
+        <FieldLabel>Pi</FieldLabel>
+        <Checkbox id="tool-pi" />
+      </Field>,
+    );
+    expect(screen.getByRole("checkbox", { name: "Pi" })).toBeTruthy();
+    expect(screen.getByText("Pi").getAttribute("for")).toBe("tool-pi");
   });
 });

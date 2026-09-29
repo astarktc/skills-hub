@@ -187,13 +187,14 @@ export type AppSettings = {
 };
 
 /**
- *  Force-overwrite for one (skill, tool) pair; applies to any target tool
- *  sharing the named tool's skills dir.
+ *  The operator's answer to one pair's `TARGET_EXISTS` ask — overwrite the
+ *  folder, or keep it (the pair is recorded `disabled`); applies to any
+ *  target tool sharing the named tool's skills dir.
  */
 export type BatchSyncOverrideDto = {
 	skill_id: string,
 	tool: string,
-	overwrite: boolean,
+	decision: OverrideDecision,
 };
 
 export type BatchSyncPolicyDto = {
@@ -249,7 +250,11 @@ export type BulkUnassignResultDto = {
  */
 export type CandidateMatch = { kind: "resolved"; subpath: string } | { kind: "ambiguous"; subpaths: string[] } | { kind: "none" };
 
-/**  Structured command failure crossing the IPC seam. */
+/**
+ *  Structured command failure crossing the IPC seam. `Deserialize` because a
+ *  settled failure is also stored as this JSON (`skills.last_outcome_error`,
+ *  see `core::skill_health`) and read back into the catalog.
+ */
 export type CommandError = { code: "TOOL_NOT_INSTALLED"; tool: string } | 
 /**
  *  A sync fan-out skipped this (skill, Tool) pair because the operator
@@ -298,7 +303,14 @@ key: string;
 /**  Parser diagnostic, not user copy. */
 detail: string } | { code: "CREDENTIAL_STORE_UNAVAILABLE"; 
 /**  The credential store's diagnostic, not user copy. */
-detail: string } | { code: "OTHER"; message: string };
+detail: string } | 
+/**
+ *  An Update replayed the operator's invocation Edit onto new upstream
+ *  bytes whose own invocation mode disagrees with both the Edit's base
+ *  and its override: the Edit was kept and needs review. Settled by
+ *  `skill_update::apply_unlocked` as the skill's `edit_conflict` health.
+ */
+{ code: "EDIT_CONFLICT"; baseMode: InvocationMode; upstreamMode: InvocationMode; overrideMode: InvocationMode } | { code: "OTHER"; message: string };
 
 /**
  *  What configuring a project's tool set settled: the resulting view and
@@ -426,10 +438,20 @@ targets: BatchTargetOutcome[];
  */
 forced_tools: string[]; 
 /**
- *  Originals settled: every variant when auto-sync is off; only the
- *  divergent siblings (kept in place) when auto-sync is on.
+ *  Originals settled, per Tool: every variant still present when
+ *  auto-sync is off (removed, left in place or kept divergent); only
+ *  the divergent siblings (kept in place) when auto-sync is on — the
+ *  identical ones are the `targets`.
  */
 originals: OriginalOutcome[] } | 
+/**
+ *  A managed-name group the operator chose to replace: the Managed
+ *  skill was synced to every Tool holding a copy. A divergent copy is a
+ *  `TARGET_EXISTS` target row — askable, never force-overwritten here.
+ */
+{ status: "replaced"; skill_id: string; skill_name: string; targets: BatchTargetOutcome[] } | 
+/**  Not imported by design; nothing of this group was touched. */
+{ status: "skipped"; reason: ImportSkipReason } | 
 /**  Admission or finalize failed; nothing of this group was touched. */
 { status: "failed"; error: CommandError };
 
@@ -442,6 +464,11 @@ export type ImportPhaseDto = "admitting" | "applying";
 export type ImportPolicyDto = {
 	auto_sync?: boolean,
 	tools?: string[] | null,
+	/**
+	 *  Auto-sync off: remove the byte-identical originals, or leave them.
+	 *  Required — the frontend states the operator's per-run choice.
+	 */
+	remove_originals: boolean,
 };
 
 /**  Progress tick streamed before each phase of each imported group. */
@@ -456,6 +483,14 @@ export type ImportReport = {
 	groups: ImportGroupOutcome[],
 };
 
+/**  Why a selected group was not imported, when that is not a failure. */
+export type ImportSkipReason = 
+/**
+ *  A Managed skill already holds the group's name and the selection
+ *  carried no `replace` decision.
+ */
+{ reason: "name_managed"; skill_id: string };
+
 export type InstallResultDto = {
 	skill_id: string,
 	name: string,
@@ -468,6 +503,20 @@ export type IntRange = {
 	min: number,
 	max: number,
 };
+
+/**
+ *  Why a directory is not a usable skill, typed for the wire (the onboarding
+ *  plan lists such directories disabled, with the reason in words).
+ */
+export type InvalidManifestReason = 
+/**  No `SKILL.md` in the directory. */
+"missing_skill_md" | 
+/**  A `SKILL.md` exists but could not be read. */
+"read_failed" | 
+/**  The `SKILL.md` has no complete `---` frontmatter block. */
+"invalid_frontmatter" | 
+/**  The frontmatter has no `name`. */
+"missing_name";
 
 export type InvocationEditConflict = {
 	base_mode: InvocationMode,
@@ -568,18 +617,54 @@ export type ManagedSkillDto = {
 	 *  whose central copy is present); the UI offers Detach only when `true`.
 	 */
 	detachable: boolean,
+	/**
+	 *  Skill health: the stored last outcome of a skill-level operation
+	 *  (see **Skill health** in `CONTEXT.md`), null when healthy.
+	 */
+	health: SkillHealth | null,
 };
 
 export type OnboardingGroup = {
 	name: string,
 	variants: OnboardingVariant[],
 	has_conflict: boolean,
+	/**
+	 *  A Managed skill already carries this name: importing the group would
+	 *  collide. The review offers "Replace this Tool's copy with the managed
+	 *  skill" (the selection's `replace`) or "Leave" instead of an import.
+	 */
+	name_is_managed: boolean,
+	/**
+	 *  The Managed skill holding the name; `Some` exactly when
+	 *  `name_is_managed`.
+	 */
+	managed_skill_id: string | null,
+};
+
+/**
+ *  A directory in a scanned Tool's skills dir that is not an importable
+ *  skill: listed so the review can show it disabled, with the reason.
+ */
+export type OnboardingInvalidEntry = {
+	tool: string,
+	name: string,
+	path: string,
+	reason: InvalidManifestReason,
 };
 
 export type OnboardingPlan = {
 	total_tools_scanned: number,
-	total_skills_found: number,
+	/**  Name-groups ("skills") in `groups`. */
+	group_count: number,
+	/**  Copies across every group: one per (Tool, directory) variant. */
+	copy_count: number,
+	/**  Sorted by name. */
 	groups: OnboardingGroup[],
+	/**
+	 *  Directories the `SKILL.md` gate refused, in scan order; never part of
+	 *  a group and never importable.
+	 */
+	invalid: OnboardingInvalidEntry[],
 };
 
 /**
@@ -591,6 +676,11 @@ export type OnboardingSelectionDto = {
 	group_name: string,
 	chosen_path: string,
 	name: string | null,
+	/**
+	 *  Managed-name group only: replace the Tools' copies with the Managed
+	 *  skill. Absent/false = no decision — the group is skipped.
+	 */
+	replace?: boolean,
 };
 
 export type OnboardingVariant = {
@@ -619,9 +709,14 @@ export type OriginalOutcome = {
 export type OriginalStatus = 
 /**
  *  Byte-identical to the central copy (or already gone) — removed
- *  (auto-sync off).
+ *  (auto-sync off, `remove_originals`).
  */
 { status: "removed" } | 
+/**
+ *  Byte-identical to the central copy and left where it was because the
+ *  operator chose not to remove originals (auto-sync off).
+ */
+{ status: "left_in_place" } | 
 /**
  *  Content differs from the central copy, so it was left in place
  *  (either policy).
@@ -629,6 +724,20 @@ export type OriginalStatus =
 { status: "kept_divergent" } | 
 /**  The path was refused or could not be removed. Report data. */
 { status: "failed"; error: CommandError };
+
+/**
+ *  The operator's answer to a `TARGET_EXISTS` ask for one pair (D12).
+ *  Crosses the wire as itself: `"overwrite"` or `"keep"`.
+ */
+export type OverrideDecision = 
+/**  Replace the folder in the way with the managed skill. */
+"overwrite" | 
+/**
+ *  Keep the existing folder: the pair is not synced and is recorded
+ *  `disabled` (a marker owning nothing at its path), so no later pass
+ *  re-asks or re-materialises it until the operator enables it.
+ */
+"keep";
 
 export type ProjectDto = {
 	id: string,
@@ -919,10 +1028,40 @@ export type SkillFileEntry = {
 	size: number,
 };
 
+/**  A skill's stored health, as the catalog carries it (`ManagedSkill.health`). */
+export type SkillHealth = {
+	kind: SkillOutcomeKind,
+	/**  The settled failure, in the same tagged shape as every report row. */
+	error: CommandError,
+	/**  When the outcome settled (ms since the epoch). */
+	at: number,
+};
+
 export type SkillMutationResultDto = {
 	report: RefreshReport,
 	skills: ManagedSkillDto[],
 };
+
+/**
+ *  What went wrong with a skill, as stored. Crosses the wire as itself
+ *  (`"fetch_failed"`, …).
+ */
+export type SkillOutcomeKind = 
+/**  An Update / Refresh could not acquire or settle the skill's bytes. */
+"fetch_failed" | 
+/**  An Update kept the operator's Edit over disagreeing upstream bytes. */
+"edit_conflict" | 
+/**  A Delete could not remove every artifact; the skill was kept. */
+"delete_incomplete" | 
+/**  A Re-point's new source could not be acquired or settled. */
+"repoint_failed" | 
+/**  A Restore (the Update of a skill whose central copy is gone) failed. */
+"restore_failed" | 
+/**
+ *  An Onboarding import finalised the skill but could not settle an
+ *  original afterwards.
+ */
+"import_failed";
 
 export type SkillRefreshOutcome = {
 	skill_id: string,

@@ -14,7 +14,7 @@ use crate::core::{
     mutation_guard,
     skill_store::{SkillStore, TargetTransition},
     sync_engine::{self, SyncOutcome},
-    sync_status::SyncStatus,
+    sync_status::{SyncMode, SyncStatus},
     tool_adapters::{
         adapter_by_key, adapters_sharing_skills_dir, is_installed_in, skills_dir_in, ToolAdapter,
     },
@@ -199,14 +199,27 @@ pub struct BatchSkill {
     pub source_path: PathBuf,
 }
 
-/// Force-overwrite for one (skill, tool) pair. Applies to any target tool
-/// sharing the named tool's skills dir (the dir, not the key, is the real
-/// identity of a sync target).
+/// The operator's answer to a `TARGET_EXISTS` ask for one pair (D12).
+/// Crosses the wire as itself: `"overwrite"` or `"keep"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum OverrideDecision {
+    /// Replace the folder in the way with the managed skill.
+    Overwrite,
+    /// Keep the existing folder: the pair is not synced and is recorded
+    /// `disabled` (a marker owning nothing at its path), so no later pass
+    /// re-asks or re-materialises it until the operator enables it.
+    Keep,
+}
+
+/// The operator's decision for one (skill, tool) pair. Applies to any target
+/// tool sharing the named tool's skills dir (the dir, not the key, is the
+/// real identity of a sync target).
 #[derive(Debug, Clone)]
 pub struct BatchOverride {
     pub skill_id: String,
     pub tool_key: String,
-    pub overwrite: bool,
+    pub decision: OverrideDecision,
 }
 
 /// Batch-level default policy plus per-(skill, tool) overrides.
@@ -380,14 +393,25 @@ pub(crate) fn sync_skills_to_planned_tools(
 
             // An override names a tool key; it applies to this target when
             // that tool shares the target's skills dir (the registry's answer).
-            let overwrite = policy.overwrite
-                || policy.overrides.iter().any(|o| {
-                    o.overwrite
+            let decision = |wanted: OverrideDecision| {
+                policy.overrides.iter().any(|o| {
+                    o.decision == wanted
                         && o.skill_id == skill.skill_id
                         && adapters_sharing_skills_dir(target.adapter)
                             .iter()
                             .any(|a| a.key() == o.tool_key)
+                })
+            };
+            if decision(OverrideDecision::Keep) {
+                outcomes.push(BatchTargetOutcome {
+                    skill_id: skill.skill_id.clone(),
+                    skill_name: skill.skill_name.clone(),
+                    tool_key: tool_key.to_string(),
+                    status: record_kept(store, target, skill),
                 });
+                continue;
+            }
+            let overwrite = policy.overwrite || decision(OverrideDecision::Overwrite);
             let pair_policy = OverwritePolicy {
                 overwrite,
                 overwrite_if_same_content: policy.overwrite_if_same_content,
@@ -405,14 +429,21 @@ pub(crate) fn sync_skills_to_planned_tools(
                 now,
             ) {
                 Ok(outcome) => BatchTargetStatus::Synced { outcome },
-                Err(error @ GlobalSyncError::ToolNotWritable { .. }) => {
-                    BatchTargetStatus::Skipped {
-                        error: CommandError::from(error),
-                    }
-                }
-                Err(error) => BatchTargetStatus::Failed {
+                // Asked first (D12): no row until the operator decides.
+                Err(error @ GlobalSyncError::TargetExists { .. }) => BatchTargetStatus::Failed {
                     error: CommandError::from(error),
                 },
+                Err(error) => {
+                    record_failed(store, target, skill, &error);
+                    match error {
+                        GlobalSyncError::ToolNotWritable { .. } => BatchTargetStatus::Skipped {
+                            error: CommandError::from(error),
+                        },
+                        error => BatchTargetStatus::Failed {
+                            error: CommandError::from(error),
+                        },
+                    }
+                }
             };
             outcomes.push(BatchTargetOutcome {
                 skill_id: skill.skill_id.clone(),
@@ -424,6 +455,83 @@ pub(crate) fn sync_skills_to_planned_tools(
     }
 
     outcomes
+}
+
+/// Where an attempted target's artifact is (or would be), and the mode a
+/// sync would try first — what a row that never materialised records.
+fn would_be(target: &PlannedToolTarget, skill: &BatchSkill) -> (String, SyncMode) {
+    let path = target.root.join(&skill.skill_name);
+    let mode = if target.adapter.supports_symlink {
+        SyncMode::Symlink
+    } else {
+        SyncMode::Copy
+    };
+    (path.to_string_lossy().into_owned(), mode)
+}
+
+/// A failed sync settles its rows here (D9, symmetric with ADR-0002): every
+/// Tool of the target's shared-dir group is recorded `error` with the
+/// diagnostic chain — a new row owns nothing (`synced_at` NULL), an existing
+/// one keeps its ownership. A store failure here is logged: the report row
+/// already carries the sync failure, which is what the operator acts on.
+fn record_failed(
+    store: &SkillStore,
+    target: &PlannedToolTarget,
+    skill: &BatchSkill,
+    error: &GlobalSyncError,
+) {
+    let (target_path, mode) = would_be(target, skill);
+    let detail = error.to_string();
+    for adapter in &target.record_tools {
+        if let Err(err) = store.transition_skill_target(
+            &Uuid::new_v4().to_string(),
+            TargetTransition::FailedRecorded {
+                skill_id: &skill.skill_id,
+                tool: adapter.key(),
+                mode,
+                target_path: &target_path,
+                error: &detail,
+            },
+        ) {
+            log::warn!(
+                "recording the failed sync of {} to {} failed: {err:#}",
+                skill.skill_id,
+                adapter.key()
+            );
+        }
+    }
+}
+
+/// The operator kept the folder in the way (`OverrideDecision::Keep`): the
+/// pair is recorded `disabled` for the attempted Tool — a marker that owns
+/// nothing at its path, and that the Disabled rule extends to the Tool's
+/// shared-dir siblings — and reported as the batch reports any disabled
+/// pair. A store failure fails the pair as report data.
+fn record_kept(
+    store: &SkillStore,
+    target: &PlannedToolTarget,
+    skill: &BatchSkill,
+) -> BatchTargetStatus {
+    let (target_path, mode) = would_be(target, skill);
+    let tool_key = target.adapter.key();
+    match store.transition_skill_target(
+        &Uuid::new_v4().to_string(),
+        TargetTransition::DisabledRecorded {
+            skill_id: &skill.skill_id,
+            tool: tool_key,
+            mode,
+            target_path: &target_path,
+        },
+    ) {
+        Ok(()) => BatchTargetStatus::Skipped {
+            error: CommandError::from(GlobalSyncError::TargetDisabled {
+                tool_key: tool_key.to_string(),
+            }),
+        },
+        Err(err) => BatchTargetStatus::Failed {
+            error: CommandError::internal(format!("{err:#}")),
+        },
+    }
 }
 
 /// The Disabled rule of the batch (see **Disabled** in `CONTEXT.md`): a pair

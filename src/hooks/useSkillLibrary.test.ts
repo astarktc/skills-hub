@@ -3,7 +3,7 @@
 // the backend at the invokeTauri module seam — exactly the shape App.tsx
 // wires, so these tests exercise the hook the way the app does.
 
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BatchTargetOutcome,
@@ -39,7 +39,34 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 
 import { invokeTauri, type CommandName } from "../lib/tauri";
 import * as folds from "../lib/reportOutcome";
-import { useSkillLibrary } from "./useSkillLibrary";
+import { useSkillLibrary as useSkillLibraryHook } from "./useSkillLibrary";
+import { useFocusReconciliation, useSurfaceState } from "./useSurfaceState";
+
+/** The deps a test supplies; the surface module is composed in, as App does. */
+type LibraryDeps = Omit<SkillLibraryDeps, "surface">;
+/**
+ * The library as App composes it: which skill is focused and which dialog is
+ * open are surface state, reconciled against this world's catalog. The
+ * read-outs below are what the assertions inspect.
+ */
+function useSkillLibrary(deps: LibraryDeps) {
+  const surface = useSurfaceState();
+  const library = useSkillLibraryHook({ ...deps, surface });
+  useFocusReconciliation(surface, "skill", library.managedSkillIds);
+  const { focused } = surface;
+  return {
+    ...library,
+    surface,
+    detailSkill:
+      focused?.kind === "skill"
+        ? (library.managedSkills.find((row) => row.id === focused.id) ?? null)
+        : null,
+    openDetail: (id: string) => surface.focus({ kind: "skill", id }),
+    closeDetail: () => surface.unfocus(),
+    invocationEditSkillId: surface.layer("invocationEdit")?.skillId ?? null,
+    pendingDeleteId: surface.layer("deleteSkill")?.skillId ?? null,
+  };
+}
 import {
   ActionExit,
   type ActionHandle,
@@ -85,6 +112,7 @@ function skill(id: string, name: string, targets: string[] = []): ManagedSkill {
     refreshable: true,
     unlocatable: null,
     detachable: false,
+    health: null,
   };
 }
 
@@ -243,7 +271,7 @@ function makeDeps(overrides?: {
     ],
   };
 
-  const deps: SkillLibraryDeps = { t, reporter, sync };
+  const deps: LibraryDeps = { t, reporter, sync };
   return { deps, reporter, sync, skills };
 }
 
@@ -427,7 +455,7 @@ describe("repair notification actions", () => {
     await act(async () => { await result.current.handleRefresh(); });
     const action = vi.mocked(setup.reporter.showActionErrors).mock.calls[0][0][0].action!;
     act(() => action.onClick());
-    expect(result.current.repointSelection).toEqual({ skillId: "s1", name: "alpha", preselect: "git" });
+    expect(result.current.repointSelection).toEqual({ kind: "repoint", skillId: "s1", name: "alpha", preselect: "git" });
     expect(result.current.pendingRepointSkill).toEqual(gitSkill);
   });
 
@@ -447,7 +475,7 @@ describe("Change source", () => {
     const setup = makeDeps({ skills: [row] });
     const { result } = await renderLibrary(setup);
     act(() => result.current.handleRepointSkill(row, preselect));
-    expect(result.current.repointSelection).toEqual({ skillId: "s1", name: "alpha", preselect: expected });
+    expect(result.current.repointSelection).toEqual({ kind: "repoint", skillId: "s1", name: "alpha", preselect: expected });
     expect(result.current.pendingRepointSkill).toEqual(row);
     expect(mockInvoke).not.toHaveBeenCalledWith("repointSkillSource", expect.anything(), expect.anything(), expect.anything());
   });
@@ -804,6 +832,9 @@ describe("useSkillLibrary name collisions", () => {
 });
 
 afterEach(() => vi.restoreAllMocks());
+// No vitest globals: unmount explicitly so a surface's window listeners never
+// outlive its test.
+afterEach(cleanup);
 
 // Presentation is table-tested through the pure module. Here a deliberately
 // synthetic outcome proves that each caller obeys the fold, not DTO fields.
@@ -838,10 +869,11 @@ describe("invoke → fold → completion", () => {
       };
       const spy = vi.spyOn(folds, fold).mockReturnValue(outcome);
       const { result, unmount } = await renderLibrary(setup);
+      // One dialog at a time (surface state): open the one this action settles.
       act(() => {
-        result.current.handleDeletePrompt("s1");
-        result.current.handleRepointSkill(setup.skills[0]);
-        result.current.openInvocationEdit("s1");
+        if (action === "delete") result.current.handleDeletePrompt("s1");
+        if (action.endsWith("Re-point")) result.current.handleRepointSkill(setup.skills[0]);
+        if (action === "Edit") result.current.openInvocationEdit("s1");
       });
       mockInvoke.mockClear();
       await act(async () => {

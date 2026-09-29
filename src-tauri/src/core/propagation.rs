@@ -260,9 +260,12 @@ fn propagate_global_rows(
             continue;
         };
 
+        // A link already follows the central copy — but only a link of ours:
+        // a row that never materialised (a failed first sync's `error` row,
+        // `owns_artifact` false) has no link yet, so it gets a first sync.
         if !installed
             .iter()
-            .any(|(member, a)| needs_new_bytes(member.mode, a))
+            .any(|(member, a)| needs_new_bytes(member.mode, a) || !member.owns_artifact())
         {
             for (member, _) in &installed {
                 report.targets.push(skipped_global(
@@ -421,7 +424,9 @@ fn propagate_one_assignment(
             reason: unavailable,
         });
     }
-    if !needs_new_bytes(assignment.mode, adapter) {
+    // Only a link of ours follows the source; a row that never materialised
+    // gets a first sync (see the global arm).
+    if assignment.owns_artifact() && !needs_new_bytes(assignment.mode, adapter) {
         return Ok(PropagationStatus::Skipped {
             reason: PropagationSkip::LinkFollowsSource,
         });

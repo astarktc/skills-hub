@@ -12,7 +12,7 @@ use crate::core::installer::InstallerPaths;
 use crate::core::onboarding::OnboardingScanScope;
 use crate::core::onboarding_import::{
     import_onboarding_selection, ImportGroupStatus, ImportPhase, ImportPolicy, ImportSelection,
-    OriginalStatus,
+    ImportSkipReason, OriginalStatus,
 };
 use crate::core::skill_store::SkillStore;
 use crate::core::sync_status::SyncMode;
@@ -97,6 +97,17 @@ fn selection(group_name: &str, chosen: &Path) -> ImportSelection {
         group_name: group_name.to_string(),
         chosen_path: chosen.to_path_buf(),
         name: None,
+        replace: false,
+    }
+}
+
+/// Auto-sync off, with the operator's per-run choice about the originals.
+fn policy_off(remove_originals: bool) -> ImportPolicy {
+    ImportPolicy {
+        auto_sync: false,
+        remove_originals,
+        tools: None,
+        scan_scope: OnboardingScanScope::Installed,
     }
 }
 
@@ -129,7 +140,7 @@ fn import_records_imported_provenance_with_the_found_in_tool_as_history() {
     install_tool(&f, "claude_code");
     let chosen = seed_skill_dir(&f, "claude_code", "alpha", "body");
 
-    let report = run(&f, &[selection("alpha", &chosen)], ImportPolicy::default());
+    let report = run(&f, &[selection("alpha", &chosen)], policy_off(true));
 
     let ImportGroupStatus::Imported { skill_id, .. } = imported(&report, "alpha") else {
         panic!("alpha should import: {:?}", report);
@@ -175,7 +186,7 @@ fn import_of_a_variant_installed_by_npx_skills_add_records_its_upstream_as_git()
     .expect("lock file");
     let chosen = seed_skill_link(&f, "claude_code", "alpha", &real);
 
-    let report = run(&f, &[selection("alpha", &chosen)], ImportPolicy::default());
+    let report = run(&f, &[selection("alpha", &chosen)], policy_off(true));
 
     let ImportGroupStatus::Imported { skill_id, .. } = imported(&report, "alpha") else {
         panic!("alpha should import: {:?}", report);
@@ -209,6 +220,7 @@ fn auto_sync_on_overwrites_the_source_tool_in_place_across_its_shared_dir_group(
         &[selection("alpha", &original)],
         ImportPolicy {
             auto_sync: true,
+            remove_originals: true,
             tools: Some(vec!["amp".to_string(), "kimi_cli".to_string()]),
             scan_scope: OnboardingScanScope::Installed,
         },
@@ -271,6 +283,7 @@ fn auto_sync_on_force_includes_a_source_tool_the_policy_deselected() {
         &[selection("alpha", &original)],
         ImportPolicy {
             auto_sync: true,
+            remove_originals: true,
             tools: Some(vec!["cursor".to_string()]),
             scan_scope: OnboardingScanScope::Installed,
         },
@@ -350,6 +363,7 @@ fn auto_sync_on_takes_over_every_identical_original_in_the_group() {
         &[selection("alpha", &real)],
         ImportPolicy {
             auto_sync: true,
+            remove_originals: true,
             tools: Some(vec!["claude_code".to_string()]),
             scan_scope: OnboardingScanScope::Installed,
         },
@@ -419,6 +433,7 @@ fn auto_sync_on_leaves_a_divergent_sibling_in_place_and_reports_it() {
         &[selection("alpha", &real)],
         ImportPolicy {
             auto_sync: true,
+            remove_originals: true,
             tools: Some(vec!["claude_code".to_string()]),
             scan_scope: OnboardingScanScope::Installed,
         },
@@ -481,6 +496,7 @@ fn auto_sync_on_keeps_a_sibling_that_diverged_after_planning() {
         &[selection("alpha", &chosen)],
         &ImportPolicy {
             auto_sync: true,
+            remove_originals: true,
             tools: Some(vec!["cursor".to_string()]),
             scan_scope: OnboardingScanScope::Installed,
         },
@@ -539,6 +555,7 @@ fn auto_sync_on_reports_nothing_beyond_a_policy_naming_every_identical_tool() {
         &[selection("alpha", &real)],
         ImportPolicy {
             auto_sync: true,
+            remove_originals: true,
             tools: Some(vec!["claude_code".to_string(), "pi".to_string()]),
             scan_scope: OnboardingScanScope::Installed,
         },
@@ -587,6 +604,7 @@ fn chosen_original_with_internal_symlinks_is_same_content() {
             &[selection("alpha", &chosen)],
             ImportPolicy {
                 auto_sync,
+                remove_originals: true,
                 tools: Some(vec![]),
                 scan_scope: OnboardingScanScope::Installed,
             },
@@ -628,7 +646,7 @@ fn auto_sync_off_removes_identical_originals() {
     let chosen = seed_skill_dir(&f, "claude_code", "alpha", "same");
     let sibling = seed_skill_dir(&f, "cursor", "alpha", "same");
 
-    let report = run(&f, &[selection("alpha", &chosen)], ImportPolicy::default());
+    let report = run(&f, &[selection("alpha", &chosen)], policy_off(true));
 
     let ImportGroupStatus::Imported {
         targets, originals, ..
@@ -659,7 +677,7 @@ fn auto_sync_off_keeps_and_reports_a_divergent_sibling() {
     let chosen = seed_skill_dir(&f, "claude_code", "alpha", "chosen-body");
     let divergent = seed_skill_dir(&f, "cursor", "alpha", "different-body");
 
-    let report = run(&f, &[selection("alpha", &chosen)], ImportPolicy::default());
+    let report = run(&f, &[selection("alpha", &chosen)], policy_off(true));
 
     let ImportGroupStatus::Imported { originals, .. } = imported(&report, "alpha") else {
         panic!("alpha should import: {:?}", report);
@@ -696,7 +714,7 @@ fn a_group_failing_admission_does_not_stop_the_others() {
     let report = run(
         &f,
         &[selection("broken", &broken), selection("alpha", &good)],
-        ImportPolicy::default(),
+        policy_off(true),
     );
 
     assert!(
@@ -737,7 +755,7 @@ fn a_finalize_failure_mid_batch_is_reported_per_group() {
             selection("beta", &clash),
             selection("gamma", &last),
         ],
-        ImportPolicy::default(),
+        policy_off(true),
     );
 
     assert!(matches!(
@@ -771,11 +789,7 @@ fn a_path_the_plan_does_not_own_fails_the_group_without_touching_disk() {
     fs::create_dir_all(&elsewhere).expect("create dir");
     fs::write(elsewhere.join("SKILL.md"), "---\nname: alpha\n---\n").expect("write");
 
-    let report = run(
-        &f,
-        &[selection("alpha", &elsewhere)],
-        ImportPolicy::default(),
-    );
+    let report = run(&f, &[selection("alpha", &elsewhere)], policy_off(true));
 
     assert!(
         matches!(imported(&report, "alpha"), ImportGroupStatus::Failed { .. }),
@@ -798,7 +812,7 @@ fn progress_reports_both_phases_of_every_group() {
         &f.paths,
         &f.store,
         &[selection("alpha", &alpha), selection("beta", &beta)],
-        &ImportPolicy::default(),
+        &policy_off(true),
         5000,
         |p| ticks.push((p.index, p.total, p.group_name.to_string(), p.phase)),
     )
@@ -841,6 +855,7 @@ fn import_without_a_policy_selection_follows_the_recorded_global_selection() {
         &[selection("alpha", &alpha)],
         ImportPolicy {
             auto_sync: true,
+            remove_originals: true,
             tools: None,
             scan_scope: OnboardingScanScope::Installed,
         },
@@ -860,4 +875,290 @@ fn import_without_a_policy_selection_follows_the_recorded_global_selection() {
         !f.paths.home.join(".codex/skills/alpha").exists(),
         "codex is detected but not selected, so it gets no artifact"
     );
+}
+
+// ── remove_originals × auto-sync ──────────────────────────────────────────
+
+/// Auto-sync off, `remove_originals: false`: nothing on disk is touched and
+/// every original is reported per Tool — identical ones `LeftInPlace`, a
+/// divergent sibling `KeptDivergent`.
+#[test]
+fn auto_sync_off_without_remove_originals_leaves_and_reports_every_original() {
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    install_tool(&f, "cursor");
+    install_tool(&f, "codex");
+    let chosen = seed_skill_dir(&f, "claude_code", "alpha", "same");
+    let sibling = seed_skill_dir(&f, "cursor", "alpha", "same");
+    let divergent = seed_skill_dir(&f, "codex", "alpha", "different");
+
+    let report = run(&f, &[selection("alpha", &chosen)], policy_off(false));
+
+    let ImportGroupStatus::Imported {
+        targets, originals, ..
+    } = imported(&report, "alpha")
+    else {
+        panic!("alpha should import: {:?}", report);
+    };
+    assert!(targets.is_empty(), "auto-sync off syncs nothing");
+    let by_tool: Vec<(&str, &OriginalStatus)> = originals
+        .iter()
+        .map(|o| (o.tool.as_str(), &o.status))
+        .collect();
+    assert_eq!(by_tool.len(), 3, "{:?}", originals);
+    for (tool, status) in &by_tool {
+        match *tool {
+            "claude_code" | "cursor" => assert!(
+                matches!(status, OriginalStatus::LeftInPlace),
+                "{tool}: {status:?}"
+            ),
+            "codex" => assert!(
+                matches!(status, OriginalStatus::KeptDivergent),
+                "{tool}: {status:?}"
+            ),
+            other => panic!("unexpected Tool {other}"),
+        }
+    }
+    for path in [&chosen, &sibling, &divergent] {
+        assert!(
+            path.join("SKILL.md").is_file(),
+            "{:?} is left in place",
+            path
+        );
+        assert!(
+            !path.symlink_metadata().unwrap().file_type().is_symlink(),
+            "{:?} stays a real directory",
+            path
+        );
+    }
+    assert!(f.paths.central_dir.join("alpha/SKILL.md").is_file());
+}
+
+/// Auto-sync on ignores `remove_originals`: whatever the value, the sync
+/// batch takes the identical originals over, exactly as with `true`.
+#[test]
+fn auto_sync_on_takes_originals_over_whatever_remove_originals_says() {
+    for remove_originals in [false, true] {
+        let f = fixture();
+        install_tool(&f, "pi");
+        install_tool(&f, "claude_code");
+        let real = seed_skill_dir(&f, "pi", "alpha", "v1");
+        let link = seed_skill_link(&f, "claude_code", "alpha", &real);
+
+        let report = run(
+            &f,
+            &[selection("alpha", &real)],
+            ImportPolicy {
+                auto_sync: true,
+                remove_originals,
+                tools: Some(vec!["claude_code".to_string()]),
+                scan_scope: OnboardingScanScope::Installed,
+            },
+        );
+
+        let ImportGroupStatus::Imported {
+            originals,
+            forced_tools,
+            ..
+        } = imported(&report, "alpha")
+        else {
+            panic!("alpha should import: {:?}", report);
+        };
+        assert!(originals.is_empty(), "{remove_originals}: {originals:?}");
+        assert_eq!(*forced_tools, vec!["pi".to_string()]);
+        assert_links_to_central(&f, &real, "alpha");
+        assert_links_to_central(&f, &link, "alpha");
+    }
+}
+
+// ── managed-name groups ───────────────────────────────────────────────────
+
+/// Import `alpha` from claude_code (auto-sync off, originals removed), so a
+/// Managed skill holds the name; returns its id.
+fn manage_alpha(f: &Fixture, body: &str) -> String {
+    install_tool(f, "claude_code");
+    let chosen = seed_skill_dir(f, "claude_code", "alpha", body);
+    let report = run(f, &[selection("alpha", &chosen)], policy_off(true));
+    let ImportGroupStatus::Imported { skill_id, .. } = imported(&report, "alpha") else {
+        panic!("alpha should import: {:?}", report);
+    };
+    skill_id.clone()
+}
+
+fn replace(group_name: &str, chosen: &Path) -> ImportSelection {
+    ImportSelection {
+        replace: true,
+        ..selection(group_name, chosen)
+    }
+}
+
+/// With no decision a managed-name group is skipped with a typed reason —
+/// never the finalize collision — and nothing is touched: no applying tick.
+#[test]
+fn a_managed_name_group_without_a_decision_is_skipped_untouched() {
+    let f = fixture();
+    let skill_id = manage_alpha(&f, "managed");
+    install_tool(&f, "cursor");
+    let copy = seed_skill_dir(&f, "cursor", "alpha", "someone's fork");
+
+    let mut phases = Vec::new();
+    let report = import_onboarding_selection(
+        &f.paths,
+        &f.store,
+        &[selection("alpha", &copy)],
+        &policy_off(true),
+        5000,
+        |p| phases.push(p.phase),
+    )
+    .expect("import");
+
+    match imported(&report, "alpha") {
+        ImportGroupStatus::Skipped {
+            reason: ImportSkipReason::NameManaged { skill_id: id },
+        } => assert_eq!(*id, skill_id),
+        other => panic!("expected a NameManaged skip: {other:?}"),
+    }
+    assert_eq!(phases, vec![ImportPhase::Admitting]);
+    assert!(copy.join("SKILL.md").is_file(), "the copy is untouched");
+    assert!(f
+        .store
+        .get_skill_target(&skill_id, "cursor")
+        .unwrap()
+        .is_none());
+}
+
+/// Replace over an identical copy: the Managed skill is synced over it by
+/// the same-content policy, no ask needed.
+#[test]
+fn replace_syncs_the_managed_skill_over_an_identical_copy() {
+    let f = fixture();
+    let skill_id = manage_alpha(&f, "same");
+    install_tool(&f, "cursor");
+    let copy = seed_skill_dir(&f, "cursor", "alpha", "same");
+
+    let report = run(&f, &[replace("alpha", &copy)], policy_off(true));
+
+    let ImportGroupStatus::Replaced {
+        skill_id: id,
+        targets,
+        ..
+    } = imported(&report, "alpha")
+    else {
+        panic!("alpha should be replaced: {:?}", report);
+    };
+    assert_eq!(*id, skill_id);
+    assert_eq!(targets.len(), 1, "{targets:?}");
+    assert_eq!(targets[0].tool_key, "cursor");
+    assert!(matches!(
+        targets[0].status,
+        crate::core::global_sync::BatchTargetStatus::Synced { .. }
+    ));
+    assert_links_to_central(&f, &copy, "alpha");
+    assert!(f
+        .store
+        .get_skill_target(&skill_id, "cursor")
+        .unwrap()
+        .is_some());
+}
+
+/// Replace over a divergent copy never force-overwrites from the plan: the
+/// pair answers an askable `TARGET_EXISTS` row naming (skill, Tool), and the
+/// overwrite ask's retry — `sync_skills_to_tools` with an Overwrite override
+/// for that pair — replaces the copy.
+#[test]
+fn replace_over_a_divergent_copy_produces_an_askable_target_exists_row() {
+    use crate::core::errors::CommandError;
+    use crate::core::global_sync::{
+        sync_skills_to_tools, BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus,
+        OverrideDecision,
+    };
+
+    let f = fixture();
+    let skill_id = manage_alpha(&f, "managed");
+    install_tool(&f, "cursor");
+    let copy = seed_skill_dir(&f, "cursor", "alpha", "someone's fork");
+    let fork_bytes = fs::read(copy.join("SKILL.md")).unwrap();
+
+    let report = run(&f, &[replace("alpha", &copy)], policy_off(false));
+
+    let ImportGroupStatus::Replaced {
+        skill_id: id,
+        skill_name,
+        targets,
+    } = imported(&report, "alpha")
+    else {
+        panic!("alpha should be replaced: {:?}", report);
+    };
+    assert_eq!(targets.len(), 1, "{targets:?}");
+    let row = &targets[0];
+    assert_eq!(
+        (row.skill_id.as_str(), row.tool_key.as_str()),
+        (id.as_str(), "cursor")
+    );
+    assert!(
+        matches!(
+            &row.status,
+            BatchTargetStatus::Failed {
+                error: CommandError::TargetExists { .. }
+            }
+        ),
+        "askable TARGET_EXISTS row: {:?}",
+        row.status
+    );
+    assert_eq!(
+        fs::read(copy.join("SKILL.md")).unwrap(),
+        fork_bytes,
+        "copy untouched"
+    );
+
+    // The ask's confirmed retry: one batch, per-pair Overwrite override.
+    let record = f.store.get_skill_by_id(&skill_id).unwrap().unwrap();
+    let retry = sync_skills_to_tools(
+        &f.paths.home,
+        &f.store,
+        &[BatchSkill {
+            skill_id: skill_id.clone(),
+            skill_name: skill_name.clone(),
+            source_path: PathBuf::from(&record.central_path),
+        }],
+        &["cursor".to_string()],
+        &BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: true,
+            overrides: vec![BatchOverride {
+                skill_id: skill_id.clone(),
+                tool_key: "cursor".to_string(),
+                decision: OverrideDecision::Overwrite,
+            }],
+        },
+        6000,
+        |_| {},
+    );
+    assert!(
+        matches!(retry[0].status, BatchTargetStatus::Synced { .. }),
+        "{:?}",
+        retry
+    );
+    assert_links_to_central(&f, &copy, "alpha");
+}
+
+/// #46 end to end: a Tool dir entry whose manifest fails the gate is not in
+/// the plan, so naming it fails admission as an unknown group.
+#[test]
+fn an_invalid_manifest_is_never_admitted() {
+    let f = fixture();
+    install_tool(&f, "cursor");
+    let broken = f.paths.home.join(".cursor/skills/broken-skill");
+    fs::create_dir_all(&broken).unwrap();
+    fs::write(broken.join("SKILL.md"), "no frontmatter at all\n").unwrap();
+
+    let report = run(&f, &[selection("broken-skill", &broken)], policy_off(true));
+
+    match imported(&report, "broken-skill") {
+        ImportGroupStatus::Failed {
+            error: crate::core::errors::CommandError::NotFound { kind, .. },
+        } => assert_eq!(kind, "onboarding_group"),
+        other => panic!("expected an unknown-group failure: {other:?}"),
+    }
+    assert!(broken.join("SKILL.md").is_file());
 }

@@ -7,13 +7,17 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "./popover";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
@@ -73,6 +77,30 @@ describe("DropdownMenu", () => {
 
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+});
+
+describe("DropdownMenu with a labelled group", () => {
+  it("names the group by its label and keeps its items inside it", async () => {
+    render(
+      <DropdownMenu>
+        <DropdownMenuTrigger aria-label="More actions">⋯</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Skill</DropdownMenuLabel>
+            <DropdownMenuItem>Edit</DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive">Delete…</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+
+    const group = await screen.findByRole("group", { name: "Skill" });
+    expect(within(group).getByRole("menuitem", { name: "Edit" })).toBeTruthy();
+    expect(within(group).queryByRole("menuitem", { name: "Delete…" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Delete…" })).toBeTruthy();
   });
 });
 

@@ -18,6 +18,7 @@ import {
 import { invokeTauri, isTauri } from "../lib/tauri";
 import { deployAction, repointKind, type RepointKind } from "../lib/skillPresentation";
 import type { SyncOrchestration } from "./useSyncOrchestration";
+import type { DialogDoor } from "./useSurfaceState";
 import type {
   ActionErrorEntry,
   StatusReporter,
@@ -43,7 +44,11 @@ export type SkillLibraryDeps = {
     | "toolLabelById"
     | "tools"
   >;
+  /** The surface module: Delete, Invocation edit and Change source are its dialogs. */
+  surface: Pick<DialogDoor, "layer" | "openDialog" | "closeDialog" | "dismissDialog">;
 };
+
+const NO_SKILLS: ManagedSkill[] = [];
 
 /**
  * Skill library world: the managed-skill list plus every per-skill and bulk
@@ -59,7 +64,7 @@ export type SkillLibraryDeps = {
  * Refresh-all keeps its refetch. This hook folds reports and never fans out
  * a sync of its own for a refresh.
  */
-export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
+export function useSkillLibrary({ t, reporter, sync, surface }: SkillLibraryDeps) {
   const {
     loading,
     notify,
@@ -78,23 +83,36 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     toolLabelById,
     tools,
   } = sync;
+  const { layer, openDialog, closeDialog, dismissDialog } = surface;
 
-  const [managedSkills, setManagedSkills] = useState<ManagedSkill[]>([]);
-  const [detailSkillId, setDetailSkillId] = useState<string | null>(null);
-  const detailSkill = managedSkills.find((skill) => skill.id === detailSkillId) ?? null;
-  const openDetail = useCallback((id: string) => setDetailSkillId(id), []);
-  const closeDetail = useCallback(() => setDetailSkillId(null), []);
-  const [invocationEditSkillId, setInvocationEditSkillId] = useState<string | null>(null);
-  const invocationEditSkill = managedSkills.find((skill) => skill.id === invocationEditSkillId) ?? null;
-  const openInvocationEdit = useCallback((id: string) => setInvocationEditSkillId(id), []);
-  const closeInvocationEdit = useCallback(() => { if (!loading) setInvocationEditSkillId(null); }, [loading]);
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  // null until the first load lands: a deep-linked focus must survive the
+  // empty first render (`managedSkillIds` is what reconciliation reads).
+  const [catalog, setManagedSkills] = useState<ManagedSkill[] | null>(null);
+  const managedSkills = catalog ?? NO_SKILLS;
+  const managedSkillIds = useMemo(
+    () => catalog?.map((skill) => skill.id) ?? null,
+    [catalog],
+  );
+  const findSkill = (id: string | undefined) =>
+    managedSkills.find((skill) => skill.id === id) ?? null;
+  // Which skill each of this world's dialogs is about lives in the surface
+  // module's dialog value; the skill itself is resolved against this list.
+  const invocationEditSkill = findSkill(layer("invocationEdit")?.skillId);
+  const openInvocationEdit = useCallback(
+    (id: string) => openDialog({ kind: "invocationEdit", skillId: id }),
+    [openDialog],
+  );
+  const closeInvocationEdit = useCallback(() => {
+    if (!loading) closeDialog("invocationEdit");
+  }, [closeDialog, loading]);
   // Change source: which skill the modal is open for and the kind it opens on.
-  const [repointSelection, setRepointSelection] =
-    useState<{ skillId: string; name: string; preselect: RepointKind } | null>(null);
-  const pendingRepointSkill = managedSkills.find(
-    (skill) => skill.id === repointSelection?.skillId,
-  ) ?? null;
+  const repointSelection = layer("repoint");
+  const pendingRepointSkill = findSkill(repointSelection?.skillId);
+  const openRepoint = useCallback(
+    (skillId: string, name: string, preselect: RepointKind) =>
+      openDialog({ kind: "repoint", skillId, name, preselect }),
+    [openDialog],
+  );
 
   const loadManagedSkills = useCallback(async () => {
     try {
@@ -124,10 +142,7 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     [managedSkills],
   );
 
-  const pendingDeleteSkill = useMemo(
-    () => managedSkills.find((skill) => skill.id === pendingDeleteId) ?? null,
-    [managedSkills, pendingDeleteId],
-  );
+  const pendingDeleteSkill = findSkill(layer("deleteSkill")?.skillId);
 
   /**
    * Update and Refresh-all share progress presentation, not response types.
@@ -163,17 +178,19 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
    * `source_missing` repair passes `local` — the folder moved.
    */
   const handleRepointSkill = useCallback((skill: ManagedSkill, preselect?: RepointKind) => {
-    setRepointSelection({ skillId: skill.id, name: skill.name, preselect: preselect ?? repointKind(skill) });
-  }, []);
+    openRepoint(skill.id, skill.name, preselect ?? repointKind(skill));
+  }, [openRepoint]);
 
   // Both the modal and historical notification actions select by id. A click
-  // resolves against this render's list, not the list that produced the report.
+  // resolves against this render's list, not the list that produced the report:
+  // a skill that is gone is reported, and its dialog withdrawn.
   const repointSkillGone = repointSelection !== null && pendingRepointSkill === null;
   useEffect(() => {
     if (repointSkillGone && repointSelection) {
       notify("warning", t("errors.skillGone", { name: repointSelection.name }));
+      dismissDialog("repoint");
     }
-  }, [repointSelection, notify, repointSkillGone, t]);
+  }, [dismissDialog, repointSelection, notify, repointSkillGone, t]);
 
   // Every managed skill can change its source.
   const foldContext = useMemo(() => ({
@@ -186,23 +203,23 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     // missing upstream, so the notification action opens on the URL arm.
     const entries = (items: Outcome["errors"]): ActionErrorEntry[] => items.map(({ action, ...entry }) => ({
       ...entry,
-      ...(action ? { action: { label: action.label, onClick: () => setRepointSelection({ skillId: action.skillId, name: action.skillName, preselect: "git" }) } } : {}),
+      ...(action ? { action: { label: action.label, onClick: () => openRepoint(action.skillId, action.skillName, "git") } } : {}),
     }));
     if (outcome.completion.reload) await loadManagedSkills();
     showActionErrors(entries(outcome.errors));
     showActionWarnings(entries(outcome.warnings));
     if (outcome.toast) notify(outcome.toast.kind, outcome.toast.message, outcome.toast.detail);
     return outcome.completion;
-  }, [loadManagedSkills, notify, showActionErrors, showActionWarnings]);
+  }, [loadManagedSkills, notify, openRepoint, showActionErrors, showActionWarnings]);
 
   const setInvocationOverride = useCallback(async (skillId: string, mode: InvocationMode | null) => {
     await runAction({}, async () => {
       const { report, skills } = await invokeTauri("setSkillInvocationOverride", skillId, mode);
       setManagedSkills(skills);
       const completion = await applyOutcome(invocationEditOutcome(report, foldContext));
-      if (completion.closeModal) setInvocationEditSkillId(null);
+      if (completion.closeModal) dismissDialog("invocationEdit");
     });
-  }, [applyOutcome, foldContext, runAction]);
+  }, [applyOutcome, dismissDialog, foldContext, runAction]);
 
   const handleRefresh = useCallback(async () => {
     if (managedSkills.length === 0) return;
@@ -303,17 +320,17 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     await runAction({ message: t("actions.removing", { name: skill.name }) }, async () => {
       const result = await invokeTauri("deleteManagedSkill", skill.id);
       const completion = await applyOutcome(deleteOutcome(result, foldContext));
-      if (completion.closeModal) setPendingDeleteId(null);
+      if (completion.closeModal) dismissDialog("deleteSkill");
     });
-  }, [applyOutcome, foldContext, runAction, t]);
+  }, [applyOutcome, dismissDialog, foldContext, runAction, t]);
 
   const handleDeletePrompt = useCallback((skillId: string) => {
-    setPendingDeleteId(skillId);
-  }, []);
+    openDialog({ kind: "deleteSkill", skillId });
+  }, [openDialog]);
 
   const handleCloseDelete = useCallback(() => {
-    if (!loading) setPendingDeleteId(null);
-  }, [loading]);
+    if (!loading) closeDialog("deleteSkill");
+  }, [closeDialog, loading]);
 
   const runToggleToolForSkill = useCallback(
     async (skill: ManagedSkill, toolId: string) => {
@@ -412,8 +429,8 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   );
 
   const handleCloseRepoint = useCallback(() => {
-    setRepointSelection(null);
-  }, []);
+    closeDialog("repoint");
+  }, [closeDialog]);
 
   const repointName = repointSelection?.name ?? "";
   /**
@@ -457,9 +474,9 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
           reassert_auto_sync: autoSyncEnabled,
         }),
       );
-      if (completed?.closeModal) setRepointSelection(null);
+      if (completed?.closeModal) dismissDialog("repoint");
     },
-    [autoSyncEnabled, pendingRepointSkill, runSingleRefresh, t],
+    [autoSyncEnabled, dismissDialog, pendingRepointSkill, runSingleRefresh, t],
   );
 
   /**
@@ -484,15 +501,11 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
 
   return {
     managedSkills,
-    invocationEditSkillId,
+    managedSkillIds,
     invocationEditSkill,
     openInvocationEdit,
     closeInvocationEdit,
     setInvocationOverride,
-    detailSkill,
-    openDetail,
-    closeDetail,
-    pendingDeleteId,
     pendingDeleteSkill,
     repointSelection,
     pendingRepointSkill,

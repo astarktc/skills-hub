@@ -265,3 +265,96 @@ Run at 1280 × 800 and 960 × 640, both themes.
   `src/bindings/index.ts` unchanged).
 - Fail: `rust:fmt:check`, **only** in `src-tauri/src/core/tests/skill_disable.rs` (3 hunks) and
   `src-tauri/src/core/tests/target_relocation.rs` (1 hunk). Both files belong to the concurrent ticket-01 child.
+
+## Comments
+
+### 2026-09-29 — adversarial review of committed `9d70918`
+
+**fix-then-ship** — full report: `../review/ticket-07-review.md`.
+
+Blocking: (B1) Tailwind `outline-none` leaves `--tw-outline-style:none` in the focus-visible state, so the advertised
+primitive focus outlines do not draw; DropdownMenu also lacks a ≥3:1 keyboard-highlight cue (1.10 dark / 1.16 light).
+(B2) Legacy identifying input boundaries still use decorative `--border-subtle`: the search edge measures 1.33 dark /
+1.25 light against its outside ground, not 3:1. The new `input` token passes but those controls do not use it.
+
+The original pinned-copy `styles:check`, 33 primitive/preference tests and production build pass. All five requested
+guard mutations fail correctly, but ordinary equivalents bypass the migrated-class, raw-colour and prose checks.
+Other should-fix findings: explicit-id/Checkbox Field label wiring, the missing-opener default focus-return gap, and
+the specimen Menu's missing Group ancestor (opening it crashes the specimen). See the report for exact reproductions,
+fixes, measurements, coverage and disposition of known documentation gaps.
+
+Both-theme trusted keyboard evidence now verifies forward/backward Dialog Tab wrapping, inert lower layers,
+top-only Escape and trigger return in a named headless Chromium session with focus emulation, after the hidden T3
+preview proved unsuitable for a stable transcript. This also directly reproduced B1 with `:focus-visible=true`.
+No source was edited, no real-library/Tauri operation was run, and concurrent tickets' changes were not reviewed.
+
+### 2026-09-29 — review fixes (B1, B2, S1–S4, N1)
+
+Status stays `implemented`. Every finding of `../review/ticket-07-review.md` is fixed; gate
+`npm run version:check && npm run check` green (lint, styles:check + self-test, vitest 26 files / 583 tests, build,
+rustfmt, clippy, cargo test 769).
+
+- **B1 — focus ring draws.** `ui/styles.ts` now holds three literal rings, each with `focus-visible:outline-solid`:
+  `focusRing` (offset 2), `fieldFocusRing` (offset 1; Input/Textarea/Select), `insetFocusRing` (offset −2; every
+  DropdownMenu item — the scrolling popup cannot clip it). Dialog Close inherits `focusRing` through Button.
+  *Compiled CSS* (`npm run build`, `dist/assets/index-*.css`):
+  `.focus-visible\:outline-solid:focus-visible{--tw-outline-style:solid;outline-style:solid}` beside
+  `.focus-visible\:outline-2:focus-visible{outline-style:var(--tw-outline-style);outline-width:2px}`.
+  *Test*: `ui/focus-ring.test.tsx` renders Button, Chip, Checkbox, Switch, Tabs trigger, Segmented item,
+  Input/Textarea/Select, Dialog Close and a menu item, compiles each element's rendered classes with the installed
+  Tailwind (`compile()`), resolves the focus-visible cascade and asserts `solid` / `2px` / `var(--ring)` (and `none`
+  unfocused); a resolver case reproduces the defect (`none` without `outline-solid`). Reverting `focusRing` fails 7
+  of its 10 tests. *Rendered page* (fixture `/?specimen`, named headless session `r19-t07-fix`, focus emulation,
+  trusted CDP `Tab` / `Enter` / `ArrowDown`, both themes): Button, Chip, Checkbox, Switch, Tabs trigger, Segmented
+  item, Input, Select, dialog Cancel → Save → Close → Cancel (wrap) all `:focus-visible=true`,
+  `outlineStyle: solid`, `2px`, `rgb(150,144,255)` dark / `rgb(90,79,220)` light (offset 1px on fields);
+  keyboard-highlighted menu item `solid 2px`, offset `-2px`: ring vs highlight ground 6.01 dark / 5.04 light, vs
+  popover 6.61 / 5.86 (the ground alone stays 1.10 / 1.16 and is no longer the cue). The T3 hidden preview tab
+  cannot match `:focus-visible` (no window focus: `hasFocus:false`), hence the headless session.
+- **B2 — legacy input boundaries.** `App.css` in place (5 values, line count unchanged at 3038): `.search-input`,
+  `.input`, `.settings-select`, `.settings-input`, `.explore-search-input` border `var(--border-subtle)` →
+  `var(--input)`; the alias itself stays (decorative hairlines keep it). Rendered edge vs outside ground / vs own
+  fill, fixture `?scenario=rich`, dark | light: Library search 3.90/3.65 | 3.78/3.52; Add-skill `.input` (dialog;
+  Re-point shares the rule and ground) 3.65/3.90 | 3.87/3.78; Settings select 3.90/3.90 | 3.78/3.78; Settings input
+  3.90/3.90 | 3.78/3.78; Explore search 3.90/3.65 | 3.78/3.52. Focused (iris edge): ≥ 6.61 dark / ≥ 5.32 light.
+  Disabled: same edge as default. Recorded in DESIGN.md.
+- **S1 — guard hardening.** `scripts/check-styles.mjs`: a string/comment-aware CSS parser with nesting resolution;
+  prose containment = starts at `.prose` and leaves it only by descendant/child combinator (`.prose + x`,
+  `.prose ~ x`, nested `& ~ p` rejected; `.prose p + p` allowed); colour literals read `var()` fallbacks; class
+  tokens come from the TypeScript AST (`className`, cn/cva/clsx), following constants, objects, conditionals,
+  templates, helper functions and named relative/`@/` imports (cva `defaultVariants` / `compoundVariants` variant
+  names excluded); raw colours include arbitrary named colours (`bg-[red]`), arbitrary properties
+  (`[color:tomato]`) and colour literals in inline `style` objects (followed through constants). The CLI runs only
+  when invoked (realpath compare). *Test*: `scripts/check-styles.test.mjs` (node:test, 21 cases) copies `src/` +
+  the guard + baseline to a temp dir per case, applies one violation and asserts exit 1 with the rule tag; the clean
+  copy exits 0 and prints `styles:check ok`. `styles:check` runs it first (`--no-self-test` skips; the suite's own
+  runs use it). Against the old guard the same suite fails the 10 S1 cases; against the new one, 21/21 pass.
+  `className` layout-only stays a documented convention (DESIGN.md), not enforced.
+- **S2 — Field owns the control id.** `ui/field-context.ts` (new; context + `useFieldControlProps`): the control
+  reports the id it renders (explicit `id` wins, else generated) and `FieldLabel`'s `htmlFor` follows it. Checkbox
+  consumes the Field wiring: the id lands on Base UI's form input, the label points at it, and Base UI's
+  `aria-labelledby` fallback names the `role=checkbox` span. *Tests* (`field.test.tsx`): explicit id →
+  `input.labels.length === 1` and `for="repo-url"`; generated id → 1 label; `<Field><FieldLabel>Cursor</FieldLabel>
+  <Checkbox/></Field>` → checkbox named "Cursor" via `aria-labelledby`; Checkbox with explicit id in a Field → named.
+- **S3 — no focus on `<body>`.** `ui/focus-fallback.ts` `mainLandmarkFocus()`: the app's `<main>` (made
+  programmatically focusable, `tabindex=-1`). Dialog's chain is now opener → `fallbackFocus` → layer beneath →
+  main landmark. `DeleteModal` and `RemoveProjectModal` pass `fallbackFocus={mainLandmarkFocus}` (one prop + its
+  import each). *Test* (`dialog.test.tsx`): lone opener removed, no fallback, no lower layer, inside `<main>` →
+  focus is the main landmark, not body; removing the landmark step makes it fail. DESIGN.md qualifies the claim
+  ("while the app renders a `<main>`") and names ticket 09 as the row-level target owner. Note: after keyboard use
+  the base-layer ring then outlines the whole `<main>` — deliberate as a focus indicator until ticket 09 supplies
+  the row target.
+- **S4 — specimen Menu.** Label + Edit wrapped in `DropdownMenuGroup`; `DropdownMenuLabel` documents the
+  requirement. Rendered: the menu opens, `role=group` named "Label" holds 1 item, specimen stays mounted. *Test*
+  (`popover.test.tsx`): labelled group named by its label, contains Edit, not Delete.
+- **N1 — docs.** DESIGN.md scopes "no `transition: all`" to the primitives (22 legacy declarations remain until
+  surfaces migrate; reduced motion zeroes them), documents the explicit ring style, the inset menu ring, Field id
+  ownership / Checkbox composition, the dialog fallback chain and the hardened guard. `styles.ts` says ≥ 5.04:1
+  (light `raised`). AGENTS.md's "no component rendering tests" bullet gains the D2 exception for
+  `src/components/ui/*.test.tsx` (role/ARIA/focus contract only).
+
+Files: `src/components/ui/{styles.ts, field.tsx, field-context.ts (new), checkbox.tsx, dropdown-menu.tsx, dialog.tsx,
+focus-fallback.ts (new), specimen.tsx, field.test.tsx, dialog.test.tsx, popover.test.tsx, focus-ring.test.tsx
+(new)}`, `src/App.css` (5 values), `scripts/check-styles.mjs`, `scripts/check-styles.test.mjs` (new), `DESIGN.md`,
+`AGENTS.md` (one bullet), `src/components/skills/modals/DeleteModal.tsx` and
+`src/components/projects/RemoveProjectModal.tsx` (one prop + import each). Nothing committed.

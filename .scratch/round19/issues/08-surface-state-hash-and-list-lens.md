@@ -133,6 +133,27 @@ detail with repo line "anthropics/skills · just now · 2 files", Install, no Ch
 vitest 25 files / 562 tests passed, build ok, rust fmt/clippy ok, cargo test 769 passed). Earlier mid-run failures were
 all in ticket 02's in-flight files (`src/fixtures/**`, `commandError.ts`, `health` on `ManagedSkillDto`) and cleared.
 
+**Steer (orchestrator, after ticket 02): three-way ask answers.** Ticket 02 made a declined overwrite ask record
+`Keep` (pair → `disabled`), but a dismissal must record nothing. The surface ask now resolves
+`AskAnswer = 'confirmed' | 'declined' | 'dismissed'`: `confirmed`/`declined` come only from the explicit buttons
+(`pendingAsk(kind).answer(...)`); Escape/outside press (the top-layer `closeDialog`), displacement by a newer ask of the
+kind, the stack being replaced/reconciled, and unmount all settle `dismissed`. (`useOverwriteConfirmation` no longer
+exists — its `request()` is `useSyncOrchestration`'s `requestOverwriteConfirmation(rows) → Promise<OverwriteAnswer>`,
+`'overwrite' | 'keep' | 'dismissed'`, still the request-resolves pattern.) `syncSkillsToTools` sends
+`decision: 'keep'` only for `'keep'`; on `'dismissed'` it returns the first report as settled — no override, no retry
+batch. `OverwriteModal` composes the Dialog primitives itself (Keep existing → `declined`, Overwrite → `confirmed`,
+`onOpenChange(false)` → `dismissed`) because `ConfirmDialog` funnels Escape into its cancel callback (ui/ out of
+bounds; a ui ticket could give ConfirmDialog an `onDismiss`). `useSharedDirConfirmation` checked: its "no" records
+nothing (the toggle just does not happen), so it keeps `request() → boolean` (true only for `confirmed`; Cancel and
+dismissal both false) — documented in the hook. Tests: surface suite — confirmed once, explicit `declined`,
+displaced → `dismissed` (stale answer no-op), Escape/stack-replaced → `dismissed`, unmount → `dismissed`;
+`useSyncOrchestration.test` — confirmed → one retry with `overwrite`; **Keep existing** → retry with `keep`;
+`it.each` **dismissed** by Escape / displacing ask / stack replaced → exactly one batch, report as settled;
+`useSharedDirConfirmation.test` — Escape resolves false. Fixture (`rich`, zod-schema-first → Cursor, occupied
+folder): Escape closes the ask and the next click raises the ask again (nothing recorded); Keep existing → the Cursor
+pill reads "Cursor: disabled — Refresh and sync leave it off". Gate re-run: `version:check` OK, `npm run check`
+exit 0 (vitest 567 passed, cargo 769 passed).
+
 **Deferred / notes for 09–17**
 - `src/components/ui/confirm-dialog.tsx`'s comment still names `useOverwriteConfirmation` (ui/ was out of bounds);
   `docs/adr/0006-styling-architecture.md` (l. 98) and tickets 04/16 also name it — the overwrite ask is now `surface.ask({ kind: 'overwrite', rows })`

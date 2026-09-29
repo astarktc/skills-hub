@@ -1179,33 +1179,6 @@ describe("useProjectState assignment reconciliation flag", () => {
   });
 });
 
-describe("useProjectState dialog", () => {
-  it("opens, replaces and closes one dialog value", async () => {
-    const { result } = await renderReady();
-    expect(result.current.dialog).toBeNull();
-
-    act(() => {
-      result.current.openDialog({ kind: "add" });
-    });
-    expect(result.current.dialog).toEqual({ kind: "add" });
-
-    act(() => {
-      result.current.openDialog({ kind: "remove", projectId: "p1" });
-    });
-    // Opening a dialog replaces the previous one: two cannot be open, and a
-    // target can never outlive the dialog it belongs to.
-    expect(result.current.dialog).toEqual({
-      kind: "remove",
-      projectId: "p1",
-    });
-
-    act(() => {
-      result.current.closeDialog();
-    });
-    expect(result.current.dialog).toBeNull();
-  });
-});
-
 describe("useProjectState edit-project gitignore", () => {
   it("reads status and writes toggles through the gitignore commands", async () => {
     const { result } = await renderReady();

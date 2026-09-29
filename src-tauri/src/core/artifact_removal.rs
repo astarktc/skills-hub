@@ -62,6 +62,7 @@ use crate::core::{
     errors::{CommandError, SignalError},
     mutation_guard,
     project_sync::resolve_assignment_artifact,
+    skill_health::{self, SkillOutcomeKind},
     skill_store::{AssignmentTransition, ProjectRecord, SkillRecord, SkillStore, TargetTransition},
     sync_engine::remove_path_any,
     tool_adapters::{
@@ -639,7 +640,22 @@ pub(crate) fn execute_settling_unlocked(
     let mut central_removed = false;
     let mut record_deleted = false;
     if let (Some(skill), Settlement::Delete) = (plan.skill, settlement) {
-        if !any_failed {
+        if any_failed {
+            // A kept Delete settles here as the skill's health, with the
+            // first failed target's classified error (the report carries
+            // every one).
+            if let Some(error) = targets.iter().find_map(|t| match &t.status {
+                RemovalTargetStatus::Failed { error } => Some(error),
+                RemovalTargetStatus::Removed => None,
+            }) {
+                skill_health::note_outcome(
+                    store,
+                    &skill.id,
+                    SkillOutcomeKind::DeleteIncomplete,
+                    error,
+                );
+            }
+        } else {
             let central = Path::new(&skill.central_path);
             if central.exists() {
                 std::fs::remove_dir_all(central)

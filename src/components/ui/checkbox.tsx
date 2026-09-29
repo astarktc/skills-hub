@@ -1,6 +1,7 @@
 import { Checkbox as CheckboxPrimitive } from "@base-ui/react/checkbox";
 import { Check, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useFieldControlProps } from "./field-context";
 import { disabledState, focusRing } from "./styles";
 
 type CheckboxProps = Omit<CheckboxPrimitive.Root.Props, "className"> & {
@@ -12,9 +13,13 @@ type CheckboxProps = Omit<CheckboxPrimitive.Root.Props, "className"> & {
  * Checkbox — `role="checkbox"` with `aria-checked` (true / false / mixed).
  * A 16 px box with a 24 × 24 hit area (the dense target floor); the unchecked
  * edge is `input` (≥ 3:1 on every surface), checked fills with iris. Name it
- * with a wrapping `<label>`, `aria-label`, or a Field label.
+ * with a wrapping `<label>`, `aria-label`, or a Field label: inside a Field
+ * the checkbox renders the Field's control id on its form input, the
+ * FieldLabel points at it, and Base UI names the `role="checkbox"` element
+ * from that label (`aria-labelledby`).
  */
-function Checkbox({ className, ...props }: CheckboxProps) {
+function Checkbox({ className, ...rest }: CheckboxProps) {
+  const props = useFieldControlProps(rest);
   return (
     <CheckboxPrimitive.Root
       data-slot="checkbox"

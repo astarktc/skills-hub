@@ -1,14 +1,17 @@
 // Tests at the shared-dir confirmation seam: the decision (does this tool
 // share its skills dir?), the label arithmetic (which other members), and
-// the one pending-confirmation value both flows drive through the Modal.
-// No backend, no window.confirm — the hook takes the tool list as input.
+// the ask both flows raise on the surface stack (composed with the real
+// surface module, the way App wires it). No backend, no window.confirm.
 
-import { act, renderHook } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, cleanup, renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   useSharedDirConfirmation,
   type SharedDirTool,
 } from "./useSharedDirConfirmation";
+import { useSurfaceState } from "./useSurfaceState";
+
+afterEach(cleanup);
 
 // claude and pi share a skills dir (backend-owned grouping); cursor stands
 // alone and its shared_with is the singleton group.
@@ -19,7 +22,17 @@ const TOOLS: SharedDirTool[] = [
 ];
 
 function render(tools: SharedDirTool[] = TOOLS) {
-  return renderHook(() => useSharedDirConfirmation(tools));
+  return renderHook(() => {
+    const surface = useSurfaceState();
+    const confirmation = useSharedDirConfirmation(tools, surface);
+    return {
+      ...confirmation,
+      // What SharedDirModal renders, and its Cancel.
+      pending: surface.pendingAsk("sharedDir"),
+      cancel: () => surface.pendingAsk("sharedDir")?.answer("declined"),
+      surface,
+    };
+  });
 }
 
 describe("useSharedDirConfirmation decision", () => {
@@ -58,7 +71,7 @@ describe("useSharedDirConfirmation labels", () => {
 });
 
 describe("useSharedDirConfirmation request", () => {
-  it("resolves true immediately, with no pending value, when not shared", async () => {
+  it("resolves true immediately, with no pending ask, when not shared", async () => {
     const { result } = render();
 
     let answer: boolean | null = null;
@@ -70,7 +83,7 @@ describe("useSharedDirConfirmation request", () => {
     expect(result.current.pending).toBeNull();
   });
 
-  it("exposes the pending confirmation and resolves with the operator's answer", async () => {
+  it("raises the ask on the surface stack and resolves with the operator's answer", async () => {
     const { result } = render();
 
     let answer: boolean | null = null;
@@ -87,7 +100,7 @@ describe("useSharedDirConfirmation request", () => {
     expect(answer).toBeNull();
 
     await act(async () => {
-      result.current.pending!.resolve(true);
+      result.current.pending!.answer("confirmed");
     });
 
     expect(answer).toBe(true);
@@ -105,14 +118,14 @@ describe("useSharedDirConfirmation request", () => {
     });
 
     await act(async () => {
-      result.current.pending!.resolve(false);
+      result.current.pending!.answer("declined");
     });
 
     expect(answer).toBe(false);
     expect(result.current.pending).toBeNull();
   });
 
-  it("cancel resolves the pending confirmation as declined", async () => {
+  it("cancel resolves the pending ask as declined", async () => {
     const { result } = render();
 
     let answer: boolean | null = null;
@@ -124,6 +137,24 @@ describe("useSharedDirConfirmation request", () => {
 
     await act(async () => {
       result.current.cancel();
+    });
+
+    expect(answer).toBe(false);
+    expect(result.current.pending).toBeNull();
+  });
+
+  it("a dismissal (Escape) is also a plain no: nothing is recorded for this ask", async () => {
+    const { result } = render();
+
+    let answer: boolean | null = null;
+    act(() => {
+      void result.current.request("claude").then((ok) => {
+        answer = ok;
+      });
+    });
+
+    await act(async () => {
+      result.current.surface.closeDialog("sharedDir");
     });
 
     expect(answer).toBe(false);

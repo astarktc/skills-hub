@@ -475,10 +475,18 @@ fn a_disabled_skill_is_never_rematerialised_by_any_automatic_pass() {
 /// Onboarding import's first sync is the gated global batch, and an import
 /// always creates a *new* skill (the name must be free), so it can never carry
 /// a disabled row of its own. The one way it could meet a Disable is an
-/// unmanaged copy of a disabled skill reappearing in the Tool's dir: importing
-/// it must fail per group and leave the disabled pair and the copy alone.
+/// unmanaged copy of a disabled skill reappearing in the Tool's dir. The
+/// disabled row still records that path, so the plan never offers it: naming
+/// it fails per group (even with Replace) and leaves the disabled pair and
+/// the copy alone.
 #[test]
 fn onboarding_import_never_rematerialises_a_disabled_pair() {
+    for replace in [false, true] {
+        onboarding_import_leaves_a_disabled_pair(replace);
+    }
+}
+
+fn onboarding_import_leaves_a_disabled_pair(replace: bool) {
     let f = fixture(&["claude_code"]);
     f.sync(&["claude_code"]);
     disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
@@ -497,9 +505,11 @@ fn onboarding_import_never_rematerialises_a_disabled_pair() {
             group_name: "alpha".into(),
             chosen_path: reappeared.clone(),
             name: None,
+            replace,
         }],
         &ImportPolicy {
             auto_sync: true,
+            remove_originals: true,
             tools: Some(vec!["claude_code".into()]),
             scan_scope: OnboardingScanScope::Installed,
         },
@@ -513,7 +523,7 @@ fn onboarding_import_never_rematerialises_a_disabled_pair() {
             report.groups.as_slice(),
             [group] if matches!(group.status, ImportGroupStatus::Failed { .. })
         ),
-        "{report:?}"
+        "replace={replace}: {report:?}"
     );
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Disabled));
     assert!(
@@ -750,12 +760,15 @@ fn an_intent_only_assignment_is_unassigned_without_touching_its_path() {
     assert!(foreign_bytes_survive(&path));
 }
 
-/// A project first sync that met a directory in the way. Project sync does
-/// not type the collision yet (it surfaces as `OTHER`, unlike the global
-/// batch's `TARGET_EXISTS`), so the refusal is read from the chain.
+/// A project first sync that met a directory in the way: typed
+/// `TARGET_EXISTS`, the same as the global batch's collision.
 fn is_collision(status: &ProjectSyncOutcomeStatus) -> bool {
-    matches!(status, ProjectSyncOutcomeStatus::Failed { error }
-        if format!("{error:?}").contains("already exists"))
+    matches!(
+        status,
+        ProjectSyncOutcomeStatus::Failed {
+            error: CommandError::TargetExists { .. }
+        }
+    )
 }
 
 /// F1-R1 arrangement: a skill disabled at skill grain, an assignment

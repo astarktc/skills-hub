@@ -16,7 +16,14 @@ const LEGACY_APP_IDENTIFIERS: &[&str] = &[
 ];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 10;
+const SCHEMA_VERSION: i32 = 11;
+
+/// V11: Skill health — the last settled outcome of a skill-level operation
+/// (`core::skill_health`): its kind, the tagged `CommandError` as JSON, and
+/// when it settled. All three are NULL for a healthy skill.
+const MIGRATION_V11: &str = "ALTER TABLE skills ADD COLUMN last_outcome_kind TEXT NULL;
+ALTER TABLE skills ADD COLUMN last_outcome_error TEXT NULL;
+ALTER TABLE skills ADD COLUMN last_outcome_at INTEGER NULL;";
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -155,6 +162,16 @@ pub struct SkillRecord {
     pub imported_from_tool: Option<String>,
 }
 
+/// The raw Skill health columns (`skills.last_outcome_*`); typed and parsed
+/// by `core::skill_health`, which alone writes them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredOutcome {
+    pub kind: String,
+    /// The settled `CommandError`, serialised as its tagged wire JSON.
+    pub error: String,
+    pub at: i64,
+}
+
 #[derive(Clone, Debug)]
 pub struct SkillTargetRecord {
     pub id: String,
@@ -179,8 +196,9 @@ pub struct SkillTargetRecord {
 /// of the app). A row the app never materialised (`synced_at` NULL) owns
 /// nothing, whatever its status: the pair-grain marker
 /// (`TargetTransition::DisabledRecorded`), the assignment recorded `disabled`
-/// for a disabled skill, the "Keep existing" decline of D9 — and the same rows
-/// after a failed first sync (Enable's `TARGET_EXISTS`) turned them `error`, or
+/// for a disabled skill, the "Keep existing" decline of D9, the `error` row a
+/// failed first sync records (`TargetTransition::FailedRecorded`) — and the
+/// same rows after a failed first sync (Enable's `TARGET_EXISTS`) turned them `error`, or
 /// a reconcile re-derived their status. They record intent and where the
 /// target *would* be, and must never make whatever sits at that path
 /// removable or overwritable. No lifecycle transition clears `synced_at`
@@ -325,6 +343,21 @@ pub enum TargetTransition<'a> {
     /// A sync failed; `error` is the diagnostic chain, and the row keeps its
     /// recorded mode and path so the failure stays observable.
     SyncFailed { error: &'a str },
+    /// The insert-shaped sibling of [`SyncFailed`](Self::SyncFailed): a
+    /// first sync of a `(skill_id, tool)` pair failed to materialise (any
+    /// failure but an unanswered `TARGET_EXISTS`, which is asked first), so
+    /// the pair is recorded `error` with its diagnostic — symmetric with
+    /// ADR-0002, so the strip shows the failure and Retry has a row. A new
+    /// row gets `synced_at` NULL: it never materialised, so it owns nothing
+    /// ([`owns_artifact`]). An existing row keeps its id, mode, path and
+    /// `synced_at` and is settled exactly as `SyncFailed` would settle it.
+    FailedRecorded {
+        skill_id: &'a str,
+        tool: &'a str,
+        mode: SyncMode,
+        target_path: &'a str,
+        error: &'a str,
+    },
     /// The row's artifact was removed at the operator's request and the row
     /// is kept as the durable "not on this Tool" record (`Disabled`). Mode,
     /// path and `synced_at` are kept: they describe where the target was.
@@ -427,6 +460,8 @@ impl SkillStore {
                 )?;
                 // V10: skill-level Disabled marker
                 tx.execute_batch("ALTER TABLE skills ADD COLUMN disabled_at INTEGER NULL;")?;
+                // V11: Skill health (the stored last outcome)
+                tx.execute_batch(MIGRATION_V11)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version < SCHEMA_VERSION {
                 // Incremental migrations
@@ -491,6 +526,12 @@ impl SkillStore {
                     // when set, the skill is off everywhere until enabled.
                     // Presence-guarded like V9 so the step is idempotent.
                     tx.execute_batch("ALTER TABLE skills ADD COLUMN disabled_at INTEGER NULL;")?;
+                }
+                if user_version < 11 && !column_exists(&tx, "skills", "last_outcome_kind")? {
+                    // Skill health (see **Skill health** in `CONTEXT.md`):
+                    // the three columns land together, presence-guarded on
+                    // the first like V9/V10.
+                    tx.execute_batch(MIGRATION_V11)?;
                 }
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
@@ -915,6 +956,100 @@ impl SkillStore {
         })
     }
 
+    /// The stored Skill health columns of one skill, raw (`kind`, `error`
+    /// JSON, `at`); `None` when the skill is healthy or gone. Like
+    /// `disabled_at` these are deliberately **not** [`SkillRecord`] fields,
+    /// so a whole-record upsert (finalize, Re-point) never touches them: only
+    /// `core::skill_health` writes them and parses what it reads.
+    pub fn skill_outcome(&self, skill_id: &str) -> Result<Option<StoredOutcome>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT last_outcome_kind, last_outcome_error, last_outcome_at
+                 FROM skills WHERE id = ?1 AND last_outcome_kind IS NOT NULL",
+            )?;
+            let mut rows = stmt.query(params![skill_id])?;
+            match rows.next()? {
+                Some(row) => Ok(Some(StoredOutcome {
+                    kind: row.get(0)?,
+                    error: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    at: row.get::<_, Option<i64>>(2)?.unwrap_or_default(),
+                })),
+                None => Ok(None),
+            }
+        })
+    }
+
+    /// Every stored Skill health, keyed by skill id — one read for the
+    /// catalog instead of one per skill.
+    pub fn skill_outcomes(&self) -> Result<HashMap<String, StoredOutcome>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, last_outcome_kind, last_outcome_error, last_outcome_at
+                 FROM skills WHERE last_outcome_kind IS NOT NULL",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    StoredOutcome {
+                        kind: row.get(1)?,
+                        error: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                        at: row.get::<_, Option<i64>>(3)?.unwrap_or_default(),
+                    },
+                ))
+            })?;
+            let mut items = HashMap::new();
+            for row in rows {
+                let (id, outcome) = row?;
+                items.insert(id, outcome);
+            }
+            Ok(items)
+        })
+    }
+
+    /// Write (`Some`) or clear (`None`) the Skill health columns of one
+    /// skill. A skill with no row is left alone (no-op).
+    pub fn set_skill_outcome(&self, skill_id: &str, outcome: Option<&StoredOutcome>) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE skills
+                 SET last_outcome_kind = ?1, last_outcome_error = ?2, last_outcome_at = ?3
+                 WHERE id = ?4",
+                params![
+                    outcome.map(|o| o.kind.as_str()),
+                    outcome.map(|o| o.error.as_str()),
+                    outcome.map(|o| o.at),
+                    skill_id
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Clear the Skill health columns only when the stored kind is one of
+    /// `kinds` (a success clears its own family, never another's).
+    pub fn clear_skill_outcome_of(&self, skill_id: &str, kinds: &[&str]) -> Result<()> {
+        self.with_conn(|conn| {
+            use rusqlite::OptionalExtension;
+            let stored: Option<String> = conn
+                .query_row(
+                    "SELECT last_outcome_kind FROM skills WHERE id = ?1",
+                    params![skill_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .flatten();
+            if stored.is_some_and(|kind| kinds.contains(&kind.as_str())) {
+                conn.execute(
+                    "UPDATE skills
+                     SET last_outcome_kind = NULL, last_outcome_error = NULL, last_outcome_at = NULL
+                     WHERE id = ?1",
+                    params![skill_id],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
     pub fn delete_skill(&self, skill_id: &str) -> Result<()> {
         self.with_conn(|conn| {
             conn.execute("DELETE FROM skills WHERE id = ?1", params![skill_id])?;
@@ -954,11 +1089,18 @@ impl SkillStore {
         })
     }
 
+    /// Every global target path the app **owns** ([`owns_artifact`]:
+    /// `synced_at` set), with its Tool — what Onboarding discovery hides as
+    /// already managed. A row that never materialised (a pair-grain marker,
+    /// a "Keep existing" decline, a failed first sync's `error` row) owns
+    /// nothing at its path, so an unmanaged folder sitting there stays
+    /// discoverable.
     pub fn list_all_skill_target_paths(&self) -> Result<Vec<(String, String)>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT tool, target_path
-         FROM skill_targets",
+         FROM skill_targets
+         WHERE synced_at IS NOT NULL",
             )?;
             let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
 
@@ -1327,6 +1469,34 @@ impl SkillStore {
             ),
             TargetTransition::SyncFailed { error } => {
                 (SyncStatus::Error, Some(error), None, None, None)
+            }
+            TargetTransition::FailedRecorded {
+                skill_id,
+                tool,
+                mode,
+                target_path,
+                error,
+            } => {
+                return self.with_conn(|conn| {
+                    conn.execute(
+                        "INSERT INTO skill_targets (
+                           id, skill_id, tool, target_path, mode, status, last_error, synced_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)
+                         ON CONFLICT(skill_id, tool) DO UPDATE SET
+                           status = excluded.status,
+                           last_error = excluded.last_error",
+                        params![
+                            target_id,
+                            skill_id,
+                            tool,
+                            target_path,
+                            mode.as_str(),
+                            SyncStatus::Error.as_str(),
+                            error
+                        ],
+                    )?;
+                    Ok(())
+                });
             }
             TargetTransition::Disabled => (SyncStatus::Disabled, None, None, None, None),
             TargetTransition::DisabledRecorded {

@@ -49,6 +49,7 @@ use super::propagation::{
     PropagationOutcome, PropagationScope, PropagationSkip, PropagationStatus,
 };
 use super::provenance::{refresh_eligibility, RefreshEligibility};
+use super::skill_health::{self, SkillOutcomeKind};
 use super::skill_store::SkillStore;
 use super::skill_update::{
     acquire_update, apply_unlocked, ApplyOutcome, UpdateRequest, UpdateSkip,
@@ -183,6 +184,16 @@ pub fn refresh_managed_skills(
     )
 }
 
+/// What the batch is doing to each skill's source, for the Skill health a
+/// failure settles as (`core::skill_health`): an Update of the skill's own
+/// source (`fetch_failed`, or `restore_failed` when the central copy is gone
+/// — that Update is a Restore), or a Re-point to a new one (`repoint_failed`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateIntent {
+    Update,
+    Repoint,
+}
+
 /// [`refresh_managed_skills`] with acquisition injected, so the pool's
 /// concurrency, ordering and cancellation behaviour are testable without the
 /// network (and without real latency being the only signal).
@@ -197,8 +208,34 @@ pub(crate) fn refresh_managed_skills_with(
     policy: RefreshPolicy,
     cancel: Option<&CancelToken>,
     now: i64,
+    on_progress: impl FnMut(RefreshProgress),
+    acquire: &AcquireFn,
+) -> Result<RefreshReport> {
+    refresh_with_intent(
+        paths,
+        store,
+        selection,
+        policy,
+        cancel,
+        now,
+        on_progress,
+        acquire,
+        UpdateIntent::Update,
+    )
+}
+
+/// The batch itself, for either [`UpdateIntent`] (Re-point enters here).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn refresh_with_intent(
+    paths: &InstallerPaths,
+    store: &SkillStore,
+    selection: RefreshSelection,
+    policy: RefreshPolicy,
+    cancel: Option<&CancelToken>,
+    now: i64,
     mut on_progress: impl FnMut(RefreshProgress),
     acquire: &AcquireFn,
+    intent: UpdateIntent,
 ) -> Result<RefreshReport> {
     let Selection {
         members: selected,
@@ -254,13 +291,16 @@ pub(crate) fn refresh_managed_skills_with(
         let update = match result {
             Ok(update) => update,
             Err(error) => {
-                // Reported and excluded from propagation and the re-assert.
+                // Reported and excluded from propagation and the re-assert;
+                // the acquisition failure settles here, as the skill's health.
+                let error = CommandError::from_anyhow(error);
+                mutation_guard::serialized(|| {
+                    settle_failure_health(store, &skill_id, intent, &error)
+                });
                 report.skills.push(SkillRefreshOutcome {
                     skill_id,
                     skill_name,
-                    status: SkillRefreshStatus::Failed {
-                        error: CommandError::from_anyhow(error),
-                    },
+                    status: SkillRefreshStatus::Failed { error },
                 });
                 continue;
             }
@@ -271,8 +311,9 @@ pub(crate) fn refresh_managed_skills_with(
             skill_name: &skill_name,
             phase: RefreshPhase::Applying,
         });
-        let status =
-            mutation_guard::serialized(|| apply_one_unlocked(paths, store, update, policy, now));
+        let status = mutation_guard::serialized(|| {
+            apply_one_unlocked(paths, store, update, policy, now, intent)
+        });
         report.skills.push(SkillRefreshOutcome {
             skill_id,
             skill_name,
@@ -398,16 +439,18 @@ fn apply_one_unlocked(
     update: UpdateRequest,
     policy: RefreshPolicy,
     now: i64,
+    intent: UpdateIntent,
 ) -> SkillRefreshStatus {
+    let skill_id = update.skill_id().to_string();
     let outcome = match apply_unlocked(paths, store, update) {
         Ok(ApplyOutcome::Updated(outcome)) => outcome,
         Ok(ApplyOutcome::Skipped { reason }) => {
             return SkillRefreshStatus::SkippedAcquisition { reason }
         }
         Err(error) => {
-            return SkillRefreshStatus::Failed {
-                error: CommandError::from_anyhow(error),
-            }
+            let error = CommandError::from_anyhow(error);
+            settle_failure_health(store, &skill_id, intent, &error);
+            return SkillRefreshStatus::Failed { error };
         }
     };
     let targets = outcome.propagation.targets;
@@ -431,6 +474,38 @@ fn apply_one_unlocked(
         reassert_error,
         edit_conflict: outcome.edit_conflict,
     }
+}
+
+/// A failed Update / Restore / Re-point settles as the skill's health (see
+/// `core::skill_health`), with the error its report row carries. A
+/// cancellation is not a failure of the skill and records nothing. Restore is
+/// told apart by the state it repairs: the central copy is gone (finalize
+/// never ran, or rolled back). The caller holds the mutation guard.
+fn settle_failure_health(
+    store: &SkillStore,
+    skill_id: &str,
+    intent: UpdateIntent,
+    error: &CommandError,
+) {
+    if matches!(error, CommandError::Cancelled) {
+        return;
+    }
+    let kind = match intent {
+        UpdateIntent::Repoint => SkillOutcomeKind::RepointFailed,
+        UpdateIntent::Update => match store.get_skill_by_id(skill_id) {
+            Ok(Some(skill)) if !std::path::Path::new(&skill.central_path).exists() => {
+                SkillOutcomeKind::RestoreFailed
+            }
+            Ok(Some(_)) => SkillOutcomeKind::FetchFailed,
+            // Deleted meanwhile: nothing to record on.
+            Ok(None) => return,
+            Err(err) => {
+                log::warn!("reading skill {skill_id} for its health failed: {err:#}");
+                return;
+            }
+        },
+    };
+    skill_health::note_outcome(store, skill_id, kind, error);
 }
 
 /// Fold the re-assert's result into the skill's target list. The skill stays

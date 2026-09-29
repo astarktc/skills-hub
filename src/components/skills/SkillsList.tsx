@@ -1,16 +1,16 @@
-import { memo, useMemo } from "react";
+import { memo } from "react";
 import { GitBranch, MessageCircle } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { ManagedSkill, OnboardingPlan, ToolOption } from "./types";
 import type { CopyToClipboardFn } from "../../hooks/useStatusReporter";
 import SkillCard from "./SkillCard";
-import { groupSkillsByRepo, type RepointKind } from "../../lib/skillPresentation";
+import type { RepointKind } from "../../lib/skillPresentation";
+import type { ListLens } from "../../hooks/useListLens";
 
 type SkillsListProps = {
   plan: OnboardingPlan | null;
-  visibleSkills: ManagedSkill[];
-  groupByRepo: boolean;
-  viewMode: "list" | "auto-grid" | "dense-grid";
+  /** My Skills' list lens: the visible skills, their groups (null = Flat), the view mode. */
+  lens: ListLens<ManagedSkill>;
   installedTools: ToolOption[];
   /** Every registry tool, detected or not — labels a card's orphaned rows. */
   allTools: ToolOption[];
@@ -34,9 +34,7 @@ type SkillsListProps = {
 
 const SkillsList = ({
   plan,
-  visibleSkills,
-  groupByRepo,
-  viewMode,
+  lens,
   installedTools,
   allTools,
   loading,
@@ -54,13 +52,7 @@ const SkillsList = ({
   copyToClipboard,
   t,
 }: SkillsListProps) => {
-  const groups = useMemo(() => {
-    if (!groupByRepo) return null;
-    return groupSkillsByRepo(visibleSkills, {
-      local: t("localGroup"),
-      ungrouped: t("ungrouped"),
-    });
-  }, [groupByRepo, visibleSkills, t]);
+  const { visible: visibleSkills, groups, viewMode } = lens;
 
   const renderSkill = (skill: ManagedSkill) => (
     <SkillCard
@@ -89,7 +81,7 @@ const SkillsList = ({
 
   return (
     <div className="skills-list">
-      {plan && plan.total_skills_found > 0 ? (
+      {plan && plan.group_count > 0 ? (
         <div className="discovered-banner">
           <div className="banner-left">
             <div className="banner-icon">
@@ -98,7 +90,7 @@ const SkillsList = ({
             <div className="banner-content">
               <div className="banner-title">{t("discoveredTitle")}</div>
               <div className="banner-subtitle">
-                {t("discoveredCount", { count: plan.total_skills_found })}
+                {t("discoveredCount", { count: plan.group_count })}
               </div>
             </div>
           </div>

@@ -21,6 +21,7 @@ import type { InvokeTauri } from "../../lib/tauri";
 import { parseFrontmatter } from "../../lib/manifestPresentation";
 import { describeCommandError } from "../../commandError";
 import type { NotifyFn } from "../../hooks/useStatusReporter";
+import type { ExplorePreview } from "../../hooks/useSurfaceState";
 import type { ManagedSkill, SkillFileEntry } from "./types";
 import {
   formatRelativeTime,
@@ -36,14 +37,19 @@ import {
 const NO_INLINE_THEME = {};
 
 // ─── Types ───────────────────────────────────────────
+/** What the detail shows: a Managed skill, or an Explore preview (never managed). */
+export type DetailSubject =
+  | { kind: "managed"; skill: ManagedSkill }
+  | { kind: "explore"; preview: ExplorePreview };
+
 type SkillDetailViewProps = {
-  skill: ManagedSkill;
+  subject: DetailSubject;
   onBack: () => void;
   invokeTauri: InvokeTauri;
   /** The reporter's notification entry point, handed down by the binder. */
   notify: NotifyFn;
   t: TFunction;
-  isExplorePreview?: boolean;
+  /** Install the previewed skill (Explore previews only). */
   onInstall?: () => void;
   onRepoint?: (skill: ManagedSkill) => void;
   actionLoading?: boolean;
@@ -352,16 +358,32 @@ FileContentRenderer.displayName = "FileContentRenderer";
 
 // ─── Main component ──────────────────────────────────
 const SkillDetailView = ({
-  skill,
+  subject,
   onBack,
   invokeTauri,
   notify,
   t,
-  isExplorePreview = false,
   onInstall,
   onRepoint,
   actionLoading = false,
 }: SkillDetailViewProps) => {
+  const managed = subject.kind === "managed" ? subject.skill : null;
+  const isExplorePreview = subject.kind === "explore";
+  // The fields every subject has: where its files are, what to call it.
+  const skill =
+    subject.kind === "managed"
+      ? {
+          name: subject.skill.name,
+          description: subject.skill.description,
+          central_path: subject.skill.central_path,
+          updated_at: subject.skill.updated_at,
+        }
+      : {
+          name: subject.preview.name,
+          description: subject.preview.summary,
+          central_path: subject.preview.cachePath,
+          updated_at: subject.preview.fetchedAt,
+        };
   const [files, setFiles] = useState<SkillFileEntry[]>([]);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState("");
@@ -443,13 +465,15 @@ const SkillDetailView = ({
   // One Provenance rule decides the source line: a git skill shows its repo,
   // a local skill its folder, an imported skill "Managed here" with the Tool
   // it was found in as history (there is no source).
-  const kind = sourceKind(skill);
+  // An Explore preview is always a git source.
+  const kind = managed ? sourceKind(managed) : "git";
+  const sourceRef = managed ? managed.source_ref : subject.kind === "explore" ? subject.preview.sourceUrl : null;
   const sourceLabel =
     kind === "git"
-      ? (repoInfo(skill.source_ref)?.label ?? skill.source_ref ?? "")
-      : kind === "imported"
-        ? importedSourceLine(skill, t).text
-        : (skill.source_ref ?? "");
+      ? (repoInfo(sourceRef)?.label ?? sourceRef ?? "")
+      : kind === "imported" && managed
+        ? importedSourceLine(managed, t).text
+        : (sourceRef ?? "");
 
   const SourceIcon =
     kind === "git" ? GitBranch : kind === "imported" ? Box : Folder;
@@ -462,12 +486,12 @@ const SkillDetailView = ({
             <ArrowLeft size={16} />
             {t("detail.back")}
           </button>
-          {!isExplorePreview && onRepoint ? (
+          {managed && onRepoint ? (
             <button
               className="btn btn-secondary"
               type="button"
               disabled={actionLoading}
-              onClick={() => onRepoint(skill)}
+              onClick={() => onRepoint(managed)}
             >
               {t("changeSource.action")}
             </button>

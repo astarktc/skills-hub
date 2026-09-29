@@ -35,7 +35,10 @@
 //!    through the existing batches — `global_sync` for global targets (the
 //!    cleared rows are deleted so the batch records them afresh) and
 //!    `project_sync::first_sync_assignments_unlocked` for assignments — with
-//!    overwrite off, so `TARGET_EXISTS` can occur and is report data.
+//!    overwrite off, so `TARGET_EXISTS` can occur and is report data. A
+//!    global pair whose folder is in the way stays `disabled` (Enable raises
+//!    no overwrite ask; the D12 ask for it is ticket 04's); any other failed
+//!    pair is the batch's `error` row; an assignment keeps its row `error`.
 //!
 //! Both answer with report types that cross the wire as themselves:
 //! [`RemovalReport`] for Disable, [`EnableReport`] for Enable. Only a store
@@ -410,7 +413,39 @@ fn first_sync_global(
         overwrite_if_same_content: true,
         overrides: Vec::new(),
     };
-    sync_skills_to_tools_unlocked(home, store, &skills, tools, &policy, now, |_| {})
+    let outcomes = sync_skills_to_tools_unlocked(home, store, &skills, tools, &policy, now, |_| {});
+    // A folder in the way is asked about, never recorded as a failure (D9);
+    // Enable raises no ask, so the pair keeps the state it was enabled from:
+    // `disabled`, re-recorded as a marker owning nothing at that path (the
+    // cleared row was deleted above so the batch could record afresh). Any
+    // other failure is the batch's own `error` row.
+    for outcome in &outcomes {
+        if let BatchTargetStatus::Failed {
+            error: CommandError::TargetExists { path },
+        } = &outcome.status
+        {
+            let mode = match adapter_by_key(&outcome.tool_key) {
+                Some(adapter) if !adapter.supports_symlink => SyncMode::Copy,
+                _ => SyncMode::Symlink,
+            };
+            if let Err(err) = store.transition_skill_target(
+                &Uuid::new_v4().to_string(),
+                TargetTransition::DisabledRecorded {
+                    skill_id: &skill.id,
+                    tool: &outcome.tool_key,
+                    mode,
+                    target_path: path,
+                },
+            ) {
+                log::warn!(
+                    "keeping {} disabled on {} after a collision failed: {err:#}",
+                    skill.id,
+                    outcome.tool_key
+                );
+            }
+        }
+    }
+    outcomes
 }
 
 fn require_skill(store: &SkillStore, skill_id: &str) -> Result<SkillRecord> {

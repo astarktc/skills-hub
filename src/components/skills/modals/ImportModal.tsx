@@ -57,7 +57,7 @@ const ImportModal = ({
               <div>{t('importSummary')}</div>
               <div className="import-metrics">
                 <span>{t('toolsScanned', { count: plan.total_tools_scanned })}</span>
-                <span>{t('skillsFound', { count: plan.total_skills_found })}</span>
+                <span>{t('skillsFound', { count: plan.group_count })}</span>
               </div>
             </div>
             <div className="sync-row">

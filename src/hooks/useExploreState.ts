@@ -1,9 +1,9 @@
 import { useCallback, useRef, useState } from "react";
 import type {
   FeaturedSkillDto,
-  ManagedSkill,
   OnlineSkillDto,
 } from "../components/skills/types";
+import type { ExplorePreview } from "./useSurfaceState";
 import { invokeTauri } from "../lib/tauri";
 import type { StatusReporter, TranslateFn } from "./useStatusReporter";
 import { showHiddenPreference } from "../lib/preferences";
@@ -15,8 +15,8 @@ export type ExploreStateDeps = {
     StatusReporter,
     "runAction" | "setError" | "formatError"
   >;
-  /** Navigate to the explore-detail view with the cloned preview skill. */
-  onOpenExploreDetail: (skill: ManagedSkill) => void;
+  /** Focus the cloned preview (the surface module shows it in the detail). */
+  onOpenPreview: (preview: ExplorePreview) => void;
 };
 
 /**
@@ -26,7 +26,7 @@ export type ExploreStateDeps = {
 export function useExploreState({
   t,
   reporter,
-  onOpenExploreDetail,
+  onOpenPreview,
 }: ExploreStateDeps) {
   const { runAction, setError, formatError } = reporter;
   const [featuredSkills, setFeaturedSkills] = useState<FeaturedSkillDto[]>([]);
@@ -129,30 +129,18 @@ export function useExploreState({
           sourceUrl,
           skillName,
         );
-        const exploreManagedSkill: ManagedSkill = {
-          id: "",
+        // A preview is not a Managed skill: it carries only what the
+        // detail shows (no id, no targets, nothing to act on but Install).
+        onOpenPreview({
+          sourceUrl,
           name: skillName,
-          description: summary ?? null,
-          source_type: "github",
-          source_ref: sourceUrl,
-          imported_from_tool: null,
-          central_path: cachePath,
-          created_at: 0,
-          updated_at: Date.now(),
-          last_sync_at: null,
-          status: "",
-          invocation_mode: "user-and-model",
-          invocation_override: null,
-          targets: [],
-          disabled_at: null,
-          refreshable: true,
-          unlocatable: null,
-          detachable: false,
-        };
-        onOpenExploreDetail(exploreManagedSkill);
+          summary: summary ?? null,
+          cachePath,
+          fetchedAt: Date.now(),
+        });
       });
     },
-    [onOpenExploreDetail, runAction],
+    [onOpenPreview, runAction],
   );
 
   return {

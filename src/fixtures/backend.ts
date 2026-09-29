@@ -50,6 +50,7 @@ import type {
   RowRef,
   SettingUpdate,
   SkillMutationResultDto,
+  SkillOutcomeKind,
   SkillRefreshOutcome,
   SkillRefreshStatus,
   SyncMode,
@@ -77,7 +78,6 @@ import {
   type FixtureState,
 } from "./model";
 import { TOOL_REGISTRY, VIRTUAL_GROUP_KEY } from "./registry";
-import { BROKEN_IMPORT_NAMES } from "./scenarios";
 
 type Handler<K extends CommandName> = (
   ...args: Parameters<Commands[K]>
@@ -188,6 +188,7 @@ export function createFixtureBackend(
         refreshable: input.sourceType !== "imported",
         unlocatable: null,
         detachable: input.sourceType === "local",
+        health: null,
       },
       files,
       contentHash: input.hashOverride ?? hashFiles(files),
@@ -227,6 +228,40 @@ export function createFixtureBackend(
     skill.dto.last_sync_at = at;
   };
 
+  /**
+   * A failed sync settles its rows (Rust `global_sync::record_failed`, D9):
+   * every detected Tool sharing the root gets an `error` row — a new one owns
+   * nothing (`synced_at` null), an existing one keeps its ownership. An
+   * unanswered TARGET_EXISTS never reaches here (it is asked first).
+   */
+  const recordFailedTargets = (skill: FixtureSkill, tool: string) => {
+    const path = `${globalRoot(tool)}/${skill.dto.name}`;
+    for (const sharer of globalSharers(tool).filter(isInstalled)) {
+      const row = skill.dto.targets.find((t) => t.tool === sharer);
+      if (row) row.status = "error";
+      else skill.dto.targets.push({ tool: sharer, mode: "symlink", status: "error", target_path: path, synced_at: null });
+    }
+  };
+
+  /**
+   * "Keep existing" (Rust `global_sync::record_kept`): the attempted Tool's
+   * pair is recorded `disabled` — a marker owning nothing — and reported as
+   * any disabled pair is.
+   */
+  const recordKept = (skill: FixtureSkill, tool: string): BatchTargetStatus => {
+    const row = skill.dto.targets.find((t) => t.tool === tool);
+    if (row) row.status = "disabled";
+    else
+      skill.dto.targets.push({
+        tool,
+        mode: "symlink",
+        status: "disabled",
+        target_path: `${globalRoot(tool)}/${skill.dto.name}`,
+        synced_at: null,
+      });
+    return { status: "skipped", error: { code: "TARGET_DISABLED", tool } };
+  };
+
   /** One (skill, tool root) attempt under the overwrite rule. */
   const syncPair = (
     skill: FixtureSkill,
@@ -237,9 +272,11 @@ export function createFixtureBackend(
     const root = globalRoot(tool);
     const path = `${root}/${skill.dto.name}`;
     if (state.unwritableTools.includes(tool)) {
+      recordFailedTargets(skill, tool);
       return { status: "skipped", error: { code: "TOOL_NOT_WRITABLE", tool, path: root } };
     }
     if (skill.files.length === 0) {
+      recordFailedTargets(skill, tool);
       return { status: "failed", error: { code: "CENTRAL_PATH_MISSING", path: skill.dto.central_path } };
     }
     const occupantIndex = state.foreign.findIndex(
@@ -303,11 +340,15 @@ export function createFixtureBackend(
           outcomes.push({ skill_id: s.skill_id, skill_name: s.name, tool_key: key, status: { status: "skipped", error: { code: "TARGET_DISABLED", tool: key } } });
           continue;
         }
-        const overwrite =
-          (policy.overwrite ?? false) ||
+        const decided = (decision: "overwrite" | "keep") =>
           (policy.overrides ?? []).some(
-            (o) => o.overwrite && o.skill_id === s.skill_id && globalSharers(key).includes(o.tool),
+            (o) => o.decision === decision && o.skill_id === s.skill_id && globalSharers(key).includes(o.tool),
           );
+        if (decided("keep")) {
+          outcomes.push({ skill_id: s.skill_id, skill_name: s.name, tool_key: key, status: recordKept(skill, key) });
+          continue;
+        }
+        const overwrite = (policy.overwrite ?? false) || decided("overwrite");
         outcomes.push({
           skill_id: s.skill_id,
           skill_name: s.name,
@@ -561,9 +602,8 @@ export function createFixtureBackend(
    * `overwrite` is the caller's policy: off for a first sync (assign, Enable),
    * and for a re-sync / Propagation only a row that owns its path may replace
    * what is there (Rust `owns_artifact`). Someone else's folder in the way
-   * of a sync without overwrite is refused; project sync does not type the
-   * collision yet, so it surfaces as `OTHER` (the global batch's is
-   * `TARGET_EXISTS`).
+   * of a sync without overwrite is refused as `TARGET_EXISTS`, the global
+   * batch's code.
    */
   const syncAssignment = (
     project: FixtureProject,
@@ -592,11 +632,12 @@ export function createFixtureBackend(
     }
     if (state.projectOccupants.includes(path)) {
       if (!overwrite) {
-        const message = `target already exists: "${path}"`;
+        // Typed like the global batch's collision (Rust `CommandError::from_anyhow`
+        // recovers `sync_engine::TargetExistsError`); `last_error` keeps the chain.
         a.status = "error";
-        a.last_error = message;
+        a.last_error = `target already exists: "${path}"`;
         a.content_hash = null;
-        return { status: "failed", error: { code: "OTHER", message } };
+        return { status: "failed", error: { code: "TARGET_EXISTS", path } };
       }
       state.projectOccupants = state.projectOccupants.filter((p) => p !== path);
     }
@@ -702,13 +743,25 @@ export function createFixtureBackend(
     return out;
   };
 
-  const firstSync = (skill: FixtureSkill, tools: string[]) =>
-    syncBatch(
+  /**
+   * Enable's first sync (Rust `skill_disable::first_sync_global`): a folder in
+   * the way raises no ask, so the pair stays `disabled` (a marker owning
+   * nothing); any other failure is the batch's own `error` row.
+   */
+  const firstSync = async (skill: FixtureSkill, tools: string[]) => {
+    const outcomes = await syncBatch(
       [{ skill_id: skill.dto.id, name: skill.dto.name, source_path: skill.dto.central_path }],
       tools,
       { overwrite: false, overwrite_if_same_content: true },
       null,
     );
+    for (const o of outcomes) {
+      if (o.status.status === "failed" && o.status.error.code === "TARGET_EXISTS") {
+        recordKept(skill, o.tool_key);
+      }
+    }
+    return outcomes;
+  };
 
   /** Only a skill-grain Enable lifts a skill-grain Disable. */
   const enablePair = async (skill: FixtureSkill, tool: string): Promise<EnableReport> => {
@@ -753,6 +806,52 @@ export function createFixtureBackend(
    * an errored *copy* is retried.
    */
   const needsNewBytes = (mode: SyncMode) => mode === "copy";
+
+  // -------------------------------------------------------------------------
+  // Skill health (Rust `skill_health`): one stored last outcome per skill,
+  // written where the outcome settles, cleared by its family's next success.
+  // -------------------------------------------------------------------------
+
+  const UPDATE_FAMILY: readonly SkillOutcomeKind[] = ["fetch_failed", "repoint_failed", "restore_failed"];
+  const EDIT_FAMILY: readonly SkillOutcomeKind[] = ["edit_conflict"];
+  const recordHealth = (skill: FixtureSkill, kind: SkillOutcomeKind, error: CommandError) => {
+    skill.dto.health = { kind, error, at: now() };
+  };
+  const clearHealth = (skill: FixtureSkill, family: readonly SkillOutcomeKind[]) => {
+    if (skill.dto.health && family.includes(skill.dto.health.kind)) skill.dto.health = null;
+  };
+  /**
+   * A failed Update / Restore / Re-point (Rust `refresh::settle_failure_health`):
+   * a cancellation records nothing; Restore is an Update of a skill whose
+   * central copy is gone.
+   */
+  const recordUpdateFailure = (skill: FixtureSkill, repoint: boolean, error: CommandError) => {
+    if (error.code === "CANCELLED") return;
+    const kind: SkillOutcomeKind = repoint
+      ? "repoint_failed"
+      : skill.files.length === 0
+        ? "restore_failed"
+        : "fetch_failed";
+    recordHealth(skill, kind, error);
+  };
+  /**
+   * A settled Update (Rust `skill_update::settle_health`): a replay conflict
+   * records `edit_conflict`; otherwise the Update family clears, and the Edit
+   * family too once the Edit no longer conflicts.
+   */
+  const settleUpdateHealth = (skill: FixtureSkill, conflict: InvocationEditConflict | null) => {
+    if (conflict) {
+      recordHealth(skill, "edit_conflict", {
+        code: "EDIT_CONFLICT",
+        baseMode: conflict.base_mode,
+        upstreamMode: conflict.upstream_mode,
+        overrideMode: conflict.override_mode,
+      });
+      return;
+    }
+    clearHealth(skill, UPDATE_FAMILY);
+    if (!skill.dto.invocation_override?.conflict) clearHealth(skill, EDIT_FAMILY);
+  };
 
   /** A missing central copy, as Propagation reports it per target. */
   const missingSource = (skill: FixtureSkill): CommandError => ({
@@ -803,18 +902,27 @@ export function createFixtureBackend(
       }
       const installed = group.filter((r) => isInstalled(r.tool));
       if (installed.length === 0) continue;
-      if (!installed.some((member) => needsNewBytes(member.mode))) {
+      // Only a link of ours follows the source: a row that never materialised
+      // (a failed first sync's `error` row) gets a first sync.
+      if (!installed.some((member) => needsNewBytes(member.mode) || !ownsArtifact(member))) {
         for (const member of installed) skippedGlobal(member.tool, { reason: "link_follows_source" });
         continue;
       }
       const driverPath = installed[0].target_path;
+      // A first sync (no member owns the path) meets a foreign folder as
+      // TARGET_EXISTS; an owner replaces it.
+      const occupied =
+        !installed.some(ownsArtifact) &&
+        state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === driverPath);
       // An unwritable dir surfaces as the sync engine's io error, which the
       // command seam classifies as `OTHER` (not the batch's TOOL_NOT_WRITABLE).
-      const error = centralMissing
+      const error: CommandError | null = centralMissing
         ? missingSource(skill)
         : state.unwritableTools.includes(installed[0].tool)
           ? PERMISSION_DENIED(driverPath)
-          : null;
+          : occupied
+            ? { code: "TARGET_EXISTS", path: driverPath }
+            : null;
       const at = now();
       for (const member of installed) {
         const scope = { scope: "global" as const, tool: member.tool };
@@ -840,7 +948,7 @@ export function createFixtureBackend(
           skip({ reason: "unknown_tool", tool: a.tool });
         } else if (!project.path_exists) {
           skip({ reason: "project_unavailable", project_id: project.id });
-        } else if (!needsNewBytes(a.mode)) {
+        } else if (ownsArtifact(a) && !needsNewBytes(a.mode)) {
           skip({ reason: "link_follows_source" });
         } else if (centralMissing) {
           a.status = "error";
@@ -932,6 +1040,7 @@ export function createFixtureBackend(
       acquisition.upstreamChanged = false;
     }
     const { targets, reassert_error } = await settleTargets(skill, policy);
+    settleUpdateHealth(skill, editConflict);
     return {
       status: "refreshed",
       content_hash: skill.contentHash,
@@ -1016,6 +1125,7 @@ export function createFixtureBackend(
     for (const [i, skill] of selected.entries()) {
       const error = acquired[i];
       if (error) {
+        recordUpdateFailure(skill, false, error);
         outcomes.push(refreshRow(skill, { status: "failed", error }));
         continue;
       }
@@ -1076,6 +1186,7 @@ export function createFixtureBackend(
   const buildPlan = (): OnboardingPlan => {
     const scope = scanScope();
     const groups = new Map<string, OnboardingGroup>();
+    const invalid: OnboardingPlan["invalid"] = [];
     const seenPaths = new Set<string>();
     let found = 0;
     for (const tool of TOOL_REGISTRY.filter((t) => scope.includes(t.key))) {
@@ -1084,8 +1195,20 @@ export function createFixtureBackend(
         const path = `${root}/${dir.name}`;
         if (seenPaths.has(path)) continue;
         seenPaths.add(path);
+        // Rust `scan_tool_dir`'s manifest gate (#46): listed apart, never a group.
+        if (dir.invalid) {
+          invalid.push({ tool: tool.key, name: dir.name, path, reason: dir.invalid });
+          continue;
+        }
         found += 1;
-        const group = groups.get(dir.name) ?? { name: dir.name, variants: [], has_conflict: false };
+        const managed = state.skills.find((s) => s.dto.name === dir.name);
+        const group = groups.get(dir.name) ?? {
+          name: dir.name,
+          variants: [],
+          has_conflict: false,
+          name_is_managed: managed !== undefined,
+          managed_skill_id: managed?.dto.id ?? null,
+        };
         group.variants.push({
           tool: tool.key,
           name: dir.name,
@@ -1100,8 +1223,10 @@ export function createFixtureBackend(
     }
     return {
       total_tools_scanned: scope.length,
-      total_skills_found: found,
+      group_count: groups.size,
+      copy_count: found,
       groups: [...groups.values()].sort((a, b) => a.name.localeCompare(b.name)),
+      invalid,
     };
   };
 
@@ -1113,13 +1238,44 @@ export function createFixtureBackend(
   const admit = (
     selection: OnboardingSelectionDto,
     plan: OnboardingPlan,
-  ): { ok: true; group: OnboardingGroup } | { ok: false; error: CommandError } => {
+  ):
+    | { ok: true; group: OnboardingGroup; replace: string | null }
+    | { ok: false; status: ImportGroupStatus } => {
+    const refuse = (error: CommandError) => ({ ok: false as const, status: { status: "failed" as const, error } });
     const group = plan.groups.find((g) => g.name === selection.group_name);
-    if (!group) return { ok: false, error: { code: "NOT_FOUND", kind: "onboarding_group", id: selection.group_name } };
+    if (!group) return refuse({ code: "NOT_FOUND", kind: "onboarding_group", id: selection.group_name });
     if (!group.variants.some((v) => v.path === selection.chosen_path)) {
-      return { ok: false, error: { code: "NOT_FOUND", kind: "onboarding_variant", id: selection.chosen_path } };
+      return refuse({ code: "NOT_FOUND", kind: "onboarding_variant", id: selection.chosen_path });
     }
-    return { ok: true, group };
+    // A managed name is decided here, never by finalize's collision; a
+    // different operator-supplied name is an ordinary import.
+    const keepsName = selection.name == null || selection.name === group.name;
+    if (group.managed_skill_id !== null && keepsName) {
+      if (selection.replace) return { ok: true, group, replace: group.managed_skill_id };
+      return {
+        ok: false,
+        status: { status: "skipped", reason: { reason: "name_managed", skill_id: group.managed_skill_id } },
+      };
+    }
+    return { ok: true, group, replace: null };
+  };
+
+  /**
+   * Replace (Rust `onboarding_import::replace_with_managed_unlocked`): sync
+   * the Managed skill to every Tool of the group, same-content policy, no
+   * override — a divergent copy answers an askable TARGET_EXISTS row.
+   */
+  const replaceGroup = async (group: OnboardingGroup, skillId: string): Promise<ImportGroupStatus> => {
+    const skill = state.skills.find((s) => s.dto.id === skillId);
+    if (!skill) return { status: "failed", error: { code: "NOT_FOUND", kind: "skill", id: skillId } };
+    const tools = [...new Set(group.variants.map((v) => v.tool))];
+    const targets = await syncBatch(
+      [{ skill_id: skill.dto.id, name: skill.dto.name, source_path: skill.dto.central_path }],
+      tools,
+      { overwrite: false, overwrite_if_same_content: true },
+      null,
+    );
+    return { status: "replaced", skill_id: skill.dto.id, skill_name: skill.dto.name, targets };
   };
 
   /**
@@ -1142,7 +1298,6 @@ export function createFixtureBackend(
     const failed = (error: CommandError): ImportGroupStatus => ({ status: "failed", error });
     const chosen = group.variants.find((v) => v.path === selection.chosen_path);
     if (!chosen) return failed({ code: "NOT_FOUND", kind: "onboarding_variant", id: selection.chosen_path });
-    if (BROKEN_IMPORT_NAMES.has(group.name)) return failed({ code: "SKILL_INVALID", reason: "missing_name" });
     const name = selection.name ?? group.name;
     if (nameTaken(name)) return failed({ code: "SKILL_EXISTS", name });
     const skill = finalize({
@@ -1174,6 +1329,13 @@ export function createFixtureBackend(
         { overwrite: false, overwrite_if_same_content: true },
         null,
       );
+    } else if (!policy.remove_originals) {
+      // Rust `leave_original`: nothing touched; every original still present
+      // is reported per Tool.
+      for (const v of group.variants) {
+        if (!state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === v.path)) continue;
+        originals.push({ path: v.path, tool: v.tool, status: { status: identical(v) ? "left_in_place" : "kept_divergent" } });
+      }
     } else {
       // Rust `settle_original`, per variant in plan order.
       for (const v of group.variants) {
@@ -1189,6 +1351,11 @@ export function createFixtureBackend(
           originals.push({ path: v.path, tool: v.tool, status: { status: "removed" } });
         }
       }
+    }
+    // Finalised, then an original could not be settled: `import_failed`.
+    const failedOriginal = originals.find((o) => o.status.status === "failed");
+    if (failedOriginal && failedOriginal.status.status === "failed") {
+      recordHealth(skill, "import_failed", failedOriginal.status.error);
     }
     return { status: "imported", skill_id: skill.dto.id, skill_name: name, targets, forced_tools: forced, originals };
   };
@@ -1373,8 +1540,12 @@ export function createFixtureBackend(
       // cancellation contract and report shape as Update.
       state.cancelRequested = false;
       const skill = findSkill(skillId);
-      const refused = (error: CommandError): SkillMutationResultDto =>
-        skillResult({ skills: [refreshRow(skill, { status: "failed", error })] });
+      // A failure after validation is the batch's report row, and settles as
+      // the skill's `repoint_failed` health (a cancellation records nothing).
+      const refused = (error: CommandError): SkillMutationResultDto => {
+        recordUpdateFailure(skill, true, error);
+        return skillResult({ skills: [refreshRow(skill, { status: "failed", error })] });
+      };
       const parsed =
         target.kind === "git" ? (parseGithub(target.url) ?? fail({ code: "INVALID_GITHUB_URL", url: target.url })) : null;
       if (target.kind === "local") {
@@ -1406,6 +1577,7 @@ export function createFixtureBackend(
       skill.acquisition = {};
       landBytes(skill, 1);
       const { targets, reassert_error } = await settleTargets(skill, policy);
+      settleUpdateHealth(skill, null);
       return skillResult({
         skills: [
           refreshRow(skill, {
@@ -1441,9 +1613,12 @@ export function createFixtureBackend(
         if (admitted.ok) {
           emit(onProgress, { index: i + 1, total, group_name: selection.group_name, phase: "applying" });
           await step(total * 2);
-          status = await importGroup(selection, admitted.group, policy);
+          status =
+            admitted.replace !== null
+              ? await replaceGroup(admitted.group, admitted.replace)
+              : await importGroup(selection, admitted.group, policy);
         } else {
-          status = { status: "failed", error: admitted.error };
+          status = admitted.status;
         }
         groups.push({ group_name: selection.group_name, status });
       }
@@ -1463,8 +1638,11 @@ export function createFixtureBackend(
       skill.files = skillFiles(skill.dto.name, skill.dto.description ?? skill.dto.name, skill.dto.invocation_mode);
       skill.contentHash = hashFiles(skill.files);
       skill.dto.updated_at = now();
+      const targets = propagate(skill);
+      // A saved (or cleared) Edit is the Edit family's success.
+      clearHealth(skill, EDIT_FAMILY);
       return {
-        report: { skill_id: skill.dto.id, skill_name: skill.dto.name, propagation: { targets: propagate(skill) } },
+        report: { skill_id: skill.dto.id, skill_name: skill.dto.name, propagation: { targets } },
         skills: skillsDto(),
       };
     },
@@ -1475,7 +1653,14 @@ export function createFixtureBackend(
       for (const project of state.projects) {
         parts.push(removeAssignments(project, (a) => a.skill_id !== skillId));
       }
-      if (failedIn(parts.flatMap((part) => part.targets))) return removal(parts);
+      const failure = parts
+        .flatMap((part) => part.targets)
+        .find((target) => target.status.status === "failed");
+      if (failure && failure.status.status === "failed") {
+        // A kept Delete settles as the skill's `delete_incomplete` health.
+        recordHealth(skill, "delete_incomplete", failure.status.error);
+        return removal(parts);
+      }
       state.skills = state.skills.filter((s) => s !== skill);
       return removal(parts, { central_removed: true, record_deleted: true });
     },

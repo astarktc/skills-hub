@@ -7,6 +7,7 @@
 export type { OnboardingVariant } from "../../bindings";
 export type { OnboardingGroup } from "../../bindings";
 export type { OnboardingPlan } from "../../bindings";
+export type { OnboardingInvalidEntry, InvalidManifestReason } from "../../bindings";
 // Aliased: the frontend has always called this ManagedSkill; the Rust
 // struct (and generated binding) is ManagedSkillDto.
 export type { ManagedSkillDto as ManagedSkill } from "../../bindings";
@@ -28,6 +29,8 @@ export type { RefreshProgressDto } from "../../bindings";
 export type { SkillRefreshOutcome } from "../../bindings";
 export type { SkillRefreshStatus } from "../../bindings";
 export type { UnlocatableState, UpdateSkip } from "../../bindings";
+export type { SkillHealth, SkillOutcomeKind } from "../../bindings";
+export type { OverrideDecision } from "../../bindings";
 export type { PropagationOutcome, PropagationReport } from "../../bindings";
 export type { PropagationScope } from "../../bindings";
 export type { PropagationStatus } from "../../bindings";
@@ -57,6 +60,7 @@ export type { ImportProgressDto } from "../../bindings";
 export type { ImportReport } from "../../bindings";
 export type { ImportGroupOutcome } from "../../bindings";
 export type { ImportGroupStatus } from "../../bindings";
+export type { ImportSkipReason } from "../../bindings";
 export type { OriginalOutcome } from "../../bindings";
 export type { OriginalStatus } from "../../bindings";
 

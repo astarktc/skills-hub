@@ -8,10 +8,7 @@ import type {
   ToolStatusDto,
 } from "../components/skills/types";
 import { invokeTauri, isTauri } from "../lib/tauri";
-import {
-  useOverwriteConfirmation,
-  type OverwriteRow,
-} from "./useOverwriteConfirmation";
+import type { AskAnswer, DialogDoor, SurfaceState } from "./useSurfaceState";
 import {
   useSharedDirConfirmation,
   type SharedDirTool,
@@ -20,6 +17,36 @@ import type {
   StatusReporter,
   TranslateFn,
 } from "./useStatusReporter";
+
+/** One occupied sync target the operator may authorise overwriting. */
+export type OverwriteRow = {
+  skillId: string;
+  skillName: string;
+  toolKey: string;
+  toolLabel: string;
+  /** The occupied target path, as the backend reported it. */
+  path: string;
+};
+
+/** The overwrite ask as its modal renders it (`surface.pendingAsk("overwrite")`). */
+export type OverwritePending = {
+  rows: OverwriteRow[];
+  answer: (answer: AskAnswer) => void;
+};
+
+/**
+ * The operator's answer to the overwrite ask. `keep` is only ever the
+ * explicit "Keep existing" button (the backend then records the pairs
+ * `disabled`); `dismissed` — Escape, outside press, a displacing ask, the
+ * stack replaced, unmount — is no answer, and records nothing.
+ */
+export type OverwriteAnswer = "overwrite" | "keep" | "dismissed";
+
+const OVERWRITE_ANSWER: Record<AskAnswer, OverwriteAnswer> = {
+  confirmed: "overwrite",
+  declined: "keep",
+  dismissed: "dismissed",
+};
 
 export type SyncPolicy = {
   overwrite?: boolean;
@@ -97,6 +124,8 @@ export type SyncOrchestrationDeps = {
     | "setSuccessToastMessage"
     | "formatError"
   >;
+  /** The surface module: this world's dialogs and its two asks. */
+  surface: DialogDoor & Pick<SurfaceState, "ask">;
 };
 
 /**
@@ -107,7 +136,7 @@ export type SyncOrchestrationDeps = {
  * back over a channel. Nothing else may loop a per-pair sync command —
  * sync_skill_to_tool no longer exists.
  */
-export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
+export function useSyncOrchestration({ t, reporter, surface }: SyncOrchestrationDeps) {
   const {
     loading,
     notify,
@@ -116,9 +145,8 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
     setSuccessToastMessage,
     formatError,
   } = reporter;
+  const { ask, offerDialog, openDialog, closeDialog, dismissDialog } = surface;
   const [toolStatus, setToolStatus] = useState<ToolStatusDto | null>(null);
-  const [showNewToolsModal, setShowNewToolsModal] = useState(false);
-  const [showToolConfigModal, setShowToolConfigModal] = useState(false);
   const [globalSelectedTools, setGlobalSelectedTools] = useState<
     string[] | null
   >(null);
@@ -172,10 +200,17 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
       })),
     [toolInfos, toolLabelById],
   );
-  const sharedDirConfirmation = useSharedDirConfirmation(sharedDirTools);
-  const { request: requestSharedDirConfirmation } = sharedDirConfirmation;
-  const overwriteConfirmation = useOverwriteConfirmation();
-  const { request: requestOverwriteConfirmation } = overwriteConfirmation;
+  const { request: requestSharedDirConfirmation } = useSharedDirConfirmation(
+    sharedDirTools,
+    surface,
+  );
+  // The overwrite ask is a nested ask on the surface stack: a newer ask
+  // declines the one it displaces, and every ask settles exactly once.
+  const requestOverwriteConfirmation = useCallback(
+    async (rows: OverwriteRow[]): Promise<OverwriteAnswer> =>
+      OVERWRITE_ANSWER[await ask({ kind: "overwrite", rows })],
+    [ask],
+  );
 
   const installedToolIds = useMemo(
     () => toolStatus?.installed ?? [],
@@ -266,7 +301,8 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
           selectedTools,
         );
         if (relevantNew.length > 0) {
-          setShowNewToolsModal(true);
+          // Announced when no other dialog is up (it may be the update's turn).
+          offerDialog({ kind: "newTools" });
         }
       } catch (err) {
         // Non-fatal; app can still work without detection.
@@ -316,11 +352,14 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
    * The one sync fan-out seam, with the overwrite ask: a batch that settled
    * `TARGET_EXISTS` rows (a target occupied by *different* content — the
    * caller's same-content rule already replaced identical content silently)
-   * raises one confirmation listing them. Confirmed, one more batch runs over
-   * the affected skills × tools with a per-pair override for each asked pair
-   * and the same same-content rule, and the asked rows are replaced in the
-   * report; declined, the report is returned as it settled. The confirm click
-   * is the operator action that authorises the second batch.
+   * raises one confirmation listing them. Answered, one more batch runs over
+   * the affected skills × tools with a per-pair decision for each asked pair
+   * — `overwrite` when confirmed, `keep` for the explicit "Keep existing"
+   * (the backend records the pair `disabled`, so no later pass re-asks) — and
+   * the same same-content rule, and the asked rows are replaced in the report.
+   * The operator's answer is what authorises the second batch. A dismissed
+   * ask (Escape, displaced, dropped) is no answer: no retry batch runs, no
+   * decision is recorded, and the report is returned as it settled.
    */
   const syncSkillsToTools = useCallback(
     async (
@@ -333,15 +372,15 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
       if (occupied.length === 0) return report;
 
       setActionMessage(t("overwrite.waiting"));
-      const confirmed = await requestOverwriteConfirmation(occupied);
-      if (!confirmed) return report;
+      const decision = await requestOverwriteConfirmation(occupied);
+      if (decision === "dismissed") return report;
 
       const askedSkillIds = new Set(occupied.map((row) => row.skillId));
       const askedToolIds = [...new Set(occupied.map((row) => row.toolKey))];
       const overrides: BatchSyncOverrideDto[] = occupied.map((row) => ({
         skill_id: row.skillId,
         tool: row.toolKey,
-        overwrite: true,
+        decision,
       }));
       const retry = await invokeBatchSync(
         skills.filter((skill) => askedSkillIds.has(skill.skill_id)),
@@ -379,16 +418,16 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
   );
 
   const handleOpenToolConfig = useCallback(() => {
-    setShowToolConfigModal(true);
-  }, []);
+    openDialog({ kind: "toolConfig" });
+  }, [openDialog]);
 
   const handleCloseToolConfig = useCallback(() => {
-    if (!loading) setShowToolConfigModal(false);
-  }, [loading]);
+    if (!loading) closeDialog("toolConfig");
+  }, [closeDialog, loading]);
 
   const handleCloseNewTools = useCallback(() => {
-    if (!loading) setShowNewToolsModal(false);
-  }, [loading]);
+    if (!loading) closeDialog("newTools");
+  }, [closeDialog, loading]);
 
   const handleToolConfigConfirm = useCallback(
     async (selected: string[], scanOnly = false) => {
@@ -408,13 +447,13 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
           }
           return next;
         });
-        setShowToolConfigModal(false);
+        dismissDialog("toolConfig");
         setSuccessToastMessage(t("status.toolConfigSaved"));
       } catch (err) {
         setError(formatError(err));
       }
     },
-    [formatError, setError, setSuccessToastMessage, t, toolInfos],
+    [dismissDialog, formatError, setError, setSuccessToastMessage, t, toolInfos],
   );
 
   const handleSyncTargetChange = useCallback(
@@ -460,10 +499,6 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
     toolStatus,
     tools,
     toolLabelById,
-    sharedDirPending: sharedDirConfirmation.pending,
-    cancelSharedDirConfirmation: sharedDirConfirmation.cancel,
-    overwritePending: overwriteConfirmation.pending,
-    cancelOverwriteConfirmation: overwriteConfirmation.cancel,
     requestSharedDirConfirmation,
     installedToolIds,
     isInstalled,
@@ -474,9 +509,6 @@ export function useSyncOrchestration({ t, reporter }: SyncOrchestrationDeps) {
     scanScopeRevision,
     syncTargets,
     autoSyncEnabled,
-    showNewToolsModal,
-    setShowNewToolsModal,
-    showToolConfigModal,
     relevantNewlyInstalled,
     newlyInstalledToolsText,
     syncSkillsToTools,

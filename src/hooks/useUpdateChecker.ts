@@ -4,6 +4,7 @@ import type { Update } from "@tauri-apps/plugin-updater";
 import { isTauri } from "../lib/tauri";
 import { ignoredUpdateVersionPreference } from "../lib/preferences";
 import type { StatusReporter } from "./useStatusReporter";
+import type { DialogDoor } from "./useSurfaceState";
 
 /**
  * App-update world: checks for a newer release on mount (unless the user
@@ -12,13 +13,20 @@ import type { StatusReporter } from "./useStatusReporter";
  * failures must not mix with skill-operation status), but an install
  * failure is a notification like any other, so it goes through the
  * reporter's `notify` and lands in the history.
+ *
+ * The found release is data; whether its dialog shows is the surface
+ * module's (`{ kind: "update" }`), offered so it waits for any dialog
+ * already up (the new-tools announcement raised at the same startup).
  */
 export function useUpdateChecker({
   reporter,
+  surface,
 }: {
   reporter: Pick<StatusReporter, "notify" | "formatError">;
+  surface: Pick<DialogDoor, "offerDialog" | "closeDialog">;
 }) {
   const { notify, formatError } = reporter;
+  const { offerDialog, closeDialog } = surface;
   const [updateAvailableVersion, setUpdateAvailableVersion] = useState<
     string | null
   >(null);
@@ -38,6 +46,7 @@ export function useUpdateChecker({
         if (update && update.version !== ignoredVersion) {
           updateObjRef.current = update;
           setUpdateAvailableVersion(update.version);
+          offerDialog({ kind: "update" });
           // Fetch full release notes from GitHub API
           try {
             const res = await fetch(
@@ -55,20 +64,20 @@ export function useUpdateChecker({
         }
       })
       .catch(() => {});
+    // Mount-once check; `offerDialog` is a stable surface action.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const dismissUpdate = useCallback(() => {
-    setUpdateAvailableVersion(null);
-    setUpdateBody(null);
-  }, []);
+    closeDialog("update");
+  }, [closeDialog]);
 
   const dismissUpdateForever = useCallback(() => {
     if (updateAvailableVersion) {
       ignoredUpdateVersionPreference.write(updateAvailableVersion);
     }
-    setUpdateAvailableVersion(null);
-    setUpdateBody(null);
-  }, [updateAvailableVersion]);
+    closeDialog("update");
+  }, [closeDialog, updateAvailableVersion]);
 
   const updateNow = useCallback(async () => {
     const update = updateObjRef.current;

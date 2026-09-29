@@ -29,7 +29,8 @@ use super::errors::SignalError;
 use super::git_acquisition::{parse_full_github_url, GithubApi, HttpGithubApi};
 use super::installer::InstallerPaths;
 use super::refresh::{
-    refresh_managed_skills_with, RefreshPolicy, RefreshProgress, RefreshReport, RefreshSelection,
+    refresh_with_intent, RefreshPolicy, RefreshProgress, RefreshReport, RefreshSelection,
+    UpdateIntent,
 };
 use super::skill_discovery::require_skill_md;
 use super::skill_store::SkillStore;
@@ -105,7 +106,7 @@ pub(crate) fn repoint_skill_source_with(
         RepointTarget::Local { path } => {
             let folder = expand_home_path_in(&paths.home, &path)?;
             validate_local_folder(&paths.home, &folder)?;
-            refresh_managed_skills_with(
+            refresh_with_intent(
                 paths,
                 store,
                 selection,
@@ -114,13 +115,14 @@ pub(crate) fn repoint_skill_source_with(
                 now,
                 on_progress,
                 &|_, _| UpdateRequest::local(record.clone(), &folder, true),
+                UpdateIntent::Repoint,
             )
         }
         RepointTarget::Git { url } => {
             let url = url.trim();
             let source = parse_full_github_url(url)?;
             let ttl_ms = super::settings::git_cache_ttl_ms(store);
-            refresh_managed_skills_with(
+            refresh_with_intent(
                 paths,
                 store,
                 selection,
@@ -131,6 +133,7 @@ pub(crate) fn repoint_skill_source_with(
                 &|id, cancel| {
                     acquire_git_repoint(paths, store, id, cancel, api, ttl_ms, url, &source)
                 },
+                UpdateIntent::Repoint,
             )
         }
     }

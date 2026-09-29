@@ -1,21 +1,17 @@
 import { memo } from "react";
 import { Bell, FolderKanban, Layers, Search, Settings } from "lucide-react";
 import type { TFunction } from "i18next";
+import type { Area } from "../../hooks/useSurfaceState";
 
 type HeaderProps = {
   loading: boolean;
-  activeView:
-    | "myskills"
-    | "explore"
-    | "detail"
-    | "settings"
-    | "projects"
-    | "explore-detail";
+  /** The area showing (surface state); a focused subject stays in its area. */
+  activeArea: Area;
   /** Errors and warnings not yet seen in the notification panel. */
   unreadNotifications: number;
   onOpenNotifications: () => void;
   onOpenSettings: () => void;
-  onViewChange: (view: "myskills" | "explore" | "projects") => void;
+  onViewChange: (area: Exclude<Area, "settings">) => void;
   t: TFunction;
 };
 
@@ -23,7 +19,7 @@ type HeaderProps = {
 const BADGE_MAX = 99;
 
 const Header = ({
-  activeView,
+  activeArea,
   unreadNotifications,
   onOpenNotifications,
   onOpenSettings,
@@ -45,15 +41,15 @@ const Header = ({
         </div>
         <nav className="nav-tabs">
           <button
-            className={`nav-tab${activeView === "myskills" || activeView === "detail" ? " active" : ""}`}
+            className={`nav-tab${activeArea === "skills" ? " active" : ""}`}
             type="button"
-            onClick={() => onViewChange("myskills")}
+            onClick={() => onViewChange("skills")}
           >
             <Layers size={16} />
             {t("navMySkills")}
           </button>
           <button
-            className={`nav-tab${activeView === "explore" || activeView === "explore-detail" ? " active" : ""}`}
+            className={`nav-tab${activeArea === "explore" ? " active" : ""}`}
             type="button"
             onClick={() => onViewChange("explore")}
           >
@@ -61,7 +57,7 @@ const Header = ({
             {t("navExplore")}
           </button>
           <button
-            className={`nav-tab${activeView === "projects" ? " active" : ""}`}
+            className={`nav-tab${activeArea === "projects" ? " active" : ""}`}
             type="button"
             onClick={() => onViewChange("projects")}
           >
@@ -88,7 +84,7 @@ const Header = ({
           ) : null}
         </button>
         <button
-          className={`icon-btn${activeView === "settings" ? " active" : ""}`}
+          className={`icon-btn${activeArea === "settings" ? " active" : ""}`}
           type="button"
           onClick={onOpenSettings}
         >

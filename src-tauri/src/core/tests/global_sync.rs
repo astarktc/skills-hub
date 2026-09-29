@@ -13,7 +13,7 @@ use std::path::Path;
 use crate::core::global_sync::{
     plan_batch_tool_targets, sync_skill_into_root, sync_skills_to_planned_tools,
     sync_skills_to_tools, BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus,
-    GlobalSyncError, OverwritePolicy, PlannedToolTarget,
+    GlobalSyncError, OverrideDecision, OverwritePolicy, PlannedToolTarget,
 };
 use crate::core::skill_store::{SkillRecord, SkillStore};
 use crate::core::tool_adapters::{adapter_by_key, mark_installed_in, ToolAdapter};
@@ -486,7 +486,7 @@ fn batch_override_applies_to_named_tool_and_its_shared_dir_group() {
         overrides: vec![BatchOverride {
             skill_id: "skill-1".to_string(),
             tool_key: "amp".to_string(),
-            overwrite: true,
+            decision: OverrideDecision::Overwrite,
         }],
     };
     let skills = vec![batch_skill("skill-1", "my-skill", &source)];
@@ -522,7 +522,7 @@ fn batch_override_applies_to_named_tool_and_its_shared_dir_group() {
             overrides: vec![BatchOverride {
                 skill_id: "skill-1".to_string(),
                 tool_key: "amp".to_string(),
-                overwrite: true,
+                decision: OverrideDecision::Overwrite,
             }],
         };
         let outcomes = sync_skills_to_planned_tools(
@@ -560,7 +560,7 @@ fn batch_direct_override_forces_overwrite_for_that_skill_only() {
         overrides: vec![BatchOverride {
             skill_id: "skill-1".to_string(),
             tool_key: "claude_code".to_string(),
-            overwrite: true,
+            decision: OverrideDecision::Overwrite,
         }],
     };
     let skills = vec![

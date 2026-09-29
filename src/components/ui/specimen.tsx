@@ -23,6 +23,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -187,10 +188,12 @@ export default function Specimen() {
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button />}>Menu</DropdownMenuTrigger>
           <DropdownMenuContent>
-            <DropdownMenuLabel>Label</DropdownMenuLabel>
-            <DropdownMenuItem>
-              Edit <DropdownMenuShortcut>E</DropdownMenuShortcut>
-            </DropdownMenuItem>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Label</DropdownMenuLabel>
+              <DropdownMenuItem>
+                Edit <DropdownMenuShortcut>E</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive">Delete…</DropdownMenuItem>
           </DropdownMenuContent>

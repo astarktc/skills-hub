@@ -18,6 +18,7 @@ use std::path::Path;
 use crate::core::{
     manifest::{invocation_mode_for_dir, InvocationMode},
     provenance::is_refreshable,
+    skill_health::{all_skill_health, skill_health, SkillHealth},
     skill_store::{SkillRecord, SkillStore, SkillTargetRecord},
     unlocatable::{is_detachable, unlocatable_state, UnlocatableState},
 };
@@ -47,6 +48,9 @@ pub struct ManagedSkillEntry {
     /// Whether Detach would be accepted for this skill (`unlocatable::is_detachable`):
     /// the card offers it, for a `source_missing` skill, exactly when so.
     pub detachable: bool,
+    /// The skill's stored last outcome (`core::skill_health`), `None` when
+    /// healthy. Distinct from each target's own status and `last_error`.
+    pub health: Option<SkillHealth>,
 }
 
 /// Assemble the Managed-skill catalog: every Managed skill with its Sync
@@ -54,11 +58,13 @@ pub struct ManagedSkillEntry {
 pub fn managed_skill_catalog(store: &SkillStore) -> Result<Vec<ManagedSkillEntry>> {
     let skills = store.list_skills().context("list managed skills")?;
     let disabled = store.disabled_skills().context("list disabled skills")?;
+    let mut health = all_skill_health(store).context("list skill health")?;
     skills
         .into_iter()
         .map(|skill| {
             let disabled_at = disabled.get(&skill.id).copied();
-            build_entry(store, skill, disabled_at)
+            let health = health.remove(&skill.id);
+            build_entry(store, skill, disabled_at, health)
         })
         .collect()
 }
@@ -69,7 +75,8 @@ pub fn managed_skill_entry(store: &SkillStore, id: &str) -> Result<Option<Manage
         .get_skill_by_id(id)?
         .map(|skill| {
             let disabled_at = store.skill_disabled_at(&skill.id)?;
-            build_entry(store, skill, disabled_at)
+            let health = skill_health(store, &skill.id)?;
+            build_entry(store, skill, disabled_at, health)
         })
         .transpose()
 }
@@ -78,6 +85,7 @@ fn build_entry(
     store: &SkillStore,
     skill: SkillRecord,
     disabled_at: Option<i64>,
+    health: Option<SkillHealth>,
 ) -> Result<ManagedSkillEntry> {
     let targets = store
         .list_skill_targets(&skill.id)
@@ -96,6 +104,7 @@ fn build_entry(
         refreshable,
         unlocatable,
         detachable,
+        health,
     })
 }
 

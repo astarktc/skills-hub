@@ -83,7 +83,7 @@ function projectSyncCounts(report: ProjectSyncReport) {
 }
 
 function importCounts(report: ImportReport) {
-  const counts = { imported: 0, failed: 0 };
+  const counts = { imported: 0, replaced: 0, skipped: 0, failed: 0 };
   for (const group of report.groups) counts[group.status.status]++;
   return counts;
 }
@@ -583,7 +583,19 @@ export function importOutcome(
       });
       continue;
     }
-    for (const tool of group.status.forced_tools)
+    // A managed name with no Replace decision: nothing was touched.
+    if (group.status.status === "skipped") {
+      out.warnings.push({
+        title: t("importGroups.nameManagedTitle", { name }),
+        message: t("importGroups.nameManagedMessage", { name }),
+      });
+      continue;
+    }
+    const forcedTools =
+      group.status.status === "imported" ? group.status.forced_tools : [];
+    const originals =
+      group.status.status === "imported" ? group.status.originals : [];
+    for (const tool of forcedTools)
       forcedLines.push(
         t("status.importSourceToolForced", { name, tool: label(ctx, tool) }),
       );
@@ -605,7 +617,7 @@ export function importOutcome(
             : errorMessage(ctx, target.status.error),
       });
     }
-    for (const original of group.status.originals) {
+    for (const original of originals) {
       const tool = label(ctx, original.tool);
       if (original.status.status === "kept_divergent")
         out.warnings.push({

@@ -2,7 +2,7 @@ import * as React from "react";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { floatingSurface, iconSlot } from "./styles";
+import { floatingSurface, iconSlot, insetFocusRing } from "./styles";
 
 /**
  * DropdownMenu — `role="menu"` of `menuitem`s with roving focus, typeahead,
@@ -15,8 +15,13 @@ const DropdownMenuTrigger = MenuPrimitive.Trigger;
 const DropdownMenuGroup = MenuPrimitive.Group;
 const DropdownMenuRadioGroup = MenuPrimitive.RadioGroup;
 
-const itemBase =
-  "relative flex h-8 cursor-default items-center gap-2 rounded-sm px-2 text-sm text-foreground outline-none select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50";
+// The highlight ground (`accent` on `popover`) is only ~1.1:1, so it is never
+// the keyboard cue on its own: the inset ring (≥ 5.04:1) marks the item that
+// holds keyboard focus.
+const itemBase = [
+  "relative flex h-8 cursor-default items-center gap-2 rounded-sm px-2 text-sm text-foreground select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50",
+  insetFocusRing,
+];
 
 function DropdownMenuContent({
   className,
@@ -56,6 +61,10 @@ function DropdownMenuContent({
   );
 }
 
+/**
+ * A group's label (Base UI GroupLabel). It must sit inside a
+ * `DropdownMenuGroup`, which it names; outside one, Base UI throws.
+ */
 function DropdownMenuLabel({
   className,
   ...props

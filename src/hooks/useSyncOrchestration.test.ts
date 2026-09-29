@@ -4,8 +4,8 @@
 // mocked at the invokeTauri module seam with per-command responses; the
 // Tauri Channel is a minimal fake capturing onmessage.
 
-import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BatchTargetOutcome,
   AppSettings,
@@ -32,6 +32,7 @@ vi.mock("@tauri-apps/api/core", () => ({ Channel: FakeChannel }));
 
 import { invokeTauri, type CommandName } from "../lib/tauri";
 import { useSyncOrchestration } from "./useSyncOrchestration";
+import { useSurfaceState } from "./useSurfaceState";
 
 // The seam is generic over the command table; the stub switches on the
 // command name, so it is typed loosely (positional args, unknown result).
@@ -145,13 +146,38 @@ function makeReporter(): Pick<
   };
 }
 
+/**
+ * The sync world as App composes it: its dialogs and its two asks are
+ * surface state. The read-outs are what App renders the modals from.
+ */
 function renderSync(reporter = makeReporter()) {
-  return renderHook(() => useSyncOrchestration({ t, reporter }));
+  return renderHook(() => {
+    const surface = useSurfaceState();
+    const sync = useSyncOrchestration({ t, reporter, surface });
+    const sharedDirPending = surface.pendingAsk("sharedDir");
+    const overwritePending = surface.pendingAsk("overwrite");
+    return {
+      ...sync,
+      surface,
+      showNewToolsModal: surface.isOpen("newTools"),
+      showToolConfigModal: surface.isOpen("toolConfig"),
+      sharedDirPending,
+      cancelSharedDirConfirmation: () => sharedDirPending?.answer("declined"),
+      overwritePending,
+      // "Keep existing": the explicit button (App's OverwriteModal).
+      keepExisting: () => overwritePending?.answer("declined"),
+      // Escape / outside press: the operator's top-layer close.
+      dismissOverwrite: () => surface.closeDialog("overwrite"),
+    };
+  });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
+// No vitest globals: unmount explicitly so a surface's window listeners never
+// outlive its test.
+afterEach(cleanup);
 
 describe("useSyncOrchestration target defaulting", () => {
   it("defaults sync targets to the installed tools when nothing is saved", async () => {
@@ -238,6 +264,45 @@ describe("useSyncOrchestration target defaulting", () => {
 
     await waitFor(() => expect(result.current.showNewToolsModal).toBe(true));
     expect(result.current.relevantNewlyInstalled).toEqual(["goose"]);
+  });
+
+  it("offers the announcement: it waits behind a dialog already open", async () => {
+    stubBackend({ status: { newly_installed: ["goose"] } });
+    const { result } = renderSync();
+    act(() => result.current.surface.openDialog({ kind: "update" }));
+
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+    expect(result.current.showNewToolsModal).toBe(false);
+
+    act(() => result.current.surface.closeDialog("update"));
+    expect(result.current.showNewToolsModal).toBe(true);
+  });
+});
+
+describe("useSyncOrchestration tool configuration dialog", () => {
+  it("opens as a surface dialog, closes unless loading, and a saved config dismisses it", async () => {
+    stubBackend();
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+
+    act(() => result.current.handleOpenToolConfig());
+    expect(result.current.showToolConfigModal).toBe(true);
+    act(() => result.current.handleCloseToolConfig());
+    expect(result.current.showToolConfigModal).toBe(false);
+
+    act(() => result.current.handleOpenToolConfig());
+    await act(async () => {
+      await result.current.handleToolConfigConfirm(["claude"]);
+    });
+    expect(result.current.showToolConfigModal).toBe(false);
+  });
+
+  it("stays open while an action runs", async () => {
+    stubBackend();
+    const { result } = renderSync({ ...makeReporter(), loading: true });
+    act(() => result.current.handleOpenToolConfig());
+    act(() => result.current.handleCloseToolConfig());
+    expect(result.current.showToolConfigModal).toBe(true);
   });
 });
 
@@ -329,7 +394,7 @@ describe("useSyncOrchestration shared-dir groups", () => {
     expect(result.current.syncTargets.claude).toBe(true);
 
     await act(async () => {
-      result.current.sharedDirPending!.resolve(true);
+      result.current.sharedDirPending!.answer("confirmed");
     });
 
     expect(result.current.sharedDirPending).toBeNull();
@@ -529,7 +594,7 @@ describe("syncSkillsToTools overwrite ask", () => {
 
     let report: BatchTargetOutcome[] = [];
     await act(async () => {
-      result.current.overwritePending!.resolve(true);
+      result.current.overwritePending!.answer("confirmed");
       report = await reportPromise;
     });
 
@@ -542,8 +607,8 @@ describe("syncSkillsToTools overwrite ask", () => {
       overwrite: false,
       overwrite_if_same_content: true,
       overrides: [
-        { skill_id: "s1", tool: "cursor", overwrite: true },
-        { skill_id: "s2", tool: "claude", overwrite: true },
+        { skill_id: "s1", tool: "cursor", decision: "overwrite" },
+        { skill_id: "s2", tool: "claude", decision: "overwrite" },
       ],
     });
     // Asked rows replaced in place; the others are the first batch's rows.
@@ -584,7 +649,7 @@ describe("syncSkillsToTools overwrite ask", () => {
     });
     await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
     await act(async () => {
-      result.current.overwritePending!.resolve(true);
+      result.current.overwritePending!.answer("confirmed");
       await reportPromise;
     });
     const [, retrySkills, , retryPolicy] = syncCalls()[1]!;
@@ -592,7 +657,7 @@ describe("syncSkillsToTools overwrite ask", () => {
     expect(retryPolicy).toEqual({
       overwrite: false,
       overwrite_if_same_content: false,
-      overrides: [{ skill_id: "s2", tool: "claude", overwrite: true }],
+      overrides: [{ skill_id: "s2", tool: "claude", decision: "overwrite" }],
     });
   });
 
@@ -624,14 +689,14 @@ describe("syncSkillsToTools overwrite ask", () => {
     });
     await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
     await act(async () => {
-      result.current.overwritePending!.resolve(true);
+      result.current.overwritePending!.answer("confirmed");
       await expect(reportPromise).rejects.toThrow("retry transport down");
     });
     expect(syncCalls()).toHaveLength(2);
     expect(result.current.overwritePending).toBeNull();
   });
 
-  it("declined, returns the first report unchanged after one batch", async () => {
+  it("Keep existing retries the asked pairs with a keep decision", async () => {
     const first = [synced("s1", "claude"), occupied("s1", "cursor")];
     stubBackend({ syncReport: first });
     const { result } = renderSync();
@@ -644,11 +709,49 @@ describe("syncSkillsToTools overwrite ask", () => {
     await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
     let report: BatchTargetOutcome[] = [];
     await act(async () => {
-      result.current.cancelOverwriteConfirmation();
+      result.current.keepExisting();
       report = await reportPromise;
     });
+    // The stub answers the retry with the same rows: the asked row is
+    // replaced by the retry's row for that pair.
+    expect(report).toEqual(first);
+    const calls = syncCalls();
+    expect(calls).toHaveLength(2);
+    const [, retrySkills, retryTools, retryPolicy] = calls[1]!;
+    expect(retrySkills).toEqual([skills[0]]);
+    expect(retryTools).toEqual(["cursor"]);
+    expect(retryPolicy).toEqual({
+      overwrite: false,
+      overwrite_if_same_content: false,
+      overrides: [{ skill_id: "s1", tool: "cursor", decision: "keep" }],
+    });
+    expect(result.current.overwritePending).toBeNull();
+  });
+
+  it.each([
+    ["Escape", "escape"],
+    ["a displacing ask", "displaced"],
+    ["the stack replaced", "replaced"],
+  ] as const)("dismissed (%s), records nothing: no retry batch, no decision", async (_label, how) => {
+    const first = [synced("s1", "claude"), occupied("s1", "cursor")];
+    stubBackend({ syncReport: first });
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+
+    let reportPromise!: Promise<BatchTargetOutcome[]>;
+    act(() => {
+      reportPromise = result.current.syncSkillsToTools([skills[0]!], ["claude", "cursor"]);
+    });
+    await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
+    let report: BatchTargetOutcome[] = [];
+    await act(async () => {
+      if (how === "escape") result.current.dismissOverwrite();
+      if (how === "displaced") void result.current.surface.ask({ kind: "overwrite", rows: [] });
+      if (how === "replaced") result.current.surface.openDialog({ kind: "addSkill" });
+      report = await reportPromise;
+    });
+    // The report is returned as it settled: the occupied row stays failed.
     expect(report).toEqual(first);
     expect(syncCalls()).toHaveLength(1);
-    expect(result.current.overwritePending).toBeNull();
   });
 });

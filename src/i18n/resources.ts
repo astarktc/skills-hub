@@ -74,6 +74,7 @@ export const resources = {
       groupByRepo: "Group by repo",
       ungrouped: "Ungrouped",
       localGroup: "Local",
+      individualSources: "Individual sources",
       searchPlaceholder: "Search skills...",
       refresh: "Refresh",
       discoveredTitle: "Discovered skills",
@@ -355,6 +356,8 @@ export const resources = {
           "Your saved tool selection could not be read, so nothing was synced. Open Configure Tools and save your selection to repair it.",
         credentialStoreUnavailable:
           "Could not access the system keychain, so the GitHub token was not read or saved. Unlock the keychain and allow Skills Hub access, then try again. On Linux, start your desktop's secret service (GNOME Keyring, KWallet, …) and restart Skills Hub — retrying without a restart cannot reach it.",
+        editConflict:
+          "The skill's upstream changed its invocation setting to {{upstream}}; your override ({{override}}) was kept and needs review.",
         settingCorruptStartup:
           "Your saved tool selection could not be read. Syncs are paused until you open Configure Tools and save your selection.",
         syncSkippedNotInstalledTitle: "Skipped {{tool}}: not detected",
@@ -676,6 +679,20 @@ export const resources = {
           "Enable {{count}} disabled tool and sync",
         deployDisabledPairs_other:
           "Enable {{count}} disabled tools and sync",
+      },
+      importGroups: {
+        nameManagedTitle: "Not imported: {{name}}",
+        nameManagedMessage:
+          "Skills Hub already manages a skill named {{name}}. The copy was left where it is; choose Replace to put the managed skill in its place.",
+      },
+      skillHealth: {
+        line: "{{outcome}} · {{time}}",
+        fetchFailed: "Update failed",
+        editConflict: "Edit conflict",
+        deleteIncomplete: "Delete incomplete",
+        repointFailed: "Change source failed",
+        restoreFailed: "Restore failed",
+        importFailed: "Import incomplete",
       },
     },
   },

@@ -1,6 +1,5 @@
 import { memo } from "react";
 import {
-  ArrowUpDown,
   LayoutList,
   Plus,
   RefreshCw,
@@ -8,13 +7,13 @@ import {
   Wrench,
 } from "lucide-react";
 import type { TFunction } from "i18next";
+import type { ListLens, ViewMode } from "../../hooks/useListLens";
+import LensSortControl from "../shared/LensSortControl";
 
 type FilterBarProps = {
-  sortBy: "name" | "updated" | "added";
-  searchQuery: string;
+  /** My Skills' list lens: query, sort, Grouped/Flat and view mode. */
+  lens: ListLens;
   loading: boolean;
-  onSortChange: (value: "name" | "updated" | "added") => void;
-  onSearchChange: (value: string) => void;
   /** Opens the Local / Git add modal — the same flow Explore's Manual button uses. */
   onAddSkill: () => void;
   onRefresh: () => void;
@@ -22,59 +21,30 @@ type FilterBarProps = {
   onAutoSyncChange: (enabled: boolean) => void;
   onUnsyncAll: () => void;
   onConfigureTools: () => void;
-  groupByRepo: boolean;
-  onGroupByRepoChange: (value: boolean) => void;
-  viewMode: "list" | "auto-grid" | "dense-grid";
-  onViewModeChange: (value: "list" | "auto-grid" | "dense-grid") => void;
   t: TFunction;
 };
 
 const FilterBar = ({
-  sortBy,
-  searchQuery,
+  lens,
   loading,
-  onSortChange,
-  onSearchChange,
   onAddSkill,
   onRefresh,
   autoSyncEnabled,
   onAutoSyncChange,
   onUnsyncAll,
   onConfigureTools,
-  groupByRepo,
-  onGroupByRepoChange,
-  viewMode,
-  onViewModeChange,
   t,
 }: FilterBarProps) => {
+  const { viewMode, setViewMode } = lens;
   return (
     <div className="filter-bar">
       <div className="filter-bar-left">
-        <button className="btn btn-secondary sort-btn" type="button">
-          <span className="sort-label">{t("filterSort")}:</span>
-          {sortBy === "name"
-            ? t("sortName")
-            : sortBy === "added"
-              ? t("sortAdded")
-              : t("sortUpdated")}
-          <ArrowUpDown size={12} />
-          <select
-            aria-label={t("filterSort")}
-            value={sortBy}
-            onChange={(event) =>
-              onSortChange(event.target.value as "name" | "updated" | "added")
-            }
-          >
-            <option value="name">{t("sortName")}</option>
-            <option value="updated">{t("sortUpdated")}</option>
-            <option value="added">{t("sortAdded")}</option>
-          </select>
-        </button>
+        <LensSortControl sort={lens.sort} onSortChange={lens.setSort} t={t} />
         <label className="group-by-repo-toggle" title={t("groupByRepo")}>
           <input
             type="checkbox"
-            checked={groupByRepo}
-            onChange={(e) => onGroupByRepoChange(e.target.checked)}
+            checked={lens.groupByRepo}
+            onChange={(e) => lens.setGroupByRepo(e.target.checked)}
           />
           <span className="group-by-repo-label">{t("groupByRepo")}</span>
         </label>
@@ -89,11 +59,7 @@ const FilterBar = ({
           <select
             aria-label={t("viewMode")}
             value={viewMode}
-            onChange={(event) =>
-              onViewModeChange(
-                event.target.value as "list" | "auto-grid" | "dense-grid",
-              )
-            }
+            onChange={(event) => setViewMode(event.target.value as ViewMode)}
           >
             <option value="list">{t("viewList")}</option>
             <option value="auto-grid">{t("viewAutoGrid")}</option>
@@ -143,8 +109,8 @@ const FilterBar = ({
           <Search size={16} className="search-icon-abs" />
           <input
             className="search-input"
-            value={searchQuery}
-            onChange={(event) => onSearchChange(event.target.value)}
+            value={lens.query}
+            onChange={(event) => lens.setQuery(event.target.value)}
             placeholder={t("searchPlaceholder")}
           />
         </div>

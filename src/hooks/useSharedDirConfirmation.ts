@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
+import type { AskAnswer, SurfaceState } from "./useSurfaceState";
 
 /**
  * The minimal per-tool facts the confirmation needs: the tool key, its
@@ -11,26 +12,33 @@ export type SharedDirTool = {
   sharedWith: string[];
 };
 
+/** The ask as its modal renders it (`surface.pendingAsk("sharedDir")`). */
 export type SharedDirPending = {
   toolKey: string;
   toolLabel: string;
   /** The other group members' labels, in the group's order. */
   labels: string[];
-  resolve: (confirmed: boolean) => void;
+  answer: (answer: AskAnswer) => void;
 };
 
 /**
  * Shared-skills-dir confirmation: one building-block hook owning the
- * decision ("does changing this Tool affect others?"), the label
- * arithmetic, and the single pending-confirmation value both the per-skill
- * toggle and the sync-target change drive through the Modal shell.
+ * decision ("does changing this Tool affect others?") and the label
+ * arithmetic both the per-skill toggle and the sync-target change use.
  *
  * `request` resolves true immediately when no confirmation is needed, and
- * otherwise resolves with the operator's answer once the modal is answered
- * (or `cancel` is called, which resolves false).
+ * otherwise raises the ask on the surface stack (`asks.ask`) and resolves
+ * true only for an explicit Continue. Its "no" records nothing durable (the
+ * toggle simply does not happen), so the explicit Cancel and a dismissal
+ * (Escape, displaced, dropped) are the same answer here: false. The
+ * three-way `AskAnswer` matters where a "no" is itself recorded — the
+ * overwrite ask's Keep.
  */
-export function useSharedDirConfirmation(tools: SharedDirTool[]) {
-  const [pending, setPending] = useState<SharedDirPending | null>(null);
+export function useSharedDirConfirmation(
+  tools: SharedDirTool[],
+  asks: Pick<SurfaceState, "ask">,
+) {
+  const { ask } = asks;
 
   const byId = useMemo(() => {
     const out: Record<string, SharedDirTool> = {};
@@ -58,26 +66,17 @@ export function useSharedDirConfirmation(tools: SharedDirTool[]) {
   const request = useCallback(
     (toolKey: string): Promise<boolean> => {
       if (!needsConfirmation(toolKey)) return Promise.resolve(true);
-      return new Promise<boolean>((resolve) => {
-        setPending({
-          toolKey,
-          toolLabel: byId[toolKey]?.label ?? toolKey,
-          labels: sharedLabels(toolKey),
-          resolve: (confirmed) => {
-            setPending(null);
-            resolve(confirmed);
-          },
-        });
-      });
+      return ask({
+        kind: "sharedDir",
+        toolKey,
+        toolLabel: byId[toolKey]?.label ?? toolKey,
+        labels: sharedLabels(toolKey),
+      }).then((answer) => answer === "confirmed");
     },
-    [byId, needsConfirmation, sharedLabels],
+    [ask, byId, needsConfirmation, sharedLabels],
   );
 
-  const cancel = useCallback(() => {
-    pending?.resolve(false);
-  }, [pending]);
-
-  return { needsConfirmation, sharedLabels, pending, request, cancel };
+  return { needsConfirmation, sharedLabels, request };
 }
 
 export type SharedDirConfirmation = ReturnType<typeof useSharedDirConfirmation>;

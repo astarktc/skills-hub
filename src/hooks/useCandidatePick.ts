@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { installOutcome, type InstallDeployment, type InstallSettlement, type Outcome } from "../lib/reportOutcome";
 import type { InstallResultDto } from "../components/skills/types";
+import type { DialogDoor } from "./useSurfaceState";
 import type {
   StatusReporter,
   TranslateFn,
@@ -17,6 +18,8 @@ const EMPTY: never[] = [];
  * path), captured when the picker opens so it survives form edits.
  */
 export type CandidatePickSource<C extends PickCandidate, Ctx> = {
+  /** This picker's dialog on the surface stack. */
+  dialogKind: "gitPick" | "localPick";
   /** Custom name typed in the add form; applies to a single selection only. */
   customName: string;
   /** Which candidates can be selected at all; every candidate when omitted. */
@@ -44,6 +47,8 @@ export type CandidatePickDeps = {
     | "showActionWarnings"
     | "showActionErrors"
   >;
+  /** The surface module: the picker is a dialog layered over whatever is open. */
+  surface: Pick<DialogDoor, "isOpen" | "pushDialog" | "closeDialog" | "dismissDialog">;
   isSkillNameTaken: (name: string) => boolean;
   toolLabelById?: Readonly<Record<string, string>>;
   /** The install→deploy tail returns data, including whole-command failure. */
@@ -116,7 +121,9 @@ export function useCandidatePick<C extends PickCandidate, Ctx>(
   source: CandidatePickSource<C, Ctx>,
   deps: CandidatePickDeps,
 ): CandidatePick<C, Ctx> {
-  const { t, reporter, isSkillNameTaken, deploy, afterBatch, toolLabelById } = deps;
+  const { t, reporter, surface, isSkillNameTaken, deploy, afterBatch, toolLabelById } = deps;
+  const { isOpen, pushDialog, closeDialog, dismissDialog } = surface;
+  const { dialogKind } = source;
   const {
     loading,
     runAction,
@@ -133,14 +140,16 @@ export function useCandidatePick<C extends PickCandidate, Ctx>(
     null,
   );
   const [selected, setSelected] = useState<Record<string, boolean>>({});
-  const [visible, setVisible] = useState(false);
+  // Visibility is the surface module's: the picker opens as a layer above
+  // the Add dialog (or alone, from Explore's one-click install).
+  const visible = isOpen(dialogKind);
   const candidates = listing?.candidates ?? EMPTY;
 
   const reset = useCallback(() => {
-    setVisible(false);
+    dismissDialog(dialogKind);
     setListing(null);
     setSelected({});
-  }, []);
+  }, [dialogKind, dismissDialog]);
 
   const open = useCallback(
     (ctx: Ctx, next: C[]) => {
@@ -148,17 +157,17 @@ export function useCandidatePick<C extends PickCandidate, Ctx>(
       setSelected(
         Object.fromEntries(next.map((c) => [c.subpath, selectable(c)])),
       );
-      setVisible(true);
+      if (!isOpen(dialogKind)) pushDialog({ kind: dialogKind });
     },
     // The selectable rule is an adapter constant (a plain predicate on the
     // candidate), not render state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+    [dialogKind, isOpen, pushDialog],
   );
 
   const close = useCallback(() => {
-    if (!loading) setVisible(false);
-  }, [loading]);
+    if (!loading) closeDialog(dialogKind);
+  }, [closeDialog, dialogKind, loading]);
 
   const cancel = useCallback(() => {
     if (!loading) reset();

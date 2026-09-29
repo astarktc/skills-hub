@@ -24,17 +24,6 @@ export type ToggleResult =
   | { kind: "assigned"; report: ProjectSyncReport }
   | { kind: "unassigned"; report: RemovalReport };
 
-/**
- * Which modal the project world is showing, and what it is about. One value
- * instead of a flag-plus-target pair per modal: the two can never disagree,
- * and closing is one call.
- */
-export type ProjectDialog =
-  | { kind: "add" }
-  | { kind: "edit"; projectId: string }
-  | { kind: "toolConfig" }
-  | { kind: "remove"; projectId: string };
-
 export type ProjectState = {
   // Data
   projects: ProjectDto[];
@@ -56,8 +45,8 @@ export type ProjectState = {
   pendingCells: Set<string>;
   // Errors
   loadFailed: boolean;
-  // Modal state
-  dialog: ProjectDialog | null;
+  // Modal state lives in the surface module (`projectAdd`, `projectEdit`,
+  // `projectToolConfig`, `projectRemove` — the union this world introduced).
   // Actions
   loadProjects: () => Promise<void>;
   selectProject: (id: string) => Promise<void>;
@@ -115,8 +104,6 @@ export type ProjectState = {
     projectId: string,
     options: IgnoreUpdateOptions,
   ) => Promise<void>;
-  openDialog: (dialog: ProjectDialog) => void;
-  closeDialog: () => void;
 };
 
 /**
@@ -159,9 +146,6 @@ export function useProjectState(): ProjectState {
 
   // Error state
   const [loadFailed, setLoadFailed] = useState(false);
-
-  // Modal state
-  const [dialog, setDialog] = useState<ProjectDialog | null>(null);
 
   // Ignore intent captured by registerProject, consumed by the next
   // configureTools for that project (and dropped by any other registration
@@ -535,14 +519,6 @@ export function useProjectState(): ProjectState {
     [],
   );
 
-  const openDialog = useCallback((next: ProjectDialog) => {
-    setDialog(next);
-  }, []);
-
-  const closeDialog = useCallback(() => {
-    setDialog(null);
-  }, []);
-
   return {
     projects,
     selectedProjectId,
@@ -555,7 +531,6 @@ export function useProjectState(): ProjectState {
     matrixLoading,
     pendingCells,
     loadFailed,
-    dialog,
     loadProjects,
     selectProject,
     registerProject,
@@ -571,7 +546,5 @@ export function useProjectState(): ProjectState {
     discardPendingIgnore,
     getGitignoreStatus,
     updateGitignore,
-    openDialog,
-    closeDialog,
   };
 }
