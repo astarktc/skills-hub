@@ -24,6 +24,13 @@ README row, and `sed` the `round18/` references in `round19/issues/*.md`, `round
 - **Wave 2 dispatched** (`r19-t07-review-astra-v1` reviews the commit; `r19-t08-surface-state-v1`, `r19-t02-health-v1`,
   `r19-t05-onboarding-v1` implement on the shared tree with stated file ownership).
 
+- 2026-09-29 — **Wave 2 committed as `2803e6c`**: 02 (health), 05 (onboarding plan), 08 (surface state; steered mid-flight to add
+  the `dismissed` ask answer so Escape never records Keep), plus 07's Astra fixes (focus ring never drew under Tailwind 4.3
+  `outline-none` — proven on compiled CSS + a headless keyboard run; the T3 hidden tab cannot match `:focus-visible`, so
+  ring/keyboard proofs need a headless agent-browser session). Reviews under `round19/review/`.
+- **Wave 3 dispatched**: `r19-t03-outcomes-v1`, `r19-t06-repoint-v1`, `r19-t10-modules-v1` (disjoint files; ownership stated).
+  Next: 04 ∥ 09 (09 after 03 + 10), Astra on 04 + 09, then 11 alone.
+
 ## Wave plan (D9: sequential on styling hotspots; parallel only on disjoint files)
 
 1. 01 ∥ 07 → Astra reviews both (01: settlement/guard/skips; 07: contrast re-measured, Dialog transcript, guard rules).
