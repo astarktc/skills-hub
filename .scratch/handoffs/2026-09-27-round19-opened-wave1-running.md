@@ -14,6 +14,16 @@ README row, and `sed` the `round18/` references in `round19/issues/*.md`, `round
   - ticket 07 world ticket (tokens, primitives on Base UI, guard, DESIGN.md) — `r19-t07-world-v1`
 - Fixture server running on 5175 from the orchestrator (`/tmp/skillshub-fixture.log`); children were told not to start another.
 
+## Progress log
+
+- 2026-09-29 — **Wave 1 committed as `9d70918`**: ticket 01 (Disable; Astra review fix-then-ship ×2, all findings closed incl.
+  the status-independent ownership rule `owns_artifact` = `synced_at` set) and ticket 07 (world: tokens measured, primitives,
+  guard, DESIGN.md). Lessons: two children died mid-task (provider timeout at 3h20; a 56-min reasoning loop with zero tool
+  calls) — re-brief with "make your first tool call immediately" and "take the tree as is". Ticket 01's first child kept
+  design choices the ticket text did not prescribe (`disabled_at` off `SkillRecord`; `ProjectSyncSkip`) — sound, recorded.
+- **Wave 2 dispatched** (`r19-t07-review-astra-v1` reviews the commit; `r19-t08-surface-state-v1`, `r19-t02-health-v1`,
+  `r19-t05-onboarding-v1` implement on the shared tree with stated file ownership).
+
 ## Wave plan (D9: sequential on styling hotspots; parallel only on disjoint files)
 
 1. 01 ∥ 07 → Astra reviews both (01: settlement/guard/skips; 07: contrast re-measured, Dialog transcript, guard rules).
