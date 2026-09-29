@@ -21,12 +21,10 @@ ticket's Comments before briefing its child). Reviews under `round19/review/tick
   - Tickets 01–10 `Status: implemented`. **Round 18** is closed (`round18/spec.md` § Closure) but not yet `git mv`'d to `archive/`
     — do it at 19a closure (children were briefed with `round18/` paths).
 - **In flight when paused** (durable T3 child threads; check with `t3_thread_list` / `task_status`, do not re-dispatch):
-  - `r19-t11-my-skills-v1` — ticket 11, My Skills as the first migrated surface (Opus 5.5 high). It edits
-    `src/components/skills/**`, `App.tsx` shell markup, `App.css` (deleting rules), `scripts/styles-baseline.json`, i18n. If it
-    finished: verify (`git status`, `npm run version:check && npm run check`), read its `## Result`, dispatch the D31 Astra audit
-    (keyboard transcript, contrast, grayscale strip, 960×640), commit. If it died mid-way: re-brief a fresh child with "take the
-    tree as is; make your first tool call immediately" (two earlier children died: a provider timeout at 3h20 and a 56-min
-    reasoning loop with zero tool calls).
+  - `r19-t11-my-skills-v1` — DONE and **committed as `353e0fe`** (a 429 cut its first run; a nudge on the same thread finished
+    it). Ticket 11 `implemented`; App.css ceiling 3038 → 2316; child ran the first half of the D31 gate (evidence local under
+    `round19/evidence/11/`). **Still owed: the D31 Astra audit of 11** (keyboard transcript on the fixture, axe, contrast of the
+    rendered pairs, grayscale strip, 960×640 + 1280×800, both themes) — a P0/P1 finding reopens the ticket.
   - `r19-t04-t09-rereview-astra-v1` — DONE. **04: ship.** **09: fix-then-ship** with two residual items (see
     `round19/review/ticket-09-review.md` § Re-review): (B1) Add Project's Browse still opens while another mutation is blocked and
     three project dialogs omit the running reason; (B3-R1) `combineOutcomes` drops the Enable half of a Deploy-all — its counts
@@ -38,7 +36,7 @@ ticket's Comments before briefing its child). Reviews under `round19/review/tick
 
 ## Exact next steps (in order)
 
-1. Fix 09's two residual items (above). Read ticket 11's result. Land 11 (+ its D31 audit) → commit → 18 becomes actionable (`ready-for-human`: the
+1. Dispatch in parallel: the 09 residual-fix child (above) and the D31 Astra audit of 11. Commit fixes → 18 becomes actionable (`ready-for-human`: the
    45-min think-aloud with Alex on `?scenario=failures` and `?scenario=first-run`).
 2. Then sequentially, each with its D31 child audit before `implemented`: **12** inspector → **13** selection + bulk rail →
    **14** notifications by run + header progress → **15** Emil pass → **16** Add (Astra review) → **17** Projects → **19**
