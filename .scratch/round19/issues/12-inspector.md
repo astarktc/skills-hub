@@ -54,3 +54,4 @@ Re-point to a mismatched name requires Continue. `npm run check` green.
 ## Comments
 
 - 2026-09-27 — round-18 extract: the fixture's invocation-conflict data differs between the card ("upstream … User & model") and the Refresh report ("Model only"; `round18/review/flows.md` § Fixture gaps) — make it consistent when the Edits section renders the conflict.
+- 2026-09-29 — from ticket 02: the Health section's Retry must cover failed first-sync `error` rows (`synced_at` NULL — they own nothing at the path; a retry is a first sync, so `TARGET_EXISTS` can occur and routes to the ask).

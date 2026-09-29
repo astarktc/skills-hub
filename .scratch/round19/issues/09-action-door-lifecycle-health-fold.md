@@ -48,3 +48,7 @@ focus-rule table coverage.
 ## Result
 
 (child fills in)
+
+## Comments
+
+- 2026-09-29 — from ticket 02: `ManagedSkill.health: SkillHealth | null` (`{ kind, error, at }`, six kinds) is on the wire; `skillPresentation.skillHealth` is a stub returning it — build the full fold here. Decide how `delete_incomplete` / `import_failed` are dismissed (today only a newer outcome or Delete clears them) — recommend: Retry (delete → finish; import → nothing to retry, so an explicit "Dismiss" that clears the family). `deployAction` counts an `error` row as deployed, so a skill whose only target is a failed first sync shows no deploy — the door's `retry` verb must cover it.

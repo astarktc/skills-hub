@@ -72,3 +72,4 @@ Astra @ high: guard ordering per candidate, no partial-finalize leak on cancel, 
 ## Comments
 
 - 2026-09-27 — round-18 extract: the fixture does not produce `TARGET_EXISTS` on re-assert for some seeded occupied targets (`prisma-review` → Cursor/Codex; `round18/review/flows.md` § Fixture gaps) — fix under "Fixture" here.
+- 2026-09-29 — from ticket 02: Enable's `TARGET_EXISTS` still bypasses the overwrite ask, and project sync (assign/resync/Enable) has no Keep/Overwrite choice — route both into the consolidated ask here. Overrides now carry `decision: "overwrite" | "keep"` (02); a dismissed ask must send nothing (08 adds the third answer).

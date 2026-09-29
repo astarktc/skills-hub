@@ -31,3 +31,7 @@ Replace; auto-sync-off path shows the checkbox and the button text changes; coun
 ## Result
 
 (child fills in)
+
+## Comments
+
+- 2026-09-29 — from tickets 02/05: rename `list_all_skill_target_paths` to say "owned" (it now returns only rows the app materialised); the `replaced` group's `TARGET_EXISTS` rows route into ticket 04's one ask — decide whether the review's "Replace" button is the confirmation or raises the ask (05 chose not to force-overwrite from the plan because a copy can change between review and import).
