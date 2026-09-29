@@ -53,3 +53,7 @@ reduced-motion CSS coverage for anything that moves. `npm run check` green.
 ## Result
 
 (child fills in)
+
+## Comments
+
+- 2026-09-29 — from ticket 05: the `first-run` fixture scenario now seeds two managed skills (for the managed-name import case), so it is no longer an empty library. Design the empty state on `?scenario=empty`; the "discovered groups present" first-run state on `?scenario=first-run`.
