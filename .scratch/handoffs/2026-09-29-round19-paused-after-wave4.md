@@ -27,14 +27,18 @@ ticket's Comments before briefing its child). Reviews under `round19/review/tick
     (keyboard transcript, contrast, grayscale strip, 960×640), commit. If it died mid-way: re-brief a fresh child with "take the
     tree as is; make your first tool call immediately" (two earlier children died: a provider timeout at 3h20 and a 56-min
     reasoning loop with zero tool calls).
-  - `r19-t04-t09-rereview-astra-v1` — bounded Astra re-check of the 04/09 blockers on commit `df7cfc8`; writes only
-    `round19/review/ticket-0{4,9}-review.md` § Re-review + ticket Comments. If it says fix-then-ship, brief a narrow fix child.
+  - `r19-t04-t09-rereview-astra-v1` — DONE. **04: ship.** **09: fix-then-ship** with two residual items (see
+    `round19/review/ticket-09-review.md` § Re-review): (B1) Add Project's Browse still opens while another mutation is blocked and
+    three project dialogs omit the running reason; (B3-R1) `combineOutcomes` drops the Enable half of a Deploy-all — its counts
+    and tone are lost, so a Keep can read as success. Brief ONE narrow fix child for both (files: `useProjectActions.ts`,
+    `AddProjectModal.tsx` + the two other project dialogs, `useSkillActions.ts`/`reportOutcome.ts` `combineOutcomes` + tests),
+    then commit — no further re-review needed unless the fix changes shape.
 - Fixture server: was running on 5175 from the orchestrator (`/tmp/skillshub-fixture.log`); a fresh session must restart it
   (`npm run dev:fixture &`) before briefing any child that uses `preview_*`.
 
 ## Exact next steps (in order)
 
-1. Read the two in-flight results (above). Land 11 (+ its D31 audit) → commit → 18 becomes actionable (`ready-for-human`: the
+1. Fix 09's two residual items (above). Read ticket 11's result. Land 11 (+ its D31 audit) → commit → 18 becomes actionable (`ready-for-human`: the
    45-min think-aloud with Alex on `?scenario=failures` and `?scenario=first-run`).
 2. Then sequentially, each with its D31 child audit before `implemented`: **12** inspector → **13** selection + bulk rail →
    **14** notifications by run + header progress → **15** Emil pass → **16** Add (Astra review) → **17** Projects → **19**
