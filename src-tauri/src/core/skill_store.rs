@@ -395,6 +395,15 @@ pub enum AssignmentTransition<'a> {
     /// The assignment's artifact was removed by a skill-level Disable and the
     /// row kept as its record. The hash is dropped (nothing is deployed).
     Disabled,
+    /// Enable admits a `disabled` row to its first sync. A successful Disable
+    /// removed the row's artifact, so its historical `synced_at` no longer
+    /// describes anything of ours on disk: ownership is cleared (the one
+    /// transition that clears it), so a first sync that meets a folder in the
+    /// way leaves a non-owner the overwrite ask can settle, and only a sync
+    /// that succeeds makes the row an owner again. Status, mode and path stay
+    /// until that sync settles the row. A row that is not `disabled` is left
+    /// untouched: a failed removal keeps its ownership (ADR-0002).
+    EnableAdmitted,
     /// A reconcile pass decided the row's true status (see
     /// `sync_status::next_status`). `content_hash` is the confirmed source
     /// hash for a `Synced` copy, `None` otherwise. Mode and `synced_at` are
@@ -1569,6 +1578,17 @@ impl SkillStore {
                 (SyncStatus::Error, Some(error), None, None, None)
             }
             AssignmentTransition::Disabled => (SyncStatus::Disabled, None, None, None, None),
+            AssignmentTransition::EnableAdmitted => {
+                return self.with_conn(|conn| {
+                    conn.execute(
+                        "UPDATE project_skill_assignments
+                         SET synced_at = NULL, content_hash = NULL
+                         WHERE id = ?1 AND status = ?2",
+                        params![assignment_id, SyncStatus::Disabled.as_str()],
+                    )?;
+                    Ok(())
+                });
+            }
             AssignmentTransition::Reconciled {
                 status,
                 content_hash,

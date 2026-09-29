@@ -475,6 +475,14 @@ function failures(now: number): FixtureState {
   state.repos.push(
     { slug: "corp/private-skills", candidates: [], listingError: { code: "GIT_CLONE_FAILED", kind: "auth", detail: "remote: Repository not found.\nfatal: Authentication failed for 'https://github.com/corp/private-skills/'" } },
     { slug: "rate/limited", candidates: [], listingError: RATE_LIMITED },
+    // Add of a multi-skill repo with two collisions raises one ask (D12,
+    // ticket 04): lint-staged-rules and changelog-writer already have
+    // hand-made folders in Claude Code's skills dir (seeded below).
+    repo("acme/collide-kit", "skills", [
+      ["lint-staged-rules", "Run the right linters on staged files"],
+      ["commit-helper", "Draft conventional commit messages"],
+      ["changelog-writer", "Keep CHANGELOG.md in step with merged work"],
+    ]),
   );
   const git = (repo: string) => ({ kind: "git" as const, repo });
   const specs: SkillSpec[] = [
@@ -600,6 +608,9 @@ function failures(now: number): FixtureState {
     foreign("amp", "commit-message", "commit-message v1"),
     foreign("codex", "commit-message", "commit-message v1"),
     { ...foreign("cursor", "broken-skill", "no frontmatter at all"), invalid: "invalid_frontmatter" },
+    // acme/collide-kit: two of its three candidates collide on install.
+    foreign("claude_code", "lint-staged-rules", "a hand-made lint-staged-rules"),
+    foreign("claude_code", "changelog-writer", "an older changelog-writer"),
   ];
   return state;
 }

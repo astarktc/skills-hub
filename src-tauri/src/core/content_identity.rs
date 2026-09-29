@@ -10,6 +10,7 @@ use super::{
 };
 
 /// Managed copies trust the row. Unmanaged onboarding candidates have no row yet.
+#[derive(Clone, Copy)]
 pub enum Source<'a> {
     Managed {
         store: &'a SkillStore,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import "./App.css";
 import { useTranslation } from "react-i18next";
 // The binder mounts the token-themed Toaster once; useStatusReporter makes
@@ -30,6 +30,7 @@ import { useAddSkillFlow } from "./hooks/useAddSkillFlow";
 import { useExploreState } from "./hooks/useExploreState";
 import { useSettingsState } from "./hooks/useSettingsState";
 import { useSkillLibrary } from "./hooks/useSkillLibrary";
+import { useSkillActions } from "./hooks/useSkillActions";
 import { useStatusReporter } from "./hooks/useStatusReporter";
 import { useSyncOrchestration } from "./hooks/useSyncOrchestration";
 import { useToolCatalog } from "./hooks/useToolCatalog";
@@ -46,6 +47,7 @@ import {
   viewModePreference,
 } from "./lib/preferences";
 import { invokeTauri, isTauri } from "./lib/tauri";
+import { describeRefusal } from "./lib/actionLifecycle";
 import type { ManagedSkill } from "./components/skills/types";
 
 // App is the binder: it owns only i18n, composes the surface module (what is
@@ -66,13 +68,13 @@ function App() {
   const update = useAppUpdate({ reporter, surface });
   const catalog = useToolCatalog({ t });
   const sync = useSyncOrchestration({ t, reporter, surface, catalog });
-  const library = useSkillLibrary({ t, reporter, sync, catalog, surface });
+  const library = useSkillLibrary({ t, reporter, surface });
   // A focused or selected skill that leaves the catalog clears itself.
   useFocusReconciliation(surface, "skill", library.managedSkillIds);
   // The project world lives as long as the app: its selected project, matrix
   // and the Tool catalog's project entries survive navigation. Its skill
   // rows are the library's catalog, passed to its view below.
-  const projects = useProjectState();
+  const projects = useProjectState({ settleCollisions: sync.settleProjectCollisions });
 
   const { area, focused, focus, unfocus, open, openDialog, closeDialog, dismissDialog } =
     surface;
@@ -80,6 +82,13 @@ function App() {
     (preview: ExplorePreview) => focus({ kind: "explore", ref: preview }),
     [focus],
   );
+  // Where the operator is now, for an intent that settles later (a queued
+  // Explore preview opens only while Explore is still showing).
+  const areaRef = useRef(area);
+  useLayoutEffect(() => {
+    areaRef.current = area;
+  });
+  const exploreIsActive = useCallback(() => areaRef.current === "explore", []);
 
   const settings = useSettingsState({
     t,
@@ -90,8 +99,18 @@ function App() {
     t,
     reporter,
     onOpenPreview: openExplorePreview,
+    isActive: exploreIsActive,
   });
-  const addFlow = useAddSkillFlow({ t, reporter, sync, catalog, library, surface });
+  const reviewIsWanted = useCallback(() => areaRef.current === "skills", []);
+  const addFlow = useAddSkillFlow({
+    t,
+    reporter,
+    sync,
+    catalog,
+    library,
+    surface,
+    isReviewWanted: reviewIsWanted,
+  });
 
   // My Skills' list lens: query, sort, Grouped/Flat, view mode.
   const lens = useListLens({
@@ -106,20 +125,44 @@ function App() {
     selection: surface.selection.skills,
   });
 
+  // The skill action door: every verb on a skill (card, detail, toolbar,
+  // new-tools notice) goes through its one handle. Delete's focus rule reads
+  // the list's display order (a grouped list walks its groups).
+  const visibleOrder = useMemo(() => lens.displayed.map((skill) => skill.id), [lens.displayed]);
+  const actions = useSkillActions({
+    t,
+    reporter,
+    sync,
+    catalog,
+    surface,
+    library,
+    projects,
+    order: visibleOrder,
+  });
+
   const {
     loading,
-    loadingStartAt,
+    pending,
+    refusal,
     actionMessage,
-    cancelLoading,
+    cancelPending,
+    runAction,
+    applyOutcome,
     notify,
     notifyError,
-    showActionErrors,
     copyToClipboard,
     notifications,
     unreadCount,
     markAllRead,
     clearNotifications,
   } = reporter;
+  // One mutation at a time (D19): while one runs, every verb is disabled
+  // with the reason in words.
+  const blockedReason = useMemo(
+    () => (refusal ? describeRefusal(refusal, t) : null),
+    [refusal, t],
+  );
+
   const handleOpenSettings = useCallback(() => {
     open("settings");
   }, [open]);
@@ -200,7 +243,8 @@ function App() {
     effectiveSyncTargetIds,
     enableTargetsFor,
   } = sync;
-  const { syncAllManagedToTools } = library;
+  const { autoSyncEnabled } = sync;
+  const { run } = actions;
   const handleSyncAllNewTools = useCallback(() => {
     if (relevantNewlyInstalled.length === 0) return;
     // A sync target set is the operator's recorded selection, not detection —
@@ -217,15 +261,17 @@ function App() {
       return;
     }
     enableTargetsFor(targets);
-    void syncAllManagedToTools(targets);
+    // With auto-sync off the new Tools are only selected, never written to.
+    if (autoSyncEnabled) void run("syncToTargets", "all", { tools: targets });
   }, [
+    autoSyncEnabled,
     dismissDialog,
     effectiveSyncTargetIds,
     enableTargetsFor,
     notify,
     relevantNewlyInstalled,
+    run,
     t,
-    syncAllManagedToTools,
   ]);
 
   // The two asks render from the surface stack and answer through it.
@@ -239,15 +285,13 @@ function App() {
           default of 3: a fourth open error shows without hovering. */}
       <Toaster position="top-right" richColors visibleToasts={5} />
       <LoadingOverlay
-        loading={loading}
+        pending={pending}
         actionMessage={actionMessage}
-        loadingStartAt={loadingStartAt}
-        onCancel={cancelLoading}
+        onCancel={cancelPending}
         t={t}
       />
 
       <Header
-        loading={loading}
         activeArea={area}
         unreadNotifications={unreadCount}
         onOpenNotifications={handleOpenNotifications}
@@ -260,8 +304,8 @@ function App() {
         {detailSubject ? (
           <SkillDetailView
             subject={detailSubject}
-            onRepoint={library.handleRepointSkill}
-            actionLoading={loading}
+            actions={actions}
+            blockedReason={blockedReason}
             onBack={unfocus}
             invokeTauri={invokeTauri}
             notify={notify}
@@ -276,12 +320,11 @@ function App() {
           <div className="dashboard-stack">
             <FilterBar
               lens={lens}
-              loading={loading}
+              blockedReason={blockedReason}
               onAddSkill={addFlow.handleOpenAdd}
-              onRefresh={library.handleRefresh}
               autoSyncEnabled={sync.autoSyncEnabled}
               onAutoSyncChange={sync.handleAutoSyncToggle}
-              onUnsyncAll={library.handleUnsyncAll}
+              actions={actions}
               onConfigureTools={sync.handleOpenToolConfig}
               t={t}
             />
@@ -290,18 +333,11 @@ function App() {
               lens={lens}
               installedTools={catalog.installedTools}
               allTools={catalog.tools}
-              loading={loading}
+              pending={pending}
+              blockedReason={blockedReason}
               onReviewImport={addFlow.handleReviewImport}
-              onUpdateSkill={library.handleUpdateSkill}
-              onRepointSkill={library.handleRepointSkill}
-              onDetachSkill={library.handleDetachSkill}
-              onRestoreSkill={library.handleRestoreSkill}
-              onDeleteSkill={library.handleDeletePrompt}
-              onToggleTool={library.handleToggleToolForSkill}
-              onUnsyncSkill={library.handleUnsyncSkill}
-              onSyncSkillToAllTools={library.handleSyncSkillToAllTools}
+              actions={actions}
               onOpenDetail={handleOpenDetail}
-              onInvocationClick={library.openInvocationEdit}
               copyToClipboard={copyToClipboard}
               t={t}
             />
@@ -338,9 +374,11 @@ function App() {
             skills={library.managedSkills}
             catalog={catalog}
             surface={surface}
+            pending={pending}
+            runAction={runAction}
+            applyOutcome={applyOutcome}
             notify={notify}
             notifyError={notifyError}
-            showActionErrors={showActionErrors}
           />
         ) : (
           <ExplorePage
@@ -459,7 +497,7 @@ function App() {
           loading={loading}
           onRequestClose={library.closeInvocationEdit}
           onConfirm={(mode) => {
-            if (library.invocationEditSkill) void library.setInvocationOverride(library.invocationEditSkill.id, mode);
+            if (library.invocationEditSkill) void run("editInvocation", [library.invocationEditSkill], { mode });
           }}
           t={t}
         />
@@ -474,7 +512,9 @@ function App() {
           loading={loading}
           onRequestClose={library.handleCloseRepoint}
           onPickFolder={library.pickRepointFolder}
-          onConfirm={library.handleConfirmRepoint}
+          onConfirm={(target) => {
+            if (library.pendingRepointSkill) void run("repoint", [library.pendingRepointSkill], { target });
+          }}
           t={t}
         />
       ) : null}
@@ -486,8 +526,9 @@ function App() {
         onRequestClose={library.handleCloseDelete}
         onConfirm={() => {
           if (library.pendingDeleteSkill)
-            void library.handleDeleteManaged(library.pendingDeleteSkill);
+            void run("delete", [library.pendingDeleteSkill], { confirmed: true });
         }}
+        fallbackFocus={actions.dialogFallbackFocus}
         t={t}
       />
 

@@ -1,6 +1,6 @@
 // Tests at the StatusReporter seam: the interface every world hook reports
 // through. Side channels are mocked at their module seams — sonner (toast
-// one-shots render there) and src/lib/tauri.ts (cancelLoading fires the
+// one-shots render there) and src/lib/tauri.ts (cancelPending fires the
 // backend cancel command through it).
 
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -22,6 +22,7 @@ vi.mock("../lib/tauri", () => ({
 import { toast } from "sonner";
 import { invokeTauri } from "../lib/tauri";
 import { useStatusReporter } from "./useStatusReporter";
+import type { Outcome } from "../lib/reportOutcome";
 
 const t = (key: string, opts?: Record<string, unknown>) =>
   opts ? `${key} ${JSON.stringify(opts)}` : key;
@@ -396,28 +397,117 @@ describe("useStatusReporter", () => {
     expect(result.current.unreadCount).toBe(2);
   });
 
-  it("cancelLoading fires the backend cancel and resets the loading surface", async () => {
+  it("cancelPending asks the backend to stop a cancellable action and hides nothing until it returns", async () => {
     const { result } = renderHook(() => useStatusReporter(t));
     let finish: () => void = () => {};
-    const pending = new Promise<void>((resolve) => {
+    const body = new Promise<void>((resolve) => {
       finish = resolve;
     });
 
     let run: Promise<unknown> = Promise.resolve();
     act(() => {
-      run = result.current.runAction({ message: "working…" }, () => pending);
+      run = result.current.runAction(
+        { message: "working…", cancel: "refreshManagedSkills", label: "Refresh" },
+        () => body,
+      );
     });
-    expect(result.current.loading).toBe(true);
+    expect(result.current.pending).toMatchObject({ cancellable: true, cancelling: false });
 
     act(() => {
-      result.current.cancelLoading();
+      result.current.cancelPending();
     });
 
     expect(invokeTauri).toHaveBeenCalledWith("cancelCurrentOperation");
-    expect(result.current.loading).toBe(false);
-    expect(result.current.loadingStartAt).toBeNull();
-    expect(result.current.actionMessage).toBeNull();
+    // Still running: the command has not returned yet.
+    expect(result.current.loading).toBe(true);
+    expect(result.current.pending).toMatchObject({ cancelling: true });
+    expect(result.current.actionMessage).toBe("lifecycle.cancelling");
 
+    await act(async () => {
+      finish();
+      await run;
+    });
+    expect(result.current.pending).toBeNull();
+    expect(result.current.actionMessage).toBeNull();
+  });
+
+  it("a progress tick after Cancel keeps the Cancelling line until the command returns", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    let finish: () => void = () => {};
+    const body = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let run: Promise<unknown> = Promise.resolve();
+    act(() => {
+      run = result.current.runAction({ cancel: "refreshManagedSkills", label: "Refresh" }, () => body);
+    });
+    act(() => result.current.reportProgress({ done: 1, total: 5, message: "Fetched alpha" }));
+    expect(result.current.actionMessage).toBe("Fetched alpha");
+    act(() => result.current.cancelPending());
+    expect(result.current.actionMessage).toBe("lifecycle.cancelling");
+    // The backend streams one more step before it honours the token.
+    act(() => result.current.reportProgress({ done: 2, total: 5, message: "Applying beta" }));
+    act(() => result.current.setActionMessage("another channel"));
+    expect(result.current.actionMessage).toBe("lifecycle.cancelling");
+    // The count still moves; only the line is held.
+    expect(result.current.pending).toMatchObject({ cancelling: true, progress: { done: 2, total: 5 } });
+    await act(async () => {
+      finish();
+      await run;
+    });
+    expect(result.current.actionMessage).toBeNull();
+  });
+
+  it("an action records its Cancel (cancelRequested) and withdraws Cancel for an uncancellable phase", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    const gate = (() => {
+      let open: () => void = () => {};
+      const promise = new Promise<void>((resolve) => (open = resolve));
+      return { promise, open: () => open() };
+    })();
+    const retry = (() => {
+      let open: () => void = () => {};
+      const promise = new Promise<void>((resolve) => (open = resolve));
+      return { promise, open: () => open() };
+    })();
+    const seen: boolean[] = [];
+    let run: Promise<unknown> = Promise.resolve();
+    act(() => {
+      run = result.current.runAction({ cancel: "installSelection" }, async (action) => {
+        seen.push(action.cancelRequested());
+        await gate.promise;
+        seen.push(action.cancelRequested());
+        await action.uncancellable(() => retry.promise);
+      });
+    });
+    act(() => result.current.cancelPending());
+    await act(async () => gate.open());
+    // In the uncancellable phase: no Cancel offered, the request still recorded.
+    expect(result.current.pending).toMatchObject({ cancellable: false, cancelling: true });
+    await act(async () => {
+      retry.open();
+      await run;
+    });
+    expect(seen).toEqual([false, true]);
+    expect(result.current.pending).toBeNull();
+  });
+
+  it("cancelPending does nothing for an action whose command cannot be cancelled", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    let finish: () => void = () => {};
+    const body = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let run: Promise<unknown> = Promise.resolve();
+    act(() => {
+      run = result.current.runAction({ label: "Sync" }, () => body);
+    });
+    expect(result.current.pending?.cancellable).toBe(false);
+    act(() => {
+      result.current.cancelPending();
+    });
+    expect(invokeTauri).not.toHaveBeenCalled();
+    expect(result.current.pending?.cancelling).toBe(false);
     await act(async () => {
       finish();
       await run;
@@ -492,7 +582,11 @@ describe("useStatusReporter runAction", () => {
     });
 
     expect(result.current.loading).toBe(true);
-    expect(result.current.loadingStartAt).toEqual(expect.any(Number));
+    expect(result.current.pending).toMatchObject({
+      subject: { kind: "batch" },
+      startedAt: expect.any(Number),
+      cancellable: false,
+    });
     expect(result.current.actionMessage).toBe("working…");
     expect(toast.success).not.toHaveBeenCalled();
 
@@ -504,7 +598,7 @@ describe("useStatusReporter runAction", () => {
 
     expect(value).toBe(42);
     expect(result.current.loading).toBe(false);
-    expect(result.current.loadingStartAt).toBeNull();
+    expect(result.current.pending).toBeNull();
     expect(result.current.actionMessage).toBeNull();
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith("done!", SUCCESS_OPTIONS),
@@ -622,7 +716,7 @@ describe("useStatusReporter runAction", () => {
 
     expect(value).toBeUndefined();
     expect(result.current.loading).toBe(false);
-    expect(result.current.loadingStartAt).toBeNull();
+    expect(result.current.pending).toBeNull();
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
         "errors.targetExists",
@@ -643,7 +737,7 @@ describe("useStatusReporter runAction", () => {
     });
 
     expect(result.current.loading).toBe(false);
-    expect(result.current.loadingStartAt).toBeNull();
+    expect(result.current.pending).toBeNull();
     expect(result.current.actionMessage).toBeNull();
     expect(toast.error).not.toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
@@ -662,7 +756,7 @@ describe("useStatusReporter runAction", () => {
 
     expect(value).toBeUndefined();
     expect(result.current.loading).toBe(false);
-    expect(result.current.loadingStartAt).toBeNull();
+    expect(result.current.pending).toBeNull();
     expect(result.current.actionMessage).toBeNull();
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.error).not.toHaveBeenCalled();
@@ -714,5 +808,315 @@ describe("useStatusReporter runAction", () => {
     });
 
     expect(toast.error).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useStatusReporter lifecycle (D19–D20)", () => {
+  function gate() {
+    let open: () => void = () => {};
+    const promise = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    return { promise, open };
+  }
+
+  it.each([
+    [{ kind: "skill", id: "s1" }],
+    [{ kind: "cell", ids: ["s1:claude", "s1:cursor"] }],
+    [{ kind: "batch" }],
+  ] as const)("pending says what runs: %o", async (subject) => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    const body = gate();
+    let run: Promise<unknown> = Promise.resolve();
+    act(() => {
+      run = result.current.runAction({ subject, label: "Disable" }, () => body.promise);
+    });
+    expect(result.current.pending).toMatchObject({ subject, label: "Disable", progress: null });
+    expect(result.current.refusal).toEqual({ code: "MUTATION_RUNNING", running: "Disable" });
+    await act(async () => {
+      body.open();
+      await run;
+    });
+    expect(result.current.pending).toBeNull();
+    expect(result.current.refusal).toBeNull();
+  });
+
+  it("refuses a second action while one runs — it never starts, and says why", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    const body = gate();
+    const second = vi.fn(async () => "ran");
+    let run: Promise<unknown> = Promise.resolve();
+    let refused: unknown = "unset";
+    await act(async () => {
+      run = result.current.runAction({ label: "Refresh" }, () => body.promise);
+      // Same tick: the ref, not render state, decides.
+      refused = await result.current.runAction({ label: "Sync" }, second);
+    });
+    expect(second).not.toHaveBeenCalled();
+    expect(refused).toBeUndefined();
+    expect(toast.info).toHaveBeenCalledWith(
+      'lifecycle.running {"action":"Refresh"}',
+      expect.objectContaining({ duration: 2000 }),
+    );
+    // A refusal is not an outcome: nothing recorded.
+    expect(result.current.notifications).toEqual([]);
+    await act(async () => {
+      body.open();
+      await run;
+    });
+  });
+
+  it("frees the slot after a thrown request, so the next action runs", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    await act(async () => {
+      await result.current.runAction({}, async () => {
+        throw { code: "OTHER", message: "boom" };
+      });
+    });
+    expect(result.current.pending).toBeNull();
+    const next = vi.fn(async () => 1);
+    await act(async () => {
+      await result.current.runAction({}, next);
+    });
+    expect(next).toHaveBeenCalled();
+  });
+
+  it("reportProgress counts a streamed batch and shows its line", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    const body = gate();
+    let run: Promise<unknown> = Promise.resolve();
+    act(() => {
+      run = result.current.runAction({ cancel: "refreshManagedSkills" }, () => body.promise);
+    });
+    act(() => result.current.reportProgress({ done: 3, total: 12, message: "alpha 3/12" }));
+    expect(result.current.pending?.progress).toEqual({ done: 3, total: 12 });
+    expect(result.current.actionMessage).toBe("alpha 3/12");
+    await act(async () => {
+      body.open();
+      await run;
+    });
+  });
+});
+
+describe("useStatusReporter applyOutcome", () => {
+  const outcome = (over: Partial<Outcome> = {}): Outcome => ({
+    toast: { kind: "warning", tone: "failure", message: "1 refreshed · 1 failed", detail: "a note" },
+    errors: [
+      { title: "alpha failed", message: "offline", action: { label: "Change source", skillId: "s1", skillName: "alpha" } },
+      { title: "silenced", message: "" },
+    ],
+    warnings: [{ title: "beta skipped", message: "not found" }],
+    notes: ["a note"],
+    completion: { reload: true, closeModal: true, conflict: false },
+    ...over,
+  });
+
+  it("reloads first, then toasts, records one run block and closes the dialog", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    const order: string[] = [];
+    const reload = vi.fn(async () => {
+      order.push("reload");
+    });
+    vi.mocked(toast.warning).mockImplementation(((title: string) => {
+      order.push(`toast:${title}`);
+      return 1;
+    }) as never);
+    const closeModal = vi.fn();
+    let completion: unknown;
+    await act(async () => {
+      completion = await result.current.applyOutcome(outcome(), { reload, closeModal });
+    });
+    expect(order[0]).toBe("reload");
+    expect(closeModal).toHaveBeenCalled();
+    expect(completion).toEqual({ reload: true, closeModal: true, conflict: false });
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    const rows = result.current.notifications;
+    // headline over its entries, silenced entry dropped, one runId.
+    expect(rows.map((row) => [row.role, row.kind, row.title])).toEqual([
+      ["headline", "warning", "1 refreshed · 1 failed"],
+      ["entry", "error", "alpha failed"],
+      ["entry", "warning", "beta skipped"],
+    ]);
+    expect(new Set(rows.map((row) => row.runId)).size).toBe(1);
+  });
+
+  it("does not reload or close when the completion says not to", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    const reload = vi.fn(async () => {});
+    const closeModal = vi.fn();
+    await act(async () => {
+      await result.current.applyOutcome(
+        outcome({ completion: { reload: false, closeModal: false, conflict: false } }),
+        { reload, closeModal },
+      );
+    });
+    expect(reload).not.toHaveBeenCalled();
+    expect(closeModal).not.toHaveBeenCalled();
+  });
+
+  it("an entry's declarative action resolves through the caller when clicked", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    const onAction = vi.fn();
+    await act(async () => {
+      await result.current.applyOutcome(outcome(), { onAction });
+    });
+    const row = result.current.notifications.find((n) => n.title === "alpha failed");
+    row?.action?.onClick();
+    expect(onAction).toHaveBeenCalledWith({ label: "Change source", skillId: "s1", skillName: "alpha" });
+  });
+
+  it("quiet notes are their own rows only when no headline carries them", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    await act(async () => {
+      await result.current.applyOutcome(
+        outcome({ toast: null, errors: [], warnings: [], notes: ["alpha: kept your existing Cursor folder"] }),
+      );
+    });
+    expect(result.current.notifications.map((row) => [row.role, row.kind, row.title])).toEqual([
+      ["entry", "info", "alpha: kept your existing Cursor folder"],
+    ]);
+  });
+
+  it("an empty outcome records nothing", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    await act(async () => {
+      await result.current.applyOutcome(outcome({ toast: null, errors: [], warnings: [], notes: [] }));
+    });
+    expect(result.current.notifications).toEqual([]);
+  });
+});
+
+describe("useStatusReporter reads", () => {
+  it("a read is never refused: it waits for the running action, then runs", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    let open: () => void = () => {};
+    const body = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const read = vi.fn(async () => "plan");
+    let first: Promise<unknown> = Promise.resolve();
+    let second: Promise<unknown> = Promise.resolve();
+    act(() => {
+      first = result.current.runAction({ read: true }, () => body);
+      second = result.current.runAction({ read: true }, read);
+    });
+    expect(read).not.toHaveBeenCalled();
+    let value: unknown;
+    await act(async () => {
+      open();
+      await first;
+      value = await second;
+    });
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(value).toBe("plan");
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(result.current.pending).toBeNull();
+  });
+});
+
+describe("useStatusReporter queued reads (lifetime and intent)", () => {
+  const gate = () => {
+    let open: () => void = () => {};
+    const promise = new Promise<void>((resolve) => (open = resolve));
+    return { promise, open: () => open() };
+  };
+
+  it("reads queued behind a mutation run one at a time, in order, after it", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    const mutation = gate();
+    const order: string[] = [];
+    const first = gate();
+    let runs: Promise<unknown>[] = [];
+    act(() => {
+      runs = [
+        result.current.runAction({ label: "Refresh" }, async () => {
+          await mutation.promise;
+          order.push("mutation");
+        }),
+        result.current.runAction({ read: true }, async () => {
+          order.push("read 1 start");
+          await first.promise;
+          order.push("read 1 end");
+        }),
+        result.current.runAction({ read: true }, async () => {
+          order.push("read 2");
+        }),
+      ];
+    });
+    await act(async () => mutation.open());
+    await waitFor(() => expect(order).toContain("read 1 start"));
+    expect(order).not.toContain("read 2");
+    await act(async () => {
+      first.open();
+      await Promise.all(runs);
+    });
+    expect(order).toEqual(["mutation", "read 1 start", "read 1 end", "read 2"]);
+    expect(toast.info).not.toHaveBeenCalled();
+  });
+
+  it("a read waiting when the reporter unmounts never runs", async () => {
+    const { result, unmount } = renderHook(() => useStatusReporter(t));
+    const mutation = gate();
+    const read = vi.fn(async () => "plan");
+    let running: Promise<unknown> = Promise.resolve();
+    let waiting: Promise<unknown> = Promise.resolve();
+    act(() => {
+      running = result.current.runAction({}, () => mutation.promise);
+      waiting = result.current.runAction({ read: true }, read);
+    });
+    unmount();
+    // The waiter is released without its body, before and after the mutation settles.
+    expect(await waiting).toBeUndefined();
+    mutation.open();
+    await running;
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("a queued navigational read whose intent went stale is dropped when its turn comes", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    const mutation = gate();
+    let area = "explore";
+    const open = vi.fn(async () => "preview");
+    let running: Promise<unknown> = Promise.resolve();
+    let waiting: Promise<unknown> = Promise.resolve();
+    act(() => {
+      running = result.current.runAction({}, () => mutation.promise);
+      waiting = result.current.runAction({ read: true, stillWanted: () => area === "explore" }, open);
+    });
+    area = "skills";
+    let value: unknown = "unset";
+    await act(async () => {
+      mutation.open();
+      await running;
+      value = await waiting;
+    });
+    expect(open).not.toHaveBeenCalled();
+    expect(value).toBeUndefined();
+    expect(result.current.pending).toBeNull();
+  });
+
+  it("a queued read after a rejected mutation still runs, and its own rejection is reported", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    const mutation = gate();
+    const failing = vi.fn(async () => {
+      throw { code: "OTHER", message: "read failed" };
+    });
+    let running: Promise<unknown> = Promise.resolve();
+    let waiting: Promise<unknown> = Promise.resolve();
+    act(() => {
+      running = result.current.runAction({}, async () => {
+        await mutation.promise;
+        throw { code: "OTHER", message: "mutation failed" };
+      });
+      waiting = result.current.runAction({ read: true }, failing);
+    });
+    await act(async () => {
+      mutation.open();
+      await running;
+      await waiting;
+    });
+    expect(failing).toHaveBeenCalledTimes(1);
+    expect(result.current.notifications.filter((n) => n.kind === "error")).toHaveLength(2);
+    expect(result.current.pending).toBeNull();
   });
 });

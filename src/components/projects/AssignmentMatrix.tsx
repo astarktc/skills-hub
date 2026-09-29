@@ -30,7 +30,13 @@ export type AssignmentMatrixProps = {
    */
   assignmentsReconciled: boolean;
   skills: ManagedSkill[];
+  /** The cells the running action is about: their localized pending mark. */
   pendingCells: Set<string>;
+  /**
+   * Why every mutation control is disabled while any action runs (D19),
+   * shown as its title; null = they may run.
+   */
+  blockedReason: string | null;
   matrixLoading: boolean;
   onToggleAssignment: (skillId: string, tool: string) => Promise<void>;
   onBulkAssign: (skillId: string) => Promise<void>;
@@ -49,6 +55,7 @@ const AssignmentMatrix = ({
   assignmentsReconciled,
   skills,
   pendingCells,
+  blockedReason,
   matrixLoading,
   onToggleAssignment,
   onBulkAssign,
@@ -130,11 +137,11 @@ const AssignmentMatrix = ({
           <button
             className="btn btn-primary btn-sm"
             onClick={() => void onResyncProject()}
-            disabled={pathMissing}
+            disabled={pathMissing || blockedReason !== null}
             title={
               pathMissing
                 ? t("projects.syncDisabledMissing")
-                : t("projects.syncProject")
+                : (blockedReason ?? t("projects.syncProject"))
             }
           >
             <RefreshCw size={14} />
@@ -143,11 +150,11 @@ const AssignmentMatrix = ({
           <button
             className="btn btn-secondary btn-sm"
             onClick={() => void onResyncAll()}
-            disabled={pathMissing}
+            disabled={pathMissing || blockedReason !== null}
             title={
               pathMissing
                 ? t("projects.syncDisabledMissing")
-                : t("projects.syncAll")
+                : (blockedReason ?? t("projects.syncAll"))
             }
           >
             <RefreshCw size={14} />
@@ -225,6 +232,7 @@ const AssignmentMatrix = ({
                           assignmentMap={assignmentMap}
                           pendingCells={pendingCells}
                           disabled={pathMissing}
+                          blockedReason={blockedReason}
                           onToggleAssignment={onToggleAssignment}
                           onBulkAssign={onBulkAssign}
                           onBulkUnassign={onBulkUnassign}
@@ -241,6 +249,7 @@ const AssignmentMatrix = ({
                       assignmentMap={assignmentMap}
                       pendingCells={pendingCells}
                       disabled={pathMissing}
+                      blockedReason={blockedReason}
                       onToggleAssignment={onToggleAssignment}
                       onBulkAssign={onBulkAssign}
                       onBulkUnassign={onBulkUnassign}
@@ -261,6 +270,7 @@ type MatrixRowProps = {
   assignmentMap: Map<string, ProjectSkillAssignmentDto>;
   pendingCells: Set<string>;
   disabled: boolean;
+  blockedReason: string | null;
   onToggleAssignment: (skillId: string, tool: string) => Promise<void>;
   onBulkAssign: (skillId: string) => Promise<void>;
   onBulkUnassign: (skillId: string) => Promise<void>;
@@ -282,11 +292,14 @@ const MatrixRow = memo(
     assignmentMap,
     pendingCells,
     disabled,
+    blockedReason,
     onToggleAssignment,
     onBulkAssign,
     onBulkUnassign,
     t,
   }: MatrixRowProps) => {
+    // Another action running blocks every mutation here, not only its own cells.
+    const blocked = blockedReason !== null;
     // Bulk actions only earn a column when there is more than one Tool (a
     // single checkbox already is "all"). Bulk assign hides once the row is
     // saturated; its inverse shows once the skill holds any assignment here.
@@ -332,7 +345,7 @@ const MatrixRow = memo(
               className={`matrix-cell ${statusClass}${isGlobal ? " global" : ""}`}
               title={cellTitle}
               onClick={
-                isError && !disabled
+                isError && !disabled && !blocked
                   ? () => onToggleAssignment(skill.id, tool.tool)
                   : undefined
               }
@@ -343,7 +356,8 @@ const MatrixRow = memo(
                 <input
                   type="checkbox"
                   checked={!!assignment}
-                  disabled={isPending || disabled || lockedGlobal}
+                  disabled={isPending || disabled || lockedGlobal || blocked}
+                  title={blocked && !isPending ? (blockedReason ?? undefined) : undefined}
                   onChange={() => onToggleAssignment(skill.id, tool.tool)}
                   aria-label={`${skill.name} - ${tool.tool}`}
                 />
@@ -370,8 +384,8 @@ const MatrixRow = memo(
               <button
                 className="btn btn-xs matrix-all-tools-btn"
                 onClick={() => onBulkAssign(skill.id)}
-                disabled={disabled || rowPending}
-                title={t("projects.allToolsTitle", { name: skill.name })}
+                disabled={disabled || rowPending || blocked}
+                title={blockedReason ?? t("projects.allToolsTitle", { name: skill.name })}
               >
                 {t("projects.allTools")}
               </button>
@@ -380,8 +394,8 @@ const MatrixRow = memo(
               <button
                 className="btn btn-xs matrix-unassign-all-btn"
                 onClick={() => onBulkUnassign(skill.id)}
-                disabled={disabled || rowPending}
-                title={t("projects.unassignAllTitle", { name: skill.name })}
+                disabled={disabled || rowPending || blocked}
+                title={blockedReason ?? t("projects.unassignAllTitle", { name: skill.name })}
               >
                 {t("projects.unassignAll")}
               </button>
@@ -396,6 +410,7 @@ const MatrixRow = memo(
     if (prev.tools !== next.tools) return false;
     if (prev.assignmentMap !== next.assignmentMap) return false;
     if (prev.disabled !== next.disabled) return false;
+    if (prev.blockedReason !== next.blockedReason) return false;
     if (prev.onToggleAssignment !== next.onToggleAssignment) return false;
     if (prev.onBulkAssign !== next.onBulkAssign) return false;
     if (prev.onBulkUnassign !== next.onBulkUnassign) return false;
@@ -413,6 +428,7 @@ export default memo(AssignmentMatrix, (prev, next) => {
   if (prev.assignmentsReconciled !== next.assignmentsReconciled) return false;
   if (prev.skills !== next.skills) return false;
   if (prev.matrixLoading !== next.matrixLoading) return false;
+  if (prev.blockedReason !== next.blockedReason) return false;
   if (prev.onToggleAssignment !== next.onToggleAssignment) return false;
   if (prev.onBulkAssign !== next.onBulkAssign) return false;
   if (prev.onBulkUnassign !== next.onBulkUnassign) return false;

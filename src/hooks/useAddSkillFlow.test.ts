@@ -16,15 +16,19 @@ import type {
   GitSourceResolution,
   ImportGroupStatus,
   ImportReport,
+  InstallBatchReport,
+  InstallRequest,
   LocalSkillCandidate,
   OnboardingPlan,
 } from "../components/skills/types";
 import * as folds from "../lib/reportOutcome";
 import { describeCommandError } from "../commandError";
 import type { AddSkillFlowDeps } from "./useAddSkillFlow";
+import type { SyncOrchestration } from "./useSyncOrchestration";
 
 vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  // warning/info: the real reporter (the cancellation cases) uses every kind.
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 vi.mock("../lib/tauri", () => ({
   isTauri: true,
@@ -51,6 +55,7 @@ function useAddSkillFlow(deps: FlowDeps) {
 }
 import {
   ActionExit,
+  useStatusReporter,
   type ActionHandle,
   type RunActionOptions,
   type StatusReporter,
@@ -85,6 +90,10 @@ function stubBackend(overrides?: {
   /** What the backend resolved a `targetName` to; `none` by default. */
   targetMatch?: CandidateMatch;
   localCandidates?: LocalSkillCandidate[];
+  /** Tools whose target the install batch reports occupied (TARGET_EXISTS). */
+  occupied?: string[];
+  /** The install batch's answer for every candidate, when not installed. */
+  candidateFailure?: unknown;
 }) {
   mockInvoke.mockImplementation((command, ...args) => {
     switch (command) {
@@ -102,14 +111,41 @@ function stubBackend(overrides?: {
       }
       case "listLocalSkillsCmd":
         return Promise.resolve(overrides?.localCandidates ?? []);
-      case "installGitSelection":
-      case "installLocalSelection":
-        return Promise.resolve({
-          skill_id: "new-id",
-          name: "installed-skill",
-          central_path: "/hub/installed-skill",
-          content_hash: null,
-        });
+      case "installSelection": {
+        // One report for the whole batch (ticket 04): every candidate is
+        // installed (a lone one as "installed-skill") and first-synced to
+        // the request's Tools; an occupied Tool is a collected TARGET_EXISTS.
+        const [request] = args as [InstallRequest];
+        const report: InstallBatchReport = {
+          candidates: request.candidates.map((candidate, i) => {
+            const name =
+              request.candidates.length === 1 ? "installed-skill" : candidate.subpath.split("/").pop()!;
+            if (overrides?.candidateFailure) {
+              return { subpath: candidate.subpath, name, status: { status: "failed", error: overrides.candidateFailure as never } };
+            }
+            const skill_id = request.candidates.length === 1 ? "new-id" : `new-id-${i}`;
+            return {
+              subpath: candidate.subpath,
+              name,
+              status: {
+                status: "installed",
+                skill: { skill_id, name, central_path: `/hub/${name}`, content_hash: null },
+                targets: request.deploy
+                  ? request.tools.map((tool) => ({
+                      skill_id,
+                      skill_name: name,
+                      tool_key: tool,
+                      status: overrides?.occupied?.includes(tool)
+                        ? { status: "failed" as const, error: { code: "TARGET_EXISTS" as const, path: `/${tool}/${name}`, modifiedAt: 1, sameContent: false } }
+                        : { status: "synced" as const, outcome: { mode_used: "symlink" as const, target_path: `/${tool}/${name}`, replaced: false } },
+                    }))
+                  : [],
+              },
+            };
+          }),
+        };
+        return Promise.resolve(report);
+      }
       default:
         return Promise.resolve(undefined);
     }
@@ -137,6 +173,8 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
         const outcome = await fn({
           handOff: () => ActionExit.handOff(),
           fail: (message) => ActionExit.failed(message),
+          uncancellable: (run) => run(),
+          cancelRequested: () => false,
         });
         if (outcome instanceof ActionExit) {
           if (outcome.kind === "failed") setError(outcome.message);
@@ -155,14 +193,33 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
       }
     },
   );
+  const showActionErrors = vi.fn();
+  const showActionWarnings = vi.fn();
+  const notify = vi.fn();
   const reporter: StatusReporter = {
+    pending: null,
     loading: false,
-    loadingStartAt: null,
+    refusal: null,
     actionMessage: null,
     // vi.fn erases the generic; the spy still records calls.
     runAction: runAction as StatusReporter["runAction"],
     setActionMessage: vi.fn(),
-    notify: vi.fn(),
+    reportProgress: vi.fn(),
+    // Executes an Outcome onto the entry spies below in the real executor's
+    // order — reload, entries and toast, close (the executor itself is
+    // useStatusReporter's own test).
+    applyOutcome: vi.fn(async (
+      outcome: Parameters<StatusReporter["applyOutcome"]>[0],
+      handlers: Parameters<StatusReporter["applyOutcome"]>[1] = {},
+    ) => {
+      if (outcome.completion.reload) await handlers.reload?.();
+      showActionErrors(outcome.errors);
+      showActionWarnings(outcome.warnings);
+      if (outcome.toast) notify(outcome.toast.kind, outcome.toast.message, outcome.toast.detail);
+      if (outcome.completion.closeModal) handlers.closeModal?.();
+      return outcome.completion;
+    }),
+    notify,
     notifications: [],
     unreadCount: 0,
     markAllRead: vi.fn(),
@@ -171,17 +228,18 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
     setSuccessToastMessage,
     formatError,
     notifyError: vi.fn(),
-    showActionErrors: vi.fn(),
-    showActionWarnings: vi.fn(),
+    showActionErrors,
+    showActionWarnings,
     copyToClipboard: vi.fn().mockResolvedValue(true),
-    cancelLoading: vi.fn(),
+    cancelPending: vi.fn(),
   };
   const sync = {
     autoSyncEnabled: true,
     scanScopeRevision: 0,
     // cursor is deselected; goose is selected but not installed and stays
     // in the deploy set (round 12 D3: the batch reports it as a skip).
-    syncSkillsToTools: vi.fn().mockResolvedValue([]),
+    // The one overwrite ask + retry: answers the report as settled.
+    resolveGlobalCollisions: vi.fn<SyncOrchestration["resolveGlobalCollisions"]>(async (report) => report),
     syncTargets: { claude: true, cursor: false, goose: true },
     targetAllInstalled: vi.fn(),
   };
@@ -201,9 +259,19 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
   return { deps, reporter, sync, library };
 }
 
-function installGitCalls() {
-  return mockInvoke.mock.calls.filter(([cmd]) => cmd === "installGitSelection");
+function installCalls() {
+  return mockInvoke.mock.calls.filter(([cmd]) => cmd === "installSelection");
 }
+
+/** The install batch request a git install sends for `picks`. */
+const gitRequest = (url: string, subpaths: string[], resolution: GitSourceResolution | null = null, tools = ["claude", "goose"]) => ({
+  source: { kind: "git", url, resolution },
+  candidates: subpaths.map((subpath) => ({ subpath, name_override: null })),
+  tools,
+  overwrite_if_same_content: true,
+  overrides: [],
+  deploy: true,
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -240,7 +308,7 @@ describe("useAddSkillFlow git flow", () => {
     expect(setup.reporter.setError).toHaveBeenCalledWith(
       'errors.skillAlreadyExists {"name":"alpha"}',
     );
-    expect(installGitCalls()).toHaveLength(0);
+    expect(installCalls()).toHaveLength(0);
   });
 
   it("a single free candidate installs and syncs to every selected target, detected or not", async () => {
@@ -253,26 +321,15 @@ describe("useAddSkillFlow git flow", () => {
       await result.current.handleCreate();
     });
 
+    // One batch: goose is selected but not installed and is still deployed
+    // to (the backend reports the skip); cursor is deselected.
     expect(mockInvoke).toHaveBeenCalledWith(
-      "installGitSelection",
-      "https://github.com/x/y",
-      "skills/alpha",
-      null,
-      null,
+      "installSelection",
+      gitRequest("https://github.com/x/y", ["skills/alpha"]),
+      expect.anything(),
     );
-    // goose is selected but not installed and is still deployed to (the
-    // backend reports the skip); cursor is deselected.
-    expect(setup.sync.syncSkillsToTools).toHaveBeenCalledWith(
-      [
-        {
-          skill_id: "new-id",
-          name: "installed-skill",
-          source_path: "/hub/installed-skill",
-        },
-      ],
-      ["claude", "goose"],
-      { overwriteIfSameContent: true },
-    );
+    // Nothing collided: no ask.
+    expect(setup.sync.resolveGlobalCollisions).not.toHaveBeenCalled();
     expect(setup.reporter.notify).toHaveBeenCalledWith(
       "success", "status.gitSkillCreated", undefined,
     );
@@ -288,8 +345,8 @@ describe("useAddSkillFlow git flow", () => {
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
     act(() => result.current.setGitUrl("https://github.com/x/y/tree/feature/x/skills"));
     await act(async () => { await result.current.handleCreate(); });
-    expect(installGitCalls()).toEqual([["installGitSelection",
-      "https://github.com/x/y/tree/feature/x/skills", "skills/alpha", null, resolution]]);
+    expect(installCalls()).toEqual([["installSelection",
+      gitRequest("https://github.com/x/y/tree/feature/x/skills", ["skills/alpha"], resolution), expect.anything()]]);
   });
 
   it.each<GitSourceResolution | null>([
@@ -306,9 +363,9 @@ describe("useAddSkillFlow git flow", () => {
     act(() => result.current.setGitUrl("https://github.com/x/y/tree/feature/x/skills"));
     await act(async () => { await result.current.handleCreate(); });
     await act(async () => { await result.current.git.install(); });
-    expect(installGitCalls()).toEqual([
-      ["installGitSelection", "https://github.com/x/y/tree/feature/x/skills", "skills/alpha", null, resolution],
-      ["installGitSelection", "https://github.com/x/y/tree/feature/x/skills", "skills/beta", null, resolution],
+    // The whole selection is one batch call.
+    expect(installCalls()).toEqual([
+      ["installSelection", gitRequest("https://github.com/x/y/tree/feature/x/skills", ["skills/alpha", "skills/beta"], resolution), expect.anything()],
     ]);
   });
 
@@ -332,7 +389,7 @@ describe("useAddSkillFlow git flow", () => {
       "skills/alpha": true,
       "skills/beta": true,
     });
-    expect(installGitCalls()).toHaveLength(0);
+    expect(installCalls()).toHaveLength(0);
     // A hand-off to the picker is neither a success nor a failure.
     expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
     expect(setup.reporter.setError).not.toHaveBeenCalled();
@@ -362,11 +419,12 @@ describe("useAddSkillFlow explore auto-select", () => {
 
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith(
-        "installGitSelection",
-        "https://github.com/x/y",
-        "skills/react",
-        null,
-        null,
+        "installSelection",
+        expect.objectContaining({
+          source: { kind: "git", url: "https://github.com/x/y", resolution: null },
+          candidates: [{ subpath: "skills/react", name_override: null }],
+        }),
+        expect.anything(),
       ),
     );
     expect(mockInvoke).toHaveBeenCalledWith(
@@ -410,7 +468,7 @@ describe("useAddSkillFlow explore auto-select", () => {
     });
 
     await waitFor(() => expect(result.current.git.visible).toBe(true));
-    expect(installGitCalls()).toHaveLength(0);
+    expect(installCalls()).toHaveLength(0);
   });
 
   it("falls back to the pick modal when the backend reports ambiguity", async () => {
@@ -435,7 +493,7 @@ describe("useAddSkillFlow explore auto-select", () => {
     });
 
     await waitFor(() => expect(result.current.git.visible).toBe(true));
-    expect(installGitCalls()).toHaveLength(0);
+    expect(installCalls()).toHaveLength(0);
   });
 
   it("errors instead of silently installing a mismatched single candidate", async () => {
@@ -452,7 +510,7 @@ describe("useAddSkillFlow explore auto-select", () => {
         'errors.skillNotFoundInRepo {"name":"gamma"}',
       ),
     );
-    expect(installGitCalls()).toHaveLength(0);
+    expect(installCalls()).toHaveLength(0);
   });
 });
 
@@ -493,7 +551,7 @@ describe("useAddSkillFlow local flow", () => {
       broken: false,
     });
     expect(
-      mockInvoke.mock.calls.some(([cmd]) => cmd === "installLocalSelection"),
+      mockInvoke.mock.calls.some(([cmd]) => cmd === "installSelection"),
     ).toBe(false);
     // A hand-off to the picker is neither a success nor a failure.
     expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
@@ -527,7 +585,7 @@ describe("useAddSkillFlow local flow", () => {
       'errors.skillAlreadyExists {"name":"alpha"}',
     );
     expect(
-      mockInvoke.mock.calls.some(([cmd]) => cmd === "installLocalSelection"),
+      mockInvoke.mock.calls.some(([cmd]) => cmd === "installSelection"),
     ).toBe(false);
   });
 
@@ -547,13 +605,9 @@ describe("useAddSkillFlow local flow", () => {
           reason: null,
         },
       ],
+      // The batch answers the refusal as the candidate's report row.
+      candidateFailure: refusal,
     });
-    const listing = mockInvoke.getMockImplementation()!;
-    mockInvoke.mockImplementation((command, ...args) =>
-      command === "installLocalSelection"
-        ? Promise.reject(refusal)
-        : listing(command, ...args),
-    );
     const setup = makeDeps();
     // The real error copy seam, so the assertion reads the key the
     // Notification carries rather than the double's placeholder.
@@ -570,14 +624,18 @@ describe("useAddSkillFlow local flow", () => {
       await result.current.handleCreate();
     });
 
-    // The thrown refusal lands on the reporter's one-shot error channel,
-    // which the reporter records as an error Notification.
-    expect(setup.reporter.setError).toHaveBeenCalledWith(
-      'errors.localSourceInsideToolDir {"tool":"tools.claude_code {\\"defaultValue\\":\\"claude_code\\"}"}\n\n/home/u/.claude/skills/alpha',
-    );
-    // Nothing was installed, so nothing was deployed.
-    expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
+    // The refusal is the candidate's report row, an error entry the
+    // reporter records as an error Notification with the typed copy.
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
+      {
+        title: t("errors.importFailedTitle", { name: "alpha" }),
+        message: describeCommandError(refusal, t),
+      },
+    ]);
+    // Nothing was installed, so no ask and no success.
+    expect(setup.sync.resolveGlobalCollisions).not.toHaveBeenCalled();
     expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
+    expect(result.current.showAddModal).toBe(false);
   });
 });
 
@@ -859,25 +917,74 @@ it.each(["git", "local"] as const)("%s install applies fold completion instead o
     expect(result.current.showAddModal).toBe(!complete);
     expect(setup.reporter.showActionErrors).toHaveBeenCalledWith(outcome.errors);
     expect(setup.reporter.notify).toHaveBeenCalledWith("warning", "install fold", undefined);
+    // One awaited applyOutcome carries the completion (S9): the reload runs
+    // before the toast, never after an unawaited publish.
+    expect(setup.reporter.applyOutcome).toHaveBeenCalledTimes(1);
+    if (complete)
+      expect(vi.mocked(setup.library.loadManagedSkills).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(setup.reporter.notify).mock.invocationCallOrder.at(-1)!,
+      );
     unmount(); spy.mockRestore();
   }
 });
 
-it("an installed skill still completes when the deployment command throws", async () => {
-  stubBackend({ gitCandidates: [gitCandidate("alpha", "alpha")] });
+it("an installed skill still completes when the overwrite retry throws", async () => {
+  stubBackend({ gitCandidates: [gitCandidate("alpha", "alpha")], occupied: ["claude"] });
   const setup = makeDeps();
-  setup.sync.syncSkillsToTools.mockRejectedValue(new Error("deploy failed"));
+  setup.sync.resolveGlobalCollisions.mockRejectedValue(new Error("retry failed"));
   const { result } = renderHook(() => useAddSkillFlow(setup.deps));
   act(() => { result.current.handleOpenAdd(); result.current.setGitUrl("https://github.com/x/y"); });
   await act(async () => { await result.current.handleCreate(); });
   expect(result.current.showAddModal).toBe(false);
   expect(setup.library.loadManagedSkills).toHaveBeenCalledTimes(1);
-  expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([{ title: t("errors.unsyncedTitle", { name: "installed-skill" }), message: "deploy failed" }]);
+  expect(setup.reporter.setError).toHaveBeenCalledWith("retry failed");
+  // The collided row settles as it first answered: a target failure.
   expect(setup.reporter.notify).toHaveBeenCalledWith(
     "warning",
     `${t("outcome.done.installed", { count: 1 })} · ${t("outcome.targetsFailed", { count: 1 })}`,
     undefined,
   );
+});
+
+it("one ask per Add batch: every candidate's collisions go to the ask at once, and its answer replaces them", async () => {
+  stubBackend({
+    gitCandidates: [gitCandidate("alpha", "skills/alpha"), gitCandidate("beta", "skills/beta")],
+    occupied: ["claude"],
+  });
+  const setup = makeDeps();
+  // The ask's retry answers both asked pairs synced.
+  setup.sync.resolveGlobalCollisions.mockImplementation(async (report) =>
+    report.map((row) => ({
+      ...row,
+      status: { status: "synced", outcome: { mode_used: "symlink", target_path: "/x", replaced: true } },
+    })),
+  );
+  const fold = vi.spyOn(folds, "installOutcome");
+  const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+  act(() => result.current.setGitUrl("https://github.com/x/y"));
+  await act(async () => { await result.current.handleCreate(); });
+  await act(async () => { await result.current.git.install(); });
+
+  expect(installCalls()).toHaveLength(1);
+  expect(setup.sync.resolveGlobalCollisions).toHaveBeenCalledTimes(1);
+  const [asked, skills, policy] = setup.sync.resolveGlobalCollisions.mock.calls[0];
+  expect(asked.filter((row) => row.status.status === "failed").map((row) => [row.skill_name, row.tool_key])).toEqual([
+    ["alpha", "claude"],
+    ["beta", "claude"],
+  ]);
+  expect(skills).toEqual([
+    { skill_id: "new-id-0", name: "alpha", source_path: "/hub/alpha" },
+    { skill_id: "new-id-1", name: "beta", source_path: "/hub/beta" },
+  ]);
+  expect(policy).toEqual({ overwriteIfSameContent: true });
+  const settled = fold.mock.calls[0][0];
+  expect(
+    settled.flatMap((item) =>
+      item.status === "installed" && item.deployment.status === "reported"
+        ? item.deployment.report.map((row) => row.status.status)
+        : [],
+    ),
+  ).toEqual(["synced", "synced", "synced", "synced"]);
 });
 
 it("an empty selection deploys nowhere and says so (no-targets), even with tools detected", async () => {
@@ -887,7 +994,7 @@ it("an empty selection deploys nowhere and says so (no-targets), even with tools
   const { result } = renderHook(() => useAddSkillFlow(setup.deps));
   act(() => { result.current.handleOpenAdd(); result.current.setGitUrl("https://github.com/x/y"); });
   await act(async () => { await result.current.handleCreate(); });
-  expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
+  expect(installCalls()[0][1]).toMatchObject({ tools: [], deploy: true });
   expect(result.current.showAddModal).toBe(false);
   expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([{ title: t("errors.unsyncedTitle", { name: "installed-skill" }), message: t("errors.noSyncTargets") }]);
   expect(setup.reporter.notify).toHaveBeenCalledWith(
@@ -915,5 +1022,129 @@ describe("useAddSkillFlow local folder picker (platform seam)", () => {
     await act(async () => { await result.current.handlePickLocalPath(); });
     expect(setup.reporter.setError).toHaveBeenCalled();
     expect(result.current.localPath).toBe("/home/op/my-skill");
+  });
+});
+
+describe("useAddSkillFlow cancellation at the action boundary (ticket 04 review F2)", () => {
+  /** The flow over the real reporter: its pending record and Cancel are under test. */
+  function useFlowWithReporter(deps: FlowDeps) {
+    const reporter = useStatusReporter(t);
+    const flow = useAddSkillFlow({ ...deps, reporter });
+    return { flow, reporter };
+  }
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((r) => (resolve = r));
+    return { promise, resolve };
+  }
+
+  const cancelCalls = () => mockInvoke.mock.calls.filter(([cmd]) => cmd === "cancelCurrentOperation");
+
+  it.each(["git", "local"] as const)(
+    "%s: a Cancel pressed while the listing runs sends no installSelection; a later Add installs",
+    async (kind) => {
+      stubBackend({
+        gitCandidates: [gitCandidate("alpha", "skills/alpha")],
+        localCandidates: [{ name: "alpha", description: null, subpath: "alpha", valid: true, reason: null }],
+      });
+      const listCommand = kind === "git" ? "listGitSkillsCmd" : "listLocalSkillsCmd";
+      const base = mockInvoke.getMockImplementation()!;
+      const listing = deferred<void>();
+      mockInvoke.mockImplementation((command, ...args) =>
+        command === listCommand ? listing.promise.then(() => base(command, ...args)) : base(command, ...args),
+      );
+      const setup = makeDeps();
+      const { result } = renderHook(() => useFlowWithReporter(setup.deps));
+      // Let the mount's plan read settle (a mutation is refused while it runs).
+      await act(async () => {});
+      act(() => {
+        if (kind === "git") {
+          result.current.flow.setGitUrl("https://github.com/x/y");
+        } else {
+          result.current.flow.setAddModalTab("local");
+          result.current.flow.setLocalPath("/some/dir");
+        }
+      });
+
+      let task!: Promise<void>;
+      await act(async () => {
+        task = result.current.flow.handleCreate();
+      });
+      expect(result.current.reporter.pending?.cancellable).toBe(true);
+      act(() => result.current.reporter.cancelPending());
+      expect(cancelCalls()).toHaveLength(1);
+      await act(async () => {
+        listing.resolve();
+        await task;
+      });
+
+      expect(installCalls()).toHaveLength(0);
+      expect(result.current.reporter.pending).toBeNull();
+
+      // A fresh Add is not poisoned by the earlier Cancel.
+      mockInvoke.mockImplementation(base);
+      await act(async () => {
+        await result.current.flow.handleCreate();
+      });
+      expect(installCalls()).toHaveLength(1);
+    },
+  );
+
+  it("a Cancel during the batch reports the cancelled tail; the ask's retry offers no Cancel", async () => {
+    stubBackend({
+      gitCandidates: [gitCandidate("alpha", "skills/alpha"), gitCandidate("beta", "skills/beta")],
+      occupied: ["claude"],
+    });
+    const base = mockInvoke.getMockImplementation()!;
+    const batch = deferred<void>();
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "installSelection"
+        ? batch.promise.then(async () => {
+            // Cancelled between candidates: the second answers cancelled.
+            const report = (await base(command, ...args)) as InstallBatchReport;
+            return {
+              candidates: report.candidates.map((c, i) => (i === 0 ? c : { ...c, status: { status: "cancelled" } })),
+            };
+          })
+        : base(command, ...args),
+    );
+    const setup = makeDeps();
+    const retry = deferred<void>();
+    setup.sync.resolveGlobalCollisions.mockImplementation(async (report) => {
+      await retry.promise;
+      return report;
+    });
+    const fold = vi.spyOn(folds, "installOutcome");
+    const { result } = renderHook(() => useFlowWithReporter(setup.deps));
+    await act(async () => {});
+    act(() => result.current.flow.setGitUrl("https://github.com/x/y"));
+    await act(async () => {
+      await result.current.flow.handleCreate();
+    });
+
+    let task!: Promise<void>;
+    await act(async () => {
+      task = result.current.flow.git.install();
+    });
+    expect(installCalls()).toHaveLength(1);
+    expect(result.current.reporter.pending?.cancellable).toBe(true);
+    act(() => result.current.reporter.cancelPending());
+    expect(cancelCalls()).toHaveLength(1);
+
+    await act(async () => {
+      batch.resolve();
+    });
+    // The retry is a plain sync: Cancel is withdrawn while it runs.
+    expect(setup.sync.resolveGlobalCollisions).toHaveBeenCalledTimes(1);
+    expect(result.current.reporter.pending?.cancellable).toBe(false);
+
+    await act(async () => {
+      retry.resolve();
+      await task;
+    });
+    expect(fold.mock.calls[0][0].map((item) => item.status)).toEqual(["installed", "cancelled"]);
+    expect(result.current.reporter.pending).toBeNull();
+    expect(installCalls()).toHaveLength(1);
   });
 });

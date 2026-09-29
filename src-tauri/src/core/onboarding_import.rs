@@ -29,7 +29,9 @@
 //!   force-overwrite. The Tools the policy did not name are reported
 //!   as `forced_tools` so the UI can say why a deselected Tool received a
 //!   link. A divergent sibling is neither force-included nor overwritten:
-//!   it is left in place and reported, exactly as on the auto-sync-off path.
+//!   it is left in place and reported once — as the pair's askable
+//!   `TARGET_EXISTS` target row when its Tool is a target, else as a kept
+//!   original, exactly as on the auto-sync-off path.
 //! * **Auto-sync off**: the operator decides per run (`remove_originals`).
 //!   When true, every original of the group (the chosen variant's own path
 //!   included — it now lives in the central repo) is removed *only* when it
@@ -541,6 +543,19 @@ fn sync_imported_unlocked(
         now,
         |_| {},
     );
+    // A divergent sibling sitting where a target lands is that target's
+    // `TARGET_EXISTS` row — the askable one (D12). Reported once, there:
+    // it is not also a kept original.
+    let collided: Vec<&Path> = targets
+        .iter()
+        .filter_map(|outcome| match &outcome.status {
+            super::global_sync::BatchTargetStatus::Failed {
+                error: CommandError::TargetExists { path, .. },
+            } => Some(Path::new(path.as_str())),
+            _ => None,
+        })
+        .collect();
+    originals.retain(|original| !collided.contains(&original.path.as_path()));
     (targets, forced_tools, originals)
 }
 

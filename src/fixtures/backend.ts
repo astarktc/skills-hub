@@ -25,6 +25,12 @@ import type {
   ImportGroupStatus,
   ImportPolicyDto,
   ImportProgressDto,
+  AssignmentDecision,
+  BatchSyncOverrideDto,
+  InstallBatchReport,
+  InstallCandidateOutcome,
+  InstallProgressDto,
+  InstallRequest,
   InstallResultDto,
   InvocationEditConflict,
   InvocationMode,
@@ -205,6 +211,18 @@ export function createFixtureBackend(
     content_hash: skill.contentHash,
   });
 
+  /**
+   * A folder in a target's way, with what the one overwrite ask shows
+   * (Rust `sync_engine::Occupant`, D12): every seeded occupant was last
+   * modified three days before the fixture's clock.
+   */
+  const targetExists = (path: string, sameContent = false): CommandError => ({
+    code: "TARGET_EXISTS",
+    path,
+    modifiedAt: now() - 3 * 24 * 60 * 60 * 1000,
+    sameContent,
+  });
+
   // -------------------------------------------------------------------------
   // Global sync
   // -------------------------------------------------------------------------
@@ -287,7 +305,7 @@ export function createFixtureBackend(
     if (occupantIndex >= 0) {
       const same = state.foreign[occupantIndex].fingerprint === skill.contentHash;
       if (!(overwrite || (same && overwriteIfSameContent))) {
-        return { status: "failed", error: { code: "TARGET_EXISTS", path } };
+        return { status: "failed", error: targetExists(path, same) };
       }
       state.foreign.splice(occupantIndex, 1);
       replaced = true;
@@ -638,7 +656,7 @@ export function createFixtureBackend(
         a.status = "error";
         a.last_error = `target already exists: "${path}"`;
         a.content_hash = null;
-        return { status: "failed", error: { code: "TARGET_EXISTS", path } };
+        return { status: "failed", error: targetExists(path) };
       }
       state.projectOccupants = state.projectOccupants.filter((p) => p !== path);
     }
@@ -746,14 +764,19 @@ export function createFixtureBackend(
 
   /**
    * Enable's first sync (Rust `skill_disable::first_sync_global`): a folder in
-   * the way raises no ask, so the pair stays `disabled` (a marker owning
-   * nothing); any other failure is the batch's own `error` row.
+   * the way is the one ask's (D12) — until answered the pair stays `disabled`
+   * (a marker owning nothing), and the ask's retry is the same scope with the
+   * per-pair decisions; any other failure is the batch's own `error` row.
    */
-  const firstSync = async (skill: FixtureSkill, tools: string[]) => {
+  const firstSync = async (skill: FixtureSkill, tools: string[], overrides: BatchSyncOverrideDto[]) => {
     const outcomes = await syncBatch(
       [{ skill_id: skill.dto.id, name: skill.dto.name, source_path: skill.dto.central_path }],
       tools,
-      { overwrite: false, overwrite_if_same_content: true },
+      {
+        overwrite: false,
+        overwrite_if_same_content: true,
+        overrides: overrides.filter((o) => o.skill_id === skill.dto.id),
+      },
       null,
     );
     for (const o of outcomes) {
@@ -765,7 +788,11 @@ export function createFixtureBackend(
   };
 
   /** Only a skill-grain Enable lifts a skill-grain Disable. */
-  const enablePair = async (skill: FixtureSkill, tool: string): Promise<EnableReport> => {
+  const enablePair = async (
+    skill: FixtureSkill,
+    tool: string,
+    overrides: BatchSyncOverrideDto[],
+  ): Promise<EnableReport> => {
     if (skill.dto.disabled_at !== null) {
       return {
         global: [{ skill_id: skill.dto.id, skill_name: skill.dto.name, tool_key: tool, status: { status: "skipped", error: { code: "TARGET_DISABLED", tool } } }],
@@ -774,25 +801,28 @@ export function createFixtureBackend(
     }
     const group = toolByKey(tool) ? globalSharers(tool) : [tool];
     skill.dto.targets = skill.dto.targets.filter((t) => !(t.status === "disabled" && group.includes(t.tool)));
-    return { global: await firstSync(skill, [tool]), projects: { items: [] } };
+    return { global: await firstSync(skill, [tool], overrides), projects: { items: [] } };
   };
 
   /**
-   * Clear the marker; re-sync every disabled row as a first sync. A folder in
-   * the way of an assignment fails it (`error` with the diagnostic) and the
-   * row still owns nothing (`synced_at` stays null).
+   * Clear the marker; re-sync every disabled row as a first sync. Admission
+   * (Rust `AssignmentTransition::EnableAdmitted`) clears a disabled
+   * assignment's historical ownership — its Disable removed the artifact — so
+   * a folder in the way fails it (`error` with the diagnostic) as a row that
+   * owns nothing (`synced_at` null), which the overwrite ask can settle.
    */
-  const enableSkill = async (skill: FixtureSkill): Promise<EnableReport> => {
+  const enableSkill = async (skill: FixtureSkill, overrides: BatchSyncOverrideDto[]): Promise<EnableReport> => {
     skill.dto.disabled_at = null;
     const tools = skill.dto.targets.filter((t) => t.status === "disabled").map((t) => t.tool);
     skill.dto.targets = skill.dto.targets.filter((t) => t.status !== "disabled");
     const items: ProjectSyncOutcome[] = [];
     for (const project of state.projects) {
       for (const a of project.assignments.filter((x) => x.skill_id === skill.dto.id && x.status === "disabled")) {
+        a.synced_at = null;
         items.push(outcomeOf(project, a, syncAssignment(project, a, false)));
       }
     }
-    return { global: tools.length ? await firstSync(skill, tools) : [], projects: { items } };
+    return { global: tools.length ? await firstSync(skill, tools, overrides) : [], projects: { items } };
   };
 
   // -------------------------------------------------------------------------
@@ -922,7 +952,7 @@ export function createFixtureBackend(
         : state.unwritableTools.includes(installed[0].tool)
           ? PERMISSION_DENIED(driverPath)
           : occupied
-            ? { code: "TARGET_EXISTS", path: driverPath }
+            ? targetExists(driverPath)
             : null;
       const at = now();
       for (const member of installed) {
@@ -1345,6 +1375,16 @@ export function createFixtureBackend(
         { overwrite: false, overwrite_if_same_content: true },
         null,
       );
+      // Rust: a divergent sibling sitting where a target lands is that
+      // target's `TARGET_EXISTS` row — the askable one (D12). Reported once,
+      // there: it is not also a kept original.
+      const collided = new Set(
+        targets.flatMap((o) =>
+          o.status.status === "failed" && o.status.error.code === "TARGET_EXISTS" ? [o.status.error.path] : [],
+        ),
+      );
+      const kept = originals.filter((o) => !collided.has(o.path));
+      originals.splice(0, originals.length, ...kept);
     } else if (!policy.remove_originals) {
       // Rust `leave_original`: nothing touched; every original still present
       // is reported per Tool.
@@ -1448,6 +1488,120 @@ export function createFixtureBackend(
 
   const skillResult = (report: RefreshReport): SkillMutationResultDto => ({ report, skills: skillsDto() });
 
+  /**
+   * The Add batch (Rust `install_batch::install_selection_with`): per
+   * candidate, acquire (a latency step, cancellable between candidates and
+   * after an acquisition — a cancelled candidate finalizes nothing), then
+   * finalize + first sync through the global batch with the same-content
+   * policy. Collisions are collected as `TARGET_EXISTS` rows, never asked.
+   */
+  const installBatch = async (
+    request: InstallRequest,
+    onProgress: ProgressSink<InstallProgressDto>,
+  ): Promise<InstallBatchReport> => {
+    state.cancelRequested = false;
+    const total = request.candidates.length;
+    const candidates: InstallCandidateOutcome[] = [];
+    const labelOf = (subpath: string, name: string | null) =>
+      name || (subpath === "." ? null : subpath.split("/").pop()) || subpath;
+    for (const [i, candidate] of request.candidates.entries()) {
+      const label = labelOf(candidate.subpath, candidate.name_override);
+      const settle = (status: InstallCandidateOutcome["status"], name = label) =>
+        candidates.push({ subpath: candidate.subpath, name, status });
+      if (state.cancelRequested) {
+        settle({ status: "cancelled" });
+        continue;
+      }
+      emit(onProgress, { index: i + 1, total, name: label });
+      await pause(request.source.kind === "git" ? 650 : 400);
+      try {
+        const staged =
+          request.source.kind === "git"
+            ? (() => {
+                const { repo } = findRepo(request.source.url);
+                const found =
+                  repo.candidates.find((c) => c.subpath === candidate.subpath) ??
+                  fail({ code: "SUBPATH_MISSING", subpath: candidate.subpath });
+                return {
+                  name: candidate.name_override ?? found.name,
+                  description: found.description,
+                  sourceType: "git" as const,
+                  sourceRef: request.source.url.trim(),
+                  invocation: found.invocation,
+                };
+              })()
+            : (() => {
+                const local = findLocal(request.source.root);
+                const found =
+                  local.candidates.find((c) => c.subpath === candidate.subpath) ??
+                  fail({ code: "SUBPATH_MISSING", subpath: candidate.subpath });
+                if (!found.valid) fail({ code: "SKILL_INVALID", reason: found.reason ?? "missing_skill_md" });
+                const tool = insideToolDir(local.path);
+                if (tool) fail({ code: "LOCAL_SOURCE_INSIDE_TOOL_DIR", path: local.path, tool: tool.key });
+                return {
+                  name: candidate.name_override ?? found.name,
+                  description: found.description ?? found.name,
+                  sourceType: "local" as const,
+                  sourceRef: candidate.subpath === "." ? local.path : `${local.path}/${candidate.subpath}`,
+                };
+              })();
+        // Cancelled while acquiring: the staged bytes are discarded.
+        if (state.cancelRequested) {
+          settle({ status: "cancelled" });
+          continue;
+        }
+        const skill = finalize(staged);
+        const targets =
+          request.deploy && request.tools.length > 0
+            ? await syncBatch(
+                [{ skill_id: skill.dto.id, name: skill.dto.name, source_path: skill.dto.central_path }],
+                request.tools,
+                {
+                  overwrite: false,
+                  overwrite_if_same_content: request.overwrite_if_same_content,
+                  overrides: request.overrides
+                    .filter((o) => o.skill_name === skill.dto.name)
+                    .map((o) => ({ skill_id: skill.dto.id, tool: o.tool, decision: o.decision })),
+                },
+                null,
+              )
+            : [];
+        settle({ status: "installed", skill: installResult(skill), targets }, skill.dto.name);
+      } catch (error) {
+        settle({ status: "failed", error: error as CommandError });
+      }
+    }
+    return { candidates };
+  };
+
+  /**
+   * The overwrite ask's project retry (Rust `project_sync::resolve_collisions`):
+   * Overwrite re-syncs over the folder; Keep keeps the row `disabled`, owning
+   * nothing, reported `declined`.
+   */
+  const resolveCollision = (decision: AssignmentDecision): ProjectSyncOutcome => {
+    const project = findProject(decision.project_id);
+    const a = project.assignments.find((x) => x.skill_id === decision.skill_id && x.tool === decision.tool);
+    if (!a) {
+      return {
+        assignment_id: null,
+        project_id: decision.project_id,
+        skill_id: decision.skill_id,
+        skill_name: "",
+        tool: decision.tool,
+        status: { status: "failed", error: { code: "NOT_FOUND", kind: "assignment", id: `${decision.project_id}/${decision.skill_id}/${decision.tool}` } },
+      };
+    }
+    if (isDisabledAssignment(a)) return outcomeOf(project, a, skippedDisabled);
+    if (a.synced_at !== null) return outcomeOf(project, a, { status: "already_assigned" });
+    if (decision.decision === "keep") {
+      a.status = "disabled";
+      a.last_error = null;
+      return outcomeOf(project, a, { status: "declined" });
+    }
+    return outcomeOf(project, a, syncAssignment(project, a, true));
+  };
+
   const handlers = {
     getSettings: async () => {
       await pause(40);
@@ -1541,6 +1695,7 @@ export function createFixtureBackend(
       await pause(120);
       return syncBatch(skills, tools, policy, onProgress);
     },
+    installSelection: async (request, onProgress) => installBatch(request, onProgress),
     refreshManagedSkills: async (skillIds, policy, onProgress) =>
       refreshBatch(skillIds, policy, onProgress),
     updateManagedSkill: async (skillId, policy, onProgress) =>
@@ -1655,6 +1810,14 @@ export function createFixtureBackend(
       Object.assign(skill.dto, { source_type: "imported", source_ref: null, imported_from_tool: null, refreshable: false, unlocatable: null, detachable: false });
       return null;
     },
+    // Rust `skill_health::dismiss_outcome`: only `import_failed` is
+    // dismissable; a newer outcome of another kind is left alone.
+    clearSkillHealth: async (skillId, kind) => {
+      await pause(60);
+      if (kind !== "import_failed") fail({ code: "OTHER", message: `skill health ${kind} is not dismissable` });
+      clearHealth(findSkill(skillId), ["import_failed"]);
+      return null;
+    },
     importOnboardingSelection: async (selections, policy, onProgress: ProgressSink<ImportProgressDto>) => {
       await pause(150);
       const plan = buildPlan();
@@ -1728,16 +1891,16 @@ export function createFixtureBackend(
           : state.skills.filter((s) => scope.skill_ids.includes(s.dto.id));
       return removal(skills.flatMap(disableSkill));
     },
-    enableSkillTargets: async (scope: DisableScope) => {
+    enableSkillTargets: async (scope: DisableScope, overrides) => {
       await pause(200);
-      if (scope.kind === "skill_tool") return enablePair(findSkill(scope.skill_id), scope.tool);
+      if (scope.kind === "skill_tool") return enablePair(findSkill(scope.skill_id), scope.tool, overrides);
       const skills =
         scope.kind === "skill"
           ? [findSkill(scope.skill_id)]
           : state.skills.filter((s) => scope.skill_ids.includes(s.dto.id));
       const report: EnableReport = { global: [], projects: { items: [] } };
       for (const skill of skills) {
-        const one = await enableSkill(skill);
+        const one = await enableSkill(skill, overrides);
         report.global.push(...one.global);
         report.projects.items.push(...one.projects.items);
       }
@@ -1873,6 +2036,10 @@ export function createFixtureBackend(
       const project = findProject(projectId);
       const items = project.assignments.map((a) => outcomeOf(project, a, resyncOne(project, a)));
       return { view: viewOf(project), report: { items } };
+    },
+    resolveProjectCollisions: async (decisions) => {
+      await pause(200);
+      return { items: decisions.map(resolveCollision) };
     },
     resyncAllProjects: async () => {
       await pause(700);

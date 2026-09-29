@@ -33,6 +33,8 @@ pub enum GlobalSyncError {
     },
     TargetExists {
         target_path: PathBuf,
+        /// The folder in the way, as the overwrite ask shows it (D12).
+        occupant: sync_engine::Occupant,
     },
     ToolNotWritable {
         tool_display_name: String,
@@ -50,7 +52,7 @@ impl fmt::Display for GlobalSyncError {
             GlobalSyncError::TargetDisabled { tool_key } => {
                 write!(f, "target disabled: {}", tool_key)
             }
-            GlobalSyncError::TargetExists { target_path } => {
+            GlobalSyncError::TargetExists { target_path, .. } => {
                 write!(f, "target already exists: {}", target_path.display())
             }
             GlobalSyncError::ToolNotWritable {
@@ -122,9 +124,14 @@ pub(crate) fn sync_skill_into_root(
         || (policy.overwrite_if_same_content
             && content_identity::same_content(Source::Managed { store, skill_id }, &target));
 
-    let outcome =
-        sync_engine::sync_dir_for_tool_with_overwrite(adapter, source, &target, overwrite)
-            .map_err(|err| classify_sync_error(err, adapter, tool_root, &target))?;
+    let outcome = sync_engine::sync_dir_for_tool_with_overwrite(
+        adapter,
+        source,
+        Source::Managed { store, skill_id },
+        &target,
+        overwrite,
+    )
+    .map_err(|err| classify_sync_error(err, adapter, tool_root, &target))?;
 
     // Some tools share the same global skills directory; keep DB records consistent across them.
     let target_path = outcome.target_path.to_string_lossy();
@@ -152,13 +159,13 @@ fn classify_sync_error(
 ) -> GlobalSyncError {
     // Typed condition raised by `sync_engine` — recovered by downcast through
     // the anyhow chain, never by matching message text (ADR 0001).
-    if err.chain().any(|cause| {
-        cause
-            .downcast_ref::<sync_engine::TargetExistsError>()
-            .is_some()
-    }) {
+    if let Some(exists) = err
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<sync_engine::TargetExistsError>())
+    {
         return GlobalSyncError::TargetExists {
             target_path: target.to_path_buf(),
+            occupant: exists.occupant,
         };
     }
 

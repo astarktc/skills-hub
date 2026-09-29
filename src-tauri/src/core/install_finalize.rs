@@ -25,8 +25,9 @@ use super::provenance::Provenance;
 use super::skill_store::{SkillRecord, SkillStore};
 use super::sync_engine::copy_dir_recursive;
 
-/// Outcome of a completed install.
-#[derive(Debug)]
+/// Outcome of a completed install. Crosses the wire as itself inside the
+/// install batch's report (`core::install_batch`).
+#[derive(Debug, serde::Serialize, specta::Type)]
 pub struct InstallResult {
     pub skill_id: String,
     pub name: String,

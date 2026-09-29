@@ -6,6 +6,7 @@
  * function in.
  */
 
+import type { CommandError } from "../bindings";
 import type {
   InvocationMode,
   RepointTarget,
@@ -61,6 +62,16 @@ export type RepoGroup<T> = {
 };
 
 export const LOCAL_GROUP_KEY = "__local__";
+
+/**
+ * The order a list's rows are on screen: a grouped list walks its groups
+ * (each group's skills in sort order), a flat list is the sorted list. One
+ * sequence for rendering, selection navigation and focus — a grouped list's
+ * neighbours are not its flat sort's.
+ */
+export function displayOrder<T>(visible: readonly T[], groups: readonly RepoGroup<T>[] | null): T[] {
+  return groups ? groups.flatMap((group) => group.skills) : [...visible];
+}
 
 /** The folded group of sources that hold one skill each (`foldSingletons`). */
 export const INDIVIDUAL_GROUP_KEY = "__individual__";
@@ -467,11 +478,24 @@ export function formatRelativeTime(
 }
 
 /**
+ * Whether a target row is live: materialised by the app and not switched
+ * off. A `disabled` row is the operator's "not on this Tool"; an `error` row
+ * that was never synced (`synced_at` null — a failed first sync, D9) owns
+ * nothing on disk, so the skill is not deployed there.
+ */
+export function isLiveTarget(target: Pick<SkillTargetDto, "status" | "synced_at">): boolean {
+  if (target.status === "disabled") return false;
+  return !(target.status === "error" && target.synced_at === null);
+}
+
+/**
  * The card's deploy action for a skill with no live target. Disabled at
  * either grain it is an Enable (`enable` — one skill-grain batch that
  * re-syncs every disabled row, never a sync the Disabled gate would skip);
  * `disabledTargets` names how many pairs that turns back on. Otherwise a sync
- * to the effective target set (`sync`). `deployed` means some target is live.
+ * to the effective target set (`sync`) — which is also the retry of a skill
+ * whose only targets are failed first syncs. `deployed` means some target is
+ * live (`isLiveTarget`).
  */
 export type DeployAction =
   | { kind: "deployed" }
@@ -479,22 +503,317 @@ export type DeployAction =
   | { kind: "sync" };
 export function deployAction(skill: {
   disabled_at: number | null;
-  targets: readonly Pick<SkillTargetDto, "status">[];
+  targets: readonly Pick<SkillTargetDto, "status" | "synced_at">[];
 }): DeployAction {
   const disabledTargets = skill.targets.filter((target) => target.status === "disabled").length;
   if (skill.disabled_at !== null) return { kind: "enable", disabledTargets };
-  if (disabledTargets < skill.targets.length) return { kind: "deployed" };
+  if (skill.targets.some(isLiveTarget)) return { kind: "deployed" };
   return disabledTargets > 0 ? { kind: "enable", disabledTargets } : { kind: "sync" };
 }
 
+// ---------------------------------------------------------------------------
+// Skill health and the source line: one fold (D7 candidate 3, D9)
+// ---------------------------------------------------------------------------
+
+/** How loud a health row is: failed › stale › muted; a skill with no row is healthy. */
+export type HealthSeverity = "failed" | "stale" | "muted" | "healthy";
+
 /**
- * Skill health: the skill's stored last outcome (`ManagedSkill.health`,
- * written by the backend where the outcome settled), or `null` when healthy.
- * A stub: ticket 09's fold adds severity and the source line; every reader
- * goes through this one function so that fold lands in one place.
+ * One reason a skill is not simply healthy. Skill-level kinds are the
+ * Unlocatable states (computed at list time), the stored outcome kinds
+ * (`ManagedSkill.health`) and skill-grain Disable; target-level kinds count
+ * Sync target rows by status.
  */
-export function skillHealth(skill: { health: SkillHealth | null }): SkillHealth | null {
-  return skill.health;
+export type HealthRowKind =
+  | UnlocatableState
+  | SkillOutcomeKind
+  | "disabled"
+  | "targets_failed"
+  | "targets_missing"
+  | "targets_stale"
+  | "targets_disabled"
+  | "not_deployed";
+
+/**
+ * A repair a health row offers; each is a verb of the skill action door
+ * (`dismiss` = the `import_failed` Dismiss, `retryTargets` = a re-sync from
+ * the central copy of the row's pairs — failed, missing or stale, never an
+ * upstream fetch — `deploy` = a sync to the effective targets, `disable` =
+ * finish a skill-grain Disable whose targets did not all settle).
+ */
+export type HealthRepair =
+  | "restore"
+  | "repoint"
+  | "detach"
+  | "update"
+  | "editInvocation"
+  | "delete"
+  | "dismiss"
+  | "retryTargets"
+  | "enable"
+  | "deploy"
+  | "disable";
+
+export type HealthRow = {
+  kind: HealthRowKind;
+  scope: "skill" | "target";
+  severity: HealthSeverity;
+  /** Target rows: how many, and on which Tools (registry keys, in row order). */
+  count: number;
+  tools: string[];
+  /** A stored outcome's typed error and when it settled; null otherwise. */
+  error: CommandError | null;
+  at: number | null;
+  repairs: HealthRepair[];
+};
+
+/**
+ * The one precedence rule: rows are listed in this order, which is also
+ * severity order (every failed kind before every stale kind before every
+ * muted one). The first row is the skill's headline problem.
+ */
+export const HEALTH_ROW_ORDER = [
+  "central_missing",
+  "restore_failed",
+  "delete_incomplete",
+  "targets_failed",
+  "targets_missing",
+  "source_missing",
+  "repoint_failed",
+  "fetch_failed",
+  "edit_conflict",
+  "import_failed",
+  "targets_stale",
+  "disabled",
+  "targets_disabled",
+  "not_deployed",
+] as const satisfies readonly HealthRowKind[];
+
+const ROW_SEVERITY: Record<HealthRowKind, HealthSeverity> = {
+  central_missing: "failed",
+  restore_failed: "failed",
+  delete_incomplete: "failed",
+  targets_failed: "failed",
+  targets_missing: "failed",
+  source_missing: "stale",
+  repoint_failed: "stale",
+  fetch_failed: "stale",
+  edit_conflict: "stale",
+  import_failed: "stale",
+  targets_stale: "stale",
+  disabled: "muted",
+  targets_disabled: "muted",
+  not_deployed: "muted",
+};
+
+const SEVERITY_RANK: Record<HealthSeverity, number> = {
+  failed: 3,
+  stale: 2,
+  muted: 1,
+  healthy: 0,
+};
+
+/** The label of each row kind (`health.rows.*`; counted kinds take `count`). */
+export const HEALTH_ROW_LABEL_KEY = {
+  central_missing: "unlocatable.centralMissing",
+  source_missing: "unlocatable.sourceMissing",
+  fetch_failed: "skillHealth.fetchFailed",
+  edit_conflict: "skillHealth.editConflict",
+  delete_incomplete: "skillHealth.deleteIncomplete",
+  repoint_failed: "skillHealth.repointFailed",
+  restore_failed: "skillHealth.restoreFailed",
+  import_failed: "skillHealth.importFailed",
+  disabled: "health.rows.disabled",
+  targets_failed: "health.rows.targetsFailed",
+  targets_missing: "health.rows.targetsMissing",
+  targets_stale: "health.rows.targetsStale",
+  targets_disabled: "health.rows.targetsDisabled",
+  not_deployed: "health.rows.notDeployed",
+} as const satisfies Record<HealthRowKind, string>;
+
+/** The label of each repair (`health.repairs.*`, the Unlocatable ones reused). */
+export const HEALTH_REPAIR_LABEL_KEY = {
+  restore: "unlocatable.restore",
+  repoint: "unlocatable.repoint",
+  detach: "unlocatable.detach",
+  update: "health.repairs.retryUpdate",
+  editInvocation: "health.repairs.editInvocation",
+  delete: "health.repairs.finishDelete",
+  dismiss: "health.repairs.dismiss",
+  retryTargets: "health.repairs.retryTargets",
+  enable: "health.repairs.enable",
+  deploy: "health.repairs.deploy",
+  disable: "health.repairs.finishDisable",
+} as const satisfies Record<HealthRepair, string>;
+
+/** How the source line is drawn. */
+export type SourceIcon = "github" | "git" | "folder" | "imported";
+
+/**
+ * A skill's source line: what it is labelled, where it links, what Copy
+ * puts on the clipboard (null = nothing to copy — an imported skill has no
+ * source) and its icon. For an imported skill `label` is "Managed here"
+ * and `detail` the display-only "Imported from {Tool}" history.
+ */
+export type SkillSourceLine = {
+  kind: SourceKind;
+  label: string;
+  detail: string | null;
+  /** Hover text (the imported line's explanation), when there is one. */
+  title: string | null;
+  href: string | null;
+  copyValue: string | null;
+  icon: SourceIcon;
+};
+
+/**
+ * The one source-line rule (card, inspector, Explore preview): a GitHub
+ * repo shows `owner/repo`, links and copies the repo; any other git source
+ * and a local folder show and copy the recorded source ref (a local skill's
+ * `source_ref`, D15) — the central copy only when none is recorded; an
+ * imported skill shows "Managed here · Imported from {Tool}" and copies
+ * nothing.
+ */
+export function skillSourceLine(
+  skill: Pick<SkillPresentationFields, "source_type" | "source_ref" | "central_path"> & {
+    imported_from_tool?: string | null;
+  },
+  t: Translate,
+): SkillSourceLine {
+  const kind = sourceKind(skill);
+  if (kind === "imported") {
+    const imported = importedSourceLine({ imported_from_tool: skill.imported_from_tool ?? null }, t);
+    return {
+      kind,
+      label: imported.managedHere,
+      detail: imported.importedFrom,
+      title: t("provenance.managedHereTooltip", { tool: imported.tool }),
+      href: null,
+      copyValue: null,
+      icon: "imported",
+    };
+  }
+  const github = kind === "git" ? repoInfo(skill.source_ref) : null;
+  if (github) {
+    return { kind, label: github.label, detail: null, title: null, href: github.href, copyValue: github.href, icon: "github" };
+  }
+  const label = skillSourceLabel(skill);
+  return {
+    kind,
+    label,
+    detail: null,
+    title: null,
+    href: null,
+    copyValue: label.trim() || null,
+    icon: kind === "git" ? "git" : "folder",
+  };
+}
+
+/** The skill fields the health fold reads (all on the wire). */
+export type SkillHealthFields = Pick<
+  SkillPresentationFields,
+  "source_type" | "source_ref" | "central_path"
+> & {
+  imported_from_tool: string | null;
+  unlocatable: UnlocatableState | null;
+  refreshable: boolean;
+  detachable: boolean;
+  disabled_at: number | null;
+  health: SkillHealth | null;
+  invocation_override: { conflict: boolean } | null;
+  targets: readonly Pick<SkillTargetDto, "tool" | "status" | "synced_at">[];
+};
+
+/** What the fold answers: the rows by precedence, the loudest severity, the source line. */
+export type SkillHealthFold = {
+  rows: HealthRow[];
+  severity: HealthSeverity;
+  source: SkillSourceLine;
+};
+
+const STORED_REPAIRS: Record<SkillOutcomeKind, (skill: SkillHealthFields) => HealthRepair[]> = {
+  fetch_failed: (skill) => (skill.refreshable ? ["update", "repoint"] : ["repoint"]),
+  edit_conflict: () => ["editInvocation"],
+  // Retry = finish the Delete (the kept artifacts go, then the row).
+  delete_incomplete: () => ["delete"],
+  repoint_failed: () => ["repoint"],
+  restore_failed: (skill) => (skill.refreshable ? ["restore", "repoint"] : ["repoint"]),
+  // Nothing to retry (the skill is imported; an original stayed): Dismiss.
+  import_failed: () => ["dismiss"],
+};
+
+/**
+ * Skill health: every reason this skill is not simply healthy, one row per
+ * kind in `HEALTH_ROW_ORDER`, its loudest severity, and its source line.
+ * Card, inspector ladder, issues banner/chip and the strip read this answer;
+ * nothing else composes health. `context.t` labels the source line.
+ *
+ * - Skill level: the Unlocatable state (repairs from `unlocatableRepairs`,
+ *   plus Remove), the stored outcome (`ManagedSkill.health`), an Edit
+ *   conflict the override reports live (deduplicated with a stored one),
+ *   skill-grain Disable.
+ * - Target level: `error` rows (failed — a never-synced one is a failed first
+ *   sync), `missing`, `stale` (copy drift), pair-grain `disabled` rows (only
+ *   when the skill is not disabled as a whole), and "not deployed" when no
+ *   target is live and nothing is disabled. A failed / missing / stale row is
+ *   repaired from the central copy (`retryTargets` on its Tools) — for every
+ *   provenance, since the central bytes are what a target should hold; under
+ *   skill-grain Disable the only repair honouring the operator's policy is
+ *   finishing the Disable (a re-sync would be skipped by the Disabled gate).
+ */
+export function skillHealth(
+  skill: SkillHealthFields,
+  context: { t: Translate },
+): SkillHealthFold {
+  const rows: HealthRow[] = [];
+  const row = (
+    kind: HealthRowKind,
+    fields: Partial<Omit<HealthRow, "kind" | "scope" | "severity">> = {},
+  ): HealthRow => ({
+    kind,
+    scope: kind.startsWith("targets_") || kind === "not_deployed" ? "target" : "skill",
+    severity: ROW_SEVERITY[kind],
+    count: 0,
+    tools: [],
+    error: null,
+    at: null,
+    repairs: [],
+    ...fields,
+  });
+
+  if (skill.unlocatable) {
+    rows.push(row(skill.unlocatable, { repairs: [...unlocatableRepairs(skill), "delete"] }));
+  }
+  const stored = skill.health;
+  if (stored) {
+    rows.push(row(stored.kind, { error: stored.error, at: stored.at, repairs: STORED_REPAIRS[stored.kind](skill) }));
+  }
+  if (skill.invocation_override?.conflict && stored?.kind !== "edit_conflict") {
+    rows.push(row("edit_conflict", { repairs: ["editInvocation"] }));
+  }
+  if (skill.disabled_at !== null) rows.push(row("disabled", { at: skill.disabled_at, repairs: ["enable"] }));
+
+  const byStatus = (status: SkillTargetDto["status"]) =>
+    skill.targets.filter((target) => target.status === status).map((target) => target.tool);
+  const counted = (kind: HealthRowKind, tools: string[], repairs: HealthRepair[]) => {
+    if (tools.length > 0) rows.push(row(kind, { count: tools.length, tools, repairs }));
+  };
+  const targetRepairs: HealthRepair[] = skill.disabled_at !== null ? ["disable"] : ["retryTargets"];
+  counted("targets_failed", byStatus("error"), targetRepairs);
+  counted("targets_missing", byStatus("missing"), targetRepairs);
+  counted("targets_stale", byStatus("stale"), targetRepairs);
+  if (skill.disabled_at === null) counted("targets_disabled", byStatus("disabled"), ["enable"]);
+  if (skill.disabled_at === null && deployAction(skill).kind === "sync" && !skill.unlocatable) {
+    rows.push(row("not_deployed", { repairs: ["deploy"] }));
+  }
+
+  const rank = (kind: HealthRowKind) => (HEALTH_ROW_ORDER as readonly HealthRowKind[]).indexOf(kind);
+  rows.sort((a, b) => rank(a.kind) - rank(b.kind));
+  const severity = rows.reduce<HealthSeverity>(
+    (loudest, current) => (SEVERITY_RANK[current.severity] > SEVERITY_RANK[loudest] ? current.severity : loudest),
+    "healthy",
+  );
+  return { rows, severity, source: skillSourceLine(skill, context.t) };
 }
 
 /** The one-line label of each stored outcome kind (`skillHealth.*`). */

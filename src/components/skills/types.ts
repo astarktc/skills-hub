@@ -63,6 +63,17 @@ export type { ImportGroupStatus } from "../../bindings";
 export type { ImportSkipReason } from "../../bindings";
 export type { OriginalOutcome } from "../../bindings";
 export type { OriginalStatus } from "../../bindings";
+export type {
+  InstallRequest,
+  InstallSource,
+  InstallCandidate,
+  InstallOverride,
+  InstallBatchReport,
+  InstallCandidateOutcome,
+  InstallCandidateStatus,
+  InstallProgressDto,
+  InstallResult,
+} from "../../bindings";
 
 // Frontend-only type (no Rust counterpart).
 export type ToolOption = {

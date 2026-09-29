@@ -95,15 +95,17 @@ function stubBackend(initial = appSettings()) {
   });
 }
 
+// The one failure dialect: `notifyError(err)` is an error Notification of
+// the formatted copy — the stub records it through `notify`.
 function makeReporter(): Pick<
   StatusReporter,
-  "setError" | "setSuccessToastMessage" | "formatError" | "notify"
+  "notifyError" | "setSuccessToastMessage" | "notify"
 > {
+  const notify = vi.fn();
   return {
-    setError: vi.fn(),
+    notifyError: vi.fn((err: unknown) => notify("error", `formatted:${String(err)}`)),
     setSuccessToastMessage: vi.fn(),
-    formatError: vi.fn((err: unknown) => `formatted:${String(err)}`),
-    notify: vi.fn(),
+    notify,
   };
 }
 
@@ -185,7 +187,7 @@ describe("useSettingsState load", () => {
     renderSettings(reporter);
 
     await waitFor(() => {
-      expect(reporter.setError).toHaveBeenCalledWith("formatted:Error: boom");
+      expect(reporter.notify).toHaveBeenCalledWith("error", "formatted:Error: boom");
     });
   });
 });
@@ -256,7 +258,7 @@ describe("useSettingsState writes", () => {
     await act(async () => {
       await result.current.handleGithubTokenRemove();
     });
-    expect(reporter.setError).toHaveBeenCalledWith(`formatted:${String(failure)}`);
+    expect(reporter.notify).toHaveBeenCalledWith("error", `formatted:${String(failure)}`);
     expect(result.current.githubTokenSet).toBe(true);
 
     // A failed save keeps the draft for a retry.
@@ -291,7 +293,7 @@ describe("useSettingsState writes", () => {
       "githubTokenUnconfirmedMessage",
     );
     expect(reporter.setSuccessToastMessage).not.toHaveBeenCalled();
-    expect(reporter.setError).not.toHaveBeenCalled();
+    expect(reporter.notifyError).not.toHaveBeenCalled();
   });
 });
 
@@ -361,7 +363,7 @@ describe("useSettingsState token single-flight", () => {
       await result.current.handleGitCacheTtlSecsChange(3);
     });
 
-    expect(reporter.setError).toHaveBeenCalledWith("formatted:Error: disk");
+    expect(reporter.notify).toHaveBeenCalledWith("error", "formatted:Error: disk");
     expect(result.current.storagePath).toBe("/home/op/.skillshub");
   });
 });
@@ -431,7 +433,7 @@ describe("useSettingsState open log folder", () => {
     });
 
     expect(mockInvoke).toHaveBeenCalledWith("openLogFolder");
-    expect(reporter.setError).not.toHaveBeenCalled();
+    expect(reporter.notifyError).not.toHaveBeenCalled();
   });
 
   it("surfaces a failure to open through the reporter", async () => {
@@ -449,8 +451,7 @@ describe("useSettingsState open log folder", () => {
       await result.current.handleOpenLogFolder();
     });
 
-    expect(reporter.setError).toHaveBeenCalledWith(
-      "formatted:[object Object]",
+    expect(reporter.notify).toHaveBeenCalledWith("error", "formatted:[object Object]",
     );
   });
 });
@@ -493,7 +494,7 @@ describe("useSettingsState storage folder and zoom (platform seam)", () => {
     await act(async () => {
       await result.current.handlePickStoragePath();
     });
-    expect(reporter.setError).toHaveBeenCalledWith("formatted:Error: dialog failed");
+    expect(reporter.notify).toHaveBeenCalledWith("error", "formatted:Error: dialog failed");
     expect(updateCalls()).toEqual([]);
   });
 

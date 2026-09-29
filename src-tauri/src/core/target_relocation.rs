@@ -195,7 +195,13 @@ fn materialise(
         },
         &target,
     );
-    match sync_engine::sync_dir_for_tool_with_overwrite(adapter, central, &target, overwrite) {
+    let identity = Source::Managed {
+        store,
+        skill_id: &skill.id,
+    };
+    match sync_engine::sync_dir_for_tool_with_overwrite(
+        adapter, central, identity, &target, overwrite,
+    ) {
         Ok(outcome) => Some(outcome),
         Err(err) => {
             log::warn!(

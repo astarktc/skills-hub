@@ -9,33 +9,36 @@ import {
 import type { TFunction } from "i18next";
 import type { ListLens, ViewMode } from "../../hooks/useListLens";
 import LensSortControl from "../shared/LensSortControl";
+import type { SkillActions } from "../../hooks/useSkillActions";
 
 type FilterBarProps = {
   /** My Skills' list lens: query, sort, Grouped/Flat and view mode. */
   lens: ListLens;
-  loading: boolean;
+  /** Why the toolbar's verbs are disabled while an action runs (one at a time, D19), or null. */
+  blockedReason: string | null;
   /** Opens the Local / Git add modal — the same flow Explore's Manual button uses. */
   onAddSkill: () => void;
-  onRefresh: () => void;
   autoSyncEnabled: boolean;
   onAutoSyncChange: (enabled: boolean) => void;
-  onUnsyncAll: () => void;
+  /** The skill action door: Refresh and library-wide Disable go through it. */
+  actions: Pick<SkillActions, "run">;
   onConfigureTools: () => void;
   t: TFunction;
 };
 
 const FilterBar = ({
   lens,
-  loading,
+  blockedReason,
   onAddSkill,
-  onRefresh,
   autoSyncEnabled,
   onAutoSyncChange,
-  onUnsyncAll,
+  actions,
   onConfigureTools,
   t,
 }: FilterBarProps) => {
   const { viewMode, setViewMode } = lens;
+  const blocked = blockedReason !== null;
+  const titled = (title: string) => blockedReason ?? title;
   return (
     <div className="filter-bar">
       <div className="filter-bar-left">
@@ -72,7 +75,8 @@ const FilterBar = ({
           className="btn btn-primary"
           type="button"
           onClick={onAddSkill}
-          disabled={loading}
+          disabled={blocked}
+          title={blockedReason ?? undefined}
         >
           <Plus size={14} />
           {t("addSkillButton")}
@@ -82,7 +86,7 @@ const FilterBar = ({
             type="checkbox"
             checked={autoSyncEnabled}
             onChange={(e) => onAutoSyncChange(e.target.checked)}
-            disabled={loading}
+            disabled={blocked}
           />
           <span className="auto-sync-label">{t("autoSyncToggle")}</span>
         </label>
@@ -90,8 +94,8 @@ const FilterBar = ({
           className="btn btn-secondary"
           type="button"
           onClick={onConfigureTools}
-          disabled={loading}
-          title={t("configureTools")}
+          disabled={blocked}
+          title={titled(t("configureTools"))}
         >
           <Wrench size={14} />
           {t("configureTools")}
@@ -99,9 +103,9 @@ const FilterBar = ({
         <button
           className="btn btn-secondary unsync-all-btn"
           type="button"
-          onClick={onUnsyncAll}
-          disabled={loading}
-          title={t("unsyncAll")}
+          onClick={() => void actions.run("disable", "all")}
+          disabled={blocked}
+          title={titled(t("unsyncAll"))}
         >
           {t("unsyncAll")}
         </button>
@@ -117,8 +121,9 @@ const FilterBar = ({
         <button
           className="btn btn-secondary"
           type="button"
-          onClick={onRefresh}
-          disabled={loading}
+          onClick={() => void actions.run("update", "all")}
+          disabled={blocked}
+          title={blockedReason ?? undefined}
         >
           <RefreshCw size={14} />
           {t("refresh")}

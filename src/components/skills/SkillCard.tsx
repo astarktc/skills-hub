@@ -4,6 +4,7 @@ import {
   Box,
   Copy,
   Folder,
+  GitBranch,
   Link,
   MapPin,
   RefreshCw,
@@ -13,26 +14,22 @@ import {
 import { SiGithub } from "@icons-pack/react-simple-icons";
 import type { TFunction } from "i18next";
 import type { CopyToClipboardFn } from "../../hooks/useStatusReporter";
+import type { SkillActions } from "../../hooks/useSkillActions";
 import { describeCommandError } from "../../commandError";
+import { cn } from "@/lib/utils";
+import { isPendingSkill, type PendingAction } from "../../lib/actionLifecycle";
 import InvocationModeBadge from "./InvocationModeBadge";
 import type { ManagedSkill, SkillTargetDto, ToolOption } from "./types";
 import {
   deployAction,
   formatRelativeTime,
-  importedSourceLine,
-  repoInfo,
+  HEALTH_REPAIR_LABEL_KEY,
+  HEALTH_ROW_LABEL_KEY,
   skillHealth,
-  SKILL_OUTCOME_LABEL_KEY,
-  skillSourceLabel,
   skillToolChips,
-  sourceKind,
-  unlocatableRepairs,
-  UNLOCATABLE_STATE_KEY,
   UNLOCATABLE_TOOLTIP_KEY,
-  UNLOCATABLE_REPAIR_KEY,
+  type HealthRow,
   type SkillToolChip,
-  type RepointKind,
-  type UnlocatableRepair,
 } from "../../lib/skillPresentation";
 
 type SyncedChip = SkillToolChip & { target: SkillTargetDto };
@@ -42,21 +39,16 @@ type SkillCardProps = {
   installedTools: ToolOption[];
   /** Every registry tool, detected or not — labels the skill's orphaned rows. */
   allTools: ToolOption[];
-  loading: boolean;
-  onUpdate: (skill: ManagedSkill) => void;
   /**
-   * Change source (every managed skill); the `source_missing` repair opens
-   * it on `local`. The other Unlocatable repairs follow; Remove is `onDelete`.
+   * The action running now: this card's own shows inline (`aria-busy`); any
+   * running action disables the card's verbs (one mutation at a time, D19).
    */
-  onRepoint: (skill: ManagedSkill, preselect?: RepointKind) => void;
-  onDetach: (skill: ManagedSkill) => void;
-  onRestore: (skill: ManagedSkill) => void;
-  onDelete: (skillId: string) => void;
-  onToggleTool: (skill: ManagedSkill, toolId: string) => void;
-  onUnsync: (skillId: string) => void;
-  onSyncToAllTools: (skill: ManagedSkill) => void;
+  pending: PendingAction | null;
+  /** Why the verbs are disabled while something runs (the refusal in words). */
+  blockedReason: string | null;
+  /** The skill action door: every verb on this card goes through it. */
+  actions: Pick<SkillActions, "run" | "repair">;
   onOpenDetail: (skill: ManagedSkill) => void;
-  onInvocationClick: (skillId: string) => void;
   /** The reporter's clipboard helper, handed down by the list. */
   copyToClipboard: CopyToClipboardFn;
   t: TFunction;
@@ -68,58 +60,57 @@ const SkillCard = ({
   skill,
   installedTools,
   allTools,
-  loading,
-  onUpdate,
-  onRepoint,
-  onDetach,
-  onRestore,
-  onDelete,
-  onToggleTool,
-  onUnsync,
-  onSyncToAllTools,
+  pending,
+  blockedReason,
+  actions,
   onOpenDetail,
-  onInvocationClick,
   copyToClipboard,
   t,
 }: SkillCardProps) => {
-  const kind = sourceKind(skill);
+  const { run, repair } = actions;
+  const busy = pending !== null;
+  const busyHere = isPendingSkill(pending, skill.id);
+  // One fold answers health and the source line (card, inspector, banner).
+  const health = skillHealth(skill, { t });
+  const { source } = health;
   const iconNode =
-    kind === "git" ? (
+    source.icon === "github" ? (
       <SiGithub size={20} />
-    ) : kind === "local" ? (
-      <Folder size={20} />
-    ) : (
+    ) : source.icon === "git" ? (
+      <GitBranch size={20} />
+    ) : source.icon === "imported" ? (
       <Box size={20} />
+    ) : (
+      <Folder size={20} />
     );
-  const github = repoInfo(skill.source_ref);
-  const copyValue = (github?.href ?? skill.source_ref ?? "").trim();
-  // An imported skill's found-in Tool is display-only history: shown, never
-  // treated as a source.
-  const imported = importedSourceLine(skill, t);
 
   const handleCopy = () => {
-    if (!copyValue) return;
-    void copyToClipboard(copyValue);
+    if (!source.copyValue) return;
+    void copyToClipboard(source.copyValue);
   };
 
-  // The Unlocatable state and the affordance bits are the backend's answers
-  // (computed at list time); `unlocatableRepairs` pairs them, the card only
-  // wires each repair to its handler. Remove is always offered.
-  const unlocatable = skill.unlocatable;
-  const repairHandlers: Record<UnlocatableRepair, () => void> = {
-    // Only a local folder can go missing: its repair picks the new folder.
-    repoint: () => onRepoint(skill, "local"),
-    detach: () => onDetach(skill),
-    restore: () => onRestore(skill),
-  };
-  // The stored last outcome (Skill health), shown as one plain line until
-  // tickets 09/11 give it its fold, chip and ladder.
-  const health = skillHealth(skill);
-  const repairs = unlocatableRepairs(skill).map((repair) => ({
-    key: repair,
-    label: t(UNLOCATABLE_REPAIR_KEY[repair]),
-    onClick: repairHandlers[repair],
-  }));
+  // The Unlocatable row (computed at list time) and the stored last outcome
+  // (Skill health) — skill-level rows of the fold, each with its repairs.
+  // Target-level rows read on the pills until ticket 11's strip.
+  const unlocatable = health.rows.find(
+    (row) => row.kind === "source_missing" || row.kind === "central_missing",
+  );
+  const storedRow = skill.health
+    ? health.rows.find((row) => row.kind === skill.health?.kind)
+    : undefined;
+  const repairButtons = (row: HealthRow) =>
+    row.repairs.map((key) => (
+      <button
+        key={key}
+        type="button"
+        className={cn("unlocatable-action", key === "delete" && "danger")}
+        onClick={() => void repair(skill, row, key)}
+        disabled={busy}
+        title={busy ? (blockedReason ?? undefined) : undefined}
+      >
+        {t(key === "delete" && row.kind !== "delete_incomplete" ? "remove" : HEALTH_REPAIR_LABEL_KEY[key])}
+      </button>
+    ));
 
   // Chips are the union of the rows this skill has and the installed tools,
   // so a target for an undetected Tool stays reachable (it renders muted and
@@ -129,9 +120,10 @@ const SkillCard = ({
     (chip): chip is SyncedChip => chip.target !== null,
   );
   const unsyncedTools = chips.filter((chip) => chip.target === null);
-  // Deployed somewhere: any target the operator has not disabled. A skill
-  // disabled at either grain offers the deploy action as an Enable, labelled
-  // with the pairs it turns back on (the hook routes it the same way).
+  // Deployed somewhere: any live target (a failed first sync is not one). A
+  // skill disabled at either grain offers the deploy action as an Enable,
+  // labelled with the pairs it turns back on; one with no live target
+  // (never deployed, or only failed first syncs) offers a sync.
   const deploy = deployAction(skill);
   const deployed = deploy.kind === "deployed";
   const deployLabel = deployed
@@ -139,6 +131,23 @@ const SkillCard = ({
     : deploy.kind === "enable" && deploy.disabledTargets > 0
       ? t("disabledSkips.deployDisabledPairs", { count: deploy.disabledTargets })
       : t("syncSkillTooltip");
+  const handleDeploy = () =>
+    void (deploy.kind === "deployed"
+      ? run("disable", [skill])
+      : deploy.kind === "enable"
+        ? run("enable", [skill])
+        : run("syncToTargets", [skill]));
+  // Three states per pill: a disabled target enables, any other target
+  // disables (the durable "not on this Tool"), no target syncs.
+  const handleToggleTool = (chip: SkillToolChip) => {
+    const status = chip.target?.status;
+    void (status === "disabled"
+      ? run("enable", [skill], { tool: chip.id })
+      : chip.target
+        ? run("disable", [skill], { tool: chip.id })
+        : run("syncToTargets", [skill], { tool: chip.id }));
+  };
+  const blockedTitle = (title: string) => (busy && blockedReason ? blockedReason : title);
 
   const [expanded, setExpanded] = useState(false);
   const needsCollapse = syncedTools.length > MAX_VISIBLE_BADGES;
@@ -148,13 +157,14 @@ const SkillCard = ({
   const remainingCount = syncedTools.length - MAX_VISIBLE_BADGES;
 
   return (
-    <div className="skill-card">
+    <div className={cn("skill-card", busyHere && "opacity-70")} aria-busy={busyHere || undefined}>
       <div className="skill-icon">{iconNode}</div>
       <div className="skill-main">
         <div className="skill-header-row">
           <button
             type="button"
             className="skill-name clickable"
+            data-skill-row={skill.id}
             onClick={() => onOpenDetail(skill)}
           >
             {skill.name}
@@ -162,8 +172,8 @@ const SkillCard = ({
           <InvocationModeBadge
             mode={skill.invocation_mode}
             override={skill.invocation_override}
-            disabled={loading || skill.unlocatable === "central_missing"}
-            onClick={() => onInvocationClick(skill.id)}
+            disabled={busy || skill.unlocatable === "central_missing"}
+            onClick={() => void run("editInvocation", [skill])}
             t={t}
           />
         </div>
@@ -171,32 +181,11 @@ const SkillCard = ({
           <div className="skill-desc">{skill.description}</div>
         ) : null}
         <div className="skill-meta-row">
-          {kind === "imported" ? (
-            <div
-              className="skill-source"
-              title={t("provenance.managedHereTooltip", {
-                tool: imported.tool,
-              })}
-            >
-              <span className="repo-pill">{imported.managedHere}</span>
+          {source.kind === "imported" ? (
+            <div className="skill-source" title={source.title ?? undefined}>
+              <span className="repo-pill">{source.label}</span>
               <span className="dot">•</span>
-              {imported.importedFrom}
-            </div>
-          ) : github ? (
-            <div className="skill-source">
-              <button
-                className="repo-pill copyable"
-                type="button"
-                title={t("copy")}
-                aria-label={t("copy")}
-                onClick={handleCopy}
-                disabled={!copyValue}
-              >
-                {github.label}
-                <span className="copy-icon" aria-hidden="true">
-                  <Copy size={12} />
-                </span>
-              </button>
+              {source.detail}
             </div>
           ) : (
             <div className="skill-source">
@@ -206,9 +195,9 @@ const SkillCard = ({
                 title={t("copy")}
                 aria-label={t("copy")}
                 onClick={handleCopy}
-                disabled={!copyValue}
+                disabled={!source.copyValue}
               >
-                <span className="mono">{skillSourceLabel(skill)}</span>
+                {source.icon === "github" ? source.label : <span className="mono">{source.label}</span>}
                 <span className="copy-icon" aria-hidden="true">
                   <Copy size={12} />
                 </span>
@@ -220,54 +209,41 @@ const SkillCard = ({
             {formatRelativeTime(skill.updated_at, t)}
           </div>
         </div>
-        {unlocatable ? (
+        {unlocatable && skill.unlocatable ? (
           <div
             className="skill-unlocatable"
             role="status"
-            title={t(UNLOCATABLE_TOOLTIP_KEY[unlocatable])}
+            tabIndex={-1}
+            data-skill-health={skill.id}
+            title={t(UNLOCATABLE_TOOLTIP_KEY[skill.unlocatable])}
           >
             <span className="unlocatable-badge">
               <AlertTriangle size={12} aria-hidden="true" />
-              {t(UNLOCATABLE_STATE_KEY[unlocatable])}
+              {t(HEALTH_ROW_LABEL_KEY[unlocatable.kind])}
             </span>
-            {unlocatable === "source_missing" && skill.source_ref ? (
+            {unlocatable.kind === "source_missing" && skill.source_ref ? (
               <span className="mono" title={skill.source_ref}>
                 {t("repointSource.missingFolder", { path: skill.source_ref })}
               </span>
             ) : null}
-            {repairs.map((repair) => (
-              <button
-                key={repair.key}
-                type="button"
-                className="unlocatable-action"
-                onClick={repair.onClick}
-                disabled={loading}
-              >
-                {repair.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              className="unlocatable-action danger"
-              onClick={() => onDelete(skill.id)}
-              disabled={loading}
-            >
-              {t("remove")}
-            </button>
+            {repairButtons(unlocatable)}
           </div>
         ) : null}
-        {health ? (
+        {storedRow && storedRow.at !== null ? (
           <div
             className="skill-meta-row"
             role="status"
-            title={describeCommandError(health.error, t) ?? undefined}
+            tabIndex={-1}
+            data-skill-health={unlocatable ? undefined : skill.id}
+            title={storedRow.error ? (describeCommandError(storedRow.error, t) ?? undefined) : undefined}
           >
             <div className="skill-source">
               {t("skillHealth.line", {
-                outcome: t(SKILL_OUTCOME_LABEL_KEY[health.kind]),
-                time: formatRelativeTime(health.at, t),
+                outcome: t(HEALTH_ROW_LABEL_KEY[storedRow.kind]),
+                time: formatRelativeTime(storedRow.at, t),
               })}
             </div>
+            {repairButtons(storedRow)}
           </div>
         ) : null}
         <div
@@ -286,16 +262,17 @@ const SkillCard = ({
                 className={`tool-pill ${isDisabled ? "inactive" : "active"}${
                   isError ? " error" : ""
                 }${chip.detected ? "" : " undetected"}`}
-                title={
+                disabled={busy}
+                title={blockedTitle(
                   !chip.detected
                     ? t("toolNotDetectedTooltip", { tool: chip.label })
                     : isDisabled
                       ? t("syncTarget.disabledTitle", { tool: chip.label })
                       : isError
                         ? t("syncTarget.errorTitle", { tool: chip.label })
-                        : `${chip.label} (${chip.target.mode ?? t("unknown")})`
-                }
-                onClick={() => void onToggleTool(skill, chip.id)}
+                        : `${chip.label} (${chip.target.mode ?? t("unknown")})`,
+                )}
+                onClick={() => handleToggleTool(chip)}
               >
                 {isDisabled ? null : <span className="status-badge" />}
                 {chip.label}
@@ -327,8 +304,9 @@ const SkillCard = ({
                 key={`${skill.id}-${chip.id}`}
                 type="button"
                 className="tool-pill inactive"
-                title={chip.label}
-                onClick={() => void onToggleTool(skill, chip.id)}
+                disabled={busy}
+                title={blockedTitle(chip.label)}
+                onClick={() => handleToggleTool(chip)}
               >
                 {chip.label}
               </button>
@@ -336,13 +314,14 @@ const SkillCard = ({
         </div>
       </div>
       <div className="skill-actions-col">
-        {skill.refreshable && !unlocatable ? (
+        {skill.refreshable && !skill.unlocatable ? (
           <button
             className="card-btn primary-action"
             type="button"
-            onClick={() => onUpdate(skill)}
-            disabled={loading}
+            onClick={() => void run("update", [skill])}
+            disabled={busy}
             aria-label={t("update")}
+            title={busy ? (blockedReason ?? undefined) : undefined}
           >
             <RefreshCw size={16} />
           </button>
@@ -350,31 +329,30 @@ const SkillCard = ({
         <button
           className="card-btn secondary-action"
           type="button"
-          onClick={() => onRepoint(skill)}
-          disabled={loading}
+          onClick={() => void run("repoint", [skill])}
+          disabled={busy}
           aria-label={t("changeSource.action")}
-          title={t("changeSource.action")}
+          title={blockedTitle(t("changeSource.action"))}
         >
           <MapPin size={16} />
         </button>
         <button
           className="card-btn secondary-action"
           type="button"
-          onClick={() =>
-            deployed ? onUnsync(skill.id) : onSyncToAllTools(skill)
-          }
-          disabled={loading}
+          onClick={handleDeploy}
+          disabled={busy}
           aria-label={deployLabel}
-          title={deployLabel}
+          title={blockedTitle(deployLabel)}
         >
           {deployed ? <Link size={16} /> : <Unlink size={16} />}
         </button>
         <button
           className="card-btn danger-action"
           type="button"
-          onClick={() => onDelete(skill.id)}
-          disabled={loading}
+          onClick={() => void run("delete", [skill])}
+          disabled={busy}
           aria-label={t("remove")}
+          title={busy ? (blockedReason ?? undefined) : undefined}
         >
           <Trash2 size={16} />
         </button>

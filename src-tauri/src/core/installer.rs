@@ -45,6 +45,10 @@ pub struct InstallerPaths {
 /// directory is refused before anything is copied: the app would later
 /// overwrite or remove that source, so a Tool's copy is Import's business
 /// (`install_imported_skill`).
+/// Test fixture door: production installs a local selection through the
+/// install batch (`core::install_batch`), which stages and finalizes the
+/// same way.
+#[cfg(test)]
 pub fn install_local_skill(
     paths: &InstallerPaths,
     store: &SkillStore,
@@ -87,6 +91,41 @@ fn install_from_dir(
     name: Option<String>,
     provenance: impl FnOnce() -> SkillProvenance,
 ) -> Result<InstallResult> {
+    stage_from_dir(paths, source_path, name, provenance)?.finalize(store)
+}
+
+/// Bytes staged beside the central repo for one install, not yet a Managed
+/// skill: the acquire half of every install flow, split from
+/// [`StagedInstall::finalize`] so the install batch (`core::install_batch`)
+/// can acquire outside the mutation guard and finalize + first-sync inside
+/// it. Dropping it discards the staged bytes (the `StagingDir` RAII), so a
+/// cancelled batch never leaks a partial install.
+pub(crate) struct StagedInstall {
+    central_dir: PathBuf,
+    staged: StagingDir,
+    name: NameIntent,
+    provenance: SkillProvenance,
+}
+
+impl StagedInstall {
+    /// Move the staged bytes into the central repo and record the skill.
+    pub(crate) fn finalize(self, store: &SkillStore) -> Result<InstallResult> {
+        finalize_install(
+            store,
+            &self.central_dir,
+            self.staged,
+            self.name,
+            self.provenance,
+        )
+    }
+}
+
+fn stage_from_dir(
+    paths: &InstallerPaths,
+    source_path: &Path,
+    name: Option<String>,
+    provenance: impl FnOnce() -> SkillProvenance,
+) -> Result<StagedInstall> {
     if !source_path.exists() {
         anyhow::bail!(source_path_missing(source_path));
     }
@@ -123,13 +162,12 @@ fn install_from_dir(
 
     // The name is always honored as given: callers either pass the operator's
     // choice or the folder name, and a local folder name is the skill's name.
-    finalize_install(
-        store,
-        central_dir,
+    Ok(StagedInstall {
+        central_dir: central_dir.clone(),
         staged,
-        NameIntent::UserProvided(name),
+        name: NameIntent::UserProvided(name),
         provenance,
-    )
+    })
 }
 
 /// The typed condition for an Add → local folder pointed at a Tool's own
@@ -416,6 +454,21 @@ fn install_git_selection_with(
     cancel: Option<&CancelToken>,
     api: &dyn GithubApi,
 ) -> Result<InstallResult> {
+    stage_git_selection(paths, store, repo_url, selection, name, cancel, api)?.finalize(store)
+}
+
+/// The git install's acquire half: the selection's bytes through
+/// `git_acquisition::acquire` (the one git byte door) into a staging dir.
+/// `store` is read for the cache TTL only.
+pub(crate) fn stage_git_selection(
+    paths: &InstallerPaths,
+    store: &SkillStore,
+    repo_url: &str,
+    selection: GitSelection,
+    name: Option<String>,
+    cancel: Option<&CancelToken>,
+    api: &dyn GithubApi,
+) -> Result<StagedInstall> {
     let source = parse_github_url(repo_url);
     let subpath = selection.subpath;
     let name = name_intent(name, || {
@@ -441,13 +494,12 @@ fn install_git_selection_with(
     ensure_installable_skill_dir(staged.path())?;
 
     let source_subpath = acquired.resolved_subpath.filter(|subpath| subpath != ".");
-    finalize_install(
-        store,
-        central_dir,
+    Ok(StagedInstall {
+        central_dir: central_dir.clone(),
         staged,
         name,
-        SkillProvenance::git(repo_url, source_subpath, Some(acquired.revision)),
-    )
+        provenance: SkillProvenance::git(repo_url, source_subpath, Some(acquired.revision)),
+    })
 }
 
 pub fn install_local_skill_from_selection(
@@ -457,6 +509,18 @@ pub fn install_local_skill_from_selection(
     subpath: &str,
     name: Option<String>,
 ) -> Result<InstallResult> {
+    stage_local_selection(paths, base_path, subpath, name)?.finalize(store)
+}
+
+/// The local selection's acquire half: the same admission as
+/// [`install_local_skill`] (a Tool's own copy is refused), copied into a
+/// staging dir.
+pub(crate) fn stage_local_selection(
+    paths: &InstallerPaths,
+    base_path: &Path,
+    subpath: &str,
+    name: Option<String>,
+) -> Result<StagedInstall> {
     if !base_path.exists() {
         anyhow::bail!(source_path_missing(base_path));
     }
@@ -479,7 +543,12 @@ pub fn install_local_skill_from_selection(
 
     let display_name = name.unwrap_or(parsed_name);
 
-    install_local_skill(paths, store, &selected_dir, Some(display_name))
+    if let Some(holder) = tool_holding_path(&paths.home, &selected_dir) {
+        anyhow::bail!(local_source_inside_tool_dir(&selected_dir, holder));
+    }
+    stage_from_dir(paths, &selected_dir, Some(display_name), || {
+        SkillProvenance::local(&selected_dir)
+    })
 }
 
 /// Guards the explore cache (`<central_dir>/.explore-cache`) while a preview

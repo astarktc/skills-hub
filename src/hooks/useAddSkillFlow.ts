@@ -1,18 +1,30 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   GitSkillCandidate,
   ImportProgressDto,
-  InstallResultDto,
+  InstallProgressDto,
+  InstallRequest,
+  InstallSource,
   LocalSkillCandidate,
   OnboardingPlan,
   OnboardingSelectionDto,
 } from "../components/skills/types";
 
-import { importOutcome, installOutcome, type InstallDeployment, type Outcome, type PlainEntry } from "../lib/reportOutcome";
+import {
+  importOutcome,
+  installBatchSettlements,
+  installOutcome,
+  type InstallSettlement,
+} from "../lib/reportOutcome";
+import { globalCollisionRows, installTargets, mergeInstallRetry } from "../lib/overwriteAsk";
 import { defaultImportVariantPath } from "../lib/skillPresentation";
 import { createProgressChannel, pickFolder } from "../lib/platform";
 import { invokeTauri, isTauri } from "../lib/tauri";
-import { useCandidatePick } from "./useCandidatePick";
+import {
+  useCandidatePick,
+  type InstallBatchAction,
+  type InstallPick,
+} from "./useCandidatePick";
 import type { SkillLibrary } from "./useSkillLibrary";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type { ToolCatalog } from "./useToolCatalog";
@@ -22,21 +34,14 @@ import type {
   TranslateFn,
 } from "./useStatusReporter";
 
-/** The `{skill_id, name, source_path}` batch item for a freshly installed skill. */
-const toSyncItem = (created: InstallResultDto) => ({
-  skill_id: created.skill_id,
-  name: created.name,
-  source_path: created.central_path,
-});
-
 export type AddSkillFlowDeps = {
   t: TranslateFn;
   reporter: StatusReporter;
   sync: Pick<
     SyncOrchestration,
     | "autoSyncEnabled"
+    | "resolveGlobalCollisions"
     | "scanScopeRevision"
-    | "syncSkillsToTools"
     | "syncTargets"
     | "targetAllInstalled"
   >;
@@ -48,6 +53,12 @@ export type AddSkillFlowDeps = {
     DialogDoor,
     "isOpen" | "openDialog" | "pushDialog" | "closeDialog" | "dismissDialog"
   >;
+  /**
+   * Whether the import review's invitation is still on screen (My Skills is
+   * showing). A review that waited for a running action opens its dialog
+   * only if it is.
+   */
+  isReviewWanted?: () => boolean;
 };
 
 /**
@@ -62,21 +73,20 @@ export function useAddSkillFlow({
   catalog,
   library,
   surface,
+  isReviewWanted,
 }: AddSkillFlowDeps) {
   const {
     loading,
-    notify,
-    showActionWarnings,
     runAction,
     setActionMessage,
     setError,
     formatError,
-    showActionErrors,
+    applyOutcome,
   } = reporter;
   const {
     autoSyncEnabled,
+    resolveGlobalCollisions,
     scanScopeRevision,
-    syncSkillsToTools,
     syncTargets,
     targetAllInstalled,
   } = sync;
@@ -112,21 +122,109 @@ export function useAddSkillFlow({
     [syncTargets, tools],
   );
 
-  /** Acquisition already succeeded: even a thrown deploy cannot undo it. */
-  const deployNewSkill = useCallback(
-    async (created: InstallResultDto): Promise<InstallDeployment> => {
-      if (!autoSyncEnabled) return { status: "disabled" };
-      const selectedIds = getSelectedIds();
-      if (!selectedIds.length) return { status: "no-targets" };
-      try {
-        return { status: "reported", report: await syncSkillsToTools(
-          [toSyncItem(created)], selectedIds, { overwriteIfSameContent: true },
-        ) };
-      } catch (error) {
-        return { status: "failed", error };
+  /**
+   * The Add action as one backend batch (`installSelection`, D12): every
+   * pick is acquired, finalized and deployed to the operator's deploy
+   * targets in one call that answers one report. Its collisions — across
+   * every installed candidate — raise **one** overwrite ask; the answer's
+   * retry is an ordinary sync batch (the skills exist by then) whose rows
+   * replace the asked ones. A dismissed ask records nothing.
+   *
+   * Cancel (D20): the batch honours the action's cancellation at its
+   * boundary — an action cancelled before `installSelection` is sent (a
+   * Cancel pressed during the caller's listing, which takes no token) sends
+   * nothing and answers every pick `cancelled` — and withdraws Cancel for
+   * the ask's retry, which no token stops.
+   */
+  const installBatch = useCallback(
+    async (
+      source: InstallSource,
+      picks: InstallPick[],
+      action: InstallBatchAction,
+    ): Promise<InstallSettlement[]> => {
+      const tools = autoSyncEnabled ? getSelectedIds() : [];
+      const request: InstallRequest = {
+        source,
+        candidates: picks.map((pick) => ({
+          subpath: pick.subpath,
+          name_override: pick.nameOverride,
+        })),
+        tools,
+        overwrite_if_same_content: true,
+        overrides: [],
+        deploy: autoSyncEnabled,
+      };
+      const onProgress = await createProgressChannel<InstallProgressDto>((progress) => {
+        setActionMessage(
+          t("installBatch.step", {
+            index: progress.index,
+            total: progress.total,
+            name: progress.name,
+          }),
+        );
+      });
+      // The boundary: the command resets the shared token on entry, so a
+      // Cancel that arrived before it would be lost there — honour it here.
+      if (action.cancelRequested()) {
+        return installBatchSettlements(
+          {
+            candidates: picks.map((pick) => ({
+              subpath: pick.subpath,
+              name: pick.name,
+              status: { status: "cancelled" },
+            })),
+          },
+          { deploy: autoSyncEnabled, tools },
+        );
       }
+      let report = await invokeTauri("installSelection", request, onProgress);
+      const targets = installTargets(report);
+      const asked = globalCollisionRows(targets, toolLabelById);
+      if (asked.length > 0) {
+        const skills = report.candidates.flatMap((candidate) =>
+          candidate.status.status === "installed"
+            ? [{
+                skill_id: candidate.status.skill.skill_id,
+                name: candidate.status.skill.name,
+                source_path: candidate.status.skill.central_path,
+              }]
+            : [],
+        );
+        // The skills are installed whatever the retry does: a thrown retry
+        // is reported and the batch settles as it first answered (the
+        // collided rows read as target failures).
+        try {
+          const settled = await action.uncancellable(() =>
+            resolveGlobalCollisions(targets, skills, {
+              overwriteIfSameContent: true,
+            }),
+          );
+          report = mergeInstallRetry(report, asked, settled);
+        } catch (err) {
+          setError(formatError(err));
+        }
+      }
+      // A candidate that never installed reads under the listing's name.
+      const names = new Map(picks.map((pick) => [pick.subpath, pick.name]));
+      report = {
+        candidates: report.candidates.map((candidate) =>
+          candidate.status.status === "installed"
+            ? candidate
+            : { ...candidate, name: names.get(candidate.subpath) ?? candidate.name },
+        ),
+      };
+      return installBatchSettlements(report, { deploy: autoSyncEnabled, tools });
     },
-    [autoSyncEnabled, getSelectedIds, syncSkillsToTools],
+    [
+      autoSyncEnabled,
+      formatError,
+      getSelectedIds,
+      resolveGlobalCollisions,
+      setActionMessage,
+      setError,
+      t,
+      toolLabelById,
+    ],
   );
 
   /**
@@ -146,20 +244,27 @@ export function useAddSkillFlow({
     [formatError, setError],
   );
 
-  /** After any install (single or batch): the add modal is done, the library has changed. */
-  const finishInstall = useCallback(async (completion: Outcome["completion"]) => {
-    if (completion.closeModal) dismissDialog("addSkill");
-    if (completion.reload) await refreshWithoutFailingAction(loadManagedSkills);
-  }, [dismissDialog, loadManagedSkills, refreshWithoutFailingAction]);
+  /**
+   * Any install's completion (single or batch), executed by the reporter's
+   * one `applyOutcome`: the library has changed (a failed re-read stays
+   * nonfatal), and the add modal is done.
+   */
+  const installHandlers = useMemo(
+    () => ({
+      reload: () => refreshWithoutFailingAction(loadManagedSkills),
+      closeModal: () => dismissDialog("addSkill"),
+    }),
+    [dismissDialog, loadManagedSkills, refreshWithoutFailingAction],
+  );
 
   const pickDeps = {
     t,
     reporter,
     surface,
     isSkillNameTaken,
-    deploy: deployNewSkill,
+    installBatch,
     toolLabelById,
-    afterBatch: finishInstall,
+    outcomeHandlers: installHandlers,
   };
 
   /** Git picker: candidates of one repo URL (the picker's context). */
@@ -167,8 +272,12 @@ export function useAddSkillFlow({
     {
       dialogKind: "gitPick",
       customName: gitName,
-      installOne: (repoUrl, candidate, name) =>
-        invokeTauri("installGitSelection", repoUrl, candidate.subpath, name, candidate.resolution),
+      // Every candidate of one listing carries the same source resolution.
+      installSource: (repoUrl, picked) => ({
+        kind: "git",
+        url: repoUrl,
+        resolution: picked[0]?.resolution ?? null,
+      }),
       resetForm: () => {
         setGitUrl("");
         setGitName("");
@@ -183,8 +292,7 @@ export function useAddSkillFlow({
       dialogKind: "localPick",
       customName: localName,
       selectable: (candidate) => candidate.valid,
-      installOne: (basePath, candidate, name) =>
-        invokeTauri("installLocalSelection", basePath, candidate.subpath, name),
+      installSource: (basePath) => ({ kind: "local", root: basePath }),
       resetForm: () => {
         setLocalPath("");
         setLocalName("");
@@ -216,7 +324,7 @@ export function useAddSkillFlow({
    * the plan, or undefined when loading it failed.
    */
   const loadPlan = useCallback(
-    () => runAction({}, fetchPlan),
+    () => runAction({ read: true }, fetchPlan),
     [fetchPlan, runAction],
   );
 
@@ -250,12 +358,18 @@ export function useAddSkillFlow({
    * operator must have seen exactly those. The banner's plan is only the
    * invitation.
    */
+  const reviewGenerationRef = useRef(0);
   const handleReviewImport = useCallback(async () => {
-    const result = await loadPlan();
-    if (result) {
+    // Still wanted while it is the latest request and its invitation is on
+    // screen — checked when its turn comes and before the dialog opens.
+    const generation = ++reviewGenerationRef.current;
+    const stillWanted = () =>
+      reviewGenerationRef.current === generation && (isReviewWanted?.() ?? true);
+    const result = await runAction({ read: true, stillWanted }, fetchPlan);
+    if (result && stillWanted()) {
       openDialog({ kind: "import" });
     }
-  }, [loadPlan, openDialog]);
+  }, [fetchPlan, isReviewWanted, openDialog, runAction]);
 
   const handlePickLocalPath = useCallback(async () => {
     try {
@@ -294,12 +408,6 @@ export function useAddSkillFlow({
     },
     [plan],
   );
-
-  const publishOutcome = (outcome: Outcome<PlainEntry>) => {
-    showActionErrors(outcome.errors);
-    showActionWarnings(outcome.warnings);
-    if (outcome.toast) notify(outcome.toast.kind, outcome.toast.message, outcome.toast.detail);
-  };
 
   /**
    * Import is one backend call: the selections plus the auto-sync policy.
@@ -352,13 +460,14 @@ export function useAddSkillFlow({
         },
         onProgress,
       );
-      const outcome = importOutcome(report, { t, toolLabelById });
-      if (outcome.completion.reload) await refreshWithoutFailingAction(async () => {
-        await loadManagedSkills();
-        await fetchPlan();
+      await applyOutcome(importOutcome(report, { t, toolLabelById }), {
+        reload: () =>
+          refreshWithoutFailingAction(async () => {
+            await loadManagedSkills();
+            await fetchPlan();
+          }),
+        closeModal: () => dismissDialog("import"),
       });
-      if (outcome.completion.closeModal) dismissDialog("import");
-      publishOutcome(outcome);
     });
   };
 
@@ -368,12 +477,17 @@ export function useAddSkillFlow({
       return;
     }
     await runAction(
+      // Cancellable from the start: the listing takes no token, so a Cancel
+      // pressed during it is honoured at the batch boundary (installBatch)
+      // and here, before a picker would open.
       {
         message: t("actions.creatingLocalSkill"),
+        cancel: "installSelection",
       },
       async (action) => {
         const basePath = localPath.trim();
         const candidates = await invokeTauri("listLocalSkillsCmd", basePath);
+        if (action.cancelRequested()) return action.fail(null);
         if (candidates.length === 0) {
           return action.fail(t("errors.noSkillsFoundLocal"));
         }
@@ -387,18 +501,18 @@ export function useAddSkillFlow({
             t("errors.skillAlreadyExists", { name: desiredName }),
           );
         }
-        const created = await invokeTauri(
-          "installLocalSelection",
-          basePath,
-          candidates[0].subpath,
-          localName.trim() || null,
+        const settlements = await installBatch(
+          { kind: "local", root: basePath },
+          [{
+            subpath: candidates[0].subpath,
+            name: desiredName,
+            nameOverride: localName.trim() || null,
+          }],
+          action,
         );
-        const deployment = await deployNewSkill(created);
-        const outcome = installOutcome([{ name: created.name, status: "installed", result: created, deployment }], { t, toolLabelById, source: "local" });
-        publishOutcome(outcome);
         setLocalPath("");
         setLocalName("");
-        await finishInstall(outcome.completion);
+        await applyOutcome(installOutcome(settlements, { t, toolLabelById, source: "local" }), installHandlers);
       },
     );
   };
@@ -409,8 +523,12 @@ export function useAddSkillFlow({
       return;
     }
     await runAction(
+      // Cancellable from the start: the listing takes no token, so a Cancel
+      // pressed during it is honoured at the batch boundary (installBatch)
+      // and here, before a picker would open.
       {
         message: t("actions.creatingGitSkill"),
+        cancel: "installSelection",
       },
       async (action) => {
         const url = gitUrl.trim();
@@ -427,6 +545,7 @@ export function useAddSkillFlow({
           url,
           target,
         );
+        if (action.cancelRequested()) return action.fail(null);
         if (candidates.length === 0) {
           return action.fail(t("errors.noSkillsFoundWithHint"));
         }
@@ -458,19 +577,18 @@ export function useAddSkillFlow({
             t("errors.skillAlreadyExists", { name: chosen.name }),
           );
         }
-        const created = await invokeTauri(
-          "installGitSelection",
-          url,
-          chosen.subpath,
-          gitName.trim() || null,
-          chosen.resolution,
+        const settlements = await installBatch(
+          { kind: "git", url, resolution: chosen.resolution },
+          [{
+            subpath: chosen.subpath,
+            name: chosen.name,
+            nameOverride: gitName.trim() || null,
+          }],
+          action,
         );
-        const deployment = await deployNewSkill(created);
-        const outcome = installOutcome([{ name: created.name, status: "installed", result: created, deployment }], { t, toolLabelById, source: "git" });
-        publishOutcome(outcome);
         setGitUrl("");
         setGitName("");
-        await finishInstall(outcome.completion);
+        await applyOutcome(installOutcome(settlements, { t, toolLabelById, source: "git" }), installHandlers);
       },
     );
   };

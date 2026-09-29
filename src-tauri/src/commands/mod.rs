@@ -22,6 +22,7 @@ use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::global_sync::{
     BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome, OverrideDecision,
 };
+use crate::core::install_batch::{InstallBatchReport, InstallRequest};
 use crate::core::installer::{
     clone_for_explore_preview, install_git_skill_from_listing, install_local_skill_from_selection,
     list_git_skills, list_local_skills, GitSkillListing, InstallResult, InstallerPaths,
@@ -426,6 +427,54 @@ pub async fn install_git_selection(
     .map_err(CommandError::from_anyhow)
 }
 
+/// Progress tick streamed before each candidate of an install batch.
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct InstallProgressDto {
+    pub index: u32,
+    pub total: u32,
+    pub name: String,
+}
+
+/// Add: install a selection of candidates from one source and deploy each
+/// to the request's Tools — one batch, one report (`core::install_batch`).
+/// Per-candidate failures, cancellations and target collisions are report
+/// data; the command itself fails only when its roots cannot be resolved.
+/// Honours the cancel token between candidates.
+#[tauri::command]
+#[specta::specta]
+pub async fn install_selection(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    cancel: State<'_, Arc<CancelToken>>,
+    request: InstallRequest,
+    on_progress: Channel<InstallProgressDto>,
+) -> Result<InstallBatchReport, CommandError> {
+    let store = store.inner().clone();
+    let cancel = cancel.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        cancel.reset();
+        let paths = installer_paths(&app, &store)?;
+        Ok::<_, anyhow::Error>(crate::core::install_batch::install_selection(
+            &paths,
+            &store,
+            &credential_store(),
+            &request,
+            Some(&cancel),
+            now_ms(),
+            |p| {
+                let _ = on_progress.send(InstallProgressDto {
+                    index: p.index as u32,
+                    total: p.total as u32,
+                    name: p.name.to_string(),
+                });
+            },
+        ))
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
 /// One skill in a batch sync request.
 #[derive(Debug, Clone, Deserialize, Type)]
 pub struct BatchSyncSkillDto {
@@ -442,6 +491,16 @@ pub struct BatchSyncOverrideDto {
     pub skill_id: String,
     pub tool: String,
     pub decision: OverrideDecision,
+}
+
+impl From<BatchSyncOverrideDto> for BatchOverride {
+    fn from(o: BatchSyncOverrideDto) -> Self {
+        BatchOverride {
+            skill_id: o.skill_id,
+            tool_key: o.tool,
+            decision: o.decision,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Type)]
@@ -493,11 +552,7 @@ pub async fn sync_skills_to_tools(
             overrides: policy
                 .overrides
                 .into_iter()
-                .map(|o| BatchOverride {
-                    skill_id: o.skill_id,
-                    tool_key: o.tool,
-                    decision: o.decision,
-                })
+                .map(BatchOverride::from)
                 .collect(),
         };
 
@@ -548,16 +603,21 @@ pub async fn disable_skill_targets(
 
 /// Enable a scope: clear its Disabled marker and re-sync it as a first sync.
 /// Per-target outcomes (including `TARGET_EXISTS`) are report data.
+/// `overrides` carries the operator's answers to the overwrite ask raised
+/// over a previous Enable's collided global pairs (empty on the first call).
 #[tauri::command]
 #[specta::specta]
 pub async fn enable_skill_targets(
     store: State<'_, SkillStore>,
     scope: DisableScope,
+    overrides: Vec<BatchSyncOverrideDto>,
 ) -> Result<EnableReport, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let home = home_dir()?;
-        crate::core::skill_disable::enable_targets(&store, &home, &scope, now_ms())
+        let overrides: Vec<BatchOverride> =
+            overrides.into_iter().map(BatchOverride::from).collect();
+        crate::core::skill_disable::enable_targets_with(&store, &home, &scope, &overrides, now_ms())
     })
     .await
     .map_err(CommandError::internal)?
@@ -776,6 +836,26 @@ pub async fn detach_skill_from_source(
     tauri::async_runtime::spawn_blocking(move || {
         detach_from_source(&store, &skillId)?;
         Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+/// The operator's Dismiss of a skill's stored health (`import_failed` only;
+/// see `skill_health::dismiss_outcome`). Clears nothing when a newer outcome
+/// replaced it. Store-only; no Sync target changes.
+#[tauri::command]
+#[specta::specta]
+#[allow(non_snake_case)]
+pub async fn clear_skill_health(
+    store: State<'_, SkillStore>,
+    skillId: String,
+    kind: crate::core::skill_health::SkillOutcomeKind,
+) -> Result<(), CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::core::skill_health::dismiss_outcome(&store, &skillId, kind)
     })
     .await
     .map_err(CommandError::internal)?

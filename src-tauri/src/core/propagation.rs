@@ -295,6 +295,7 @@ fn propagate_global_rows(
             sync_engine::sync_dir_for_tool_with_overwrite(
                 driving_adapter,
                 central_path,
+                super::content_identity::Source::Managed { store, skill_id },
                 Path::new(&driver.target_path),
                 overwrite,
             )

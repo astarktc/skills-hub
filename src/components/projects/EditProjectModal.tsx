@@ -23,6 +23,8 @@ type EditProjectModalProps = {
   ) => Promise<void>;
   /** Backend access goes through the hook (useProjectState.getGitignoreStatus). */
   loadStatus: (projectId: string) => Promise<GitignoreStatusDto>;
+  /** Why Save is disabled: another action is running (D19); null = it may run. */
+  blockedReason: string | null;
   onRequestClose: () => void;
   t: TFunction;
 };
@@ -31,6 +33,7 @@ const EditProjectModalInner = ({
   project,
   onSave,
   loadStatus,
+  blockedReason,
   onRequestClose,
   t,
 }: Omit<EditProjectModalProps, "open"> & { project: ProjectDto }) => {
@@ -129,7 +132,8 @@ const EditProjectModalInner = ({
           <button
             className="btn btn-primary"
             onClick={handleSave}
-            disabled={loading || saving}
+            disabled={loading || saving || blockedReason !== null}
+            title={blockedReason ?? undefined}
           >
             {t("projects.save")}
           </button>

@@ -120,8 +120,17 @@ pub(crate) fn sync_assignment_target(
         })
     })?;
 
-    let outcome =
-        sync_engine::sync_dir_for_tool_with_overwrite(ctx.adapter, source, &target, ctx.overwrite)?;
+    let identity = content_identity::Source::Managed {
+        store: ctx.store,
+        skill_id: &ctx.skill.id,
+    };
+    let outcome = sync_engine::sync_dir_for_tool_with_overwrite(
+        ctx.adapter,
+        source,
+        identity,
+        &target,
+        ctx.overwrite,
+    )?;
 
     let hash = if outcome.mode_used.can_drift() {
         central_hash()
@@ -305,6 +314,11 @@ pub enum ProjectSyncOutcomeStatus {
     Failed { error: CommandError },
     /// Deliberately not synced. Report data, never a failure.
     Skipped { reason: ProjectSyncSkip },
+    /// The operator answered the overwrite ask with "Keep existing" for this
+    /// assignment ([`resolve_collisions`]): the folder in the way was left
+    /// alone and the row is kept `disabled`, owning nothing at its path (D9).
+    /// Its own outcome kind (D10), never a failure or a skip.
+    Declined,
 }
 
 /// Why a project sync left an assignment alone.
@@ -350,6 +364,7 @@ impl std::fmt::Display for ProjectSyncReport {
                 ProjectSyncOutcomeStatus::AlreadyAssigned => "already assigned".to_string(),
                 ProjectSyncOutcomeStatus::Failed { error } => format!("failed: {error}"),
                 ProjectSyncOutcomeStatus::Skipped { reason } => format!("skipped: {reason:?}"),
+                ProjectSyncOutcomeStatus::Declined => "declined".to_string(),
             };
             write!(
                 f,
@@ -661,7 +676,10 @@ pub(crate) fn resync_project_unlocked(
 /// `synced`, or `error` with its chain (report data); a store failure fails
 /// the whole operation. The caller has already decided these rows may be
 /// materialised (their skill is not disabled), so their stored status is not
-/// consulted here.
+/// consulted here — except to admit a `disabled` row: a successful Disable
+/// removed its artifact, so its ownership is cleared first
+/// (`EnableAdmitted`) and a collision leaves a non-owner the overwrite ask
+/// can settle (Keep → `disabled`, Overwrite → synced and owning again).
 ///
 /// Unlocked internal seam: the caller holds the mutation guard.
 pub(crate) fn first_sync_assignments_unlocked(
@@ -671,6 +689,9 @@ pub(crate) fn first_sync_assignments_unlocked(
 ) -> Result<ProjectSyncReport> {
     let mut report = ProjectSyncReport::default();
     for assignment in assignments {
+        if assignment.status == SyncStatus::Disabled {
+            store.transition_assignment(&assignment.id, AssignmentTransition::EnableAdmitted)?;
+        }
         let result = project_ops::require_project(store, &assignment.project_id)
             .and_then(|project| sync_single_assignment(store, &project, assignment, false, now));
         let status = match result {
@@ -701,6 +722,122 @@ pub(crate) fn first_sync_assignments_unlocked(
             tool: assignment.tool.clone(),
             status,
         });
+    }
+    Ok(report)
+}
+
+/// The operator's answer to the overwrite ask for one project assignment
+/// whose sync met a folder in the way (a `TARGET_EXISTS` report row of
+/// assign / resync / Enable / Propagation). Crosses the wire as itself.
+#[derive(Clone, Debug, serde::Deserialize, specta::Type)]
+pub struct AssignmentDecision {
+    pub project_id: String,
+    pub skill_id: String,
+    pub tool: String,
+    pub decision: crate::core::global_sync::OverrideDecision,
+}
+
+/// Settle the overwrite ask's answers for project assignments (D12): the
+/// retry half of every project path that produced `TARGET_EXISTS` rows.
+/// `Overwrite` re-syncs the assignment replacing the folder (settling
+/// `synced`, or `error` with its chain); `Keep` leaves the folder and keeps
+/// the row `disabled` — owning nothing, so no removal touches the folder
+/// and no pass re-materialises it until the skill is enabled — reported
+/// `Declined`. A row that is gone, disabled, of a disabled skill, or that
+/// already owns its artifact is not a collision any more and answers as the
+/// assignment listing would (`Failed NotFound`, `Skipped`, `AlreadyAssigned`).
+/// Store failures fail the whole call.
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
+pub fn resolve_collisions(
+    store: &SkillStore,
+    decisions: &[AssignmentDecision],
+    now: i64,
+) -> Result<ProjectSyncReport> {
+    mutation_guard::serialized(|| resolve_collisions_unlocked(store, decisions, now))
+}
+
+fn resolve_collisions_unlocked(
+    store: &SkillStore,
+    decisions: &[AssignmentDecision],
+    now: i64,
+) -> Result<ProjectSyncReport> {
+    use crate::core::global_sync::OverrideDecision;
+    let mut report = ProjectSyncReport::default();
+    for decision in decisions {
+        let assignment = store.get_project_skill_assignment(
+            &decision.project_id,
+            &decision.skill_id,
+            &decision.tool,
+        )?;
+        let item = |assignment_id: Option<String>, skill_name: String, status| ProjectSyncOutcome {
+            assignment_id,
+            project_id: decision.project_id.clone(),
+            skill_id: decision.skill_id.clone(),
+            skill_name,
+            tool: decision.tool.clone(),
+            status,
+        };
+        let Some(assignment) = assignment else {
+            report.items.push(item(
+                None,
+                String::new(),
+                ProjectSyncOutcomeStatus::Failed {
+                    error: CommandError::from(SignalError::NotFound {
+                        kind: "assignment".to_string(),
+                        id: format!(
+                            "{}/{}/{}",
+                            decision.project_id, decision.skill_id, decision.tool
+                        ),
+                    }),
+                },
+            ));
+            continue;
+        };
+        let name = reported_skill_name(store, &assignment);
+        let id = Some(assignment.id.clone());
+        let skill_disabled = store.skill_disabled_at(&assignment.skill_id)?.is_some();
+        let status = if assignment.status == SyncStatus::Disabled || skill_disabled {
+            ProjectSyncOutcomeStatus::Skipped {
+                reason: ProjectSyncSkip::Disabled,
+            }
+        } else if assignment.owns_artifact() {
+            ProjectSyncOutcomeStatus::AlreadyAssigned
+        } else {
+            match decision.decision {
+                OverrideDecision::Keep => {
+                    store.transition_assignment(&assignment.id, AssignmentTransition::Disabled)?;
+                    ProjectSyncOutcomeStatus::Declined
+                }
+                OverrideDecision::Overwrite => {
+                    let result = project_ops::require_project(store, &assignment.project_id)
+                        .and_then(|project| {
+                            sync_single_assignment(store, &project, &assignment, true, now)
+                        });
+                    match result {
+                        Ok(()) => ProjectSyncOutcomeStatus::Synced,
+                        Err(e) => {
+                            let err_msg = format!("{:#}", e);
+                            store
+                                .transition_assignment(
+                                    &assignment.id,
+                                    AssignmentTransition::SyncFailed { error: &err_msg },
+                                )
+                                .with_context(|| {
+                                    format!(
+                                        "settle assignment {} as error after its overwrite failed: {err_msg}",
+                                        assignment.id
+                                    )
+                                })?;
+                            ProjectSyncOutcomeStatus::Failed {
+                                error: CommandError::from_anyhow(e),
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        report.items.push(item(id, name, status));
     }
     Ok(report)
 }

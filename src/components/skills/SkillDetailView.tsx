@@ -23,12 +23,8 @@ import { describeCommandError } from "../../commandError";
 import type { NotifyFn } from "../../hooks/useStatusReporter";
 import type { ExplorePreview } from "../../hooks/useSurfaceState";
 import type { ManagedSkill, SkillFileEntry } from "./types";
-import {
-  formatRelativeTime,
-  importedSourceLine,
-  repoInfo,
-  sourceKind,
-} from "../../lib/skillPresentation";
+import type { SkillActions } from "../../hooks/useSkillActions";
+import { formatRelativeTime, skillSourceLine } from "../../lib/skillPresentation";
 
 // An empty theme object for every highlighter: even with
 // useInlineStyles={false} the library builds the <code> tag's inline style
@@ -51,8 +47,10 @@ type SkillDetailViewProps = {
   t: TFunction;
   /** Install the previewed skill (Explore previews only). */
   onInstall?: () => void;
-  onRepoint?: (skill: ManagedSkill) => void;
-  actionLoading?: boolean;
+  /** The skill action door (Managed skills only): Change source goes through it. */
+  actions?: Pick<SkillActions, "run">;
+  /** Why verbs are disabled while an action runs (null = they may run). */
+  blockedReason?: string | null;
 };
 
 type TreeNode = {
@@ -364,8 +362,8 @@ const SkillDetailView = ({
   notify,
   t,
   onInstall,
-  onRepoint,
-  actionLoading = false,
+  actions,
+  blockedReason = null,
 }: SkillDetailViewProps) => {
   const managed = subject.kind === "managed" ? subject.skill : null;
   const isExplorePreview = subject.kind === "explore";
@@ -462,21 +460,24 @@ const SkillDetailView = ({
     });
   }, []);
 
-  // One Provenance rule decides the source line: a git skill shows its repo,
-  // a local skill its folder, an imported skill "Managed here" with the Tool
-  // it was found in as history (there is no source).
-  // An Explore preview is always a git source.
-  const kind = managed ? sourceKind(managed) : "git";
-  const sourceRef = managed ? managed.source_ref : subject.kind === "explore" ? subject.preview.sourceUrl : null;
-  const sourceLabel =
-    kind === "git"
-      ? (repoInfo(sourceRef)?.label ?? sourceRef ?? "")
-      : kind === "imported" && managed
-        ? importedSourceLine(managed, t).text
-        : (sourceRef ?? "");
+  // The one source-line rule (`skillSourceLine`); an Explore preview is a
+  // git source that is not managed yet.
+  const source = managed
+    ? skillSourceLine(managed, t)
+    : subject.kind === "explore"
+      ? skillSourceLine(
+          { source_type: "git", source_ref: subject.preview.sourceUrl, central_path: subject.preview.cachePath },
+          t,
+        )
+      : null;
+  const sourceLabel = source
+    ? source.detail
+      ? `${source.label} · ${source.detail}`
+      : source.label
+    : "";
 
   const SourceIcon =
-    kind === "git" ? GitBranch : kind === "imported" ? Box : Folder;
+    source?.icon === "imported" ? Box : source?.icon === "folder" ? Folder : GitBranch;
 
   return (
     <div className="detail-view">
@@ -486,12 +487,13 @@ const SkillDetailView = ({
             <ArrowLeft size={16} />
             {t("detail.back")}
           </button>
-          {managed && onRepoint ? (
+          {managed && actions ? (
             <button
               className="btn btn-secondary"
               type="button"
-              disabled={actionLoading}
-              onClick={() => onRepoint(managed)}
+              disabled={blockedReason !== null}
+              title={blockedReason ?? undefined}
+              onClick={() => void actions.run("repoint", [managed])}
             >
               {t("changeSource.action")}
             </button>

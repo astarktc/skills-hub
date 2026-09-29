@@ -284,8 +284,8 @@ beforeEach(() => {
   stubBackend();
 });
 
-async function renderReady() {
-  const rendered = renderHook(() => useProjectState());
+async function renderReady(deps: Parameters<typeof useProjectState>[0] = {}) {
+  const rendered = renderHook(() => useProjectState(deps));
   await waitFor(() => {
     expect(rendered.result.current.projectsLoading).toBe(false);
   });
@@ -708,7 +708,6 @@ describe("useProjectState applies the view a mutation returns", () => {
       ["pi", "synced"],
       ["cursor", "synced"],
     ]);
-    expect(result.current.pendingCells.size).toBe(0);
   });
 
   it("returns a toggle-on sync failure as report data with the kept error row applied", async () => {
@@ -770,7 +769,7 @@ describe("useProjectState applies the view a mutation returns", () => {
     await act(async () => {
       await result.current.toggleAssignment("s2", "pi");
     });
-    // s1 comes off cursor by hand first: only its remaining cells are in flight.
+    // s1 comes off cursor by hand first: only its remaining assignments go.
     await act(async () => {
       await result.current.toggleAssignment("s1", "cursor");
     });
@@ -790,10 +789,6 @@ describe("useProjectState applies the view a mutation returns", () => {
     act(() => {
       pending = result.current.bulkUnassign("s1");
     });
-    expect([...result.current.pendingCells].sort()).toEqual([
-      "s1:claude_code",
-      "s1:pi",
-    ]);
     let report: RemovalReport | undefined;
     await act(async () => {
       release();
@@ -810,7 +805,6 @@ describe("useProjectState applies the view a mutation returns", () => {
     expect(result.current.assignments.map((a) => `${a.skill_id}:${a.tool}`)).toEqual([
       "s2:pi",
     ]);
-    expect(result.current.pendingCells.size).toBe(0);
   });
 
   it("converges on the backend's view when bulk unassign throws", async () => {
@@ -835,7 +829,6 @@ describe("useProjectState applies the view a mutation returns", () => {
 
     expect(commandOrder()).toEqual(["bulkUnassignSkill", "getProjectView"]);
     expect(result.current.assignments).toHaveLength(2);
-    expect(result.current.pendingCells.size).toBe(0);
   });
 
   it("sends nothing for bulk actions without a selected project", async () => {
@@ -1230,7 +1223,7 @@ describe("useProjectState project-assignment verbs (the door's entry points)", (
 
     let report: ProjectSyncReport | undefined;
     await act(async () => {
-      report = await result.current.assignToProject("p2", "s1");
+      report = await result.current.assignToProject("p2", ["s1"]);
     });
     expect(callsTo("bulkAssignSkill")).toEqual([["p2", "s1"]]);
     expect(report?.items.map((item) => item.tool)).toEqual(["claude_code"]);
@@ -1241,7 +1234,7 @@ describe("useProjectState project-assignment verbs (the door's entry points)", (
 
     let removal: RemovalReport | undefined;
     await act(async () => {
-      removal = await result.current.unassignFromProject("p2", "s1");
+      removal = await result.current.unassignFromProject("p2", ["s1"]);
     });
     expect(callsTo("bulkUnassignSkill")).toEqual([["p2", "s1"]]);
     expect(removal?.targets).toHaveLength(1);
@@ -1252,9 +1245,26 @@ describe("useProjectState project-assignment verbs (the door's entry points)", (
     const { result } = await renderReady();
     await withSelectedProject(result, ["pi"]);
     await act(async () => {
-      await result.current.assignToProject("p1", "s1");
+      await result.current.assignToProject("p1", ["s1"]);
     });
     expect(result.current.assignments.map((a) => `${a.skill_id}:${a.tool}`)).toEqual(["s1:pi"]);
+  });
+
+  it("assigns several skills, then asks about all their collisions once", async () => {
+    const settleCollisions = vi.fn(async (report: ProjectSyncReport) => ({ report, resolved: true }));
+    const { result } = await renderReady({ settleCollisions });
+    await withSelectedProject(result, ["pi"]);
+    mockInvoke.mockClear();
+    let report: ProjectSyncReport | undefined;
+    await act(async () => {
+      report = await result.current.assignToProject("p1", ["s1", "s2"]);
+    });
+    expect(callsTo("bulkAssignSkill")).toEqual([["p1", "s1"], ["p1", "s2"]]);
+    // One ask over the merged report; a retry answers no view, so one re-read.
+    expect(settleCollisions).toHaveBeenCalledTimes(1);
+    expect(settleCollisions.mock.calls[0]![0].items.map((item) => item.skill_id)).toEqual(["s1", "s2"]);
+    expect(report?.items).toHaveLength(2);
+    expect(callsTo("getProjectView")).toEqual([["p1"]]);
   });
 
   it("a thrown verb converges on the backend's view of that project before rethrowing", async () => {
@@ -1268,7 +1278,7 @@ describe("useProjectState project-assignment verbs (the door's entry points)", (
     mockInvoke.mockClear();
     await expect(
       act(async () => {
-        await result.current.assignToProject("p1", "s1");
+        await result.current.assignToProject("p1", ["s1"]);
       }),
     ).rejects.toEqual(failure);
     expect(callsTo("getProjectView")).toEqual([["p1"]]);

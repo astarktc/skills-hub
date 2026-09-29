@@ -303,6 +303,25 @@ pub async fn resync_all_projects(
     .map_err(CommandError::from_anyhow)
 }
 
+/// The overwrite ask's retry for project assignments (D12): settle each
+/// collided assignment with the operator's decision. Spans projects (a
+/// resync-all or an Enable can collide in several); the caller re-reads the
+/// view it shows.
+#[tauri::command]
+#[specta::specta]
+pub async fn resolve_project_collisions(
+    store: State<'_, SkillStore>,
+    decisions: Vec<project_sync::AssignmentDecision>,
+) -> Result<ProjectSyncReport, CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        project_sync::resolve_collisions(&store, &decisions, now_ms())
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
 /// The fan-out's fresh view plus its report: one item per configured Tool
 /// (`synced`, `already_assigned`, or `failed` with the typed error).
 #[derive(serde::Serialize, Clone, Type)]

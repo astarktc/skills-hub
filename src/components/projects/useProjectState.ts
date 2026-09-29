@@ -42,7 +42,8 @@ export type ProjectState = {
   // Loading
   projectsLoading: boolean;
   matrixLoading: boolean;
-  pendingCells: Set<string>;
+  // Cells in flight are the reporter's pending subject (`{ kind: "cell" }`),
+  // run by the view one mutation at a time (D19) — not state of this world.
   // Errors
   loadFailed: boolean;
   // Modal state lives in the surface module (`projectAdd`, `projectEdit`,
@@ -78,15 +79,24 @@ export type ProjectState = {
   /** Inverse of `bulkAssign`: one skill off every Tool of the project. */
   bulkUnassign: (skillId: string) => Promise<RemovalReport | undefined>;
   /**
-   * Assign one skill to every Tool of any project — the project-assignment
+   * Assign skills to every Tool of any project — the project-assignment
    * verb other surfaces call (the skill action door, the inspector). The
    * project need not be the selected one: its row updates, and its matrix
-   * too when it is shown. Resolves to the report, unread; a thrown command
-   * converges on the backend's view before rethrowing.
+   * too when it is shown. The backend command is per skill, so the skills
+   * are assigned one after another and their reports merged; their
+   * collisions are then **one** overwrite ask. Resolves to the merged
+   * report, unread; a thrown command converges on the backend's view
+   * before rethrowing.
    */
-  assignToProject: (projectId: string, skillId: string) => Promise<ProjectSyncReport>;
-  /** Inverse of `assignToProject`: one skill off every Tool of a project. */
-  unassignFromProject: (projectId: string, skillId: string) => Promise<RemovalReport>;
+  assignToProject: (projectId: string, skillIds: readonly string[]) => Promise<ProjectSyncReport>;
+  /** Inverse of `assignToProject`: skills off every Tool of a project, one merged report. */
+  unassignFromProject: (projectId: string, skillIds: readonly string[]) => Promise<RemovalReport>;
+  /**
+   * Re-read one project's view (its row, and its matrix when shown) — for a
+   * caller whose mutation answered no view (a collision retry another world
+   * ran). Resolves to whether the view was applied.
+   */
+  refreshView: (projectId: string) => Promise<boolean>;
   resyncProject: () => Promise<ProjectSyncReport>;
   updateProjectPath: (
     projectId: string,
@@ -135,7 +145,22 @@ const NO_SELECTION: Selection = {
   reconciled: true,
 };
 
-export function useProjectState(): ProjectState {
+/** What the project world needs from outside it (App passes it in). */
+export type ProjectStateDeps = {
+  /**
+   * The one overwrite ask for a project report (the sync world's
+   * `settleProjectCollisions`): its `TARGET_EXISTS` assignments are asked
+   * and resolved; `resolved` says a retry ran (and answered no view).
+   */
+  settleCollisions?: (
+    report: ProjectSyncReport,
+  ) => Promise<{ report: ProjectSyncReport; resolved: boolean }>;
+};
+
+const UNSETTLED = async (report: ProjectSyncReport) => ({ report, resolved: false });
+
+export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
+  const settleCollisions = deps.settleCollisions ?? UNSETTLED;
   // Data state
   const [projects, setProjects] = useState<ProjectDto[]>([]);
   const [selection, setSelection] = useState<Selection>(NO_SELECTION);
@@ -149,7 +174,6 @@ export function useProjectState(): ProjectState {
   // Loading state
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [matrixLoading, setMatrixLoading] = useState(false);
-  const [pendingCells, setPendingCells] = useState<Set<string>>(new Set());
 
   // Error state
   const [loadFailed, setLoadFailed] = useState(false);
@@ -315,14 +339,6 @@ export function useProjectState(): ProjectState {
   const toggleAssignment = useCallback(
     async (skillId: string, tool: string): Promise<ToggleResult | null> => {
       if (!selectedProjectId) return null;
-      const key = `${skillId}:${tool}`;
-      // Prevent double-toggle while a pending operation is in flight
-      if (pendingCells.has(key)) return null;
-      setPendingCells((prev) => {
-        const next = new Set(prev);
-        next.add(key);
-        return next;
-      });
       try {
         // Add-vs-remove is the backend's decision, read from its own rows
         // under the mutation guard — the frontend mirrors nothing.
@@ -333,47 +349,62 @@ export function useProjectState(): ProjectState {
           tool,
         );
         applyView(result.view);
-        return result.kind === "assigned"
-          ? { kind: "assigned", report: result.report }
-          : { kind: "unassigned", report: result.report };
+        if (result.kind === "unassigned") return { kind: "unassigned", report: result.report };
+        // A folder in the way is the one overwrite ask's (D12); a retry
+        // answers no view, so the matrix is re-read.
+        const settled = await settleCollisions(result.report);
+        if (settled.resolved) await refreshView(selectedProjectId);
+        return { kind: "assigned", report: settled.report };
       } catch (err) {
         // A whole-command failure may follow settled rows, so converge on
         // the backend's view before surfacing the failure.
         await refreshView(selectedProjectId);
         throw err;
-      } finally {
-        setPendingCells((prev) => {
-          const next = new Set(prev);
-          next.delete(key);
-          return next;
-        });
       }
     },
-    [selectedProjectId, pendingCells, applyView, refreshView],
+    [selectedProjectId, applyView, refreshView, settleCollisions],
   );
 
   const assignToProject = useCallback(
-    async (projectId: string, skillId: string): Promise<ProjectSyncReport> => {
+    async (projectId: string, skillIds: readonly string[]): Promise<ProjectSyncReport> => {
       try {
-        const result = await invokeTauri("bulkAssignSkill", projectId, skillId);
-        applyView(result.view);
-        return result.report;
+        // Every skill's report first, then one ask over all of them.
+        const items: ProjectSyncReport["items"] = [];
+        for (const skillId of skillIds) {
+          const result = await invokeTauri("bulkAssignSkill", projectId, skillId);
+          applyView(result.view);
+          items.push(...result.report.items);
+        }
+        const settled = await settleCollisions({ items });
+        if (settled.resolved) await refreshView(projectId);
+        return settled.report;
       } catch (err) {
         await refreshView(projectId);
         throw err;
       }
     },
-    [applyView, refreshView],
+    [applyView, refreshView, settleCollisions],
   );
 
   const unassignFromProject = useCallback(
-    async (projectId: string, skillId: string): Promise<RemovalReport> => {
+    async (projectId: string, skillIds: readonly string[]): Promise<RemovalReport> => {
       try {
-        const result = await invokeTauri("bulkUnassignSkill", projectId, skillId);
-        // A row whose artifact stayed is kept with status `error`
-        // (ADR-0002); the view already shows it.
-        applyView(result.view);
-        return result.report;
+        const reports: RemovalReport[] = [];
+        for (const skillId of skillIds) {
+          const result = await invokeTauri("bulkUnassignSkill", projectId, skillId);
+          // A row whose artifact stayed is kept with status `error`
+          // (ADR-0002); the view already shows it.
+          applyView(result.view);
+          reports.push(result.report);
+        }
+        return reports.length === 1
+          ? reports[0]
+          : {
+              targets: reports.flatMap((report) => report.targets),
+              central_removed: false,
+              record_deleted: false,
+              cleared_markers: reports.flatMap((report) => report.cleared_markers),
+            };
       } catch (err) {
         await refreshView(projectId);
         throw err;
@@ -385,49 +416,17 @@ export function useProjectState(): ProjectState {
   const bulkAssign = useCallback(
     async (skillId: string): Promise<ProjectSyncReport | undefined> => {
       if (!selectedProjectId) return;
-      const toolKeys = tools.map((t) => t.tool);
-      const pendingKeys = toolKeys.map((tk) => `${skillId}:${tk}`);
-      setPendingCells((prev) => {
-        const next = new Set(prev);
-        for (const k of pendingKeys) next.add(k);
-        return next;
-      });
-      try {
-        return await assignToProject(selectedProjectId, skillId);
-      } finally {
-        setPendingCells((prev) => {
-          const next = new Set(prev);
-          for (const k of pendingKeys) next.delete(k);
-          return next;
-        });
-      }
+      return assignToProject(selectedProjectId, [skillId]);
     },
-    [selectedProjectId, tools, assignToProject],
+    [selectedProjectId, assignToProject],
   );
 
   const bulkUnassign = useCallback(
     async (skillId: string): Promise<RemovalReport | undefined> => {
       if (!selectedProjectId) return;
-      // Only the cells that hold an assignment are in flight.
-      const pendingKeys = assignments
-        .filter((a) => a.skill_id === skillId)
-        .map((a) => `${skillId}:${a.tool}`);
-      setPendingCells((prev) => {
-        const next = new Set(prev);
-        for (const k of pendingKeys) next.add(k);
-        return next;
-      });
-      try {
-        return await unassignFromProject(selectedProjectId, skillId);
-      } finally {
-        setPendingCells((prev) => {
-          const next = new Set(prev);
-          for (const k of pendingKeys) next.delete(k);
-          return next;
-        });
-      }
+      return unassignFromProject(selectedProjectId, [skillId]);
     },
-    [selectedProjectId, assignments, unassignFromProject],
+    [selectedProjectId, unassignFromProject],
   );
 
   const updateProjectPath = useCallback(
@@ -444,20 +443,26 @@ export function useProjectState(): ProjectState {
     try {
       const result = await invokeTauri("resyncProject", selectedProjectId);
       applyView(result.view);
-      return result.report;
+      const settled = await settleCollisions(result.report);
+      if (settled.resolved) await refreshView(selectedProjectId);
+      return settled.report;
     } catch (err) {
       await refreshView(selectedProjectId);
       throw err;
     }
-  }, [selectedProjectId, applyView, refreshView]);
+  }, [selectedProjectId, applyView, refreshView, settleCollisions]);
 
   const resyncAll = useCallback(async (): Promise<{
     report: ProjectSyncReport;
     viewRefreshed: boolean;
   }> => {
     let result: ResyncAllResultDto;
+    let report: ProjectSyncReport;
     try {
       result = await invokeTauri("resyncAllProjects");
+      // Collisions across every project are one ask, settled before the
+      // shown matrix is re-read below.
+      ({ report } = await settleCollisions(result.report));
     } catch (err) {
       if (selectedProjectId) await refreshView(selectedProjectId);
       throw err;
@@ -466,8 +471,8 @@ export function useProjectState(): ProjectState {
     // The batch touches every project and answers with no view; only the
     // shown one needs its matrix, so this read is the success path here.
     const viewRefreshed = selectedProjectId ? await refreshView(selectedProjectId) : true;
-    return { report: result.report, viewRefreshed };
-  }, [selectedProjectId, refreshView]);
+    return { report, viewRefreshed };
+  }, [selectedProjectId, refreshView, settleCollisions]);
 
   const configureTools = useCallback(
     async (toolIds: string[]): Promise<RemovalReport | undefined> => {
@@ -532,7 +537,6 @@ export function useProjectState(): ProjectState {
       assignmentsReconciled,
       projectsLoading,
       matrixLoading,
-      pendingCells,
       loadFailed,
       loadProjects,
       selectProject,
@@ -543,6 +547,7 @@ export function useProjectState(): ProjectState {
       bulkUnassign,
       assignToProject,
       unassignFromProject,
+      refreshView,
       resyncProject,
       updateProjectPath,
       resyncAll,
@@ -559,7 +564,6 @@ export function useProjectState(): ProjectState {
       assignmentsReconciled,
       projectsLoading,
       matrixLoading,
-      pendingCells,
       loadFailed,
       loadProjects,
       selectProject,
@@ -570,6 +574,7 @@ export function useProjectState(): ProjectState {
       bulkUnassign,
       assignToProject,
       unassignFromProject,
+      refreshView,
       resyncProject,
       updateProjectPath,
       resyncAll,

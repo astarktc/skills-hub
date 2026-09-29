@@ -530,16 +530,19 @@ fn auto_sync_on_keeps_a_sibling_that_diverged_after_planning() {
         panic!("alpha should import: {:?}", report);
     };
     assert_eq!(*forced_tools, vec!["pi".to_string()]);
-    assert_eq!(originals.len(), 1);
-    assert_eq!(originals[0].path, sibling);
-    assert!(matches!(originals[0].status, OriginalStatus::KeptDivergent));
+    // Reported once (ticket 04): the sibling in the target's way is the
+    // pair's askable `TARGET_EXISTS` row, carrying the ask's facts — not
+    // also a kept original.
+    assert!(originals.is_empty(), "{originals:?}");
     assert!(targets.iter().any(|target| {
         target.tool_key == "cursor"
             && matches!(
-                target.status,
-                crate::core::global_sync::BatchTargetStatus::Failed { .. }
+                &target.status,
+                crate::core::global_sync::BatchTargetStatus::Failed {
+                    error: crate::core::errors::CommandError::TargetExists { path, modified_at: Some(_), same_content: false },
+                } if Path::new(path) == sibling
             )
-    }));
+    }), "{targets:?}");
 }
 
 #[test]

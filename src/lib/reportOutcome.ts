@@ -2,6 +2,7 @@ import type {
   BatchTargetOutcome,
   EnableReport,
   ImportReport,
+  InstallBatchReport,
   InstallResultDto,
   InvocationEditReport,
   ProjectSyncReport,
@@ -10,6 +11,7 @@ import type {
   RemovalReport,
 } from "../bindings";
 import { describeCommandError } from "../commandError";
+import type { DeclinedPair } from "./overwriteAsk";
 import type { ActionErrorEntry, TranslateFn } from "../hooks/useStatusReporter";
 import { ACQUISITION_SKIP_KEY, INVOCATION_LABEL_KEY, SKIPPED_REASON_KEY } from "./skillPresentation";
 
@@ -221,11 +223,12 @@ function removalCounts(report: RemovalReport) {
 }
 
 function projectSyncCounts(report: ProjectSyncReport) {
-  const counts = { synced: 0, alreadyAssigned: 0, failed: 0, skipped: 0 };
+  const counts = { synced: 0, alreadyAssigned: 0, failed: 0, skipped: 0, declined: 0 };
   for (const { status } of report.items) {
     if (status.status === "synced") counts.synced++;
     else if (status.status === "already_assigned") counts.alreadyAssigned++;
     else if (status.status === "skipped") counts.skipped++;
+    else if (status.status === "declined") counts.declined++;
     else counts.failed++;
   }
   return counts;
@@ -258,6 +261,8 @@ export function refreshOutcome(
   report: RefreshReport,
   ctx: ReportContext & {
     single?: { name: string; success: string };
+    /** Pairs the operator kept in the overwrite ask the report's collisions raised. */
+    declined?: readonly DeclinedPair[];
   },
 ): Outcome {
   const out: Outcome = empty();
@@ -303,6 +308,7 @@ export function refreshOutcome(
     // A cancelled row is counted in the headline and raises no entry.
   }
   out.errors.push(...targetErrors);
+  for (const pair of ctx.declined ?? []) out.notes.push(declinedNote(ctx, pair.skillName, pair.tool));
   for (const skill of report.skills) {
     if (skill.status.status !== "refreshed" || !skill.status.edit_conflict)
       continue;
@@ -327,7 +333,7 @@ export function refreshOutcome(
     failed: summary.failed,
     targetsFailed: summary.target_failures,
     skipped: summary.skipped,
-    declined: 0,
+    declined: ctx.declined?.length ?? 0,
     cancelled: summary.cancelled,
     review: summary.conflicts,
   };
@@ -347,10 +353,11 @@ export function refreshOutcome(
         headlineTone(counts),
         t("invocationEdit.updateCompletedWithConflict", { name: ctx.single.name }),
       );
-    else if (!failed && !skipped) out.toast = toast("success", ctx.single.success);
+    else if (!failed && !skipped)
+      out.toast = toast(headlineTone(counts), ctx.single.success, detailOf(out.notes));
     return out;
   }
-  out.toast = headlineToast(t, "refreshed", counts);
+  out.toast = headlineToast(t, "refreshed", counts, { detail: detailOf(out.notes) });
   return out;
 }
 
@@ -372,20 +379,23 @@ function propagationErrors(
  * accompanying catalog replaces the whole library. */
 export function invocationEditOutcome(
   report: InvocationEditReport,
-  ctx: ReportContext,
+  ctx: ReportContext & { declined?: readonly DeclinedPair[] },
 ): Outcome<PlainEntry> {
   const errors = propagationErrors(report.propagation.targets, report.skill_name, ctx);
   const saved = ctx.t("invocationEdit.saved");
+  // Pairs kept in the overwrite ask its collisions raised: quiet notes.
+  const notes = (ctx.declined ?? []).map((pair) => declinedNote(ctx, pair.skillName, pair.tool));
   return {
     toast: errors.length
       ? toast(
           "failure",
           [saved, ctx.t("outcome.targetsFailed", { count: errors.length })].join(HEADLINE_SEPARATOR),
+          detailOf(notes),
         )
-      : toast("success", saved),
+      : toast(notes.length ? "declined" : "success", saved, detailOf(notes)),
     errors,
     warnings: [],
-    notes: [],
+    notes,
     completion: { reload: false, closeModal: true, conflict: false },
   };
 }
@@ -491,6 +501,12 @@ export function projectSyncOutcome(
   out.completion.reload = false;
   const counts = projectSyncCounts(report);
   for (const item of report.items) {
+    // "Keep existing" in the overwrite ask (ticket 04): a quiet note, never
+    // an error — the row is kept `disabled` (D9, D10).
+    if (item.status.status === "declined") {
+      out.notes.push(declinedNote(ctx, item.skill_name, item.tool));
+      continue;
+    }
     if (item.status.status !== "failed") continue;
     const title =
       ctx.action === "resyncAll"
@@ -510,7 +526,9 @@ export function projectSyncOutcome(
   const { t } = ctx;
   switch (ctx.action) {
     case "toggleOn":
-      if (!failed)
+      if (!failed && counts.declined > 0)
+        out.toast = toast("declined", out.notes.join("\n"));
+      else if (!failed)
         out.toast = counts.skipped > 0
           ? toast("skipped", t("projects.assignedWhileDisabled"))
           : toast("success", t("status.syncEnabled"));
@@ -548,6 +566,9 @@ export function projectSyncOutcome(
       break;
     }
   }
+  // Declined pairs ride as the detail of a count-bearing project toast.
+  if (out.toast && ctx.action !== "toggleOn" && out.notes.length && !out.toast.detail)
+    out.toast = { ...out.toast, detail: detailOf(out.notes) };
   return out;
 }
 
@@ -868,6 +889,31 @@ export type InstallSettlement = { name: string } & (
   | { status: "failed"; error: unknown }
   | { status: "cancelled" }
 );
+
+/**
+ * The install batch's report (`installSelection`, ticket 04) as the fold's
+ * settlements, in candidate order. The request says whether the action
+ * deployed at all (`deploy`, auto-sync) and which Tools it named — the
+ * backend answers an empty target list for both "not deployed" and "no
+ * Tools", and the fold tells them apart.
+ */
+export function installBatchSettlements(
+  report: InstallBatchReport,
+  request: { deploy: boolean; tools: readonly string[] },
+): InstallSettlement[] {
+  return report.candidates.map((candidate): InstallSettlement => {
+    const status = candidate.status;
+    if (status.status === "cancelled") return { name: candidate.name, status: "cancelled" };
+    if (status.status === "failed")
+      return { name: candidate.name, status: "failed", error: status.error };
+    const deployment: InstallDeployment = !request.deploy
+      ? { status: "disabled" }
+      : request.tools.length === 0
+        ? { status: "no-targets" }
+        : { status: "reported", report: status.targets };
+    return { name: status.skill.name, status: "installed", result: status.skill, deployment };
+  });
+}
 /**
  * The headline counts candidates: installed · failed · targets failed (a
  * deployment problem under an installed skill) · kept existing · cancelled.
@@ -937,4 +983,42 @@ export function deleteOutcome(
     ? toast("failure", ctx.t("status.skillDeleteKept", { failed: removalCounts(report).failed }))
     : toast("success", ctx.t("status.skillRemoved"));
   return out;
+}
+
+/**
+ * One operator action that settled several reports (a group's Deploy all:
+ * a first sync and an Enable, asked once) as one Outcome: the entries and
+ * notes of every part; the first part with a toast heads it — re-toned to a
+ * failure when another part failed, carrying the other parts' quiet notes
+ * as detail (a headline hides notes as rows) — and one completion (reload /
+ * conflict if any part asks; close only when every part may). The reporter
+ * executes it once: one toast set, one history block.
+ */
+export function combineOutcomes<Entry>(...parts: Outcome<Entry>[]): Outcome<Entry> {
+  const errors = parts.flatMap((part) => part.errors);
+  const headPart = parts.find((part) => part.toast) ?? null;
+  const head = headPart?.toast ?? null;
+  const others = parts.filter((part) => part !== headPart);
+  const detail = detailOf([
+    ...(head?.detail ? [head.detail] : []),
+    ...others.flatMap((part) => part.notes),
+  ]);
+  const toastOut = head
+    ? toast(
+        head.tone !== "failure" && others.some((part) => part.errors.length > 0) ? "failure" : head.tone,
+        head.message,
+        detail,
+      )
+    : null;
+  return {
+    toast: toastOut,
+    errors,
+    warnings: parts.flatMap((part) => part.warnings),
+    notes: parts.flatMap((part) => part.notes),
+    completion: {
+      reload: parts.some((part) => part.completion.reload),
+      closeModal: parts.every((part) => part.completion.closeModal),
+      conflict: parts.some((part) => part.completion.conflict),
+    },
+  };
 }

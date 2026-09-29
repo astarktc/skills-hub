@@ -4,7 +4,6 @@ import type { TFunction } from "i18next";
 import type { Area } from "../../hooks/useSurfaceState";
 
 type HeaderProps = {
-  loading: boolean;
   /** The area showing (surface state); a focused subject stays in its area. */
   activeArea: Area;
   /** Errors and warnings not yet seen in the notification panel. */

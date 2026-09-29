@@ -9,6 +9,7 @@ export type { ProjectDto } from "../../bindings";
 export type { ProjectToolDto } from "../../bindings";
 export type { ProjectSkillAssignmentDto } from "../../bindings";
 export type { ProjectViewDto } from "../../bindings";
+export type { AssignmentDecision } from "../../bindings";
 export type { ToggleAssignmentResultDto } from "../../bindings";
 export type { RemoveProjectResultDto } from "../../bindings";
 export type { ConfigureProjectToolsResultDto } from "../../bindings";

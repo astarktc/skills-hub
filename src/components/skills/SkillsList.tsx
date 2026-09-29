@@ -3,8 +3,9 @@ import { GitBranch, MessageCircle } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { ManagedSkill, OnboardingPlan, ToolOption } from "./types";
 import type { CopyToClipboardFn } from "../../hooks/useStatusReporter";
+import type { SkillActions } from "../../hooks/useSkillActions";
+import type { PendingAction } from "../../lib/actionLifecycle";
 import SkillCard from "./SkillCard";
-import type { RepointKind } from "../../lib/skillPresentation";
 import type { ListLens } from "../../hooks/useListLens";
 
 type SkillsListProps = {
@@ -14,19 +15,14 @@ type SkillsListProps = {
   installedTools: ToolOption[];
   /** Every registry tool, detected or not — labels a card's orphaned rows. */
   allTools: ToolOption[];
-  loading: boolean;
+  /** The action running now (the reporter's `pending`); cards show their own inline. */
+  pending: PendingAction | null;
+  /** Why verbs are disabled while something runs, in words. */
+  blockedReason: string | null;
   onReviewImport: () => void;
-  onUpdateSkill: (skill: ManagedSkill) => void;
-  /** Change source; the `source_missing` repair opens it on `local`. */
-  onRepointSkill: (skill: ManagedSkill, preselect?: RepointKind) => void;
-  onDetachSkill: (skill: ManagedSkill) => void;
-  onRestoreSkill: (skill: ManagedSkill) => void;
-  onDeleteSkill: (skillId: string) => void;
-  onToggleTool: (skill: ManagedSkill, toolId: string) => void;
-  onUnsyncSkill: (skillId: string) => void;
-  onSyncSkillToAllTools: (skill: ManagedSkill) => void;
+  /** The skill action door's handle: every per-skill verb goes through it. */
+  actions: Pick<SkillActions, "run" | "repair">;
   onOpenDetail: (skill: ManagedSkill) => void;
-  onInvocationClick: (skillId: string) => void;
   /** The reporter's clipboard helper, handed down by the binder. */
   copyToClipboard: CopyToClipboardFn;
   t: TFunction;
@@ -37,22 +33,17 @@ const SkillsList = ({
   lens,
   installedTools,
   allTools,
-  loading,
+  pending,
+  blockedReason,
   onReviewImport,
-  onUpdateSkill,
-  onRepointSkill,
-  onDetachSkill,
-  onRestoreSkill,
-  onDeleteSkill,
-  onToggleTool,
-  onUnsyncSkill,
-  onSyncSkillToAllTools,
+  actions,
   onOpenDetail,
-  onInvocationClick,
   copyToClipboard,
   t,
 }: SkillsListProps) => {
-  const { visible: visibleSkills, groups, viewMode } = lens;
+  // `displayed` is the one on-screen order (a grouped list walks its groups
+  // below); the focus rule and selection read the same sequence.
+  const { displayed, groups, viewMode } = lens;
 
   const renderSkill = (skill: ManagedSkill) => (
     <SkillCard
@@ -60,17 +51,10 @@ const SkillsList = ({
       skill={skill}
       installedTools={installedTools}
       allTools={allTools}
-      loading={loading}
-      onUpdate={onUpdateSkill}
-      onRepoint={onRepointSkill}
-      onDetach={onDetachSkill}
-      onRestore={onRestoreSkill}
-      onDelete={onDeleteSkill}
-      onToggleTool={onToggleTool}
-      onUnsync={onUnsyncSkill}
-      onSyncToAllTools={onSyncSkillToAllTools}
+      pending={pending}
+      blockedReason={blockedReason}
+      actions={actions}
       onOpenDetail={onOpenDetail}
-      onInvocationClick={onInvocationClick}
       copyToClipboard={copyToClipboard}
       t={t}
     />
@@ -98,14 +82,15 @@ const SkillsList = ({
             className="btn btn-warning"
             type="button"
             onClick={onReviewImport}
-            disabled={loading}
+            disabled={pending !== null}
+            title={blockedReason ?? undefined}
           >
             {t("reviewImport")}
           </button>
         </div>
       ) : null}
 
-      {visibleSkills.length === 0 ? (
+      {displayed.length === 0 ? (
         <div className="empty">{t("skillsEmpty")}</div>
       ) : groups ? (
         <>
@@ -140,7 +125,7 @@ const SkillsList = ({
           ))}
         </>
       ) : (
-        <div className={gridClass}>{visibleSkills.map(renderSkill)}</div>
+        <div className={gridClass}>{displayed.map(renderSkill)}</div>
       )}
     </div>
   );

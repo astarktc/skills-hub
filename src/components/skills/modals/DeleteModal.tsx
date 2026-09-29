@@ -15,6 +15,11 @@ type DeleteModalProps = {
   skillName: string | null
   onRequestClose: () => void
   onConfirm: () => void
+  /**
+   * Where focus goes when the dialog closes and its opener (the row) is gone:
+   * the lifecycle's post-Delete target (D21). Falls back to the main landmark.
+   */
+  fallbackFocus?: () => HTMLElement | null
   t: TFunction
 }
 
@@ -24,6 +29,7 @@ const DeleteModal = ({
   skillName,
   onRequestClose,
   onConfirm,
+  fallbackFocus,
   t,
 }: DeleteModalProps) => {
   const titleId = useId()
@@ -34,7 +40,7 @@ const DeleteModal = ({
         if (!next) onRequestClose()
       }}
     >
-      <DialogContent aria-labelledby={titleId} fallbackFocus={mainLandmarkFocus}>
+      <DialogContent aria-labelledby={titleId} fallbackFocus={() => fallbackFocus?.() ?? mainLandmarkFocus()}>
         <DialogBody>
           <div className="delete-title" id={titleId}>
             <TriangleAlert size={20} />

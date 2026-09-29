@@ -1,5 +1,6 @@
 use std::fs;
 
+use crate::core::content_identity::Source;
 use crate::core::sync_engine::{
     copy_dir_recursive, sync_dir_for_tool_with_overwrite, sync_dir_hybrid,
     sync_dir_hybrid_with_overwrite, SyncMode,
@@ -61,7 +62,7 @@ fn hybrid_sync_creates_link_and_is_idempotent_when_same_link() {
     let dst_dir = tempfile::tempdir().unwrap();
     let target = dst_dir.path().join("t");
 
-    let out = sync_dir_hybrid(src_dir.path(), &target).unwrap();
+    let out = sync_dir_hybrid(src_dir.path(), Source::Directory(src_dir.path()), &target).unwrap();
     assert!(matches!(
         out.mode_used,
         SyncMode::Symlink | SyncMode::Junction | SyncMode::Copy
@@ -69,7 +70,8 @@ fn hybrid_sync_creates_link_and_is_idempotent_when_same_link() {
 
     if let Ok(link) = fs::read_link(&target) {
         assert_eq!(link, src_dir.path());
-        let out2 = sync_dir_hybrid(src_dir.path(), &target).unwrap();
+        let out2 =
+            sync_dir_hybrid(src_dir.path(), Source::Directory(src_dir.path()), &target).unwrap();
         assert!(matches!(out2.mode_used, SyncMode::Symlink));
     }
 }
@@ -82,7 +84,8 @@ fn hybrid_sync_refuses_missing_source() {
     let target = dst_dir.path().join("t");
     let source = dst_dir.path().join("no-such-source");
 
-    let err = sync_dir_hybrid_with_overwrite(&source, &target, true).unwrap_err();
+    let err = sync_dir_hybrid_with_overwrite(&source, Source::Directory(&source), &target, true)
+        .unwrap_err();
     match err.downcast_ref::<crate::core::errors::SignalError>() {
         Some(crate::core::errors::SignalError::InvalidPath { path, reason }) => {
             assert_eq!(path, &source.to_string_lossy());
@@ -106,14 +109,26 @@ fn hybrid_sync_with_overwrite_replaces_existing() {
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("old.txt"), b"old").unwrap();
 
-    let err = sync_dir_hybrid_with_overwrite(src_dir.path(), &target, false).unwrap_err();
+    let err = sync_dir_hybrid_with_overwrite(
+        src_dir.path(),
+        Source::Directory(src_dir.path()),
+        &target,
+        false,
+    )
+    .unwrap_err();
     // Typed condition, recovered by downcast — not by message text (ADR 0001).
     let typed = err
         .downcast_ref::<crate::core::sync_engine::TargetExistsError>()
         .expect("TargetExistsError must be downcastable through the anyhow chain");
     assert_eq!(typed.target, target);
 
-    let out = sync_dir_hybrid_with_overwrite(src_dir.path(), &target, true).unwrap();
+    let out = sync_dir_hybrid_with_overwrite(
+        src_dir.path(),
+        Source::Directory(src_dir.path()),
+        &target,
+        true,
+    )
+    .unwrap();
     assert!(out.replaced);
 }
 
@@ -128,7 +143,14 @@ fn symlink_capable_tool_gets_a_link() {
 
     let claude = adapter_by_key("claude_code").expect("claude adapter");
     assert!(claude.supports_symlink);
-    let out = sync_dir_for_tool_with_overwrite(claude, src_dir.path(), &target, false).unwrap();
+    let out = sync_dir_for_tool_with_overwrite(
+        claude,
+        src_dir.path(),
+        Source::Directory(src_dir.path()),
+        &target,
+        false,
+    )
+    .unwrap();
     assert!(matches!(out.mode_used, SyncMode::Symlink));
     assert!(fs::symlink_metadata(&target)
         .unwrap()
@@ -153,7 +175,14 @@ fn any_adapter_without_symlink_support_is_copied() {
         .expect("claude adapter")
         .clone();
     claude.supports_symlink = false;
-    let out = sync_dir_for_tool_with_overwrite(&claude, src_dir.path(), &target, false).unwrap();
+    let out = sync_dir_for_tool_with_overwrite(
+        &claude,
+        src_dir.path(),
+        Source::Directory(src_dir.path()),
+        &target,
+        false,
+    )
+    .unwrap();
     assert!(matches!(out.mode_used, SyncMode::Copy));
     assert!(!fs::symlink_metadata(&target)
         .unwrap()
@@ -176,8 +205,13 @@ fn copy_overwrite_replaces_broken_symlink_target() {
     // Create a broken symlink at the target path.
     symlink(dst_dir.path().join("missing"), &target).unwrap();
 
-    let out = crate::core::sync_engine::sync_dir_copy_with_overwrite(src_dir.path(), &target, true)
-        .unwrap();
+    let out = crate::core::sync_engine::sync_dir_copy_with_overwrite(
+        src_dir.path(),
+        Source::Directory(src_dir.path()),
+        &target,
+        true,
+    )
+    .unwrap();
 
     assert!(matches!(out.mode_used, SyncMode::Copy));
     assert!(target.join("s/a.txt").exists());

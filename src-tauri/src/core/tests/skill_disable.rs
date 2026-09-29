@@ -1160,3 +1160,354 @@ fn disabled_virtual_group_assignment_enables_once() {
     assert!(enabled.global.is_empty());
     assert!(exists_any(&target));
 }
+
+// ---------------------------------------------------------------------------
+// Ticket 04 (D12): every `TARGET_EXISTS` producer answers an askable row
+// carrying the ask's facts, and the ask's retry settles it.
+// ---------------------------------------------------------------------------
+
+fn ask_facts(error: &CommandError, expected: &Path) {
+    match error {
+        CommandError::TargetExists {
+            path,
+            modified_at,
+            same_content,
+        } => {
+            assert_eq!(Path::new(path), expected);
+            assert!(modified_at.is_some(), "modified time observed");
+            assert!(!same_content, "a foreign folder differs from the skill");
+        }
+        other => panic!("expected TARGET_EXISTS, got {other:?}"),
+    }
+}
+
+fn overwrite_or_keep(
+    f: &Fixture,
+    tool: &str,
+    decision: crate::core::global_sync::OverrideDecision,
+) -> Vec<crate::core::global_sync::BatchOverride> {
+    vec![crate::core::global_sync::BatchOverride {
+        skill_id: f.skill_id.clone(),
+        tool_key: tool.to_string(),
+        decision,
+    }]
+}
+
+/// Enable's first sync collides → an askable row (pair identity + facts);
+/// the retry is the same scope with the decision: Overwrite replaces.
+#[test]
+fn an_enable_collision_is_askable_and_its_overwrite_retry_replaces_the_folder() {
+    use crate::core::global_sync::OverrideDecision;
+    use crate::core::skill_disable::enable_targets_with;
+    let f = fixture(&["claude_code"]);
+    disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    let path = f.global_path(".claude/skills");
+    foreign_folder(&path);
+
+    let enabled = enable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    let [row] = enabled.global.as_slice() else {
+        panic!("{:?}", enabled.global)
+    };
+    assert_eq!(
+        (row.skill_id.as_str(), row.tool_key.as_str()),
+        (f.skill_id.as_str(), "claude_code")
+    );
+    let BatchTargetStatus::Failed { error } = &row.status else {
+        panic!("{row:?}")
+    };
+    ask_facts(error, &path);
+    assert_eq!(f.status("claude_code"), Some(SyncStatus::Disabled));
+
+    let retried = enable_targets_with(
+        &f.store,
+        f.home(),
+        &f.pair("claude_code"),
+        &overwrite_or_keep(&f, "claude_code", OverrideDecision::Overwrite),
+        NOW,
+    )
+    .unwrap();
+    assert!(
+        matches!(retried.global.as_slice(), [o] if matches!(o.status, BatchTargetStatus::Synced { .. })),
+        "{:?}",
+        retried.global
+    );
+    assert!(!foreign_bytes_survive(&path));
+    assert_eq!(f.status("claude_code"), Some(SyncStatus::Synced));
+}
+
+#[test]
+fn an_enable_collision_kept_stays_disabled_and_reads_declined() {
+    use crate::core::global_sync::OverrideDecision;
+    use crate::core::skill_disable::enable_targets_with;
+    let f = fixture(&["claude_code"]);
+    disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    let path = f.global_path(".claude/skills");
+    foreign_folder(&path);
+    enable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+
+    let retried = enable_targets_with(
+        &f.store,
+        f.home(),
+        &f.pair("claude_code"),
+        &overwrite_or_keep(&f, "claude_code", OverrideDecision::Keep),
+        NOW,
+    )
+    .unwrap();
+    assert!(
+        matches!(retried.global.as_slice(), [o] if matches!(o.status, BatchTargetStatus::Declined)),
+        "{:?}",
+        retried.global
+    );
+    assert!(foreign_bytes_survive(&path));
+    let row = f
+        .store
+        .get_skill_target(&f.skill_id, "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, SyncStatus::Disabled);
+    assert!(!row.owns_artifact());
+}
+
+/// Review F1 arrangement: an assignment synced (so it owned its artifact),
+/// then the skill disabled successfully (artifact removed, row `disabled`
+/// with its historical `synced_at`), then a foreign folder at the path and a
+/// skill Enable. Enable's admission clears the ownership, so the collision
+/// leaves a non-owner the ask can settle.
+fn synced_then_disabled_project_enable(
+    f: &Fixture,
+) -> (ProjectRecord, PathBuf, project_sync::ProjectSyncOutcome) {
+    let project = project(f, "claude_code");
+    assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
+    let path = Path::new(&project.path).join(".claude/skills/alpha");
+    let owned = f
+        .store
+        .get_project_skill_assignment(&project.id, &f.skill_id, "claude_code")
+        .unwrap()
+        .unwrap();
+    assert!(owned.owns_artifact(), "the first assignment sync owns");
+    disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    let disabled = f
+        .store
+        .get_project_skill_assignment(&project.id, &f.skill_id, "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(disabled.status, SyncStatus::Disabled);
+    assert!(!exists_any(&path), "the Disable removed the artifact");
+    foreign_folder(&path);
+
+    let enabled = enable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    let [item] = enabled.projects.items.as_slice() else {
+        panic!("{}", enabled.projects)
+    };
+    assert!(is_collision(&item.status), "{}", enabled.projects);
+    let row = f
+        .store
+        .get_project_skill_assignment(&project.id, &f.skill_id, "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, SyncStatus::Error);
+    assert!(
+        !row.owns_artifact(),
+        "a collided Enable leaves a non-owner, not the historical owner"
+    );
+    assert!(foreign_bytes_survive(&path));
+    (project, path, item.clone())
+}
+
+/// A project collision resolves through `project_sync::resolve_collisions`:
+/// Overwrite materialises and owns anew, Keep keeps the folder and records
+/// the row `disabled`, owning nothing — so no later resync, Propagation or
+/// Delete touches it. Two arrangements: the never-synced marker of a failed
+/// project Enable (re-asked by resync), and a previously synced assignment
+/// whose skill was disabled and re-enabled into a foreign folder (review F1).
+#[test]
+fn a_project_collision_resolves_with_overwrite_or_keep() {
+    use crate::core::global_sync::OverrideDecision;
+    use crate::core::project_sync::{resolve_collisions, AssignmentDecision};
+    type Setup = fn(&Fixture) -> (ProjectRecord, PathBuf, project_sync::ProjectSyncOutcome);
+    let setups: [(&str, Setup); 2] = [
+        ("never-synced marker", |f| {
+            let (project, path) = failed_project_enable(f);
+            let report = resync_project(&f.store, &project.id, NOW).unwrap();
+            let [item] = report.items.as_slice() else {
+                panic!("{report}")
+            };
+            (project, path, item.clone())
+        }),
+        (
+            "synced, disabled, re-enabled",
+            synced_then_disabled_project_enable,
+        ),
+    ];
+    for (label, setup) in setups {
+        for decision in [OverrideDecision::Overwrite, OverrideDecision::Keep] {
+            let f = fixture(&[]);
+            let (project, path, item) = setup(&f);
+            let ProjectSyncOutcomeStatus::Failed { error } = &item.status else {
+                panic!("{label}: {item:?}")
+            };
+            ask_facts(error, &path);
+
+            let resolved = resolve_collisions(
+                &f.store,
+                &[AssignmentDecision {
+                    project_id: item.project_id.clone(),
+                    skill_id: item.skill_id.clone(),
+                    tool: item.tool.clone(),
+                    decision,
+                }],
+                NOW + 5,
+            )
+            .unwrap();
+            let row = f
+                .store
+                .get_project_skill_assignment(&project.id, &f.skill_id, "claude_code")
+                .unwrap()
+                .unwrap();
+            match decision {
+                OverrideDecision::Overwrite => {
+                    assert!(
+                        matches!(resolved.items[0].status, ProjectSyncOutcomeStatus::Synced),
+                        "{label}: {resolved}"
+                    );
+                    assert!(!foreign_bytes_survive(&path), "{label}");
+                    assert_eq!(row.status, SyncStatus::Synced, "{label}");
+                    assert_eq!(row.synced_at, Some(NOW + 5), "{label}: owns anew");
+                    // The new artifact is ours: Delete removes it.
+                    let report = remove_skill(&f.store, &f.skill_id).unwrap();
+                    assert!(report.record_deleted, "{label}: {report}");
+                    assert!(!exists_any(&path), "{label}: the owned artifact is removed");
+                }
+                OverrideDecision::Keep => {
+                    assert!(
+                        matches!(resolved.items[0].status, ProjectSyncOutcomeStatus::Declined),
+                        "{label}: {resolved}"
+                    );
+                    assert!(foreign_bytes_survive(&path), "{label}");
+                    assert_eq!(row.status, SyncStatus::Disabled, "{label}");
+                    assert_eq!(row.synced_at, None, "{label}: a kept row owns nothing");
+                    // No later pass re-asks or replaces: resync skips it,
+                    // Propagation skips it, Delete sets it aside.
+                    let again = resync_project(&f.store, &project.id, NOW + 6).unwrap();
+                    assert!(is_disabled_skip(&again.items[0].status), "{label}: {again}");
+                    assert!(foreign_bytes_survive(&path), "{label}: resync kept it");
+                    let propagated =
+                        propagate_unlocked(&f.store, &f.paths, &f.skill_id, NOW + 7).unwrap();
+                    assert!(
+                        propagated.targets.iter().any(|t| matches!(
+                            (&t.scope, &t.status),
+                            (
+                                PropagationScope::Project { .. },
+                                PropagationStatus::Skipped {
+                                    reason: PropagationSkip::Disabled
+                                }
+                            )
+                        )),
+                        "{label}: {propagated:?}"
+                    );
+                    assert!(foreign_bytes_survive(&path), "{label}: Propagation kept it");
+                    let report = remove_skill(&f.store, &f.skill_id).unwrap();
+                    assert!(report.record_deleted, "{label}: {report}");
+                    assert!(
+                        report.targets.is_empty(),
+                        "{label}: no path planned: {report}"
+                    );
+                    assert!(foreign_bytes_survive(&path), "{label}: Delete kept it");
+                }
+            }
+        }
+    }
+}
+
+/// Enable's admission clears ownership only for a successfully disabled
+/// row: a row whose removal failed (`error`, ADR-0002) keeps its ownership,
+/// so a retry still plans and removes the artifact that is ours.
+#[test]
+fn enable_admission_keeps_the_ownership_of_a_failed_removal() {
+    use crate::core::skill_store::AssignmentTransition;
+    let f = fixture(&[]);
+    let project = project(&f, "claude_code");
+    assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
+    let row = |f: &Fixture| {
+        f.store
+            .get_project_skill_assignment(&project.id, &f.skill_id, "claude_code")
+            .unwrap()
+            .unwrap()
+    };
+    f.store
+        .transition_assignment(
+            &row(&f).id,
+            AssignmentTransition::SyncFailed {
+                error: "removal failed",
+            },
+        )
+        .unwrap();
+    f.store
+        .transition_assignment(&row(&f).id, AssignmentTransition::EnableAdmitted)
+        .unwrap();
+    assert_eq!(row(&f).status, SyncStatus::Error);
+    assert!(row(&f).owns_artifact(), "a failed removal stays an owner");
+
+    f.store
+        .transition_assignment(&row(&f).id, AssignmentTransition::Disabled)
+        .unwrap();
+    assert!(
+        row(&f).owns_artifact(),
+        "Disable keeps the historical record"
+    );
+    f.store
+        .transition_assignment(&row(&f).id, AssignmentTransition::EnableAdmitted)
+        .unwrap();
+    assert_eq!(row(&f).status, SyncStatus::Disabled);
+    assert!(!row(&f).owns_artifact(), "admission clears a disabled row");
+}
+
+/// The Refresh re-assert's collision is askable: the row names the pair
+/// (the skill of its outcome, the Tool of its global scope) and carries the
+/// facts; the retry is an ordinary sync with the per-pair override.
+#[test]
+fn a_reassert_collision_row_is_askable_and_retried_through_the_sync_batch() {
+    use crate::core::global_sync::OverrideDecision;
+    let f = fixture(&["claude_code"]);
+    let path = f.global_path(".claude/skills");
+    foreign_folder(&path);
+
+    let targets = f.refresh_with_reassert();
+    let error = targets
+        .iter()
+        .find_map(|(scope, status)| match (scope, status) {
+            (PropagationScope::Global { tool }, PropagationStatus::Failed { error })
+                if tool == "claude_code" =>
+            {
+                Some(error)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{targets:?}"));
+    ask_facts(error, &path);
+    assert_eq!(f.status("claude_code"), None, "asked first: no row");
+
+    let skill = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+    let retried = sync_skills_to_tools(
+        f.home(),
+        &f.store,
+        &[BatchSkill {
+            skill_id: skill.id,
+            skill_name: skill.name,
+            source_path: PathBuf::from(skill.central_path),
+        }],
+        &["claude_code".to_string()],
+        &BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: true,
+            overrides: overwrite_or_keep(&f, "claude_code", OverrideDecision::Overwrite),
+        },
+        NOW,
+        |_| {},
+    );
+    assert!(matches!(
+        retried[0].status,
+        BatchTargetStatus::Synced { .. }
+    ));
+    assert!(!foreign_bytes_survive(&path));
+}

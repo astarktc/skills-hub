@@ -86,6 +86,10 @@ pub enum OutcomeFamily {
     /// A saved or cleared Edit, or an Update whose replay converged (the Edit
     /// row no longer conflicts), clears the Edit conflict.
     Edit,
+    /// The operator's explicit Dismiss of an incomplete import: nothing can
+    /// retry it (the skill is imported; only an original stayed), so the
+    /// operator acknowledges it ([`dismiss_outcome`]).
+    Import,
 }
 
 impl OutcomeFamily {
@@ -97,8 +101,30 @@ impl OutcomeFamily {
                 SkillOutcomeKind::RestoreFailed,
             ],
             OutcomeFamily::Edit => &[SkillOutcomeKind::EditConflict],
+            OutcomeFamily::Import => &[SkillOutcomeKind::ImportFailed],
         }
     }
+}
+
+/// The family an operator may clear by hand, if any. Only an incomplete
+/// import is dismissable: every other kind is cleared by the success of its
+/// own family (Update, Edit) or by finishing the operation (a retried Delete
+/// removes the row), so dismissing it would hide a problem still there.
+pub fn dismissable_family(kind: SkillOutcomeKind) -> Option<OutcomeFamily> {
+    match kind {
+        SkillOutcomeKind::ImportFailed => Some(OutcomeFamily::Import),
+        _ => None,
+    }
+}
+
+/// The operator's Dismiss: clear the skill's health when it is still one
+/// of `kind`'s family (a newer outcome is left alone). A kind that is not
+/// dismissable is refused — the UI never offers it (a guard, so prose).
+pub fn dismiss_outcome(store: &SkillStore, skill_id: &str, kind: SkillOutcomeKind) -> Result<()> {
+    let Some(family) = dismissable_family(kind) else {
+        anyhow::bail!("skill health {} is not dismissable", kind.as_str());
+    };
+    clear_outcome(store, skill_id, family)
 }
 
 /// A skill's stored health, as the catalog carries it (`ManagedSkill.health`).

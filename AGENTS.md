@@ -148,7 +148,24 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   `src/hooks/useAppUpdate.ts`** (status, version, notes, `check`/`install`/`dismiss`/`ignore`), read by
   Settings and the startup notice (`UpdateDialog`). A world reads another world's catalog only as a value
   App passes in — the project world's skill rows are the library's `ManagedSkill[]` and its Tool entries
-  the Tool catalog's, handed to `ProjectsPage` by App, never fetched or imported. **What is on screen is one module,
+  the Tool catalog's, handed to `ProjectsPage` by App, never fetched or imported. **Every verb on a skill goes
+  through one door, `src/hooks/useSkillActions.ts`**: `run(verb, skills | ids | "all", opts)` over `syncToTargets ·
+  retry · disable · enable · update · restore · repoint · detach · delete · editInvocation · dismissHealth ·
+  assignToProject · unassignFromProject · deployGroup`. The door decides one batch vs one skill, where confirmation
+  happens (a verb without its confirming option — `target`, `mode`, `confirmed` — opens its dialog; a pair asks the
+  shared-dir confirmation), which fold settles the report, the reload rule (`RELOAD_ON_THROW`) and the
+  post-mutation focus; `repair(skill, row, key)` maps a health row's repair onto its verb. `useSkillLibrary` keeps
+  only the catalog (`replaceCatalog`, `loadManagedSkills`) and which skill each dialog is about. **The action
+  lifecycle is the reporter's, `src/hooks/useStatusReporter.ts`**: `runAction` holds the one `pending` action
+  (subject `skill` / `cell` / `batch`, label, streamed `progress`, `cancellable`) — **one mutation at a time**
+  (D19): a second is refused with a typed reason (`refusal`, never queued), a `read: true` action waits its turn;
+  `cancellable` only when the action declares a token-taking command (`cancel:`, D20), withdrawn for an
+  `action.uncancellable(run)` phase, and a body checks `action.cancelRequested()` before sending a token-taking
+  command that follows a token-less step (the command resets the token); `cancelPending` hides
+  nothing until the command returns; `applyOutcome(outcome, { reload, closeModal, onAction })` executes every
+  fold's Outcome (reload first, toasts, one `recordRun` history block, close) — no caller unpacks an Outcome;
+  `notifyError(err)` is the one failure dialect (`setError` remains only in the sync world until it migrates).
+  The project matrix's pending cells are the reporter's `{ kind: "cell" }` subject. **What is on screen is one module,
   `src/hooks/useSurfaceState.ts`** (created first in App, passed to worlds as a narrowed door): the area,
   the focused subject, per-surface selection and the dialog stack (one union across worlds). World hooks
   keep data and actions and *ask* it to open/close (`openDialog`, `pushDialog` for a nested step, `ask`
@@ -171,10 +188,14 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   `update_project_gitignore` returns `()` (it changes no view row), and `resync_all_projects` returns
   `{ report, projects }` — one `ProjectSyncReport` spanning every project — so the hook refetches
   `getProjectView` for the selected project alone. `configure_project_tools` returns `{ view, report }` — the
-  dropped tools' removal reports merged into one. Every project report is folded in `ProjectsPage`, never in
-  the hook: removal reports by `projectRemovalOutcome` / `removalOutcome` (toggle-off, bulk unassign,
-  configure, remove), `ProjectSyncReport`s by `projectSyncOutcome` (toggle-on, bulk assign, resync);
-  `toggle_project_skill_assignment` answers a `kind`-tagged union so the page picks the fold without a boolean.
+  dropped tools' removal reports merged into one. Every project report is folded in the view's action hook
+  (`src/components/projects/useProjectActions.ts`), never in the world hook: removal reports by
+  `projectRemovalOutcome` / `removalOutcome` (toggle-off, bulk unassign, configure, remove), `ProjectSyncReport`s by
+  `projectSyncOutcome` (toggle-on, bulk assign, resync); `toggle_project_skill_assignment` answers a `kind`-tagged
+  union so the page picks the fold without a boolean. **Every** project mutation — registration, the Edit dialog's
+  ignore write, a path update included (a folder pick stays outside; the mutation it leads to is gated) — runs under
+  `runAction`, and the list, matrix and dialogs disable their mutation controls with its `blockedReason` while
+  anything runs; per-cell pending is only the localized mark.
 - **Frontend tests are hook- and pure-function-level; no component rendering tests** (vitest + `renderHook`,
   jsdom; colocated `src/**/*.test.ts`,
   type-checked by `npm run build`): mock at module seams — `src/lib/tauri.ts` for backend calls,
@@ -285,6 +306,29 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   - Onboarding scan → `get_onboarding_plan`: `commands::onboarding_scan_scope` resolves
     `OnboardingScanScope::{Installed, Selected}` from the settings once; the plan and the import re-derive
     under the same scope.
+  - Add → `install_selection` (`core/install_batch.rs`): one call per Add action over a source
+    (`InstallSource::{Git { url, resolution }, Local { root }}`) and its picked candidates; per candidate, acquire
+    outside the guard (`installer::stage_*`), then finalize + first sync through `sync_skills_to_tools_unlocked`
+    in one `serialized` section. Answers one `InstallBatchReport`: per candidate `installed { skill, targets }` /
+    `failed { error }` / `cancelled` (the `CancelToken`, honoured between candidates, after an acquisition and once the
+    guard is held — never mid-finalize). Collisions are **collected** as `TARGET_EXISTS` target rows, never asked in core.
+    `install_git_selection` / `install_local_selection` remain registered only until ticket 16 deletes them.
+  - **The one overwrite ask (D12)**: every `TARGET_EXISTS` producer — the global batch, the install batch, the
+    re-assert, import (a divergent sibling in a target's way is reported once, as that row), Enable, project
+    assign / resync / Propagation — answers a row carrying pair identity plus `path`, `modifiedAt`, `sameContent`
+    (observed where `sync_engine` raises the collision). The frontend raises **one** ask per operator action
+    (`src/lib/overwriteAsk.ts` shapes the rows; `useSyncOrchestration` owns the ask) answered per row, and retries:
+    global pairs through `sync_skills_to_tools` with per-pair overrides (the install batch's skills exist by then),
+    Enable's global pairs through `enable_skill_targets(scope, overrides)`, project assignments through
+    `resolve_project_collisions` (`Keep` → the row `disabled`, owning nothing, reported `declined`). A dismissed
+    ask sends nothing. An operator action that settles several reports (a group's Deploy all, Retry over several
+    Tools, a multi-skill project assignment) or a report of another shape (Refresh / Update / Restore / Re-point —
+    Propagation and the re-assert — and Edit's Propagation) **collects every report first** (`collectSync`,
+    `collectEnable`, the project world's `assignToProject(projectId, skillIds)`) and asks once through
+    `useSyncOrchestration.settleCollisionParts`, which retries with exact pair identity (one sync batch per skill
+    Tool-set, never a skills × Tools product), hands each part back with its answered rows settled (a kept
+    Propagation row as `declined`, folded as a quiet note) and says whether a retry ran — the door then re-reads the
+    catalog and the touched projects' views, and folds once.
   - Onboarding import → `import_onboarding_selection` (`core/onboarding_import.rs`): admit, finalize,
     then sync through the global sync batch (auto-sync on — a first sync, not Propagation) or remove
     byte-identical originals (auto-sync off), per group. An imported skill has no external source (ADR-0003).
@@ -317,7 +361,9 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   (`synced_at` set — `owns_artifact`) owns its path. A never-synced row (the pair marker, an assignment recorded for a
   disabled skill, the same rows after a failed Enable turned them `error`) owns nothing: planning sets it aside, no path
   is touched, and once the scope succeeds Delete clears the row alone (`RemovalReport.cleared_markers`) and Disable
-  flips it `disabled`; re-sync and Propagation never overwrite its path. Only a successful sync makes a row an owner. Callers (`project_ops`, `project_sync`, `skill_disable`, the delete command) build a scope
+  flips it `disabled`; re-sync and Propagation never overwrite its path. Only a successful sync makes a row an owner;
+  Enable's admission (`AssignmentTransition::EnableAdmitted`) clears a `disabled` assignment's ownership (its Disable
+  removed the artifact), never an `error` row's. Callers (`project_ops`, `project_sync`, `skill_disable`, the delete command) build a scope
   and read the report; they never delete a path themselves (project reconcile may probe one with `symlink_metadata`).
 - **Git bytes have two single entry points.** `git_cache::fetch_through_cache` is the only way into the
   clone cache (per-key locks, TTL as an `i64` value from `settings::git_cache_ttl_ms`, no DB handle in
@@ -342,14 +388,26 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   `src/lib/preferences.ts` own persisted view preferences (the literal storage keys are a compat
   contract with existing users); `src/lib/reportOutcome.ts` owns turning every backend report (Refresh /
   Update batch-of-one, Edit, removal, global sync, import, install, delete) into an `Outcome` — toast, error and
-  warning entries, quiet `notes` (a declined pair), and a `completion` (reload / closeModal / conflict) the hook
-  executes; a batch's headline is the composite count line (`compositeHeadline`: done · failed · targets failed ·
+  warning entries, quiet `notes` (a declined pair), and a `completion` (reload / closeModal / conflict) the
+  reporter's `applyOutcome` executes; a batch's headline is the composite count line (`compositeHeadline`: done · failed · targets failed ·
   skipped · declined · cancelled · to review, zeros omitted) and precedence only picks the toast `tone` (failure ›
   conflict › skipped › declined › success; a cancel alone is neutral) — `declined` and `cancelled` are outcome kinds,
   never failures (D10); the conflict completion fires independently; actions carry a skill *id* the hook resolves at click time, and
-  hooks unpack response envelopes but never interpret nested report fields outside the fold. Components import pure functions (presentation, `describeCommandError`);
-  the props App passes carry state — `notify`, `runAction`, data, actions — never a function that is
-  only an import with an argument pre-bound.
+  hooks unpack response envelopes but never interpret nested report fields outside the fold.
+  **`skillHealth(skill, { t })` is the one health/source fold**: skill-level rows (Unlocatable, the stored
+  `ManagedSkill.health` kinds, a live Edit conflict, skill-grain Disable) and target-level rows (failed · missing ·
+  stale · pair-disabled · not deployed), one precedence (`HEALTH_ROW_ORDER`, which is severity order failed ›
+  stale › muted), each row's `repairs`, and the source line (`skillSourceLine`: label, href, copy value, icon).
+  Card, inspector ladder, issues banner/chip and strip read it; nothing composes health or a source line by hand.
+  `deployAction` counts only a live target (`isLiveTarget`: not `disabled`, not a never-synced `error` row) as
+  deployed. `src/lib/actionLifecycle.ts` owns the lifecycle's pure vocabulary: pending subjects, the cancellable
+  set (`CANCELLABLE_COMMANDS`), the refusal copy and `focusAfter` (D21: Delete → next row / previous / heading;
+  Restore → health row; otherwise the same control) with its one DOM resolver. Components import pure functions
+  (presentation, `describeCommandError`, the lifecycle rules); the props App passes carry state — `notify`,
+  `runAction`, `pending`, data, actions — never a function that is only an import with an argument pre-bound.
+  The door's handle (`actions`, stable across renders) is such a value: list, card, detail and toolbar receive it
+  and call `actions.run(verb, …)` themselves — no per-verb callback props. The one binding App does is a
+  confirmation dialog's `onConfirm`, which joins the dialog's answer to the verb it confirms.
 
 ## Do not
 

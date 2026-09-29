@@ -36,9 +36,11 @@
 //!    cleared rows are deleted so the batch records them afresh) and
 //!    `project_sync::first_sync_assignments_unlocked` for assignments — with
 //!    overwrite off, so `TARGET_EXISTS` can occur and is report data. A
-//!    global pair whose folder is in the way stays `disabled` (Enable raises
-//!    no overwrite ask; the D12 ask for it is ticket 04's); any other failed
-//!    pair is the batch's `error` row; an assignment keeps its row `error`.
+//!    global pair whose folder is in the way stays `disabled` until the
+//!    operator answers the one overwrite ask (D12) — the retry is the same
+//!    scope with per-pair decisions ([`enable_targets_with`]); any other
+//!    failed pair is the batch's `error` row; an assignment keeps its row
+//!    `error` and is retried through `project_sync::resolve_collisions`.
 //!
 //! Both answer with report types that cross the wire as themselves:
 //! [`RemovalReport`] for Disable, [`EnableReport`] for Enable. Only a store
@@ -59,8 +61,8 @@ use uuid::Uuid;
 use super::artifact_removal::{self, RemovalPlan, RemovalReport, RemovalScope, RowRef, Settlement};
 use super::errors::{CommandError, SignalError};
 use super::global_sync::{
-    sync_skills_to_tools_unlocked, BatchPolicy, BatchSkill, BatchTargetOutcome, BatchTargetStatus,
-    GlobalSyncError,
+    sync_skills_to_tools_unlocked, BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome,
+    BatchTargetStatus, GlobalSyncError,
 };
 use super::mutation_guard;
 use super::project_sync::{first_sync_assignments_unlocked, ProjectSyncReport};
@@ -110,13 +112,35 @@ pub fn disable_targets(
 /// Enable `scope`: clear the Disabled marker and re-sync as a first sync.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
+/// Without overrides — the first Enable; test fixtures' door (the command
+/// always states its overrides through [`enable_targets_with`]).
+#[cfg(test)]
 pub fn enable_targets(
     store: &SkillStore,
     home: &Path,
     scope: &DisableScope,
     now: i64,
 ) -> Result<EnableReport> {
-    mutation_guard::serialized(|| enable_unlocked(store, home, scope, now))
+    enable_targets_with(store, home, scope, &[], now)
+}
+
+/// [`enable_targets`] carrying the operator's answers to the overwrite ask
+/// (D12) for global pairs whose first sync met a folder in the way: the ask
+/// is raised over the first Enable's `TARGET_EXISTS` rows, and its retry is
+/// the same scope again with per-pair decisions — `Overwrite` replaces the
+/// folder, `Keep` leaves the pair `disabled` and reports it `Declined`.
+/// Project assignments are retried through `project_sync`'s collision
+/// resolution (their rows are `error`, not `disabled`).
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
+pub fn enable_targets_with(
+    store: &SkillStore,
+    home: &Path,
+    scope: &DisableScope,
+    overrides: &[BatchOverride],
+    now: i64,
+) -> Result<EnableReport> {
+    mutation_guard::serialized(|| enable_unlocked(store, home, scope, overrides, now))
 }
 
 // ---------------------------------------------------------------------------
@@ -284,22 +308,23 @@ fn enable_unlocked(
     store: &SkillStore,
     home: &Path,
     scope: &DisableScope,
+    overrides: &[BatchOverride],
     now: i64,
 ) -> Result<EnableReport> {
     match scope {
         DisableScope::SkillTool { skill_id, tool } => {
             let skill = require_skill(store, skill_id)?;
-            enable_pair(store, home, &skill, tool, now)
+            enable_pair(store, home, &skill, tool, overrides, now)
         }
         DisableScope::Skill { skill_id } => {
             let skill = require_skill(store, skill_id)?;
-            enable_skill(store, home, &skill, now)
+            enable_skill(store, home, &skill, overrides, now)
         }
         DisableScope::Skills { skill_ids } => {
             let mut report = EnableReport::default();
             for skill_id in skill_ids {
                 if let Some(skill) = store.get_skill_by_id(skill_id)? {
-                    let one = enable_skill(store, home, &skill, now)?;
+                    let one = enable_skill(store, home, &skill, overrides, now)?;
                     report.global.extend(one.global);
                     report.projects.items.extend(one.projects.items);
                 }
@@ -319,6 +344,7 @@ fn enable_pair(
     home: &Path,
     skill: &SkillRecord,
     tool: &str,
+    overrides: &[BatchOverride],
     now: i64,
 ) -> Result<EnableReport> {
     if store.skill_disabled_at(&skill.id)?.is_some() {
@@ -355,7 +381,7 @@ fn enable_pair(
         }
     }
     Ok(EnableReport {
-        global: first_sync_global(store, home, skill, &[tool.to_string()], now),
+        global: first_sync_global(store, home, skill, &[tool.to_string()], overrides, now),
         projects: ProjectSyncReport::default(),
     })
 }
@@ -367,6 +393,7 @@ fn enable_skill(
     store: &SkillStore,
     home: &Path,
     skill: &SkillRecord,
+    overrides: &[BatchOverride],
     now: i64,
 ) -> Result<EnableReport> {
     store.set_skill_disabled_at(&skill.id, None)?;
@@ -388,19 +415,21 @@ fn enable_skill(
         global: if tools.is_empty() {
             Vec::new()
         } else {
-            first_sync_global(store, home, skill, &tools, now)
+            first_sync_global(store, home, skill, &tools, overrides, now)
         },
         projects: first_sync_assignments_unlocked(store, &assignments, now)?,
     })
 }
 
 /// The global sync batch as a first sync: overwrite off, identical content
-/// replaced silently (the same policy as every operator-initiated sync).
+/// replaced silently (the same policy as every operator-initiated sync),
+/// plus the operator's per-pair answers to an earlier ask for this skill.
 fn first_sync_global(
     store: &SkillStore,
     home: &Path,
     skill: &SkillRecord,
     tools: &[String],
+    overrides: &[BatchOverride],
     now: i64,
 ) -> Vec<BatchTargetOutcome> {
     let skills = [BatchSkill {
@@ -411,17 +440,21 @@ fn first_sync_global(
     let policy = BatchPolicy {
         overwrite: false,
         overwrite_if_same_content: true,
-        overrides: Vec::new(),
+        overrides: overrides
+            .iter()
+            .filter(|o| o.skill_id == skill.id)
+            .cloned()
+            .collect(),
     };
     let outcomes = sync_skills_to_tools_unlocked(home, store, &skills, tools, &policy, now, |_| {});
     // A folder in the way is asked about, never recorded as a failure (D9);
-    // Enable raises no ask, so the pair keeps the state it was enabled from:
+    // until the operator answers, the pair keeps the state it was enabled from:
     // `disabled`, re-recorded as a marker owning nothing at that path (the
     // cleared row was deleted above so the batch could record afresh). Any
     // other failure is the batch's own `error` row.
     for outcome in &outcomes {
         if let BatchTargetStatus::Failed {
-            error: CommandError::TargetExists { path },
+            error: CommandError::TargetExists { path, .. },
         } = &outcome.status
         {
             let mode = match adapter_by_key(&outcome.tool_key) {

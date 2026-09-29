@@ -12,6 +12,7 @@ import {
   viewModePreference,
 } from "../lib/preferences";
 import { INDIVIDUAL_GROUP_KEY, LOCAL_GROUP_KEY } from "../lib/skillPresentation";
+import { focusAfter } from "../lib/actionLifecycle";
 
 const item = (id: string, name: string, source_ref: string | null, updated_at = 0): LensItem => ({
   id,
@@ -99,6 +100,22 @@ describe("useListLens", () => {
     const again = render();
     expect(again.result.current.groupByRepo).toBe(true);
     expect(again.result.current.viewMode).toBe("dense-grid");
+  });
+
+  it("walks a grouped list in its display order, not the flat sort's (Delete's next row)", () => {
+    const { result } = render({ selection: new Set(["1", "3"]) });
+    // Flat: the sort's order.
+    expect(result.current.displayed.map((s) => s.name)).toEqual(["alpha", "beta", "delta", "gamma"]);
+    act(() => result.current.setGroupByRepo(true));
+    // Grouped: acme/tools interleaves with solo/one — gamma now follows alpha.
+    expect(result.current.displayed.map((s) => s.name)).toEqual(["alpha", "gamma", "beta", "delta"]);
+    expect(result.current.visibleSelection).toEqual(["1", "3"]);
+    // The focus rule reads that sequence: deleting alpha lands on gamma.
+    const order = result.current.displayed.map((s) => s.id);
+    expect(focusAfter({ verb: "delete", removed: true }, { skillId: "2", order, surface: "skills" })).toEqual({
+      kind: "row",
+      skillId: "1",
+    });
   });
 
   it("answers the selection's visible subset in sort order", () => {

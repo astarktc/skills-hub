@@ -1,8 +1,8 @@
 // Tests for the shared candidate-pick module with a stub source: the
 // selection defaults, close vs cancel, the one selection validation both
 // the git and local flows share (duplicate names, custom name rules, taken
-// names), and batch-install error collection. Reporter and deploy tail
-// enter as mocked dependency interfaces.
+// names), and the one install batch per selection (ticket 04). Reporter and
+// the install batch enter as mocked dependency interfaces.
 
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +12,10 @@ import {
   useCandidatePick,
   type CandidatePickDeps,
   type CandidatePickSource,
+  type InstallBatchAction,
+  type InstallPick,
 } from "./useCandidatePick";
+import type { InstallSource } from "../components/skills/types";
 import { useSurfaceState } from "./useSurfaceState";
 import {
   ActionExit,
@@ -55,6 +58,8 @@ function makeDeps(overrides?: { takenNames?: string[]; loading?: boolean }) {
         const outcome = await fn({
           handOff: () => ActionExit.handOff(),
           fail: (message) => ActionExit.failed(message),
+          uncancellable: (run) => run(),
+          cancelRequested: () => false,
         });
         if (outcome instanceof ActionExit) {
           if (outcome.kind === "failed") setError(outcome.message);
@@ -70,10 +75,27 @@ function makeDeps(overrides?: { takenNames?: string[]; loading?: boolean }) {
       }
     },
   );
-  const deploy = vi.fn<
-    (created: InstallResultDto) => Promise<folds.InstallDeployment>
-  >(async () => ({ status: "disabled" }));
-  const afterBatch = vi.fn(async () => {});
+  // The add flow's batch: every pick installs, deploy disabled.
+  const installBatch = vi.fn<
+    (source: InstallSource, picks: InstallPick[], action: InstallBatchAction) => Promise<folds.InstallSettlement[]>
+  >(async (_source, picks) =>
+    picks.map((pick) => ({
+      status: "installed",
+      name: pick.name,
+      result: installed(pick.name),
+      deployment: { status: "disabled" },
+    })),
+  );
+  // The order the completion was carried out in: reload → entries → close.
+  const log: string[] = [];
+  const outcomeHandlers = {
+    reload: vi.fn(async () => {
+      log.push("reload");
+    }),
+    closeModal: vi.fn(() => {
+      log.push("close");
+    }),
+  };
   const deps: Omit<CandidatePickDeps, "surface"> = {
     t,
     reporter: {
@@ -81,31 +103,40 @@ function makeDeps(overrides?: { takenNames?: string[]; loading?: boolean }) {
       runAction: runAction as CandidatePickDeps["reporter"]["runAction"],
       setActionMessage: vi.fn(),
       setError,
-      notify: vi.fn(),
-      showActionWarnings: vi.fn(),
-      showActionErrors,
+      // Executes an Outcome in the real executor's order onto the entry spy
+      // (the executor itself is useStatusReporter's own test).
+      applyOutcome: vi.fn(async (
+        outcome: Parameters<CandidatePickDeps["reporter"]["applyOutcome"]>[0],
+        handlers: Parameters<CandidatePickDeps["reporter"]["applyOutcome"]>[1] = {},
+      ) => {
+        if (outcome.completion.reload) await handlers.reload?.();
+        log.push("entries");
+        showActionErrors(outcome.errors);
+        if (outcome.completion.closeModal) handlers.closeModal?.();
+        return outcome.completion;
+      }),
     },
     isSkillNameTaken: (name) => taken.has(name),
-    deploy,
-    afterBatch,
+    installBatch,
+    outcomeHandlers,
   };
-  return { deps, setError, showActionErrors, setSuccessToastMessage, deploy, afterBatch };
+  return { deps, setError, showActionErrors, setSuccessToastMessage, installBatch, outcomeHandlers, log };
 }
 
 function makeSource(overrides?: Partial<CandidatePickSource<Cand, string>>) {
-  const installOne = vi.fn<
-    (ctx: string, c: Cand, name: string | null) => Promise<InstallResultDto>
-  >(async (_ctx, c) => installed(c.name));
+  const installSource = vi.fn<(ctx: string, picked: Cand[]) => InstallSource>(
+    (ctx) => ({ kind: "local", root: ctx }),
+  );
   const resetForm = vi.fn();
   const source: CandidatePickSource<Cand, string> = {
     dialogKind: "gitPick",
     customName: "",
     selectable: (c) => c.valid,
-    installOne,
+    installSource,
     resetForm,
     ...overrides,
   };
-  return { source, installOne, resetForm };
+  return { source, installSource, resetForm };
 }
 
 beforeEach(() => {
@@ -235,7 +266,7 @@ describe("useCandidatePick selection", () => {
 describe("useCandidatePick validation", () => {
   it("rejects an empty selection", async () => {
     const { deps, setError } = makeDeps();
-    const { source, installOne } = makeSource();
+    const { source } = makeSource();
     const { result } = renderPick(source, deps);
     act(() => result.current.open("/base", [cand("alpha", "alpha")]));
     act(() => result.current.toggleAll(false));
@@ -243,12 +274,12 @@ describe("useCandidatePick validation", () => {
     await act(() => result.current.install());
 
     expect(setError).toHaveBeenCalledWith("errors.selectAtLeastOneSkill");
-    expect(installOne).not.toHaveBeenCalled();
+    expect(deps.installBatch).not.toHaveBeenCalled();
   });
 
   it("rejects a custom name for a multi-selection", async () => {
     const { deps, setError } = makeDeps();
-    const { source, installOne } = makeSource({ customName: "mine" });
+    const { source } = makeSource({ customName: "mine" });
     const { result } = renderPick(source, deps);
     act(() =>
       result.current.open("/base", [
@@ -260,12 +291,12 @@ describe("useCandidatePick validation", () => {
     await act(() => result.current.install());
 
     expect(setError).toHaveBeenCalledWith("errors.multiSelectNoCustomName");
-    expect(installOne).not.toHaveBeenCalled();
+    expect(deps.installBatch).not.toHaveBeenCalled();
   });
 
   it("rejects duplicate names within the selection", async () => {
     const { deps, setError } = makeDeps();
-    const { source, installOne } = makeSource();
+    const { source } = makeSource();
     const { result } = renderPick(source, deps);
     act(() =>
       result.current.open("/base", [
@@ -279,12 +310,12 @@ describe("useCandidatePick validation", () => {
     expect(setError).toHaveBeenCalledWith(
       'errors.duplicateSelectedSkills {"name":"alpha"}',
     );
-    expect(installOne).not.toHaveBeenCalled();
+    expect(deps.installBatch).not.toHaveBeenCalled();
   });
 
   it("rejects a taken candidate name in a multi-selection", async () => {
     const { deps, setError } = makeDeps({ takenNames: ["beta"] });
-    const { source, installOne } = makeSource();
+    const { source } = makeSource();
     const { result } = renderPick(source, deps);
     act(() =>
       result.current.open("/base", [
@@ -298,12 +329,12 @@ describe("useCandidatePick validation", () => {
     expect(setError).toHaveBeenCalledWith(
       'errors.skillAlreadyExists {"name":"beta"}',
     );
-    expect(installOne).not.toHaveBeenCalled();
+    expect(deps.installBatch).not.toHaveBeenCalled();
   });
 
   it("checks the custom name (not the candidate name) for a single selection", async () => {
     const { deps, setError } = makeDeps({ takenNames: ["mine"] });
-    const { source, installOne } = makeSource({ customName: " mine " });
+    const { source } = makeSource({ customName: " mine " });
     const { result } = renderPick(source, deps);
     act(() => result.current.open("/base", [cand("alpha", "alpha")]));
 
@@ -312,15 +343,14 @@ describe("useCandidatePick validation", () => {
     expect(setError).toHaveBeenCalledWith(
       'errors.skillAlreadyExists {"name":"mine"}',
     );
-    expect(installOne).not.toHaveBeenCalled();
+    expect(deps.installBatch).not.toHaveBeenCalled();
   });
 });
 
 describe("useCandidatePick batch install", () => {
-  it("installs each selected candidate with its context, deploys, resets and finishes", async () => {
-    const { deps, deploy, afterBatch, showActionErrors } =
-      makeDeps();
-    const { source, installOne, resetForm } = makeSource({
+  it("installs the selection as one batch from its context, resets and finishes", async () => {
+    const { deps, installBatch, outcomeHandlers, showActionErrors, log } = makeDeps();
+    const { source, installSource, resetForm } = makeSource({
       customName: " custom ",
     });
     const { result } = renderPick(source, deps);
@@ -333,26 +363,34 @@ describe("useCandidatePick batch install", () => {
 
     await act(() => result.current.install());
 
-    expect(installOne).toHaveBeenCalledTimes(1);
-    expect(installOne).toHaveBeenCalledWith(
-      "/base",
-      cand("alpha", "alpha"),
-      "custom",
+    expect(installSource).toHaveBeenCalledWith("/base", [cand("alpha", "alpha")]);
+    expect(installBatch).toHaveBeenCalledTimes(1);
+    expect(installBatch).toHaveBeenCalledWith(
+      { kind: "local", root: "/base" },
+      [{ subpath: "alpha", name: "alpha", nameOverride: "custom" }],
+      expect.objectContaining({ cancelRequested: expect.any(Function) }),
     );
-    expect(deploy).toHaveBeenCalledWith(installed("alpha"));
     expect(resetForm).toHaveBeenCalled();
-    expect(afterBatch).toHaveBeenCalled();
+    // One executed completion: reload, then the entries, then the close.
+    expect(log).toEqual(["reload", "entries", "close"]);
+    expect(outcomeHandlers.closeModal).toHaveBeenCalledTimes(1);
     expect(showActionErrors).toHaveBeenCalledWith([]);
-    expect(deps.reporter.notify).toHaveBeenCalledWith(
-      "success", t("outcome.done.installed", { count: 1 }), undefined,
+    expect(deps.reporter.applyOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toast: expect.objectContaining({
+          kind: "success",
+          message: t("outcome.done.installed", { count: 1 }),
+        }),
+      }),
+      expect.anything(),
     );
     expect(result.current.visible).toBe(false);
     expect(result.current.candidates).toEqual([]);
   });
 
-  it("passes no name for a multi-selection", async () => {
-    const { deps } = makeDeps();
-    const { source, installOne } = makeSource();
+  it("passes no name for a multi-selection, every pick in one call", async () => {
+    const { deps, installBatch } = makeDeps();
+    const { source } = makeSource();
     const { result } = renderPick(source, deps);
     act(() =>
       result.current.open("/base", [
@@ -363,28 +401,22 @@ describe("useCandidatePick batch install", () => {
 
     await act(() => result.current.install());
 
-    expect(installOne).toHaveBeenCalledTimes(2);
-    expect(installOne).toHaveBeenNthCalledWith(
-      2,
-      "/base",
-      cand("beta", "beta"),
-      null,
-    );
+    expect(installBatch).toHaveBeenCalledTimes(1);
+    expect(installBatch.mock.calls[0][1]).toEqual([
+      { subpath: "alpha", name: "alpha", nameOverride: null },
+      { subpath: "beta", name: "beta", nameOverride: null },
+    ]);
   });
 
-  it("collects per-candidate install and deploy failures without aborting the batch", async () => {
-    const { deps, deploy, setError } = makeDeps();
+  it("folds per-candidate failures and a cancelled tail as report data, never an action failure", async () => {
+    const { deps, installBatch, setError, showActionErrors } = makeDeps();
     const fold = vi.spyOn(folds, "installOutcome");
-    const { source, installOne } = makeSource();
-    installOne.mockImplementation(async (_ctx, c) => {
-      if (c.name === "beta") throw new Error("clone failed");
-      return installed(c.name);
-    });
-    deploy.mockImplementation(async (created) =>
-      created.name === "gamma"
-        ? { status: "no-targets" }
-        : { status: "disabled" },
-    );
+    installBatch.mockImplementation(async () => [
+      { status: "installed", name: "alpha", result: installed("alpha"), deployment: { status: "no-targets" } },
+      { status: "failed", name: "beta", error: { code: "SUBPATH_MISSING", subpath: "beta" } },
+      { status: "cancelled", name: "gamma" },
+    ]);
+    const { source } = makeSource();
     const { result } = renderPick(source, deps);
     act(() =>
       result.current.open("/base", [
@@ -396,9 +428,8 @@ describe("useCandidatePick batch install", () => {
 
     await act(() => result.current.install());
 
-    expect(installOne).toHaveBeenCalledTimes(3);
-    expect(fold.mock.calls[0][0].map((item) => item.status)).toEqual(["installed", "failed", "installed"]);
-    expect(deps.reporter.showActionErrors).toHaveBeenCalledWith(fold.mock.results[0].value.errors);
+    expect(fold.mock.calls[0][0].map((item) => item.status)).toEqual(["installed", "failed", "cancelled"]);
+    expect(showActionErrors).toHaveBeenCalledWith(fold.mock.results[0].value.errors);
     // Per-candidate failures are report data, not an action failure.
     expect(setError).not.toHaveBeenCalled();
     expect(result.current.visible).toBe(false);
@@ -406,8 +437,8 @@ describe("useCandidatePick batch install", () => {
 });
 
 afterEach(() => vi.restoreAllMocks());
-it.each([false, true])("picker executes fold completion=%s and publishes its outcome", async (complete) => {
-  const { deps, afterBatch } = makeDeps();
+it.each([false, true])("picker hands completion=%s to the one applyOutcome, never interpreting it", async (complete) => {
+  const { deps, outcomeHandlers, log } = makeDeps();
   const { source, resetForm } = makeSource();
   const outcome: folds.Outcome = { toast: { kind: "warning", tone: "failure", message: "fold" }, errors: [{ title: "error", message: "detail" }], warnings: [], notes: [], completion: { reload: complete, closeModal: complete, conflict: false } };
   const fold = vi.spyOn(folds, "installOutcome").mockReturnValue(outcome);
@@ -415,9 +446,9 @@ it.each([false, true])("picker executes fold completion=%s and publishes its out
   act(() => result.current.open("/base", [cand("alpha", "alpha")]));
   await act(async () => { await result.current.install(); });
   expect(fold).toHaveBeenCalledTimes(1);
-  expect(afterBatch).toHaveBeenCalledWith(outcome.completion);
+  expect(deps.reporter.applyOutcome).toHaveBeenCalledTimes(1);
+  expect(deps.reporter.applyOutcome).toHaveBeenCalledWith(outcome, expect.objectContaining({ reload: outcomeHandlers.reload }));
+  expect(log).toEqual(complete ? ["reload", "entries", "close"] : ["entries"]);
   expect(resetForm).toHaveBeenCalledTimes(complete ? 1 : 0);
   expect(result.current.visible).toBe(!complete);
-  expect(deps.reporter.showActionErrors).toHaveBeenCalledWith(outcome.errors);
-  expect(deps.reporter.notify).toHaveBeenCalledWith("warning", "fold", undefined);
 });

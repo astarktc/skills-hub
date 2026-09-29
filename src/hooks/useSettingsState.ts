@@ -33,7 +33,7 @@ export type SettingsStateDeps = {
   t: TranslateFn;
   reporter: Pick<
     StatusReporter,
-    "setError" | "setSuccessToastMessage" | "formatError" | "notify"
+    "notifyError" | "setSuccessToastMessage" | "notify"
   >;
   /** Called after the central repo moves so the skill list reloads. */
   onManagedSkillsChanged: () => Promise<void>;
@@ -60,7 +60,7 @@ export function useSettingsState({
   reporter,
   onManagedSkillsChanged,
 }: SettingsStateDeps) {
-  const { setError, setSuccessToastMessage, formatError, notify } = reporter;
+  const { notifyError, setSuccessToastMessage, notify } = reporter;
   const [themePreference, setThemePreference] = useState<
     "system" | "light" | "dark"
   >(() => storedThemePreference.read());
@@ -182,9 +182,9 @@ export function useSettingsState({
     invokeTauri("getSettings")
       .then(adoptSettings)
       .catch((err) => {
-        setError(formatError(err));
+        notifyError(err);
       });
-  }, [adoptSettings, formatError, setError]);
+  }, [adoptSettings, notifyError]);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -218,12 +218,11 @@ export function useSettingsState({
       await writeSetting({ key: "central_repo_path", value: selected });
       await onManagedSkillsChanged();
     } catch (err) {
-      setError(formatError(err));
+      notifyError(err);
     }
   }, [
-    formatError,
+    notifyError,
     onManagedSkillsChanged,
-    setError,
     t,
     writeSetting,
   ]);
@@ -239,10 +238,10 @@ export function useSettingsState({
           value: normalized,
         });
       } catch (err) {
-        setError(formatError(err));
+        notifyError(err);
       }
     },
-    [bounds, formatError, setError, writeSetting],
+    [bounds, notifyError, writeSetting],
   );
 
   const handleGitCacheTtlSecsChange = useCallback(
@@ -253,10 +252,10 @@ export function useSettingsState({
       try {
         await writeSetting({ key: "git_cache_ttl_secs", value: normalized });
       } catch (err) {
-        setError(formatError(err));
+        notifyError(err);
       }
     },
-    [bounds, formatError, setError, writeSetting],
+    [bounds, notifyError, writeSetting],
   );
 
   /**
@@ -288,13 +287,13 @@ export function useSettingsState({
           setGithubTokenDraft((current) => (current === value ? "" : current));
         }
       } catch (err) {
-        setError(formatError(err));
+        notifyError(err);
       } finally {
         githubTokenInFlight.current = false;
         setGithubTokenPending(false);
       }
     },
-    [formatError, notify, setError, t, writeSetting],
+    [notify, notifyError, t, writeSetting],
   );
 
   const handleGithubTokenSave = useCallback(async () => {
@@ -309,29 +308,29 @@ export function useSettingsState({
 
   const handleClearGitCacheNow = useCallback(async () => {
     if (!isTauri) {
-      setError(t("errors.notTauri"));
+      notify("error", t("errors.notTauri"));
       return;
     }
     try {
       const removed = await invokeTauri("clearGitCacheNow");
       setSuccessToastMessage(t("status.gitCacheCleared", { count: removed }));
     } catch (err) {
-      setError(formatError(err));
+      notifyError(err);
     }
-  }, [formatError, setError, setSuccessToastMessage, t]);
+  }, [notify, notifyError, setSuccessToastMessage, t]);
 
   /** Reveal the backend log: partial forensics (backend-logged events) for earlier runs. */
   const handleOpenLogFolder = useCallback(async () => {
     if (!isTauri) {
-      setError(t("errors.notTauri"));
+      notify("error", t("errors.notTauri"));
       return;
     }
     try {
       await invokeTauri("openLogFolder");
     } catch (err) {
-      setError(formatError(err));
+      notifyError(err);
     }
-  }, [formatError, setError, t]);
+  }, [notify, notifyError, t]);
 
   const handleThemeChange = useCallback(
     (nextTheme: "system" | "light" | "dark") => {

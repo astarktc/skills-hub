@@ -131,8 +131,14 @@ fn sync_without_overwrite_fails_with_target_exists() {
     .expect_err("must fail");
 
     match err {
-        GlobalSyncError::TargetExists { target_path } => {
+        GlobalSyncError::TargetExists {
+            target_path,
+            occupant,
+        } => {
             assert_eq!(target_path, tool_root.join("my-skill"));
+            // The ask's facts are observed where the collision is raised.
+            assert!(occupant.modified_at.is_some());
+            assert!(!occupant.same_content);
         }
         other => panic!("expected TargetExists, got {:?}", other),
     }
@@ -233,6 +239,92 @@ fn overwrite_if_same_content_only_replaces_identical_targets() {
     )
     .expect_err("different content must not be replaced");
     assert!(matches!(err, GlobalSyncError::TargetExists { .. }));
+}
+
+/// Review F3: the ask's `same_content` fact reads the skill's stored
+/// identity (`Source::Managed`), the same read the overwrite policy decided
+/// with — never a re-hash of the central copy. Three cases: the stored
+/// identity disagrees with the central bytes, the identity is unknown, and a
+/// target identical to the stored identity (replaced in the first pass).
+#[test]
+fn the_collision_fact_reads_the_stored_identity_like_the_policy() {
+    use crate::core::content_identity;
+    let same_content_policy = OverwritePolicy {
+        overwrite: false,
+        overwrite_if_same_content: true,
+    };
+    let adapter = claude();
+
+    // Stored A, central bytes changed to B without recording, target B.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = make_store(dir.path());
+    seed_skill(&store, "skill-1");
+    let central = make_skill_dir(dir.path(), "central", "# A");
+    let mut skill = store.get_skill_by_id("skill-1").unwrap().unwrap();
+    skill.central_path = central.to_string_lossy().into_owned();
+    content_identity::record(&store, &mut skill).unwrap();
+    fs::write(central.join("SKILL.md"), "# B").unwrap();
+    let tool_root = dir.path().join("skills-root");
+    make_skill_dir(&tool_root, "my-skill", "# B");
+    let err = sync_skill_into_root(
+        &store,
+        adapter,
+        &tool_root,
+        &central,
+        "skill-1",
+        "my-skill",
+        &same_content_policy,
+        std::slice::from_ref(&adapter),
+        1000,
+    )
+    .expect_err("the stored identity differs: not replaced");
+    match err {
+        GlobalSyncError::TargetExists { occupant, .. } => {
+            assert!(!occupant.same_content, "the fact agrees with the policy");
+        }
+        other => panic!("expected TargetExists, got {other:?}"),
+    }
+    assert_eq!(
+        fs::read_to_string(tool_root.join("my-skill/SKILL.md")).unwrap(),
+        "# B"
+    );
+
+    // Unknown identity (no skill row to read): never "same", even though
+    // the target is byte-identical to the source directory.
+    make_skill_dir(&tool_root, "ghost", "# B");
+    let err = sync_skill_into_root(
+        &store,
+        adapter,
+        &tool_root,
+        &central,
+        "no-such-skill",
+        "ghost",
+        &same_content_policy,
+        std::slice::from_ref(&adapter),
+        1000,
+    )
+    .expect_err("unknown identity: not replaced");
+    match err {
+        GlobalSyncError::TargetExists { occupant, .. } => assert!(!occupant.same_content),
+        other => panic!("expected TargetExists, got {other:?}"),
+    }
+
+    // A target identical to the stored identity is replaced in the first pass.
+    fs::write(central.join("SKILL.md"), "# A").unwrap();
+    make_skill_dir(&tool_root, "same", "# A");
+    let outcome = sync_skill_into_root(
+        &store,
+        adapter,
+        &tool_root,
+        &central,
+        "skill-1",
+        "same",
+        &same_content_policy,
+        std::slice::from_ref(&adapter),
+        1000,
+    )
+    .expect("same content: replaced silently");
+    assert!(outcome.replaced);
 }
 
 /// A copy-only capability (no shipped entry carries it any more) is honoured
@@ -604,12 +696,23 @@ fn classification_recovers_target_exists_by_downcast_despite_reworded_message() 
     // Bury the typed value under context layers with completely different prose.
     let err = anyhow::Error::new(crate::core::sync_engine::TargetExistsError {
         target: target.to_path_buf(),
+        occupant: crate::core::sync_engine::Occupant {
+            modified_at: Some(7),
+            same_content: true,
+        },
     })
     .context("some totally reworded wrapper text");
 
     let classified = super::classify_sync_error(err, adapter, tool_root, target);
     match classified {
-        GlobalSyncError::TargetExists { target_path } => assert_eq!(target_path, target),
+        GlobalSyncError::TargetExists {
+            target_path,
+            occupant,
+        } => {
+            assert_eq!(target_path, target);
+            assert_eq!(occupant.modified_at, Some(7));
+            assert!(occupant.same_content);
+        }
         other => panic!("expected TargetExists, got {:?}", other),
     }
 }

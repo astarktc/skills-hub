@@ -248,8 +248,14 @@ pub enum CommandError {
         /// Registry key of the Tool the pair names.
         tool: String,
     },
+    /// A sync target is occupied by a folder the app does not own. Every
+    /// producer's row carries what the one overwrite ask shows (D12): the
+    /// path, the folder's modification time and whether its content is
+    /// identical to the skill's.
     TargetExists {
         path: String,
+        modified_at: Option<i64>,
+        same_content: bool,
     },
     ToolNotWritable {
         tool: String,
@@ -415,6 +421,8 @@ impl CommandError {
         {
             return CommandError::TargetExists {
                 path: exists.target.to_string_lossy().into_owned(),
+                modified_at: exists.occupant.modified_at,
+                same_content: exists.occupant.same_content,
             };
         }
 
@@ -550,8 +558,13 @@ impl From<GlobalSyncError> for CommandError {
             GlobalSyncError::TargetDisabled { tool_key } => {
                 CommandError::TargetDisabled { tool: tool_key }
             }
-            GlobalSyncError::TargetExists { target_path } => CommandError::TargetExists {
+            GlobalSyncError::TargetExists {
+                target_path,
+                occupant,
+            } => CommandError::TargetExists {
                 path: target_path.to_string_lossy().to_string(),
+                modified_at: occupant.modified_at,
+                same_content: occupant.same_content,
             },
             GlobalSyncError::ToolNotWritable {
                 tool_display_name,

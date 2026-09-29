@@ -14,6 +14,7 @@ import type {
   SkillRefreshOutcome,
 } from "../bindings";
 import {
+  combineOutcomes,
   compositeHeadline,
   deleteOutcome,
   HEADLINE_DONE_KEY,
@@ -21,6 +22,7 @@ import {
   enableOutcome,
   invocationEditOutcome,
   importOutcome,
+  installBatchSettlements,
   installOutcome,
   projectRemovalOutcome,
   projectSyncOutcome,
@@ -1077,7 +1079,7 @@ describe("syncOutcome", () => {
             ...syncReport[0],
             status: {
               status: "skipped",
-              error: { code: "TARGET_EXISTS", path: "/conflict" },
+              error: { code: "TARGET_EXISTS", path: "/conflict", modifiedAt: null, sameContent: false },
             },
           },
       ],
@@ -1205,7 +1207,7 @@ describe("importOutcome", () => {
             ...syncReport[0],
             status: {
               status: "failed",
-              error: { code: "TARGET_EXISTS", path: "/conflict" },
+              error: { code: "TARGET_EXISTS", path: "/conflict", modifiedAt: null, sameContent: false },
             },
           },
         ],
@@ -1299,7 +1301,7 @@ describe("importOutcome", () => {
         targets: [
           {
             ...syncReport[0],
-            status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/copy" } },
+            status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/copy", modifiedAt: null, sameContent: false } },
           },
         ],
       } as ImportGroupStatus,
@@ -1371,7 +1373,7 @@ describe("importOutcome", () => {
               ...syncReport[0],
               status: {
                 status: "failed",
-                error: { code: "TARGET_EXISTS", path: "/conflict" },
+                error: { code: "TARGET_EXISTS", path: "/conflict", modifiedAt: null, sameContent: false },
               },
             },
           ],
@@ -1739,5 +1741,110 @@ describe("removalOutcome with cleared markers", () => {
       kind: "success", tone: "success",
       message: t("projects.bulkUnassignSuccess", { count: 2 }),
     });
+  });
+});
+
+describe("ticket 04: the install batch report and the project Keep", () => {
+  it("installBatchSettlements maps candidates in order and tells 'not deployed' from 'no Tools'", () => {
+    const report = {
+      candidates: [
+        {
+          subpath: "s/a",
+          name: "a",
+          status: {
+            status: "installed" as const,
+            skill: { skill_id: "a", name: "a", central_path: "/hub/a", content_hash: null },
+            targets: [],
+          },
+        },
+        { subpath: "s/b", name: "b", status: { status: "failed" as const, error: { code: "OTHER" as const, message: "x" } } },
+        { subpath: "s/c", name: "c", status: { status: "cancelled" as const } },
+      ],
+    };
+    const kinds = (deploy: boolean, tools: string[]) =>
+      installBatchSettlements(report, { deploy, tools }).map((s) =>
+        s.status === "installed" ? `installed:${s.deployment.status}` : s.status,
+      );
+    expect(kinds(false, ["claude_code"])).toEqual(["installed:disabled", "failed", "cancelled"]);
+    expect(kinds(true, [])).toEqual(["installed:no-targets", "failed", "cancelled"]);
+    expect(kinds(true, ["claude_code"])).toEqual(["installed:reported", "failed", "cancelled"]);
+  });
+
+  it("a declined project assignment is a quiet note, never a failure", () => {
+    const out = projectSyncOutcome(
+      {
+        items: [
+          { assignment_id: "x", project_id: "p", skill_id: "a", skill_name: "alpha", tool: "claude_code", status: { status: "declined" } },
+        ],
+      },
+      { t, action: "toggleOn" },
+    );
+    expect(out.errors).toEqual([]);
+    expect(out.notes).toHaveLength(1);
+    expect(out.toast?.tone).toBe("declined");
+  });
+});
+
+describe("an answered overwrite ask inside Propagation-shaped reports (ticket 09 B2)", () => {
+  it("a kept pair is a declined count and a quiet note on the Refresh headline, never a failure", () => {
+    const out = refreshOutcome({ skills: [refreshed("a"), refreshed("b")] }, {
+      ...ctx,
+      declined: [{ skillName: "a", tool: "claude" }],
+    });
+    expect(out.errors).toEqual([]);
+    expect(out.notes).toEqual(['outcome.declinedLine {"name":"a","tool":"CLAUDE"}']);
+    expect(out.toast).toMatchObject({ tone: "declined", detail: out.notes[0] });
+    expect(out.toast?.message).toContain("outcome.declined");
+  });
+
+  it("a batch of one keeps its sentence, toned declined, with the note as detail", () => {
+    const out = refreshOutcome({ skills: [refreshed("a")] }, {
+      ...ctx,
+      single: { name: "a", success: "updated a" },
+      declined: [{ skillName: "a", tool: "claude" }],
+    });
+    expect(out.toast).toMatchObject({ tone: "declined", message: "updated a" });
+    expect(out.toast?.detail).toContain("outcome.declinedLine");
+  });
+
+  it("Edit's saved headline carries a kept pair as a note", () => {
+    const out = invocationEditOutcome(
+      { skill_id: "a", skill_name: "a", propagation: { targets: [] } },
+      { ...ctx, declined: [{ skillName: "a", tool: "claude" }] },
+    );
+    expect(out.toast).toMatchObject({ tone: "declined", message: "invocationEdit.saved" });
+    expect(out.notes).toHaveLength(1);
+  });
+});
+
+describe("combineOutcomes (one action, several reports, one run)", () => {
+  const part = (over: Partial<ReturnType<typeof syncOutcome>>): ReturnType<typeof syncOutcome> => ({
+    toast: null,
+    errors: [],
+    warnings: [],
+    notes: [],
+    completion: { reload: false, closeModal: true, conflict: false },
+    ...over,
+  });
+
+  it("heads with the first toast, re-tones it when another part failed, and carries the others' notes", () => {
+    const out = combineOutcomes(
+      part({ toast: { kind: "success", tone: "success", message: "3 synced" } }),
+      part({
+        errors: [{ title: "e", message: "m" }],
+        notes: ["kept"],
+        completion: { reload: true, closeModal: false, conflict: false },
+      }),
+    );
+    expect(out.toast).toMatchObject({ tone: "failure", kind: "warning", message: "3 synced", detail: "kept" });
+    expect(out.errors).toHaveLength(1);
+    expect(out.notes).toEqual(["kept"]);
+    expect(out.completion).toEqual({ reload: true, closeModal: false, conflict: false });
+  });
+
+  it("no part with a toast: none, and the notes stay rows", () => {
+    const out = combineOutcomes(part({ notes: ["a"] }), part({ notes: ["b"] }));
+    expect(out.toast).toBeNull();
+    expect(out.notes).toEqual(["a", "b"]);
   });
 });

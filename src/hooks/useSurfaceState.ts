@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { RepointKind } from "../lib/skillPresentation";
-import type { OverwriteRow } from "./useSyncOrchestration";
+import type { OverwriteChoice, OverwriteRow } from "../lib/overwriteAsk";
 
 /**
  * Surface state: "what is on screen", as one value — the area, the focused
@@ -91,13 +91,25 @@ export type AskLayer = AskRequest & { askId: number };
  */
 export type AskAnswer = "confirmed" | "declined" | "dismissed";
 
+/**
+ * The overwrite ask may also answer per row (D12): one choice per row, in
+ * row order, when the operator's choices differ. `confirmed` / `declined`
+ * remain "every row overwrite" / "every row keep".
+ */
+export type RowChoices = { choices: readonly OverwriteChoice[] };
+
+/** What an ask of kind `K` resolves with. */
+export type AskAnswerOf<K extends AskRequest["kind"]> = K extends "overwrite"
+  ? AskAnswer | RowChoices
+  : AskAnswer;
+
 export type DialogLayer = DialogState | AskLayer;
 export type DialogKind = DialogLayer["kind"];
 export type LayerOf<K extends DialogKind> = Extract<DialogLayer, { kind: K }>;
 /** An ask as a modal renders it: its payload plus the one way to answer it. */
 export type PendingAsk<K extends AskRequest["kind"]> = LayerOf<K> & {
   /** Settle the ask; a second call (or a stale layer's) is a no-op. */
-  answer: (answer: AskAnswer) => void;
+  answer: (answer: AskAnswerOf<K>) => void;
 };
 
 export type SurfaceValue = {
@@ -247,10 +259,10 @@ export function useSurfaceState() {
   // previous call produced (several transitions can run in one handler), and
   // side effects (settling asks, writing history) stay out of updaters.
   const valueRef = useRef(value);
-  const resolvers = useRef(new Map<number, (answer: AskAnswer) => void>());
+  const resolvers = useRef(new Map<number, (answer: AskAnswer | RowChoices) => void>());
   const nextAskId = useRef(1);
 
-  const settle = useCallback((askId: number, answer: AskAnswer) => {
+  const settle = useCallback((askId: number, answer: AskAnswer | RowChoices) => {
     const resolve = resolvers.current.get(askId);
     if (!resolve) return;
     resolvers.current.delete(askId);
@@ -447,9 +459,9 @@ export function useSurfaceState() {
    * Ask the operator: pushes the ask on top and resolves with the answer. A
    * newer ask of the same kind dismisses the one it displaces.
    */
-  const ask = useCallback(
-    (request: AskRequest): Promise<AskAnswer> =>
-      new Promise<AskAnswer>((resolve) => {
+  const askAnyKind = useCallback(
+    (request: AskRequest): Promise<AskAnswer | RowChoices> =>
+      new Promise<AskAnswer | RowChoices>((resolve) => {
         const askId = nextAskId.current++;
         const layer = { ...request, askId } as AskLayer;
         resolvers.current.set(askId, resolve);
@@ -459,8 +471,13 @@ export function useSurfaceState() {
       }),
     [commit],
   );
+  // A kind's answers are typed at `pendingAsk(kind).answer`, which is the
+  // only way an ask settles; the shared resolver store holds every kind's.
+  const ask = askAnyKind as <R extends AskRequest>(
+    request: R,
+  ) => Promise<AskAnswerOf<R["kind"]>>;
   const answer = useCallback(
-    (askId: number, answer: AskAnswer) => {
+    (askId: number, answer: AskAnswer | RowChoices) => {
       settle(askId, answer);
       const prev = valueRef.current;
       const stack = prev.stack.filter((l) => !(isAsk(l) && l.askId === askId));
@@ -486,7 +503,10 @@ export function useSurfaceState() {
       const found = layer(kind);
       if (!found) return null;
       const { askId } = found as AskLayer;
-      return { ...found, answer: (settled: AskAnswer) => answer(askId, settled) };
+      return {
+        ...found,
+        answer: (settled: AskAnswerOf<K>) => answer(askId, settled),
+      } as PendingAsk<K>;
     },
     [answer, layer],
   );

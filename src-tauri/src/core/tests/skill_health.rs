@@ -180,6 +180,38 @@ fn a_success_clears_only_its_own_family() {
 }
 
 #[test]
+fn only_an_incomplete_import_is_dismissable_and_a_newer_outcome_survives_the_dismiss() {
+    let f = fixture();
+    let error = CommandError::Other {
+        message: "x".into(),
+    };
+    // Every other kind clears by its own retry: dismissing it is refused
+    // and the stored health stays.
+    for kind in [
+        SkillOutcomeKind::FetchFailed,
+        SkillOutcomeKind::EditConflict,
+        SkillOutcomeKind::DeleteIncomplete,
+        SkillOutcomeKind::RepointFailed,
+        SkillOutcomeKind::RestoreFailed,
+    ] {
+        record_outcome(&f.store, &f.id, kind, &error).unwrap();
+        assert!(dismiss_outcome(&f.store, &f.id, kind).is_err(), "{kind:?}");
+        assert_eq!(f.health().map(|h| h.kind), Some(kind));
+    }
+    // A dismiss of `import_failed` answered after a newer outcome replaced
+    // it leaves the newer one alone.
+    record_outcome(&f.store, &f.id, SkillOutcomeKind::FetchFailed, &error).unwrap();
+    dismiss_outcome(&f.store, &f.id, SkillOutcomeKind::ImportFailed).unwrap();
+    assert_eq!(
+        f.health().map(|h| h.kind),
+        Some(SkillOutcomeKind::FetchFailed)
+    );
+    record_outcome(&f.store, &f.id, SkillOutcomeKind::ImportFailed, &error).unwrap();
+    dismiss_outcome(&f.store, &f.id, SkillOutcomeKind::ImportFailed).unwrap();
+    assert!(f.health().is_none());
+}
+
+#[test]
 fn an_unknown_kind_is_dropped_and_an_unparsable_error_reads_as_other() {
     let f = fixture();
     f.store
@@ -726,12 +758,20 @@ fn a_project_first_sync_collision_is_typed_target_exists() {
 
     let report = assign_skill_to_project_tools(&f.store, "p1", &f.id, 1000).unwrap();
     let ProjectSyncOutcomeStatus::Failed {
-        error: CommandError::TargetExists { path },
+        error:
+            CommandError::TargetExists {
+                path,
+                modified_at,
+                same_content,
+            },
     } = &report.items[0].status
     else {
         panic!("{report:?}");
     };
     assert_eq!(Path::new(path), target);
+    // The project row carries the overwrite ask's facts too (ticket 04).
+    assert!(modified_at.is_some());
+    assert!(!same_content);
     assert_eq!(
         fs::read_to_string(target.join("SKILL.md")).unwrap(),
         "foreign"

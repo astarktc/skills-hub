@@ -520,9 +520,12 @@ fn git_restore_rebuilds_the_central_copy_and_its_dangling_link() {
     let adapter = crate::core::tool_adapters::adapter_by_key("claude_code").unwrap();
     crate::core::tool_adapters::mark_installed_in(&paths.home, adapter);
     let target = paths.home.join("linked");
-    let synced =
-        crate::core::sync_engine::sync_dir_hybrid(Path::new(&record.central_path), &target)
-            .unwrap();
+    let synced = crate::core::sync_engine::sync_dir_hybrid(
+        Path::new(&record.central_path),
+        crate::core::content_identity::Source::Directory(Path::new(&record.central_path)),
+        &target,
+    )
+    .unwrap();
     store
         .upsert_skill_target(&crate::core::skill_store::SkillTargetRecord {
             id: "linked".into(),

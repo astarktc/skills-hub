@@ -257,3 +257,91 @@ test assertions; 09 made one-line switches in those hooks and edited only the re
 ## Comments
 
 - 2026-09-29 — from ticket 02: `ManagedSkill.health: SkillHealth | null` (`{ kind, error, at }`, six kinds) is on the wire; `skillPresentation.skillHealth` is a stub returning it — build the full fold here. Decide how `delete_incomplete` / `import_failed` are dismissed (today only a newer outcome or Delete clears them) — recommend: Retry (delete → finish; import → nothing to retry, so an explicit "Dismiss" that clears the family). `deployAction` counts an `error` row as deployed, so a skill whose only target is a failed first sync shows no deploy — the door's `retry` verb must cover it.
+- 2026-09-29 — adversarial review: **FIX BEFORE ACCEPTANCE**, `.scratch/round19/review/ticket-09-review.md`. Blocking: B1 project registration/Edit/path mutations bypass the reporter and other project controls remain enabled; B2 Refresh/re-assert and Update/Restore/Re-point/Edit propagation collisions never reach the one overwrite ask (04/09 integration); B3 compound Deploy/Retry/project-assignment actions can ask repeatedly and Deploy publishes separate runs. Should-fix S4–S9 cover mixed-group/no-target reload, impossible stale-target repairs for imported skills, grouped Delete focus (fixture: store-hiccup → tdd instead of json-canvas), post-Cancel progress copy, queued reads after unmount, and Add/picker completion still interpreted outside applyOutcome. Requested gates pass: vitest 22 files/541 tests, Rust skill_health 19 tests, export_bindings 1 test with unchanged SHA-256, tsc -b --noEmit exit 0. Review only; source untouched; status not advanced.
+- 2026-09-29 — review fixes (B1–B3, S4–S9 + the defensive confirm test), child Opus. Status stays `implemented`.
+  - **B1** — every project mutation moved into `src/components/projects/useProjectActions.ts` (new) under
+    `runAction`: registration (register + select; the tool-config dialog opens after), Edit save (`updateGitignore`,
+    `successToast`), path update (the picker stays outside and is not even opened while refused; the
+    `updateProjectPath` it leads to is gated), configure / remove / resync / resync-all / cell / row. The hook derives
+    `blockedReason` from the reporter's `pending`; `ProjectList` (update-path), `AssignmentMatrix` (every cell, row
+    verb, Sync project / Sync all; memo comparators include it), `EditProjectModal` (Save) disable with it as the title,
+    and Add / Remove / tool-config dialogs take `loading={pending !== null}` (were `false`). `pendingCells` is only the
+    localized mark. Tests: `useProjectActions.test.ts` — "while a cell toggle runs, '%s' is refused and sends no
+    command" × 10 mutations (zero `invokeTauri` calls, picker not opened, `blockedReason` names the running action);
+    "registration, the Edit save and a path update run under the lifecycle when nothing else does".
+  - **B2** — the sync world gained the collect-then-ask-once seam: `collectSync` (the batch without its ask),
+    `collectEnable`, and `settleCollisionParts(parts)` over `sync | enable | project | refresh | propagation` report
+    parts (pure shapes in `overwriteAsk.ts`: `propagationCollisionRows`, `refreshCollisionRows`,
+    `mergePropagationRetry`, `mergeRefreshRetry`, `CollisionRetry`, `DeclinedPair`). Update / Restore / Re-point
+    (`refreshOne`), Refresh-all and Edit route their report through it inside `action.uncancellable` (no Cancel during
+    the ask/retry); after an answered retry the door re-reads the catalog and `refreshView`s every touched project
+    (`ProjectState.refreshView` now public); the fold runs once over the merged report. A kept Propagation row
+    becomes `declined` (the report shape has no declined status) → `refreshOutcome` / `invocationEditOutcome` take
+    `ctx.declined` (count + quiet note/detail). `syncSkillsToTools` / `enableSkillTargets` / `settleProjectCollisions`
+    / `resolveGlobalCollisions` are now thin wrappers over the same seam. Tests (`useSkillActions.test.ts`, "one
+    operator action, one overwrite ask (the real sync world)" — real surface + sync + catalog + reporter):
+    update / restore / repoint re-assert + project Propagation collisions → one ask with both rows, exact retry,
+    catalog + project view re-read, no error entry, one run; dismissed → no retry, failure stays; Refresh-all Keep →
+    `keep` decision, folded once with `declined`; Edit Propagation → ask + retry. Pure: `overwriteAsk.test.ts`
+    "Propagation / re-assert rows (ticket 09 B2)" ×3; `reportOutcome.test.ts` "an answered overwrite ask inside
+    Propagation-shaped reports" ×3.
+  - **B3** — `deployGroup` collects Enable + first sync, then one `settleCollisionParts`, one `combineOutcomes`
+    (new, `reportOutcome.ts`: first toast heads — the sync count line when it ran — re-toned on another part's
+    failure, other parts' notes as detail), one `applyOutcome` → one `recordRun`. `retry` collects one batch per
+    distinct skill Tool-set (exact pairs), then one ask. Multi-skill `assignToProject` / `unassignFromProject` now take
+    `skillIds` in the project world: every per-skill report first, then one `settleCollisions`, one view re-read.
+    `settleClaims` retries with **pair identity** (one sync batch per skill Tool-set; 04's Cartesian retry replaced —
+    its test updated to pin two exact batches, plus "skills asking about the same Tools share one retry batch").
+    Tests: "deploy a group: a disabled skill's Enable and a new skill's sync collide — one ask with both pairs, one
+    run"; "retry over two occupied Tools: one batch, one ask with both pairs, one retry of exactly them";
+    `useProjectState.test.ts` "assigns several skills, then asks about all their collisions once".
+  - **S4** — runnable work decided first; with no targets the Enable part runs, the undeployed part is a warning
+    entry in the same run (`lifecycle.deployNoTargets`), one reload. Test: "a mixed group with no sync targets
+    enables, reports the undeployed part, and reloads once (S4)".
+  - **S5** — `skillHealth`: failed / missing / stale target rows repair with `retryTargets` for every provenance
+    (central-to-target re-sync; never `update`); under skill-grain Disable they offer the new repair `disable`
+    ("Finish disabling", `health.repairs.finishDisable`). `retry` selects `error | missing | stale` and takes
+    `tools`; `repair` passes `row.tools`. Tests: `skillPresentation.test.ts` target repairs × {git, local, imported,
+    imported (detached)} × {error, missing, stale}; "under skill-grain Disable a %s target offers finishing the
+    Disable"; door test "a stale target's repair re-syncs that Tool from the central copy, never an upstream Update".
+  - **S6** — `displayOrder(visible, groups)` (`skillPresentation.ts`); `useListLens` exposes `displayed` (and
+    `visibleSelection` follows it); App's door `order`, and `SkillsList`'s flat render, read it. Test:
+    `useListLens.test.ts` "walks a grouped list in its display order … (Delete's next row)" (interleaved repos:
+    alpha → gamma, not beta).
+  - **S7** — the reporter's `actionMessage` (and `LoadingOverlay`) derive "Cancelling…" from `pending.cancelling`;
+    `cancelPending` no longer writes the line. Test: "a progress tick after Cancel keeps the Cancelling line until
+    the command returns" (tick + another channel's `setActionMessage`; count still moves).
+  - **S8** — reporter: queued reads are woken without running on unmount (`disposedRef`), and `read` actions take
+    `stillWanted` (checked when their turn comes). Explore preview: generation + `isActive` (App: area is still
+    `explore`), checked before running and before opening; import review: generation + `isReviewWanted` (area is
+    still `skills`). Tests: `useStatusReporter.test.ts` "queued reads (lifetime and intent)" ×4 (mutation → two reads
+    in order; unmount; stale intent dropped; rejection after a rejected mutation); `useExploreState.test.ts` (new) ×3.
+  - **S9** — `useCandidatePick` takes `outcomeHandlers: { reload, closeModal }` instead of `afterBatch`; the picker's
+    close handler resets itself, the form, then the parent. `useAddSkillFlow` (after the 04 child's recorded finish):
+    `finishInstall` / `publishOutcome` deleted; single Add, the picker and Import each make one awaited
+    `applyOutcome(outcome, handlers)` (nonfatal reload kept via `refreshWithoutFailingAction`). Tests: the two
+    reporter doubles now execute handlers in the real order; picker "installs … resets and finishes" asserts
+    `reload → entries → close`; "picker hands completion=%s to the one applyOutcome, never interpreting it"; Add
+    "%s install applies fold completion" asserts one `applyOutcome` and reload before the toast.
+  - **Defensive** — `confirmPair` catches a rejected shared-dir confirmation → `notifyError`, acts as "no". Test: "a
+    rejected shared-dir confirmation reaches notifyError and writes nothing" (run resolves, zero commands).
+  - **Command-API compromises** (src-tauri is the 04 child's lane this round): (1) `bulk_assign_skill` /
+    `bulk_unassign_skill` are per skill, so a multi-skill assignment still sends one command per skill — but one ask,
+    one report, one run; a batch command is a follow-up. (2) Deploy all is two commands (Enable scope + first-sync
+    batch) with one ask/fold; no combined backend surface. (3) `resolve_project_collisions` answers no sync mode, so an
+    answered Propagation row that synced *leaves* the report (the fold counts only failures) rather than being
+    rewritten as `synced`. (4) Enable-route retries re-run the whole scope with overrides (04's shape).
+  - AGENTS.md: the D12 bullet gains the collect-then-ask-once rule; the project-world bullet names `useProjectActions`
+    and the every-mutation-gated rule.
+  - Gate: `npm run version:check && npm run check` → exit 0 — Version OK (1.2.18); lint clean (0 warnings — the
+    `idleWaitersRef` cleanup warning is fixed); styles:check ok; vitest 34 files / 744 tests; build ok; fmt; clippy;
+    `cargo test` 792 passed.
+  - Fixture (5175 `failures`, t3 preview, driven in `preview_evaluate`): Update on `prisma-review` → its re-assert's
+    Cursor + Codex collisions raise **one** ask (2 rows), no Cancel during it; Overwrite → Cursor and Codex deployed,
+    the unwritable-Amp failure reported. Deploy all over `[retired-playbook (disabled), prisma-review (undeployed)]`
+    through the door handle → **one** ask with both pairs; Keep Cursor / Overwrite Codex → one run block "4 synced · 2
+    skipped · 1 kept existing" + "prisma-review: kept your existing Cursor folder", retired-playbook enabled. The fixture
+    has no disabled skill with an occupied target, so enable+sync *both colliding* is proven by the hook test only.
+    One early scripted attempt saw the ask close ~180 ms after opening before any input; two instrumented reruns
+    (immediately after load and 4 s after) kept it open without input for 2 s+ — treated as an automation artifact,
+    not reproduced.

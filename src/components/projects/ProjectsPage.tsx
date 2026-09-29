@@ -1,28 +1,22 @@
 import { memo, useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { FolderOpen } from "lucide-react";
-import { pickFolder } from "../../lib/platform";
-import {
-  projectRemovalOutcome,
-  projectSyncOutcome,
-  removalOutcome,
-  type Outcome,
-  type PlainEntry,
-} from "../../lib/reportOutcome";
+import type { PendingAction } from "../../lib/actionLifecycle";
 import type { ProjectState } from "./useProjectState";
+import { useProjectActions } from "./useProjectActions";
 import ProjectList from "./ProjectList";
 import AssignmentMatrix from "./AssignmentMatrix";
 import AddProjectModal from "./AddProjectModal";
 import EditProjectModal from "./EditProjectModal";
 import ToolConfigModal from "../shared/ToolConfigModal";
 import RemoveProjectModal from "./RemoveProjectModal";
-import type { IgnoreUpdateOptions } from "./types";
 import type { ManagedSkill } from "../skills/types";
 import type { ToolCatalog } from "../../hooks/useToolCatalog";
 import type {
-  ActionErrorEntry,
+  ApplyOutcomeFn,
   NotifyErrorFn,
   NotifyFn,
+  StatusReporter,
 } from "../../hooks/useStatusReporter";
 import {
   useFocusReconciliation,
@@ -52,8 +46,15 @@ type ProjectsPageProps = {
   notify: NotifyFn;
   /** The reporter's command-failure entry point: `notifyError(err)`. */
   notifyError: NotifyErrorFn;
-  /** The reporter's per-target failure batch (one toast per kept artifact). */
-  showActionErrors: (errors: ActionErrorEntry[]) => void;
+  /**
+   * The reporter's action lifecycle: matrix mutations run one at a time
+   * (D19), a cell or row pends inline (`pending`), a resync is a batch.
+   */
+  runAction: StatusReporter["runAction"];
+  /** The action running now; the matrix shows its cells pending. */
+  pending: PendingAction | null;
+  /** The reporter's Outcome executor: every project report settles through it. */
+  applyOutcome: ApplyOutcomeFn;
   /**
    * The surface module: the focused project (`#/projects/<id>`) and this
    * world's dialogs.
@@ -78,11 +79,13 @@ const ProjectsPage = ({
   catalog,
   notify,
   notifyError,
-  showActionErrors,
+  runAction,
+  pending,
+  applyOutcome,
   surface,
 }: ProjectsPageProps) => {
   const { t } = useTranslation();
-  const { toolLabelById, projectToolStatus, loadProjectToolStatus } = catalog;
+  const { projectToolStatus } = catalog;
   const { focus, openDialog, closeDialog, dismissDialog } = surface;
 
   // The focused project is the surface's (hash-addressable); this world
@@ -117,67 +120,35 @@ const ProjectsPage = ({
     [focus],
   );
 
-  // Per-target outcomes (removal under ADR-0002, project sync) are report
-  // data: the fold decides the entries and the toast; this only shows them
-  // and reports whether the modal may close.
-  const applyOutcome = useCallback(
-    (outcome: Outcome<PlainEntry>) => {
-      showActionErrors(outcome.errors);
-      if (outcome.toast)
-        notify(outcome.toast.kind, outcome.toast.message, outcome.toast.detail);
-      return outcome.completion;
-    },
-    [notify, showActionErrors],
-  );
-
-  const handleAddProject = useCallback(
-    async (path: string, gitignore: IgnoreUpdateOptions) => {
-      try {
-        // The ignore intent rides along with registration; the hook hands
-        // it to the backend once the tool set is confirmed.
-        const project = await state.registerProject(path, gitignore);
-        focus({ kind: "project", id: project.id });
-        await state.selectProject(project.id);
-        openDialog({ kind: "projectToolConfig" });
-        await loadProjectToolStatus();
-      } catch (err) {
-        notifyError(err);
-      }
-    },
-    [focus, loadProjectToolStatus, notifyError, openDialog, state],
-  );
-
-  const handleToolConfigConfirm = useCallback(
-    async (selectedTools: string[]) => {
-      try {
-        const report = await state.configureTools(selectedTools);
-        if (!report) return;
-        const completion = applyOutcome(
-          projectRemovalOutcome(report, { t, toolLabelById, action: "configureTools" }),
-        );
-        if (completion.closeModal) dismissDialog("projectToolConfig");
-      } catch (err) {
-        notifyError(err);
-      }
-    },
-    [applyOutcome, dismissDialog, notifyError, state, t, toolLabelById],
-  );
+  // Every mutation runs under the reporter's lifecycle (one at a time, a
+  // cell or row pending inline, the rest as a batch) and settles its report
+  // through `applyOutcome`; while one runs, every other mutation control is
+  // disabled with `blockedReason` as its title.
+  const {
+    pendingCells,
+    blockedReason,
+    handleAddProject,
+    handleToolConfigConfirm,
+    handleRemoveProject,
+    handleEditSave,
+    handleUpdatePath,
+    handleResyncProject,
+    handleResyncAll,
+    handleToggleAssignment,
+    handleBulkAssign,
+    handleBulkUnassign,
+    handleConfigureToolsFromToolbar,
+    handlePickProjectFolder,
+  } = useProjectActions({
+    t,
+    state,
+    catalog,
+    reporter: { pending, runAction, applyOutcome, notify, notifyError },
+    surface,
+  });
 
   const editDialog = surface.layer("projectEdit");
   const removeDialog = surface.layer("projectRemove");
-
-  const handleRemoveProject = useCallback(async () => {
-    if (!removeDialog) return;
-    try {
-      const report = await state.removeProject(removeDialog.projectId);
-      const completion = applyOutcome(
-        projectRemovalOutcome(report, { t, toolLabelById, action: "removeProject" }),
-      );
-      if (completion.closeModal) dismissDialog("projectRemove");
-    } catch (err) {
-      notifyError(err);
-    }
-  }, [applyOutcome, dismissDialog, notifyError, removeDialog, state, t, toolLabelById]);
 
   const handlePromptRemove = useCallback(
     (id: string) => {
@@ -191,122 +162,6 @@ const ProjectsPage = ({
       openDialog({ kind: "projectEdit", projectId: id });
     },
     [openDialog],
-  );
-
-  const handleEditSave = useCallback(
-    async (projectId: string, gitignore: IgnoreUpdateOptions) => {
-      try {
-        await state.updateGitignore(projectId, gitignore);
-        dismissDialog("projectEdit");
-        notify("success", t("projects.configureProject"));
-      } catch (err) {
-        notifyError(err);
-      }
-    },
-    [dismissDialog, notify, notifyError, state, t],
-  );
-
-  const handleResyncProject = useCallback(async () => {
-    try {
-      const report = await state.resyncProject();
-      applyOutcome(projectSyncOutcome(report, { t, toolLabelById, action: "resync" }));
-    } catch (err) {
-      notifyError(err);
-    }
-  }, [applyOutcome, notifyError, state, t, toolLabelById]);
-
-  const handleResyncAll = useCallback(async () => {
-    try {
-      const { report, viewRefreshed } = await state.resyncAll();
-      const projectLabelById = Object.fromEntries(
-        state.projects.map((project) => [project.id, project.name]),
-      );
-      applyOutcome(
-        projectSyncOutcome(report, { t, toolLabelById, projectLabelById, action: "resyncAll" }),
-      );
-      if (!viewRefreshed) notify("warning", t("projects.viewRefreshFailed"));
-    } catch (err) {
-      notifyError(err);
-    }
-  }, [applyOutcome, notify, notifyError, state, t, toolLabelById]);
-
-  const handleToggleAssignment = useCallback(
-    async (skillId: string, tool: string) => {
-      try {
-        const result = await state.toggleAssignment(skillId, tool);
-        if (!result) return;
-        applyOutcome(
-          result.kind === "assigned"
-            ? projectSyncOutcome(result.report, { t, toolLabelById, action: "toggleOn" })
-            : removalOutcome(result.report, { t, toolLabelById, action: "toggle" }),
-        );
-      } catch (err) {
-        notifyError(err);
-      }
-    },
-    [applyOutcome, notifyError, state, t, toolLabelById],
-  );
-
-  const handleBulkAssign = useCallback(
-    async (skillId: string) => {
-      try {
-        const report = await state.bulkAssign(skillId);
-        if (report)
-          applyOutcome(projectSyncOutcome(report, { t, toolLabelById, action: "bulkAssign" }));
-      } catch (err) {
-        notifyError(err);
-      }
-    },
-    [applyOutcome, notifyError, state, t, toolLabelById],
-  );
-
-  // No confirmation, symmetric with bulk assign: a removed link is
-  // re-assignable, not data loss (round 16 D2).
-  const handleBulkUnassign = useCallback(
-    async (skillId: string) => {
-      try {
-        const report = await state.bulkUnassign(skillId);
-        if (report)
-          applyOutcome(removalOutcome(report, { t, toolLabelById, action: "bulkUnassign" }));
-      } catch (err) {
-        notifyError(err);
-      }
-    },
-    [applyOutcome, notifyError, state, t, toolLabelById],
-  );
-
-  const handleConfigureToolsFromToolbar = useCallback(async () => {
-    try {
-      await loadProjectToolStatus();
-      openDialog({ kind: "projectToolConfig" });
-    } catch (err) {
-      notifyError(err);
-    }
-  }, [loadProjectToolStatus, notifyError, openDialog]);
-
-  /** Add project's Browse: the picked folder, or null (cancelled / failed). */
-  const handlePickProjectFolder = useCallback(async () => {
-    try {
-      const [picked] = await pickFolder({ title: t("projects.pathLabel") });
-      return picked ?? null;
-    } catch (err) {
-      notifyError(err);
-      return null;
-    }
-  }, [notifyError, t]);
-
-  const handleUpdatePath = useCallback(
-    async (projectId: string) => {
-      try {
-        const [newPath] = await pickFolder({ title: t("projects.updatePath") });
-        if (!newPath) return;
-        await state.updateProjectPath(projectId, newPath);
-        notify("success", t("projects.updatePathSuccess"));
-      } catch (err) {
-        notifyError(err);
-      }
-    },
-    [notify, notifyError, state, t],
   );
 
   return (
@@ -337,6 +192,7 @@ const ProjectsPage = ({
             onEditProject={handlePromptEdit}
             onRemoveProject={handlePromptRemove}
             onUpdatePath={handleUpdatePath}
+            blockedReason={blockedReason}
             t={t}
           />
           <section className="matrix-panel">
@@ -356,7 +212,8 @@ const ProjectsPage = ({
                   assignments={state.assignments}
                   assignmentsReconciled={state.assignmentsReconciled}
                   skills={skills}
-                  pendingCells={state.pendingCells}
+                  pendingCells={pendingCells}
+                  blockedReason={blockedReason}
                   matrixLoading={state.matrixLoading}
                   onToggleAssignment={handleToggleAssignment}
                   onBulkAssign={handleBulkAssign}
@@ -374,7 +231,7 @@ const ProjectsPage = ({
 
       <AddProjectModal
         open={surface.layer("projectAdd") !== null}
-        loading={false}
+        loading={pending !== null}
         projects={state.projects}
         onPickFolder={handlePickProjectFolder}
         onRegister={handleAddProject}
@@ -386,6 +243,7 @@ const ProjectsPage = ({
         open={editDialog !== null}
         project={state.projects.find((p) => p.id === editDialog?.projectId) ?? null}
         onSave={handleEditSave}
+        blockedReason={blockedReason}
         loadStatus={state.getGitignoreStatus}
         onRequestClose={() => closeDialog("projectEdit")}
         t={t}
@@ -393,7 +251,7 @@ const ProjectsPage = ({
 
       <ToolConfigModal
         open={surface.layer("projectToolConfig") !== null}
-        loading={false}
+        loading={pending !== null}
         toolStatus={projectToolStatus}
         savedSelection={
           state.tools.length > 0 ? state.tools.map((ct) => ct.tool) : null
@@ -413,7 +271,7 @@ const ProjectsPage = ({
 
       <RemoveProjectModal
         open={removeDialog !== null}
-        loading={false}
+        loading={pending !== null}
         projectName={
           state.projects.find((p) => p.id === removeDialog?.projectId)?.name ?? null
         }

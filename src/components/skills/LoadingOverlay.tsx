@@ -1,24 +1,29 @@
 import { memo, useId } from 'react'
 import type { TFunction } from 'i18next'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
+import {
+  showsProgressSurface,
+  type PendingAction,
+} from '../../lib/actionLifecycle'
 
 type LoadingOverlayProps = {
-  loading: boolean
+  /** The reporter's running action; the overlay shows for a batch or a streamed/cancellable one. */
+  pending: PendingAction | null
   actionMessage: string | null
-  loadingStartAt: number | null
-  onCancel?: () => void
+  /** Offered only when the running action is cancellable (D20). */
+  onCancel: () => void
   t: TFunction
 }
 
 const LoadingOverlay = ({
-  loading,
+  pending,
   actionMessage,
-  loadingStartAt,
   onCancel,
   t,
 }: LoadingOverlayProps) => {
-  // Until ticket 14 replaces it with header progress (D19), the overlay is a
-  // modal layer like any other: named, focus-trapped, top of the stack while
+  // Until ticket 14 replaces it with header progress (D19), the overlay is
+  // the progress surface for a batch or a streamed action (a small action on
+  // one skill or cell pends inline instead). It is a modal layer like any other: named, focus-trapped, top of the stack while
   // it runs (a confirmation raised mid-action opens above it), never
   // dismissed by Escape. The spinner and shimmer stop under reduced motion
   // (index.css base layer); the words carry the state.
@@ -26,7 +31,7 @@ const LoadingOverlay = ({
   const stageId = useId()
 
   return (
-    <Dialog open={loading} dismissible={false} onOpenChange={() => {}}>
+    <Dialog open={showsProgressSurface(pending)} dismissible={false} onOpenChange={() => {}}>
       <DialogContent
         size="md"
         showCloseButton={false}
@@ -39,9 +44,9 @@ const LoadingOverlay = ({
             {t('processingTitle')}
           </div>
           <div className="loading-stage" id={stageId} role="status">
-            {actionMessage ?? t('processingTipShort')}
+            {pending?.cancelling ? t('lifecycle.cancelling') : (actionMessage ?? t('processingTipShort'))}
           </div>
-          {loadingStartAt ? (
+          {pending ? (
             <div className="loading-subtext loading-subtext-delayed">
               {t('processingTipLong')}
             </div>
@@ -49,13 +54,14 @@ const LoadingOverlay = ({
           <div className="progress-bar">
             <div className="progress-fill" />
           </div>
-          {onCancel ? (
+          {pending?.cancellable ? (
             <button
               className="btn btn-secondary loading-cancel-btn"
               type="button"
               onClick={onCancel}
+              disabled={pending.cancelling}
             >
-              {t('cancel')}
+              {pending.cancelling ? t('lifecycle.cancelling') : t('cancel')}
             </button>
           ) : null}
         </div>

@@ -13,10 +13,16 @@ export type ExploreStateDeps = {
   t: TranslateFn;
   reporter: Pick<
     StatusReporter,
-    "runAction" | "setError" | "formatError"
+    "runAction" | "notify" | "notifyError"
   >;
   /** Focus the cloned preview (the surface module shows it in the detail). */
   onOpenPreview: (preview: ExplorePreview) => void;
+  /**
+   * Whether Explore is still where the operator is. A preview that waited
+   * for a running action (or cloned slowly) opens only if it is: an intent
+   * the operator navigated away from never opens a surface.
+   */
+  isActive?: () => boolean;
 };
 
 /**
@@ -27,14 +33,17 @@ export function useExploreState({
   t,
   reporter,
   onOpenPreview,
+  isActive,
 }: ExploreStateDeps) {
-  const { runAction, setError, formatError } = reporter;
+  const { runAction, notify, notifyError } = reporter;
   const [featuredSkills, setFeaturedSkills] = useState<FeaturedSkillDto[]>([]);
   const [featuredLoading, setFeaturedLoading] = useState(false);
   const [exploreFilter, setExploreFilter] = useState("");
   const [searchResults, setSearchResults] = useState<OnlineSkillDto[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The latest preview request: an earlier one still waiting is superseded.
+  const previewGenerationRef = useRef(0);
   const [hiddenSkills, setHiddenSkills] = useState<Set<string>>(new Set());
   const [showHidden, setShowHidden] =
     usePersistedPreference(showHiddenPreference);
@@ -67,10 +76,10 @@ export function useExploreState({
         await invokeTauri("hideExploreSkill", sourceUrl);
         setHiddenSkills((prev) => new Set([...prev, sourceUrl]));
       } catch (err) {
-        setError(formatError(err));
+        notifyError(err);
       }
     },
-    [formatError, setError],
+    [notifyError],
   );
 
   const handleUnhideSkill = useCallback(
@@ -83,10 +92,10 @@ export function useExploreState({
           return next;
         });
       } catch (err) {
-        setError(formatError(err));
+        notifyError(err);
       }
     },
-    [formatError, setError],
+    [notifyError],
   );
 
   const handleExploreFilterChange = useCallback(
@@ -111,24 +120,32 @@ export function useExploreState({
           );
           setSearchResults(results);
         } catch {
-          setError(t("searchError"));
+          notify("error", t("searchError"));
           setSearchResults([]);
         } finally {
           setSearchLoading(false);
         }
       }, 500);
     },
-    [setError, t],
+    [notify, t],
   );
 
   const handleOpenExploreDetail = useCallback(
     async (sourceUrl: string, skillName: string, summary?: string) => {
-      await runAction({}, async () => {
+      // A preview changes nothing (a read: it waits its turn, never refused)
+      // and its clone honours the cancel token. It is still wanted while it
+      // is the latest request and Explore is still showing — checked when
+      // its turn comes and again before it opens.
+      const generation = ++previewGenerationRef.current;
+      const stillWanted = () =>
+        previewGenerationRef.current === generation && (isActive?.() ?? true);
+      await runAction({ read: true, cancel: "cloneExploreSkill", stillWanted }, async () => {
         const cachePath = await invokeTauri(
           "cloneExploreSkill",
           sourceUrl,
           skillName,
         );
+        if (!stillWanted()) return;
         // A preview is not a Managed skill: it carries only what the
         // detail shows (no id, no targets, nothing to act on but Install).
         onOpenPreview({
@@ -140,7 +157,7 @@ export function useExploreState({
         });
       });
     },
-    [onOpenPreview, runAction],
+    [isActive, onOpenPreview, runAction],
   );
 
   return {

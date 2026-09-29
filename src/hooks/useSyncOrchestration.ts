@@ -3,13 +3,32 @@ import type {
   BatchSyncOverrideDto,
   BatchTargetOutcome,
   BatchSyncSkillDto,
+  DisableScope,
+  EnableReport,
   SyncProgressDto,
   ToolStatusDto,
 } from "../components/skills/types";
+import type { AssignmentDecision, ProjectSyncReport } from "../components/projects/types";
+import type { PropagationReport, RefreshReport } from "../bindings";
 import { createProgressChannel } from "../lib/platform";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import type { ToolCatalog } from "./useToolCatalog";
-import type { AskAnswer, DialogDoor, SurfaceState } from "./useSurfaceState";
+import type { AskAnswer, DialogDoor, RowChoices, SurfaceState } from "./useSurfaceState";
+import {
+  globalCollisionRows,
+  mergeGlobalRetry,
+  mergeProjectRetry,
+  mergePropagationRetry,
+  mergeRefreshRetry,
+  overwriteRowKey,
+  projectCollisionRows,
+  propagationCollisionRows,
+  refreshCollisionRows,
+  type CollisionRetry,
+  type DeclinedPair,
+  type OverwriteChoice,
+  type OverwriteRow,
+} from "../lib/overwriteAsk";
 import {
   useSharedDirConfirmation,
   type SharedDirTool,
@@ -19,41 +38,145 @@ import type {
   TranslateFn,
 } from "./useStatusReporter";
 
-/** One occupied sync target the operator may authorise overwriting. */
-export type OverwriteRow = {
-  skillId: string;
-  skillName: string;
-  toolKey: string;
-  toolLabel: string;
-  /** The occupied target path, as the backend reported it. */
-  path: string;
-};
+export type { OverwriteChoice, OverwriteRow } from "../lib/overwriteAsk";
 
 /** The overwrite ask as its modal renders it (`surface.pendingAsk("overwrite")`). */
 export type OverwritePending = {
   rows: OverwriteRow[];
-  answer: (answer: AskAnswer) => void;
+  answer: (answer: AskAnswer | RowChoices) => void;
 };
 
 /**
- * The operator's answer to the overwrite ask. `keep` is only ever the
- * explicit "Keep existing" button (the backend then records the pairs
- * `disabled`); `dismissed` — Escape, outside press, a displacing ask, the
- * stack replaced, unmount — is no answer, and records nothing.
+ * The operator's answer to the overwrite ask: one choice per row, in row
+ * order — `keep` only ever from an explicit Keep (the backend then records
+ * the pair `disabled`) — or `dismissed` (Escape, outside press, a displacing
+ * ask, the stack replaced, unmount): no answer, records nothing.
  */
-export type OverwriteAnswer = "overwrite" | "keep" | "dismissed";
+export type OverwriteAnswer = readonly OverwriteChoice[] | "dismissed";
 
-const OVERWRITE_ANSWER: Record<AskAnswer, OverwriteAnswer> = {
-  confirmed: "overwrite",
-  declined: "keep",
-  dismissed: "dismissed",
-};
+/** The per-row choices an ask settled with. */
+function choicesOf(
+  answer: AskAnswer | RowChoices,
+  rowCount: number,
+): OverwriteAnswer {
+  if (answer === "dismissed") return "dismissed";
+  if (answer === "confirmed") return Array(rowCount).fill("overwrite");
+  if (answer === "declined") return Array(rowCount).fill("keep");
+  return answer.choices;
+}
 
 export type SyncPolicy = {
   overwrite?: boolean;
   overwriteIfSameContent?: boolean;
   overrides?: BatchSyncOverrideDto[];
 };
+
+/**
+ * How an asked global row is retried: through a sync batch for its skill
+ * (a first sync, a re-assert, Propagation over a never-synced row), or
+ * through the Enable scope that produced it. Project rows need no route.
+ */
+export type GlobalRetryRoute =
+  | { via: "sync"; skill: BatchSyncSkillDto; overwriteIfSameContent: boolean }
+  | { via: "enable"; scope: DisableScope };
+
+/** One askable row and how its answer is carried out. */
+export type CollisionClaim = { row: OverwriteRow; route?: GlobalRetryRoute };
+
+/**
+ * A report one operator action produced, as the one ask settles it. `sync`:
+ * a global sync batch (`skills` are its items, for the retry); `enable`: an
+ * Enable over `scope`; `project`: a project sync report; `refresh`: a
+ * Refresh / Update / Restore / Re-point report (Propagation and the
+ * re-assert, retried through a sync batch for the skill — `skills` are the
+ * catalog's items); `propagation`: one skill's Edit Propagation.
+ */
+export type CollisionPart =
+  | { kind: "sync"; report: BatchTargetOutcome[]; skills: readonly BatchSyncSkillDto[]; policy?: SyncPolicy }
+  | { kind: "enable"; report: EnableReport; scope: DisableScope }
+  | { kind: "project"; report: ProjectSyncReport }
+  | { kind: "refresh"; report: RefreshReport; skills: readonly BatchSyncSkillDto[] }
+  | { kind: "propagation"; report: PropagationReport; skill: BatchSyncSkillDto };
+
+/** A part with its answered rows settled; `declined` for the shapes that carry no declined row. */
+export type SettledPart<P extends CollisionPart> = P & { declined: DeclinedPair[] };
+
+export type SettledParts<P extends readonly CollisionPart[]> = {
+  parts: { [K in keyof P]: SettledPart<P[K]> };
+  retried: boolean;
+  projectIds: string[];
+};
+
+/** The askable rows of one part, each with its retry route. */
+function claimsOf(part: CollisionPart, labels: Readonly<Record<string, string>>): CollisionClaim[] {
+  const project = (row: OverwriteRow): CollisionClaim => ({ row });
+  const viaSync = (skills: readonly BatchSyncSkillDto[], sameContent: boolean) => {
+    const bySkill = new Map(skills.map((skill) => [skill.skill_id, skill]));
+    return (row: OverwriteRow): CollisionClaim[] => {
+      if (row.scope.kind === "project") return [project(row)];
+      const skill = bySkill.get(row.skillId);
+      return skill ? [{ row, route: { via: "sync", skill, overwriteIfSameContent: sameContent } }] : [];
+    };
+  };
+  switch (part.kind) {
+    case "sync":
+      return globalCollisionRows(part.report, labels).flatMap(
+        viaSync(part.skills, part.policy?.overwriteIfSameContent ?? false),
+      );
+    case "enable":
+      return [
+        ...globalCollisionRows(part.report.global, labels).map(
+          (row): CollisionClaim => ({ row, route: { via: "enable", scope: part.scope } }),
+        ),
+        ...projectCollisionRows(part.report.projects, labels).map(project),
+      ];
+    case "project":
+      return projectCollisionRows(part.report, labels).map(project);
+    // Propagation and the re-assert write with the same-content rule on.
+    case "refresh":
+      return refreshCollisionRows(part.report, labels).flatMap(viaSync(part.skills, true));
+    case "propagation":
+      return propagationCollisionRows(
+        { skillId: part.skill.skill_id, skillName: part.skill.name },
+        part.report.targets,
+        labels,
+      ).flatMap(viaSync([part.skill], true));
+  }
+}
+
+/** One part with the retry's rows in place of the asked ones. */
+function settlePart(part: CollisionPart, retry: CollisionRetry | null): SettledPart<CollisionPart> {
+  if (!retry) return { ...part, declined: [] };
+  const projects = (report: ProjectSyncReport) =>
+    retry.projects ? mergeProjectRetry(report, retry.projects) : report;
+  switch (part.kind) {
+    case "sync":
+      return { ...part, report: mergeGlobalRetry(part.report, retry.rows, retry.global), declined: [] };
+    case "enable":
+      return {
+        ...part,
+        report: {
+          global: mergeGlobalRetry(part.report.global, retry.rows, retry.global),
+          projects: projects(part.report.projects),
+        },
+        declined: [],
+      };
+    case "project":
+      return { ...part, report: projects(part.report), declined: [] };
+    case "refresh": {
+      const merged = mergeRefreshRetry(part.report, retry);
+      return { ...part, report: merged.report, declined: merged.declined };
+    }
+    case "propagation": {
+      const merged = mergePropagationRetry(
+        { skillId: part.skill.skill_id, skillName: part.skill.name },
+        part.report.targets,
+        retry,
+      );
+      return { ...part, report: { targets: merged.targets }, declined: merged.declined };
+    }
+  }
+}
 
 /**
  * "Only scan selected tools": ignore newly detected tools that are not
@@ -68,50 +191,6 @@ function filterRelevantNewlyInstalled(
     return newlyInstalled.filter((id) => selectedTools.includes(id));
   }
   return newlyInstalled;
-}
-
-/** The rows of a batch report that settled as an occupied target. */
-function occupiedTargets(
-  report: BatchTargetOutcome[],
-  toolLabelById: Readonly<Record<string, string>>,
-): OverwriteRow[] {
-  const rows: OverwriteRow[] = [];
-  for (const result of report) {
-    if (
-      result.status.status === "failed" &&
-      result.status.error.code === "TARGET_EXISTS"
-    )
-      rows.push({
-        skillId: result.skill_id,
-        skillName: result.skill_name,
-        toolKey: result.tool_key,
-        toolLabel: toolLabelById[result.tool_key] ?? result.tool_key,
-        path: result.status.error.path,
-      });
-  }
-  return rows;
-}
-
-/**
- * The first report with each asked (skill, tool) row replaced by the retry's
- * row for that pair. Rows the retry produced for other pairs are dropped:
- * the report stays faithful to the operator's action.
- */
-function mergeRetry(
-  report: BatchTargetOutcome[],
-  asked: OverwriteRow[],
-  retry: BatchTargetOutcome[],
-): BatchTargetOutcome[] {
-  const key = (skillId: string, toolKey: string) => `${skillId}\n${toolKey}`;
-  const askedKeys = new Set(asked.map((row) => key(row.skillId, row.toolKey)));
-  const retried = new Map<string, BatchTargetOutcome>();
-  for (const result of retry) {
-    const k = key(result.skill_id, result.tool_key);
-    if (askedKeys.has(k)) retried.set(k, result);
-  }
-  return report.map(
-    (result) => retried.get(key(result.skill_id, result.tool_key)) ?? result,
-  );
 }
 
 export type SyncOrchestrationDeps = {
@@ -240,12 +319,16 @@ export function useSyncOrchestration({
     sharedDirTools,
     surface,
   );
-  // The overwrite ask is a nested ask on the surface stack: a newer ask
-  // declines the one it displaces, and every ask settles exactly once.
+  // The one overwrite ask (D12) is a nested ask on the surface stack: a
+  // newer ask dismisses the one it displaces, and every ask settles exactly
+  // once. Every producer's collided rows — global pairs and project
+  // assignments alike — are asked in one go and answered per row.
   const requestOverwriteConfirmation = useCallback(
-    async (rows: OverwriteRow[]): Promise<OverwriteAnswer> =>
-      OVERWRITE_ANSWER[await ask({ kind: "overwrite", rows })],
-    [ask],
+    async (rows: OverwriteRow[]): Promise<OverwriteAnswer> => {
+      setActionMessage(t("overwrite.waiting"));
+      return choicesOf(await ask({ kind: "overwrite", rows }), rows.length);
+    },
+    [ask, setActionMessage, t],
   );
 
   /**
@@ -345,58 +428,213 @@ export function useSyncOrchestration({
     [setActionMessage, t, toolLabelById],
   );
 
+  /** The Enable command without its ask: the report as it settled. */
+  const collectEnable = useCallback(
+    (scope: DisableScope): Promise<EnableReport> =>
+      invokeTauri("enableSkillTargets", scope, []),
+    [],
+  );
+
+  /** Project assignments: the asked rows' decisions, resolved in one call. */
+  const resolveAssignments = useCallback(
+    async (
+      rows: readonly OverwriteRow[],
+      choices: readonly OverwriteChoice[],
+    ): Promise<ProjectSyncReport | null> => {
+      const decisions: AssignmentDecision[] = rows.flatMap((row, index) =>
+        row.scope.kind === "project"
+          ? [{
+              project_id: row.scope.projectId,
+              skill_id: row.skillId,
+              tool: row.toolKey,
+              decision: choices[index],
+            }]
+          : [],
+      );
+      return decisions.length
+        ? invokeTauri("resolveProjectCollisions", decisions)
+        : null;
+    },
+    [],
+  );
+
   /**
-   * The one sync fan-out seam, with the overwrite ask: a batch that settled
+   * The one overwrite ask over one operator action's collisions (D12): every
+   * claimed row is asked in one go and answered per row; the answer's
+   * retries run for the asked rows only. A global pair is retried the way
+   * it was produced — a sync batch per group of skills asking about the
+   * same Tools (exact pair identity: no skill × Tool product reaches a pair
+   * nobody asked about), or its Enable scope with per-pair decisions — and
+   * project assignments through `resolveProjectCollisions`. Null when
+   * nothing was askable or the ask was dismissed: no retry ran, nothing was
+   * recorded.
+   */
+  const settleClaims = useCallback(
+    async (claims: readonly CollisionClaim[]): Promise<CollisionRetry | null> => {
+      const seen = new Set<string>();
+      const unique = claims.filter((claim) => {
+        const key = overwriteRowKey(claim.row);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (unique.length === 0) return null;
+      const rows = unique.map((claim) => claim.row);
+      const answer = await requestOverwriteConfirmation(rows);
+      if (answer === "dismissed") return null;
+
+      const global: BatchTargetOutcome[] = [];
+      // Sync-route pairs: one batch per (Tool set, same-content rule).
+      const bySkill = new Map<string, { skill: BatchSyncSkillDto; sameContent: boolean; tools: string[]; overrides: BatchSyncOverrideDto[] }>();
+      // Enable-route pairs: one retry per scope.
+      const byScope = new Map<string, { scope: DisableScope; overrides: BatchSyncOverrideDto[] }>();
+      unique.forEach((claim, index) => {
+        const { row, route } = claim;
+        if (row.scope.kind !== "global" || !route) return;
+        const override = { skill_id: row.skillId, tool: row.toolKey, decision: answer[index] };
+        if (route.via === "sync") {
+          const entry = bySkill.get(row.skillId) ?? { skill: route.skill, sameContent: route.overwriteIfSameContent, tools: [], overrides: [] };
+          entry.tools.push(row.toolKey);
+          entry.overrides.push(override);
+          bySkill.set(row.skillId, entry);
+        } else {
+          const key = JSON.stringify(route.scope);
+          const entry = byScope.get(key) ?? { scope: route.scope, overrides: [] };
+          entry.overrides.push(override);
+          byScope.set(key, entry);
+        }
+      });
+      const batches = new Map<string, { skills: BatchSyncSkillDto[]; tools: string[]; sameContent: boolean; overrides: BatchSyncOverrideDto[] }>();
+      for (const entry of bySkill.values()) {
+        const key = `${entry.sameContent}\n${entry.tools.join("\n")}`;
+        const batch = batches.get(key) ?? { skills: [], tools: entry.tools, sameContent: entry.sameContent, overrides: [] };
+        batch.skills.push(entry.skill);
+        batch.overrides.push(...entry.overrides);
+        batches.set(key, batch);
+      }
+      for (const batch of batches.values()) {
+        global.push(
+          ...(await invokeBatchSync(batch.skills, batch.tools, {
+            overwrite: false,
+            overwriteIfSameContent: batch.sameContent,
+            overrides: batch.overrides,
+          })),
+        );
+      }
+      for (const entry of byScope.values()) {
+        global.push(...(await invokeTauri("enableSkillTargets", entry.scope, entry.overrides)).global);
+      }
+      const projects = await resolveAssignments(rows, answer);
+      // Only the asked pairs' rows: a retry reporting other pairs does not
+      // speak for the operator's action.
+      const askedPairs = new Set(
+        rows.filter((row) => row.scope.kind === "global").map((row) => `${row.skillId}\n${row.toolKey}`),
+      );
+      return {
+        rows,
+        global: global.filter((row) => askedPairs.has(`${row.skill_id}\n${row.tool_key}`)),
+        projects,
+      };
+    },
+    [invokeBatchSync, requestOverwriteConfirmation, resolveAssignments],
+  );
+
+  /**
+   * One operator action's reports, settled through one ask: each part's
+   * `TARGET_EXISTS` rows are claimed (a sync batch's pairs retried through
+   * the batch, Enable's through its scope, project assignments and
+   * Propagation / re-assert rows by where they live), asked once, and each
+   * part comes back with its answered rows replaced — Refresh / Propagation
+   * parts with the kept pairs as `declined` (their report shape has no
+   * declined row). `retried` says an answer ran retries (a catalog or view
+   * read before it is stale); `projectIds` are the projects a retry touched.
+   */
+  const settleCollisionParts = useCallback(
+    async <P extends readonly CollisionPart[]>(parts: P): Promise<SettledParts<P>> => {
+      const claims = parts.flatMap((part) => claimsOf(part, toolLabelById));
+      const retry = await settleClaims(claims);
+      // SAFETY: `settlePart` returns each part spread with only `report`
+      // (same kind's shape) and `declined` replaced, in input order, so the
+      // array is the mapped tuple `SettledParts<P>["parts"]`; TypeScript
+      // cannot map a tuple through a union-typed function.
+      const settled = parts.map((part) => settlePart(part, retry)) as unknown as SettledParts<P>["parts"];
+      return {
+        parts: settled,
+        retried: retry !== null,
+        projectIds: retry
+          ? [...new Set(retry.rows.flatMap((row) => (row.scope.kind === "project" ? [row.scope.projectId] : [])))]
+          : [],
+      };
+    },
+    [settleClaims, toolLabelById],
+  );
+
+  /**
+   * The global half of the ask for a finished batch: `report`'s
    * `TARGET_EXISTS` rows (a target occupied by *different* content — the
    * caller's same-content rule already replaced identical content silently)
-   * raises one confirmation listing them. Answered, one more batch runs over
-   * the affected skills × tools with a per-pair decision for each asked pair
-   * — `overwrite` when confirmed, `keep` for the explicit "Keep existing"
-   * (the backend records the pair `disabled`, so no later pass re-asks) — and
-   * the same same-content rule, and the asked rows are replaced in the report.
-   * The operator's answer is what authorises the second batch. A dismissed
-   * ask (Escape, displaced, dropped) is no answer: no retry batch runs, no
-   * decision is recorded, and the report is returned as it settled.
+   * raise one ask; each answered pair is retried with its decision —
+   * `overwrite`, or `keep` (the backend records the pair `disabled`, so no
+   * later pass re-asks) — under the same same-content rule, and replaces its
+   * row. A dismissed ask is no answer: no retry, the report as it settled.
+   * The skills must exist (a sync batch or a finished install).
    */
+  const resolveGlobalCollisions = useCallback(
+    async (
+      report: BatchTargetOutcome[],
+      skills: BatchSyncSkillDto[],
+      policy?: SyncPolicy,
+    ): Promise<BatchTargetOutcome[]> => {
+      const { parts: [settled] } = await settleCollisionParts([{ kind: "sync", report, skills, policy }] as const);
+      return settled.report;
+    },
+    [settleCollisionParts],
+  );
+
+  /** The one sync fan-out seam, with the overwrite ask (see above). */
   const syncSkillsToTools = useCallback(
     async (
       skills: BatchSyncSkillDto[],
       toolIds: string[],
       policy?: SyncPolicy,
-    ): Promise<BatchTargetOutcome[]> => {
-      const report = await invokeBatchSync(skills, toolIds, policy);
-      const occupied = occupiedTargets(report, toolLabelById);
-      if (occupied.length === 0) return report;
+    ): Promise<BatchTargetOutcome[]> =>
+      resolveGlobalCollisions(
+        await invokeBatchSync(skills, toolIds, policy),
+        skills,
+        policy,
+      ),
+    [invokeBatchSync, resolveGlobalCollisions],
+  );
 
-      setActionMessage(t("overwrite.waiting"));
-      const decision = await requestOverwriteConfirmation(occupied);
-      if (decision === "dismissed") return report;
-
-      const askedSkillIds = new Set(occupied.map((row) => row.skillId));
-      const askedToolIds = [...new Set(occupied.map((row) => row.toolKey))];
-      const overrides: BatchSyncOverrideDto[] = occupied.map((row) => ({
-        skill_id: row.skillId,
-        tool: row.toolKey,
-        decision,
-      }));
-      const retry = await invokeBatchSync(
-        skills.filter((skill) => askedSkillIds.has(skill.skill_id)),
-        askedToolIds,
-        {
-          overwrite: false,
-          overwriteIfSameContent: policy?.overwriteIfSameContent ?? false,
-          overrides,
-        },
-      );
-      return mergeRetry(report, occupied, retry);
+  /**
+   * The project half: a project report's collided assignments (assign,
+   * resync) raise the one ask and are settled by `resolveProjectCollisions`;
+   * their rows are replaced in the report. `resolved: false` when nothing
+   * was asked or the ask was dismissed (the report is as it settled).
+   */
+  const settleProjectCollisions = useCallback(
+    async (
+      report: ProjectSyncReport,
+    ): Promise<{ report: ProjectSyncReport; resolved: boolean }> => {
+      const { parts: [settled], retried } = await settleCollisionParts([{ kind: "project", report }] as const);
+      return { report: settled.report, resolved: retried };
     },
-    [
-      invokeBatchSync,
-      requestOverwriteConfirmation,
-      setActionMessage,
-      t,
-      toolLabelById,
-    ],
+    [settleCollisionParts],
+  );
+
+  /**
+   * Enable, with its collisions in the one ask: global pairs whose first
+   * sync met a folder stay `disabled` until answered — the retry is the same
+   * scope with per-pair decisions — and project assignments are settled by
+   * `resolveProjectCollisions`. The answered rows replace the asked ones.
+   */
+  const enableSkillTargets = useCallback(
+    async (scope: DisableScope): Promise<EnableReport> => {
+      const report = await collectEnable(scope);
+      const { parts: [settled] } = await settleCollisionParts([{ kind: "enable", report, scope }] as const);
+      return settled.report;
+    },
+    [collectEnable, settleCollisionParts],
   );
 
   const handleAutoSyncToggle = useCallback(
@@ -501,6 +739,13 @@ export function useSyncOrchestration({
     relevantNewlyInstalled,
     newlyInstalledToolsText,
     syncSkillsToTools,
+    collectSync: invokeBatchSync,
+    collectEnable,
+    settleCollisionParts,
+    resolveGlobalCollisions,
+    settleProjectCollisions,
+    enableSkillTargets,
+    requestOverwriteConfirmation,
     handleAutoSyncToggle,
     handleOpenToolConfig,
     handleCloseToolConfig,

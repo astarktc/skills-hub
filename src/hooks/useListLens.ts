@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  displayOrder,
   filterAndSortSkills,
   groupSkillsByRepo,
   type RepoGroup,
@@ -70,10 +71,17 @@ export function useListLens<T extends LensItem>({
     [foldSingletons, groupByRepo, individual, local, ungrouped, visible],
   );
 
-  /** The selected ids the lens currently shows, in sort order. */
+  /**
+   * The rows in the order they are on screen — a grouped list walks its
+   * groups — the one sequence rendering, selection navigation and the
+   * post-mutation focus rule (Delete's next row) read.
+   */
+  const displayed = useMemo(() => displayOrder(visible, groups), [groups, visible]);
+
+  /** The selected ids the lens currently shows, in display order. */
   const visibleSelection = useMemo(
-    () => (selection ? visible.filter((item) => selection.has(item.id)).map((item) => item.id) : []),
-    [selection, visible],
+    () => (selection ? displayed.filter((item) => selection.has(item.id)).map((item) => item.id) : []),
+    [displayed, selection],
   );
 
   // One stable value per change, so memoised consumers take the lens whole.
@@ -89,9 +97,10 @@ export function useListLens<T extends LensItem>({
       setViewMode,
       visible,
       groups,
+      displayed,
       visibleSelection,
     }),
-    [groupByRepo, groups, query, setGroupByRepo, setViewMode, sort, viewMode, visible, visibleSelection],
+    [displayed, groupByRepo, groups, query, setGroupByRepo, setViewMode, sort, viewMode, visible, visibleSelection],
   );
 }
 

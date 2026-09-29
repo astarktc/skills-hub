@@ -1,21 +1,36 @@
 import { useCallback, useState } from "react";
-import { installOutcome, type InstallDeployment, type InstallSettlement, type Outcome } from "../lib/reportOutcome";
-import type { InstallResultDto } from "../components/skills/types";
+import { installOutcome, type InstallSettlement } from "../lib/reportOutcome";
+import type { InstallSource } from "../components/skills/types";
 import type { DialogDoor } from "./useSurfaceState";
 import type {
+  ActionHandle,
+  OutcomeHandlers,
   StatusReporter,
   TranslateFn,
 } from "./useStatusReporter";
+
+/** The part of an action's handle the install batch scopes Cancel with (D20). */
+export type InstallBatchAction = Pick<ActionHandle, "uncancellable" | "cancelRequested">;
 
 /** The shape every pickable candidate shares (git and local). */
 export type PickCandidate = { name: string; subpath: string };
 
 const EMPTY: never[] = [];
 
+/** One picked candidate as the install batch takes it. */
+export type InstallPick = {
+  subpath: string;
+  /** The candidate's own name (the report's label when it is not installed). */
+  name: string;
+  /** Custom name for a single selection; `null` = keep the skill's own. */
+  nameOverride: string | null;
+};
+
 /**
  * Per-instance adapter: what differs between the git and the local picker.
- * `Ctx` is what `installOne` needs besides the candidate (repo URL, base
- * path), captured when the picker opens so it survives form edits.
+ * `Ctx` is what the install source is built from (repo URL + listing
+ * resolution, base path), captured when the picker opens so it survives
+ * form edits.
  */
 export type CandidatePickSource<C extends PickCandidate, Ctx> = {
   /** This picker's dialog on the surface stack. */
@@ -24,12 +39,8 @@ export type CandidatePickSource<C extends PickCandidate, Ctx> = {
   customName: string;
   /** Which candidates can be selected at all; every candidate when omitted. */
   selectable?: (candidate: C) => boolean;
-  installOne: (
-    ctx: Ctx,
-    candidate: C,
-    /** Custom name for a single selection; `null` = keep the skill's own. */
-    name: string | null,
-  ) => Promise<InstallResultDto>;
+  /** The install batch's source for the candidates of `ctx`. */
+  installSource: (ctx: Ctx, candidates: C[]) => InstallSource;
   /** Clear the add-form fields this flow owns, after a successful batch. */
   resetForm: () => void;
 };
@@ -43,18 +54,32 @@ export type CandidatePickDeps = {
     | "runAction"
     | "setActionMessage"
     | "setError"
-    | "notify"
-    | "showActionWarnings"
-    | "showActionErrors"
+    | "applyOutcome"
   >;
   /** The surface module: the picker is a dialog layered over whatever is open. */
   surface: Pick<DialogDoor, "isOpen" | "pushDialog" | "closeDialog" | "dismissDialog">;
   isSkillNameTaken: (name: string) => boolean;
   toolLabelById?: Readonly<Record<string, string>>;
-  /** The install→deploy tail returns data, including whole-command failure. */
-  deploy: (created: InstallResultDto) => Promise<InstallDeployment>;
-  /** Runs once after every batch (close the add modal, reload the library). */
-  afterBatch: (completion: Outcome["completion"]) => Promise<void>;
+  /**
+   * The Add action's one batch (`installSelection`): install + deploy every
+   * pick, raise the one overwrite ask over the batch's collisions, and
+   * answer the settlements in pick order. `action` is the running action's
+   * handle: the batch sends nothing once the action is cancelled, and
+   * withdraws Cancel for the overwrite retry (no token stops it).
+   */
+  installBatch: (
+    source: InstallSource,
+    picks: InstallPick[],
+    action: InstallBatchAction,
+  ) => Promise<InstallSettlement[]>;
+  /**
+   * The parent's half of a batch's completion, carried out by the reporter's
+   * one `applyOutcome` (reload first, then the toasts and the run block,
+   * then close): `reload` re-reads the library (its failure is the parent's
+   * nonfatal policy), `closeModal` dismisses the parent's dialog after the
+   * picker has reset itself.
+   */
+  outcomeHandlers: Pick<OutcomeHandlers, "reload" | "closeModal">;
 };
 
 export type CandidatePick<C extends PickCandidate, Ctx> = {
@@ -70,7 +95,7 @@ export type CandidatePick<C extends PickCandidate, Ctx> = {
   cancel: () => void;
   toggle: (subpath: string, checked: boolean) => void;
   toggleAll: (checked: boolean) => void;
-  /** Validate the selection, then install it as one batch. */
+  /** Validate the selection, then install it as one backend batch. */
   install: () => Promise<void>;
 };
 
@@ -121,17 +146,14 @@ export function useCandidatePick<C extends PickCandidate, Ctx>(
   source: CandidatePickSource<C, Ctx>,
   deps: CandidatePickDeps,
 ): CandidatePick<C, Ctx> {
-  const { t, reporter, surface, isSkillNameTaken, deploy, afterBatch, toolLabelById } = deps;
+  const { t, reporter, surface, isSkillNameTaken, installBatch, outcomeHandlers, toolLabelById } = deps;
   const { isOpen, pushDialog, closeDialog, dismissDialog } = surface;
   const { dialogKind } = source;
   const {
     loading,
     runAction,
-    setActionMessage,
     setError,
-    notify,
-    showActionWarnings,
-    showActionErrors,
+    applyOutcome,
   } = reporter;
   const { selectable = () => true } = source;
 
@@ -203,55 +225,45 @@ export function useCandidatePick<C extends PickCandidate, Ctx>(
     }
     const name = picked.length === 1 && customName ? customName : null;
     await runAction(
-      {},
-      async () => {
-        const settlements: InstallSettlement[] = [];
-        for (const [i, candidate] of picked.entries()) {
-          setActionMessage(
-            t("actions.importStep", {
-              index: i + 1,
-              total: picked.length,
-              name: candidate.name,
-            }),
-          );
-          try {
-            const created = await source.installOne(
-              listing.ctx,
-              candidate,
-              name,
-            );
-            settlements.push({ status: "installed", name: candidate.name, result: created, deployment: await deploy(created) });
-          } catch (err) {
-            settlements.push({ status: "failed", name: candidate.name, error: err });
-          }
-        }
-        const outcome = installOutcome(settlements, { t, toolLabelById, source: "selection" });
-        if (outcome.completion.closeModal) {
-          reset();
-          source.resetForm();
-        }
-        await afterBatch(outcome.completion);
-        showActionErrors(outcome.errors);
-        showActionWarnings(outcome.warnings);
-        if (outcome.toast) notify(outcome.toast.kind, outcome.toast.message, outcome.toast.detail);
+      { cancel: "installSelection" },
+      async (action) => {
+        // One backend batch for the whole selection (D12): per-candidate
+        // failures and a cancelled tail are report data, and every
+        // collision of the batch is one ask.
+        const settlements = await installBatch(
+          source.installSource(listing.ctx, picked),
+          picked.map((candidate) => ({
+            subpath: candidate.subpath,
+            name: candidate.name,
+            nameOverride: name,
+          })),
+          action,
+        );
+        // The reporter executes the completion; the picker only says how
+        // its own part closes (reset, clear the form, then the parent's).
+        await applyOutcome(installOutcome(settlements, { t, toolLabelById, source: "selection" }), {
+          reload: outcomeHandlers.reload,
+          closeModal: () => {
+            reset();
+            source.resetForm();
+            outcomeHandlers.closeModal?.();
+          },
+        });
       },
     );
     // `selectable` is an adapter constant, not render state (see `open`).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    afterBatch,
+    applyOutcome,
     candidates,
-    deploy,
-    notify,
-    showActionWarnings,
+    installBatch,
     isSkillNameTaken,
     listing,
+    outcomeHandlers,
     reset,
     runAction,
     selected,
-    setActionMessage,
     setError,
-    showActionErrors,
     source,
     t,
     toolLabelById,

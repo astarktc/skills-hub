@@ -3,6 +3,9 @@ import type { SkillTargetDto } from "../components/skills/types";
 import {
   defaultImportVariantPath,
   deployAction,
+  HEALTH_ROW_ORDER,
+  skillHealth,
+  skillSourceLine,
   filterAndSortSkills,
   formatRelativeTime,
   groupSkillsByRepo,
@@ -603,15 +606,186 @@ describe("visibleToolChoices", () => {
 });
 
 describe("deployAction", () => {
-  const targets = (...statuses: SkillTargetDto["status"][]) => statuses.map((status) => ({ status }));
+  const targets = (...statuses: SkillTargetDto["status"][]) =>
+    statuses.map((status) => ({ status, synced_at: 1 as number | null }));
+  const neverSynced = (status: SkillTargetDto["status"]) => ({ status, synced_at: null });
   it.each([
     ["no target at all syncs", null, targets(), { kind: "sync" }],
     ["a live target is deployed", null, targets("synced", "disabled"), { kind: "deployed" }],
-    ["an error target is still deployed (Disable retries it)", null, targets("error"), { kind: "deployed" }],
+    ["an error target that was synced is still deployed (Disable retries it)", null, targets("error"), { kind: "deployed" }],
+    ["a failed first sync alone is not deployed: retry = first sync", null, [neverSynced("error")], { kind: "sync" }],
+    ["a failed first sync beside a live target is deployed", null, [neverSynced("error"), ...targets("synced")], { kind: "deployed" }],
     ["every target pair-disabled enables them", null, targets("disabled", "disabled"), { kind: "enable", disabledTargets: 2 }],
     ["skill grain enables, whatever the rows", 5, targets("disabled", "error"), { kind: "enable", disabledTargets: 1 }],
     ["skill grain with no rows still enables", 5, targets(), { kind: "enable", disabledTargets: 0 }],
   ] as const)("%s", (_name, disabled_at, rows, expected) => {
     expect(deployAction({ disabled_at, targets: rows })).toEqual(expected);
+  });
+});
+
+describe("skillSourceLine", () => {
+  const t = (key: string, opts?: Record<string, unknown>) =>
+    opts ? `${key}:${JSON.stringify(opts)}` : key;
+  const base = { central_path: "/hub/alpha", imported_from_tool: null };
+  it.each([
+    [
+      "a GitHub repo links and copies the repo",
+      { source_type: "git", source_ref: "https://github.com/acme/skills.git" },
+      { kind: "git", label: "acme/skills", href: "https://github.com/acme/skills", copyValue: "https://github.com/acme/skills", icon: "github" },
+    ],
+    [
+      "another git host shows and copies the ref",
+      { source_type: "git", source_ref: "https://gitlab.com/acme/skills" },
+      { kind: "git", label: "https://gitlab.com/acme/skills", href: null, copyValue: "https://gitlab.com/acme/skills", icon: "git" },
+    ],
+    [
+      "a local skill shows and copies its recorded folder (D15)",
+      { source_type: "local", source_ref: "~/skills/alpha" },
+      { kind: "local", label: "~/skills/alpha", href: null, copyValue: "~/skills/alpha", icon: "folder" },
+    ],
+    [
+      "a local skill with no recorded folder falls back to the central copy",
+      { source_type: "local", source_ref: null },
+      { kind: "local", label: "/hub/alpha", copyValue: "/hub/alpha", icon: "folder" },
+    ],
+    [
+      "an imported skill copies nothing and names its found-in Tool as history",
+      { source_type: "imported", source_ref: null, imported_from_tool: "cursor" },
+      { kind: "imported", label: "provenance.managedHere", copyValue: null, href: null, icon: "imported" },
+    ],
+  ] as const)("%s", (_name, fields, expected) => {
+    expect(skillSourceLine({ ...base, ...fields }, t)).toMatchObject(expected);
+  });
+});
+
+describe("skillHealth (the fold)", () => {
+  const t = (key: string) => key;
+  type Fields = Parameters<typeof skillHealth>[0];
+  const healthy: Fields = {
+    source_type: "local",
+    source_ref: "/src/alpha",
+    central_path: "/hub/alpha",
+    imported_from_tool: null,
+    unlocatable: null,
+    refreshable: true,
+    detachable: true,
+    disabled_at: null,
+    health: null,
+    invocation_override: null,
+    targets: [{ tool: "claude", status: "synced", synced_at: 1 }],
+  };
+  const failure = { code: "OTHER", message: "x" } as const;
+  const row = (tool: string, status: SkillTargetDto["status"], synced_at: number | null = 1) => ({ tool, status, synced_at });
+  const kinds = (fields: Partial<Fields>) =>
+    skillHealth({ ...healthy, ...fields }, { t }).rows.map((r) => r.kind);
+
+  it("a healthy, deployed skill has no rows and is healthy", () => {
+    const fold = skillHealth(healthy, { t });
+    expect(fold.rows).toEqual([]);
+    expect(fold.severity).toBe("healthy");
+    expect(fold.source.copyValue).toBe("/src/alpha");
+  });
+
+  it.each([
+    ["central copy missing", { unlocatable: "central_missing" }, ["central_missing"], "failed", ["restore", "delete"]],
+    ["source folder missing", { unlocatable: "source_missing" }, ["source_missing"], "stale", ["repoint", "detach", "delete"]],
+    ["fetch failed", { health: { kind: "fetch_failed", error: failure, at: 5 } }, ["fetch_failed"], "stale", ["update", "repoint"]],
+    ["edit conflict (stored)", { health: { kind: "edit_conflict", error: failure, at: 5 } }, ["edit_conflict"], "stale", ["editInvocation"]],
+    ["edit conflict (live override)", { invocation_override: { conflict: true } }, ["edit_conflict"], "stale", ["editInvocation"]],
+    ["delete incomplete: Retry finishes the Delete", { health: { kind: "delete_incomplete", error: failure, at: 5 } }, ["delete_incomplete"], "failed", ["delete"]],
+    ["import incomplete: only Dismiss", { health: { kind: "import_failed", error: failure, at: 5 } }, ["import_failed"], "stale", ["dismiss"]],
+    ["repoint failed", { health: { kind: "repoint_failed", error: failure, at: 5 } }, ["repoint_failed"], "stale", ["repoint"]],
+    ["restore failed", { health: { kind: "restore_failed", error: failure, at: 5 } }, ["restore_failed"], "failed", ["restore", "repoint"]],
+    ["disabled at skill grain", { disabled_at: 9, targets: [row("claude", "disabled")] }, ["disabled"], "muted", ["enable"]],
+    ["one pair disabled", { targets: [row("claude", "synced"), row("cursor", "disabled")] }, ["targets_disabled"], "muted", ["enable"]],
+    ["never deployed", { targets: [] }, ["not_deployed"], "muted", ["deploy"]],
+    ["a failed first sync only", { targets: [row("claude", "error", null)] }, ["targets_failed", "not_deployed"], "failed", ["retryTargets"]],
+    ["a stale copy: re-synced from the central copy", { targets: [row("claude", "stale")] }, ["targets_stale"], "stale", ["retryTargets"]],
+    ["a missing target", { targets: [row("claude", "missing")] }, ["targets_missing"], "failed", ["retryTargets"]],
+  ] as const)("%s", (_name, fields, expectedKinds, severity, repairs) => {
+    const fold = skillHealth({ ...healthy, ...(fields as Partial<Fields>) }, { t });
+    expect(fold.rows.map((r) => r.kind)).toEqual(expectedKinds);
+    expect(fold.severity).toBe(severity);
+    expect(fold.rows[0].repairs).toEqual(repairs);
+  });
+
+  // Target repairs × provenance × skill policy (S5): the central copy is
+  // what a target should hold, so a failed / missing / stale target is
+  // re-synced from it whatever the skill's source — never an upstream Update
+  // an imported or detached skill cannot run; under skill-grain Disable the
+  // repair finishes the Disable (a re-sync would meet the Disabled gate).
+  it.each([
+    ["git", true],
+    ["local", true],
+    ["imported", false],
+    // Detached: imported provenance, not refreshable, no external source.
+    ["imported (detached)", false],
+  ] as const)("a %s skill's target rows repair from the central copy", (provenance, refreshable) => {
+    const source_type = provenance.startsWith("imported") ? "imported" : provenance;
+    for (const status of ["error", "missing", "stale"] as const) {
+      const fold = skillHealth(
+        { ...healthy, source_type, source_ref: source_type === "imported" ? null : "/src/alpha", refreshable, targets: [row("claude", "synced"), row("cursor", status)] },
+        { t },
+      );
+      expect(fold.rows).toEqual([expect.objectContaining({ tools: ["cursor"], repairs: ["retryTargets"] })]);
+    }
+  });
+
+  it.each(["error", "missing", "stale"] as const)(
+    "under skill-grain Disable a %s target offers finishing the Disable, never a retry",
+    (status) => {
+      const fold = skillHealth({ ...healthy, disabled_at: 4, targets: [row("claude", status)] }, { t });
+      const target = fold.rows.find((r) => r.scope === "target");
+      expect(target?.repairs).toEqual(["disable"]);
+      expect(fold.rows.flatMap((r) => r.repairs)).not.toContain("retryTargets");
+    },
+  );
+
+  it("an Edit conflict both stored and live is one row", () => {
+    expect(
+      kinds({ health: { kind: "edit_conflict", error: failure, at: 1 }, invocation_override: { conflict: true } }),
+    ).toEqual(["edit_conflict"]);
+  });
+
+  it("counts target rows by status and names their Tools", () => {
+    const fold = skillHealth(
+      { ...healthy, targets: [row("claude", "error"), row("cursor", "error"), row("pi", "synced")] },
+      { t },
+    );
+    expect(fold.rows).toEqual([
+      expect.objectContaining({ kind: "targets_failed", scope: "target", count: 2, tools: ["claude", "cursor"] }),
+    ]);
+  });
+
+  it("one precedence rule orders every row, loudest first, and the severity is the loudest", () => {
+    const fold = skillHealth(
+      {
+        ...healthy,
+        unlocatable: "source_missing",
+        health: { kind: "fetch_failed", error: failure, at: 1 },
+        targets: [row("claude", "stale"), row("cursor", "disabled"), row("pi", "error")],
+      },
+      { t },
+    );
+    expect(fold.rows.map((r) => r.kind)).toEqual([
+      "targets_failed",
+      "source_missing",
+      "fetch_failed",
+      "targets_stale",
+      "targets_disabled",
+    ]);
+    expect(fold.severity).toBe("failed");
+    const order = HEALTH_ROW_ORDER as readonly string[];
+    const ranks = fold.rows.map((r) => order.indexOf(r.kind));
+    expect([...ranks].sort((a, b) => a - b)).toEqual(ranks);
+  });
+
+  it("a skill disabled at skill grain shows no pair-disabled or not-deployed row", () => {
+    expect(kinds({ disabled_at: 3, targets: [] })).toEqual(["disabled"]);
+  });
+
+  it("the stored row carries its typed error and when it settled", () => {
+    const fold = skillHealth({ ...healthy, health: { kind: "fetch_failed", error: failure, at: 42 } }, { t });
+    expect(fold.rows[0]).toMatchObject({ error: failure, at: 42, scope: "skill" });
   });
 });

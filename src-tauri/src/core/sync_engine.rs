@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use super::content_identity::{self, Source};
 use super::errors::SignalError;
 use super::tool_adapters::ToolAdapter;
 
@@ -13,6 +14,49 @@ use super::tool_adapters::ToolAdapter;
 #[derive(Debug)]
 pub struct TargetExistsError {
     pub target: PathBuf,
+    /// What the overwrite ask shows about the folder in the way (D12),
+    /// observed where the collision is raised so every producer's
+    /// `TARGET_EXISTS` row carries it.
+    pub occupant: Occupant,
+}
+
+/// The folder in a sync target's way, as the overwrite ask displays it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Occupant {
+    /// The existing folder's modification time (ms since the epoch); `None`
+    /// when the filesystem cannot say.
+    pub modified_at: Option<i64>,
+    /// Whether its content is byte-identical to the skill's (the content
+    /// identity rule). The frontend never re-derives it.
+    pub same_content: bool,
+}
+
+impl Occupant {
+    /// Observe the occupant of `target` against the skill's identity. A
+    /// Managed skill's identity is its stored one (`Source::Managed`, the
+    /// same read the overwrite policy decided with), never a re-hash of the
+    /// central copy; `Source::Directory` is for genuinely unmanaged bytes.
+    pub fn observe(identity: Source<'_>, target: &Path) -> Self {
+        let modified_at = std::fs::metadata(target)
+            .or_else(|_| std::fs::symlink_metadata(target))
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|since| since.as_millis() as i64);
+        Self {
+            modified_at,
+            same_content: content_identity::same_content(identity, target),
+        }
+    }
+}
+
+impl TargetExistsError {
+    fn at(identity: Source<'_>, target: &Path) -> Self {
+        Self {
+            target: target.to_path_buf(),
+            occupant: Occupant::observe(identity, target),
+        }
+    }
 }
 
 impl fmt::Display for TargetExistsError {
@@ -35,7 +79,9 @@ pub struct SyncOutcome {
     pub replaced: bool,
 }
 
-pub fn sync_dir_hybrid(source: &Path, target: &Path) -> Result<SyncOutcome> {
+/// `identity` names the skill whose bytes sit at `source`; it is read only
+/// when a folder is in the way, for the ask's `same_content` fact.
+pub fn sync_dir_hybrid(source: &Path, identity: Source<'_>, target: &Path) -> Result<SyncOutcome> {
     if target.exists() {
         if is_same_link(target, source) {
             return Ok(SyncOutcome {
@@ -44,9 +90,7 @@ pub fn sync_dir_hybrid(source: &Path, target: &Path) -> Result<SyncOutcome> {
                 replaced: false,
             });
         }
-        anyhow::bail!(TargetExistsError {
-            target: target.to_path_buf()
-        });
+        anyhow::bail!(TargetExistsError::at(identity, target));
     }
 
     ensure_parent_dir(target)?;
@@ -78,6 +122,7 @@ pub fn sync_dir_hybrid(source: &Path, target: &Path) -> Result<SyncOutcome> {
 
 pub fn sync_dir_hybrid_with_overwrite(
     source: &Path,
+    identity: Source<'_>,
     target: &Path,
     overwrite: bool,
 ) -> Result<SyncOutcome> {
@@ -104,14 +149,12 @@ pub fn sync_dir_hybrid_with_overwrite(
                 .with_context(|| format!("remove existing target {:?}", target))?;
             did_replace = true;
         } else {
-            anyhow::bail!(TargetExistsError {
-                target: target.to_path_buf()
-            });
+            anyhow::bail!(TargetExistsError::at(identity, target));
         }
     }
 
     // reuse normal flow
-    sync_dir_hybrid(source, target).map(|mut out| {
+    sync_dir_hybrid(source, identity, target).map(|mut out| {
         out.replaced = did_replace;
         out
     })
@@ -119,6 +162,7 @@ pub fn sync_dir_hybrid_with_overwrite(
 
 pub fn sync_dir_copy_with_overwrite(
     source: &Path,
+    identity: Source<'_>,
     target: &Path,
     overwrite: bool,
 ) -> Result<SyncOutcome> {
@@ -129,9 +173,7 @@ pub fn sync_dir_copy_with_overwrite(
                 .with_context(|| format!("remove existing target {:?}", target))?;
             did_replace = true;
         } else {
-            anyhow::bail!(TargetExistsError {
-                target: target.to_path_buf()
-            });
+            anyhow::bail!(TargetExistsError::at(identity, target));
         }
     }
 
@@ -148,17 +190,20 @@ pub fn sync_dir_copy_with_overwrite(
 /// The tool-aware sync entry point: tools that cannot consume a symlinked
 /// skills dir (`ToolAdapter::supports_symlink == false`) are always copied so
 /// the skills stay usable after sync; every other tool gets the hybrid
-/// symlink -> junction -> copy fallback.
+/// symlink -> junction -> copy fallback. `identity` is the skill's content
+/// identity (`Source::Managed` for a Managed skill), read only to describe
+/// a folder in the way (`TargetExistsError::occupant`).
 pub fn sync_dir_for_tool_with_overwrite(
     adapter: &ToolAdapter,
     source: &Path,
+    identity: Source<'_>,
     target: &Path,
     overwrite: bool,
 ) -> Result<SyncOutcome> {
     if !adapter.supports_symlink {
-        return sync_dir_copy_with_overwrite(source, target, overwrite);
+        return sync_dir_copy_with_overwrite(source, identity, target, overwrite);
     }
-    sync_dir_hybrid_with_overwrite(source, target, overwrite)
+    sync_dir_hybrid_with_overwrite(source, identity, target, overwrite)
 }
 
 fn ensure_parent_dir(path: &Path) -> Result<()> {

@@ -7,6 +7,7 @@
 
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ProjectSyncOutcome } from "../components/projects/types";
 import type {
   BatchTargetOutcome,
   AppSettings,
@@ -538,7 +539,7 @@ describe("syncSkillsToTools overwrite ask", () => {
     tool_key,
     status: {
       status: "failed",
-      error: { code: "TARGET_EXISTS", path: `/t/${tool_key}/${skill_id}` },
+      error: { code: "TARGET_EXISTS", path: `/t/${tool_key}/${skill_id}`, modifiedAt: 1_000, sameContent: false },
     },
   });
   const syncCalls = () =>
@@ -565,12 +566,9 @@ describe("syncSkillsToTools overwrite ask", () => {
       occupied("s2", "claude"),
       synced("s2", "cursor"),
     ];
-    const retry = [
-      synced("s1", "claude"), // cross pair, re-synced by the retry batch: dropped
-      synced("s1", "cursor"),
-      synced("s2", "claude"),
-      synced("s2", "cursor"),
-    ];
+    // One retry batch per asked pair set: s1 only on cursor, s2 only on
+    // claude — never the skills × Tools product (pair identity).
+    const retries = [[synced("s1", "cursor")], [synced("s2", "claude")]];
     let batch = 0;
     mockInvoke.mockImplementation((command) => {
       switch (command) {
@@ -580,7 +578,7 @@ describe("syncSkillsToTools overwrite ask", () => {
           return Promise.resolve(TOOL_STATUS);
         case "syncSkillsToTools":
           batch += 1;
-          return Promise.resolve(batch === 1 ? first : retry);
+          return Promise.resolve(batch === 1 ? first : retries[batch - 2]);
         default:
           return Promise.resolve(undefined);
       }
@@ -597,9 +595,12 @@ describe("syncSkillsToTools overwrite ask", () => {
     });
     await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
     expect(reporter.setActionMessage).toHaveBeenCalledWith("overwrite.waiting");
+    // Each row carries what the ask shows (D12): path, modified time, and
+    // whether it differs — the backend's answers, never re-derived.
+    const facts = { modifiedAt: 1_000, sameContent: false, scope: { kind: "global" } };
     expect(result.current.overwritePending!.rows).toEqual([
-      { skillId: "s1", skillName: "s1", toolKey: "cursor", toolLabel: "CURSOR", path: "/t/cursor/s1" },
-      { skillId: "s2", skillName: "s2", toolKey: "claude", toolLabel: "CLAUDE", path: "/t/claude/s2" },
+      { skillId: "s1", skillName: "s1", toolKey: "cursor", toolLabel: "CURSOR", path: "/t/cursor/s1", ...facts },
+      { skillId: "s2", skillName: "s2", toolKey: "claude", toolLabel: "CLAUDE", path: "/t/claude/s2", ...facts },
     ]);
 
     let report: BatchTargetOutcome[] = [];
@@ -609,18 +610,11 @@ describe("syncSkillsToTools overwrite ask", () => {
     });
 
     const calls = syncCalls();
-    expect(calls).toHaveLength(2);
-    const [, retrySkills, retryTools, retryPolicy] = calls[1]!;
-    expect(retrySkills).toEqual(skills);
-    expect(retryTools).toEqual(["cursor", "claude"]);
-    expect(retryPolicy).toEqual({
-      overwrite: false,
-      overwrite_if_same_content: true,
-      overrides: [
-        { skill_id: "s1", tool: "cursor", decision: "overwrite" },
-        { skill_id: "s2", tool: "claude", decision: "overwrite" },
-      ],
-    });
+    expect(calls).toHaveLength(3);
+    expect(calls.slice(1).map(([, retrySkills, retryTools, retryPolicy]) => [retrySkills, retryTools, retryPolicy])).toEqual([
+      [[skills[0]], ["cursor"], { overwrite: false, overwrite_if_same_content: true, overrides: [{ skill_id: "s1", tool: "cursor", decision: "overwrite" }] }],
+      [[skills[1]], ["claude"], { overwrite: false, overwrite_if_same_content: true, overrides: [{ skill_id: "s2", tool: "claude", decision: "overwrite" }] }],
+    ]);
     // Asked rows replaced in place; the others are the first batch's rows.
     expect(report).toEqual([
       synced("s1", "claude"),
@@ -629,6 +623,40 @@ describe("syncSkillsToTools overwrite ask", () => {
       synced("s2", "cursor"),
     ]);
     expect(result.current.overwritePending).toBeNull();
+  });
+
+  it("skills asking about the same Tools share one retry batch", async () => {
+    let batch = 0;
+    mockInvoke.mockImplementation((command) => {
+      switch (command) {
+        case "getSettings":
+          return Promise.resolve(appSettings());
+        case "getToolStatus":
+          return Promise.resolve(TOOL_STATUS);
+        case "syncSkillsToTools":
+          batch += 1;
+          return Promise.resolve(
+            batch === 1
+              ? [occupied("s1", "claude"), occupied("s2", "claude")]
+              : [synced("s1", "claude"), synced("s2", "claude")],
+          );
+        default:
+          return Promise.resolve(undefined);
+      }
+    });
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+    let reportPromise!: Promise<BatchTargetOutcome[]>;
+    act(() => {
+      reportPromise = result.current.syncSkillsToTools(skills, ["claude"]);
+    });
+    await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
+    await act(async () => {
+      result.current.overwritePending!.answer("confirmed");
+      await reportPromise;
+    });
+    expect(syncCalls()).toHaveLength(2);
+    expect(syncCalls()[1]!.slice(1, 3)).toEqual([skills, ["claude"]]);
   });
 
   it("retries only the affected skills, carrying the caller's same-content rule", async () => {
@@ -763,5 +791,162 @@ describe("syncSkillsToTools overwrite ask", () => {
     // The report is returned as it settled: the occupied row stays failed.
     expect(report).toEqual(first);
     expect(syncCalls()).toHaveLength(1);
+  });
+});
+
+describe("the one overwrite ask across producers (ticket 04)", () => {
+  const facts = { modifiedAt: 5_000, sameContent: false };
+  const globalRow = (skill_id: string, tool_key: string, collided: boolean): BatchTargetOutcome => ({
+    skill_id,
+    skill_name: skill_id,
+    tool_key,
+    status: collided
+      ? { status: "failed", error: { code: "TARGET_EXISTS", path: `/g/${tool_key}/${skill_id}`, ...facts } }
+      : { status: "synced", outcome: { mode_used: "symlink", target_path: `/g/${tool_key}/${skill_id}`, replaced: true } },
+  });
+  const projectItem = (status: ProjectSyncOutcome["status"]): ProjectSyncOutcome => ({
+    assignment_id: "a1",
+    project_id: "p1",
+    skill_id: "s1",
+    skill_name: "s1",
+    tool: "claude",
+    status,
+  });
+  const projectCollision = projectItem({
+    status: "failed",
+    error: { code: "TARGET_EXISTS", path: "/p1/.claude/skills/s1", ...facts },
+  });
+
+  /** Backend: settings + tools, plus the given per-command answers (in call order). */
+  function backend(answers: Partial<Record<CommandName, unknown[]>>) {
+    const queues = Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, [...(v ?? [])]]));
+    mockInvoke.mockImplementation((command) => {
+      if (command === "getSettings") return Promise.resolve(appSettings());
+      if (command === "getToolStatus") return Promise.resolve(TOOL_STATUS);
+      const queue = queues[command];
+      return Promise.resolve(queue?.length ? queue.shift() : undefined);
+    });
+  }
+  const calls = (command: CommandName) => mockInvoke.mock.calls.filter(([cmd]) => cmd === command);
+
+  it("answers per row: each asked pair is retried with its own decision", async () => {
+    backend({
+      syncSkillsToTools: [
+        [globalRow("s1", "claude", true), globalRow("s2", "claude", true)],
+        [globalRow("s1", "claude", false), { ...globalRow("s2", "claude", false), status: { status: "declined" } }],
+      ],
+    });
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+    let done!: Promise<BatchTargetOutcome[]>;
+    act(() => {
+      done = result.current.syncSkillsToTools(
+        [
+          { skill_id: "s1", name: "s1", source_path: "/r/s1" },
+          { skill_id: "s2", name: "s2", source_path: "/r/s2" },
+        ],
+        ["claude"],
+        { overwriteIfSameContent: true },
+      );
+    });
+    await waitFor(() => expect(result.current.overwritePending?.rows).toHaveLength(2));
+    let report: BatchTargetOutcome[] = [];
+    await act(async () => {
+      result.current.overwritePending!.answer({ choices: ["overwrite", "keep"] });
+      report = await done;
+    });
+    expect(calls("syncSkillsToTools")[1]![3]).toEqual({
+      overwrite: false,
+      overwrite_if_same_content: true,
+      overrides: [
+        { skill_id: "s1", tool: "claude", decision: "overwrite" },
+        { skill_id: "s2", tool: "claude", decision: "keep" },
+      ],
+    });
+    expect(report.map((row) => row.status.status)).toEqual(["synced", "declined"]);
+  });
+
+  it("a project report's collisions are asked and resolved by resolveProjectCollisions", async () => {
+    backend({ resolveProjectCollisions: [{ items: [projectItem({ status: "declined" })] }] });
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+    let done!: ReturnType<typeof result.current.settleProjectCollisions>;
+    act(() => {
+      done = result.current.settleProjectCollisions({ items: [projectCollision] });
+    });
+    await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
+    expect(result.current.overwritePending!.rows).toEqual([
+      {
+        skillId: "s1",
+        skillName: "s1",
+        toolKey: "claude",
+        toolLabel: "CLAUDE",
+        path: "/p1/.claude/skills/s1",
+        ...facts,
+        scope: { kind: "project", projectId: "p1" },
+      },
+    ]);
+    let settled!: Awaited<typeof done>;
+    await act(async () => {
+      result.current.keepExisting();
+      settled = await done;
+    });
+    expect(calls("resolveProjectCollisions")).toEqual([
+      ["resolveProjectCollisions", [{ project_id: "p1", skill_id: "s1", tool: "claude", decision: "keep" }]],
+    ]);
+    expect(settled).toEqual({ report: { items: [projectItem({ status: "declined" })] }, resolved: true });
+  });
+
+  it("a dismissed project ask resolves nothing", async () => {
+    backend({});
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+    let done!: ReturnType<typeof result.current.settleProjectCollisions>;
+    act(() => {
+      done = result.current.settleProjectCollisions({ items: [projectCollision] });
+    });
+    await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
+    let settled!: Awaited<typeof done>;
+    await act(async () => {
+      result.current.dismissOverwrite();
+      settled = await done;
+    });
+    expect(calls("resolveProjectCollisions")).toHaveLength(0);
+    expect(settled.resolved).toBe(false);
+  });
+
+  it("Enable: global and project collisions are one ask; the retry is the same scope with the decisions", async () => {
+    const scope = { kind: "skill", skill_id: "s1" } as const;
+    backend({
+      enableSkillTargets: [
+        { global: [globalRow("s1", "claude", true), globalRow("s1", "pi", false)], projects: { items: [projectCollision] } },
+        { global: [globalRow("s1", "claude", false)], projects: { items: [] } },
+      ],
+      resolveProjectCollisions: [{ items: [projectItem({ status: "synced" })] }],
+    });
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+    let done!: ReturnType<typeof result.current.enableSkillTargets>;
+    act(() => {
+      done = result.current.enableSkillTargets(scope);
+    });
+    await waitFor(() => expect(result.current.overwritePending?.rows).toHaveLength(2));
+    let report!: Awaited<typeof done>;
+    await act(async () => {
+      result.current.overwritePending!.answer("confirmed");
+      report = await done;
+    });
+    expect(calls("enableSkillTargets")).toEqual([
+      ["enableSkillTargets", scope, []],
+      ["enableSkillTargets", scope, [{ skill_id: "s1", tool: "claude", decision: "overwrite" }]],
+    ]);
+    expect(calls("resolveProjectCollisions")[0]![1]).toEqual([
+      { project_id: "p1", skill_id: "s1", tool: "claude", decision: "overwrite" },
+    ]);
+    expect(report.global.map((row) => [row.tool_key, row.status.status])).toEqual([
+      ["claude", "synced"],
+      ["pi", "synced"],
+    ]);
+    expect(report.projects.items.map((item) => item.status.status)).toEqual(["synced"]);
   });
 });

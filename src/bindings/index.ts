@@ -23,6 +23,14 @@ export const commands = {
 	subpath: string | null,
 } | null) => __TAURI_INVOKE<InstallResultDto>("install_git_selection", { repoUrl, subpath, name, resolution }),
 	/**
+	 *  Add: install a selection of candidates from one source and deploy each
+	 *  to the request's Tools — one batch, one report (`core::install_batch`).
+	 *  Per-candidate failures, cancellations and target collisions are report
+	 *  data; the command itself fails only when its roots cannot be resolved.
+	 *  Honours the cancel token between candidates.
+	 */
+	installSelection: (request: InstallRequest, onProgress: Channel<InstallProgressDto>) => __TAURI_INVOKE<InstallBatchReport>("install_selection", { request, onProgress }),
+	/**
 	 *  Sync N skills to M tools in one call. The backend owns the whole
 	 *  choreography — installedness filtering, shared-dir dedupe, overwrite
 	 *  policy, DB record fan-out — and returns a per-target report; per-target
@@ -64,6 +72,12 @@ export const commands = {
 	 */
 	detachSkillFromSource: (skillId: string) => __TAURI_INVOKE<null>("detach_skill_from_source", { skillId }),
 	/**
+	 *  The operator's Dismiss of a skill's stored health (`import_failed` only;
+	 *  see `skill_health::dismiss_outcome`). Clears nothing when a newer outcome
+	 *  replaced it. Store-only; no Sync target changes.
+	 */
+	clearSkillHealth: (skillId: string, kind: SkillOutcomeKind) => __TAURI_INVOKE<null>("clear_skill_health", { skillId, kind }),
+	/**
 	 *  Import pre-existing Tool skills the operator selected, in one call: admit
 	 *  each chosen variant, finalize it as a Managed skill, then sync it
 	 *  (auto-sync on) or remove the byte-identical originals (auto-sync off).
@@ -91,8 +105,10 @@ export const commands = {
 	/**
 	 *  Enable a scope: clear its Disabled marker and re-sync it as a first sync.
 	 *  Per-target outcomes (including `TARGET_EXISTS`) are report data.
+	 *  `overrides` carries the operator's answers to the overwrite ask raised
+	 *  over a previous Enable's collided global pairs (empty on the first call).
 	 */
-	enableSkillTargets: (scope: DisableScope) => __TAURI_INVOKE<EnableReport>("enable_skill_targets", { scope }),
+	enableSkillTargets: (scope: DisableScope, overrides: BatchSyncOverrideDto[]) => __TAURI_INVOKE<EnableReport>("enable_skill_targets", { scope, overrides }),
 	getFeaturedSkills: () => __TAURI_INVOKE<FeaturedSkillDto[]>("get_featured_skills"),
 	searchSkillsOnline: (query: string, limit: number | null) => __TAURI_INVOKE<OnlineSkillDto[]>("search_skills_online", { query, limit }),
 	listSkillFiles: (centralPath: string) => __TAURI_INVOKE<SkillFileEntry[]>("list_skill_files", { centralPath }),
@@ -144,6 +160,13 @@ export const commands = {
 	toggleProjectSkillAssignment: (projectId: string, skillId: string, tool: string) => __TAURI_INVOKE<ToggleAssignmentResultDto>("toggle_project_skill_assignment", { projectId, skillId, tool }),
 	resyncProject: (projectId: string) => __TAURI_INVOKE<ResyncProjectResultDto>("resync_project", { projectId }),
 	resyncAllProjects: () => __TAURI_INVOKE<ResyncAllResultDto>("resync_all_projects"),
+	/**
+	 *  The overwrite ask's retry for project assignments (D12): settle each
+	 *  collided assignment with the operator's decision. Spans projects (a
+	 *  resync-all or an Enable can collide in several); the caller re-reads the
+	 *  view it shows.
+	 */
+	resolveProjectCollisions: (decisions: AssignmentDecision[]) => __TAURI_INVOKE<ProjectSyncReport>("resolve_project_collisions", { decisions }),
 	bulkAssignSkill: (projectId: string, skillId: string) => __TAURI_INVOKE<BulkAssignResultDto>("bulk_assign_skill", { projectId, skillId }),
 	/**
 	 *  Unassign one skill from every Tool of one project — the inverse of
@@ -191,6 +214,18 @@ export type AppSettings = {
 	 */
 	ui_zoom_level: number,
 	bounds: SettingsBounds,
+};
+
+/**
+ *  The operator's answer to the overwrite ask for one project assignment
+ *  whose sync met a folder in the way (a `TARGET_EXISTS` report row of
+ *  assign / resync / Enable / Propagation). Crosses the wire as itself.
+ */
+export type AssignmentDecision = {
+	project_id: string,
+	skill_id: string,
+	tool: string,
+	decision: OverrideDecision,
 };
 
 /**
@@ -278,7 +313,14 @@ export type CommandError = { code: "TOOL_NOT_INSTALLED"; tool: string } |
  */
 { code: "TARGET_DISABLED"; 
 /**  Registry key of the Tool the pair names. */
-tool: string } | { code: "TARGET_EXISTS"; path: string } | { code: "TOOL_NOT_WRITABLE"; tool: string; path: string } | { code: "SKILL_INVALID"; reason: string } | { code: "MULTI_SKILLS" } | { code: "SKILL_EXISTS"; 
+tool: string } | 
+/**
+ *  A sync target is occupied by a folder the app does not own. Every
+ *  producer's row carries what the one overwrite ask shows (D12): the
+ *  path, the folder's modification time and whether its content is
+ *  identical to the skill's.
+ */
+{ code: "TARGET_EXISTS"; path: string; modifiedAt: number | null; sameContent: boolean } | { code: "TOOL_NOT_WRITABLE"; tool: string; path: string } | { code: "SKILL_INVALID"; reason: string } | { code: "MULTI_SKILLS" } | { code: "SKILL_EXISTS"; 
 /**  Name of the skill directory already present in the central repo. */
 name: string } | { code: "FINALIZE_ROLLBACK_FAILED"; central: string; backup: string | null; 
 /**  Original failure and rollback error chain, diagnostics only. */
@@ -506,12 +548,108 @@ export type ImportSkipReason =
  */
 { reason: "name_managed"; skill_id: string };
 
+export type InstallBatchReport = {
+	candidates: InstallCandidateOutcome[],
+};
+
+/**  One selected candidate. */
+export type InstallCandidate = {
+	/**  The listing's subpath (`"."` for the source root). */
+	subpath: string,
+	/**  The operator's name for a single pick; `null` keeps the skill's own. */
+	name_override: string | null,
+};
+
+export type InstallCandidateOutcome = {
+	subpath: string,
+	/**
+	 *  The installed skill's name, or the name the candidate was asked
+	 *  under when it was not installed.
+	 */
+	name: string,
+	status: InstallCandidateStatus,
+};
+
+/**  What happened to one candidate. */
+export type InstallCandidateStatus = 
+/**
+ *  Finalized as a Managed skill; `targets` is its first sync (empty when
+ *  the request did not deploy or named no Tools). A `TARGET_EXISTS` row
+ *  is the askable collision.
+ */
+{ status: "installed"; skill: InstallResult; targets: BatchTargetOutcome[] } | 
+/**  Acquisition or finalize failed; nothing of this candidate remains. */
+{ status: "failed"; error: CommandError } | 
+/**
+ *  The operator cancelled before this candidate was finalized; nothing
+ *  of it remains (D10 — its own kind, never a failure).
+ */
+{ status: "cancelled" };
+
+/**
+ *  A decision taken before the first pass for one (skill, Tool) pair, keyed
+ *  by the skill's name (it has no id until it is installed). Applies to any
+ *  Tool sharing the named Tool's skills dir, like `BatchOverride`.
+ */
+export type InstallOverride = {
+	skill_name: string,
+	tool: string,
+	decision: OverrideDecision,
+};
+
+/**  Progress tick streamed before each candidate of an install batch. */
+export type InstallProgressDto = {
+	index: number,
+	total: number,
+	name: string,
+};
+
+/**  The whole Add action. */
+export type InstallRequest = {
+	source: InstallSource,
+	candidates: InstallCandidate[],
+	/**
+	 *  Tools to deploy each installed skill to (the global sync batch's
+	 *  rules: installedness, shared-dir dedupe, Disabled gate).
+	 */
+	tools: string[],
+	/**  Replace a target whose content is identical to the skill's. */
+	overwrite_if_same_content: boolean,
+	overrides: InstallOverride[],
+	/**  Deploy at all (auto-sync on). `false` installs only. */
+	deploy: boolean,
+};
+
+/**
+ *  Outcome of a completed install. Crosses the wire as itself inside the
+ *  install batch's report (`core::install_batch`).
+ */
+export type InstallResult = {
+	skill_id: string,
+	name: string,
+	central_path: string,
+	content_hash: string | null,
+};
+
 export type InstallResultDto = {
 	skill_id: string,
 	name: string,
 	central_path: string,
 	content_hash: string | null,
 };
+
+/**
+ *  Where the candidates come from. Crosses the wire as itself:
+ *  `{ kind: "git", url, resolution }` or `{ kind: "local", root }`.
+ */
+export type InstallSource = 
+/**
+ *  A GitHub repo URL and the listing's source decision (branch / path),
+ *  reused so the install makes no second refs lookup.
+ */
+{ kind: "git"; url: string; resolution: GitSourceResolution | null } | 
+/**  A local folder the candidates' subpaths are relative to. */
+{ kind: "local"; root: string };
 
 /**  Inclusive integer bound, shipped to the frontend inside `AppSettings`. */
 export type IntRange = {
@@ -812,7 +950,14 @@ export type ProjectSyncOutcomeStatus =
  */
 { status: "failed"; error: CommandError } | 
 /**  Deliberately not synced. Report data, never a failure. */
-{ status: "skipped"; reason: ProjectSyncSkip };
+{ status: "skipped"; reason: ProjectSyncSkip } | 
+/**
+ *  The operator answered the overwrite ask with "Keep existing" for this
+ *  assignment ([`resolve_collisions`]): the folder in the way was left
+ *  alone and the row is kept `disabled`, owning nothing at its path (D9).
+ *  Its own outcome kind (D10), never a failure or a skip.
+ */
+{ status: "declined" };
 
 export type ProjectSyncReport = {
 	items: ProjectSyncOutcome[],

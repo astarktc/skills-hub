@@ -13,10 +13,11 @@ import {
   useFocusReconciliation,
   useSurfaceState,
   type AskAnswer,
+  type AskAnswerOf,
   type ExplorePreview,
   type Route,
 } from "./useSurfaceState";
-import type { OverwriteRow } from "./useSyncOrchestration";
+import type { OverwriteRow } from "../lib/overwriteAsk";
 
 const row = (skillId: string): OverwriteRow => ({
   skillId,
@@ -24,6 +25,9 @@ const row = (skillId: string): OverwriteRow => ({
   toolKey: "claude",
   toolLabel: "Claude",
   path: `/t/${skillId}`,
+  modifiedAt: null,
+  sameContent: false,
+  scope: { kind: "global" },
 });
 
 const preview: ExplorePreview = {
@@ -345,7 +349,7 @@ describe("asks", () => {
 
   it("an explicit decline is `declined`, never a dismissal", async () => {
     const { result } = render();
-    let answer!: Promise<AskAnswer>;
+    let answer!: Promise<AskAnswerOf<"overwrite">>;
     act(() => {
       answer = result.current.ask({ kind: "overwrite", rows: [row("s1")] });
     });
@@ -356,8 +360,8 @@ describe("asks", () => {
 
   it("a newer ask of the same kind dismisses the displaced one, whose answer goes stale", async () => {
     const { result } = render();
-    let first!: Promise<AskAnswer>;
-    let second!: Promise<AskAnswer>;
+    let first!: Promise<AskAnswerOf<"overwrite">>;
+    let second!: Promise<AskAnswerOf<"overwrite">>;
     act(() => {
       first = result.current.ask({ kind: "overwrite", rows: [row("s1")] });
     });
@@ -378,14 +382,14 @@ describe("asks", () => {
 
   it("an ask closed by the operator (Escape) or dropped with its stack is dismissed", async () => {
     const { result } = render();
-    let dropped!: Promise<AskAnswer>;
+    let dropped!: Promise<AskAnswerOf<"overwrite">>;
     act(() => {
       dropped = result.current.ask({ kind: "overwrite", rows: [row("s1")] });
     });
     act(() => result.current.openDialog({ kind: "addSkill" }));
     await expect(dropped).resolves.toBe("dismissed");
 
-    let closed!: Promise<AskAnswer>;
+    let closed!: Promise<AskAnswerOf<"overwrite">>;
     act(() => {
       closed = result.current.ask({ kind: "overwrite", rows: [row("s1")] });
     });
@@ -394,9 +398,22 @@ describe("asks", () => {
     expect(result.current.stack.map((l) => l.kind)).toEqual(["addSkill"]);
   });
 
+  it("the overwrite ask can answer per row, in row order", async () => {
+    const { result } = render();
+    let answer!: Promise<AskAnswerOf<"overwrite">>;
+    act(() => {
+      answer = result.current.ask({ kind: "overwrite", rows: [row("s1"), row("s2")] });
+    });
+    act(() =>
+      result.current.pendingAsk("overwrite")!.answer({ choices: ["keep", "overwrite"] }),
+    );
+    await expect(answer).resolves.toEqual({ choices: ["keep", "overwrite"] });
+    expect(result.current.top).toBeNull();
+  });
+
   it("unmounting dismisses a pending ask", async () => {
     const { result, unmount } = render();
-    let answer!: Promise<AskAnswer>;
+    let answer!: Promise<AskAnswerOf<"overwrite">>;
     act(() => {
       answer = result.current.ask({ kind: "overwrite", rows: [row("s1")] });
     });

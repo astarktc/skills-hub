@@ -20,6 +20,8 @@ type ProjectListProps = {
   onEditProject: (id: string) => void;
   onRemoveProject: (id: string) => void;
   onUpdatePath: (id: string) => void;
+  /** Why mutation controls are disabled: another action is running (D19); null = they may run. */
+  blockedReason: string | null;
   t: TFunction;
 };
 
@@ -33,6 +35,7 @@ const ProjectList = ({
   onEditProject,
   onRemoveProject,
   onUpdatePath,
+  blockedReason,
   t,
 }: ProjectListProps) => {
   return (
@@ -86,8 +89,9 @@ const ProjectList = ({
                         e.stopPropagation();
                         onUpdatePath(p.id);
                       }}
+                      disabled={blockedReason !== null}
                       aria-label={t("projects.updatePath")}
-                      title={t("projects.updatePath")}
+                      title={blockedReason ?? t("projects.updatePath")}
                     >
                       <FolderOpen size={14} />
                     </button>

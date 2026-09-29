@@ -159,7 +159,7 @@ describe("rich", () => {
     const progress = sink<{ index: number; total: number }>();
 
     const first = await handlers.syncSkillsToTools(batch, ["cursor"], { overwrite_if_same_content: true }, progress.channel );
-    expect(first[0].status).toEqual({ status: "failed", error: { code: "TARGET_EXISTS", path: "/Users/alex/.cursor/skills/zod-schema-first" } });
+    expect(first[0].status).toEqual({ status: "failed", error: { code: "TARGET_EXISTS", path: "/Users/alex/.cursor/skills/zod-schema-first", modifiedAt: expect.any(Number), sameContent: false } });
     expect(progress.ticks).toEqual([{ index: 1, total: 1, skill_name: "zod-schema-first", tool: "cursor" }]);
 
     const retry = await handlers.syncSkillsToTools(
@@ -368,7 +368,7 @@ describe("Disabled: two grains, skipped by every automatic pass (round 19 D8)", 
     const off = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: zod.id, tool: "claude_code" });
     expect(off.targets.map((t) => t.status.status)).toEqual(["removed"]);
     expect(statusOf(await byName(handlers, "zod-schema-first"), "claude_code")).toBe("disabled");
-    const on = await handlers.enableSkillTargets({ kind: "skill_tool", skill_id: zod.id, tool: "claude_code" });
+    const on = await handlers.enableSkillTargets({ kind: "skill_tool", skill_id: zod.id, tool: "claude_code" }, []);
     expect(on.global.map((o) => o.status.status)).toEqual(["synced"]);
     expect(statusOf(await byName(handlers, "zod-schema-first"), "claude_code")).toBe("synced");
 
@@ -393,10 +393,10 @@ describe("Disabled: two grains, skipped by every automatic pass (round 19 D8)", 
       status: "skipped",
       reason: { reason: "disabled" },
     });
-    const pair = await handlers.enableSkillTargets({ kind: "skill_tool", skill_id: retired.id, tool: "claude_code" });
+    const pair = await handlers.enableSkillTargets({ kind: "skill_tool", skill_id: retired.id, tool: "claude_code" }, []);
     expect(pair.global[0].status).toEqual({ status: "skipped", error: { code: "TARGET_DISABLED", tool: "claude_code" } });
 
-    const on = await handlers.enableSkillTargets({ kind: "skill", skill_id: retired.id });
+    const on = await handlers.enableSkillTargets({ kind: "skill", skill_id: retired.id }, []);
     expect(on.global.map((o) => [o.tool_key, o.status.status])).toEqual([
       ["claude_code", "synced"],
       ["codex", "synced"],
@@ -482,7 +482,7 @@ describe("first-run and empty", () => {
     expect(byTool(divergent.targets).map((o) => o.status)).toEqual(
       ["claude_code", "codex", "pi"].map((tool) => ({
         status: "failed",
-        error: { code: "TARGET_EXISTS", path: `${globalRoot(tool)}/tdd` },
+        error: { code: "TARGET_EXISTS", path: `${globalRoot(tool)}/tdd`, modifiedAt: expect.any(Number), sameContent: false },
       })),
     );
     expect(divergent.targets.every((o) => o.skill_id === divergent.skill_id)).toBe(true);
@@ -533,7 +533,7 @@ describe("S1: the auto-sync re-assert is report data", () => {
     if (status.status !== "refreshed") throw new Error(`expected refreshed, got ${status.status}`);
     expect(status.targets).toContainEqual({
       scope: { scope: "global", tool: "cursor" },
-      status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/Users/alex/.cursor/skills/zod-schema-first" } },
+      status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/Users/alex/.cursor/skills/zod-schema-first", modifiedAt: expect.any(Number), sameContent: false } },
     });
     const fold = refreshOutcome(report, { t, single: { name: zod.name, success: "UPDATED" } });
     expect(fold.toast?.kind).not.toBe("success");
@@ -591,6 +591,36 @@ describe("S2/S3: onboarding import goes through the global sync batch", () => {
     // The unwritable Amp original survives and stays discoverable.
     const after = (await handlers.getOnboardingPlan()).groups.find((g) => g.name === "commit-message");
     expect(after?.variants.map((v) => v.tool)).toEqual(["amp"]);
+  });
+
+  it("reports a divergent sibling in a target's way once, as its TARGET_EXISTS row (ticket 04 review F4)", async () => {
+    for (const synced of [["codex", "gemini_cli"], ["codex"]]) {
+      const { handlers } = backendFor("first-run");
+      const group = (await handlers.getOnboardingPlan()).groups.find((g) => g.name === "commit-message")!;
+      const codex = group.variants.find((v) => v.tool === "codex")!;
+      const gemini = group.variants.find((v) => v.tool === "gemini_cli")!;
+      const report = await handlers.importOnboardingSelection(
+        [{ group_name: group.name, chosen_path: codex.path, name: null }],
+        { auto_sync: true, tools: synced, remove_originals: true },
+        sink().channel,
+      );
+      const status = report.groups[0].status;
+      if (status.status !== "imported") throw new Error(`expected imported, got ${status.status}`);
+      const collided = status.targets.filter(
+        (o) => o.status.status === "failed" && o.status.error.code === "TARGET_EXISTS",
+      );
+      if (synced.includes("gemini_cli")) {
+        // In the sync target set: the askable row alone, not also a kept original.
+        expect(collided.map((o) => o.tool_key)).toEqual(["gemini_cli"]);
+        expect(status.originals).toEqual([]);
+      } else {
+        // Not a target: the divergent copy stays a legitimate warning.
+        expect(collided).toEqual([]);
+        expect(status.originals).toEqual([
+          { path: gemini.path, tool: "gemini_cli", status: { status: "kept_divergent" } },
+        ]);
+      }
+    }
   });
 
   it("honours a saved non-empty selection when the policy names no Tools", async () => {
@@ -905,7 +935,7 @@ describe("ticket-01 review: ownership, partial Disable, artifact presence", () =
     // Typed like the global batch's collision (ticket 02).
     const collision = {
       status: "failed",
-      error: { code: "TARGET_EXISTS", path: "/Users/alex/Projects/fresh/.claude/skills/prisma-review" },
+      error: { code: "TARGET_EXISTS", path: "/Users/alex/Projects/fresh/.claude/skills/prisma-review", modifiedAt: expect.any(Number), sameContent: false },
     };
     type Act = (
       handlers: FixtureHandlers,
@@ -931,7 +961,7 @@ describe("ticket-01 review: ownership, partial Disable, artifact presence", () =
         expect(report.targets.map((t) => t.path)).not.toContain(occupied);
         const row = (await h.getProjectView(ids.project)).assignments.find((a) => a.skill_id === ids.skill)!;
         expect(row).toMatchObject({ status: "disabled", synced_at: null });
-        const enabled = await h.enableSkillTargets({ kind: "skill", skill_id: ids.skill });
+        const enabled = await h.enableSkillTargets({ kind: "skill", skill_id: ids.skill }, []);
         expect(enabled.projects.items.map((i) => i.status)).toEqual([collision]);
       }],
       ["Delete", async (h, ids) => {
@@ -963,7 +993,7 @@ describe("ticket-01 review: ownership, partial Disable, artifact presence", () =
       expect(assigned.report.items.map((i) => i.status), label).toEqual([skip]);
       state.projectOccupants.push(occupied);
 
-      const enabled = await handlers.enableSkillTargets({ kind: "skill", skill_id: prisma.dto.id });
+      const enabled = await handlers.enableSkillTargets({ kind: "skill", skill_id: prisma.dto.id }, []);
 
       expect(enabled.projects.items.map((i) => i.status), label).toEqual([collision]);
       expect(project.assignments[0], label).toMatchObject({ status: "error", synced_at: null, last_error: expect.stringContaining("already exists") });
@@ -1150,7 +1180,7 @@ describe("D9: Skill health and the failed / declined first sync (ticket 02)", ()
     const { handlers, state } = backendFor("failures");
     const zod = state.skills.find((s) => s.dto.name === "zod-schema-first")!;
     await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: zod.dto.id, tool: "cursor" });
-    const report = await handlers.enableSkillTargets({ kind: "skill_tool", skill_id: zod.dto.id, tool: "cursor" });
+    const report = await handlers.enableSkillTargets({ kind: "skill_tool", skill_id: zod.dto.id, tool: "cursor" }, []);
     expect(report.global[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS" } });
     expect(zod.dto.targets.find((t) => t.tool === "cursor")).toMatchObject({ status: "disabled", synced_at: null });
   });
@@ -1201,5 +1231,236 @@ describe("fixture backend: Re-point preview (D15)", () => {
     const scratchpad = await byName(handlers, "scratchpad");
     expect(scratchpad.source_ref).toBe("/Users/alex/Downloads/scratchpad");
     expect(skillSourceLabel(scratchpad)).toBe("/Users/alex/Downloads/scratchpad");
+  });
+});
+
+describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
+  const statusOf = (skill: ManagedSkillDto, tool: string) =>
+    skill.targets.find((row) => row.tool === tool)?.status;
+  const COLLIDE = "https://github.com/acme/collide-kit";
+  const picks = ["lint-staged-rules", "commit-helper", "changelog-writer"].map((name) => ({
+    subpath: `skills/${name}`,
+    name_override: null,
+  }));
+  const request = (overrides: { skill_name: string; tool: string; decision: "overwrite" | "keep" }[] = []) => ({
+    source: { kind: "git" as const, url: COLLIDE, resolution: null },
+    candidates: picks,
+    tools: ["claude_code", "codex"],
+    overwrite_if_same_content: true,
+    overrides,
+    deploy: true,
+  });
+
+  it("failures: a three-candidate repo with two collisions answers one report with two askable rows", async () => {
+    const { handlers, state } = backendFor("failures");
+    const occupants = state.foreign.length;
+    const progress = sink<{ index: number; total: number; name: string }>();
+    const report = await handlers.installSelection(request(), progress.channel);
+
+    expect(progress.ticks.map((tick) => [tick.index, tick.total, tick.name])).toEqual([
+      [1, 3, "lint-staged-rules"],
+      [2, 3, "commit-helper"],
+      [3, 3, "changelog-writer"],
+    ]);
+    expect(report.candidates.map((c) => c.status.status)).toEqual(["installed", "installed", "installed"]);
+    const collided = report.candidates.flatMap((c) =>
+      c.status.status === "installed"
+        ? c.status.targets.filter((o) => o.status.status === "failed").map((o) => [o.skill_name, o.tool_key, o.status])
+        : [],
+    );
+    expect(collided).toEqual(
+      ["lint-staged-rules", "changelog-writer"].map((name) => [
+        name,
+        "claude_code",
+        {
+          status: "failed",
+          error: {
+            code: "TARGET_EXISTS",
+            path: `${globalRoot("claude_code")}/${name}`,
+            modifiedAt: expect.any(Number),
+            sameContent: false,
+          },
+        },
+      ]),
+    );
+    // Collected, never written through: the folders are still there, no row.
+    expect(state.foreign).toHaveLength(occupants);
+    const lint = await byName(handlers, "lint-staged-rules");
+    expect(lint.targets.map((row) => row.tool)).toEqual(["codex"]);
+  });
+
+  it("the ask's retry is an ordinary sync batch: Overwrite replaces, Keep records disabled", async () => {
+    const { handlers, state } = backendFor("failures");
+    await handlers.installSelection(request(), sink().channel);
+    const lint = await byName(handlers, "lint-staged-rules");
+    const changelog = await byName(handlers, "changelog-writer");
+    const retry = await handlers.syncSkillsToTools(
+      [lint, changelog].map((s) => ({ skill_id: s.id, name: s.name, source_path: s.central_path })),
+      ["claude_code"],
+      {
+        overwrite: false,
+        overwrite_if_same_content: true,
+        overrides: [
+          { skill_id: lint.id, tool: "claude_code", decision: "overwrite" },
+          { skill_id: changelog.id, tool: "claude_code", decision: "keep" },
+        ],
+      },
+      sink().channel,
+    );
+    expect(retry.map((o) => [o.skill_name, o.status.status])).toEqual([
+      ["lint-staged-rules", "synced"],
+      ["changelog-writer", "declined"],
+    ]);
+    expect(state.foreign.some((f) => f.name === "lint-staged-rules")).toBe(false);
+    expect(state.foreign.some((f) => f.name === "changelog-writer")).toBe(true);
+    expect(statusOf(await byName(handlers, "changelog-writer"), "claude_code")).toBe("disabled");
+  });
+
+  it("a request override settles a collision in the first pass", async () => {
+    const { handlers } = backendFor("failures");
+    const report = await handlers.installSelection(
+      request([{ skill_name: "lint-staged-rules", tool: "claude_code", decision: "overwrite" }]),
+      sink().channel,
+    );
+    const lint = report.candidates[0].status;
+    if (lint.status !== "installed") throw new Error(lint.status);
+    expect(lint.targets.map((o) => [o.tool_key, o.status.status])).toEqual([
+      ["claude_code", "synced"],
+      ["codex", "synced"],
+    ]);
+  });
+
+  it("cancel during candidate 2 reports 2–3 cancelled and finalizes nothing of them", async () => {
+    const { handlers, armCancel } = cancellingBackend("failures");
+    armCancel(2);
+    const report = await handlers.installSelection(request(), sink().channel);
+    expect(report.candidates.map((c) => [c.name, c.status.status])).toEqual([
+      ["lint-staged-rules", "installed"],
+      ["commit-helper", "cancelled"],
+      ["changelog-writer", "cancelled"],
+    ]);
+    const names = (await handlers.getManagedSkills()).map((s) => s.name);
+    expect(names).toContain("lint-staged-rules");
+    expect(names).not.toContain("commit-helper");
+    expect(names).not.toContain("changelog-writer");
+  });
+
+  it("a failed candidate is report data; the rest proceed", async () => {
+    const { handlers } = backendFor("failures");
+    const report = await handlers.installSelection(
+      { ...request(), candidates: [picks[1], { subpath: "skills/nope", name_override: null }] },
+      sink().channel,
+    );
+    expect(report.candidates.map((c) => c.status.status)).toEqual(["installed", "failed"]);
+    expect(report.candidates[1]).toMatchObject({
+      name: "nope",
+      status: { status: "failed", error: { code: "SUBPATH_MISSING" } },
+    });
+  });
+
+  it("the re-assert's collisions carry the ask's facts (round-18 fixture gap: prisma-review → Cursor/Codex)", async () => {
+    const { handlers } = backendFor("failures");
+    const prisma = await byName(handlers, "prisma-review");
+    const report = await handlers.refreshManagedSkills([prisma.id], { reassert_auto_sync: true }, sink().channel);
+    const status = report.skills[0].status;
+    if (status.status !== "refreshed") throw new Error(status.status);
+    for (const tool of ["cursor", "codex"]) {
+      expect(status.targets).toContainEqual({
+        scope: { scope: "global", tool },
+        status: {
+          status: "failed",
+          error: {
+            code: "TARGET_EXISTS",
+            path: `${globalRoot(tool)}/prisma-review`,
+            modifiedAt: expect.any(Number),
+            sameContent: false,
+          },
+        },
+      });
+    }
+  });
+
+  it("Enable's collision is answered by the same scope with the decision", async () => {
+    const { handlers, state } = backendFor("rich");
+    const zod = await byName(handlers, "zod-schema-first");
+    const scope = { kind: "skill_tool" as const, skill_id: zod.id, tool: "cursor" };
+    await handlers.disableSkillTargets(scope);
+    const first = await handlers.enableSkillTargets(scope, []);
+    expect(first.global[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS", sameContent: false } });
+    expect(statusOf(await byName(handlers, "zod-schema-first"), "cursor")).toBe("disabled");
+
+    const retried = await handlers.enableSkillTargets(scope, [
+      { skill_id: zod.id, tool: "cursor", decision: "overwrite" },
+    ]);
+    expect(retried.global.map((o) => o.status.status)).toEqual(["synced"]);
+    expect(state.foreign.some((f) => f.tool === "cursor" && f.name === "zod-schema-first")).toBe(false);
+  });
+
+  it("a project collision resolves: Overwrite syncs, Keep records the row disabled (declined)", async () => {
+    for (const decision of ["overwrite", "keep"] as const) {
+      const { handlers, state } = backendFor("failures");
+      const project = state.projects.find((p) => p.id === "prj-quartermaster")!;
+      const prisma = await byName(handlers, "prisma-review");
+      const path = `${project.path}/.claude/skills/prisma-review`;
+      state.projectOccupants.push(path);
+      const toggled = await handlers.toggleProjectSkillAssignment(project.id, prisma.id, "claude_code");
+      if (toggled.kind !== "assigned") throw new Error(toggled.kind);
+      expect(toggled.report.items[0].status).toEqual({
+        status: "failed",
+        error: { code: "TARGET_EXISTS", path, modifiedAt: expect.any(Number), sameContent: false },
+      });
+
+      const resolved = await handlers.resolveProjectCollisions([
+        { project_id: project.id, skill_id: prisma.id, tool: "claude_code", decision },
+      ]);
+      const row = project.assignments.find((a) => a.skill_id === prisma.id && a.tool === "claude_code")!;
+      if (decision === "overwrite") {
+        expect(resolved.items[0].status).toEqual({ status: "synced" });
+        expect(row.status).toBe("synced");
+        expect(state.projectOccupants).not.toContain(path);
+      } else {
+        expect(resolved.items[0].status).toEqual({ status: "declined" });
+        expect(row.status).toBe("disabled");
+        expect(row.synced_at).toBeNull();
+        expect(state.projectOccupants).toContain(path);
+      }
+    }
+  });
+
+  it("review F1: a synced → disabled → re-enabled assignment's collision honours Keep and Overwrite", async () => {
+    for (const decision of ["overwrite", "keep"] as const) {
+      const { handlers, state } = backendFor("rich");
+      const zod = await byName(handlers, "zod-schema-first");
+      const { project } = await handlers.registerProject("/Users/alex/Projects/review-probe");
+      await handlers.configureProjectTools(project.id, ["claude_code"], null);
+      await handlers.bulkAssignSkill(project.id, zod.id);
+      const row = () =>
+        state.projects
+          .find((p) => p.id === project.id)!
+          .assignments.find((a) => a.skill_id === zod.id && a.tool === "claude_code")!;
+      expect(row().synced_at).not.toBeNull();
+      await handlers.disableSkillTargets({ kind: "skill", skill_id: zod.id });
+      const path = `${project.path}/.claude/skills/${zod.name}`;
+      state.projectOccupants.push(path);
+
+      const enabled = await handlers.enableSkillTargets({ kind: "skill", skill_id: zod.id }, []);
+      expect(enabled.projects.items[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS" } });
+      expect(row().synced_at).toBeNull();
+
+      const resolved = await handlers.resolveProjectCollisions([
+        { project_id: project.id, skill_id: zod.id, tool: "claude_code", decision },
+      ]);
+      if (decision === "overwrite") {
+        expect(resolved.items[0].status).toEqual({ status: "synced" });
+        expect(row().synced_at).not.toBeNull();
+        expect(state.projectOccupants).not.toContain(path);
+      } else {
+        expect(resolved.items[0].status).toEqual({ status: "declined" });
+        expect(row().status).toBe("disabled");
+        const resync = await handlers.resyncProject(project.id);
+        expect(resync.report.items[0].status).toEqual({ status: "skipped", reason: { reason: "disabled" } });
+        expect(state.projectOccupants).toContain(path);
+      }
+    }
   });
 });
