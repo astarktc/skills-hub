@@ -31,6 +31,11 @@ README row, and `sed` the `round18/` references in `round19/issues/*.md`, `round
 - **Wave 3 dispatched**: `r19-t03-outcomes-v1`, `r19-t06-repoint-v1`, `r19-t10-modules-v1` (disjoint files; ownership stated).
   Next: 04 ∥ 09 (09 after 03 + 10), Astra on 04 + 09, then 11 alone.
 
+- 2026-09-29 — **Wave 3 committed as `6d7b6f4`** (03 count line + cancelled/declined; 06 re-point preview; 10 catalog/platform/
+  update/project world). **Wave 4 dispatched**: `r19-t04-install-batch-v1` ∥ `r19-t09-door-lifecycle-v1` (ownership: 04 has
+  sync orchestration + add flow + surface ask kinds; 09 has reporter + library + presentation + App action wiring). Next: Astra
+  on 04 and 09, commit, then 11 alone (first migrated surface; D31 audit).
+
 ## Wave plan (D9: sequential on styling hotspots; parallel only on disjoint files)
 
 1. 01 ∥ 07 → Astra reviews both (01: settlement/guard/skips; 07: contrast re-measured, Dialog transcript, guard rules).
