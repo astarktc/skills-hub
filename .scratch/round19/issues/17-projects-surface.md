@@ -38,3 +38,7 @@ All with a missing folder yields one line; contrast; `npm run check`.
 ## Result
 
 (child fills in)
+
+## Comments
+
+- 2026-09-27 — round-18 extract: the fixture's unwritable dirs affect writes only, so ADR-0002's kept row on project removal is not reproducible (`round18/review/flows.md` § Fixture gaps) — seed one locked project artifact so the Remove Project kept-row path is walkable.

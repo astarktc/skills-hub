@@ -1,6 +1,6 @@
 # Round 18 — see and judge (UI effort phase A) → 1.2.18
 
-Status: open
+Status: closed
 Opened: 2026-09-24
 
 Opens Future effort **#37** (overall UI audit) as a two-round effort: round 18 *judges* (enablers, decisions, findings),
@@ -126,3 +126,24 @@ and the prototypes before judging; they judge the *incumbent* app for findings, 
   `audit.md`, `flows.md`.
 - `docs/adr/0006-styling-architecture.md` merged; AGENTS.md styling rules updated.
 - `round19/spec.md` written and accepted by the operator.
+
+## Closure — 2026-09-27
+
+Shipped as **v1.2.18** (`5218b12`, tag `v1.2.18`; `release.yml` run 36358980829, five targets + `updater.json`; CI
+36359005648). Tickets 01–08 and 10 `done`; 09 `done` — the grill produced `.scratch/round19/spec.md` (D1–D33) and 26
+tickets, pre-accepted by the operator 2026-09-27. ADR-0006 accepted as written.
+
+Residue (extract step):
+- BACKLOG **#63** (secure-delete zeroing test tightening) — already listed from ticket 02's final review.
+- Operator smoke of v1.2.18 (ticket 10's list: one Keychain prompt, "A token is saved", no `github_token` row or
+  `*.cleanup_pending` marker, `~/.augment/skills` relocated, no ZH option) — an operator action on the release build,
+  not a queue item (BACKLOG § Dropped by name); fallback commits `bc84841` / `4f6e312` if the migration misbehaves.
+- Fixture gaps from `review/flows.md` § Fixture gaps → round 19: cancelled-Refresh report → ticket 03; re-assert
+  `TARGET_EXISTS` seeds → ticket 04; ADR-0002 kept row on project removal / unwritable shared dir → ticket 17;
+  invocation-conflict data mismatch between card and report → ticket 12 (comments added there).
+- Ticket 08's pending AGENTS.md follow-up ("Confirmations go through the Modal shell" → Dialog primitive) → ticket 07.
+- Every review "should" (`architecture.md` candidates, both critiques' findings, `audit.md` per-clause fixes,
+  `flows.md` R-* recommendations) is either a round-19 decision (spec § Decisions maps them) or dropped by name in the
+  grill: the content diff in the overwrite ask (deferred to #26), a soft-delete/trash state, a run-log table, global
+  selection across surfaces, Radix under shadcn, a separate last-run report sheet.
+- Walk evidence under `evidence/` (local-only, gitignored) stays untracked; `prototypes/` and `review/` stay as record.

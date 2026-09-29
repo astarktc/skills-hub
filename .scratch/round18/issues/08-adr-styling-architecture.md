@@ -1,6 +1,6 @@
 # 08 — ADR 0006: styling architecture (D3)
 
-Status: implemented
+Status: done — 547c25f
 Blocked by: 05
 Spec: `.scratch/round18/spec.md` — D3, ticket 08.
 
@@ -93,3 +93,7 @@ cited in the ADR.
 8. **Glossary collision.** "world" already means a *state area* (per-world hooks). CONTEXT.md now separates
    **World** from **Visual world**, and "token" from **Design token** vs the GitHub token (a credential). Spec and
    ticket prose that says "the world ticket" is fine. New docs should say "Visual world" when they mean the look.
+
+## Comments
+
+- 2026-09-27 — status normalised to the lifecycle vocabulary at round-18 closure; evidence commit 547c25f.

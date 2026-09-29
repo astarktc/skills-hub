@@ -1,6 +1,6 @@
 # 04 — Fixture-backed browser mode (D4)
 
-Status: implemented
+Status: done — 5fbc3c5 (5a72ebe)
 Spec: `.scratch/round18/spec.md` — D4, ticket 04.
 
 ## Work
@@ -173,3 +173,7 @@ Verification: `npx vitest run src/fixtures` → 36 passed (was 16). Gate `npm ru
 → exit 0 (17 files / 449 tests). Tree-shake: `rm -rf dist && npm run build && grep -rlE
 "skills-hub-fixture-backend|fixtureInvoke|mockIPC" dist/ ; echo exit=$?` → `exit=1`. The running 5175 server serves
 the edited modules (HTTP 200); not re-walked in the browser.
+
+## Comments
+
+- 2026-09-27 — status normalised to the lifecycle vocabulary at round-18 closure; evidence commit 5fbc3c5 (5a72ebe).

@@ -1,6 +1,6 @@
 # 03 — Remove the ZH locale; EN-only invariant; gitignore `.pi/`
 
-Status: implemented
+Status: done — 38da351
 Spec: `.scratch/round18/spec.md` — D7, ticket 03.
 
 ## Work
@@ -62,3 +62,6 @@ saved language choice is ignored."
   AGENTS.md edit to the invariant) — orchestrator may want to add it.
 - `i18next-browser-languagedetector` is a declared but unused dependency; kept per ticket.
 
+## Comments
+
+- 2026-09-27 — status normalised to the lifecycle vocabulary at round-18 closure; evidence commit 38da351.

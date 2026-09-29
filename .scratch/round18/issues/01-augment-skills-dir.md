@@ -1,6 +1,6 @@
 # 01 — Augment global skills dir is `.augment/skills` (#43)
 
-Status: implemented
+Status: done — b19fba6
 Spec: `.scratch/round18/spec.md` — ticket 01.
 
 ## Work
@@ -85,3 +85,7 @@ The fix is a one-time, idempotent startup relocation driven by a new registry fa
   domain term.
 - Historical `docs/releases/v0.1-v0.2/system-design*.md` still say `.augment/rules`. They are frozen release docs
   and were left untouched.
+
+## Comments
+
+- 2026-09-27 — status normalised to the lifecycle vocabulary at round-18 closure; evidence commit b19fba6.

@@ -1,6 +1,6 @@
 # 10 — Docs, CHANGELOG, `version:set 1.2.18`, release
 
-Status: implemented (see Result)
+Status: done — 5218b12 (tag v1.2.18)
 Blocked by: 01, 02, 03, 04
 Spec: `.scratch/round18/spec.md` — ticket 10.
 
@@ -26,3 +26,7 @@ Status: implemented — v1.2.18 released (5 targets + updater.json green, run 36
 - Operator smoke (closure checklist): install the v1.2.18 build; expect the Keychain prompt once (Always Allow); Settings shows
   "A token is saved"; `github_token` row gone from `skills_hub.db` (a `\*.cleanup_pending` marker must not remain); `~/.augment/skills`
   holds the relocated targets and `~/.augment/rules` is empty of Skills Hub artifacts; no ZH option.
+
+## Comments
+
+- 2026-09-27 — status normalised to the lifecycle vocabulary at round-18 closure; evidence commit 5218b12 (tag v1.2.18).

@@ -1,6 +1,6 @@
 # 05 — Frontend architecture review (`src/` only)
 
-Status: implemented
+Status: done — cc34449
 Spec: `.scratch/round18/spec.md` — ticket 05.
 
 ## Work
@@ -67,3 +67,7 @@ Open questions for ticket 09:
 - Keep the one-action-at-a-time rule, or allow concurrent inline actions?
 - Does project assignment from My Skills ship in round 19?
 - Should the platform seam fold into ticket 04's door or sit beside it?
+
+## Comments
+
+- 2026-09-27 — status normalised to the lifecycle vocabulary at round-18 closure; evidence commit cc34449.

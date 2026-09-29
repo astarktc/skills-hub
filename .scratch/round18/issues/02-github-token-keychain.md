@@ -1,6 +1,6 @@
 # 02 — GitHub token → OS keychain behind `CredentialStore` (#44)
 
-Status: implemented
+Status: done — 4f6e312 (2b60c7f, bc84841)
 Spec: `.scratch/round18/spec.md` — ticket 02.
 
 ## Work
@@ -200,3 +200,7 @@ Verification: `npm run version:check` → `Version OK (1.2.17)`; `cargo fmt --ch
 clean; `cargo test --all` **706 passed, 0 failed**; `npm run check` exit 0 (vitest **17 files / 446 tests**, which
 includes a concurrent child's `src/fixtures/**` work in this tree). `git diff --exit-code -- src/bindings/index.ts`
 → exit 0 (no wire change).
+
+## Comments
+
+- 2026-09-27 — status normalised to the lifecycle vocabulary at round-18 closure; evidence commit 4f6e312 (2b60c7f, bc84841).

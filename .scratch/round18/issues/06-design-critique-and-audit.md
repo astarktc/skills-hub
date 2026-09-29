@@ -1,6 +1,6 @@
 # 06 — Two independent design critiques + accessibility audit
 
-Status: implemented
+Status: done — 1217934 (ae7b8a7, 65cbfdd)
 Blocked by: 04
 Spec: `.scratch/round18/spec.md` — D1, D5, D6, D10, ticket 06.
 
@@ -64,3 +64,7 @@ Limits are explicit: individual trusted-key activations used programmatic starti
 keyboard-only runs; no screen reader/native WebView testing or real reduced-motion=true emulation; late preview
 failures left some failure-state/zoom/screenshots unverified. Initial native focus-ring samples are not misreported
 as settled pixel proof. No source edits, commits, staging, archival or live-library actions.
+
+## Comments
+
+- 2026-09-27 — status normalised to the lifecycle vocabulary at round-18 closure; evidence commit 1217934 (ae7b8a7, 65cbfdd).

@@ -1,6 +1,6 @@
 # 07 — Task-flow and state review of the six core flows
 
-Status: implemented
+Status: done — 472ec4a
 Blocked by: 04
 Spec: `.scratch/round18/spec.md` — ticket 07.
 
@@ -33,3 +33,7 @@ from tool directories" removed 68 deployments with no confirm and auto-sync re-d
 Refresh; the fold's `conflict › failure` headline turned a run with 5 failures into "Refresh complete — invocation Edit
 conflicts need review"; auto-sync-off import deletes Tool copies behind an "Import & Sync" button; local skills show
 their central path instead of their (missing) source folder; Re-point accepts a different skill without preview.
+
+## Comments
+
+- 2026-09-27 — status normalised to the lifecycle vocabulary at round-18 closure; evidence commit 472ec4a.

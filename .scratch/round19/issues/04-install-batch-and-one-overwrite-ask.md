@@ -68,3 +68,7 @@ Astra @ high: guard ordering per candidate, no partial-finalize leak on cancel, 
 ## Result
 
 (child fills in)
+
+## Comments
+
+- 2026-09-27 — round-18 extract: the fixture does not produce `TARGET_EXISTS` on re-assert for some seeded occupied targets (`prisma-review` → Cursor/Codex; `round18/review/flows.md` § Fixture gaps) — fix under "Fixture" here.
