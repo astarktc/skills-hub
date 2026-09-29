@@ -15,10 +15,21 @@ const render = () =>
 // backend before the first render. The condition is a compile-time constant,
 // so a production build keeps only the direct `render()`.
 if (import.meta.env.VITE_MOCK_BACKEND === '1') {
-  void import('./fixtures').then(({ installFixtureBackend }) => {
-    installFixtureBackend()
-    render()
-  })
+  if (new URLSearchParams(window.location.search).has('specimen')) {
+    // `/?specimen`: the primitives specimen (DESIGN.md's measuring page).
+    void import('./components/ui/specimen').then(({ default: Specimen }) =>
+      createRoot(document.getElementById('root')!).render(
+        <StrictMode>
+          <Specimen />
+        </StrictMode>,
+      ),
+    )
+  } else {
+    void import('./fixtures').then(({ installFixtureBackend }) => {
+      installFixtureBackend()
+      render()
+    })
+  }
 } else {
   render()
 }

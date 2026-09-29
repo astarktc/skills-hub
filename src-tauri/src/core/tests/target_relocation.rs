@@ -7,11 +7,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::core::artifact_removal::{remove_superseded_artifact_unlocked, unsync_skill_from_tool};
+use crate::core::artifact_removal::remove_superseded_artifact_unlocked;
 use crate::core::errors::SignalError;
 use crate::core::installer::InstallerPaths;
 use crate::core::propagation::propagate_unlocked;
-use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
+use crate::core::skill_disable::{disable_targets, DisableScope};
+use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord, TargetTransition};
 use crate::core::sync_status::{SyncMode, SyncStatus};
 use crate::core::target_relocation::{relocate_unlocked, RelocationSummary};
 use crate::core::tool_adapters::{adapter_by_key, mark_installed_in, ToolAdapter};
@@ -282,18 +283,115 @@ fn a_missing_central_copy_leaves_the_row_in_place() {
 
 /// A row left in a former dir with Augment gone from the machine takes
 /// removal's stored-path fallback, which is fenced by the deletion rule —
-/// a former dir is inside it, so the operator can still unsync.
+/// a former dir is inside it, so the operator can still disable the pair.
 #[test]
-fn a_row_left_in_a_former_dir_can_be_unsynced_after_the_tool_is_gone() {
+fn a_row_left_in_a_former_dir_can_be_disabled_after_the_tool_is_gone() {
     let f = fixture();
     seed_row(&f, &f.former(), SyncMode::Symlink);
     fs::remove_dir_all(f.home().join(".augment")).unwrap();
 
-    let report = unsync_skill_from_tool(&f.store, f.home(), "skill-1", "augment")
-        .expect("planning accepts a former-dir path");
+    let scope = DisableScope::SkillTool {
+        skill_id: "skill-1".into(),
+        tool: "augment".into(),
+    };
+    let report =
+        disable_targets(&f.store, f.home(), &scope, 1).expect("planning accepts a former-dir path");
 
     assert_eq!(report.removed_rows(), 1);
-    assert!(f.row().is_none());
+    assert_eq!(f.row().expect("row kept").status, SyncStatus::Disabled);
+}
+
+/// A Disabled row has no artifact to move and must not gain one.
+#[test]
+fn relocation_leaves_a_disabled_row_alone() {
+    let f = fixture();
+    seed_row(&f, &f.former(), SyncMode::Symlink);
+    f.store
+        .transition_skill_target(&f.row().unwrap().id, TargetTransition::Disabled)
+        .unwrap();
+
+    assert_eq!(f.relocate(), RelocationSummary::default());
+    assert!(!f.current().exists(), "nothing materialised");
+    assert_eq!(f.row().unwrap().status, SyncStatus::Disabled);
+}
+
+/// F1-R1: a row the app never materialised (`synced_at` NULL, here `error`
+/// after a failed first sync) owns nothing in the former dir. Relocation must
+/// neither materialise the skill for it nor remove the foreign former folder.
+#[test]
+fn relocation_leaves_a_row_that_owns_nothing_alone() {
+    let f = fixture();
+    fs::create_dir_all(f.former()).unwrap();
+    fs::write(f.former().join("SKILL.md"), "someone else's").unwrap();
+    f.store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "target-1".to_string(),
+            skill_id: "skill-1".to_string(),
+            tool: "augment".to_string(),
+            target_path: f.former().to_string_lossy().to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Error,
+            last_error: Some("target already exists".to_string()),
+            synced_at: None,
+        })
+        .unwrap();
+
+    assert_eq!(f.relocate(), RelocationSummary::default());
+    assert!(
+        f.current().symlink_metadata().is_err(),
+        "nothing materialised"
+    );
+    assert_eq!(
+        fs::read_to_string(f.former().join("SKILL.md")).unwrap(),
+        "someone else's"
+    );
+    let row = f.row().unwrap();
+    assert_eq!(row.status, SyncStatus::Error);
+    assert_eq!(row.target_path, f.former().to_string_lossy());
+}
+
+/// A skill Disable whose removal failed keeps the former-dir row `error`
+/// (ADR-0002) while `disabled_at` says "off everywhere": relocation must not
+/// materialise the skill in the current dir for it.
+#[cfg(unix)]
+#[test]
+fn partial_skill_disable_relocation_does_not_materialise() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = fixture();
+    legacy_link_row(&f);
+    let rules = f.home().join(".augment/rules");
+    fs::set_permissions(&rules, fs::Permissions::from_mode(0o555)).unwrap();
+    if fs::create_dir(rules.join("probe")).is_ok() {
+        // Running as root: permissions are not enforced.
+        fs::set_permissions(&rules, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    let scope = DisableScope::Skill {
+        skill_id: "skill-1".into(),
+    };
+    let report = disable_targets(&f.store, f.home(), &scope, 1).expect("disable reports");
+    fs::set_permissions(&rules, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(report.failed_rows(), 1);
+    assert!(f.store.skill_disabled_at("skill-1").unwrap().is_some());
+
+    assert_eq!(
+        f.relocate(),
+        RelocationSummary {
+            relocated: 0,
+            left_in_place: 1
+        }
+    );
+    assert!(
+        f.current().symlink_metadata().is_err(),
+        "nothing materialised"
+    );
+    let row = f.row().expect("row kept");
+    assert_eq!(row.status, SyncStatus::Error);
+    assert_eq!(Path::new(&row.target_path), f.former());
+    assert!(
+        f.former().symlink_metadata().is_ok(),
+        "former artifact untouched"
+    );
 }
 
 #[test]

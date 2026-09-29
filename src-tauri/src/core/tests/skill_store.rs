@@ -102,7 +102,7 @@ fn v9_migration_adds_imported_from_tool_to_a_v8_database() {
         .expect("open")
         .query_row("PRAGMA user_version;", [], |row| row.get(0))
         .expect("user_version");
-    assert_eq!(version, 9);
+    assert_eq!(version, super::SCHEMA_VERSION);
 
     let legacy = store
         .get_skill_by_id("legacy")
@@ -206,7 +206,7 @@ fn a_partially_applied_v9_upgrade_completes_on_the_next_launch() {
         .expect("open")
         .query_row("PRAGMA user_version;", [], |row| row.get(0))
         .expect("user_version");
-    assert_eq!(version, 9);
+    assert_eq!(version, super::SCHEMA_VERSION);
     let mut imported = make_skill("imp", "imp", "/central/imp", 2);
     imported.imported_from_tool = Some("pi".to_string());
     store.upsert_skill(&imported).unwrap();
@@ -218,6 +218,145 @@ fn a_partially_applied_v9_upgrade_completes_on_the_next_launch() {
             .imported_from_tool
             .as_deref(),
         Some("pi")
+    );
+}
+
+/// Upgrading a v9 database adds the skill-level Disabled marker: legacy rows
+/// read back enabled, the step is idempotent, and a partially applied upgrade
+/// (column present, version still 9) completes.
+#[test]
+fn v10_migration_adds_disabled_at_to_a_v9_database() {
+    for column_already_there in [false, true] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("test.db");
+        open_v8_database(&db);
+        {
+            let conn = rusqlite::Connection::open(&db).expect("open");
+            conn.execute_batch("ALTER TABLE skills ADD COLUMN imported_from_tool TEXT NULL;")
+                .expect("v9");
+            if column_already_there {
+                conn.execute_batch("ALTER TABLE skills ADD COLUMN disabled_at INTEGER NULL;")
+                    .expect("partial v10");
+            }
+            conn.pragma_update(None, "user_version", 9).expect("v9");
+            conn.execute(
+                "INSERT INTO skills (id, name, source_type, central_path,
+                                     created_at, updated_at, last_seen_at, status)
+                 VALUES ('legacy', 'legacy', 'local', '/central/legacy', 1, 1, 1, 'ok')",
+                [],
+            )
+            .expect("seed a v9 row");
+        }
+
+        let store = SkillStore::new(db.clone());
+        store.ensure_schema().expect("upgrade");
+        store.ensure_schema().expect("idempotent");
+        let version: i32 = rusqlite::Connection::open(&db)
+            .expect("open")
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version");
+        assert_eq!(version, 10);
+        assert_eq!(store.skill_disabled_at("legacy").unwrap(), None);
+        store.set_skill_disabled_at("legacy", Some(42)).unwrap();
+        assert_eq!(store.skill_disabled_at("legacy").unwrap(), Some(42));
+    }
+}
+
+/// The marker lives outside `SkillRecord`, so a whole-record upsert (what a
+/// finalize or re-point writes) can never re-enable a disabled skill.
+#[test]
+fn upserting_the_skill_record_keeps_the_disabled_marker() {
+    let (_dir, store) = make_store();
+    let skill = make_skill("s1", "alpha", "/central/alpha", 1);
+    store.upsert_skill(&skill).unwrap();
+    store.set_skill_disabled_at("s1", Some(7)).unwrap();
+
+    store
+        .upsert_skill(&make_skill("s1", "alpha", "/central/alpha", 2))
+        .unwrap();
+
+    assert_eq!(store.skill_disabled_at("s1").unwrap(), Some(7));
+    assert_eq!(store.disabled_skills().unwrap().get("s1").copied(), Some(7));
+    store.set_skill_disabled_at("s1", None).unwrap();
+    assert!(store.disabled_skills().unwrap().is_empty());
+    assert_eq!(store.skill_disabled_at("missing").unwrap(), None);
+}
+
+/// The two Disabled transitions: an existing row flips status and keeps its
+/// path; a pair with no row gets a marker row; a marker over an existing row
+/// keeps that row's id and path.
+#[test]
+fn disabled_target_transitions_flip_or_record_the_row() {
+    let (_dir, store) = make_store();
+    store
+        .upsert_skill(&make_skill("s1", "alpha", "/central/alpha", 1))
+        .unwrap();
+    store
+        .transition_skill_target(
+            "t1",
+            TargetTransition::Recorded {
+                skill_id: "s1",
+                tool: "claude_code",
+                mode: SyncMode::Symlink,
+                target_path: "/home/.claude/skills/alpha",
+                synced_at: 5,
+            },
+        )
+        .unwrap();
+    store
+        .transition_skill_target("t1", TargetTransition::SyncFailed { error: "boom" })
+        .unwrap();
+    store
+        .transition_skill_target("t1", TargetTransition::Disabled)
+        .unwrap();
+    let row = store
+        .get_skill_target("s1", "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, SyncStatus::Disabled);
+    assert_eq!(row.last_error, None, "a disabled row carries no failure");
+    assert_eq!(row.target_path, "/home/.claude/skills/alpha");
+
+    store
+        .transition_skill_target(
+            "t2",
+            TargetTransition::DisabledRecorded {
+                skill_id: "s1",
+                tool: "codex",
+                mode: SyncMode::Copy,
+                target_path: "/home/.codex/skills/alpha",
+            },
+        )
+        .unwrap();
+    let marker = store.get_skill_target("s1", "codex").unwrap().unwrap();
+    assert_eq!(
+        (
+            marker.id.as_str(),
+            marker.status,
+            marker.mode,
+            marker.synced_at
+        ),
+        ("t2", SyncStatus::Disabled, SyncMode::Copy, None)
+    );
+
+    store
+        .transition_skill_target(
+            "t3",
+            TargetTransition::DisabledRecorded {
+                skill_id: "s1",
+                tool: "claude_code",
+                mode: SyncMode::Copy,
+                target_path: "/elsewhere",
+            },
+        )
+        .unwrap();
+    let kept = store
+        .get_skill_target("s1", "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (kept.id.as_str(), kept.target_path.as_str()),
+        ("t1", "/home/.claude/skills/alpha")
     );
 }
 

@@ -29,7 +29,6 @@ export const commands = {
 	 *  failures are data, not command errors.
 	 */
 	syncSkillsToTools: (skills: BatchSyncSkillDto[], tools: string[], policy: BatchSyncPolicyDto, onProgress: Channel<SyncProgressDto>) => __TAURI_INVOKE<BatchTargetOutcome[]>("sync_skills_to_tools", { skills, tools, policy, onProgress }),
-	unsyncSkillFromTool: (skillId: string, tool: string) => __TAURI_INVOKE<RemovalReport>("unsync_skill_from_tool", { skillId, tool }),
 	/**
 	 *  Re-acquire Managed skills from their sources, finalize them, and
 	 *  propagate to every Sync target — one batch, one report. `skillIds` of
@@ -75,8 +74,18 @@ export const commands = {
 /**  Both keys restrict invocation — neither the user nor the model can invoke it. */
 "neither" | null) => __TAURI_INVOKE<InvocationEditResultDto>("set_skill_invocation_override", { skillId, mode }),
 	deleteManagedSkill: (skillId: string) => __TAURI_INVOKE<RemovalReport>("delete_managed_skill", { skillId }),
-	unsyncAllSkills: () => __TAURI_INVOKE<RemovalReport>("unsync_all_skills"),
-	unsyncSkill: (skillId: string) => __TAURI_INVOKE<RemovalReport>("unsync_skill", { skillId }),
+	/**
+	 *  Disable a scope — one (skill, Tool) pair, one skill, or several skills
+	 *  (see **Disabled** in `CONTEXT.md`): its artifacts are removed and their
+	 *  rows kept `disabled`, so no Refresh, Propagation or re-assert brings them
+	 *  back. Per-target failures are report data (rows kept `error`, ADR-0002).
+	 */
+	disableSkillTargets: (scope: DisableScope) => __TAURI_INVOKE<RemovalReport>("disable_skill_targets", { scope }),
+	/**
+	 *  Enable a scope: clear its Disabled marker and re-sync it as a first sync.
+	 *  Per-target outcomes (including `TARGET_EXISTS`) are report data.
+	 */
+	enableSkillTargets: (scope: DisableScope) => __TAURI_INVOKE<EnableReport>("enable_skill_targets", { scope }),
 	getFeaturedSkills: () => __TAURI_INVOKE<FeaturedSkillDto[]>("get_featured_skills"),
 	searchSkillsOnline: (query: string, limit: number | null) => __TAURI_INVOKE<OnlineSkillDto[]>("search_skills_online", { query, limit }),
 	listSkillFiles: (centralPath: string) => __TAURI_INVOKE<SkillFileEntry[]>("list_skill_files", { centralPath }),
@@ -241,7 +250,15 @@ export type BulkUnassignResultDto = {
 export type CandidateMatch = { kind: "resolved"; subpath: string } | { kind: "ambiguous"; subpaths: string[] } | { kind: "none" };
 
 /**  Structured command failure crossing the IPC seam. */
-export type CommandError = { code: "TOOL_NOT_INSTALLED"; tool: string } | { code: "TARGET_EXISTS"; path: string } | { code: "TOOL_NOT_WRITABLE"; tool: string; path: string } | { code: "SKILL_INVALID"; reason: string } | { code: "MULTI_SKILLS" } | { code: "SKILL_EXISTS"; 
+export type CommandError = { code: "TOOL_NOT_INSTALLED"; tool: string } | 
+/**
+ *  A sync fan-out skipped this (skill, Tool) pair because the operator
+ *  disabled it — at the pair or skill grain (see **Disabled** in
+ *  `CONTEXT.md`). A skip reason, never a failure: only Enable lifts it.
+ */
+{ code: "TARGET_DISABLED"; 
+/**  Registry key of the Tool the pair names. */
+tool: string } | { code: "TARGET_EXISTS"; path: string } | { code: "TOOL_NOT_WRITABLE"; tool: string; path: string } | { code: "SKILL_INVALID"; reason: string } | { code: "MULTI_SKILLS" } | { code: "SKILL_EXISTS"; 
 /**  Name of the skill directory already present in the central repo. */
 name: string } | { code: "FINALIZE_ROLLBACK_FAILED"; central: string; backup: string | null; 
 /**  Original failure and rollback error chain, diagnostics only. */
@@ -293,6 +310,37 @@ detail: string } | { code: "OTHER"; message: string };
 export type ConfigureProjectToolsResultDto = {
 	view: ProjectViewDto,
 	report: RemovalReport,
+};
+
+/**
+ *  What the operator asked to disable or enable. Crosses the wire as itself:
+ *  `{ kind: "skill_tool", skill_id, tool }`, `{ kind: "skill", skill_id }`
+ *  or `{ kind: "skills", skill_ids }`.
+ */
+export type DisableScope = 
+/**
+ *  One (skill, Tool) pair at global scope (fanned out across the Tool's
+ *  shared skills dir by `artifact_removal`).
+ */
+{ kind: "skill_tool"; skill_id: string; tool: string } | 
+/**  One skill, everywhere: global targets and project assignments. */
+{ kind: "skill"; skill_id: string } | 
+/**
+ *  Several skills at skill grain, in order. An id with no skill row is
+ *  dropped (the listing that produced it may be stale).
+ */
+{ kind: "skills"; skill_ids: string[] };
+
+/**  What Enable re-synced. */
+export type EnableReport = {
+	/**
+	 *  Global targets, as the global sync batch reported them (a first sync:
+	 *  `TARGET_EXISTS` is a `failed` row, a skill-disabled pair a `skipped`
+	 *  `TARGET_DISABLED`).
+	 */
+	global: BatchTargetOutcome[],
+	/**  Project assignments re-synced by a skill-grain Enable. */
+	projects: ProjectSyncReport,
 };
 
 export type FeaturedSkillDto = {
@@ -497,6 +545,12 @@ export type ManagedSkillDto = {
 	invocation_override: InvocationOverride | null,
 	targets: SkillTargetDto[],
 	/**
+	 *  When the skill was disabled at skill grain (off everywhere until
+	 *  enabled), null when it is not. Per-Tool Disable shows on the
+	 *  target's `status` instead.
+	 */
+	disabled_at: number | null,
+	/**
 	 *  Whether Update / Refresh can re-acquire this skill (backend-owned
 	 *  Provenance rule); the UI offers Update only when `true`.
 	 */
@@ -632,11 +686,22 @@ export type ProjectSyncOutcomeStatus =
  *  The sync did not happen. When `assignment_id` is present the row
  *  exists with Sync status `error` and this chain in `last_error`.
  */
-{ status: "failed"; error: CommandError };
+{ status: "failed"; error: CommandError } | 
+/**  Deliberately not synced. Report data, never a failure. */
+{ status: "skipped"; reason: ProjectSyncSkip };
 
 export type ProjectSyncReport = {
 	items: ProjectSyncOutcome[],
 };
+
+/**  Why a project sync left an assignment alone. */
+export type ProjectSyncSkip = 
+/**
+ *  The row is `Disabled`, or its skill is disabled at skill grain (a new
+ *  assignment of a disabled skill is recorded `Disabled`, not synced) —
+ *  see **Disabled** in `CONTEXT.md`. Only Enable re-materialises it.
+ */
+{ reason: "disabled" };
 
 /**
  *  Roll-up of a project's assignments as shown on the project list.
@@ -702,7 +767,13 @@ export type PropagationSkip =
 /**  The row names a tool key the registry does not know. */
 { reason: "unknown_tool"; tool: string } | 
 /**  The project row is gone, or its directory no longer exists on disk. */
-{ reason: "project_unavailable"; project_id: string };
+{ reason: "project_unavailable"; project_id: string } | 
+/**
+ *  The operator disabled this target — its own row, a row sharing its
+ *  skills dir, or the whole skill (see **Disabled** in `CONTEXT.md`).
+ *  Nothing but Enable re-materialises it.
+ */
+{ reason: "disabled" };
 
 export type PropagationStatus = { status: "synced"; mode_used: SyncMode } | { status: "skipped"; reason: PropagationSkip } | { status: "failed"; error: CommandError };
 
@@ -735,6 +806,14 @@ export type RemovalReport = {
 	central_removed: boolean,
 	/**  The `skills` row was deleted (cascading targets and assignments). */
 	record_deleted: boolean,
+	/**
+	 *  Rows owning no artifact (never materialised, whatever their status)
+	 *  deleted without touching any path — the
+	 *  app never materialised their artifact. Only the delete settlement
+	 *  clears them, and only when every target of the scope succeeded (a
+	 *  kept skill or project keeps its markers too).
+	 */
+	cleared_markers: RowRef[],
 };
 
 export type RemovalTargetOutcome = {
@@ -917,7 +996,15 @@ export type SyncStatus =
 /**  Source or a previously deployed target has disappeared. */
 "missing" | 
 /**  The last sync or Artifact removal attempt failed; `last_error` carries the diagnostic. */
-"error";
+"error" | 
+/**
+ *  The operator's durable "not on this Tool" (see **Disabled** in
+ *  `CONTEXT.md`): the artifact was removed and the row kept as the
+ *  record. Terminal for every automatic pass — reconcile, Propagation,
+ *  the auto-sync re-assert and every sync fan-out leave it alone; only
+ *  `skill_disable::enable_targets` lifts it.
+ */
+"disabled";
 
 /**
  *  Which way a toggle went, with the resulting view and that direction's

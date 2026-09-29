@@ -30,16 +30,23 @@ pub enum SyncStatus {
     Missing,
     /// The last sync or Artifact removal attempt failed; `last_error` carries the diagnostic.
     Error,
+    /// The operator's durable "not on this Tool" (see **Disabled** in
+    /// `CONTEXT.md`): the artifact was removed and the row kept as the
+    /// record. Terminal for every automatic pass — reconcile, Propagation,
+    /// the auto-sync re-assert and every sync fan-out leave it alone; only
+    /// `skill_disable::enable_targets` lifts it.
+    Disabled,
 }
 
 impl SyncStatus {
     #[cfg(test)]
-    pub const ALL: [SyncStatus; 5] = [
+    pub const ALL: [SyncStatus; 6] = [
         SyncStatus::Pending,
         SyncStatus::Synced,
         SyncStatus::Stale,
         SyncStatus::Missing,
         SyncStatus::Error,
+        SyncStatus::Disabled,
     ];
 
     /// The stored (and wire) spelling.
@@ -50,6 +57,7 @@ impl SyncStatus {
             SyncStatus::Stale => "stale",
             SyncStatus::Missing => "missing",
             SyncStatus::Error => "error",
+            SyncStatus::Disabled => "disabled",
         }
     }
 
@@ -63,6 +71,7 @@ impl SyncStatus {
             "stale" => Some(SyncStatus::Stale),
             "missing" => Some(SyncStatus::Missing),
             "error" => Some(SyncStatus::Error),
+            "disabled" => Some(SyncStatus::Disabled),
             LEGACY_TARGET_OK => Some(SyncStatus::Synced),
             _ => None,
         }
@@ -149,6 +158,8 @@ pub struct Observation<'a> {
 /// nothing observed justifies a change, so callers write only on difference.
 ///
 /// Rules, in precedence order:
+/// 0. A `Disabled` row stays `Disabled`: it records the operator's choice,
+///    not an observation, so nothing on disk may change it.
 /// 1. Source absent → `Missing` (nothing can be in sync with nothing).
 /// 2. Target absent → `Missing` if the row was ever deployed
 ///    (`Synced`/`Stale`/`Missing`); `Pending`/`Error` rows never had a
@@ -159,6 +170,9 @@ pub struct Observation<'a> {
 /// 4. Both present, link mode → a `Missing` row recovers to `Synced`;
 ///    everything else is left alone (links cannot drift).
 pub fn next_status(obs: &Observation<'_>) -> SyncStatus {
+    if obs.current == SyncStatus::Disabled {
+        return SyncStatus::Disabled;
+    }
     if !obs.source_present {
         return SyncStatus::Missing;
     }
@@ -198,6 +212,9 @@ pub enum ProjectSyncStatus {
 }
 
 /// Precedence fold: error/missing > stale > pending > synced; no rows → `Empty`.
+/// A `Disabled` row is the operator's choice, not a state needing attention,
+/// so it does not take part in the fold (a project whose rows are all
+/// disabled folds as `Empty`: nothing is deployed there).
 pub fn aggregate(statuses: impl IntoIterator<Item = SyncStatus>) -> ProjectSyncStatus {
     let mut result: Option<ProjectSyncStatus> = None;
     for status in statuses {
@@ -206,6 +223,7 @@ pub fn aggregate(statuses: impl IntoIterator<Item = SyncStatus>) -> ProjectSyncS
             SyncStatus::Stale => ProjectSyncStatus::Stale,
             SyncStatus::Pending => ProjectSyncStatus::Pending,
             SyncStatus::Synced => ProjectSyncStatus::Synced,
+            SyncStatus::Disabled => continue,
         };
         result = Some(match result {
             Some(current) if current.severity() >= rank.severity() => current,

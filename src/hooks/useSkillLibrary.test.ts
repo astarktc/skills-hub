@@ -7,6 +7,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BatchTargetOutcome,
+  EnableReport,
   ManagedSkill,
   InvocationEditReport,
   SkillMutationResultDto,
@@ -80,6 +81,7 @@ function skill(id: string, name: string, targets: string[] = []): ManagedSkill {
       target_path: `/tools/${tool}/${name}`,
       synced_at: null,
     })),
+    disabled_at: null,
     refreshable: true,
     unlocatable: null,
     detachable: false,
@@ -115,7 +117,7 @@ function removedReport(tools: string[]): RemovalReport {
       status: { status: "removed" },
     })),
     central_removed: false,
-    record_deleted: false,
+    record_deleted: false, cleared_markers: [],
   };
 }
 
@@ -129,6 +131,7 @@ function makeDeps(overrides?: {
   returnedSkills?: ManagedSkill[];
   editReport?: InvocationEditReport;
   removalReport?: RemovalReport;
+  enableReport?: EnableReport;
 }) {
   const skills = overrides?.skills ?? [skill("s1", "alpha")];
   const refreshReport =
@@ -148,12 +151,14 @@ function makeDeps(overrides?: {
           skills: overrides?.returnedSkills ?? skills,
         });
       case "deleteManagedSkill":
-        return Promise.resolve({ targets: [], central_removed: true, record_deleted: true } satisfies RemovalReport);
-      case "unsyncSkill":
-      case "unsyncAllSkills":
-      case "unsyncSkillFromTool":
+        return Promise.resolve({ targets: [], central_removed: true, record_deleted: true, cleared_markers: [] } satisfies RemovalReport);
+      case "disableSkillTargets":
         return Promise.resolve(
           overrides?.removalReport ?? removedReport(["claude"]),
+        );
+      case "enableSkillTargets":
+        return Promise.resolve(
+          overrides?.enableReport ?? ({ global: [], projects: { items: [] } } satisfies EnableReport),
         );
       default:
         return Promise.resolve(undefined);
@@ -399,7 +404,7 @@ describe("repair notification actions", () => {
     const { result } = await renderLibrary(setup);
     await act(async () => { await result.current.handleRefresh(); });
     const action = vi.mocked(setup.reporter.showActionErrors).mock.calls[0][0][0].action!;
-    mockInvoke.mockImplementation((cmd) => Promise.resolve(cmd === "deleteManagedSkill" ? { targets: [], central_removed: true, record_deleted: true } : []));
+    mockInvoke.mockImplementation((cmd) => Promise.resolve(cmd === "deleteManagedSkill" ? { targets: [], central_removed: true, record_deleted: true, cleared_markers: [] } : []));
     await act(async () => { await result.current.handleDeleteManaged(gitSkill); });
     act(() => action.onClick());
     expect(setup.reporter.notify).toHaveBeenCalledWith(
@@ -520,7 +525,7 @@ describe("unchanged refetch contracts", () => {
     const { result } = await renderLibrary(setup);
     act(() => result.current.handleDeletePrompt("s1"));
     mockInvoke.mockClear();
-    mockInvoke.mockResolvedValueOnce(action === "Delete" ? { targets: [], central_removed: true, record_deleted: true } : refreshedReport(["alpha"]))
+    mockInvoke.mockResolvedValueOnce(action === "Delete" ? { targets: [], central_removed: true, record_deleted: true, cleared_markers: [] } : refreshedReport(["alpha"]))
       .mockResolvedValueOnce([]);
     await act(async () => {
       if (action === "Delete") await result.current.handleDeleteManaged(setup.skills[0]);
@@ -548,7 +553,7 @@ describe("unchanged refetch contracts", () => {
         status: { status: "failed", error: { code: "OTHER", message: "busy" } },
       }],
       central_removed: false,
-      record_deleted: false,
+      record_deleted: false, cleared_markers: [],
     };
     mockInvoke.mockClear();
     mockInvoke.mockResolvedValueOnce(report).mockResolvedValueOnce([kept]);
@@ -563,7 +568,7 @@ describe("unchanged refetch contracts", () => {
     expect(setup.reporter.notify).toHaveBeenCalledWith("warning", 'status.skillDeleteKept {"failed":2}', undefined);
     expect(setup.reporter.setError).not.toHaveBeenCalled();
     expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
-    mockInvoke.mockResolvedValueOnce({ targets: [], central_removed: true, record_deleted: true } satisfies RemovalReport)
+    mockInvoke.mockResolvedValueOnce({ targets: [], central_removed: true, record_deleted: true, cleared_markers: [] } satisfies RemovalReport)
       .mockResolvedValueOnce([]);
     await act(async () => { await result.current.handleDeleteManaged(kept); });
     expect(result.current.managedSkills).toEqual([]);
@@ -722,6 +727,50 @@ describe("cancellation and non-report actions", () => {
       "noSyncTargets",
     );
   });
+
+  // Review 2026-09-29 (ticket 01, F5), through the real enable fold: every
+  // target pair-disabled with no skill marker is still "disabled" — Deploy
+  // must Enable it, never run a sync the Disabled gate skips and then claim
+  // success.
+  it("deploying a skill whose every target is pair-disabled enables it", async () => {
+    const row = skill("s1", "alpha", ["claude"]);
+    row.targets[0].status = "disabled";
+    const setup = makeDeps({
+      skills: [row],
+      effectiveSyncTargetIds: ["claude"],
+      enableReport: {
+        global: [{
+          skill_id: "s1",
+          skill_name: "alpha",
+          tool_key: "claude",
+          status: { status: "synced", outcome: { mode_used: "symlink", target_path: "/tools/claude/alpha", replaced: false } },
+        }],
+        projects: { items: [] },
+      },
+    });
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleSyncSkillToAllTools(row);
+    });
+
+    expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
+    expect(mockInvoke).toHaveBeenCalledWith("enableSkillTargets", { kind: "skill", skill_id: "s1" });
+    expect(setup.reporter.notify).toHaveBeenCalledWith("success", "status.targetsEnabled", undefined);
+    expect(setup.reporter.notify).not.toHaveBeenCalledWith("success", "status.syncCompleted", undefined);
+  });
+
+  it("a skill with no target at all syncs, never enables", async () => {
+    const setup = makeDeps({ effectiveSyncTargetIds: ["claude"] });
+    const { result } = await renderLibrary(setup);
+
+    await act(async () => {
+      await result.current.handleSyncSkillToAllTools(setup.skills[0]);
+    });
+
+    expect(setup.sync.syncSkillsToTools).toHaveBeenCalledTimes(1);
+    expect(mockInvoke).not.toHaveBeenCalledWith("enableSkillTargets", expect.anything());
+  });
 });
 
 describe("useSkillLibrary detail selection", () => {
@@ -766,16 +815,21 @@ describe("invoke → fold → completion", () => {
     ["local Re-point", "refreshOutcome", "repointSkillSource"],
     ["Refresh-all", "refreshOutcome", "refreshManagedSkills"],
     ["Edit", "invocationEditOutcome", "setSkillInvocationOverride"],
-    ["unsync-all", "removalOutcome", "unsyncAllSkills"],
-    ["unsync", "removalOutcome", "unsyncSkill"],
+    ["unsync-all", "removalOutcome", "disableSkillTargets"],
+    ["unsync", "removalOutcome", "disableSkillTargets"],
+    ["enable-skill", "enableOutcome", "enableSkillTargets"],
     ["delete", "deleteOutcome", "deleteManagedSkill"],
     ["sync-to-all", "syncOutcome", null],
     ["auto-sync", "syncOutcome", null],
     ["toggle-on", "syncOutcome", null],
-    ["toggle-off", "removalOutcome", "unsyncSkillFromTool"],
+    ["toggle-off", "removalOutcome", "disableSkillTargets"],
+    ["toggle-enable", "enableOutcome", "enableSkillTargets"],
   ] as const)("%s applies the returned outcome (including refusal to reload/close)", async (action, fold, command) => {
     for (const complete of [false, true]) {
-      const setup = makeDeps({ skills: [skill("s1", "alpha", action === "toggle-off" ? ["claude"] : [])] });
+      const row = skill("s1", "alpha", action === "toggle-off" || action === "toggle-enable" ? ["claude"] : []);
+      if (action === "toggle-enable") row.targets[0].status = "disabled";
+      if (action === "enable-skill") row.disabled_at = 1;
+      const setup = makeDeps({ skills: [row] });
       const outcome: folds.Outcome = {
         toast: { kind: "warning", message: "fold toast", detail: "detail" },
         errors: [{ title: "fold error", message: "error detail" }],
@@ -803,7 +857,8 @@ describe("invoke → fold → completion", () => {
           case "unsync-all": await lib.handleUnsyncAll(); break;
           case "unsync": await lib.handleUnsyncSkill(row.id); break;
           case "delete": await lib.handleDeleteManaged(row); break;
-          case "sync-to-all": await lib.handleSyncSkillToAllTools(row); break;
+          case "sync-to-all":
+          case "enable-skill": await lib.handleSyncSkillToAllTools(row); break;
           case "auto-sync": await lib.syncAllManagedToTools(["claude"]); break;
           default: await lib.handleToggleToolForSkill(row, "claude");
         }

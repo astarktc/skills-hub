@@ -8,6 +8,7 @@ import type {
 } from "../components/skills/types";
 import {
   deleteOutcome,
+  enableOutcome,
   invocationEditOutcome,
   refreshOutcome,
   removalOutcome,
@@ -15,7 +16,7 @@ import {
   type Outcome,
 } from "../lib/reportOutcome";
 import { invokeTauri, isTauri } from "../lib/tauri";
-import { repointKind, type RepointKind } from "../lib/skillPresentation";
+import { deployAction, repointKind, type RepointKind } from "../lib/skillPresentation";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type {
   ActionErrorEntry,
@@ -47,8 +48,10 @@ export type SkillLibraryDeps = {
 /**
  * Skill library world: the managed-skill list plus every per-skill and bulk
  * action on it (refresh/update, delete, per-tool sync toggles including the
- * shared-dir confirmation, unsync). Sync fan-out goes through the sync
- * world's seam, received as a dependency.
+ * shared-dir confirmation, Disable / Enable). Sync fan-out goes through the
+ * sync world's seam, received as a dependency. Every operator removal of a
+ * global target is a Disable (the durable "not on this Tool"); a disabled
+ * target or skill comes back only through Enable.
  *
  * Update and Refresh (all) are one backend batch each: the backend acquires,
  * finalizes, propagates and — with `reassert_auto_sync` — re-asserts the
@@ -210,16 +213,21 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
     });
   }, [applyOutcome, autoSyncEnabled, foldContext, managedSkills.length, newRefreshProgressChannel, runAction]);
 
+  // Library-wide undeploy: every skill disabled at skill grain (ticket 13
+  // moves it behind select-all + a count-bearing confirmation).
   const handleUnsyncAll = useCallback(async () => {
     await runAction({}, async () => {
-      const report = await invokeTauri("unsyncAllSkills");
+      const report = await invokeTauri("disableSkillTargets", {
+        kind: "skills",
+        skill_ids: managedSkills.map((skill) => skill.id),
+      });
       return applyOutcome(removalOutcome(report, { ...foldContext, action: "all" }));
     });
-  }, [applyOutcome, foldContext, runAction]);
+  }, [applyOutcome, foldContext, managedSkills, runAction]);
 
   const handleUnsyncSkill = useCallback(async (skillId: string) => {
     try {
-      const report = await invokeTauri("unsyncSkill", skillId);
+      const report = await invokeTauri("disableSkillTargets", { kind: "skill", skill_id: skillId });
       await applyOutcome(removalOutcome(report, { ...foldContext, action: "skill" }));
     } catch (err) {
       setError(formatError(err));
@@ -248,6 +256,17 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
   // recorded selection, or detection when they never configured one) — never
   // to every detected tool.
   const handleSyncSkillToAllTools = useCallback(async (skill: ManagedSkill) => {
+    // A skill disabled at either grain — the skill marker, or every target
+    // row pair-disabled — is deployed again only by Enable: one skill-grain
+    // batch that re-syncs every disabled row. An ordinary sync would skip the
+    // disabled pairs and still claim success.
+    if (deployAction(skill).kind === "enable") {
+      await runAction({}, async () => {
+        const report = await invokeTauri("enableSkillTargets", { kind: "skill", skill_id: skill.id });
+        return applyOutcome(enableOutcome(report, foldContext));
+      });
+      return;
+    }
     // Zero work is reported, never silent: an operator who selected no tools
     // clicked a deploy button and must learn why nothing happened.
     if (!effectiveSyncTargetIds.length) {
@@ -301,7 +320,11 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
       if (loading) return;
       const toolLabel = tools.find((t) => t.id === toolId)?.label ?? toolId;
       const target = skill.targets.find((t) => t.tool === toolId);
-      const synced = Boolean(target);
+      // Three states per pill: a disabled target enables, any other target
+      // disables (the durable "not on this Tool"), no target syncs.
+      const disabled = target?.status === "disabled";
+      const synced = Boolean(target) && !disabled;
+      const scope = { kind: "skill_tool", skill_id: skill.id, tool: toolId } as const;
 
       await runAction(
         {
@@ -310,8 +333,11 @@ export function useSkillLibrary({ t, reporter, sync }: SkillLibraryDeps) {
             : t("actions.syncing", { name: skill.name, tool: toolLabel }),
         },
         async () => {
-          if (synced) {
-            const report = await invokeTauri("unsyncSkillFromTool", skill.id, toolId);
+          if (disabled) {
+            const report = await invokeTauri("enableSkillTargets", scope);
+            await applyOutcome(enableOutcome(report, foldContext));
+          } else if (synced) {
+            const report = await invokeTauri("disableSkillTargets", scope);
             await applyOutcome(removalOutcome(report, { ...foldContext, action: "toggle" }));
           } else {
             const report = await syncOrReload(

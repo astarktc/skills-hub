@@ -41,6 +41,7 @@ use crate::core::settings::{
     SettingUpdate,
 };
 use crate::core::skill_catalog::{managed_skill_catalog, ManagedSkillEntry};
+use crate::core::skill_disable::{DisableScope, EnableReport};
 use crate::core::skill_discovery::InvocationMode;
 use crate::core::skill_edits::InvocationEditReport;
 use crate::core::skill_store::SkillStore;
@@ -522,20 +523,38 @@ pub async fn sync_skills_to_tools(
     .map_err(CommandError::from_anyhow)
 }
 
+/// Disable a scope — one (skill, Tool) pair, one skill, or several skills
+/// (see **Disabled** in `CONTEXT.md`): its artifacts are removed and their
+/// rows kept `disabled`, so no Refresh, Propagation or re-assert brings them
+/// back. Per-target failures are report data (rows kept `error`, ADR-0002).
 #[tauri::command]
 #[specta::specta]
-#[allow(non_snake_case)]
-pub async fn unsync_skill_from_tool(
+pub async fn disable_skill_targets(
     store: State<'_, SkillStore>,
-    skillId: String,
-    tool: String,
+    scope: DisableScope,
 ) -> Result<RemovalReport, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let home = home_dir()?;
-        let report =
-            crate::core::artifact_removal::unsync_skill_from_tool(&store, &home, &skillId, &tool)?;
-        Ok::<_, anyhow::Error>(report)
+        crate::core::skill_disable::disable_targets(&store, &home, &scope, now_ms())
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+/// Enable a scope: clear its Disabled marker and re-sync it as a first sync.
+/// Per-target outcomes (including `TARGET_EXISTS`) are report data.
+#[tauri::command]
+#[specta::specta]
+pub async fn enable_skill_targets(
+    store: State<'_, SkillStore>,
+    scope: DisableScope,
+) -> Result<EnableReport, CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = home_dir()?;
+        crate::core::skill_disable::enable_targets(&store, &home, &scope, now_ms())
     })
     .await
     .map_err(CommandError::internal)?
@@ -727,36 +746,6 @@ pub async fn detach_skill_from_source(
     .map_err(CommandError::from_anyhow)
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn unsync_all_skills(
-    store: State<'_, SkillStore>,
-) -> Result<RemovalReport, CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::core::artifact_removal::unsync_all_skill_targets(&store)
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-#[specta::specta]
-#[allow(non_snake_case)]
-pub async fn unsync_skill(
-    store: State<'_, SkillStore>,
-    skillId: String,
-) -> Result<RemovalReport, CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::core::artifact_removal::unsync_skill_targets(&store, &skillId)
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
 /// One name-group the operator chose to import. The backend re-reads the
 /// onboarding plan to learn which paths the group owns, so this carries only
 /// the choice itself.
@@ -868,6 +857,10 @@ pub struct ManagedSkillDto {
     pub invocation_mode: InvocationMode,
     pub invocation_override: Option<crate::core::skill_edits::InvocationOverride>,
     pub targets: Vec<SkillTargetDto>,
+    /// When the skill was disabled at skill grain (off everywhere until
+    /// enabled), null when it is not. Per-Tool Disable shows on the
+    /// target's `status` instead.
+    pub disabled_at: Option<i64>,
     /// Whether Update / Refresh can re-acquire this skill (backend-owned
     /// Provenance rule); the UI offers Update only when `true`.
     pub refreshable: bool,
@@ -983,6 +976,7 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
             invocation_mode,
             invocation_override,
             targets,
+            disabled_at,
             refreshable,
             unlocatable,
             detachable,
@@ -1011,6 +1005,7 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
                     synced_at: target.synced_at,
                 })
                 .collect(),
+            disabled_at,
             refreshable,
             unlocatable,
             detachable,

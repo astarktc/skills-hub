@@ -455,7 +455,10 @@ pub(crate) fn merge_reassert(
 /// only the fallback — and it is not intersected with detection, so a
 /// selected-but-uninstalled Tool is reported as a skip rather than dropped.
 /// Existing targets were already brought into line by Propagation, so they are
-/// not touched again here; a directory that is in the way without a row is
+/// not touched again here — a `Disabled` row is one of them (Propagation
+/// reported it skipped), and the batch skips a disabled skill or a Tool sharing
+/// a disabled row's dir, so the re-assert never re-materialises what the
+/// operator disabled; a directory that is in the way without a row is
 /// reported, not clobbered (`overwrite_if_same_content`).
 fn reassert_auto_sync_unlocked(
     paths: &InstallerPaths,
@@ -510,6 +513,11 @@ fn reassert_auto_sync_unlocked(
                 BatchTargetStatus::Skipped { error } => match error {
                     CommandError::ToolNotInstalled { tool } => PropagationStatus::Skipped {
                         reason: PropagationSkip::ToolNotInstalled { tool },
+                    },
+                    // The batch's Disabled rule: a disabled skill, or a Tool
+                    // whose shared-dir sibling is disabled, is never re-asserted.
+                    CommandError::TargetDisabled { .. } => PropagationStatus::Skipped {
+                        reason: PropagationSkip::Disabled,
                     },
                     // A skips-because-unwritable is still a failure to report:
                     // the operator asked for this Tool to carry the skill.

@@ -1,0 +1,234 @@
+/*
+ * Skills Hub design tokens — the ONLY file that defines a token (ADR-0006 §1).
+ *
+ * Three parts:
+ *   1. raw values as plain custom properties — dark in :root (dark is designed
+ *      first), light in :root[data-theme='light'] as a measured derivation;
+ *   2. `@theme inline` registering the semantic tier (shadcn's names) and the
+ *      world extension (raised, border-strong, faint, ok, stale, failed) as
+ *      utilities that resolve to the switching variable;
+ *   3. `@theme static` for the non-colour scale (type, radius, row height,
+ *      motion, fonts, elevation), emitted whether or not a utility uses it.
+ *
+ * Values come from the direction contract
+ * (.impeccable/surfaces/src-components-skills-skillslist-tsx.md). Every
+ * foreground/background pair a surface may draw is measured on the rendered
+ * page and recorded, with its WCAG ratio, in DESIGN.md — change a value here,
+ * re-measure there. Text ≥ 4.5:1, non-text (focus ring, input boundary,
+ * state marks) ≥ 3:1, in both themes.
+ *
+ * `data-theme` and `color-scheme` on <html> are written only by the settings
+ * world (useSettingsState) and, before first paint, by the inline script in
+ * index.html. Styling reads the theme through these variables, never from JS.
+ */
+
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+/* ── 1. Raw values ─────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: dark;
+
+  /* surfaces: ground → panel → raised */
+  --background: #0e0f12;
+  --foreground: #e6e7ea;
+  --card: #15171b;
+  --card-foreground: #e6e7ea;
+  --popover: #15171b;
+  --popover-foreground: #e6e7ea;
+  --raised: #1d2025;
+
+  /* iris: the one primary action (fill), selection and focus (ring) */
+  --primary: #6a61e8;
+  --primary-foreground: #ffffff;
+  --ring: #9690ff;
+
+  /* neutral roles */
+  --muted: #1d2025;
+  --muted-foreground: #a6abb4;
+  /* contract #858b95, lifted one step: the legacy hover ground
+     (--bg-element-hover, App.css alias block) measured it at 4.20:1 */
+  --faint: #8c929c;
+  --accent: #1d2025;
+  --accent-foreground: #e6e7ea;
+
+  /* lines: border = structural hairline (decorative), border-strong =
+     control edges beside text, input = boundary that identifies a control
+     on its own (≥ 3:1 against every surface) */
+  --border: #262a31;
+  --border-strong: #343942;
+  --input: #6b717b;
+
+  /* state — used only to say state; healthy is silent */
+  --ok: #3ddc84;
+  --ok-foreground: #0e0f12;
+  --stale: #f5b400;
+  --stale-foreground: #0e0f12;
+  --failed: #ff6b6b;
+  --failed-foreground: #0e0f12;
+  --destructive: #ff6b6b;
+  --destructive-foreground: #0e0f12;
+
+  /* app sidebar */
+  --sidebar: #15171b;
+  --sidebar-foreground: #a6abb4;
+  --sidebar-primary: #6a61e8;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1d2025;
+  --sidebar-accent-foreground: #e6e7ea;
+  --sidebar-border: #262a31;
+  --sidebar-ring: #9690ff;
+
+  /* prose-only: syntax highlighting (read by styles/prose.css through var()) */
+  --syntax-keyword: #f29fd8;
+  --syntax-string: #7fc8dc;
+  --syntax-number: #e8b48a;
+  --syntax-function: #a9b6ff;
+
+  /* elevation for floating layers (dialog, popover, menu, toast) */
+  --elevation-sm: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+  --elevation-lg: 0 16px 32px -12px rgb(0 0 0 / 0.6);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --background: #fcfcfd;
+  --foreground: #16181d;
+  --card: #f3f4f6;
+  --card-foreground: #16181d;
+  --popover: #ffffff;
+  --popover-foreground: #16181d;
+  --raised: #eceef1;
+
+  --primary: #5a4fdc;
+  --primary-foreground: #ffffff;
+  --ring: #5a4fdc;
+
+  --muted: #eceef1;
+  --muted-foreground: #494e57;
+  --faint: #5b616a;
+  --accent: #eceef1;
+  --accent-foreground: #16181d;
+
+  --border: #e1e3e8;
+  --border-strong: #cdd1d8;
+  --input: #7c828b;
+
+  /* the prototype's light ok/stale (#16a35a, #b77f00) were dot colours at
+     ~3:1; these are darkened so the same token also passes as text */
+  --ok: #127440;
+  --ok-foreground: #ffffff;
+  --stale: #8a5d00;
+  --stale-foreground: #ffffff;
+  --failed: #c22e2e;
+  --failed-foreground: #ffffff;
+  --destructive: #c22e2e;
+  --destructive-foreground: #ffffff;
+
+  --sidebar: #f3f4f6;
+  --sidebar-foreground: #494e57;
+  --sidebar-primary: #5a4fdc;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eceef1;
+  --sidebar-accent-foreground: #16181d;
+  --sidebar-border: #e1e3e8;
+  --sidebar-ring: #5a4fdc;
+
+  --syntax-keyword: #a1306e;
+  --syntax-string: #16677d;
+  --syntax-number: #87460f;
+  --syntax-function: #3a4cb0;
+
+  --elevation-sm: 0 1px 2px 0 rgb(20 22 28 / 0.08);
+  --elevation-lg: 0 16px 32px -12px rgb(20 22 28 / 0.22);
+}
+
+/* ── 2. Colour utilities ───────────────────────────────────────────────── */
+
+@theme inline {
+  /* No raw palette tier: Tailwind's default palette (red-500, gray-900, …)
+     is removed, so a palette utility generates nothing (and styles:check
+     fails on it). Only the names below exist. */
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* world extension */
+  --color-raised: var(--raised);
+  --color-border-strong: var(--border-strong);
+  --color-faint: var(--faint);
+  --color-ok: var(--ok);
+  --color-ok-foreground: var(--ok-foreground);
+  --color-stale: var(--stale);
+  --color-stale-foreground: var(--stale-foreground);
+  --color-failed: var(--failed);
+  --color-failed-foreground: var(--failed-foreground);
+}
+
+/* ── 3. Non-colour scale ───────────────────────────────────────────────── */
+
+@theme static {
+  /* system UI stack + ui-monospace; no network fonts */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  /* type: 12 / 13 / 14 / 16 — the whole scale */
+  --text-*: initial;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.25rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+
+  /* radii: 4 / 6 / 10 (rounded-full stays available) */
+  --radius-*: initial;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* rows, headers and palette items; `h-row` */
+  --spacing-row: 36px;
+
+  /* motion: ≤ 120 ms, opacity/transform only; reduced motion removes it */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --default-transition-duration: 120ms;
+  --default-transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-fast: 120ms;
+
+  --shadow-*: initial;
+  --shadow-sm: var(--elevation-sm);
+  --shadow-lg: var(--elevation-lg);
+}

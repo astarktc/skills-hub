@@ -14,6 +14,7 @@ export const SYNC_STATUS_CLASS = {
   stale: "stale",
   missing: "missing",
   error: "error",
+  disabled: "disabled",
 } as const satisfies Record<SyncStatus, string>;
 
 /** CSS modifier class for the project list dot (`.project-status-dot.<class>`). */

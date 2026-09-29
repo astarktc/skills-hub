@@ -14,6 +14,7 @@ import type {
 } from "../bindings";
 import {
   deleteOutcome,
+  enableOutcome,
   invocationEditOutcome,
   importOutcome,
   installOutcome,
@@ -374,7 +375,7 @@ const removal = (fail: boolean): RemovalReport => ({
     },
   ],
   central_removed: false,
-  record_deleted: false,
+  record_deleted: false, cleared_markers: [],
 });
 describe("removalOutcome", () => {
   it("counts shared artifact rows and emits failures in target/row order for every removal action", () => {
@@ -403,7 +404,7 @@ describe("removalOutcome", () => {
         },
       ],
       central_removed: false,
-      record_deleted: false,
+      record_deleted: false, cleared_markers: [],
     };
     const before = JSON.stringify(report);
     const unsync = removalOutcome(report, { ...ctx, action: "all" });
@@ -432,7 +433,7 @@ describe("removalOutcome", () => {
   });
 
   it("delete succeeds for removed targets and has kept/retry copy", () => {
-    expect(deleteOutcome({ ...removal(false), central_removed: true, record_deleted: true }, ctx)).toEqual({
+    expect(deleteOutcome({ ...removal(false), central_removed: true, record_deleted: true, cleared_markers: [] }, ctx)).toEqual({
       toast: { kind: "success", message: "status.skillRemoved" },
       errors: [], warnings: [], completion: { reload: true, closeModal: true, conflict: false },
     });
@@ -476,7 +477,7 @@ describe("removalOutcome", () => {
     },
   );
   it("a zero-target report warns instead of claiming an unsync happened", () => {
-    const nothing: RemovalReport = { targets: [], central_removed: false, record_deleted: false };
+    const nothing: RemovalReport = { targets: [], central_removed: false, record_deleted: false, cleared_markers: [] };
     for (const action of ["all", "skill", "toggle", "bulkUnassign"] as const) {
       const out = removalOutcome(nothing, { ...ctx, action });
       expect(out.toast).toEqual({
@@ -502,7 +503,7 @@ describe("removalOutcome", () => {
         },
       ],
       central_removed: false,
-      record_deleted: false,
+      record_deleted: false, cleared_markers: [],
     };
     expect(removalOutcome(report, { ...ctx, action: "bulkUnassign" })).toEqual({
       toast: { kind: "success", message: t("projects.bulkUnassignSuccess", { count: 2 }) },
@@ -545,7 +546,7 @@ describe("removalOutcome", () => {
         },
       ],
       central_removed: false,
-      record_deleted: false,
+      record_deleted: false, cleared_markers: [],
     };
     const kept = [
       { title: t("errors.projectRemovalFailedTitle", { tool: "pi" }), message: "denied" },
@@ -581,7 +582,7 @@ describe("removalOutcome", () => {
         },
       ],
       central_removed: false,
-      record_deleted: false,
+      record_deleted: false, cleared_markers: [],
     };
     for (const toolLabelById of [{}, { pi: "Pi" }] as Record<string, string>[]) {
       for (const action of ["removeProject", "configureTools"] as const) {
@@ -606,9 +607,9 @@ describe("removalOutcome", () => {
         },
       ],
       central_removed: false,
-      record_deleted: false,
+      record_deleted: false, cleared_markers: [],
     };
-    const nothing: RemovalReport = { targets: [], central_removed: false, record_deleted: false };
+    const nothing: RemovalReport = { targets: [], central_removed: false, record_deleted: false, cleared_markers: [] };
     for (const report of [clean, nothing]) {
       expect(projectRemovalOutcome(report, { ...ctx, action: "removeProject" })).toEqual({
         toast: { kind: "success", message: "projects.removeComplete" },
@@ -625,7 +626,7 @@ describe("removalOutcome", () => {
     }
   });
   it("delete's successful report reloads and closes", () => {
-    expect(deleteOutcome({ targets: [], central_removed: true, record_deleted: true }, ctx)).toEqual({
+    expect(deleteOutcome({ targets: [], central_removed: true, record_deleted: true, cleared_markers: [] }, ctx)).toEqual({
       toast: { kind: "success", message: "status.skillRemoved" },
       errors: [],
       warnings: [],
@@ -1207,5 +1208,153 @@ describe("installOutcome", () => {
     ]);
     expect(out.completion.reload).toBe(true);
     expect(out.toast?.kind).toBe("warning");
+  });
+});
+
+// Review round 2026-09-29 (ticket 01, F6): a Disabled pair is skipped by
+// design in every report kind — never an error entry, never a failure toast.
+describe("Disabled is a skip in every fold", () => {
+  const disabledTarget: BatchTargetOutcome = {
+    skill_id: "s1",
+    skill_name: "alpha",
+    tool_key: "claude",
+    status: { status: "skipped", error: { code: "TARGET_DISABLED", tool: "claude" } },
+  };
+  const disabledPropagation = [
+    { scope: { scope: "global", tool: "claude" }, status: { status: "skipped", reason: { reason: "disabled" } } },
+    { scope: { scope: "project", project_id: "p1", tool: "claude" }, status: { status: "skipped", reason: { reason: "disabled" } } },
+  ] satisfies InvocationEditReport["propagation"]["targets"];
+  const refreshedDisabled = (): SkillRefreshOutcome => {
+    const row = refreshed();
+    if (row.status.status !== "refreshed") throw new Error("fixture");
+    row.status.targets.push(...disabledPropagation);
+    return row;
+  };
+  const cases: [string, () => { errors: unknown[]; toast: { kind: string } | null }][] = [
+    ["sync bulk", () => syncOutcome([disabledTarget], { ...ctx, action: "bulk" })],
+    ["sync install", () => syncOutcome([disabledTarget], { ...ctx, action: "install" })],
+    ["sync toggle", () => syncOutcome([disabledTarget], { ...ctx, action: "toggle" })],
+    ["install", () => installOutcome(
+      [{ name: "git", status: "installed", result: installed, deployment: { status: "reported", report: [disabledTarget] } }],
+      { ...ctx, source: "git" },
+    )],
+    ["import", () => importOutcome(importReport(imported({ targets: [disabledTarget] })), ctx)],
+    ["refresh", () => refreshOutcome(refreshReport([refreshedDisabled()]), ctx)],
+    ["edit", () => invocationEditOutcome(
+      { skill_id: "s1", skill_name: "alpha", propagation: { targets: disabledPropagation } },
+      ctx,
+    )],
+    ["enable", () => enableOutcome({ global: [disabledTarget], projects: { items: [] } }, ctx)],
+    ["project resync", () => projectSyncOutcome(
+      { items: [projectItem("claude", { status: "skipped", reason: { reason: "disabled" } })] },
+      { ...ctx, action: "resync" },
+    )],
+  ];
+  it.each(cases)("%s", (_name, fold) => {
+    const out = fold();
+    expect(out.errors).toEqual([]);
+    expect(out.toast?.kind ?? "none").not.toBe("error");
+    if (out.toast) expect(JSON.stringify(out.toast)).not.toContain("partialFailure");
+  });
+  it("import of a disabled pair completes like a clean import", () => {
+    expect(importOutcome(importReport(imported({ targets: [disabledTarget] })), ctx).toast).toEqual({
+      kind: "success",
+      message: "status.importCompleted",
+    });
+  });
+});
+
+// F7: disabled assignments are recorded, not synced — counted as such.
+describe("projectSyncOutcome counts disabled skips", () => {
+  const skip = { status: "skipped", reason: { reason: "disabled" } } as const;
+  it("an all-skipped bulk assign says assigned-not-synced, never 'already assigned'", () => {
+    const out = projectSyncOutcome(
+      { items: [projectItem("claude", skip), projectItem("pi", skip)] },
+      { ...ctx, action: "bulkAssign" },
+    );
+    expect(out.toast).toEqual({
+      kind: "warning",
+      message: t("disabledSkips.bulkAssignNotSynced", { count: 2 }),
+    });
+    expect(out.errors).toEqual([]);
+    expect(out.completion.closeModal).toBe(true);
+  });
+  it("mixed synced/skipped and synced/skipped/failed bulk assigns carry every count", () => {
+    const mixed = { items: [projectItem("claude", { status: "synced" }), projectItem("pi", skip)] };
+    expect(projectSyncOutcome(mixed, { ...ctx, action: "bulkAssign" }).toast).toEqual({
+      kind: "warning",
+      message: t("disabledSkips.bulkAssignMixed", { assigned: 1, skipped: 1 }),
+    });
+    const partial = { items: [...mixed.items, projectItem("codex", denied)] };
+    const out = projectSyncOutcome(partial, { ...ctx, action: "bulkAssign" });
+    expect(out.toast).toEqual({
+      kind: "warning",
+      message: t("disabledSkips.bulkAssignPartial", { assigned: 1, failed: 1, skipped: 1 }),
+    });
+    expect(out.errors).toHaveLength(1);
+  });
+  it("resync summaries include the skipped count", () => {
+    const report = { items: [projectItem("claude", { status: "synced" }), projectItem("pi", skip)] };
+    expect(projectSyncOutcome(report, { ...ctx, action: "resync" }).toast).toEqual({
+      kind: "success",
+      message: t("disabledSkips.resyncSuccess", { synced: 1, skipped: 1 }),
+    });
+    const partial = { items: [...report.items, projectItem("codex", denied)] };
+    expect(projectSyncOutcome(partial, { ...ctx, action: "resyncAll" }).toast).toEqual({
+      kind: "warning",
+      message: t("disabledSkips.resyncAllPartial", { synced: 1, failed: 1, skipped: 1 }),
+    });
+  });
+});
+
+// F1: clearing a marker (a row owning no artifact) is work done, not "nothing planned".
+describe("removalOutcome with cleared markers", () => {
+  it("a report that only cleared a marker row is a success", () => {
+    const report: RemovalReport = {
+      targets: [],
+      central_removed: false,
+      record_deleted: false,
+      cleared_markers: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude" }],
+    };
+    const out = removalOutcome(report, { ...ctx, action: "toggle" });
+    expect(out.toast).toEqual({ kind: "success", message: "status.syncDisabled" });
+    expect(out.errors).toEqual([]);
+  });
+
+  // N1: a cleared marker is an unassignment, so bulk unassign counts it (the
+  // copy says "removed from N tools", not that an artifact was removed).
+  const marker = (tool: string) =>
+    ({ scope: "assignment", id: `m-${tool}`, project_id: "p1", skill_id: "s1", tool }) as const;
+  it("a markers-only bulk unassign counts every cleared assignment", () => {
+    const report: RemovalReport = {
+      targets: [],
+      central_removed: false,
+      record_deleted: false,
+      cleared_markers: [marker("claude"), marker("pi")],
+    };
+    expect(removalOutcome(report, { ...ctx, action: "bulkUnassign" })).toEqual({
+      toast: { kind: "success", message: t("projects.bulkUnassignSuccess", { count: 2 }) },
+      errors: [],
+      warnings: [],
+      completion: { reload: false, closeModal: true, conflict: false },
+    });
+  });
+  it("a mixed bulk unassign counts removed targets and cleared markers together", () => {
+    const report: RemovalReport = {
+      targets: [
+        {
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "codex" }],
+          path: "/work/p1/.codex/skills/s1",
+          status: { status: "removed" },
+        },
+      ],
+      central_removed: false,
+      record_deleted: false,
+      cleared_markers: [marker("claude")],
+    };
+    expect(removalOutcome(report, { ...ctx, action: "bulkUnassign" }).toast).toEqual({
+      kind: "success",
+      message: t("projects.bulkUnassignSuccess", { count: 2 }),
+    });
   });
 });

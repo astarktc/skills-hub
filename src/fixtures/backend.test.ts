@@ -4,6 +4,8 @@ import {
   commands,
   type ManagedSkillDto,
   type ProjectDto,
+  type RefreshProgressDto,
+  type SyncProgressDto,
   type ProjectViewDto,
   type SyncMode,
   type SyncStatus,
@@ -13,7 +15,7 @@ import type { TranslateFn } from "../hooks/useStatusReporter";
 import { refreshOutcome } from "../lib/reportOutcome";
 import type { CommandName } from "../lib/tauri";
 import { createFixtureBackend, type FixtureBackend, type FixtureHandlers } from "./backend";
-import { SCENARIOS, type FixtureState, type ScenarioName } from "./model";
+import { SCENARIOS, globalRoot, type FixtureProject, type FixtureState, type ScenarioName } from "./model";
 import { TOOL_REGISTRY } from "./registry";
 import { buildScenario, DETECTED_TOOLS } from "./scenarios";
 
@@ -56,7 +58,7 @@ function sink<T>() {
   return { ticks, channel };
 }
 
-const SYNC_STATUSES: readonly SyncStatus[] = ["pending", "synced", "stale", "missing", "error"];
+const SYNC_STATUSES: readonly SyncStatus[] = ["pending", "synced", "stale", "missing", "error", "disabled"];
 const SYNC_MODES: readonly SyncMode[] = ["symlink", "junction", "copy"];
 const REGISTRY_KEYS = new Set(TOOL_REGISTRY.map((t) => t.key));
 
@@ -97,7 +99,10 @@ describe.each(SCENARIOS)("scenario %s: wire invariants", (name) => {
         // Global target rows are synced, or error after a failed
         // propagation/removal. `stale` is copy drift of a project
         // assignment — never "update available".
-        expect(["synced", "error"]).toContain(target.status);
+        // A disabled row is the operator's record (per pair or per skill).
+        expect(["synced", "error", "disabled"]).toContain(target.status);
+        // A skill disabled at skill grain has no live global target.
+        if (skill.disabled_at !== null) expect(target.status).not.toBe("synced");
       }
     }
 
@@ -284,10 +289,141 @@ describe("failures", () => {
   it("keeps a row whose artifact could not be removed (ADR-0002)", async () => {
     const { handlers } = backendFor("failures");
     const train = (await handlers.getManagedSkills()).find((s) => s.name === "release-train")!;
-    const report = await handlers.unsyncSkillFromTool(train.id, "claude_code");
+    const report = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: train.id, tool: "claude_code" });
     expect(report.targets[0].status).toMatchObject({ status: "failed" });
     const after = (await handlers.getManagedSkills()).find((s) => s.id === train.id)!;
     expect(after.targets.find((t) => t.tool === "claude_code")?.status).toBe("error");
+  });
+});
+
+describe("Disabled: two grains, skipped by every automatic pass (round 19 D8)", () => {
+  const batchOf = (skill: ManagedSkillDto) => [
+    { skill_id: skill.id, name: skill.name, source_path: skill.central_path },
+  ];
+  const statusOf = (skill: ManagedSkillDto, tool: string) =>
+    skill.targets.find((row) => row.tool === tool)?.status;
+
+  it("failures holds a disabled row at each grain", async () => {
+    const { handlers } = backendFor("failures");
+    const noisy = await byName(handlers, "noisy-linter");
+    expect(noisy.disabled_at).toBeNull();
+    expect([statusOf(noisy, "codex"), statusOf(noisy, "cursor")]).toEqual(["disabled", "disabled"]);
+    const retired = await byName(handlers, "retired-playbook");
+    expect(retired.disabled_at).not.toBeNull();
+    expect(retired.targets.map((row) => row.status)).toEqual(["disabled", "disabled"]);
+    const view = await handlers.getProjectView("prj-quartermaster");
+    expect(view.assignments.find((a) => a.skill_id === retired.id)?.status).toBe("disabled");
+    // A disabled row takes no part in the project fold.
+    expect(view.project.sync_status).toBe("synced");
+  });
+
+  it("Refresh with re-assert reports disabled targets skipped and never brings them back", async () => {
+    const { handlers } = backendFor("failures");
+    const noisy = await byName(handlers, "noisy-linter");
+    const retired = await byName(handlers, "retired-playbook");
+    const report = await handlers.refreshManagedSkills(
+      [noisy.id, retired.id],
+      { reassert_auto_sync: true },
+      sink<RefreshProgressDto>().channel,
+    );
+    // Which global Tools each skill has disabled (pair grain) — every one of
+    // them must come back `skipped: disabled`, never `failed`. Other targets
+    // keep their own outcomes: noisy-linter's re-assert onto Amp still fails
+    // on the scenario's unwritable shared dir, as the Rust re-assert reports it.
+    const disabledTools: Record<string, string[]> = {
+      [noisy.id]: ["codex", "cursor"],
+      [retired.id]: retired.targets.map((row) => row.tool),
+    };
+    for (const outcome of report.skills) {
+      expect(outcome.status.status).toBe("refreshed");
+      if (outcome.status.status !== "refreshed") continue;
+      const global = outcome.status.targets.flatMap((t) =>
+        t.scope.scope === "global" ? [{ tool: t.scope.tool, status: t.status }] : [],
+      );
+      for (const tool of disabledTools[outcome.skill_id]) {
+        expect(global.filter((t) => t.tool === tool).map((t) => t.status)).toEqual([
+          { status: "skipped", reason: { reason: "disabled" } },
+        ]);
+      }
+    }
+    const noisyTargets = report.skills.find((s) => s.skill_id === noisy.id)!.status;
+    if (noisyTargets.status === "refreshed")
+      expect(
+        noisyTargets.targets
+          .filter((t) => t.status.status === "failed")
+          .map((t) => (t.status.status === "failed" ? [t.scope.tool, t.status.error.code] : null)),
+      ).toEqual([["amp", "TOOL_NOT_WRITABLE"]]);
+    const retiredTargets = report.skills.find((s) => s.skill_id === retired.id)!.status;
+    if (retiredTargets.status === "refreshed")
+      expect(retiredTargets.targets.every((t) => t.status.status === "skipped")).toBe(true);
+    const after = await byName(handlers, "noisy-linter");
+    expect([statusOf(after, "codex"), statusOf(after, "cursor")]).toEqual(["disabled", "disabled"]);
+    expect((await byName(handlers, "retired-playbook")).targets.every((t) => t.status === "disabled")).toBe(true);
+  });
+
+  it("a pair disables and enables; a pair with no row gets a marker the batch honours", async () => {
+    const { handlers } = backendFor("failures");
+    const zod = await byName(handlers, "zod-schema-first");
+    const off = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: zod.id, tool: "claude_code" });
+    expect(off.targets.map((t) => t.status.status)).toEqual(["removed"]);
+    expect(statusOf(await byName(handlers, "zod-schema-first"), "claude_code")).toBe("disabled");
+    const on = await handlers.enableSkillTargets({ kind: "skill_tool", skill_id: zod.id, tool: "claude_code" });
+    expect(on.global.map((o) => o.status.status)).toEqual(["synced"]);
+    expect(statusOf(await byName(handlers, "zod-schema-first"), "claude_code")).toBe("synced");
+
+    const prisma = await byName(handlers, "prisma-review");
+    const marker = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: prisma.id, tool: "claude_code" });
+    expect(marker.targets).toEqual([]);
+    const marked = await byName(handlers, "prisma-review");
+    expect(statusOf(marked, "claude_code")).toBe("disabled");
+    const sync = await handlers.syncSkillsToTools(batchOf(marked), ["claude_code"], { overwrite_if_same_content: true }, sink<SyncProgressDto>().channel);
+    expect(sync.map((o) => o.status)).toEqual([
+      { status: "skipped", error: { code: "TARGET_DISABLED", tool: "claude_code" } },
+    ]);
+  });
+
+  it("a disabled skill skips the batch and project re-sync; only skill-grain Enable restores it", async () => {
+    const { handlers } = backendFor("failures");
+    const retired = await byName(handlers, "retired-playbook");
+    const sync = await handlers.syncSkillsToTools(batchOf(retired), ["pi"], { overwrite_if_same_content: true }, sink<SyncProgressDto>().channel);
+    expect(sync[0].status).toEqual({ status: "skipped", error: { code: "TARGET_DISABLED", tool: "pi" } });
+    const resync = await handlers.resyncProject("prj-quartermaster");
+    expect(resync.report.items.find((i) => i.skill_id === retired.id)?.status).toEqual({
+      status: "skipped",
+      reason: { reason: "disabled" },
+    });
+    const pair = await handlers.enableSkillTargets({ kind: "skill_tool", skill_id: retired.id, tool: "claude_code" });
+    expect(pair.global[0].status).toEqual({ status: "skipped", error: { code: "TARGET_DISABLED", tool: "claude_code" } });
+
+    const on = await handlers.enableSkillTargets({ kind: "skill", skill_id: retired.id });
+    expect(on.global.map((o) => [o.tool_key, o.status.status])).toEqual([
+      ["claude_code", "synced"],
+      ["codex", "synced"],
+    ]);
+    expect(on.projects.items.map((i) => i.status.status)).toEqual(["synced"]);
+    const after = await byName(handlers, "retired-playbook");
+    expect(after.disabled_at).toBeNull();
+    expect(after.targets.every((t) => t.status === "synced")).toBe(true);
+  });
+
+  it("skill-grain Disable covers global rows and project assignments; a new assignment is recorded disabled", async () => {
+    const { handlers } = backendFor("failures");
+    const tdd = await byName(handlers, "tdd");
+    const report = await handlers.disableSkillTargets({ kind: "skill", skill_id: tdd.id });
+    expect(report.record_deleted).toBe(false);
+    const after = await byName(handlers, "tdd");
+    expect(after.disabled_at).not.toBeNull();
+    // amp/kimi_cli sit in the unwritable shared dir: kept `error` (ADR-0002).
+    expect(statusOf(after, "claude_code")).toBe("disabled");
+    expect(statusOf(after, "amp")).toBe("error");
+    const quartermaster = await handlers.getProjectView("prj-quartermaster");
+    expect(quartermaster.assignments.find((a) => a.skill_id === tdd.id)?.status).toBe("disabled");
+
+    const { report: assigned } = await handlers.bulkAssignSkill("prj-quartermaster", tdd.id);
+    expect(assigned.items.map((i) => i.status)).toEqual([
+      { status: "skipped", reason: { reason: "disabled" } },
+      { status: "skipped", reason: { reason: "disabled" } },
+    ]);
   });
 });
 
@@ -565,10 +701,10 @@ describe("N1: progress ticks only the work that reached each phase", () => {
 // ---------------------------------------------------------------------------
 
 describe("F2: unwritable dirs refuse removal too (ADR-0002)", () => {
-  it("unsync from a shared unwritable dir: one failed target, both rows kept as error", async () => {
+  it("disable from a shared unwritable dir: one failed target, both rows kept as error", async () => {
     const { handlers } = backendFor("failures");
     const docx = await byName(handlers, "docx");
-    const report = await handlers.unsyncSkillFromTool(docx.id, "amp");
+    const report = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: docx.id, tool: "amp" });
     expect(report.targets).toHaveLength(1);
     expect(report.targets[0].rows.map((r) => r.tool).sort()).toEqual(["amp", "kimi_cli"]);
     expect(report.targets[0].status).toMatchObject({ status: "failed", error: { code: "OTHER" } });
@@ -582,13 +718,177 @@ describe("F2: unwritable dirs refuse removal too (ADR-0002)", () => {
     const failed = report.targets.filter((target) => target.status.status === "failed");
     expect(failed).toHaveLength(1);
     expect(failed[0].path).toBe("/Users/alex/Projects/monorepo/.agents/skills/release-train");
-    // Never-deployed rows (pending/error/missing) had no artifact: removed.
+    // Deployed rows whose artifact is gone (missing) are removed trivially.
     expect(report.targets.filter((target) => target.status.status === "removed").length).toBeGreaterThan(0);
     expect(projects.some((p) => p.id === "prj-monorepo")).toBe(true);
     const view = await handlers.getProjectView("prj-monorepo");
+    // Never-deployed rows (pending, a failed first sync's error: synced_at
+    // null) own nothing, so no path is planned for them; the scope failed, so
+    // they are not cleared either and keep their status and diagnostic.
+    expect(report.cleared_markers).toEqual([]);
+    expect(report.targets.map((t) => t.path)).not.toContain("/Users/alex/Projects/monorepo/.agents/skills/tdd");
     expect(view.assignments).toEqual([
+      expect.objectContaining({ skill_name: "tdd", tool: "agents_skills", status: "error", synced_at: null, last_error: expect.stringContaining("Permission denied") }),
+      expect.objectContaining({ skill_name: "release-train", tool: "claude_code", status: "pending", synced_at: null }),
       expect.objectContaining({ skill_name: "release-train", tool: "agents_skills", status: "error" }),
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ticket-01 review (2026-09-29): Rust parity for F1–F4
+// ---------------------------------------------------------------------------
+
+describe("ticket-01 review: ownership, partial Disable, artifact presence", () => {
+  const fixture = () => {
+    const state = buildScenario("failures", NOW);
+    const { handlers } = createFixtureBackend(state, { latencyScale: 0, now: () => NOW });
+    const tdd = state.skills.find((s) => s.dto.name === "tdd")!;
+    const quartermaster = state.projects.find((p) => p.id === "prj-quartermaster")!;
+    const tddAssignment = () => quartermaster.assignments.find((a) => a.skill_id === tdd.dto.id)!;
+    return { state, handlers, tdd, quartermaster, tddAssignment };
+  };
+  const skip = { status: "skipped", reason: { reason: "disabled" } };
+
+  it("F2: a failed skill Disable keeps the row error; resync (one, all) and bulk assign skip it", async () => {
+    const { state, handlers, tdd, quartermaster, tddAssignment } = fixture();
+    state.unwritableProjectTools.push(`${quartermaster.id}:claude_code`);
+    await handlers.disableSkillTargets({ kind: "skill", skill_id: tdd.dto.id });
+    expect(tdd.dto.disabled_at).not.toBeNull();
+    expect(tddAssignment().status).toBe("error");
+    const failure = tddAssignment().last_error;
+    state.unwritableProjectTools = [];
+
+    const one = await handlers.resyncProject(quartermaster.id);
+    const all = await handlers.resyncAllProjects();
+    for (const report of [one.report, all.report])
+      expect(report.items.find((i) => i.skill_id === tdd.dto.id)?.status).toEqual(skip);
+    const { report: assigned } = await handlers.bulkAssignSkill(quartermaster.id, tdd.dto.id);
+    expect(assigned.items.find((i) => i.tool === "claude_code")?.status).toEqual(skip);
+    expect(tddAssignment().status).toBe("error");
+    expect(tddAssignment().last_error).toBe(failure);
+  });
+
+  it("F3: a failed shared-dir removal mints no disabled sibling; the retry settles both", async () => {
+    const { state, handlers } = fixture();
+    const docx = state.skills.find((s) => s.dto.name === "docx")!;
+    docx.dto.targets = docx.dto.targets.filter((t) => t.tool !== "amp");
+    const failed = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: docx.dto.id, tool: "amp" });
+    expect(failed.targets.map((t) => t.status.status)).toEqual(["failed"]);
+    const shared = () => docx.dto.targets.filter((t) => t.tool === "amp" || t.tool === "kimi_cli").map((t) => [t.tool, t.status]);
+    expect(shared()).toEqual([["kimi_cli", "error"]]);
+
+    state.unwritableTools = state.unwritableTools.filter((tool) => tool !== "amp" && tool !== "kimi_cli");
+    const retried = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: docx.dto.id, tool: "amp" });
+    expect(retried.targets.map((t) => t.status.status)).toEqual(["removed"]);
+    expect(shared()).toEqual([["kimi_cli", "disabled"], ["amp", "disabled"]]);
+  });
+
+  it("F4: presence is independent of status — a repeated Disable, then Delete, on a locked path keeps failing", async () => {
+    const { state, handlers, tdd, quartermaster, tddAssignment } = fixture();
+    state.unwritableProjectTools.push(`${quartermaster.id}:claude_code`);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const report = await handlers.disableSkillTargets({ kind: "skill", skill_id: tdd.dto.id });
+      const assignment = report.targets.filter((t) => t.rows.some((r) => r.scope === "assignment"));
+      expect(assignment.map((t) => t.status.status)).toContain("failed");
+      expect(tddAssignment().status).toBe("error");
+    }
+    const deleted = await handlers.deleteManagedSkill(tdd.dto.id);
+    expect(deleted.record_deleted).toBe(false);
+    expect(state.skills).toContain(tdd);
+
+    state.unwritableProjectTools = [];
+    const retry = await handlers.disableSkillTargets({ kind: "skill", skill_id: tdd.dto.id });
+    // The shared global dir stays unwritable in this scenario; the project
+    // artifact, no longer locked, is removed at last.
+    const assignmentTargets = retry.targets.filter((t) => t.rows.some((r) => r.scope === "assignment"));
+    expect(assignmentTargets.map((t) => t.status.status)).toEqual(["removed"]);
+    expect(tddAssignment().status).toBe("disabled");
+  });
+
+  it("F1: an intent-only marker gives Delete no path; the row is cleared, the occupant kept", async () => {
+    const { state, handlers } = fixture();
+    const prisma = state.skills.find((s) => s.dto.name === "prisma-review")!;
+    expect(prisma.dto.targets.some((t) => t.tool === "claude_code")).toBe(false);
+    await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: prisma.dto.id, tool: "claude_code" });
+    state.foreign.push({ tool: "claude_code", name: prisma.dto.name, fingerprint: "someone-else", linkTarget: null });
+    const occupants = state.foreign.length;
+
+    const report = await handlers.deleteManagedSkill(prisma.dto.id);
+
+    expect(report.record_deleted).toBe(true);
+    expect(report.targets.map((t) => t.path)).not.toContain(`${globalRoot("claude_code")}/${prisma.dto.name}`);
+    expect(report.cleared_markers).toEqual([expect.objectContaining({ scope: "global_target", tool: "claude_code" })]);
+    expect(state.foreign).toHaveLength(occupants);
+  });
+
+  it("F1-R1: a failed project Enable leaves the row error with no owner; no removal or re-sync takes the folder", async () => {
+    const collision = { status: "failed", error: { code: "OTHER", message: expect.stringContaining("target already exists") } };
+    type Act = (
+      handlers: FixtureHandlers,
+      ids: { skill: string; project: string },
+    ) => Promise<unknown>;
+    const acts: [string, Act][] = [
+      ["bulk unassign", async (h, ids) => {
+        const { report } = await h.bulkUnassignSkill(ids.project, ids.skill);
+        expect(report.targets).toEqual([]);
+        expect(report.cleared_markers).toEqual([expect.objectContaining({ scope: "assignment", tool: "claude_code" })]);
+      }],
+      ["toggle-off", async (h, ids) => {
+        const toggled = await h.toggleProjectSkillAssignment(ids.project, ids.skill, "claude_code");
+        expect(toggled).toMatchObject({ kind: "unassigned", report: { targets: [], cleared_markers: [expect.anything()] } });
+      }],
+      ["remove project", async (h, ids) => {
+        const { report } = await h.removeProject(ids.project);
+        expect(report.targets.map((t) => t.path)).not.toContain(occupied);
+        expect(report.cleared_markers).toEqual([expect.objectContaining({ tool: "claude_code" })]);
+      }],
+      ["Disable again, then Enable retries", async (h, ids) => {
+        const report = await h.disableSkillTargets({ kind: "skill", skill_id: ids.skill });
+        expect(report.targets.map((t) => t.path)).not.toContain(occupied);
+        const row = (await h.getProjectView(ids.project)).assignments.find((a) => a.skill_id === ids.skill)!;
+        expect(row).toMatchObject({ status: "disabled", synced_at: null });
+        const enabled = await h.enableSkillTargets({ kind: "skill", skill_id: ids.skill });
+        expect(enabled.projects.items.map((i) => i.status)).toEqual([collision]);
+      }],
+      ["Delete", async (h, ids) => {
+        const report = await h.deleteManagedSkill(ids.skill);
+        expect(report.record_deleted).toBe(true);
+        expect(report.targets.map((t) => t.path)).not.toContain(occupied);
+        expect(report.cleared_markers).toEqual([expect.objectContaining({ scope: "assignment" })]);
+      }],
+      ["resync one", async (h, ids) => {
+        const { report } = await h.resyncProject(ids.project);
+        expect(report.items.find((i) => i.skill_id === ids.skill)?.status).toEqual(collision);
+      }],
+      ["resync all", async (h, ids) => {
+        const { report } = await h.resyncAllProjects();
+        expect(report.items.find((i) => i.skill_id === ids.skill)?.status).toEqual(collision);
+      }],
+    ];
+    const occupied = "/Users/alex/Projects/fresh/.claude/skills/prisma-review";
+    for (const [label, act] of acts) {
+      const { state, handlers } = fixture();
+      const prisma = state.skills.find((s) => s.dto.name === "prisma-review")!;
+      await handlers.disableSkillTargets({ kind: "skill", skill_id: prisma.dto.id });
+      const project: FixtureProject = {
+        id: "prj-fresh", name: "fresh", path: "/Users/alex/Projects/fresh", created_at: NOW, updated_at: NOW,
+        path_exists: true, tools: ["claude_code"], gitignore: { in_gitignore: false, in_exclude: false }, assignments: [],
+      };
+      state.projects.push(project);
+      const assigned = await handlers.bulkAssignSkill(project.id, prisma.dto.id);
+      expect(assigned.report.items.map((i) => i.status), label).toEqual([skip]);
+      state.projectOccupants.push(occupied);
+
+      const enabled = await handlers.enableSkillTargets({ kind: "skill", skill_id: prisma.dto.id });
+
+      expect(enabled.projects.items.map((i) => i.status), label).toEqual([collision]);
+      expect(project.assignments[0], label).toMatchObject({ status: "error", synced_at: null, last_error: expect.stringContaining("already exists") });
+
+      await act(handlers, { skill: prisma.dto.id, project: project.id });
+
+      expect(state.projectOccupants, `${label}: the foreign folder survives`).toContain(occupied);
+    }
   });
 });
 

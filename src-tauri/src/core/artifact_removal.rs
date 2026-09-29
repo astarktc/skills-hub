@@ -15,10 +15,21 @@
 //!   and **one settlement rule**:
 //!   - presence: `symlink_metadata` decides, so a broken symlink counts as
 //!     present and is removed; an absent path is a successful removal.
-//!   - settlement: on success every attached row is deleted; on failure
-//!     every attached row is **kept** with Sync status `error` carrying the
-//!     diagnostic, so the failure stays observable and the operator can
-//!     retry (ADR-0002). Rows are never deleted blind.
+//!   - settlement: on success every attached row is deleted — or, under
+//!     [`Settlement::Disable`] (`core::skill_disable`, the only caller), kept
+//!     with Sync status `disabled` as the operator's durable "not on this
+//!     Tool"; on failure every attached row is **kept** with Sync status
+//!     `error` carrying the diagnostic, so the failure stays observable and
+//!     the operator can retry (ADR-0002). Rows are never deleted blind, and a
+//!     row is never marked `disabled` while its artifact is still there.
+//!   - ownership: a row the app never materialised (`synced_at` NULL, see
+//!     `SkillTargetRecord::owns_artifact`) owns nothing at its path,
+//!     whatever its status — a `disabled` marker, or one a failed Enable
+//!     turned `error` — so planning sets it aside as a marker: no path is
+//!     removed for it. Delete clears the row alone
+//!     ([`RemovalReport::cleared_markers`]) and Disable records it
+//!     `disabled`, both only when every target of the scope succeeded;
+//!     until then it keeps its status and `last_error`.
 //! * Per-target outcomes are report data ([`RemovalReport`]); only a store
 //!   failure fails the whole operation.
 //!
@@ -34,11 +45,12 @@
 //! reachable through the `Project` scopes, which walk assignments from the
 //! project side.
 //!
-//! Locking: the operator-facing entry points ([`remove_skill`],
-//! [`unsync_skill_targets`], [`unsync_all_skill_targets`],
-//! [`unsync_skill_from_tool`]) take the mutation guard; [`plan`] and
-//! [`execute_unlocked`] are unlocked `pub(crate)` seams (see
-//! `mutation_guard`).
+//! Locking: the operator-facing entry point here is [`remove_skill`]
+//! (Delete), which takes the mutation guard; [`plan`], [`execute_unlocked`]
+//! and [`execute_settling_unlocked`] are unlocked `pub(crate)` seams (see
+//! `mutation_guard`) composed by `project_ops`, `project_sync` and
+//! `skill_disable`. There is no unrecorded unsync: an operator's removal of
+//! a global target is a Disable (`core::skill_disable`).
 
 use std::collections::HashMap;
 use std::fmt;
@@ -66,7 +78,8 @@ pub enum RemovalScope {
     /// Deleting a Managed skill.
     Skill { skill_id: String },
     /// Every **global** Sync target of one Managed skill; project artifacts
-    /// are untouched. "Uninstall this skill from tool directories".
+    /// are untouched. Planned by a skill-grain Disable (with a `ProjectSkill`
+    /// scope per project for the assignments).
     SkillGlobal { skill_id: String },
     /// One skill × Tool pair at global scope, expanded across the tool's
     /// shared skills dir group — or, when the registry can no longer locate
@@ -102,8 +115,9 @@ pub enum RemovalScope {
         project_id: String,
         skill_id: String,
     },
-    /// Every global Sync target of every Managed skill. "Uninstall
-    /// everything from tool directories".
+    /// Every global Sync target of every Managed skill. No operator action
+    /// plans it any more (library-wide undeploy is a Disable of every
+    /// skill); kept as the removal module's widest global scope.
     EveryGlobalTarget,
 }
 
@@ -147,6 +161,11 @@ pub struct RemovalTarget {
 pub struct RemovalPlan {
     pub scope: RemovalScope,
     pub targets: Vec<RemovalTarget>,
+    /// Rows in scope that own no artifact (`owns_artifact` in `skill_store`,
+    /// whatever their status): the app never materialised anything at their
+    /// path, so no path is planned for them — whatever sits there is not ours. They
+    /// are settled as rows alone (see [`RemovalReport::cleared_markers`]).
+    pub markers: Vec<RowRef>,
     /// Set only for [`RemovalScope::Skill`]: the record whose central copy
     /// and row are removed after every target succeeded. `None` when the
     /// skill row is already gone (legacy shape) or for any other scope.
@@ -181,6 +200,12 @@ pub struct RemovalReport {
     pub central_removed: bool,
     /// The `skills` row was deleted (cascading targets and assignments).
     pub record_deleted: bool,
+    /// Rows owning no artifact (never materialised, whatever their status)
+    /// deleted without touching any path — the
+    /// app never materialised their artifact. Only the delete settlement
+    /// clears them, and only when every target of the scope succeeded (a
+    /// kept skill or project keeps its markers too).
+    pub cleared_markers: Vec<RowRef>,
 }
 
 impl RemovalReport {
@@ -207,9 +232,11 @@ impl RemovalReport {
             targets: Vec::new(),
             central_removed: false,
             record_deleted: false,
+            cleared_markers: Vec::new(),
         });
         for report in reports {
             merged.targets.extend(report.targets);
+            merged.cleared_markers.extend(report.cleared_markers);
             merged.central_removed |= report.central_removed;
             merged.record_deleted |= report.record_deleted;
         }
@@ -364,9 +391,11 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
         }
     }
 
+    let (targets, markers) = builder.finish();
     Ok(RemovalPlan {
         scope: scope.clone(),
-        targets: builder.finish(),
+        targets,
+        markers,
         skill,
     })
 }
@@ -399,6 +428,15 @@ fn push_assignments(
 ) -> Result<()> {
     let mut projects: HashMap<String, Option<ProjectRecord>> = HashMap::new();
     for assignment in assignments {
+        if !assignment.owns_artifact() {
+            builder.markers.push(RowRef::Assignment {
+                id: assignment.id,
+                project_id: assignment.project_id,
+                skill_id: assignment.skill_id,
+                tool: assignment.tool,
+            });
+            continue;
+        }
         let project = match projects.get(&assignment.project_id) {
             Some(cached) => cached.clone(),
             None => {
@@ -453,10 +491,13 @@ fn push_assignments(
 }
 
 /// Accumulates rows into targets deduped by path — a shared skills dir means
-/// one artifact with several rows.
+/// one artifact with several rows — and sets markers aside (rows owning no
+/// artifact, whatever their status): they describe no artifact of ours, so
+/// they never join (or create) a target.
 #[derive(Default)]
 struct TargetBuilder {
     targets: Vec<RemovalTarget>,
+    markers: Vec<RowRef>,
 }
 
 impl TargetBuilder {
@@ -471,18 +512,20 @@ impl TargetBuilder {
     }
 
     fn push_global(&mut self, row: &crate::core::skill_store::SkillTargetRecord) {
-        self.push(
-            PathBuf::from(&row.target_path),
-            RowRef::GlobalTarget {
-                id: row.id.clone(),
-                skill_id: row.skill_id.clone(),
-                tool: row.tool.clone(),
-            },
-        );
+        let row_ref = RowRef::GlobalTarget {
+            id: row.id.clone(),
+            skill_id: row.skill_id.clone(),
+            tool: row.tool.clone(),
+        };
+        if !row.owns_artifact() {
+            self.markers.push(row_ref);
+        } else {
+            self.push(PathBuf::from(&row.target_path), row_ref);
+        }
     }
 
-    fn finish(self) -> Vec<RemovalTarget> {
-        self.targets
+    fn finish(self) -> (Vec<RemovalTarget>, Vec<RowRef>) {
+        (self.targets, self.markers)
     }
 }
 
@@ -509,6 +552,28 @@ fn is_present(path: &Path) -> bool {
 /// every target succeeded — a failure keeps the whole skill so the operator
 /// can retry. Unlocked internal seam.
 pub(crate) fn execute_unlocked(store: &SkillStore, plan: RemovalPlan) -> Result<RemovalReport> {
+    execute_settling_unlocked(store, plan, Settlement::Delete)
+}
+
+/// How the rows of a successfully removed target are settled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Settlement {
+    /// Rows are deleted: unassign, project removal, Delete.
+    Delete,
+    /// Rows are kept with Sync status `disabled`: the durable "not on this
+    /// Tool" (`core::skill_disable`). Never deletes a skill record.
+    Disable,
+}
+
+/// [`execute_unlocked`] with the success settlement chosen by the caller.
+/// Failure settlement is the same for both (`error`, ADR-0002), and the
+/// `Skill` scope's central copy and record are removed only under
+/// [`Settlement::Delete`]. Unlocked internal seam.
+pub(crate) fn execute_settling_unlocked(
+    store: &SkillStore,
+    plan: RemovalPlan,
+    settlement: Settlement,
+) -> Result<RemovalReport> {
     let mut targets: Vec<RemovalTargetOutcome> = Vec::with_capacity(plan.targets.len());
 
     for target in plan.targets {
@@ -521,7 +586,10 @@ pub(crate) fn execute_unlocked(store: &SkillStore, plan: RemovalPlan) -> Result<
         let status = match result {
             Ok(()) => {
                 for row in &target.rows {
-                    delete_row(store, row)?;
+                    match settlement {
+                        Settlement::Delete => delete_row(store, row)?,
+                        Settlement::Disable => settle_row_as_disabled(store, row)?,
+                    }
                 }
                 RemovalTargetStatus::Removed
             }
@@ -547,9 +615,30 @@ pub(crate) fn execute_unlocked(store: &SkillStore, plan: RemovalPlan) -> Result<
         .iter()
         .any(|t| matches!(t.status, RemovalTargetStatus::Failed { .. }));
 
+    // Markers own no artifact: no path is touched for them, and until the
+    // scope settles they keep their status and `last_error` (a failed Enable's
+    // `TARGET_EXISTS` stays observable). Only when nothing failed (so a kept
+    // skill or project keeps its recorded intent, and a sibling's failed
+    // shared artifact is never hidden behind a `disabled` row): Delete clears
+    // their rows with the scope; Disable records them `disabled` (row only,
+    // `synced_at` untouched, so they stay non-owners) so the operator's "not
+    // on this Tool" is durable and Enable retries them.
+    let mut cleared_markers = Vec::new();
+    if !any_failed {
+        for marker in plan.markers {
+            match settlement {
+                Settlement::Delete => {
+                    delete_row(store, &marker)?;
+                    cleared_markers.push(marker);
+                }
+                Settlement::Disable => settle_row_as_disabled(store, &marker)?,
+            }
+        }
+    }
+
     let mut central_removed = false;
     let mut record_deleted = false;
-    if let Some(skill) = plan.skill {
+    if let (Some(skill), Settlement::Delete) = (plan.skill, settlement) {
         if !any_failed {
             let central = Path::new(&skill.central_path);
             if central.exists() {
@@ -567,6 +656,7 @@ pub(crate) fn execute_unlocked(store: &SkillStore, plan: RemovalPlan) -> Result<
         targets,
         central_removed,
         record_deleted,
+        cleared_markers,
     })
 }
 
@@ -579,6 +669,17 @@ fn delete_row(store: &SkillStore, row: &RowRef) -> Result<()> {
             tool,
             ..
         } => store.remove_project_skill_assignment(project_id, skill_id, tool),
+    }
+}
+
+fn settle_row_as_disabled(store: &SkillStore, row: &RowRef) -> Result<()> {
+    match row {
+        RowRef::GlobalTarget { id, .. } => {
+            store.transition_skill_target(id, TargetTransition::Disabled)
+        }
+        RowRef::Assignment { id, .. } => {
+            store.transition_assignment(id, AssignmentTransition::Disabled)
+        }
     }
 }
 
@@ -647,49 +748,6 @@ pub fn remove_skill(store: &SkillStore, skill_id: &str) -> Result<RemovalReport>
             },
         )?;
         Ok(report)
-    })
-}
-
-/// Remove every global Sync target of one Managed skill.
-///
-/// Mutation entry point: serialised against every other Sync-target mutation.
-pub fn unsync_skill_targets(store: &SkillStore, skill_id: &str) -> Result<RemovalReport> {
-    mutation_guard::serialized(|| {
-        planned(
-            store,
-            RemovalScope::SkillGlobal {
-                skill_id: skill_id.to_string(),
-            },
-        )
-    })
-}
-
-/// Remove every global Sync target of every Managed skill.
-///
-/// Mutation entry point: serialised against every other Sync-target mutation.
-pub fn unsync_all_skill_targets(store: &SkillStore) -> Result<RemovalReport> {
-    mutation_guard::serialized(|| planned(store, RemovalScope::EveryGlobalTarget))
-}
-
-/// Remove one skill's global Sync target for one Tool, across the tools
-/// sharing that Tool's skills directory.
-///
-/// Mutation entry point: serialised against every other Sync-target mutation.
-pub fn unsync_skill_from_tool(
-    store: &SkillStore,
-    home: &Path,
-    skill_id: &str,
-    tool_key: &str,
-) -> Result<RemovalReport> {
-    mutation_guard::serialized(|| {
-        planned(
-            store,
-            RemovalScope::SkillTool {
-                skill_id: skill_id.to_string(),
-                tool_key: tool_key.to_string(),
-                home: home.to_path_buf(),
-            },
-        )
     })
 }
 

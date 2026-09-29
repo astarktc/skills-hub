@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import type { TFunction } from 'i18next'
-import Modal from '../../shared/Modal'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import type { OverwritePending } from '../../../hooks/useOverwriteConfirmation'
 
 type OverwriteModalProps = {
@@ -11,32 +11,21 @@ type OverwriteModalProps = {
 }
 
 /**
- * Raised mid-action by the sync seam, under the loading overlay: the
- * backdrop layers above the overlay and the buttons are never disabled on
- * `loading` — the action is waiting on exactly this answer.
+ * Raised mid-action by the sync seam, while the progress overlay runs: it
+ * opens above the overlay (the most recently opened layer is on top) and its
+ * buttons are never disabled on `loading` — the action is waiting on
+ * exactly this answer.
  */
 const OverwriteModal = ({ pending, onCancel, t }: OverwriteModalProps) => {
   return (
-    <Modal
+    <ConfirmDialog
       open={Boolean(pending)}
       title={t('overwrite.title')}
-      onRequestClose={onCancel}
-      showCloseButton={false}
-      backdropClassName="modal-backdrop-over-loading"
-      footer={
-        <>
-          <button className="btn btn-secondary" onClick={onCancel}>
-            {t('overwrite.cancel')}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={() => pending?.resolve(true)}
-            disabled={!pending}
-          >
-            {t('overwrite.confirm')}
-          </button>
-        </>
-      }
+      confirmLabel={t('overwrite.confirm')}
+      cancelLabel={t('overwrite.cancel')}
+      onConfirm={() => pending?.resolve(true)}
+      onCancel={onCancel}
+      confirmDisabled={!pending}
     >
       {pending ? (
         <>
@@ -53,7 +42,7 @@ const OverwriteModal = ({ pending, onCancel, t }: OverwriteModalProps) => {
           </ul>
         </>
       ) : null}
-    </Modal>
+    </ConfirmDialog>
   )
 }
 

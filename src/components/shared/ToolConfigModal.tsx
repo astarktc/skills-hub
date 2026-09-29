@@ -1,6 +1,13 @@
 import { memo, useState } from "react";
 import type { TFunction } from "i18next";
-import Modal from "./Modal";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { ToolStatusDto } from "../skills/types";
 import { visibleToolChoices } from "../../lib/skillPresentation";
 
@@ -102,12 +109,69 @@ const ToolConfigModalInner = ({
   };
 
   return (
-    <Modal
+    <Dialog
       open
-      title={labels.title}
-      onRequestClose={onRequestClose}
-      footer={
-        <>
+      onOpenChange={(next) => {
+        if (!next) onRequestClose();
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{labels.title}</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <p className="helper-text">{labels.description}</p>
+          <label className="tool-filter-toggle">
+            <input
+              type="checkbox"
+              checked={detectedOnly}
+              onChange={() => setDetectedOnly((v) => !v)}
+            />
+            {t("toolConfigDetectedOnly")}
+          </label>
+          <div className="tool-pick-list">
+            {tools.map((tool) => (
+              <div key={tool.key} className="pick-item">
+                <label className="pick-item-label">
+                  <input
+                    className="pick-item-checkbox"
+                    type="checkbox"
+                    checked={selectedTools.has(tool.key)}
+                    onChange={() => handleToggle(tool.key)}
+                  />
+                  <span>{tool.label}</span>
+                  {installed.includes(tool.key) ? (
+                    <span className="pick-item-badge">
+                      {" "}
+                      ({t("status.installed")})
+                    </span>
+                  ) : (
+                    <span className="pick-item-badge muted">
+                      {" "}
+                      ({t("toolNotDetected")})
+                    </span>
+                  )}
+                </label>
+                {tool.constituents.length > 0 && (
+                  <span className="pick-item-subtitle">
+                    {tool.constituents.join(", ")}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+          {hasScanToggle && (
+            <label className="tool-filter-toggle">
+              <input
+                type="checkbox"
+                checked={scanSelectedOnly}
+                onChange={() => setScanSelectedOnly((v) => !v)}
+              />
+              {labels.scanToggleLabel}
+            </label>
+              )}
+        </DialogBody>
+        <DialogFooter>
           <button
             className="btn btn-secondary"
             onClick={onRequestClose}
@@ -122,60 +186,9 @@ const ToolConfigModalInner = ({
           >
             {labels.confirmLabel}
           </button>
-        </>
-  }
->
-      <p className="helper-text">{labels.description}</p>
-      <label className="tool-filter-toggle">
-        <input
-          type="checkbox"
-          checked={detectedOnly}
-          onChange={() => setDetectedOnly((v) => !v)}
-        />
-        {t("toolConfigDetectedOnly")}
-      </label>
-      <div className="tool-pick-list">
-        {tools.map((tool) => (
-          <div key={tool.key} className="pick-item">
-            <label className="pick-item-label">
-              <input
-                className="pick-item-checkbox"
-                type="checkbox"
-                checked={selectedTools.has(tool.key)}
-                onChange={() => handleToggle(tool.key)}
-              />
-              <span>{tool.label}</span>
-              {installed.includes(tool.key) ? (
-                <span className="pick-item-badge">
-                  {" "}
-                  ({t("status.installed")})
-                </span>
-              ) : (
-                <span className="pick-item-badge muted">
-                  {" "}
-                  ({t("toolNotDetected")})
-                </span>
-              )}
-            </label>
-            {tool.constituents.length > 0 && (
-              <span className="pick-item-subtitle">
-                {tool.constituents.join(", ")}
-              </span>
-            )}
-          </div>
-        ))}
-      </div>
-      {hasScanToggle && (
-        <label className="tool-filter-toggle">
-          <input
-            type="checkbox"
-            checked={scanSelectedOnly}
-            onChange={() => setScanSelectedOnly((v) => !v)}
-          />
-          {labels.scanToggleLabel}
-        </label>
-          )}
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 

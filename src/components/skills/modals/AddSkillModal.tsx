@@ -1,6 +1,13 @@
 import { memo } from 'react'
 import type { TFunction } from 'i18next'
-import Modal from '../../shared/Modal'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import type { ToolOption, ToolStatusDto } from '../types'
 
 type AddSkillModalProps = {
@@ -51,30 +58,18 @@ const AddSkillModal = ({
   t,
 }: AddSkillModalProps) => {
   return (
-    <Modal
+    <Dialog
       open={open}
-      title={t('addSkillTitle')}
-      onRequestClose={onRequestClose}
-      closeDisabled={!canClose}
-      footer={
-        <>
-          <button
-            className="btn btn-secondary"
-            onClick={onRequestClose}
-            disabled={!canClose}
-          >
-            {t('cancel')}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={onSubmit}
-            disabled={loading}
-          >
-            {addModalTab === 'local' ? t('create') : t('install')}
-          </button>
-        </>
-      }
+      dismissible={canClose}
+      onOpenChange={(next) => {
+        if (!next) onRequestClose()
+      }}
     >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t('addSkillTitle')}</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
           <div className="tabs">
             <button
               className={`tab-item${addModalTab === 'local' ? ' active' : ''}`}
@@ -174,7 +169,25 @@ const AddSkillModal = ({
             )}
             <div className="helper-text">{t('syncAfterCreate')}</div>
           </div>
-    </Modal>
+        </DialogBody>
+        <DialogFooter>
+          <button
+            className="btn btn-secondary"
+            onClick={onRequestClose}
+            disabled={!canClose}
+          >
+            {t('cancel')}
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={onSubmit}
+            disabled={loading}
+          >
+            {addModalTab === 'local' ? t('create') : t('install')}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

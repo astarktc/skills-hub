@@ -1,5 +1,6 @@
-import { memo } from 'react'
+import { memo, useId } from 'react'
 import type { TFunction } from 'i18next'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 
 type LoadingOverlayProps = {
   loading: boolean
@@ -16,15 +17,28 @@ const LoadingOverlay = ({
   onCancel,
   t,
 }: LoadingOverlayProps) => {
-  if (!loading) return null
+  // Until ticket 14 replaces it with header progress (D19), the overlay is a
+  // modal layer like any other: named, focus-trapped, top of the stack while
+  // it runs (a confirmation raised mid-action opens above it), never
+  // dismissed by Escape. The spinner and shimmer stop under reduced motion
+  // (index.css base layer); the words carry the state.
+  const titleId = useId()
+  const stageId = useId()
 
   return (
-    <div className="modal-backdrop loading-backdrop">
-      <div className="modal loading-modal" role="dialog" aria-modal="true">
+    <Dialog open={loading} dismissible={false} onOpenChange={() => {}}>
+      <DialogContent
+        size="md"
+        showCloseButton={false}
+        aria-labelledby={titleId}
+        aria-describedby={stageId}
+      >
         <div className="loading-content">
-          <div className="loader-spinner" />
-          <div className="loading-text">{t('processingTitle')}</div>
-          <div className="loading-stage">
+          <div className="loader-spinner" aria-hidden="true" />
+          <div className="loading-text" id={titleId}>
+            {t('processingTitle')}
+          </div>
+          <div className="loading-stage" id={stageId} role="status">
             {actionMessage ?? t('processingTipShort')}
           </div>
           {loadingStartAt ? (
@@ -45,8 +59,8 @@ const LoadingOverlay = ({
             </button>
           ) : null}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 

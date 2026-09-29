@@ -47,6 +47,7 @@ export type { BatchTargetOutcome } from "../../bindings";
 export type { BatchTargetStatus } from "../../bindings";
 export type { SyncProgressDto } from "../../bindings";
 export type { RemovalReport } from "../../bindings";
+export type { DisableScope, EnableReport } from "../../bindings";
 export type { RemovalTargetOutcome } from "../../bindings";
 export type { RowRef } from "../../bindings";
 export type { RemovalTargetStatus } from "../../bindings";

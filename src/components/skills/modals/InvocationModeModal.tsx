@@ -1,6 +1,13 @@
 import { useId, useState } from "react";
 import type { TFunction } from "i18next";
-import Modal from "../../shared/Modal";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { InvocationMode, ManagedSkill } from "../types";
 import { INVOCATION_MODES, INVOCATION_LABEL_KEY, INVOCATION_TOOLTIP_KEY } from "../../../lib/skillPresentation";
 
@@ -20,35 +27,43 @@ export default function InvocationModeModal({ skill, loading, onRequestClose, on
   // Saving the same override is meaningful when it resolves a conflict.
   const unchanged = selection === current && !skill.invocation_override?.conflict;
   return (
-    <Modal
+    <Dialog
       open
-      title={t("invocationEdit.title", { name: skill.name })}
-      onRequestClose={onRequestClose}
-      closeDisabled={loading}
-      footer={<>
-        <button type="button" className="btn btn-secondary" disabled={loading} onClick={onRequestClose}>{t("cancel")}</button>
-        <button type="submit" form={id} className="btn btn-primary" disabled={loading || unchanged}>{t("invocationEdit.save")}</button>
-      </>}
+      dismissible={!loading}
+      onOpenChange={(next) => {
+        if (!next) onRequestClose();
+      }}
     >
-      <form id={id} onSubmit={(event) => { event.preventDefault(); if (!loading && !unchanged) onConfirm(selection); }}>
-        {skill.invocation_override?.conflict ? (
-          <p className="invocation-edit-warning" role="status">{t("invocationEdit.conflictBanner", { mode: base })}</p>
-        ) : null}
-        <fieldset className="invocation-edit-options" disabled={loading} aria-describedby={`${id}-note`}>
-          <legend className="label">{t("invocationEdit.choose")}</legend>
-          <label className="invocation-edit-option">
-            <input type="radio" name={`${id}-mode`} checked={selection === null} onChange={() => setSelection(null)} />
-            <span>{t("invocationEdit.follow", { mode: base })}</span>
-          </label>
-          {INVOCATION_MODES.map((mode) => (
-            <label key={mode} className="invocation-edit-option">
-              <input type="radio" name={`${id}-mode`} checked={selection === mode} onChange={() => setSelection(mode)} />
-              <span><span>{t(INVOCATION_LABEL_KEY[mode])}</span><span className="helper-text">{t(INVOCATION_TOOLTIP_KEY[mode])}</span></span>
-            </label>
-          ))}
-        </fieldset>
-        <p id={`${id}-note`} className="helper-text">{t("invocationEdit.note")}</p>
-      </form>
-    </Modal>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t("invocationEdit.title", { name: skill.name })}</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <form id={id} onSubmit={(event) => { event.preventDefault(); if (!loading && !unchanged) onConfirm(selection); }}>
+            {skill.invocation_override?.conflict ? (
+              <p className="invocation-edit-warning" role="status">{t("invocationEdit.conflictBanner", { mode: base })}</p>
+            ) : null}
+            <fieldset className="invocation-edit-options" disabled={loading} aria-describedby={`${id}-note`}>
+              <legend className="label">{t("invocationEdit.choose")}</legend>
+              <label className="invocation-edit-option">
+                <input type="radio" name={`${id}-mode`} checked={selection === null} onChange={() => setSelection(null)} />
+                <span>{t("invocationEdit.follow", { mode: base })}</span>
+              </label>
+              {INVOCATION_MODES.map((mode) => (
+                <label key={mode} className="invocation-edit-option">
+                  <input type="radio" name={`${id}-mode`} checked={selection === mode} onChange={() => setSelection(mode)} />
+                  <span><span>{t(INVOCATION_LABEL_KEY[mode])}</span><span className="helper-text">{t(INVOCATION_TOOLTIP_KEY[mode])}</span></span>
+                </label>
+              ))}
+            </fieldset>
+            <p id={`${id}-note`} className="helper-text">{t("invocationEdit.note")}</p>
+          </form>
+        </DialogBody>
+        <DialogFooter>
+          <button type="button" className="btn btn-secondary" disabled={loading} onClick={onRequestClose}>{t("cancel")}</button>
+          <button type="submit" form={id} className="btn btn-primary" disabled={loading || unchanged}>{t("invocationEdit.save")}</button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

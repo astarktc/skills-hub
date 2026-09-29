@@ -339,7 +339,7 @@ fn set_propagates_to_copy_fallback_target() {
             mode: SyncMode::Copy,
             status: SyncStatus::Synced,
             last_error: None,
-            synced_at: None,
+            synced_at: Some(1),
         })
         .unwrap();
     f.set(Some(InvocationMode::Neither)).unwrap();

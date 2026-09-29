@@ -1,5 +1,6 @@
 import type {
   BatchTargetOutcome,
+  EnableReport,
   ImportReport,
   InstallResultDto,
   InvocationEditReport,
@@ -57,18 +58,25 @@ function refreshCounts(report: RefreshReport) {
   return counts;
 }
 
+/**
+ * `removed` / `failed` count the rows of removed / kept targets; `cleared`
+ * counts rows settled without touching any path (`cleared_markers`: rows that
+ * owned no artifact), so an unassignment that only cleared such a row still
+ * counts as one without claiming an artifact was removed.
+ */
 function removalCounts(report: RemovalReport) {
-  const counts = { removed: 0, failed: 0 };
+  const counts = { removed: 0, failed: 0, cleared: report.cleared_markers.length };
   for (const target of report.targets)
     counts[target.status.status] += target.rows.length;
   return counts;
 }
 
 function projectSyncCounts(report: ProjectSyncReport) {
-  const counts = { synced: 0, alreadyAssigned: 0, failed: 0 };
+  const counts = { synced: 0, alreadyAssigned: 0, failed: 0, skipped: 0 };
   for (const { status } of report.items) {
     if (status.status === "synced") counts.synced++;
     else if (status.status === "already_assigned") counts.alreadyAssigned++;
+    else if (status.status === "skipped") counts.skipped++;
     else counts.failed++;
   }
   return counts;
@@ -249,7 +257,10 @@ export function removalOutcome(
   // Zero targets is neither success nor failure: nothing was planned, so
   // nothing was removed and whatever the operator clicked is still there.
   // `failed` counts failures and must keep meaning exactly that.
-  const nothingPlanned = !failed && report.targets.length === 0;
+  // Clearing a marker (a row that owned no artifact: the app never
+  // materialised it, whatever its status) is work done, not "nothing planned", even though no path was touched.
+  const nothingPlanned =
+    !failed && report.targets.length === 0 && report.cleared_markers.length === 0;
   out.completion.closeModal = !failed && !nothingPlanned;
   if (ctx.action === "toggle") out.completion.reload = !failed;
   if (ctx.action === "bulkUnassign") out.completion.reload = false;
@@ -274,13 +285,15 @@ export function removalOutcome(
       ? {
           kind: "warning",
           message: ctx.t("projects.bulkUnassignPartial", {
-            count: counts.removed,
+            count: counts.removed + counts.cleared,
             failed: counts.failed,
           }),
         }
       : {
           kind: "success",
-          message: ctx.t("projects.bulkUnassignSuccess", { count: counts.removed }),
+          message: ctx.t("projects.bulkUnassignSuccess", {
+            count: counts.removed + counts.cleared,
+          }),
         };
   return out;
 }
@@ -291,14 +304,18 @@ export function removalOutcome(
  * item is a row the backend kept with status `error` (its cell is red); the
  * fold names each one by skill and tool label. There is no conflict or skip
  * outcome here, so the precedence collapses to failure › success; an
- * `already_assigned` item is neither. Nothing reloads: the project world
+ * `already_assigned` or `skipped` (Disabled) item is neither — except that a
+ * toggle-on of a disabled skill says the assignment was recorded, not synced.
+ * Nothing reloads: the project world
  * applies the view the mutation returned.
  *
  * - `toggleOn`: success confirms like the global toggle; a failure is its
  *   error entry alone (no success claim, no summary for a batch of one).
  * - `bulkAssign`: success counts the tools newly assigned; a failure adds
- *   a partial summary.
- * - `resync` / `resyncAll`: synced/failed summary, as before the report.
+ *   a partial summary; disabled skips are counted as "not synced (disabled)",
+ *   never as "already assigned" or as failures.
+ * - `resync` / `resyncAll`: synced/failed summary, plus the disabled-skip
+ *   count when there is one.
  */
 export function projectSyncOutcome(
   report: ProjectSyncReport,
@@ -331,42 +348,51 @@ export function projectSyncOutcome(
   const { t } = ctx;
   switch (ctx.action) {
     case "toggleOn":
-      if (!failed) out.toast = { kind: "success", message: t("status.syncEnabled") };
+      if (!failed)
+        out.toast = counts.skipped > 0
+          ? { kind: "warning", message: t("projects.assignedWhileDisabled") }
+          : { kind: "success", message: t("status.syncEnabled") };
       break;
-    case "bulkAssign":
-      out.toast = failed
-        ? {
-            kind: "warning",
-            message: t("projects.bulkAssignPartial", {
-              assigned: counts.synced,
-              failed: counts.failed,
-            }),
-          }
-        : {
-            kind: "success",
-            message:
-              counts.synced > 0
-                ? t("projects.bulkAssignSuccess", { count: counts.synced })
-                : t("projects.bulkAssignNothing"),
-          };
+    case "bulkAssign": {
+      // A disabled skip is an assignment recorded but not synced — never
+      // "already assigned", never a failure.
+      const { synced: assigned, failed: failures, skipped } = counts;
+      if (failed)
+        out.toast = {
+          kind: "warning",
+          message: skipped > 0
+            ? t("disabledSkips.bulkAssignPartial", { assigned, failed: failures, skipped })
+            : t("projects.bulkAssignPartial", { assigned, failed: failures }),
+        };
+      else if (skipped > 0)
+        out.toast = {
+          kind: "warning",
+          message: assigned > 0
+            ? t("disabledSkips.bulkAssignMixed", { assigned, skipped })
+            : t("disabledSkips.bulkAssignNotSynced", { count: skipped }),
+        };
+      else
+        out.toast = {
+          kind: "success",
+          message: assigned > 0
+            ? t("projects.bulkAssignSuccess", { count: assigned })
+            : t("projects.bulkAssignNothing"),
+        };
       break;
+    }
     case "resync":
     case "resyncAll": {
       const all = ctx.action === "resyncAll";
-      out.toast = failed
-        ? {
-            kind: "warning",
-            message: t(all ? "projects.resyncAllPartial" : "projects.resyncPartial", {
-              synced: counts.synced,
-              failed: counts.failed,
-            }),
-          }
-        : {
-            kind: "success",
-            message: t(all ? "projects.resyncAllSuccess" : "projects.resyncSuccess", {
-              synced: counts.synced,
-            }),
-          };
+      const { synced, failed: failures, skipped } = counts;
+      const key = `${skipped > 0 ? "disabledSkips" : "projects"}.${all ? "resyncAll" : "resync"}${failed ? "Partial" : "Success"}`;
+      out.toast = {
+        kind: failed ? "warning" : "success",
+        message: t(key, {
+          synced,
+          ...(failed ? { failed: failures } : {}),
+          ...(skipped > 0 ? { skipped } : {}),
+        }),
+      };
       break;
     }
   }
@@ -446,6 +472,12 @@ class NotInstalledSkips {
   }
 }
 
+/** A pair the batch skipped because it is Disabled (either grain) — by
+ * design, so every batch fold treats it as a skip, never a failure. */
+function isDisabledSkip(result: BatchTargetOutcome): boolean {
+  return result.status.status === "skipped" && result.status.error.code === "TARGET_DISABLED";
+}
+
 /** Bulk and install surface not-detected skips as per-tool warnings and
  * other bulk skips silently; selected install targets surface unwritable
  * skips; an explicit toggle surfaces every non-success, including
@@ -456,9 +488,25 @@ export function syncOutcome(
 ): Outcome<PlainEntry> {
   const out = empty();
   const skips = new NotInstalledSkips();
+  let disabledSkip = false;
   for (const result of report) {
     const status = result.status;
     if (status.status === "synced") continue;
+    // A Disabled pair is skipped by design, never a failure: silent in bulk
+    // and install; an explicit toggle says why nothing happened.
+    if (isDisabledSkip(result)) {
+      if (ctx.action === "toggle") {
+        disabledSkip = true;
+        out.warnings.push({
+          title: ctx.t("errors.syncSkippedDisabledTitle", {
+            name: result.skill_name,
+            tool: label(ctx, result.tool_key),
+          }),
+          message: errorMessage(ctx, status.error),
+        });
+      }
+      continue;
+    }
     if (ctx.action !== "toggle" && skips.absorb(result)) continue;
     if (
       status.status !== "failed" &&
@@ -481,7 +529,7 @@ export function syncOutcome(
   out.completion.closeModal = out.errors.length === 0;
   out.completion.reload = ctx.action !== "toggle" || out.errors.length === 0;
   // No new copy: failed explicit actions have their error entries, not a success.
-  if (ctx.action !== "install" && out.errors.length === 0)
+  if (ctx.action !== "install" && out.errors.length === 0 && !disabledSkip)
     out.toast = {
       kind: "success",
       message: ctx.t(
@@ -489,6 +537,32 @@ export function syncOutcome(
       ),
     };
   return out;
+}
+
+/**
+ * Enable is a first sync again: its global rows fold like an explicit toggle
+ * (a directory in the way names its path; a pair still disabled at skill grain
+ * is a warning), its project rows like a toggle-on. One success toast only
+ * when every target synced. Always reloads: enabling rewrites rows even when
+ * the sync then fails.
+ */
+export function enableOutcome(
+  report: EnableReport,
+  ctx: ReportContext,
+): Outcome<PlainEntry> {
+  const global = syncOutcome(report.global, { ...ctx, action: "toggle" });
+  const projects = projectSyncOutcome(report.projects, { ...ctx, action: "toggleOn" });
+  const errors = [...global.errors, ...projects.errors];
+  const warnings = [...global.warnings, ...projects.warnings];
+  return {
+    toast:
+      errors.length || warnings.length
+        ? null
+        : { kind: "success", message: ctx.t("status.targetsEnabled") },
+    errors,
+    warnings,
+    completion: { reload: true, closeModal: errors.length === 0, conflict: false },
+  };
 }
 
 export function importOutcome(
@@ -515,6 +589,9 @@ export function importOutcome(
       );
     for (const target of group.status.targets) {
       if (target.status.status === "synced" || skips.absorb(target)) continue;
+      // The same skip policy as the bulk sync fold: a Disabled pair is
+      // skipped by design, silently — never a sync failure.
+      if (isDisabledSkip(target)) continue;
       out.errors.push({
         title: t("errors.syncFailedTitle", {
           name,

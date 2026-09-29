@@ -63,7 +63,19 @@ export function useSettingsState({
   const [themePreference, setThemePreference] = useState<
     "system" | "light" | "dark"
   >(() => storedThemePreference.read());
-  const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
+  // Seeded from the media query (not a "light" placeholder) so the first
+  // effect run writes the same theme the pre-paint script in index.html set.
+  const [systemTheme, setSystemTheme] = useState<"light" | "dark">(() =>
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light",
+  );
+  // The one resolved theme. This hook is its single writer on <html>
+  // (data-theme + color-scheme) and returns it for the rare JS consumer that
+  // needs the value as data (ADR-0006 §4); styling reads tokens instead.
+  const resolvedTheme: "light" | "dark" =
+    themePreference === "system" ? systemTheme : themePreference;
   const [zoomLevel, setZoomLevel] = useState(PRE_LOAD_PLACEHOLDERS.zoomLevel);
   const [storagePath, setStoragePath] = useState<string>(t("notAvailable"));
   const [gitCacheCleanupDays, setGitCacheCleanupDays] = useState<number>(
@@ -159,12 +171,10 @@ export function useSettingsState({
 
   useEffect(() => {
     if (typeof document === "undefined") return;
-    const resolvedTheme =
-      themePreference === "system" ? systemTheme : themePreference;
     document.documentElement.dataset.theme = resolvedTheme;
     document.documentElement.style.colorScheme = resolvedTheme;
     storedThemePreference.write(themePreference);
-  }, [systemTheme, themePreference]);
+  }, [resolvedTheme, themePreference]);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -359,6 +369,7 @@ export function useSettingsState({
 
   return {
     themePreference,
+    resolvedTheme,
     zoomLevel,
     storagePath,
     gitCacheCleanupDays,

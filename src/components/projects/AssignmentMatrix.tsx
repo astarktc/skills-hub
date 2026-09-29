@@ -337,7 +337,11 @@ const MatrixRow = memo(
           const cellKey = `${skill.id}:${tool.tool}`;
           const isPending = pendingCells.has(cellKey);
           const assignment = assignmentMap.get(`${skill.id}:${tool.tool}`);
-          const isGlobal = skill.targets.some((gt) => gt.tool === tool.tool);
+          // A disabled global target is the operator's "not on this Tool", not
+          // a global deployment: it neither locks the cell nor marks it.
+          const isGlobal = skill.targets.some(
+            (gt) => gt.tool === tool.tool && gt.status !== "disabled",
+          );
           const lockedGlobal = isGlobal && !assignment;
           const statusClass = isPending
             ? SYNC_STATUS_CLASS.pending

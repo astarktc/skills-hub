@@ -31,6 +31,7 @@ pub mod repo_subpath;
 pub mod repoint;
 pub mod settings;
 pub mod skill_catalog;
+pub mod skill_disable;
 pub mod skill_discovery;
 pub mod skill_edits;
 pub mod skill_files;

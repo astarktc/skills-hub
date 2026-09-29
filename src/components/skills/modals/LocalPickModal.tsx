@@ -1,6 +1,13 @@
 import { memo } from 'react'
 import type { TFunction } from 'i18next'
-import Modal from '../../shared/Modal'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import type { LocalSkillCandidate } from '../types'
 
 type LocalPickModalProps = {
@@ -44,21 +51,17 @@ const LocalPickModal = ({
   }
 
   return (
-    <Modal
+    <Dialog
       open={open}
-      title={t('localPickTitle')}
-      onRequestClose={onRequestClose}
-      footer={
-        <>
-          <button className="btn btn-secondary" onClick={onCancel} disabled={loading}>
-            {t('cancel')}
-          </button>
-          <button className="btn btn-primary" onClick={onInstall} disabled={loading}>
-            {t('installSelected')}
-          </button>
-        </>
-      }
+      onOpenChange={(next) => {
+        if (!next) onRequestClose()
+      }}
     >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t('localPickTitle')}</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
           <p className="label">{t('localPickBody')}</p>
           <div className="pick-toolbar">
             <label className="inline-checkbox">
@@ -110,7 +113,17 @@ const LocalPickModal = ({
               </div>
             ))}
           </div>
-    </Modal>
+        </DialogBody>
+        <DialogFooter>
+          <button className="btn btn-secondary" onClick={onCancel} disabled={loading}>
+            {t('cancel')}
+          </button>
+          <button className="btn btn-primary" onClick={onInstall} disabled={loading}>
+            {t('installSelected')}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

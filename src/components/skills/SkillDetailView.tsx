@@ -10,11 +10,9 @@ import {
   FolderOpen,
   GitBranch,
 } from "lucide-react";
+// Class output only (useInlineStyles={false}): colours are prose-layer
+// rules reading tokens (styles/prose.css), so the theme is never read here.
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import {
-  oneLight,
-  oneDark,
-} from "react-syntax-highlighter/dist/esm/styles/prism";
 import Markdown from "react-markdown";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
@@ -30,6 +28,12 @@ import {
   repoInfo,
   sourceKind,
 } from "../../lib/skillPresentation";
+
+// An empty theme object for every highlighter: even with
+// useInlineStyles={false} the library builds the <code> tag's inline style
+// from its `style` prop, whose default is Prism's light theme (colour: black,
+// a white text-shadow), measured 1.17:1 on the dark prose ground.
+const NO_INLINE_THEME = {};
 
 // ─── Types ───────────────────────────────────────────
 type SkillDetailViewProps = {
@@ -251,15 +255,14 @@ FileTreeNode.displayName = "FileTreeNode";
 type FileContentRendererProps = {
   filename: string;
   content: string;
-  isDark: boolean;
 };
 
 const FileContentRenderer = memo(
-  ({ filename, content, isDark }: FileContentRendererProps) => {
+  ({ filename, content }: FileContentRendererProps) => {
     if (isMarkdown(filename)) {
       const { meta, body } = parseFrontmatter(content);
       return (
-        <div className="markdown-body">
+        <div className="prose max-w-[860px] px-8 py-6">
           {meta && (
             <table>
               <thead>
@@ -293,14 +296,10 @@ const FileContentRenderer = memo(
                 }
                 return (
                   <SyntaxHighlighter
-                    style={isDark ? oneDark : oneLight}
+                    useInlineStyles={false}
+                    style={NO_INLINE_THEME}
                     language={match[1]}
                     PreTag="div"
-                    customStyle={{
-                      margin: 0,
-                      borderRadius: 6,
-                      fontSize: 13,
-                    }}
                   >
                     {String(children).replace(/\n$/, "")}
                   </SyntaxHighlighter>
@@ -317,51 +316,35 @@ const FileContentRenderer = memo(
     const lang = getLang(filename);
     if (lang) {
       return (
-        <SyntaxHighlighter
-          style={isDark ? oneDark : oneLight}
-          language={lang}
-          showLineNumbers
-          lineNumberStyle={{
-            minWidth: "3em",
-            paddingRight: "1em",
-            color: isDark ? "#636d83" : "#9ca3af",
-            userSelect: "none",
-          }}
-          customStyle={{
-            margin: 0,
-            padding: "16px 0",
-            background: "transparent",
-            fontSize: 13,
-            lineHeight: 1.7,
-          }}
-        >
-          {content}
-        </SyntaxHighlighter>
+        <div className="prose">
+          <SyntaxHighlighter
+            useInlineStyles={false}
+            style={NO_INLINE_THEME}
+            className="code-file"
+            language={lang}
+            showLineNumbers
+            lineNumberStyle={{ minWidth: "3em", paddingRight: "1em" }}
+          >
+            {content}
+          </SyntaxHighlighter>
+        </div>
       );
     }
 
     // Plain text with line numbers
     return (
-      <SyntaxHighlighter
-        style={isDark ? oneDark : oneLight}
-        language="text"
-        showLineNumbers
-        lineNumberStyle={{
-          minWidth: "3em",
-          paddingRight: "1em",
-          color: isDark ? "#636d83" : "#9ca3af",
-          userSelect: "none",
-        }}
-        customStyle={{
-          margin: 0,
-          padding: "16px 0",
-          background: "transparent",
-          fontSize: 13,
-          lineHeight: 1.7,
-        }}
-      >
-        {content}
-      </SyntaxHighlighter>
+      <div className="prose">
+        <SyntaxHighlighter
+          useInlineStyles={false}
+          style={NO_INLINE_THEME}
+          className="code-file"
+          language="text"
+          showLineNumbers
+          lineNumberStyle={{ minWidth: "3em", paddingRight: "1em" }}
+        >
+          {content}
+        </SyntaxHighlighter>
+      </div>
     );
   },
 );
@@ -385,8 +368,6 @@ const SkillDetailView = ({
   const [loadingFiles, setLoadingFiles] = useState(true);
   const [loadingContent, setLoadingContent] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
-  const isDark = document.documentElement.getAttribute("data-theme") === "dark";
 
   const tree = useMemo(() => buildTree(files), [files]);
 
@@ -578,7 +559,6 @@ const SkillDetailView = ({
                   <FileContentRenderer
                     filename={activeFile}
                     content={fileContent}
-                    isDark={isDark}
                   />
                 </div>
               )}

@@ -16,7 +16,7 @@ const LEGACY_APP_IDENTIFIERS: &[&str] = &[
 ];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 9;
+const SCHEMA_VERSION: i32 = 10;
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -171,6 +171,35 @@ pub struct SkillTargetRecord {
     pub synced_at: Option<i64>,
 }
 
+/// The one artifact-ownership rule for both Sync-target tables, independent
+/// of the row's lifecycle status: a row owns the artifact at its path only
+/// once a sync of ours succeeded there, which every success writer records
+/// as `synced_at` (`Recorded`/`SyncCompleted` — global first sync, project
+/// assign/resync/Enable, Propagation, relocation — and every earlier version
+/// of the app). A row the app never materialised (`synced_at` NULL) owns
+/// nothing, whatever its status: the pair-grain marker
+/// (`TargetTransition::DisabledRecorded`), the assignment recorded `disabled`
+/// for a disabled skill, the "Keep existing" decline of D9 — and the same rows
+/// after a failed first sync (Enable's `TARGET_EXISTS`) turned them `error`, or
+/// a reconcile re-derived their status. They record intent and where the
+/// target *would* be, and must never make whatever sits at that path
+/// removable or overwritable. No lifecycle transition clears `synced_at`
+/// (`Disabled`/`SyncFailed`/`Reconciled` keep it), so an owner stays one; only
+/// a successful sync makes a row an owner. Unknown ownership (a legacy or
+/// partially written row) is treated as none: at worst an artifact of ours is
+/// left on disk, never someone else's deleted. Readers: `artifact_removal::plan`,
+/// the project re-sync and Propagation overwrite policy, target relocation.
+fn owns_artifact(synced_at: Option<i64>) -> bool {
+    synced_at.is_some()
+}
+
+impl SkillTargetRecord {
+    /// See [`owns_artifact`]: a sync of ours succeeded at this row's path.
+    pub fn owns_artifact(&self) -> bool {
+        owns_artifact(self.synced_at)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ProjectRecord {
     pub id: String,
@@ -222,6 +251,13 @@ pub struct ProjectSkillAssignmentRecord {
     pub synced_at: Option<i64>,
     pub content_hash: Option<String>,
     pub created_at: i64,
+}
+
+impl ProjectSkillAssignmentRecord {
+    /// See [`owns_artifact`]: a sync of ours succeeded at this row's path.
+    pub fn owns_artifact(&self) -> bool {
+        owns_artifact(self.synced_at)
+    }
 }
 
 /// The store seam for the lifecycle columns: parse the stored `mode` and
@@ -289,6 +325,22 @@ pub enum TargetTransition<'a> {
     /// A sync failed; `error` is the diagnostic chain, and the row keeps its
     /// recorded mode and path so the failure stays observable.
     SyncFailed { error: &'a str },
+    /// The row's artifact was removed at the operator's request and the row
+    /// is kept as the durable "not on this Tool" record (`Disabled`). Mode,
+    /// path and `synced_at` are kept: they describe where the target was.
+    Disabled,
+    /// The insert-shaped sibling of [`Disabled`](Self::Disabled): a pair
+    /// with no row yet is recorded `Disabled` under the caller's
+    /// `target_id` (an existing row keeps its id and only flips status), so
+    /// a Tool the skill was never on can be switched off before any sync or
+    /// re-assert reaches it. `mode` and `target_path` are where the target
+    /// *would* be.
+    DisabledRecorded {
+        skill_id: &'a str,
+        tool: &'a str,
+        mode: SyncMode,
+        target_path: &'a str,
+    },
 }
 
 /// A typed write to an assignment's lifecycle columns — the only way the
@@ -307,6 +359,9 @@ pub enum AssignmentTransition<'a> {
     /// A sync or Artifact removal failed; `error` is the diagnostic chain. The
     /// recorded hash is dropped (the target's content is unknown).
     SyncFailed { error: &'a str },
+    /// The assignment's artifact was removed by a skill-level Disable and the
+    /// row kept as its record. The hash is dropped (nothing is deployed).
+    Disabled,
     /// A reconcile pass decided the row's true status (see
     /// `sync_status::next_status`). `content_hash` is the confirmed source
     /// hash for a `Synced` copy, `None` otherwise. Mode and `synced_at` are
@@ -370,6 +425,8 @@ impl SkillStore {
                 tx.execute_batch(
                     "ALTER TABLE skills ADD COLUMN imported_from_tool TEXT NULL;",
                 )?;
+                // V10: skill-level Disabled marker
+                tx.execute_batch("ALTER TABLE skills ADD COLUMN disabled_at INTEGER NULL;")?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version < SCHEMA_VERSION {
                 // Incremental migrations
@@ -428,6 +485,12 @@ impl SkillStore {
                     tx.execute_batch(
                         "ALTER TABLE skills ADD COLUMN imported_from_tool TEXT NULL;",
                     )?;
+                }
+                if user_version < 10 && !column_exists(&tx, "skills", "disabled_at")? {
+                    // Skill-level Disabled (see **Disabled** in `CONTEXT.md`):
+                    // when set, the skill is off everywhere until enabled.
+                    // Presence-guarded like V9 so the step is idempotent.
+                    tx.execute_batch("ALTER TABLE skills ADD COLUMN disabled_at INTEGER NULL;")?;
                 }
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
@@ -801,6 +864,52 @@ impl SkillStore {
             let mut items = Vec::new();
             for row in rows {
                 items.push(row?);
+            }
+            Ok(items)
+        })
+    }
+
+    /// When the skill was disabled at skill grain, or `None` when it is not
+    /// (see **Disabled** in `CONTEXT.md`).
+    ///
+    /// The marker is deliberately **not** a [`SkillRecord`] field: every
+    /// writer of the skills row goes through [`Self::upsert_skill`] with a
+    /// whole record, so a finalize or re-point that rebuilt the record would
+    /// silently re-enable the skill. Only `skill_disable` writes it, through
+    /// [`Self::set_skill_disabled_at`]; readers ask here.
+    pub fn skill_disabled_at(&self, skill_id: &str) -> Result<Option<i64>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare("SELECT disabled_at FROM skills WHERE id = ?1")?;
+            let mut rows = stmt.query(params![skill_id])?;
+            match rows.next()? {
+                Some(row) => Ok(row.get(0)?),
+                None => Ok(None),
+            }
+        })
+    }
+
+    /// Set (`Some(now)`) or clear (`None`) the skill-level Disabled marker.
+    pub fn set_skill_disabled_at(&self, skill_id: &str, at: Option<i64>) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE skills SET disabled_at = ?1 WHERE id = ?2",
+                params![at, skill_id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Every skill disabled at skill grain, with its marker — one read for
+    /// the catalog instead of one per skill.
+    pub fn disabled_skills(&self) -> Result<HashMap<String, i64>> {
+        self.with_conn(|conn| {
+            let mut stmt =
+                conn.prepare("SELECT id, disabled_at FROM skills WHERE disabled_at IS NOT NULL")?;
+            let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            let mut items = HashMap::new();
+            for row in rows {
+                let (id, at): (String, i64) = row?;
+                items.insert(id, at);
             }
             Ok(items)
         })
@@ -1219,6 +1328,33 @@ impl SkillStore {
             TargetTransition::SyncFailed { error } => {
                 (SyncStatus::Error, Some(error), None, None, None)
             }
+            TargetTransition::Disabled => (SyncStatus::Disabled, None, None, None, None),
+            TargetTransition::DisabledRecorded {
+                skill_id,
+                tool,
+                mode,
+                target_path,
+            } => {
+                return self.with_conn(|conn| {
+                    conn.execute(
+                        "INSERT INTO skill_targets (
+                           id, skill_id, tool, target_path, mode, status, last_error, synced_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL)
+                         ON CONFLICT(skill_id, tool) DO UPDATE SET
+                           status = excluded.status,
+                           last_error = NULL",
+                        params![
+                            target_id,
+                            skill_id,
+                            tool,
+                            target_path,
+                            mode.as_str(),
+                            SyncStatus::Disabled.as_str()
+                        ],
+                    )?;
+                    Ok(())
+                });
+            }
         };
         self.with_conn(|conn| {
             conn.execute(
@@ -1262,6 +1398,7 @@ impl SkillStore {
             AssignmentTransition::SyncFailed { error } => {
                 (SyncStatus::Error, Some(error), None, None, None)
             }
+            AssignmentTransition::Disabled => (SyncStatus::Disabled, None, None, None, None),
             AssignmentTransition::Reconciled {
                 status,
                 content_hash,

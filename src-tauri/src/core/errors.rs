@@ -239,6 +239,13 @@ pub enum CommandError {
     ToolNotInstalled {
         tool: String,
     },
+    /// A sync fan-out skipped this (skill, Tool) pair because the operator
+    /// disabled it — at the pair or skill grain (see **Disabled** in
+    /// `CONTEXT.md`). A skip reason, never a failure: only Enable lifts it.
+    TargetDisabled {
+        /// Registry key of the Tool the pair names.
+        tool: String,
+    },
     TargetExists {
         path: String,
     },
@@ -517,6 +524,9 @@ impl From<GlobalSyncError> for CommandError {
         match err {
             GlobalSyncError::ToolNotInstalled { tool_key } => {
                 CommandError::ToolNotInstalled { tool: tool_key }
+            }
+            GlobalSyncError::TargetDisabled { tool_key } => {
+                CommandError::TargetDisabled { tool: tool_key }
             }
             GlobalSyncError::TargetExists { target_path } => CommandError::TargetExists {
                 path: target_path.to_string_lossy().to_string(),

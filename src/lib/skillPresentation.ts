@@ -415,3 +415,24 @@ export function formatRelativeTime(
   const days = Math.floor(hours / 24);
   return t("relative.daysAgo", { days });
 }
+
+/**
+ * The card's deploy action for a skill with no live target. Disabled at
+ * either grain it is an Enable (`enable` — one skill-grain batch that
+ * re-syncs every disabled row, never a sync the Disabled gate would skip);
+ * `disabledTargets` names how many pairs that turns back on. Otherwise a sync
+ * to the effective target set (`sync`). `deployed` means some target is live.
+ */
+export type DeployAction =
+  | { kind: "deployed" }
+  | { kind: "enable"; disabledTargets: number }
+  | { kind: "sync" };
+export function deployAction(skill: {
+  disabled_at: number | null;
+  targets: readonly Pick<SkillTargetDto, "status">[];
+}): DeployAction {
+  const disabledTargets = skill.targets.filter((target) => target.status === "disabled").length;
+  if (skill.disabled_at !== null) return { kind: "enable", disabledTargets };
+  if (disabledTargets < skill.targets.length) return { kind: "deployed" };
+  return disabledTargets > 0 ? { kind: "enable", disabledTargets } : { kind: "sync" };
+}

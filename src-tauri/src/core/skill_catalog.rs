@@ -30,8 +30,12 @@ pub struct ManagedSkillEntry {
     /// frontmatter at list time (not persisted).
     pub invocation_mode: InvocationMode,
     pub invocation_override: Option<super::skill_edits::InvocationOverride>,
-    /// Every global Sync target row of this skill, in store order.
+    /// Every global Sync target row of this skill, in store order —
+    /// `disabled` rows included: they are the operator's record.
     pub targets: Vec<SkillTargetRecord>,
+    /// When the skill was disabled at skill grain, `None` when it is not
+    /// (`SkillStore::skill_disabled_at`; see **Disabled** in `CONTEXT.md`).
+    pub disabled_at: Option<i64>,
     /// Whether Refresh / Update can re-acquire this skill — the Provenance
     /// rule (`provenance::is_refreshable`), answered here so the UI shows or
     /// hides Update without re-deriving it.
@@ -49,9 +53,13 @@ pub struct ManagedSkillEntry {
 /// targets and invocation mode.
 pub fn managed_skill_catalog(store: &SkillStore) -> Result<Vec<ManagedSkillEntry>> {
     let skills = store.list_skills().context("list managed skills")?;
+    let disabled = store.disabled_skills().context("list disabled skills")?;
     skills
         .into_iter()
-        .map(|skill| build_entry(store, skill))
+        .map(|skill| {
+            let disabled_at = disabled.get(&skill.id).copied();
+            build_entry(store, skill, disabled_at)
+        })
         .collect()
 }
 
@@ -59,11 +67,18 @@ pub fn managed_skill_catalog(store: &SkillStore) -> Result<Vec<ManagedSkillEntry
 pub fn managed_skill_entry(store: &SkillStore, id: &str) -> Result<Option<ManagedSkillEntry>> {
     store
         .get_skill_by_id(id)?
-        .map(|skill| build_entry(store, skill))
+        .map(|skill| {
+            let disabled_at = store.skill_disabled_at(&skill.id)?;
+            build_entry(store, skill, disabled_at)
+        })
         .transpose()
 }
 
-fn build_entry(store: &SkillStore, skill: SkillRecord) -> Result<ManagedSkillEntry> {
+fn build_entry(
+    store: &SkillStore,
+    skill: SkillRecord,
+    disabled_at: Option<i64>,
+) -> Result<ManagedSkillEntry> {
     let targets = store
         .list_skill_targets(&skill.id)
         .with_context(|| format!("list sync targets for skill {}", skill.id))?;
@@ -77,6 +92,7 @@ fn build_entry(store: &SkillStore, skill: SkillRecord) -> Result<ManagedSkillEnt
         invocation_mode,
         invocation_override,
         targets,
+        disabled_at,
         refreshable,
         unlocatable,
         detachable,

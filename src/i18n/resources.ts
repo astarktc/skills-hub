@@ -413,6 +413,9 @@ export const resources = {
           "Its source folder is missing. Re-point, detach or remove it from its card.",
         refreshSkippedCentralMissing:
           "Its central copy is missing. Restore or remove it from its card.",
+        targetDisabled:
+          "{{tool}} is disabled for this skill. Enable it to sync there again.",
+        syncSkippedDisabledTitle: "Not synced: {{name}} -> {{tool}}",
       },
       actions: {
         importApplyStep: "Importing ({{index}}/{{total}}) {{name}} ...",
@@ -454,6 +457,7 @@ export const resources = {
         detached: "{{name}} detached: the copy in Skills Hub is now its source.",
         gitCacheCleared: "Git cache cleared ({{count}} removed).",
         installed: "Installed",
+        targetsEnabled: "Enabled and synced.",
       },
       relative: {
         empty: "—",
@@ -627,6 +631,8 @@ export const resources = {
           "Another sync operation is running, so these statuses were not re-checked against disk. They may be out of date.",
         globalSynced:
           "This skill is already deployed globally for this tool. Assign it here only to manage it per-project.",
+        assignedWhileDisabled:
+          "Assigned, but not synced: this skill is disabled. Enable it to sync.",
       },
       overwrite: {
         title: "Folder already exists",
@@ -647,6 +653,29 @@ export const resources = {
       syncTarget: {
         errorTitle:
           "{{tool}}: this sync target is in error — its artifact could not be updated or removed.",
+        disabled: "Disabled",
+        disabledTitle:
+          "{{tool}}: disabled — Refresh and sync leave it off. Click to enable.",
+      },
+      disabledSkips: {
+        bulkAssignNotSynced_one:
+          "Assigned to {{count}} tool, but not synced: this skill is disabled. Enable it to sync.",
+        bulkAssignNotSynced_other:
+          "Assigned to {{count}} tools, but not synced: this skill is disabled. Enable it to sync.",
+        bulkAssignMixed:
+          "{{assigned}} assigned and synced, {{skipped}} not synced (disabled)",
+        bulkAssignPartial:
+          "{{assigned}} assigned, {{failed}} failed, {{skipped}} not synced (disabled)",
+        resyncSuccess: "Synced {{synced}} assignments, {{skipped}} skipped (disabled)",
+        resyncPartial: "Synced {{synced}}, {{failed}} failed, {{skipped}} skipped (disabled)",
+        resyncAllSuccess:
+          "Synced {{synced}} assignments across all projects, {{skipped}} skipped (disabled)",
+        resyncAllPartial:
+          "Synced {{synced}} across all projects, {{failed}} failed, {{skipped}} skipped (disabled)",
+        deployDisabledPairs_one:
+          "Enable {{count}} disabled tool and sync",
+        deployDisabledPairs_other:
+          "Enable {{count}} disabled tools and sync",
       },
     },
   },

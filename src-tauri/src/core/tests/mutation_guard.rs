@@ -97,6 +97,16 @@ fn try_serialized_yields_none_while_a_mutation_is_in_flight() {
 /// `op` is a real core entry point, and the only thing stopping it is the
 /// serialisation the entry point wraps itself in.
 fn assert_serialized(label: &str, op: impl FnOnce() + Send + 'static) {
+    assert_serialized_observing(label, op, || {});
+}
+
+/// [`assert_serialized`], also running `unchanged` while the guard is still
+/// held — it asserts the queued operation has not touched disk or rows yet.
+fn assert_serialized_observing(
+    label: &str,
+    op: impl FnOnce() + Send + 'static,
+    unchanged: impl FnOnce(),
+) {
     let completed = Arc::new(AtomicBool::new(false));
     let completed_in_thread = completed.clone();
     let completed_probe = completed.clone();
@@ -111,6 +121,7 @@ fn assert_serialized(label: &str, op: impl FnOnce() + Send + 'static) {
             !completed_probe.load(Ordering::SeqCst),
             "{label} ran while another Sync-target mutation held the guard"
         );
+        unchanged();
         handle
     });
 
@@ -338,6 +349,58 @@ fn refresh_finalize_and_propagation_is_serialized() {
         // Keep the temp roots alive for the whole operation.
         drop((roots, source, dir));
     });
+}
+
+/// Disable and Enable (`core::skill_disable`) are mutation entry points of
+/// their own: queued behind the guard, neither removes nor re-materialises an
+/// artifact, nor settles a row, until it is released.
+#[test]
+fn disable_enable_entry_points_are_serialized() {
+    use crate::core::skill_disable::{disable_targets, enable_targets, DisableScope};
+
+    let f = fixture("disable-guard");
+    let home = f._work_dir.path().join("empty-home");
+    fs::create_dir_all(&home).expect("create home");
+    let artifact = Path::new(&f.project.path).join(".claude/skills/disable-guard");
+    let status = |store: &SkillStore| {
+        store
+            .get_project_skill_assignment(&f.project.id, &f.skill.id, "claude_code")
+            .expect("read row")
+            .expect("row exists")
+            .status
+    };
+    let scope = DisableScope::Skill {
+        skill_id: f.skill.id.clone(),
+    };
+    assert!(artifact.symlink_metadata().is_ok());
+
+    let (store, run_home, run_scope) = (f.store.clone(), home.clone(), scope.clone());
+    assert_serialized_observing(
+        "disable_targets",
+        move || {
+            disable_targets(&store, &run_home, &run_scope, 5000).expect("disable");
+        },
+        || {
+            assert!(artifact.symlink_metadata().is_ok(), "not removed yet");
+            assert_eq!(status(&f.store), SyncStatus::Synced);
+        },
+    );
+    assert!(artifact.symlink_metadata().is_err());
+    assert_eq!(status(&f.store), SyncStatus::Disabled);
+
+    let (store, run_home, run_scope) = (f.store.clone(), home.clone(), scope.clone());
+    assert_serialized_observing(
+        "enable_targets",
+        move || {
+            enable_targets(&store, &run_home, &run_scope, 6000).expect("enable");
+        },
+        || {
+            assert!(artifact.symlink_metadata().is_err(), "not synced yet");
+            assert_eq!(status(&f.store), SyncStatus::Disabled);
+        },
+    );
+    assert!(artifact.symlink_metadata().is_ok());
+    assert_eq!(status(&f.store), SyncStatus::Synced);
 }
 
 // ---------------------------------------------------------------------------

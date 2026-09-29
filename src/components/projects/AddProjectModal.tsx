@@ -1,6 +1,13 @@
 import { memo, useState } from "react";
 import type { TFunction } from "i18next";
-import Modal from "../shared/Modal";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { IgnoreUpdateOptions, ProjectDto } from "./types";
 
 type AddProjectModalProps = {
@@ -57,25 +64,17 @@ const AddProjectModal = ({
   };
 
   return (
-    <Modal
+    <Dialog
       open={open}
-      title={t("projects.addProjectTitle")}
-      onRequestClose={onRequestClose}
-      footer={
-        <>
-          <button className="btn btn-secondary" onClick={onRequestClose}>
-            {t("cancel")}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleSubmit}
-            disabled={!path.trim() || isDuplicate || loading}
-          >
-            {t("projects.register")}
-          </button>
-        </>
-      }
+      onOpenChange={(next) => {
+        if (!next) onRequestClose();
+      }}
     >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t("projects.addProjectTitle")}</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
           <div className="form-group">
             <label className="label">{t("projects.pathLabel")}</label>
             <div className="input-row">
@@ -118,7 +117,21 @@ const AddProjectModal = ({
               {t("projects.gitignorePrivate")}
             </label>
           </div>
-    </Modal>
+        </DialogBody>
+        <DialogFooter>
+          <button className="btn btn-secondary" onClick={onRequestClose}>
+            {t("cancel")}
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={handleSubmit}
+            disabled={!path.trim() || isDuplicate || loading}
+          >
+            {t("projects.register")}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 

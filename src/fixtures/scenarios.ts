@@ -8,7 +8,7 @@
 //                a sizeable onboarding plan waiting to be imported.
 // - `failures`   failure-heavy: per-target errors, TARGET_EXISTS, skipped
 //                rows, Unlocatable skills, failing acquisitions, a missing
-//                project folder.
+//                project folder, and Disabled targets at both grains.
 //
 // Only states the real backend emits appear. In particular `stale` is
 // target drift of a copy-mode *project assignment* (reconcile), never
@@ -262,6 +262,7 @@ function baseState(scenario: ScenarioName, now: number): FixtureState {
     unwritableTools: [],
     unwritableProjectTools: [],
     lockedPaths: [],
+    projectOccupants: [],
     dialogPicks: [`${HOME}/Projects/team-skills`, `${HOME}/Projects/new-service`],
     gitCacheEntries: 6,
     nextId: Math.floor(now / 1000) % 100_000,
@@ -481,6 +482,12 @@ function failures(now: number): FixtureState {
     { name: "windsurf-rules", description: "Synced to Windsurf before it was uninstalled", source: git("some-org/windsurf-rules"), synced: ["windsurf", "claude_code"] },
     { name: "zod-schema-first", description: "Design API boundaries schema-first with Zod", source: git("mattpocock/skills"), synced: ["claude_code"] },
     { name: "prisma-review", description: "Review Prisma schemas and queries for N+1 and missing indexes", source: git("mattpocock/skills"), synced: [] },
+    // Disabled at both grains (round 19 D8). noisy-linter is off on Codex and
+    // Cursor only: Refresh / re-assert report both `skipped: disabled` and
+    // never bring them back. retired-playbook is off everywhere — its global
+    // rows and its quartermaster assignment are all `disabled`.
+    { name: "noisy-linter", description: "Lint on every keystroke; switched off where it gets in the way", source: git("some-org/noisy-linter"), synced: ["claude_code", "pi"], disabled: ["codex", "cursor"] },
+    { name: "retired-playbook", description: "An incident playbook kept for reference, off everywhere", source: git("some-org/playbooks"), synced: ["claude_code", "codex"], skillDisabled: true },
   ];
   state.skills = specs.map((spec, i) => makeSkill(spec, now, i));
   state.projects = [
@@ -530,6 +537,7 @@ function failures(now: number): FixtureState {
         assignments: [
           { skill: "tdd", tool: "claude_code" },
           { skill: "using-git-worktrees", tool: "pi" },
+          { skill: "retired-playbook", tool: "claude_code", status: "disabled" },
         ],
       },
       state.skills,

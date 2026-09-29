@@ -18,6 +18,8 @@ import type {
   BatchTargetStatus,
   CandidateMatch,
   CommandError,
+  DisableScope,
+  EnableReport,
   GitSkillCandidate,
   ImportGroupOutcome,
   ImportGroupStatus,
@@ -45,6 +47,7 @@ import type {
   RemovalReport,
   RemovalTargetOutcome,
   RepointTarget,
+  RowRef,
   SettingUpdate,
   SkillMutationResultDto,
   SkillRefreshOutcome,
@@ -181,6 +184,7 @@ export function createFixtureBackend(
         invocation_mode: input.invocation ?? "user-and-model",
         invocation_override: null,
         targets: [],
+        disabled_at: null,
         refreshable: input.sourceType !== "imported",
         unlocatable: null,
         detachable: input.sourceType === "local",
@@ -208,6 +212,7 @@ export function createFixtureBackend(
   const recordTargets = (skill: FixtureSkill, tool: string) => {
     const path = `${globalRoot(tool)}/${skill.dto.name}`;
     const at = now();
+    artifacts.set(path, true);
     for (const sharer of globalSharers(tool).filter(isInstalled)) {
       const row = skill.dto.targets.find((t) => t.tool === sharer);
       if (row) {
@@ -294,6 +299,10 @@ export function createFixtureBackend(
           outcomes.push({ skill_id: s.skill_id, skill_name: s.name, tool_key: key, status: { status: "failed", error: { code: "NOT_FOUND", kind: "skill", id: s.skill_id } } });
           continue;
         }
+        if (isDisabledFor(skill, key)) {
+          outcomes.push({ skill_id: s.skill_id, skill_name: s.name, tool_key: key, status: { status: "skipped", error: { code: "TARGET_DISABLED", tool: key } } });
+          continue;
+        }
         const overwrite =
           (policy.overwrite ?? false) ||
           (policy.overrides ?? []).some(
@@ -310,6 +319,17 @@ export function createFixtureBackend(
     return outcomes;
   };
 
+  /**
+   * The batch's Disabled rule (Rust `global_sync::DisabledGate`): a skill
+   * disabled at skill grain, or any `disabled` row among the Tools sharing
+   * this Tool's skills dir, skips the pair — one shared artifact.
+   */
+  const isDisabledFor = (skill: FixtureSkill, tool: string) =>
+    skill.dto.disabled_at !== null ||
+    skill.dto.targets.some(
+      (t) => t.status === "disabled" && (t.tool === tool || globalSharers(tool).includes(t.tool)),
+    );
+
   /** Effective global target set: the recorded selection, else every detected Tool. */
   const effectiveTargets = () => state.settings.global_selected_tools ?? state.installedTools;
 
@@ -321,28 +341,96 @@ export function createFixtureBackend(
   // rule — an absent artifact is removed trivially — and one settlement rule:
   // a present artifact that cannot be removed (a locked path, or a parent
   // dir that refuses writes: unlinking needs write access to the dir) keeps
-  // its rows with Sync status `error` (ADR-0002). A global row exists only
-  // after a successful write, so its artifact is present; an assignment's is
-  // present when it was deployed (`synced`/`stale`) in an existing folder.
+  // its rows with Sync status `error` (ADR-0002).
+  //
+  // Presence is modelled by path, independent of any row's lifecycle status
+  // (Rust asks `symlink_metadata`, never the row): every successful write
+  // sets it, only a successful removal clears it, and a failed removal leaves
+  // it set — so a retry on the same locked path fails again. A path this
+  // backend never wrote or removed falls back to what the scenario's rows
+  // imply: a global artifact is there unless every row describing it is
+  // `disabled`; an assignment's when it was deployed (`synced`/`stale`) in an
+  // existing folder.
+  //
+  // Ownership (Rust `owns_artifact`), independent of the row's status: only a
+  // row the app materialised (`synced_at !== null`) owns its path. A row that
+  // never did (a `disabled` marker, or one a failed Enable turned `error`) is
+  // a marker: removal never plans its path, and re-sync / Propagation never
+  // overwrite it. Once the whole scope succeeded, Delete clears the row alone
+  // and Disable records it `disabled`; until then it keeps status and
+  // `last_error`.
 
-  const removeGlobalRows = (skill: FixtureSkill, tools: string[]): RemovalTargetOutcome[] => {
+  /** Artifact presence by path (see above). */
+  const artifacts = new Map<string, boolean>();
+  const presentAt = (path: string, implied: boolean) => artifacts.get(path) ?? implied;
+
+  /**
+   * `delete` is every removal's settlement; `disable` keeps the removed rows
+   * with status `disabled` (Rust `Settlement::Disable`) and skips rows that
+   * are already disabled. A failure keeps the row `error` either way.
+   */
+  type Settle = "delete" | "disable";
+
+  /** A row owning no artifact, set aside by planning, cleared with its scope. */
+  type Marker = { row: RowRef; clear: () => void; disable: () => void };
+  /** One removal scope's settled targets and its set-aside markers. */
+  type Removal = { targets: RemovalTargetOutcome[]; markers: Marker[] };
+
+  const ownsArtifact = (row: { synced_at: number | null }) => row.synced_at !== null;
+
+  /** Rust `Settlement::Disable` on markers: the row flips, no path is touched. */
+  const disableMarkers = (settle: Settle, removal: Removal): Removal => {
+    if (settle !== "disable") return removal;
+    if (!failedIn(removal.targets)) for (const marker of removal.markers) marker.disable();
+    return { targets: removal.targets, markers: [] };
+  };
+
+  const removeGlobalRows = (
+    skill: FixtureSkill,
+    tools: string[],
+    settle: Settle = "delete",
+  ): Removal => {
     const byPath = new Map<string, string[]>();
-    for (const row of skill.dto.targets.filter((t) => tools.includes(t.tool))) {
+    const markers: Marker[] = [];
+    const inScope = skill.dto.targets.filter(
+      (t) => tools.includes(t.tool) && !(settle === "disable" && t.status === "disabled"),
+    );
+    for (const row of inScope) {
+      if (!ownsArtifact(row)) {
+        markers.push({
+          row: { scope: "global_target", id: `tgt-${skill.dto.id}-${row.tool}`, skill_id: skill.dto.id, tool: row.tool },
+          clear: () => {
+            skill.dto.targets = skill.dto.targets.filter((t) => t !== row);
+          },
+          disable: () => {
+            row.status = "disabled";
+          },
+        });
+        continue;
+      }
       byPath.set(row.target_path, [...(byPath.get(row.target_path) ?? []), row.tool]);
     }
-    const out: RemovalTargetOutcome[] = [];
+    const targets: RemovalTargetOutcome[] = [];
     for (const [path, rowTools] of byPath) {
       const rows = rowTools.map((tool) => ({ scope: "global_target" as const, id: `tgt-${skill.dto.id}-${tool}`, skill_id: skill.dto.id, tool }));
+      const described = skill.dto.targets.filter((t) => rowTools.includes(t.tool));
+      const present = presentAt(path, described.some((t) => t.status !== "disabled"));
       const stuck = state.lockedPaths.includes(path) || rowTools.some((tool) => state.unwritableTools.includes(tool));
-      if (stuck) {
-        for (const row of skill.dto.targets) if (rowTools.includes(row.tool)) row.status = "error";
-        out.push({ path, rows, status: { status: "failed", error: PERMISSION_DENIED(path) } });
+      if (present && stuck) {
+        artifacts.set(path, true);
+        for (const row of described) row.status = "error";
+        targets.push({ path, rows, status: { status: "failed", error: PERMISSION_DENIED(path) } });
       } else {
-        skill.dto.targets = skill.dto.targets.filter((t) => !rowTools.includes(t.tool));
-        out.push({ path, rows, status: { status: "removed" } });
+        artifacts.set(path, false);
+        if (settle === "disable") {
+          for (const row of described) row.status = "disabled";
+        } else {
+          skill.dto.targets = skill.dto.targets.filter((t) => !rowTools.includes(t.tool));
+        }
+        targets.push({ path, rows, status: { status: "removed" } });
       }
     }
-    return out;
+    return disableMarkers(settle, { targets, markers });
   };
 
   const assignmentPath = (project: FixtureProject, a: ProjectSkillAssignmentDto) =>
@@ -351,47 +439,96 @@ export function createFixtureBackend(
   const removeAssignments = (
     project: FixtureProject,
     keep: (a: ProjectSkillAssignmentDto) => boolean,
-  ): RemovalTargetOutcome[] => {
-    const out: RemovalTargetOutcome[] = [];
+    settle: Settle = "delete",
+  ): Removal => {
+    const targets: RemovalTargetOutcome[] = [];
+    const markers: Marker[] = [];
     const remaining: ProjectSkillAssignmentDto[] = [];
     for (const a of project.assignments) {
-      if (keep(a)) {
+      if (keep(a) || (settle === "disable" && a.status === "disabled")) {
         remaining.push(a);
         continue;
       }
-      const path = assignmentPath(project, a);
       const rows = [{ scope: "assignment" as const, id: a.id, project_id: project.id, skill_id: a.skill_id, tool: a.tool }];
-      const present = project.path_exists && (a.status === "synced" || a.status === "stale");
+      if (!ownsArtifact(a)) {
+        remaining.push(a);
+        markers.push({
+          row: rows[0],
+          clear: () => {
+            project.assignments = project.assignments.filter((x) => x !== a);
+          },
+          disable: () => {
+            a.status = "disabled";
+            a.last_error = null;
+            a.content_hash = null;
+          },
+        });
+        continue;
+      }
+      const path = assignmentPath(project, a);
+      const present = project.path_exists && presentAt(path, a.status === "synced" || a.status === "stale");
       const stuck =
         state.lockedPaths.includes(path) || state.unwritableProjectTools.includes(`${project.id}:${a.tool}`);
       if (present && stuck) {
+        artifacts.set(path, true);
         a.status = "error";
         a.last_error = permissionDeniedText(path);
         remaining.push(a);
-        out.push({ path, rows, status: { status: "failed", error: PERMISSION_DENIED(path) } });
+        targets.push({ path, rows, status: { status: "failed", error: PERMISSION_DENIED(path) } });
       } else {
-        out.push({ path, rows, status: { status: "removed" } });
+        artifacts.set(path, false);
+        // Whatever sat at a path this row owns is removed with it.
+        state.projectOccupants = state.projectOccupants.filter((p) => p !== path);
+        if (settle === "disable") {
+          a.status = "disabled";
+          a.last_error = null;
+          a.content_hash = null;
+          remaining.push(a);
+        }
+        targets.push({ path, rows, status: { status: "removed" } });
       }
     }
     project.assignments = remaining;
-    return out;
+    return disableMarkers(settle, { targets, markers });
   };
 
+  const failedIn = (targets: RemovalTargetOutcome[]) =>
+    targets.some((t) => t.status.status === "failed");
+
+  /**
+   * The scope's report. Markers are cleared only when nothing in the whole
+   * scope failed (a kept skill or project keeps its recorded intent).
+   */
   const removal = (
-    targets: RemovalTargetOutcome[],
-    extra: Partial<RemovalReport> = {},
-  ): RemovalReport => ({ targets, central_removed: false, record_deleted: false, ...extra });
+    parts: Removal | Removal[],
+    extra: Partial<Pick<RemovalReport, "central_removed" | "record_deleted">> = {},
+  ): RemovalReport => {
+    const all = Array.isArray(parts) ? parts : [parts];
+    const targets = all.flatMap((part) => part.targets);
+    const markers = all.flatMap((part) => part.markers);
+    const cleared = failedIn(targets) ? [] : markers;
+    for (const marker of cleared) marker.clear();
+    return {
+      targets,
+      central_removed: false,
+      record_deleted: false,
+      cleared_markers: cleared.map((marker) => marker.row),
+      ...extra,
+    };
+  };
 
   // -------------------------------------------------------------------------
   // Projects
   // -------------------------------------------------------------------------
 
   const aggregate = (project: FixtureProject): ProjectSyncStatus => {
-    if (project.assignments.length === 0) return "none";
+    // Rust `sync_status::aggregate`: a disabled row takes no part.
+    const live = project.assignments.filter((a) => a.status !== "disabled");
+    if (live.length === 0) return "none";
     const rank = { synced: 1, pending: 2, stale: 3, error: 4 } as const;
     let worst: keyof typeof rank = "synced";
-    for (const a of project.assignments) {
-      const folded = a.status === "missing" ? "error" : a.status;
+    for (const a of live) {
+      const folded = a.status === "missing" ? "error" : (a.status as keyof typeof rank);
       if (rank[folded] > rank[worst]) worst = folded;
     }
     return worst;
@@ -419,12 +556,23 @@ export function createFixtureBackend(
     reconciled: true,
   });
 
+  /**
+   * One assignment through Rust `project_sync::sync_assignment_target`.
+   * `overwrite` is the caller's policy: off for a first sync (assign, Enable),
+   * and for a re-sync / Propagation only a row that owns its path may replace
+   * what is there (Rust `owns_artifact`). Someone else's folder in the way
+   * of a sync without overwrite is refused; project sync does not type the
+   * collision yet, so it surfaces as `OTHER` (the global batch's is
+   * `TARGET_EXISTS`).
+   */
   const syncAssignment = (
     project: FixtureProject,
     a: ProjectSkillAssignmentDto,
+    overwrite: boolean,
   ): ProjectSyncOutcomeStatus => {
     const skill = state.skills.find((s) => s.dto.id === a.skill_id);
     const dir = projectToolDir(project, a.tool);
+    const path = assignmentPath(project, a);
     let error: CommandError | null = null;
     if (!project.path_exists) error = { code: "INVALID_PATH", path: project.path, reason: "missing" };
     else if (!skill || skill.files.length === 0)
@@ -442,10 +590,21 @@ export function createFixtureBackend(
             : `central copy not found: ${skill?.dto.central_path ?? a.skill_name}`;
       return { status: "failed", error };
     }
+    if (state.projectOccupants.includes(path)) {
+      if (!overwrite) {
+        const message = `target already exists: "${path}"`;
+        a.status = "error";
+        a.last_error = message;
+        a.content_hash = null;
+        return { status: "failed", error: { code: "OTHER", message } };
+      }
+      state.projectOccupants = state.projectOccupants.filter((p) => p !== path);
+    }
     a.status = "synced";
     a.mode = "symlink";
     a.last_error = null;
     a.synced_at = now();
+    artifacts.set(path, true);
     // Rust `project_sync::sync_assignment_target`: only a copy records a
     // content hash; a link follows the central copy and records none.
     a.content_hash = null;
@@ -466,7 +625,13 @@ export function createFixtureBackend(
     status,
   });
 
+  /** A disabled row, or any row of a skill disabled at skill grain, is skipped. */
+  const skippedDisabled: ProjectSyncOutcomeStatus = { status: "skipped", reason: { reason: "disabled" } };
+
   const assign = (project: FixtureProject, skill: FixtureSkill, tool: string): ProjectSyncOutcome => {
+    // Rust `project_sync::assign_skill_to_tools`: a skill disabled at skill
+    // grain gets the assignment recorded `disabled`, not synced.
+    const disabled = skill.dto.disabled_at !== null;
     const a: ProjectSkillAssignmentDto = {
       id: newId(`${project.id}-asg`),
       project_id: project.id,
@@ -474,14 +639,106 @@ export function createFixtureBackend(
       skill_name: skill.dto.name,
       tool,
       mode: "symlink",
-      status: "pending",
+      status: disabled ? "disabled" : "pending",
       last_error: null,
       synced_at: null,
       content_hash: null,
       created_at: now(),
     };
     project.assignments.push(a);
-    return outcomeOf(project, a, syncAssignment(project, a));
+    return outcomeOf(project, a, disabled ? skippedDisabled : syncAssignment(project, a, false));
+  };
+
+  /**
+   * Rust `resync_project_unlocked` / bulk assign: a disabled row, or any row
+   * of a skill disabled at skill grain (a failed skill Disable keeps its rows
+   * `error`), is skipped before anything is written.
+   */
+  const isDisabledAssignment = (a: ProjectSkillAssignmentDto) =>
+    a.status === "disabled" ||
+    (state.skills.find((s) => s.dto.id === a.skill_id)?.dto.disabled_at ?? null) !== null;
+
+  /**
+   * Project re-sync: a disabled assignment is skipped (see above); only a row
+   * that owns its path replaces what is there, any other is a first sync.
+   */
+  const resyncOne = (project: FixtureProject, a: ProjectSkillAssignmentDto): ProjectSyncOutcomeStatus =>
+    isDisabledAssignment(a) ? skippedDisabled : syncAssignment(project, a, ownsArtifact(a));
+
+  // -------------------------------------------------------------------------
+  // Disable / Enable (Rust `skill_disable`)
+  // -------------------------------------------------------------------------
+
+  /**
+   * One pair: the Tool's shared-dir group when any member is installed, else
+   * the row alone (removal's stored-path fallback); removed rows are kept
+   * `disabled`, and a pair with no row gets a marker row — only when the
+   * shared artifact settled: a failed removal mints no `disabled` sibling.
+   */
+  const disablePair = (skill: FixtureSkill, tool: string): Removal => {
+    const hasRow = skill.dto.targets.some((t) => t.tool === tool);
+    if (!toolByKey(tool) && !hasRow) fail({ code: "UNKNOWN_TOOL", tool });
+    const group = globalSharers(tool).some(isInstalled) ? globalSharers(tool) : [tool];
+    const out = removeGlobalRows(skill, group, "disable");
+    if (!failedIn(out.targets) && !skill.dto.targets.some((t) => t.tool === tool)) {
+      skill.dto.targets.push({
+        tool,
+        mode: "symlink",
+        status: "disabled",
+        target_path: `${globalRoot(tool)}/${skill.dto.name}`,
+        synced_at: null,
+      });
+    }
+    return out;
+  };
+
+  /** One skill everywhere: global rows, then every assignment; then the marker. */
+  const disableSkill = (skill: FixtureSkill): Removal[] => {
+    const out = [removeGlobalRows(skill, skill.dto.targets.map((t) => t.tool), "disable")];
+    for (const project of state.projects) {
+      out.push(removeAssignments(project, (a) => a.skill_id !== skill.dto.id, "disable"));
+    }
+    skill.dto.disabled_at ??= now();
+    return out;
+  };
+
+  const firstSync = (skill: FixtureSkill, tools: string[]) =>
+    syncBatch(
+      [{ skill_id: skill.dto.id, name: skill.dto.name, source_path: skill.dto.central_path }],
+      tools,
+      { overwrite: false, overwrite_if_same_content: true },
+      null,
+    );
+
+  /** Only a skill-grain Enable lifts a skill-grain Disable. */
+  const enablePair = async (skill: FixtureSkill, tool: string): Promise<EnableReport> => {
+    if (skill.dto.disabled_at !== null) {
+      return {
+        global: [{ skill_id: skill.dto.id, skill_name: skill.dto.name, tool_key: tool, status: { status: "skipped", error: { code: "TARGET_DISABLED", tool } } }],
+        projects: { items: [] },
+      };
+    }
+    const group = toolByKey(tool) ? globalSharers(tool) : [tool];
+    skill.dto.targets = skill.dto.targets.filter((t) => !(t.status === "disabled" && group.includes(t.tool)));
+    return { global: await firstSync(skill, [tool]), projects: { items: [] } };
+  };
+
+  /**
+   * Clear the marker; re-sync every disabled row as a first sync. A folder in
+   * the way of an assignment fails it (`error` with the diagnostic) and the
+   * row still owns nothing (`synced_at` stays null).
+   */
+  const enableSkill = async (skill: FixtureSkill): Promise<EnableReport> => {
+    skill.dto.disabled_at = null;
+    const tools = skill.dto.targets.filter((t) => t.status === "disabled").map((t) => t.tool);
+    skill.dto.targets = skill.dto.targets.filter((t) => t.status !== "disabled");
+    const items: ProjectSyncOutcome[] = [];
+    for (const project of state.projects) {
+      for (const a of project.assignments.filter((x) => x.skill_id === skill.dto.id && x.status === "disabled")) {
+        items.push(outcomeOf(project, a, syncAssignment(project, a, false)));
+      }
+    }
+    return { global: tools.length ? await firstSync(skill, tools) : [], projects: { items } };
   };
 
   // -------------------------------------------------------------------------
@@ -515,12 +772,20 @@ export function createFixtureBackend(
       out.push({ scope: { scope: "global", tool }, status: { status: "skipped", reason } });
     };
     const centralMissing = skill.files.length === 0;
+    if (skill.dto.disabled_at !== null) {
+      // Off everywhere until enabled: every row reported, none touched.
+      for (const row of skill.dto.targets) skippedGlobal(row.tool, { reason: "disabled" });
+      for (const project of state.projects)
+        for (const a of project.assignments.filter((x) => x.skill_id === skill.dto.id))
+          out.push({ scope: { scope: "project", project_id: project.id, tool: a.tool }, status: { status: "skipped", reason: { reason: "disabled" } } });
+      return out;
+    }
     const handled = new Set<string>();
     for (const row of skill.dto.targets) {
       if (handled.has(row.tool)) continue;
       handled.add(row.tool);
       if (!toolByKey(row.tool)) {
-        skippedGlobal(row.tool, { reason: "unknown_tool", tool: row.tool });
+        skippedGlobal(row.tool, row.status === "disabled" ? { reason: "disabled" } : { reason: "unknown_tool", tool: row.tool });
         continue;
       }
       const sharers = globalSharers(row.tool);
@@ -528,6 +793,11 @@ export function createFixtureBackend(
         (r) => (r.tool === row.tool || sharers.includes(r.tool)) && toolByKey(r.tool),
       );
       for (const member of group) handled.add(member.tool);
+      // One disabled member disables the shared artifact.
+      if (group.some((member) => member.status === "disabled")) {
+        for (const member of group) skippedGlobal(member.tool, { reason: "disabled" });
+        continue;
+      }
       for (const member of group.filter((r) => !isInstalled(r.tool))) {
         skippedGlobal(member.tool, { reason: "tool_not_installed", tool: member.tool });
       }
@@ -564,7 +834,9 @@ export function createFixtureBackend(
       for (const a of project.assignments.filter((x) => x.skill_id === skill.dto.id)) {
         const scope = { scope: "project" as const, project_id: project.id, tool: a.tool };
         const skip = (reason: PropagationSkip) => out.push({ scope, status: { status: "skipped", reason } });
-        if (!toolByKey(a.tool)) {
+        if (a.status === "disabled") {
+          skip({ reason: "disabled" });
+        } else if (!toolByKey(a.tool)) {
           skip({ reason: "unknown_tool", tool: a.tool });
         } else if (!project.path_exists) {
           skip({ reason: "project_unavailable", project_id: project.id });
@@ -575,7 +847,7 @@ export function createFixtureBackend(
           a.last_error = `path not found: ${skill.dto.central_path}`;
           out.push({ scope, status: { status: "failed", error: missingSource(skill) } });
         } else {
-          const result = syncAssignment(project, a);
+          const result = syncAssignment(project, a, ownsArtifact(a));
           out.push({
             scope,
             status: result.status === "failed" ? { status: "failed", error: result.error } : { status: "synced", mode_used: a.mode },
@@ -618,6 +890,9 @@ export function createFixtureBackend(
       if (s.status === "synced") return { scope, status: { status: "synced", mode_used: s.outcome.mode_used } };
       if (s.status === "skipped" && s.error.code === "TOOL_NOT_INSTALLED") {
         return { scope, status: { status: "skipped", reason: { reason: "tool_not_installed", tool: s.error.tool } } };
+      }
+      if (s.status === "skipped" && s.error.code === "TARGET_DISABLED") {
+        return { scope, status: { status: "skipped", reason: { reason: "disabled" } } };
       }
       return { scope, status: { status: "failed", error: s.error } };
     });
@@ -1088,11 +1363,6 @@ export function createFixtureBackend(
       await pause(120);
       return syncBatch(skills, tools, policy, onProgress);
     },
-    unsyncSkillFromTool: async (skillId, tool) => {
-      await pause(200);
-      const skill = findSkill(skillId);
-      return removal(removeGlobalRows(skill, globalSharers(tool)));
-    },
     refreshManagedSkills: async (skillIds, policy, onProgress) =>
       refreshBatch(skillIds, policy, onProgress),
     updateManagedSkill: async (skillId, policy, onProgress) =>
@@ -1201,22 +1471,37 @@ export function createFixtureBackend(
     deleteManagedSkill: async (skillId) => {
       await pause(300);
       const skill = findSkill(skillId);
-      const targets = removeGlobalRows(skill, skill.dto.targets.map((t) => t.tool));
+      const parts = [removeGlobalRows(skill, skill.dto.targets.map((t) => t.tool))];
       for (const project of state.projects) {
-        targets.push(...removeAssignments(project, (a) => a.skill_id !== skillId));
+        parts.push(removeAssignments(project, (a) => a.skill_id !== skillId));
       }
-      if (targets.some((t) => t.status.status === "failed")) return removal(targets);
+      if (failedIn(parts.flatMap((part) => part.targets))) return removal(parts);
       state.skills = state.skills.filter((s) => s !== skill);
-      return removal(targets, { central_removed: true, record_deleted: true });
+      return removal(parts, { central_removed: true, record_deleted: true });
     },
-    unsyncAllSkills: async () => {
-      await pause(400);
-      return removal(state.skills.flatMap((s) => removeGlobalRows(s, s.dto.targets.map((t) => t.tool))));
-    },
-    unsyncSkill: async (skillId) => {
+    disableSkillTargets: async (scope: DisableScope) => {
       await pause(200);
-      const skill = findSkill(skillId);
-      return removal(removeGlobalRows(skill, skill.dto.targets.map((t) => t.tool)));
+      if (scope.kind === "skill_tool") return removal(disablePair(findSkill(scope.skill_id), scope.tool));
+      const skills =
+        scope.kind === "skill"
+          ? [findSkill(scope.skill_id)]
+          : state.skills.filter((s) => scope.skill_ids.includes(s.dto.id));
+      return removal(skills.flatMap(disableSkill));
+    },
+    enableSkillTargets: async (scope: DisableScope) => {
+      await pause(200);
+      if (scope.kind === "skill_tool") return enablePair(findSkill(scope.skill_id), scope.tool);
+      const skills =
+        scope.kind === "skill"
+          ? [findSkill(scope.skill_id)]
+          : state.skills.filter((s) => scope.skill_ids.includes(s.dto.id));
+      const report: EnableReport = { global: [], projects: { items: [] } };
+      for (const skill of skills) {
+        const one = await enableSkill(skill);
+        report.global.push(...one.global);
+        report.projects.items.push(...one.projects.items);
+      }
+      return report;
     },
     getFeaturedSkills: async () => {
       await pause(300);
@@ -1294,11 +1579,12 @@ export function createFixtureBackend(
     removeProject: async (projectId) => {
       await pause(250);
       const project = findProject(projectId);
-      const targets = removeAssignments(project, () => false);
-      if (!targets.some((t) => t.status.status === "failed")) {
+      const removed = removeAssignments(project, () => false);
+      const report = removal(removed);
+      if (!failedIn(removed.targets)) {
         state.projects = state.projects.filter((p) => p !== project);
       }
-      return { projects: projectsDto(), report: removal(targets) };
+      return { projects: projectsDto(), report };
     },
     listProjects: async () => {
       await pause(80);
@@ -1319,12 +1605,12 @@ export function createFixtureBackend(
         if (!projectCatalog().some((t) => t.key === tool)) fail({ code: "UNKNOWN_TOOL", tool });
       }
       const dropped = project.tools.filter((t) => !tools.includes(t));
-      const targets = removeAssignments(project, (a) => !dropped.includes(a.tool));
+      const report = removal(removeAssignments(project, (a) => !dropped.includes(a.tool)));
       const stuck = new Set(project.assignments.filter((a) => dropped.includes(a.tool)).map((a) => a.tool));
       project.tools = [...tools, ...dropped.filter((t) => stuck.has(t))];
       if (gitignore) project.gitignore = { in_gitignore: gitignore.add_to_gitignore, in_exclude: gitignore.add_to_exclude };
       project.updated_at = now();
-      return { view: viewOf(project), report: removal(targets) };
+      return { view: viewOf(project), report };
     },
     getProjectView: async (projectId) => {
       await pause(90);
@@ -1345,13 +1631,13 @@ export function createFixtureBackend(
     resyncProject: async (projectId) => {
       await pause(400);
       const project = findProject(projectId);
-      const items = project.assignments.map((a) => outcomeOf(project, a, syncAssignment(project, a)));
+      const items = project.assignments.map((a) => outcomeOf(project, a, resyncOne(project, a)));
       return { view: viewOf(project), report: { items } };
     },
     resyncAllProjects: async () => {
       await pause(700);
       const items = state.projects.flatMap((project) =>
-        project.assignments.map((a) => outcomeOf(project, a, syncAssignment(project, a))),
+        project.assignments.map((a) => outcomeOf(project, a, resyncOne(project, a))),
       );
       return { report: { items }, projects: projectsDto() };
     },
@@ -1361,7 +1647,8 @@ export function createFixtureBackend(
       const skill = findSkill(skillId);
       const items = project.tools.map((tool) => {
         const existing = project.assignments.find((a) => a.skill_id === skillId && a.tool === tool);
-        return existing ? outcomeOf(project, existing, { status: "already_assigned" }) : assign(project, skill, tool);
+        if (!existing) return assign(project, skill, tool);
+        return outcomeOf(project, existing, isDisabledAssignment(existing) ? skippedDisabled : { status: "already_assigned" });
       });
       return { view: viewOf(project), report: { items } };
     },

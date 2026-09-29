@@ -144,6 +144,7 @@ export function useExploreState({
           invocation_mode: "user-and-model",
           invocation_override: null,
           targets: [],
+          disabled_at: null,
           refreshable: true,
           unlocatable: null,
           detachable: false,

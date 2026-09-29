@@ -16,6 +16,7 @@ import type { CopyToClipboardFn } from "../../hooks/useStatusReporter";
 import InvocationModeBadge from "./InvocationModeBadge";
 import type { ManagedSkill, SkillTargetDto, ToolOption } from "./types";
 import {
+  deployAction,
   formatRelativeTime,
   importedSourceLine,
   repoInfo,
@@ -122,6 +123,16 @@ const SkillCard = ({
     (chip): chip is SyncedChip => chip.target !== null,
   );
   const unsyncedTools = chips.filter((chip) => chip.target === null);
+  // Deployed somewhere: any target the operator has not disabled. A skill
+  // disabled at either grain offers the deploy action as an Enable, labelled
+  // with the pairs it turns back on (the hook routes it the same way).
+  const deploy = deployAction(skill);
+  const deployed = deploy.kind === "deployed";
+  const deployLabel = deployed
+    ? t("unsyncSkillTooltip")
+    : deploy.kind === "enable" && deploy.disabledTargets > 0
+      ? t("disabledSkips.deployDisabledPairs", { count: deploy.disabledTargets })
+      : t("syncSkillTooltip");
 
   const [expanded, setExpanded] = useState(false);
   const needsCollapse = syncedTools.length > MAX_VISIBLE_BADGES;
@@ -239,24 +250,35 @@ const SkillCard = ({
         >
           {visibleSynced.map((chip) => {
             const isError = chip.target.status === "error";
+            // Disabled is the operator's choice, not a failure: it rides the
+            // error path's labelled title without the red (ticket 11 gives the
+            // strip its own mark).
+            const isDisabled = chip.target.status === "disabled";
             return (
               <button
                 key={`${skill.id}-${chip.id}`}
                 type="button"
-                className={`tool-pill active${isError ? " error" : ""}${
-                  chip.detected ? "" : " undetected"
-                }`}
+                className={`tool-pill ${isDisabled ? "inactive" : "active"}${
+                  isError ? " error" : ""
+                }${chip.detected ? "" : " undetected"}`}
                 title={
                   !chip.detected
                     ? t("toolNotDetectedTooltip", { tool: chip.label })
-                    : isError
-                      ? t("syncTarget.errorTitle", { tool: chip.label })
-                      : `${chip.label} (${chip.target.mode ?? t("unknown")})`
+                    : isDisabled
+                      ? t("syncTarget.disabledTitle", { tool: chip.label })
+                      : isError
+                        ? t("syncTarget.errorTitle", { tool: chip.label })
+                        : `${chip.label} (${chip.target.mode ?? t("unknown")})`
                 }
                 onClick={() => void onToggleTool(skill, chip.id)}
               >
-                <span className="status-badge" />
+                {isDisabled ? null : <span className="status-badge" />}
                 {chip.label}
+                {isDisabled ? (
+                  <span className="pick-item-badge muted">
+                    ({t("syncTarget.disabled")})
+                  </span>
+                ) : null}
                 {chip.detected ? null : (
                   <span className="pick-item-badge muted">
                     ({t("toolNotDetected")})
@@ -314,23 +336,13 @@ const SkillCard = ({
           className="card-btn secondary-action"
           type="button"
           onClick={() =>
-            skill.targets.length > 0
-              ? onUnsync(skill.id)
-              : onSyncToAllTools(skill)
+            deployed ? onUnsync(skill.id) : onSyncToAllTools(skill)
           }
           disabled={loading}
-          aria-label={
-            skill.targets.length > 0
-              ? t("unsyncSkillTooltip")
-              : t("syncSkillTooltip")
-          }
-          title={
-            skill.targets.length > 0
-              ? t("unsyncSkillTooltip")
-              : t("syncSkillTooltip")
-          }
+          aria-label={deployLabel}
+          title={deployLabel}
         >
-          {skill.targets.length > 0 ? <Link size={16} /> : <Unlink size={16} />}
+          {deployed ? <Link size={16} /> : <Unlink size={16} />}
         </button>
         <button
           className="card-btn danger-action"

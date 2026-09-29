@@ -125,6 +125,11 @@ export type FixtureState = {
   unwritableProjectTools: string[];
   /** Artifact paths whose removal fails (the row is kept, ADR-0002). */
   lockedPaths: string[];
+  /**
+   * Project artifact paths holding bytes the app never wrote: a folder in the
+   * way of a project first sync (the project counterpart of `foreign`).
+   */
+  projectOccupants: string[];
   /** Folders the fake native picker answers with, in rotation. */
   dialogPicks: string[];
   gitCacheEntries: number;
@@ -310,6 +315,13 @@ export type SkillSpec = {
   synced?: string[];
   /** Tools whose global target row is `error` (a failed propagation or removal). */
   errored?: string[];
+  /** Tools whose global target row is `disabled` (the per-Tool grain of Disable). */
+  disabled?: string[];
+  /**
+   * Disabled at skill grain: `disabled_at` is set and every global target and
+   * project assignment of the skill is `disabled` (off everywhere).
+   */
+  skillDisabled?: boolean;
   mode?: SyncMode;
   /**
    * Tools whose row is a `copy` (an earlier symlink → copy fallback), whatever
@@ -350,10 +362,21 @@ export function makeSkill(spec: SkillSpec, now: number, index: number): FixtureS
     mode: spec.copyTools?.includes(tool) ? "copy" : (spec.mode ?? "symlink"),
     status,
     target_path: `${globalRoot(tool)}/${spec.name}`,
-    synced_at: status === "synced" ? syncedAt : null,
+    // Rust ownership (`owns_artifact`): a global `error` row is a deployed
+    // target whose later sync failed (`SyncFailed` keeps `synced_at`; global
+    // first sync records successes only), so it owns its path. A `disabled`
+    // row from `spec.disabled` is a pair marker that never synced.
+    synced_at: status === "synced" || status === "error" ? syncedAt : null,
   });
-  for (const tool of spec.synced ?? []) targets.push(row(tool, "synced"));
+  // A skill disabled at skill grain has every row disabled (Rust
+  // `skill_disable`): a synced row flips status and keeps where and when it
+  // was synced (`TargetTransition::Disabled`).
+  for (const tool of spec.synced ?? [])
+    targets.push(
+      spec.skillDisabled ? { ...row(tool, "synced"), status: "disabled" } : row(tool, "synced"),
+    );
   for (const tool of spec.errored ?? []) targets.push(row(tool, "error"));
+  for (const tool of spec.disabled ?? []) targets.push(row(tool, "disabled"));
   const refreshable = kind !== "imported";
   return {
     dto: {
@@ -367,13 +390,14 @@ export function makeSkill(spec: SkillSpec, now: number, index: number): FixtureS
       central_path: centralPath,
       created_at: created,
       updated_at: created + Math.min(now - created, (index % 9) * DAY),
-      last_sync_at: targets.length > 0 ? syncedAt : null,
+      last_sync_at: targets.some((t) => t.status === "synced") ? syncedAt : null,
       status: "ok",
       invocation_mode: effective,
       invocation_override: spec.override
         ? { mode: spec.override.mode, base_mode: base, conflict: spec.override.conflict ?? false }
         : null,
       targets,
+      disabled_at: spec.skillDisabled ? now - 3 * DAY : null,
       refreshable,
       unlocatable: spec.unlocatable ?? null,
       detachable: kind === "local" && !centralGone,
@@ -446,7 +470,8 @@ export function makeProject(
  * drift); every other deployed copy recorded the current one.
  */
 export function recordedHash(mode: SyncMode, status: SyncStatus, current: string): string | null {
-  if (mode !== "copy" || status === "pending" || status === "error" || !current) return null;
+  if (mode !== "copy" || status === "pending" || status === "error" || status === "disabled" || !current)
+    return null;
   return status === "stale" ? fingerprint(`${current}:previous revision`) : current;
 }
 

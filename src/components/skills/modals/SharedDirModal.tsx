@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import type { TFunction } from 'i18next'
-import Modal from '../../shared/Modal'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import type { SharedDirPending } from '../../../hooks/useSharedDirConfirmation'
 
 type SharedDirModalProps = {
@@ -13,25 +13,15 @@ type SharedDirModalProps = {
 
 const SharedDirModal = ({ pending, loading, onCancel, t }: SharedDirModalProps) => {
   return (
-    <Modal
+    <ConfirmDialog
       open={Boolean(pending)}
       title={t('sharedDir.title')}
-      onRequestClose={onCancel}
-      showCloseButton={false}
-      footer={
-        <>
-          <button className="btn btn-secondary" onClick={onCancel} disabled={loading}>
-            {t('sharedDir.cancel')}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={() => pending?.resolve(true)}
-            disabled={loading || !pending}
-          >
-            {t('sharedDir.confirm')}
-          </button>
-        </>
-      }
+      confirmLabel={t('sharedDir.confirm')}
+      cancelLabel={t('sharedDir.cancel')}
+      onConfirm={() => pending?.resolve(true)}
+      onCancel={onCancel}
+      cancelDisabled={loading}
+      confirmDisabled={loading || !pending}
     >
       {pending
         ? t('sharedDir.body', {
@@ -39,7 +29,7 @@ const SharedDirModal = ({ pending, loading, onCancel, t }: SharedDirModalProps) 
             others: pending.labels.join(t('common.listSeparator')),
           })
         : null}
-    </Modal>
+    </ConfirmDialog>
   )
 }
 

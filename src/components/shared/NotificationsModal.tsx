@@ -9,7 +9,14 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import type { TFunction } from "i18next";
-import Modal from "./Modal";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type {
   CopyToClipboardFn,
   Notification,
@@ -94,15 +101,78 @@ const NotificationsModal = ({
   const isEmpty = notifications.length === 0;
 
   return (
-    <Modal
+    <Dialog
       open={open}
-      title={t("notifications.title")}
-      onRequestClose={onRequestClose}
-      className="modal-notifications"
-      bodyClassName="notif-body"
-      footerClassName="space-between"
-      footer={
-        <>
+      onOpenChange={(next) => {
+        if (!next) onRequestClose();
+      }}
+    >
+      <DialogContent size="lg">
+        <DialogHeader>
+          <DialogTitle>{t("notifications.title")}</DialogTitle>
+        </DialogHeader>
+        <DialogBody variant="flush" className="max-h-[min(70vh,560px)]">
+          {isEmpty ? (
+            <div className="notif-empty">
+              <Bell size={28} className="notif-empty-icon" aria-hidden="true" />
+              <div className="notif-empty-title">{t("notifications.empty")}</div>
+              <div className="notif-empty-hint">{t("notifications.emptyHint")}</div>
+            </div>
+          ) : (
+            <ul className="notif-list">
+              {notifications.map((n) => {
+                const Icon = KIND_ICON[n.kind];
+                const at = new Date(n.at);
+                return (
+                  <li key={n.id} className={`notif-row notif-${n.kind}`}>
+                    <span
+                      className="notif-glyph"
+                      role="img"
+                      aria-label={t(`notifications.kind.${n.kind}`)}
+                    >
+                      <Icon size={16} />
+                    </span>
+                    <div className="notif-text">
+                      <div className="notif-title">{n.title}</div>
+                      {n.message ? (
+                        <div className="notif-message">{n.message}</div>
+                      ) : null}
+                      {n.action ? (
+                        <button
+                          className="card-btn"
+                          type="button"
+                          onClick={() => {
+                            onRequestClose();
+                            n.action?.onClick();
+                          }}
+                        >
+                          {n.action.label}
+                        </button>
+                      ) : null}
+                    </div>
+                    <time
+                      className="notif-time"
+                      dateTime={at.toISOString()}
+                      title={at.toLocaleString()}
+                    >
+                      {formatRelativeTime(n.at, t)}
+                    </time>
+                    <button
+                      className="card-btn notif-copy"
+                      type="button"
+                      aria-label={t("notifications.copyEntry")}
+                      title={t("notifications.copyEntry")}
+                      onClick={() => void copy(n.id, entryText(n))}
+                    >
+                      {copied === n.id ? <Check size={14} /> : <Copy size={14} />}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </DialogBody>
+        <DialogFooter className="justify-between">
           <button
             className="btn btn-secondary"
             type="button"
@@ -120,69 +190,9 @@ const NotificationsModal = ({
             {copied === "all" ? <Check size={14} /> : <Copy size={14} />}
             {copied === "all" ? t("copied") : t("notifications.copyAll")}
           </button>
-        </>
-      }
-    >
-      {isEmpty ? (
-        <div className="notif-empty">
-          <Bell size={28} className="notif-empty-icon" aria-hidden="true" />
-          <div className="notif-empty-title">{t("notifications.empty")}</div>
-          <div className="notif-empty-hint">{t("notifications.emptyHint")}</div>
-        </div>
-      ) : (
-        <ul className="notif-list">
-          {notifications.map((n) => {
-            const Icon = KIND_ICON[n.kind];
-            const at = new Date(n.at);
-            return (
-              <li key={n.id} className={`notif-row notif-${n.kind}`}>
-                <span
-                  className="notif-glyph"
-                  role="img"
-                  aria-label={t(`notifications.kind.${n.kind}`)}
-                >
-                  <Icon size={16} />
-                </span>
-                <div className="notif-text">
-                  <div className="notif-title">{n.title}</div>
-                  {n.message ? (
-                    <div className="notif-message">{n.message}</div>
-                  ) : null}
-                  {n.action ? (
-                    <button
-                      className="card-btn"
-                      type="button"
-                      onClick={() => {
-                        onRequestClose();
-                        n.action?.onClick();
-                      }}
-                    >
-                      {n.action.label}
-                    </button>
-                  ) : null}
-                </div>
-                <time
-                  className="notif-time"
-                  dateTime={at.toISOString()}
-                  title={at.toLocaleString()}
-                >
-                  {formatRelativeTime(n.at, t)}
-                </time>
-                <button
-                  className="card-btn notif-copy"
-                  type="button"
-                  aria-label={t("notifications.copyEntry")}
-                  title={t("notifications.copyEntry")}
-                  onClick={() => void copy(n.id, entryText(n))}
-                >
-                  {copied === n.id ? <Check size={14} /> : <Copy size={14} />}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 

@@ -5,6 +5,28 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vite + React + TS</title>
+    <script>
+      // Pre-paint theme (round-19 spec D6): set data-theme + color-scheme
+      // before first paint so a light user never sees the dark-first :root.
+      // The one sanctioned storage read outside src/lib/preferences.ts; the
+      // key literal is pinned equal to themePreference.key by
+      // src/lib/preferences.test.ts. useSettingsState owns it after mount.
+      (function () {
+        var pref = null;
+        try {
+          pref = window.localStorage.getItem("skills-theme");
+        } catch (e) {}
+        var theme =
+          pref === "light" || pref === "dark"
+            ? pref
+            : window.matchMedia &&
+                window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

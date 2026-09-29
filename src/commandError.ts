@@ -14,6 +14,7 @@ type TranslateFn = (key: string, opts?: Record<string, unknown>) => string;
 // until the frontend handles the new code here and in describeCommandError.
 const COMMAND_ERROR_CODE_MAP = {
   TOOL_NOT_INSTALLED: true,
+  TARGET_DISABLED: true,
   TARGET_EXISTS: true,
   TOOL_NOT_WRITABLE: true,
   SKILL_INVALID: true,
@@ -100,6 +101,10 @@ export function describeCommandError(
   switch (e.code) {
     case "TOOL_NOT_INSTALLED":
       return t("errors.toolNotInstalled");
+    case "TARGET_DISABLED":
+      // A skip reason, not a failure: the pair (or the whole skill) is
+      // Disabled and only Enable brings it back.
+      return t("errors.targetDisabled", { tool: toolLabel(t, e.tool) });
     case "TARGET_EXISTS":
       return t("errors.targetExists");
     case "TOOL_NOT_WRITABLE":

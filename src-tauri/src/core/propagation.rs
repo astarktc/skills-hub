@@ -45,7 +45,7 @@ use super::skill_store::{
     TargetTransition,
 };
 use super::sync_engine;
-use super::sync_status::SyncMode;
+use super::sync_status::{SyncMode, SyncStatus};
 use super::tool_adapters::{
     adapter_by_key, adapters_sharing_skills_dir, is_installed_in, ToolAdapter,
 };
@@ -72,6 +72,10 @@ pub enum PropagationSkip {
     UnknownTool { tool: String },
     /// The project row is gone, or its directory no longer exists on disk.
     ProjectUnavailable { project_id: String },
+    /// The operator disabled this target — its own row, a row sharing its
+    /// skills dir, or the whole skill (see **Disabled** in `CONTEXT.md`).
+    /// Nothing but Enable re-materialises it.
+    Disabled,
 }
 
 #[derive(Debug, serde::Serialize, specta::Type)]
@@ -121,6 +125,26 @@ pub(crate) fn propagate_unlocked(
     let central_path = PathBuf::from(&skill.central_path);
 
     let mut report = PropagationReport::default();
+    if store.skill_disabled_at(skill_id)?.is_some() {
+        // Off everywhere until enabled: every row is reported, none is touched.
+        for row in store.list_skill_targets(skill_id)? {
+            report
+                .targets
+                .push(skipped_global(&row.tool, PropagationSkip::Disabled));
+        }
+        for assignment in store.list_project_skill_assignments_by_skill(skill_id)? {
+            report.targets.push(PropagationOutcome {
+                scope: PropagationScope::Project {
+                    project_id: assignment.project_id,
+                    tool: assignment.tool,
+                },
+                status: PropagationStatus::Skipped {
+                    reason: PropagationSkip::Disabled,
+                },
+            });
+        }
+        return Ok(report);
+    }
     propagate_global_rows(
         store,
         &paths.home,
@@ -174,12 +198,14 @@ fn propagate_global_rows(
         handled.push(row.tool.clone());
 
         let Some(adapter) = *adapter else {
-            report.targets.push(skipped_global(
-                &row.tool,
+            let reason = if row.status == SyncStatus::Disabled {
+                PropagationSkip::Disabled
+            } else {
                 PropagationSkip::UnknownTool {
                     tool: row.tool.clone(),
-                },
-            ));
+                }
+            };
+            report.targets.push(skipped_global(&row.tool, reason));
             continue;
         };
 
@@ -203,6 +229,20 @@ fn propagate_global_rows(
             if !handled.contains(&member.tool) {
                 handled.push(member.tool.clone());
             }
+        }
+
+        // One disabled member disables the shared artifact: writing it for a
+        // sibling would re-materialise it where the disabled Tool reads.
+        if group
+            .iter()
+            .any(|(member, _)| member.status == SyncStatus::Disabled)
+        {
+            for (member, _) in &group {
+                report
+                    .targets
+                    .push(skipped_global(&member.tool, PropagationSkip::Disabled));
+            }
+            continue;
         }
 
         let (installed, absent): (Vec<_>, Vec<_>) = group
@@ -245,11 +285,15 @@ fn propagate_global_rows(
         let result = if source_missing {
             Err(missing_source(central_path))
         } else {
+            // The shared artifact is ours to replace only when a member
+            // row materialised it (`owns_artifact`); otherwise this is a
+            // first sync and foreign bytes there are `TARGET_EXISTS`.
+            let overwrite = installed.iter().any(|(member, _)| member.owns_artifact());
             sync_engine::sync_dir_for_tool_with_overwrite(
                 driving_adapter,
                 central_path,
                 Path::new(&driver.target_path),
-                true,
+                overwrite,
             )
         };
 
@@ -351,6 +395,11 @@ fn propagate_one_assignment(
     now: i64,
     assignment: &ProjectSkillAssignmentRecord,
 ) -> Result<PropagationStatus> {
+    if assignment.status == SyncStatus::Disabled {
+        return Ok(PropagationStatus::Skipped {
+            reason: PropagationSkip::Disabled,
+        });
+    }
     let Some(adapter) = adapter_by_key(&assignment.tool) else {
         return Ok(PropagationStatus::Skipped {
             reason: PropagationSkip::UnknownTool {
@@ -387,7 +436,9 @@ fn propagate_one_assignment(
             project_path: &project_path,
             adapter,
             skill,
-            overwrite: true,
+            // Only an artifact of ours is replaced; a row that never
+            // materialised gets a first sync (`owns_artifact`).
+            overwrite: assignment.owns_artifact(),
             now,
         };
         super::project_sync::sync_assignment_target(&ctx, assignment, || skill.content_hash.clone())

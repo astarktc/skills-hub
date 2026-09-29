@@ -1,7 +1,12 @@
-import { memo } from 'react'
+import { memo, useId } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import type { TFunction } from 'i18next'
-import Modal from '../../shared/Modal'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+} from '@/components/ui/dialog'
 
 type DeleteModalProps = {
   open: boolean
@@ -20,16 +25,39 @@ const DeleteModal = ({
   onConfirm,
   t,
 }: DeleteModalProps) => {
+  const titleId = useId()
   return (
-    <Modal
+    <Dialog
       open={open}
-      onRequestClose={onRequestClose}
-      aria-label={t('deleteTitle')}
-      className="modal-delete"
-      bodyClassName="delete-body"
-      footerClassName="space-between"
-      footer={
-        <>
+      onOpenChange={(next) => {
+        if (!next) onRequestClose()
+      }}
+    >
+      <DialogContent aria-labelledby={titleId}>
+        <DialogBody>
+          <div className="delete-title" id={titleId}>
+            <TriangleAlert size={20} />
+            {t('deleteTitle')}
+          </div>
+          <div className="delete-desc">
+            {skillName ? (
+              <>
+                {t('delete.confirmPrefix')}
+                <strong>{skillName}</strong>
+                {t('delete.confirmSuffix')}
+              </>
+            ) : (
+              t('deleteBody')
+            )}
+          </div>
+          <div className="delete-warning">
+            <ul>
+              <li>{t('delete.warningRemoveFromTools')}</li>
+              <li>{t('delete.warningDeleteFromHub')}</li>
+            </ul>
+          </div>
+        </DialogBody>
+        <DialogFooter className="justify-between">
           <button
             className="btn btn-secondary"
             onClick={onRequestClose}
@@ -44,31 +72,9 @@ const DeleteModal = ({
           >
             {t('delete.confirmButton')}
           </button>
-        </>
-      }
-    >
-      <div className="delete-title">
-        <TriangleAlert size={20} />
-        {t('deleteTitle')}
-      </div>
-      <div className="delete-desc">
-        {skillName ? (
-          <>
-            {t('delete.confirmPrefix')}
-            <strong>{skillName}</strong>
-            {t('delete.confirmSuffix')}
-          </>
-        ) : (
-          t('deleteBody')
-        )}
-      </div>
-      <div className="delete-warning">
-        <ul>
-          <li>{t('delete.warningRemoveFromTools')}</li>
-          <li>{t('delete.warningDeleteFromHub')}</li>
-        </ul>
-      </div>
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

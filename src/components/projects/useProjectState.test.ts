@@ -7,7 +7,7 @@
 const emptyRemoval = (): RemovalReport => ({
   targets: [],
   central_removed: false,
-  record_deleted: false,
+  record_deleted: false, cleared_markers: [],
 });
 
 import { StrictMode } from "react";
@@ -235,7 +235,7 @@ function stubBackend(options: { reconciled?: boolean } = {}) {
               status: { status: "removed" },
             })),
             central_removed: false,
-            record_deleted: false,
+            record_deleted: false, cleared_markers: [],
           } satisfies RemovalReport,
         });
       }
@@ -568,7 +568,7 @@ describe("useProjectState applies the view a mutation returns", () => {
         },
       ],
       central_removed: false,
-      record_deleted: false,
+      record_deleted: false, cleared_markers: [],
     };
     const base = mockInvoke.getMockImplementation()!;
     mockInvoke.mockImplementation((command, ...args) => {
@@ -659,7 +659,7 @@ describe("useProjectState applies the view a mutation returns", () => {
         status: { status: "failed", error: { code: "OTHER", message: "busy" } },
       }],
       central_removed: false,
-      record_deleted: false,
+      record_deleted: false, cleared_markers: [],
     };
     const base = mockInvoke.getMockImplementation()!;
     mockInvoke.mockImplementation((command, ...args) => {
@@ -994,7 +994,7 @@ describe("useProjectState applies the view a mutation returns", () => {
         },
       ],
       central_removed: false,
-      record_deleted: false,
+      record_deleted: false, cleared_markers: [],
     };
     const listed = result.current.projects.map((p) =>
       p.id === "p1" ? ({ ...p, sync_status: "error" } satisfies ProjectDto) : p,

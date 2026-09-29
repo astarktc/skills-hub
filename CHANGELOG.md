@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Removing a skill from a tool is now **Disable**, and it lasts: the skill's folder is removed from that tool and the choice is recorded, so the next Refresh, Update or auto-sync no longer puts it back. Disabling a whole skill takes it off every tool and every project until you enable it. Enabling syncs it again. A different folder already in the way is left untouched and reported. Refresh and sync report disabled targets as skipped, not as failures. "Uninstall from tool directories" now disables every skill. (Internal: the `unsync_skill_from_tool` / `unsync_skill` / `unsync_all_skills` commands are replaced by `disable_skill_targets` / `enable_skill_targets`. Schema v10 adds `skills.disabled_at`, and sync status gains `disabled`.)
+
 ## [1.2.18] - 2026-09-27
 
 Round 18, phase A of the UI effort: the enablers and decisions ship; the new visual world is round 19 (1.3.0). Agents can now see the app, the GitHub token leaves the database, Augment syncs to the right folder, and the UI is English-only.

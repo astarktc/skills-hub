@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import "./App.css";
 import { useTranslation } from "react-i18next";
-// The sanctioned second importer of the toast library: the binder mounts the
-// Toaster once; useStatusReporter makes every call and owns toast lifetime.
-import { Toaster } from "sonner";
+// The binder mounts the token-themed Toaster once; useStatusReporter makes
+// every toast call and owns toast lifetime.
+import { Toaster } from "@/components/ui/sonner";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import ExplorePage from "./components/skills/ExplorePage";
@@ -12,7 +13,6 @@ import SkillDetailView from "./components/skills/SkillDetailView";
 import Header from "./components/skills/Header";
 import LoadingOverlay from "./components/skills/LoadingOverlay";
 import SkillsList from "./components/skills/SkillsList";
-import Modal from "./components/shared/Modal";
 import NotificationsModal from "./components/shared/NotificationsModal";
 import AddSkillModal from "./components/skills/modals/AddSkillModal";
 import DeleteModal from "./components/skills/modals/DeleteModal";
@@ -48,6 +48,7 @@ import type { ManagedSkill } from "./components/skills/types";
 // their interfaces together. State logic lives in src/hooks/, not here.
 function App() {
   const { t } = useTranslation();
+  const updateTitleId = useId();
 
   // View/navigation state (stays in the binder: it is what App composes for).
   const [activeView, setActiveView] = useState<
@@ -528,74 +529,70 @@ function App() {
         t={t}
       />
 
-      {updateAvailableVersion && (
-        <Modal
-          open
-          plain
-          aria-label={t("appUpdates")}
-          className="update-modal"
-          onRequestClose={updateInstalling ? undefined : dismissUpdate}
+      <Dialog
+        open={Boolean(updateAvailableVersion)}
+        dismissible={!updateInstalling}
+        onOpenChange={(next) => {
+          if (!next) dismissUpdate();
+        }}
+      >
+        <DialogContent
+          size="sm"
+          showCloseButton={!updateDone}
+          aria-labelledby={updateTitleId}
         >
-          {!updateInstalling && !updateDone && (
-            <button
-              className="modal-close update-modal-close"
-              type="button"
-              onClick={dismissUpdate}
-              aria-label={t("close")}
-            >
-              ✕
-            </button>
-          )}
-          <div className="update-modal-body">
-            <div className="update-modal-title">
-              {updateDone
-                ? t("updateInstalledRestart")
-                : t("updateAvailable")}
+          <div className="update-modal">
+            <div className="update-modal-body">
+              <div className="update-modal-title" id={updateTitleId}>
+                {updateDone
+                  ? t("updateInstalledRestart")
+                  : t("updateAvailable")}
+              </div>
+              {!updateDone && (
+                <div className="update-modal-text">
+                  {t("updateBannerText", { version: updateAvailableVersion })}
+                </div>
+              )}
+              {!updateDone && updateBody && (
+                <div className="update-modal-notes">
+                  <Markdown remarkPlugins={[remarkGfm]}>{updateBody}</Markdown>
+                </div>
+              )}
             </div>
-            {!updateDone && (
-              <div className="update-modal-text">
-                {t("updateBannerText", { version: updateAvailableVersion })}
-              </div>
-            )}
-            {!updateDone && updateBody && (
-              <div className="update-modal-notes">
-                <Markdown remarkPlugins={[remarkGfm]}>{updateBody}</Markdown>
-              </div>
-            )}
-          </div>
-          <div className="update-modal-actions">
-            {updateDone ? (
-              <button
-                className="btn btn-primary"
-                type="button"
-                onClick={dismissUpdate}
-              >
-                {t("done")}
-              </button>
-            ) : (
-              <>
+            <div className="update-modal-actions">
+              {updateDone ? (
                 <button
                   className="btn btn-primary"
                   type="button"
-                  disabled={updateInstalling}
-                  onClick={updateNow}
+                  onClick={dismissUpdate}
                 >
-                  {updateInstalling ? t("installingUpdate") : t("updateNow")}
+                  {t("done")}
                 </button>
-                {!updateInstalling && (
+              ) : (
+                <>
                   <button
-                    className="btn btn-secondary"
+                    className="btn btn-primary"
                     type="button"
-                    onClick={dismissUpdateForever}
+                    disabled={updateInstalling}
+                    onClick={updateNow}
                   >
-                    {t("updateBannerDismiss")}
+                    {updateInstalling ? t("installingUpdate") : t("updateNow")}
                   </button>
-                )}
-              </>
-            )}
+                  {!updateInstalling && (
+                    <button
+                      className="btn btn-secondary"
+                      type="button"
+                      onClick={dismissUpdateForever}
+                    >
+                      {t("updateBannerDismiss")}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
           </div>
-        </Modal>
-      )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

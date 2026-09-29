@@ -13,7 +13,9 @@ npm run tauri:dev        # Tauri dev window (frontend + backend) — see live-da
 npm run build            # tsc -b (TypeScript 7) && vite build
 npm run lint             # ESLint
 npm run test             # vitest unit tests (hooks + pure folds + commandError; jsdom, mocked seams)
-npm run check            # lint + test + build + rust:fmt:check + rust:clippy + rust:test
+npm run styles:check     # styling guard (ADR-0006 §6, scripts/check-styles.mjs): App.css ratchet, migrated files, no new
+                         #   stylesheets, prose.css scope, no raw colours in JSX
+npm run check            # lint + styles:check + test + build + rust:fmt:check + rust:clippy + rust:test
 npm run version:check    # verify the 5 version locations (3 manifests + 2 lockfiles) agree
 npm run version:set X.Y.Z   # bump all 5 version locations (never hand-edit)
 
@@ -111,7 +113,8 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   install a tool through `tool_adapters::mark_installed_in`, never a bare `create_dir_all(detect_dir)` — that is
   the footprint the rule rejects.
 - **Sync-target mutation**: every operation that materialises or removes a Sync target (global sync
-  batch, unsync, delete, assign/unassign/toggle, resync, configure project tools, remove project,
+  batch, Disable / Enable (`skill_disable::disable_targets` / `enable_targets`), delete,
+  assign/unassign/toggle, resync, configure project tools, remove project,
   gitignore update, Refresh's apply phase, Onboarding import's apply phase) wraps its **own** body in
   `core/mutation_guard::serialized` at its entry point — commands carry no lock state and make no
   per-call-site decision. The mutex is private to that module; per-target internals are unlocked
@@ -186,14 +189,19 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   `tool_adapters::ensure_path_within_tool_dirs`). See `docs/adr/0001-tagged-command-error-contract.md`.
 - **`src/components/Layout.tsx` and `src/pages/Dashboard.tsx` are dormant by design** — imported by nothing under `src/`.
   Leave them alone unless explicitly wiring them up.
-- **Styling is Tailwind v4 per `docs/adr/0006-styling-architecture.md`**: tokens only in `src/styles/theme.css`
-  (`@theme`), utilities in JSX via `cn()`, recurring shapes through the primitives in `src/components/ui/`
-  (shadcn on Base UI, restyled to our tokens), no raw colours. `src/App.css` is legacy and only shrinks: never add a
-  rule to it (the world ticket's one legacy-alias block excepted), and a surface counts as migrated once its files reference no class `App.css` defines. The only other
-  stylesheets are `src/index.css` and `src/styles/prose.css` (rendered Markdown / code, token-only). No CSS
-  Modules, no new `.css` files. Read the resolved theme from the settings world, never from `data-theme` on the DOM.
-  (The round-19 world ticket lands `theme.css`, `prose.css`, `components/ui/` and the `styles:check` guard; until
-  then, style new code with utilities over the existing `index.css` variables.)
+- **Styling is Tailwind v4 per `docs/adr/0006-styling-architecture.md`**; `DESIGN.md` (repo root) is the reference
+  for token values with measured contrast, every primitive's `variant` / `tone` / `size`, focus, motion and target
+  size. Tokens only in `src/styles/theme.css` (dark `:root`, light `[data-theme='light']`, `@theme inline`; the
+  Tailwind palette is removed), utilities in JSX via `cn()` (`@/lib/utils`), recurring shapes through the primitives
+  in `src/components/ui/` (shadcn on Base UI, restyled to our tokens; `className` is layout only), no raw colours.
+  `src/App.css` is legacy and only shrinks: its opening alias block maps the legacy custom properties onto the tokens
+  and was its last addition — never add a rule to it; a surface counts as migrated once its files reference no class
+  `App.css` defines. The only other stylesheets are `src/index.css` (entry + base layer) and `src/styles/prose.css`
+  (rendered Markdown / code under `.prose`, token-only). No CSS Modules, no new `.css` files. `npm run styles:check`
+  (`scripts/check-styles.mjs` + `scripts/styles-baseline.json`) enforces all of it: migrating a surface appends its
+  files to `migrated` and lowers `appCssCeiling` in the same change. Read the resolved theme from the settings world
+  (`resolvedTheme`), never from `data-theme` on the DOM; the pre-paint script in `index.html` is the one sanctioned
+  storage read outside `preferences.ts` (key pinned by `src/lib/preferences.test.ts`).
 - Path handling must support `~` expansion (`core/environment.rs::expand_home_path_in(home, input)`).
 - **Core never resolves filesystem roots from the environment.** `core/environment.rs` is the only core caller
   of `dirs::home_dir()`; every other core function takes explicit roots (`home: &Path`, `InstallerPaths { home,
@@ -249,9 +257,18 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
     then sync through the global sync batch (auto-sync on — a first sync, not Propagation) or remove
     byte-identical originals (auto-sync off), per group. An imported skill has no external source (ADR-0003).
   - project assignment on / bulk assign / resync → `core/project_sync.rs`, answering a `ProjectSyncReport`
-    (per-assignment `synced` / `already_assigned` / `failed { error }`, the failed row's id carried when the
-    row exists); the store failure that fails a listing is a whole-command error, not an item.
-  - unsync / delete / project removal / bulk unassign → `core/artifact_removal.rs` (below).
+    (per-assignment `synced` / `already_assigned` / `skipped { disabled }` / `failed { error }`, the failed
+    row's id carried when the row exists); the store failure that fails a listing is a whole-command error, not an item.
+  - Disable / delete / project removal / bulk unassign → `core/artifact_removal.rs` (below).
+  - Disable / Enable: `core/skill_disable.rs` (`disable_skill_targets` / `enable_skill_targets` over one
+    `DisableScope::{SkillTool, Skill, Skills}`). This is the durable "not on this Tool" at two grains: a `disabled`
+    target row (pair), or `skills.disabled_at` plus every row `disabled` (skill). There is no unrecorded unsync.
+    **Every fan-out skips a disabled target as report data, never `Failed`**: Propagation and the re-assert
+    (`PropagationSkip::Disabled`); the global batch, hence Onboarding import's first sync (`Skipped` with
+    `TARGET_DISABLED`, also for a shared-dir sibling of a disabled row); project sync (`ProjectSyncSkip::Disabled`).
+    A fan-out gates on `skills.disabled_at` as well as row status: a failed skill Disable keeps rows `error`
+    (ADR-0002), and those are skipped too (resync, bulk assign, relocation).
+    Only Enable re-materialises, as a first sync (`EnableReport { global, projects }`).
   Bringing every target of one changed skill into line is **Propagation** (`core/propagation.rs`) — the
   only writer of target rows on an update path, spanning global target rows and project assignment
   rows, honouring each Tool's capability through `sync_engine::sync_dir_for_tool_with_overwrite`.
@@ -262,7 +279,13 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   roots its planning needs), executes with one presence rule (`symlink_metadata`) and one settlement
   rule — a row whose artifact could not be removed is **kept** with sync status `error`, rows are
   deleted only on success (`docs/adr/0002-keep-row-with-error-on-failed-artifact-removal.md`) — and
-  reports per target. Callers (`project_ops`, `project_sync`, the unsync/delete commands) build a scope
+  reports per target. Disable (`skill_disable`) is the one caller that settles success differently
+  (`execute_settling_unlocked(.., Settlement::Disable)`: rows kept `disabled`, never deleted; failure is
+  still `error`). **Ownership** is independent of status: only a row the app materialised
+  (`synced_at` set — `owns_artifact`) owns its path. A never-synced row (the pair marker, an assignment recorded for a
+  disabled skill, the same rows after a failed Enable turned them `error`) owns nothing: planning sets it aside, no path
+  is touched, and once the scope succeeds Delete clears the row alone (`RemovalReport.cleared_markers`) and Disable
+  flips it `disabled`; re-sync and Propagation never overwrite its path. Only a successful sync makes a row an owner. Callers (`project_ops`, `project_sync`, `skill_disable`, the delete command) build a scope
   and read the report; they never delete a path themselves (project reconcile may probe one with `symlink_metadata`).
 - **Git bytes have two single entry points.** `git_cache::fetch_through_cache` is the only way into the
   clone cache (per-key locks, TTL as an `i64` value from `settings::git_cache_ttl_ms`, no DB handle in
@@ -306,7 +329,8 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
 - Removal goes through `artifact_removal`: `sync_engine::remove_path_any` is called only from that module, from
   `onboarding_import`'s original-removal step (paired with `ensure_path_within_tool_dirs`), and inside
   `sync_engine`'s own overwrite-replacement path — never from `project_ops`, `project_sync` or a command.
-- Confirmations go through the Modal shell — `useSharedDirConfirmation` owns the shared-skills-dir one;
+- Confirmations go through the Dialog primitive (`src/components/ui/dialog.tsx` / `confirm-dialog.tsx`) —
+  `useSharedDirConfirmation` owns the shared-skills-dir one;
   the app uses no native browser dialog.
 - One implementation each of relative time, repo grouping and storage access: extend
   `skillPresentation.ts` / `preferences.ts` instead of adding a second formatter or touching

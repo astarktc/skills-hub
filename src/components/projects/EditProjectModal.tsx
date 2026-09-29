@@ -1,6 +1,13 @@
 import { memo, useEffect, useState } from "react";
 import type { TFunction } from "i18next";
-import Modal from "../shared/Modal";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type {
   GitignoreStatusDto,
   IgnoreUpdateOptions,
@@ -65,12 +72,57 @@ const EditProjectModalInner = ({
   };
 
   return (
-    <Modal
+    <Dialog
       open
-      title={t("projects.configureProject")}
-      onRequestClose={onRequestClose}
-      footer={
-        <>
+      onOpenChange={(next) => {
+        if (!next) onRequestClose();
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t("projects.configureProject")}</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+              <div className="form-group">
+            <label className="label">{t("projects.pathLabel")}</label>
+            <input
+              className="input"
+              type="text"
+              value={project.path}
+              disabled
+            />
+          </div>
+
+          <div className="gitignore-section">
+            <label>{t("projects.gitignoreLabel")}</label>
+            {loading ? (
+              <div
+                className="skeleton-row"
+                style={{ width: "60%", height: 20 }}
+              />
+            ) : (
+              <>
+                <label className="gitignore-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={addToGitignore}
+                    onChange={(e) => setAddToGitignore(e.target.checked)}
+                  />
+                  {t("projects.gitignoreShared")}
+                </label>
+                <label className="gitignore-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={addToExclude}
+                    onChange={(e) => setAddToExclude(e.target.checked)}
+                  />
+                  {t("projects.gitignorePrivate")}
+                </label>
+              </>
+            )}
+          </div>
+        </DialogBody>
+        <DialogFooter>
           <button className="btn btn-secondary" onClick={onRequestClose}>
             {t("cancel")}
           </button>
@@ -81,48 +133,9 @@ const EditProjectModalInner = ({
           >
             {t("projects.save")}
           </button>
-        </>
-      }
-    >
-          <div className="form-group">
-        <label className="label">{t("projects.pathLabel")}</label>
-        <input
-          className="input"
-          type="text"
-          value={project.path}
-          disabled
-        />
-      </div>
-
-      <div className="gitignore-section">
-        <label>{t("projects.gitignoreLabel")}</label>
-        {loading ? (
-          <div
-            className="skeleton-row"
-            style={{ width: "60%", height: 20 }}
-          />
-        ) : (
-          <>
-            <label className="gitignore-checkbox">
-              <input
-                type="checkbox"
-                checked={addToGitignore}
-                onChange={(e) => setAddToGitignore(e.target.checked)}
-              />
-              {t("projects.gitignoreShared")}
-            </label>
-            <label className="gitignore-checkbox">
-              <input
-                type="checkbox"
-                checked={addToExclude}
-                onChange={(e) => setAddToExclude(e.target.checked)}
-              />
-              {t("projects.gitignorePrivate")}
-            </label>
-          </>
-        )}
-      </div>
-</Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 

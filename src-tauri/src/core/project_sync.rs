@@ -303,6 +303,18 @@ pub enum ProjectSyncOutcomeStatus {
     /// The sync did not happen. When `assignment_id` is present the row
     /// exists with Sync status `error` and this chain in `last_error`.
     Failed { error: CommandError },
+    /// Deliberately not synced. Report data, never a failure.
+    Skipped { reason: ProjectSyncSkip },
+}
+
+/// Why a project sync left an assignment alone.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum ProjectSyncSkip {
+    /// The row is `Disabled`, or its skill is disabled at skill grain (a new
+    /// assignment of a disabled skill is recorded `Disabled`, not synced) —
+    /// see **Disabled** in `CONTEXT.md`. Only Enable re-materialises it.
+    Disabled,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, specta::Type)]
@@ -337,6 +349,7 @@ impl std::fmt::Display for ProjectSyncReport {
                 ProjectSyncOutcomeStatus::Synced => "synced".to_string(),
                 ProjectSyncOutcomeStatus::AlreadyAssigned => "already assigned".to_string(),
                 ProjectSyncOutcomeStatus::Failed { error } => format!("failed: {error}"),
+                ProjectSyncOutcomeStatus::Skipped { reason } => format!("skipped: {reason:?}"),
             };
             write!(
                 f,
@@ -359,8 +372,12 @@ impl std::fmt::Display for ProjectSyncReport {
 // ---------------------------------------------------------------------------
 
 /// Deterministic engine: for each tool key in caller order, skip tools the
-/// skill is already assigned to (`AlreadyAssigned`), otherwise assign and
-/// sync. Target failures are isolated per tool — one bad tool never aborts
+/// skill is already assigned to (`AlreadyAssigned`, or `Skipped { Disabled }`
+/// for a disabled row or any row of a skill disabled at skill grain), otherwise assign and sync — or, for a skill
+/// disabled at skill grain, record the assignment `Disabled` without syncing
+/// it (the operator's intent survives; Enable materialises it).
+///
+/// Target failures are isolated per tool — one bad tool never aborts
 /// the batch: a *sync* failure leaves its row with status `error` and is
 /// reported `Failed` with that row's id; a refused assignment (unknown
 /// tool) is `Failed` with no row. A store failure — the row could not be
@@ -373,11 +390,51 @@ pub(crate) fn assign_skill_to_tools(
     tool_keys: &[String],
     now: i64,
 ) -> Result<ProjectSyncReport> {
+    let skill_disabled = store.skill_disabled_at(&skill.id)?.is_some();
     let mut items = Vec::with_capacity(tool_keys.len());
     for tool_key in tool_keys {
         let (assignment_id, status) =
             match store.get_project_skill_assignment(&project.id, &skill.id, tool_key)? {
+                // A skill disabled at skill grain answers Disabled for every
+                // existing row too: a failed Disable leaves it `error`, and
+                // that row is not "already assigned" — it is off until Enable.
+                Some(existing) if existing.status == SyncStatus::Disabled || skill_disabled => (
+                    Some(existing.id),
+                    ProjectSyncOutcomeStatus::Skipped {
+                        reason: ProjectSyncSkip::Disabled,
+                    },
+                ),
                 Some(existing) => (Some(existing.id), ProjectSyncOutcomeStatus::AlreadyAssigned),
+                None if skill_disabled => match require_adapter(tool_key) {
+                    Ok(_) => {
+                        let record = ProjectSkillAssignmentRecord {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            project_id: project.id.clone(),
+                            skill_id: skill.id.clone(),
+                            skill_name: skill.name.clone(),
+                            tool: tool_key.to_string(),
+                            mode: SyncMode::Symlink,
+                            status: SyncStatus::Disabled,
+                            last_error: None,
+                            synced_at: None,
+                            content_hash: None,
+                            created_at: now,
+                        };
+                        store.add_project_skill_assignment(&record)?;
+                        (
+                            Some(record.id),
+                            ProjectSyncOutcomeStatus::Skipped {
+                                reason: ProjectSyncSkip::Disabled,
+                            },
+                        )
+                    }
+                    Err(refusal) => (
+                        None,
+                        ProjectSyncOutcomeStatus::Failed {
+                            error: CommandError::from_anyhow(refusal),
+                        },
+                    ),
+                },
                 None => match assign_and_settle(store, project, skill, tool_key, now)? {
                     AssignAttempt::Settled {
                         record,
@@ -531,9 +588,41 @@ pub(crate) fn resync_project_unlocked(
     let project = project_ops::require_project(store, project_id)?;
     let assignments = store.list_project_skill_assignments(project_id)?;
     let mut report = ProjectSyncReport::default();
+    // The skill-level marker, read once per skill: a failed skill Disable
+    // keeps its rows `error` (ADR-0002) while the skill is off everywhere,
+    // so the row status alone cannot gate the re-sync.
+    let mut skill_disabled: HashMap<String, bool> = HashMap::new();
 
     for assignment in &assignments {
-        let status = match sync_single_assignment(store, &project, assignment, true, now) {
+        let disabled_skill = match skill_disabled.get(&assignment.skill_id) {
+            Some(disabled) => *disabled,
+            None => {
+                let disabled = store.skill_disabled_at(&assignment.skill_id)?.is_some();
+                skill_disabled.insert(assignment.skill_id.clone(), disabled);
+                disabled
+            }
+        };
+        // Skipped before any filesystem work; an `error` row keeps its
+        // status and `last_error` (the failed removal stays observable).
+        if assignment.status == SyncStatus::Disabled || disabled_skill {
+            report.items.push(ProjectSyncOutcome {
+                assignment_id: Some(assignment.id.clone()),
+                project_id: assignment.project_id.clone(),
+                skill_id: assignment.skill_id.clone(),
+                skill_name: reported_skill_name(store, assignment),
+                tool: assignment.tool.clone(),
+                status: ProjectSyncOutcomeStatus::Skipped {
+                    reason: ProjectSyncSkip::Disabled,
+                },
+            });
+            continue;
+        }
+        // Re-sync replaces only an artifact of ours: a row that never
+        // materialised (a failed first sync or Enable met someone else's
+        // folder) is a first sync again, so that folder stays and the
+        // collision is `TARGET_EXISTS` report data (`owns_artifact`).
+        let overwrite = assignment.owns_artifact();
+        let status = match sync_single_assignment(store, &project, assignment, overwrite, now) {
             Ok(()) => ProjectSyncOutcomeStatus::Synced,
             Err(e) => {
                 let err_msg = format!("{:#}", e);
@@ -563,6 +652,56 @@ pub(crate) fn resync_project_unlocked(
         });
     }
 
+    Ok(report)
+}
+
+/// Enable's project half (`core::skill_disable`): a **first** sync of each
+/// given assignment row — overwrite off, so a directory in the way is the
+/// typed `TARGET_EXISTS`, as for a new assignment. Each row settles
+/// `synced`, or `error` with its chain (report data); a store failure fails
+/// the whole operation. The caller has already decided these rows may be
+/// materialised (their skill is not disabled), so their stored status is not
+/// consulted here.
+///
+/// Unlocked internal seam: the caller holds the mutation guard.
+pub(crate) fn first_sync_assignments_unlocked(
+    store: &SkillStore,
+    assignments: &[ProjectSkillAssignmentRecord],
+    now: i64,
+) -> Result<ProjectSyncReport> {
+    let mut report = ProjectSyncReport::default();
+    for assignment in assignments {
+        let result = project_ops::require_project(store, &assignment.project_id)
+            .and_then(|project| sync_single_assignment(store, &project, assignment, false, now));
+        let status = match result {
+            Ok(()) => ProjectSyncOutcomeStatus::Synced,
+            Err(e) => {
+                let err_msg = format!("{:#}", e);
+                store
+                    .transition_assignment(
+                        &assignment.id,
+                        AssignmentTransition::SyncFailed { error: &err_msg },
+                    )
+                    .with_context(|| {
+                        format!(
+                            "settle assignment {} as error after its enable failed: {err_msg}",
+                            assignment.id
+                        )
+                    })?;
+                ProjectSyncOutcomeStatus::Failed {
+                    error: CommandError::from_anyhow(e),
+                }
+            }
+        };
+        report.items.push(ProjectSyncOutcome {
+            assignment_id: Some(assignment.id.clone()),
+            project_id: assignment.project_id.clone(),
+            skill_id: assignment.skill_id.clone(),
+            skill_name: reported_skill_name(store, assignment),
+            tool: assignment.tool.clone(),
+            status,
+        });
+    }
     Ok(report)
 }
 

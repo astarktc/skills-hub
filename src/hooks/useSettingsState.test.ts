@@ -446,3 +446,39 @@ describe("useSettingsState open log folder", () => {
     );
   });
 });
+
+describe("useSettingsState resolved theme", () => {
+  function prefersDark(matches: boolean) {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: () => ({
+        matches,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }),
+    });
+  }
+
+  it("resolves 'system' against the media query from the first render", () => {
+    stubBackend();
+    prefersDark(true);
+    const { result } = renderSettings();
+
+    expect(result.current.themePreference).toBe("system");
+    expect(result.current.resolvedTheme).toBe("dark");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(document.documentElement.style.colorScheme).toBe("dark");
+  });
+
+  it("an explicit choice wins over the system and is the one value written", () => {
+    stubBackend();
+    prefersDark(true);
+    const { result } = renderSettings();
+
+    act(() => result.current.handleThemeChange("light"));
+
+    expect(result.current.resolvedTheme).toBe("light");
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(document.documentElement.style.colorScheme).toBe("light");
+  });
+});

@@ -14,6 +14,7 @@ use crate::core::{
     mutation_guard,
     skill_store::{SkillStore, TargetTransition},
     sync_engine::{self, SyncOutcome},
+    sync_status::SyncStatus,
     tool_adapters::{
         adapter_by_key, adapters_sharing_skills_dir, is_installed_in, skills_dir_in, ToolAdapter,
     },
@@ -24,6 +25,10 @@ use crate::core::{
 #[derive(Debug)]
 pub enum GlobalSyncError {
     ToolNotInstalled {
+        tool_key: String,
+    },
+    /// The pair is Disabled (pair or skill grain) — a skip, never attempted.
+    TargetDisabled {
         tool_key: String,
     },
     TargetExists {
@@ -41,6 +46,9 @@ impl fmt::Display for GlobalSyncError {
         match self {
             GlobalSyncError::ToolNotInstalled { tool_key } => {
                 write!(f, "tool not installed: {}", tool_key)
+            }
+            GlobalSyncError::TargetDisabled { tool_key } => {
+                write!(f, "target disabled: {}", tool_key)
             }
             GlobalSyncError::TargetExists { target_path } => {
                 write!(f, "target already exists: {}", target_path.display())
@@ -335,6 +343,9 @@ pub(crate) fn sync_skills_to_planned_tools(
     let total = skills.len() * attempted.len();
     let mut index = 0usize;
     for skill in skills {
+        // Read once per skill: a store failure fails this skill's pairs as
+        // report data, never the batch (the engine itself never errors).
+        let gate = DisabledGate::read(store, &skill.skill_id);
         for target in &attempted {
             index += 1;
             let tool_key = target.adapter.id.as_key();
@@ -344,6 +355,28 @@ pub(crate) fn sync_skills_to_planned_tools(
                 skill_name: &skill.skill_name,
                 tool_key,
             });
+
+            let blocked = match &gate {
+                Ok(gate) => gate
+                    .blocks(target.adapter)
+                    .then(|| BatchTargetStatus::Skipped {
+                        error: CommandError::from(GlobalSyncError::TargetDisabled {
+                            tool_key: tool_key.to_string(),
+                        }),
+                    }),
+                Err(error) => Some(BatchTargetStatus::Failed {
+                    error: CommandError::internal(format!("{error:#}")),
+                }),
+            };
+            if let Some(status) = blocked {
+                outcomes.push(BatchTargetOutcome {
+                    skill_id: skill.skill_id.clone(),
+                    skill_name: skill.skill_name.clone(),
+                    tool_key: tool_key.to_string(),
+                    status,
+                });
+                continue;
+            }
 
             // An override names a tool key; it applies to this target when
             // that tool shares the target's skills dir (the registry's answer).
@@ -391,6 +424,40 @@ pub(crate) fn sync_skills_to_planned_tools(
     }
 
     outcomes
+}
+
+/// The Disabled rule of the batch (see **Disabled** in `CONTEXT.md`): a pair
+/// is skipped when its skill is disabled at skill grain, or when **any** row
+/// of the skill describing the target's artifact is `Disabled` — the
+/// target's own Tool or any Tool sharing its skills dir, because a shared
+/// artifact written for a sibling is the disabled Tool's artifact too.
+struct DisabledGate {
+    skill_disabled: bool,
+    disabled_tools: Vec<String>,
+}
+
+impl DisabledGate {
+    fn read(store: &SkillStore, skill_id: &str) -> Result<Self> {
+        Ok(Self {
+            skill_disabled: store.skill_disabled_at(skill_id)?.is_some(),
+            disabled_tools: store
+                .list_skill_targets(skill_id)?
+                .into_iter()
+                .filter(|row| row.status == SyncStatus::Disabled)
+                .map(|row| row.tool)
+                .collect(),
+        })
+    }
+
+    fn blocks(&self, adapter: &ToolAdapter) -> bool {
+        self.skill_disabled
+            || self.disabled_tools.iter().any(|tool| {
+                tool == adapter.key()
+                    || adapters_sharing_skills_dir(adapter)
+                        .iter()
+                        .any(|a| a.key() == tool)
+            })
+    }
 }
 
 /// Sync N skills to M tools in one call: environment probing under `home`

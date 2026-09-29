@@ -36,6 +36,7 @@ use super::content_identity::{self, Source};
 use super::mutation_guard;
 use super::skill_store::{SkillRecord, SkillStore, TargetTransition};
 use super::sync_engine::{self, SyncOutcome};
+use super::sync_status::SyncStatus;
 use super::tool_adapters::{adapter_by_key, former_skills_dirs_in, skills_dir_in, ToolAdapter};
 
 /// How many global target rows the pass moved, and how many it found in a
@@ -73,8 +74,19 @@ pub(crate) fn relocate_unlocked(
 ) -> Result<RelocationSummary> {
     let mut summary = RelocationSummary::default();
     for skill in store.list_skills()? {
+        // A skill disabled at skill grain is off everywhere until Enable,
+        // even where a failed Disable left a row `error` with its former
+        // artifact still present: nothing is materialised for it.
+        let skill_disabled = store.skill_disabled_at(&skill.id)?.is_some();
         let mut moves: Vec<Move> = Vec::new();
         for row in store.list_skill_targets(&skill.id)? {
+            // A Disabled row has no artifact to move and must not gain one:
+            // it keeps its recorded path until Enable re-syncs the pair. A row
+            // that never materialised (`owns_artifact`) has nothing of ours
+            // there either: moving would delete someone else's former folder.
+            if row.status == SyncStatus::Disabled || !row.owns_artifact() {
+                continue;
+            }
             let Some(adapter) = adapter_by_key(&row.tool) else {
                 continue;
             };
@@ -83,6 +95,16 @@ pub(crate) fn relocate_unlocked(
                 .iter()
                 .any(|dir| old.parent() == Some(dir.as_path()));
             if !in_former_dir {
+                continue;
+            }
+            if skill_disabled {
+                log::info!(
+                    "{} is disabled; its {} row stays in the former dir {}",
+                    skill.name,
+                    row.tool,
+                    old.display()
+                );
+                summary.left_in_place += 1;
                 continue;
             }
 

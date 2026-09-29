@@ -1,0 +1,243 @@
+/*
+ * The prose layer — the one named exemption from "utilities in JSX"
+ * (ADR-0006 §5). It styles content we do not author as JSX: rendered
+ * Markdown (react-markdown) and syntax-highlighted code
+ * (react-syntax-highlighter with useInlineStyles={false}, Prism classes).
+ *
+ * Two rules, enforced by `npm run styles:check`:
+ *   - every selector is scoped under the prose root `.prose`;
+ *   - tokens only (var(--…)) — no colour literal of any kind.
+ * Surface layout (padding, width) belongs in the JSX that renders the root.
+ */
+
+.prose {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--foreground);
+}
+
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4,
+.prose h5,
+.prose h6 {
+  color: var(--foreground);
+  margin-top: 24px;
+  margin-bottom: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.prose h1 {
+  font-size: 24px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.prose h2 {
+  font-size: 20px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.prose h3 {
+  font-size: 16px;
+}
+
+.prose h4 {
+  font-size: 14px;
+}
+
+.prose p {
+  margin: 0 0 12px;
+}
+
+.prose ul,
+.prose ol {
+  padding-left: 24px;
+  margin: 0 0 12px;
+}
+
+.prose ul {
+  list-style: disc;
+}
+
+.prose ol {
+  list-style: decimal;
+}
+
+.prose li {
+  margin-bottom: 4px;
+}
+
+.prose li > ul,
+.prose li > ol {
+  margin-top: 4px;
+  margin-bottom: 0;
+}
+
+.prose blockquote {
+  margin: 0 0 12px;
+  padding: 4px 16px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--muted-foreground);
+  background: var(--muted);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+/* Links read as links without colour: underline in a line colour that
+   strengthens on hover. Iris is reserved for selection, focus and the one
+   primary action. */
+.prose a {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 3px;
+}
+
+.prose a:hover {
+  text-decoration-color: var(--foreground);
+}
+
+.prose hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 20px 0;
+}
+
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.prose th,
+.prose td {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.prose td {
+  white-space: pre-wrap;
+}
+
+.prose th {
+  background: var(--muted);
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.prose tr:nth-child(even) {
+  background: var(--card);
+}
+
+.prose img {
+  max-width: 100%;
+  border-radius: var(--radius-md);
+}
+
+.prose .md-inline-code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  padding: 2px 6px;
+  background: var(--muted);
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+}
+
+/* ── Code: fenced blocks inside Markdown, and the plain file viewer ── */
+
+.prose .prismjs {
+  margin: 0 0 12px;
+  padding: 12px 16px;
+  overflow-x: auto;
+  background: var(--card);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.prose .prismjs code {
+  font-family: var(--font-mono);
+}
+
+/* The file viewer: the code is the whole pane, not a block within prose. */
+.prose .prismjs.code-file {
+  margin: 0;
+  padding: 16px 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  line-height: 1.7;
+}
+
+.prose .linenumber {
+  color: var(--faint);
+  font-style: normal;
+}
+
+.prose .token.comment,
+.prose .token.prolog,
+.prose .token.doctype,
+.prose .token.cdata {
+  color: var(--faint);
+  font-style: italic;
+}
+
+.prose .token.punctuation,
+.prose .token.operator,
+.prose .token.entity,
+.prose .token.url {
+  color: var(--muted-foreground);
+}
+
+.prose .token.keyword,
+.prose .token.atrule,
+.prose .token.attr-value,
+.prose .token.important {
+  color: var(--syntax-keyword);
+}
+
+.prose .token.string,
+.prose .token.char,
+.prose .token.selector,
+.prose .token.attr-name,
+.prose .token.builtin,
+.prose .token.inserted {
+  color: var(--syntax-string);
+}
+
+.prose .token.number,
+.prose .token.boolean,
+.prose .token.constant,
+.prose .token.symbol,
+.prose .token.property,
+.prose .token.tag,
+.prose .token.regex,
+.prose .token.variable,
+.prose .token.deleted {
+  color: var(--syntax-number);
+}
+
+.prose .token.function,
+.prose .token.class-name {
+  color: var(--syntax-function);
+}
+
+.prose .token.bold,
+.prose .token.important {
+  font-weight: 600;
+}
+
+.prose .token.italic {
+  font-style: italic;
+}

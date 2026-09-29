@@ -1,7 +1,14 @@
 import { memo } from 'react'
 import { Download } from 'lucide-react'
 import type { TFunction } from 'i18next'
-import Modal from '../../shared/Modal'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import type { OnboardingPlan } from '../types'
 
 type ImportModalProps = {
@@ -32,13 +39,100 @@ const ImportModal = ({
   t,
 }: ImportModalProps) => {
   return (
-    <Modal
+    <Dialog
       open={open}
-      title={t('importTitle')}
-      onRequestClose={onRequestClose}
-      className="modal-lg modal-discovered"
-      footer={
-        <>
+      onOpenChange={(next) => {
+        if (!next) onRequestClose()
+      }}
+    >
+      <DialogContent size="xl">
+        <DialogHeader>
+          <DialogTitle>{t('importTitle')}</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          {/* Legacy scope: the import review's content rules in App.css
+              (.modal-discovered …) until the Import review surface migrates. */}
+          <div className="modal-discovered gap-5">
+            <div className="import-summary">
+              <div>{t('importSummary')}</div>
+              <div className="import-metrics">
+                <span>{t('toolsScanned', { count: plan.total_tools_scanned })}</span>
+                <span>{t('skillsFound', { count: plan.total_skills_found })}</span>
+              </div>
+            </div>
+            <div className="sync-row">
+              <label className="inline-checkbox">
+                <input
+                  type="checkbox"
+                  checked={
+                    plan.groups.length > 0 &&
+                    plan.groups.every((group) => selected[group.name])
+                  }
+                  onChange={(event) => onToggleAll(event.target.checked)}
+                />
+                {t('selectAll')}
+              </label>
+            </div>
+            <div className="groups discovered-list">
+              {plan.groups.map((group) => (
+                <div className="group-card" key={group.name}>
+                  <div className="group-title">
+                    <label className="group-select">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(selected[group.name])}
+                        onChange={(event) =>
+                          onToggleGroup(group.name, event.target.checked)
+                        }
+                      />
+                      <span>{group.name}</span>
+                    </label>
+                    {group.has_conflict ? (
+                      <span className="badge danger">{t('conflict')}</span>
+                    ) : (
+                      <span className="badge">{t('consistent')}</span>
+                    )}
+                  </div>
+                  <div className="group-variants">
+                    {group.variants.map((variant) => (
+                      <div
+                        className="variant-row"
+                        key={`${group.name}-${variant.tool}-${variant.path}`}
+                      >
+                        {group.has_conflict ? (
+                          <input
+                            type="radio"
+                            name={`variant-${group.name}`}
+                            checked={variantChoice[group.name] === variant.path}
+                            onChange={() => onSelectVariant(group.name, variant.path)}
+                          />
+                        ) : (
+                          <span className="variant-spacer" />
+                        )}
+                        <div className="variant-info">
+                          <span className="path">{variant.path}</span>
+                          <span className="found-pill">
+                            {t('foundIn')} {variant.tool}
+                          </span>
+                        </div>
+                        {variant.is_link ? (
+                          <span className="meta">
+                            {t('linkLabel', {
+                              target: variant.link_target ?? t('unknown'),
+                            })}
+                          </span>
+                        ) : (
+                          <span className="meta">{t('directory')}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </DialogBody>
+        <DialogFooter>
           <button
             className="btn btn-primary"
             onClick={onImport}
@@ -54,87 +148,9 @@ const ImportModal = ({
           >
             {t('close')}
           </button>
-        </>
-      }
-    >
-          <div className="import-summary">
-            <div>{t('importSummary')}</div>
-            <div className="import-metrics">
-              <span>{t('toolsScanned', { count: plan.total_tools_scanned })}</span>
-              <span>{t('skillsFound', { count: plan.total_skills_found })}</span>
-            </div>
-          </div>
-          <div className="sync-row">
-            <label className="inline-checkbox">
-              <input
-                type="checkbox"
-                checked={
-                  plan.groups.length > 0 &&
-                  plan.groups.every((group) => selected[group.name])
-                }
-                onChange={(event) => onToggleAll(event.target.checked)}
-              />
-              {t('selectAll')}
-            </label>
-          </div>
-          <div className="groups discovered-list">
-            {plan.groups.map((group) => (
-              <div className="group-card" key={group.name}>
-                <div className="group-title">
-                  <label className="group-select">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(selected[group.name])}
-                      onChange={(event) =>
-                        onToggleGroup(group.name, event.target.checked)
-                      }
-                    />
-                    <span>{group.name}</span>
-                  </label>
-                  {group.has_conflict ? (
-                    <span className="badge danger">{t('conflict')}</span>
-                  ) : (
-                    <span className="badge">{t('consistent')}</span>
-                  )}
-                </div>
-                <div className="group-variants">
-                  {group.variants.map((variant) => (
-                    <div
-                      className="variant-row"
-                      key={`${group.name}-${variant.tool}-${variant.path}`}
-                    >
-                      {group.has_conflict ? (
-                        <input
-                          type="radio"
-                          name={`variant-${group.name}`}
-                          checked={variantChoice[group.name] === variant.path}
-                          onChange={() => onSelectVariant(group.name, variant.path)}
-                        />
-                      ) : (
-                        <span className="variant-spacer" />
-                      )}
-                      <div className="variant-info">
-                        <span className="path">{variant.path}</span>
-                        <span className="found-pill">
-                          {t('foundIn')} {variant.tool}
-                        </span>
-                      </div>
-                      {variant.is_link ? (
-                        <span className="meta">
-                          {t('linkLabel', {
-                            target: variant.link_target ?? t('unknown'),
-                          })}
-                        </span>
-                      ) : (
-                        <span className="meta">{t('directory')}</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

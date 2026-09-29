@@ -1,6 +1,13 @@
 import { memo } from 'react'
 import type { TFunction } from 'i18next'
-import Modal from '../../shared/Modal'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 type NewToolsModalProps = {
   open: boolean
@@ -20,26 +27,31 @@ const NewToolsModal = ({
   t,
 }: NewToolsModalProps) => {
   return (
-    <Modal
+    <Dialog
       open={open}
-      title={t('newToolsTitle')}
-      onRequestClose={onLater}
-      showCloseButton={false}
-      footer={
-        <>
+      onOpenChange={(next) => {
+        if (!next) onLater()
+      }}
+    >
+      <DialogContent showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>{t('newToolsTitle')}</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          {t('newToolsBody', {
+            tools: toolsLabelText,
+          })}
+        </DialogBody>
+        <DialogFooter>
           <button className="btn btn-secondary" onClick={onLater} disabled={loading}>
             {t('later')}
           </button>
           <button className="btn btn-primary" onClick={onSyncAll} disabled={loading}>
             {t('syncAll')}
           </button>
-        </>
-      }
-    >
-      {t('newToolsBody', {
-        tools: toolsLabelText,
-      })}
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

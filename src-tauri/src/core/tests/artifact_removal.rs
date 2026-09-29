@@ -7,9 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::core::artifact_removal::{
-    execute_unlocked, plan, remove_skill, unsync_all_skill_targets, unsync_skill_from_tool,
-    unsync_skill_targets, RemovalReport, RemovalScope, RemovalTargetOutcome, RemovalTargetStatus,
-    RowRef,
+    execute_unlocked, plan, remove_skill, RemovalReport, RemovalScope, RemovalTargetOutcome,
+    RemovalTargetStatus, RowRef,
 };
 use crate::core::errors::{CommandError, SignalError};
 use crate::core::project_sync;
@@ -49,6 +48,7 @@ fn removal_report_keeps_shared_rows_and_classified_failure_on_the_wire() {
         }],
         central_removed: false,
         record_deleted: false,
+        cleared_markers: Vec::new(),
     };
     assert_eq!(report.failed_rows(), 2);
     assert_eq!(
@@ -63,7 +63,8 @@ fn removal_report_keeps_shared_rows_and_classified_failure_on_the_wire() {
                 "status": { "status": "failed", "error": { "code": "PATH_OUTSIDE_TOOL_DIRS", "path": "refused" } }
             }],
             "central_removed": false,
-            "record_deleted": false
+            "record_deleted": false,
+            "cleared_markers": []
         })
     );
 }
@@ -87,6 +88,7 @@ fn merge_preserves_target_order_rows_statuses_and_deletion_flags() {
         }],
         central_removed: true,
         record_deleted: false,
+        cleared_markers: vec![row.clone()],
     };
     let second = RemovalReport {
         scope: RemovalScope::Skill {
@@ -101,6 +103,7 @@ fn merge_preserves_target_order_rows_statuses_and_deletion_flags() {
         }],
         central_removed: false,
         record_deleted: true,
+        cleared_markers: Vec::new(),
     };
     let expected_targets = serde_json::json!([
         serde_json::to_value(&first.targets[0]).unwrap(),
@@ -113,6 +116,7 @@ fn merge_preserves_target_order_rows_statuses_and_deletion_flags() {
     );
     assert_eq!((merged.removed_rows(), merged.failed_rows()), (1, 2));
     assert!(merged.central_removed && merged.record_deleted);
+    assert_eq!(merged.cleared_markers, vec![row.clone()]);
     assert_eq!(
         serde_json::to_value(&row).unwrap(),
         serde_json::json!({
@@ -122,6 +126,35 @@ fn merge_preserves_target_order_rows_statuses_and_deletion_flags() {
     let empty = RemovalReport::merge([]);
     assert!(empty.targets.is_empty());
     assert!(!empty.central_removed && !empty.record_deleted);
+}
+
+// The operator-facing unsync entry points are gone (an operator's removal of
+// a global target is a Disable, `core::skill_disable`); these helpers plan
+// and execute the same scopes with the delete settlement, so the module's
+// presence, settlement and fan-out rules stay covered scope by scope.
+fn unsync_skill_targets(store: &SkillStore, skill_id: &str) -> anyhow::Result<RemovalReport> {
+    let scope = RemovalScope::SkillGlobal {
+        skill_id: skill_id.to_string(),
+    };
+    execute_unlocked(store, plan(store, &scope)?)
+}
+
+fn unsync_all_skill_targets(store: &SkillStore) -> anyhow::Result<RemovalReport> {
+    execute_unlocked(store, plan(store, &RemovalScope::EveryGlobalTarget)?)
+}
+
+fn unsync_skill_from_tool(
+    store: &SkillStore,
+    home: &Path,
+    skill_id: &str,
+    tool_key: &str,
+) -> anyhow::Result<RemovalReport> {
+    let scope = RemovalScope::SkillTool {
+        skill_id: skill_id.to_string(),
+        tool_key: tool_key.to_string(),
+        home: home.to_path_buf(),
+    };
+    execute_unlocked(store, plan(store, &scope)?)
 }
 
 fn make_store(base: &Path) -> SkillStore {
@@ -201,7 +234,8 @@ fn seed_project(store: &SkillStore, base: &Path, name: &str) -> ProjectRecord {
 }
 
 /// Seed an assignment row with the given status and materialize its
-/// project-scope target on disk (a real dir, so removal is observable).
+/// project-scope target on disk (a real dir, so removal is observable). The
+/// row records a sync of ours (`synced_at`), so it owns that artifact.
 fn seed_assignment(
     store: &SkillStore,
     project: &ProjectRecord,
@@ -219,7 +253,7 @@ fn seed_assignment(
             mode: SyncMode::Copy,
             status,
             last_error: None,
-            synced_at: None,
+            synced_at: Some(1),
             content_hash: None,
             created_at: 1,
         })

@@ -1,0 +1,50 @@
+import { Checkbox as CheckboxPrimitive } from "@base-ui/react/checkbox";
+import { Check, Minus } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { disabledState, focusRing } from "./styles";
+
+type CheckboxProps = Omit<CheckboxPrimitive.Root.Props, "className"> & {
+  /** Layout only. */
+  className?: string;
+};
+
+/**
+ * Checkbox — `role="checkbox"` with `aria-checked` (true / false / mixed).
+ * A 16 px box with a 24 × 24 hit area (the dense target floor); the unchecked
+ * edge is `input` (≥ 3:1 on every surface), checked fills with iris. Name it
+ * with a wrapping `<label>`, `aria-label`, or a Field label.
+ */
+function Checkbox({ className, ...props }: CheckboxProps) {
+  return (
+    <CheckboxPrimitive.Root
+      data-slot="checkbox"
+      className={cn(
+        "peer relative inline-flex size-4 shrink-0 cursor-default items-center justify-center rounded-sm border border-input bg-transparent text-primary-foreground",
+        "after:absolute after:-inset-1 after:content-['']",
+        "data-checked:border-primary data-checked:bg-primary data-indeterminate:border-primary data-indeterminate:bg-primary",
+        "aria-invalid:border-destructive",
+        focusRing,
+        disabledState,
+        "data-disabled:opacity-50",
+        className,
+      )}
+      {...props}
+    >
+      <CheckboxPrimitive.Indicator
+        data-slot="checkbox-indicator"
+        className="flex items-center justify-center [&_svg]:size-3.5"
+        render={(indicatorProps, state) => (
+          <span {...indicatorProps}>
+            {state.indeterminate ? (
+              <Minus aria-hidden="true" strokeWidth={3} />
+            ) : (
+              <Check aria-hidden="true" strokeWidth={3} />
+            )}
+          </span>
+        )}
+      />
+    </CheckboxPrimitive.Root>
+  );
+}
+
+export { Checkbox, type CheckboxProps };

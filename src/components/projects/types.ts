@@ -21,6 +21,7 @@ export type { SyncMode } from "../../bindings";
 export type { ProjectSyncReport } from "../../bindings";
 export type { ProjectSyncOutcome } from "../../bindings";
 export type { ProjectSyncOutcomeStatus } from "../../bindings";
+export type { ProjectSyncSkip } from "../../bindings";
 export type { BulkAssignResultDto } from "../../bindings";
 export type { BulkUnassignResultDto } from "../../bindings";
 export type { GitignoreStatusDto } from "../../bindings";

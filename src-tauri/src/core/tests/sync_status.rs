@@ -139,6 +139,22 @@ fn next_status_table() {
             obs(true, true, Copy, Missing, None, None),
             Missing,
         ),
+        // Disabled is the operator's record, never an observation: terminal.
+        (
+            "disabled / source absent stays disabled",
+            obs(false, false, Symlink, Disabled, None, None),
+            Disabled,
+        ),
+        (
+            "disabled / target reappeared stays disabled",
+            obs(true, true, Copy, Disabled, Some("h"), Some("h")),
+            Disabled,
+        ),
+        (
+            "disabled / target absent stays disabled",
+            obs(true, false, Symlink, Disabled, None, None),
+            Disabled,
+        ),
     ];
 
     for (name, observation, expected) in cases {
@@ -171,6 +187,12 @@ fn aggregate_precedence_table() {
         ("error beats stale", vec![Stale, Error, Pending], P::Error),
         ("missing counts as error", vec![Synced, Missing], P::Error),
         ("missing beats stale", vec![Stale, Missing], P::Error),
+        ("disabled takes no part", vec![Synced, Disabled], P::Synced),
+        (
+            "only disabled folds as empty",
+            vec![Disabled, Disabled],
+            P::Empty,
+        ),
     ];
     for (name, statuses, expected) in cases {
         assert_eq!(aggregate(statuses.into_iter()), expected, "case: {name}");
@@ -198,6 +220,10 @@ fn sync_status_round_trips_through_stored_strings() {
     assert_eq!(
         serde_json::to_string(&SyncStatus::Missing).unwrap(),
         "\"missing\""
+    );
+    assert_eq!(
+        serde_json::to_string(&SyncStatus::Disabled).unwrap(),
+        "\"disabled\""
     );
 }
 

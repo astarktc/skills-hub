@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SkillTargetDto } from "../components/skills/types";
 import {
   defaultImportVariantPath,
+  deployAction,
   filterAndSortSkills,
   formatRelativeTime,
   groupSkillsByRepo,
@@ -539,5 +540,19 @@ describe("visibleToolChoices", () => {
         (t) => t.key,
       ),
     ).toEqual(["pi"]);
+  });
+});
+
+describe("deployAction", () => {
+  const targets = (...statuses: SkillTargetDto["status"][]) => statuses.map((status) => ({ status }));
+  it.each([
+    ["no target at all syncs", null, targets(), { kind: "sync" }],
+    ["a live target is deployed", null, targets("synced", "disabled"), { kind: "deployed" }],
+    ["an error target is still deployed (Disable retries it)", null, targets("error"), { kind: "deployed" }],
+    ["every target pair-disabled enables them", null, targets("disabled", "disabled"), { kind: "enable", disabledTargets: 2 }],
+    ["skill grain enables, whatever the rows", 5, targets("disabled", "error"), { kind: "enable", disabledTargets: 1 }],
+    ["skill grain with no rows still enables", 5, targets(), { kind: "enable", disabledTargets: 0 }],
+  ] as const)("%s", (_name, disabled_at, rows, expected) => {
+    expect(deployAction({ disabled_at, targets: rows })).toEqual(expected);
   });
 });

@@ -1,7 +1,12 @@
-import { memo } from "react";
+import { memo, useId } from "react";
 import { TriangleAlert } from "lucide-react";
 import type { TFunction } from "i18next";
-import Modal from "../shared/Modal";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+} from "@/components/ui/dialog";
 
 type RemoveProjectModalProps = {
   open: boolean;
@@ -20,16 +25,31 @@ const RemoveProjectModal = ({
   onRequestClose,
   t,
 }: RemoveProjectModalProps) => {
+  const titleId = useId();
   return (
-    <Modal
+    <Dialog
       open={open}
-      onRequestClose={onRequestClose}
-      aria-label={t("projects.removeTitle")}
-      className="modal-delete"
-      bodyClassName="delete-body"
-      footerClassName="space-between"
-      footer={
-        <>
+      onOpenChange={(next) => {
+        if (!next) onRequestClose();
+      }}
+    >
+      <DialogContent aria-labelledby={titleId}>
+        <DialogBody>
+          <div className="delete-title" id={titleId}>
+            <TriangleAlert size={20} />
+            {t("projects.removeTitle")}
+          </div>
+          <div className="delete-desc">
+            {t("projects.removeBody", { name: projectName ?? "" })}
+          </div>
+          <div className="delete-warning">
+            <ul>
+              <li>{t("projects.removeWarning1")}</li>
+              <li>{t("projects.removeWarning2")}</li>
+            </ul>
+          </div>
+        </DialogBody>
+        <DialogFooter className="justify-between">
           <button
             className="btn btn-secondary"
             onClick={onRequestClose}
@@ -44,23 +64,9 @@ const RemoveProjectModal = ({
           >
             {t("projects.removeConfirm")}
           </button>
-        </>
-      }
-    >
-          <div className="delete-title">
-            <TriangleAlert size={20} />
-            {t("projects.removeTitle")}
-          </div>
-          <div className="delete-desc">
-            {t("projects.removeBody", { name: projectName ?? "" })}
-          </div>
-          <div className="delete-warning">
-            <ul>
-              <li>{t("projects.removeWarning1")}</li>
-              <li>{t("projects.removeWarning2")}</li>
-            </ul>
-          </div>
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 
