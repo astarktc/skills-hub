@@ -13,6 +13,14 @@ vi.mock("../lib/tauri", () => ({
   invokeTauri: vi.fn(),
 }));
 
+// The folder picker and webview zoom cross the platform seam.
+const pickFolder = vi.fn<(options: { title: string; multiple?: boolean }) => Promise<string[]>>();
+const setZoom = vi.fn<(factor: number) => Promise<void>>();
+vi.mock("../lib/platform", () => ({
+  pickFolder: (options: { title: string; multiple?: boolean }) => pickFolder(options),
+  setZoom: (factor: number) => setZoom(factor),
+}));
+
 import { invokeTauri, type CommandName } from "../lib/tauri";
 import { useSettingsState } from "./useSettingsState";
 
@@ -444,6 +452,62 @@ describe("useSettingsState open log folder", () => {
     expect(reporter.setError).toHaveBeenCalledWith(
       "formatted:[object Object]",
     );
+  });
+});
+
+describe("useSettingsState storage folder and zoom (platform seam)", () => {
+  it("writes the picked folder as the central repo path, then reloads the library", async () => {
+    stubBackend();
+    const onManagedSkillsChanged = vi.fn(async () => {});
+    const { result } = renderHook(() =>
+      useSettingsState({ t, reporter: makeReporter(), onManagedSkillsChanged }),
+    );
+    await waitFor(() => expect(result.current.storagePath).toBe("/home/op/.skillshub"));
+    pickFolder.mockResolvedValueOnce(["/home/op/elsewhere"]);
+    await act(async () => {
+      await result.current.handlePickStoragePath();
+    });
+    expect(pickFolder).toHaveBeenCalledWith({ title: "selectStoragePath" });
+    expect(updateCalls()).toEqual([{ key: "central_repo_path", value: "/home/op/elsewhere" }]);
+    expect(result.current.storagePath).toBe("/home/op/elsewhere");
+    expect(onManagedSkillsChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("a cancelled picker writes nothing", async () => {
+    stubBackend();
+    const { result } = renderSettings();
+    await waitFor(() => expect(result.current.storagePath).toBe("/home/op/.skillshub"));
+    pickFolder.mockResolvedValueOnce([]);
+    await act(async () => {
+      await result.current.handlePickStoragePath();
+    });
+    expect(updateCalls()).toEqual([]);
+  });
+
+  it("a picker failure lands on the error surface", async () => {
+    stubBackend();
+    const reporter = makeReporter();
+    const { result } = renderSettings(reporter);
+    await waitFor(() => expect(result.current.storagePath).toBe("/home/op/.skillshub"));
+    pickFolder.mockRejectedValueOnce(new Error("dialog failed"));
+    await act(async () => {
+      await result.current.handlePickStoragePath();
+    });
+    expect(reporter.setError).toHaveBeenCalledWith("formatted:Error: dialog failed");
+    expect(updateCalls()).toEqual([]);
+  });
+
+  it("zooms the webview to the clamped level and saves it", async () => {
+    stubBackend();
+    setZoom.mockResolvedValue(undefined);
+    const { result } = renderSettings();
+    await waitFor(() => expect(result.current.bounds).not.toBeNull());
+    await act(async () => {
+      await result.current.handleZoomLevelChange(3);
+    });
+    expect(setZoom).toHaveBeenCalledWith(1.5);
+    expect(updateCalls()).toEqual([{ key: "ui_zoom_level", value: 1.5 }]);
+    expect(result.current.zoomLevel).toBe(1.5);
   });
 });
 

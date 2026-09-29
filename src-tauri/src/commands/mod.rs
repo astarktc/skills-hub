@@ -729,6 +729,39 @@ pub async fn repoint_skill_source(
     .map_err(CommandError::from_anyhow)
 }
 
+/// Resolve a Re-point target for one skill without writing anything: what
+/// would land (name, ref, subpath), whether its name matches, and a
+/// multi-skill repository's candidates. Refusals throw as for the Re-point;
+/// honours the shared cancel token.
+#[tauri::command]
+#[specta::specta]
+#[allow(non_snake_case)]
+pub async fn preview_repoint_source(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    cancel: State<'_, Arc<CancelToken>>,
+    skillId: String,
+    target: RepointTarget,
+) -> Result<crate::core::repoint::RepointPreview, CommandError> {
+    let store = store.inner().clone();
+    let cancel = cancel.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        cancel.reset();
+        let paths = installer_paths(&app, &store)?;
+        crate::core::repoint::preview_repoint_source(
+            &paths,
+            &store,
+            &credential_store(),
+            &skillId,
+            target,
+            Some(&cancel),
+        )
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
 /// Detach a `local` skill from its vanished source folder: it becomes
 /// `imported` — the central copy is its truth from now on (ADR-0003).
 /// Store-only; no Sync target changes.

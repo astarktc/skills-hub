@@ -259,7 +259,8 @@ export function createFixtureBackend(
         target_path: `${globalRoot(tool)}/${skill.dto.name}`,
         synced_at: null,
       });
-    return { status: "skipped", error: { code: "TARGET_DISABLED", tool } };
+    // The report row says what the operator did (Rust `record_kept`).
+    return { status: "declined" };
   };
 
   /** One (skill, tool root) attempt under the overwrite rule. */
@@ -999,7 +1000,9 @@ export function createFixtureBackend(
       if (s.status === "skipped" && s.error.code === "TOOL_NOT_INSTALLED") {
         return { scope, status: { status: "skipped", reason: { reason: "tool_not_installed", tool: s.error.tool } } };
       }
-      if (s.status === "skipped" && s.error.code === "TARGET_DISABLED") {
+      // The re-assert carries no overrides, so it never declines; a declined
+      // pair is recorded disabled, which is what it reads as.
+      if (s.status === "declined" || (s.status === "skipped" && s.error.code === "TARGET_DISABLED")) {
         return { scope, status: { status: "skipped", reason: { reason: "disabled" } } };
       }
       return { scope, status: { status: "failed", error: s.error } };
@@ -1083,7 +1086,8 @@ export function createFixtureBackend(
    * Refresh / Update (Rust `refresh::refresh_managed_skills_with`). The cancel
    * token is reset at operation entry; acquisition stops dispatching once a
    * cancel is observed, and a cancelled batch applies nothing: every selected
-   * skill is reported failed `CANCELLED`, followed by the pre-settled skips.
+   * skill is reported `cancelled` (its own kind, never a failure), followed by
+   * the pre-settled skips.
    */
   const refreshBatch = async (
     ids: string[] | null,
@@ -1118,7 +1122,7 @@ export function createFixtureBackend(
     }
     if (state.cancelRequested || acquired.length < total) {
       return {
-        skills: [...selected.map((skill) => refreshRow(skill, { status: "failed", error: { code: "CANCELLED" } })), ...skipped],
+        skills: [...selected.map((skill) => refreshRow(skill, { status: "cancelled" })), ...skipped],
       };
     }
     const outcomes: SkillRefreshOutcome[] = [];
@@ -1162,6 +1166,18 @@ export function createFixtureBackend(
     if (repo.listingError) fail(repo.listingError);
     return { repo, parsed };
   };
+
+  /** Listing's candidate admission (`list_git_skills_with`), shared with the Re-point preview. */
+  const listingCandidates = (
+    found: readonly { name: string; description: string | null; subpath: string }[],
+    branch: string | null,
+  ): GitSkillCandidate[] =>
+    found.map((c) => ({
+      name: c.name,
+      description: c.description,
+      subpath: c.subpath,
+      resolution: { branch: branch ?? "main", subpath: c.subpath },
+    }));
 
   const findLocal = (input: string) => {
     const path = expandHome(input);
@@ -1487,12 +1503,7 @@ export function createFixtureBackend(
         ? repo.candidates.filter((c) => c.subpath === parsed.subpath || c.subpath.startsWith(`${parsed.subpath}/`))
         : repo.candidates;
       if (parsed.subpath && inScope.length === 0) fail({ code: "SUBPATH_MISSING", subpath: parsed.subpath });
-      const candidates: GitSkillCandidate[] = inScope.map((c) => ({
-        name: c.name,
-        description: c.description,
-        subpath: c.subpath,
-        resolution: { branch: parsed.branch ?? "main", subpath: c.subpath },
-      }));
+      const candidates = listingCandidates(inScope, parsed.branch);
       let target_match: CandidateMatch | null = null;
       if (targetName !== null) {
         const hits = candidates.filter((c) => c.name.toLowerCase() === targetName.toLowerCase());
@@ -1555,7 +1566,8 @@ export function createFixtureBackend(
         findLocal(path);
       }
       await pause(600);
-      if (state.cancelRequested) return refused({ code: "CANCELLED" });
+      // A cancel is the batch's cancelled row, never a failure, no health.
+      if (state.cancelRequested) return skillResult({ skills: [refreshRow(skill, { status: "cancelled" })] });
       if (target.kind === "git" && parsed) {
         const repo = state.repos.find((r) => r.slug.toLowerCase() === parsed.slug.toLowerCase());
         if (!repo) return refused({ code: "GIT_CLONE_FAILED", kind: "notFound", detail: `remote: Repository not found (${parsed.slug})` });
@@ -1590,6 +1602,49 @@ export function createFixtureBackend(
           }),
         ],
       });
+    },
+    previewRepointSource: async (skillId, target: RepointTarget) => {
+      // Rust `repoint::preview_repoint_source_with`: the Re-point's validation
+      // and acquisition intent (the skill's own name), writing nothing. A
+      // refusal throws; a multi-skill repository answers its candidates.
+      state.cancelRequested = false;
+      const skill = findSkill(skillId);
+      const sameName = (name: string) => name.trim().toLowerCase() === skill.dto.name.trim().toLowerCase();
+      if (target.kind === "local") {
+        const path = expandHome(target.path);
+        const folder = state.localFolders.find((f) => f.path === path);
+        const own = folder
+          ? folder.candidates.find((c) => c.subpath === ".")
+          : state.localFolders.flatMap((f) => f.candidates.filter((c) => `${f.path}/${c.subpath}` === path))[0];
+        if (!folder && !own) fail({ code: "SOURCE_PATH_MISSING", path });
+        if (!own || own.reason === "missing_skill_md") fail({ code: "SKILL_INVALID", reason: "missing_skill_md" });
+        const tool = insideToolDir(path);
+        if (tool) fail({ code: "LOCAL_SOURCE_INSIDE_TOOL_DIR", path, tool: tool.key });
+        const name = own!.name;
+        return { resolved_name: name, ref: null, subpath: null, name_matches: sameName(name), candidates: null };
+      }
+      const parsed = parseGithub(target.url) ?? fail({ code: "INVALID_GITHUB_URL", url: target.url });
+      await pause(500);
+      if (state.cancelRequested) fail({ code: "CANCELLED" });
+      const { repo } = findRepo(target.url);
+      if (parsed.subpath) {
+        // The fast path: a named folder, on the named (or assumed) branch.
+        const branch = parsed.branch ?? "main";
+        const pick =
+          repo.candidates.find((c) => c.subpath === parsed.subpath) ??
+          fail({ code: "GITHUB_SKILL_NOT_FOUND", url: `https://github.com/${repo.slug}/tree/${branch}/${parsed.subpath}` });
+        return { resolved_name: pick.name, ref: branch, subpath: pick.subpath, name_matches: sameName(pick.name), candidates: null };
+      }
+      // A repository URL: the clone follows the default branch unnamed.
+      const candidates = listingCandidates(repo.candidates, parsed.branch);
+      const pick = repo.candidates.length === 1 ? repo.candidates[0] : repo.candidates.find((c) => sameName(c.name));
+      return {
+        resolved_name: pick?.name ?? null,
+        ref: parsed.branch,
+        subpath: pick?.subpath ?? null,
+        name_matches: pick ? sameName(pick.name) : false,
+        candidates: candidates.length > 1 ? candidates : null,
+      };
     },
     detachSkillFromSource: async (skillId) => {
       await pause(150);

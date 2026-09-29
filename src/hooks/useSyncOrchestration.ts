@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   BatchSyncOverrideDto,
   BatchTargetOutcome,
   BatchSyncSkillDto,
   SyncProgressDto,
-  ToolOption,
   ToolStatusDto,
 } from "../components/skills/types";
+import { createProgressChannel } from "../lib/platform";
 import { invokeTauri, isTauri } from "../lib/tauri";
+import type { ToolCatalog } from "./useToolCatalog";
 import type { AskAnswer, DialogDoor, SurfaceState } from "./useSurfaceState";
 import {
   useSharedDirConfirmation,
@@ -126,17 +127,53 @@ export type SyncOrchestrationDeps = {
   >;
   /** The surface module: this world's dialogs and its two asks. */
   surface: DialogDoor & Pick<SurfaceState, "ask">;
+  /** The Tool catalog: what exists, what is installed, labels, shared dirs. */
+  catalog: Pick<
+    ToolCatalog,
+    | "toolStatus"
+    | "tools"
+    | "toolLabelById"
+    | "installedToolIds"
+    | "sharedToolIdsByToolId"
+  >;
 };
 
 /**
- * Tools + sync world: tool detection status, the saved global tool selection,
- * deploy targets, the auto-sync switch, and the one sync fan-out seam. The
+ * The Add modal's per-install deploy targets before the operator touches
+ * them: the saved global selection when configured, otherwise the installed
+ * tools. Empty until the tool status has loaded.
+ */
+function defaultSyncTargets(
+  status: ToolStatusDto | null,
+  selectedTools: string[] | null,
+): Record<string, boolean> {
+  const next: Record<string, boolean> = {};
+  if (!status) return next;
+  for (const info of status.tools) {
+    next[info.key] = selectedTools
+      ? selectedTools.includes(info.key)
+      : status.installed.includes(info.key);
+  }
+  return next;
+}
+
+/**
+ * Sync world: the saved global tool selection, the two target sets (the
+ * Effective global target set and the Add modal's per-install deploy
+ * targets), the auto-sync switch, and the one sync fan-out seam with its
+ * overwrite and shared-dir asks. What tools exist is the Tool catalog's
+ * (`useToolCatalog`), received as a dependency. The
  * backend owns the sync choreography (installedness filtering, shared-dir
  * dedupe, overwrite policy, DB record fan-out) and streams per-pair progress
  * back over a channel. Nothing else may loop a per-pair sync command —
  * sync_skill_to_tool no longer exists.
  */
-export function useSyncOrchestration({ t, reporter, surface }: SyncOrchestrationDeps) {
+export function useSyncOrchestration({
+  t,
+  reporter,
+  surface,
+  catalog,
+}: SyncOrchestrationDeps) {
   const {
     loading,
     notify,
@@ -146,7 +183,17 @@ export function useSyncOrchestration({ t, reporter, surface }: SyncOrchestration
     formatError,
   } = reporter;
   const { ask, offerDialog, openDialog, closeDialog, dismissDialog } = surface;
-  const [toolStatus, setToolStatus] = useState<ToolStatusDto | null>(null);
+  const {
+    toolStatus,
+    tools,
+    toolLabelById,
+    installedToolIds,
+    sharedToolIdsByToolId,
+  } = catalog;
+  // The settings snapshot has been read (or failed to): the target defaults
+  // and the new-tools announcement wait for it, so they respect the saved
+  // selection.
+  const [settingsSettled, setSettingsSettled] = useState(false);
   const [globalSelectedTools, setGlobalSelectedTools] = useState<
     string[] | null
   >(null);
@@ -158,35 +205,24 @@ export function useSyncOrchestration({ t, reporter, surface }: SyncOrchestration
    * add/import world reloads its plan when this changes.
    */
   const [scanScopeRevision, setScanScopeRevision] = useState(0);
-  const [syncTargets, setSyncTargets] = useState<Record<string, boolean>>({});
+  // The Add modal's deploy targets: derived from the saved selection and
+  // detection until the operator (or a saved configuration) sets them.
+  const [chosenSyncTargets, setChosenSyncTargets] = useState<Record<
+    string,
+    boolean
+  > | null>(null);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
 
   const toolInfos = useMemo(() => toolStatus?.tools ?? [], [toolStatus]);
 
-  const tools: ToolOption[] = useMemo(() => {
-    return toolInfos.map((info) => ({
-      id: info.key,
-      // Prefer i18n label if present; fallback to backend label.
-      label: t(`tools.${info.key}`, { defaultValue: info.label }),
-    }));
-  }, [t, toolInfos]);
-
-  const toolLabelById = useMemo(() => {
-    const out: Record<string, string> = {};
-    for (const tool of tools) out[tool.id] = tool.label;
-    return out;
-  }, [tools]);
-
-  const sharedToolIdsByToolId = useMemo(() => {
-    // toolId -> all toolIds sharing the same skills dir. The backend owns
-    // the grouping (ToolInfoDto.shared_with); this map stays internal to
-    // this hook — it only expands target toggles to the whole group.
-    const out: Record<string, string[]> = {};
-    for (const info of toolInfos) {
-      if (info.shared_with.length > 1) out[info.key] = info.shared_with;
-    }
-    return out;
-  }, [toolInfos]);
+  const defaultTargets = useMemo(
+    () =>
+      settingsSettled
+        ? defaultSyncTargets(toolStatus, globalSelectedTools)
+        : {},
+    [globalSelectedTools, settingsSettled, toolStatus],
+  );
+  const syncTargets = chosenSyncTargets ?? defaultTargets;
 
   // The shared-dir confirmation building-block hook, fed the localized tool
   // labels. Both flows that can affect a whole group (this hook's sync
@@ -210,19 +246,6 @@ export function useSyncOrchestration({ t, reporter, surface }: SyncOrchestration
     async (rows: OverwriteRow[]): Promise<OverwriteAnswer> =>
       OVERWRITE_ANSWER[await ask({ kind: "overwrite", rows })],
     [ask],
-  );
-
-  const installedToolIds = useMemo(
-    () => toolStatus?.installed ?? [],
-    [toolStatus],
-  );
-  const isInstalled = useCallback(
-    (id: string) => installedToolIds.includes(id),
-    [installedToolIds],
-  );
-  const installedTools = useMemo(
-    () => tools.filter((tool) => installedToolIds.includes(tool.id)),
-    [tools, installedToolIds],
   );
 
   /**
@@ -256,19 +279,13 @@ export function useSyncOrchestration({ t, reporter, surface }: SyncOrchestration
   }, [relevantNewlyInstalled, t, tools]);
 
   useEffect(() => {
-    const load = async () => {
-      if (!isTauri) return;
-      // Load the settings snapshot first so the new-tools popup and sync
-      // target defaults respect the saved selection.
-      let selectedTools: string[] | null = null;
-      let scanSelectedOnly = true;
+    if (!isTauri) return;
+    void (async () => {
       try {
         const settings = await invokeTauri("getSettings");
-        selectedTools = settings.global_selected_tools;
-        scanSelectedOnly = settings.scan_selected_tools_only;
         setAutoSyncEnabled(settings.auto_sync_enabled);
-        setGlobalSelectedTools(selectedTools);
-        setScanSelectedToolsOnly(scanSelectedOnly);
+        setGlobalSelectedTools(settings.global_selected_tools);
+        setScanSelectedToolsOnly(settings.scan_selected_tools_only);
         // A corrupt saved selection reads as "unconfigured" for display only:
         // every global sync refuses (SETTING_CORRUPT) until the operator
         // saves the selection again, so say so once, up front.
@@ -278,42 +295,22 @@ export function useSyncOrchestration({ t, reporter, surface }: SyncOrchestration
         // Non-fatal; fall back to defaults.
         console.warn(err);
       }
-      try {
-        const status = await invokeTauri("getToolStatus");
-        setToolStatus(status);
-
-        // Default sync targets: saved global selection if configured,
-        // otherwise installed tools (if user hasn't toggled yet).
-        setSyncTargets((prev) => {
-          if (Object.keys(prev).length > 0) return prev;
-          const next: Record<string, boolean> = {};
-          for (const t of status.tools) {
-            next[t.key] = selectedTools
-              ? selectedTools.includes(t.key)
-              : status.installed.includes(t.key);
-          }
-          return next;
-        });
-
-        const relevantNew = filterRelevantNewlyInstalled(
-          status.newly_installed,
-          scanSelectedOnly,
-          selectedTools,
-        );
-        if (relevantNew.length > 0) {
-          // Announced when no other dialog is up (it may be the update's turn).
-          offerDialog({ kind: "newTools" });
-        }
-      } catch (err) {
-        // Non-fatal; app can still work without detection.
-        console.warn(err);
-      }
-    };
-    void load();
+      setSettingsSettled(true);
+    })();
     // Mount-once load: the corrupt-selection warning is raised with the
     // reporter and copy of that moment, not again on every language switch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Newly detected tools are announced once, when both the tool status and
+  // the saved selection are known, and only when no other dialog is up (it
+  // may be the update's turn).
+  const newToolsChecked = useRef(false);
+  useEffect(() => {
+    if (newToolsChecked.current || !settingsSettled || !toolStatus) return;
+    newToolsChecked.current = true;
+    if (relevantNewlyInstalled.length > 0) offerDialog({ kind: "newTools" });
+  }, [offerDialog, relevantNewlyInstalled, settingsSettled, toolStatus]);
 
   const invokeBatchSync = useCallback(
     async (
@@ -321,18 +318,18 @@ export function useSyncOrchestration({ t, reporter, surface }: SyncOrchestration
       toolIds: string[],
       policy?: SyncPolicy,
     ): Promise<BatchTargetOutcome[]> => {
-      const { Channel } = await import("@tauri-apps/api/core");
-      const onProgress = new Channel<SyncProgressDto>();
-      onProgress.onmessage = (progress) => {
-        setActionMessage(
-          t("actions.syncStep", {
-            index: progress.index,
-            total: progress.total,
-            name: progress.skill_name,
-            tool: toolLabelById[progress.tool] ?? progress.tool,
-          }),
-        );
-      };
+      const onProgress = await createProgressChannel<SyncProgressDto>(
+        (progress) => {
+          setActionMessage(
+            t("actions.syncStep", {
+              index: progress.index,
+              total: progress.total,
+              name: progress.skill_name,
+              tool: toolLabelById[progress.tool] ?? progress.tool,
+            }),
+          );
+        },
+      );
       return invokeTauri(
         "syncSkillsToTools",
         skills,
@@ -440,13 +437,11 @@ export function useSyncOrchestration({ t, reporter, surface }: SyncOrchestration
         setScanSelectedToolsOnly(scanOnly);
         setScanScopeRevision((revision) => revision + 1);
         // Deploy targets follow the saved selection exactly.
-        setSyncTargets(() => {
-          const next: Record<string, boolean> = {};
-          for (const info of toolInfos) {
-            next[info.key] = selected.includes(info.key);
-          }
-          return next;
-        });
+        const next: Record<string, boolean> = {};
+        for (const info of toolInfos) {
+          next[info.key] = selected.includes(info.key);
+        }
+        setChosenSyncTargets(next);
         dismissDialog("toolConfig");
         setSuccessToastMessage(t("status.toolConfigSaved"));
       } catch (err) {
@@ -461,20 +456,20 @@ export function useSyncOrchestration({ t, reporter, surface }: SyncOrchestration
       const shared = sharedToolIdsByToolId[toolId] ?? [toolId];
       const confirmed = await requestSharedDirConfirmation(toolId);
       if (!confirmed) return;
-      setSyncTargets((prev) => {
-        const next = { ...prev };
+      setChosenSyncTargets((prev) => {
+        const next = { ...(prev ?? defaultTargets) };
         for (const id of shared) next[id] = checked;
         return next;
       });
     },
-    [requestSharedDirConfirmation, sharedToolIdsByToolId],
+    [defaultTargets, requestSharedDirConfirmation, sharedToolIdsByToolId],
   );
 
   /** Enable deploy targets for the given tools, expanded to shared-dir groups. */
   const enableTargetsFor = useCallback(
     (toolIds: string[]) => {
-      setSyncTargets((prev) => {
-        const next = { ...prev };
+      setChosenSyncTargets((prev) => {
+        const next = { ...(prev ?? defaultTargets) };
         for (const id of toolIds) {
           const shared = sharedToolIdsByToolId[id] ?? [id];
           for (const sid of shared) next[sid] = true;
@@ -482,7 +477,7 @@ export function useSyncOrchestration({ t, reporter, surface }: SyncOrchestration
         return next;
       });
     },
-    [sharedToolIdsByToolId],
+    [defaultTargets, sharedToolIdsByToolId],
   );
 
   /** Reset deploy targets to exactly the currently installed tools. */
@@ -492,17 +487,11 @@ export function useSyncOrchestration({ t, reporter, surface }: SyncOrchestration
     for (const id of toolStatus.installed) {
       targets[id] = true;
     }
-    setSyncTargets(targets);
+    setChosenSyncTargets(targets);
   }, [toolStatus]);
 
   return {
-    toolStatus,
-    tools,
-    toolLabelById,
     requestSharedDirConfirmation,
-    installedToolIds,
-    isInstalled,
-    installedTools,
     effectiveSyncTargetIds,
     globalSelectedTools,
     scanSelectedToolsOnly,

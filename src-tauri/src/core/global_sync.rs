@@ -246,13 +246,25 @@ pub struct PlannedToolTarget {
 /// Per-(skill, tool) result. `Skipped` is the expected-and-ignorable class
 /// (tool absent, dir unwritable) — callers decide whether to surface it;
 /// `Failed` is everything else. Both carry the typed error, so no
-/// information is lost by the classification.
+/// information is lost by the classification. `Declined` is the operator's
+/// own answer, neither a skip nor a failure (D10).
 #[derive(Debug, serde::Serialize, specta::Type)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum BatchTargetStatus {
-    Synced { outcome: SyncOutcome },
-    Skipped { error: CommandError },
-    Failed { error: CommandError },
+    Synced {
+        outcome: SyncOutcome,
+    },
+    Skipped {
+        error: CommandError,
+    },
+    Failed {
+        error: CommandError,
+    },
+    /// The operator answered the `TARGET_EXISTS` ask with "Keep existing"
+    /// (`OverrideDecision::Keep`): the folder in the way was left alone and
+    /// the pair is recorded `disabled`. Only this batch's override produces
+    /// it; a later pass reports the same pair as a Disabled skip.
+    Declined,
 }
 
 #[derive(Debug, serde::Serialize, specta::Type)]
@@ -505,8 +517,8 @@ fn record_failed(
 /// The operator kept the folder in the way (`OverrideDecision::Keep`): the
 /// pair is recorded `disabled` for the attempted Tool — a marker that owns
 /// nothing at its path, and that the Disabled rule extends to the Tool's
-/// shared-dir siblings — and reported as the batch reports any disabled
-/// pair. A store failure fails the pair as report data.
+/// shared-dir siblings — and reported `Declined`. A store failure fails the
+/// pair as report data.
 fn record_kept(
     store: &SkillStore,
     target: &PlannedToolTarget,
@@ -523,11 +535,7 @@ fn record_kept(
             target_path: &target_path,
         },
     ) {
-        Ok(()) => BatchTargetStatus::Skipped {
-            error: CommandError::from(GlobalSyncError::TargetDisabled {
-                tool_key: tool_key.to_string(),
-            }),
-        },
+        Ok(()) => BatchTargetStatus::Declined,
         Err(err) => BatchTargetStatus::Failed {
             error: CommandError::internal(format!("{err:#}")),
         },

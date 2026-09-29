@@ -15,9 +15,11 @@ import {
   syncOutcome,
   type Outcome,
 } from "../lib/reportOutcome";
+import { createProgressChannel, pickFolder } from "../lib/platform";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import { deployAction, repointKind, type RepointKind } from "../lib/skillPresentation";
 import type { SyncOrchestration } from "./useSyncOrchestration";
+import type { ToolCatalog } from "./useToolCatalog";
 import type { DialogDoor } from "./useSurfaceState";
 import type {
   ActionErrorEntry,
@@ -41,9 +43,9 @@ export type SkillLibraryDeps = {
     | "effectiveSyncTargetIds"
     | "requestSharedDirConfirmation"
     | "syncSkillsToTools"
-    | "toolLabelById"
-    | "tools"
   >;
+  /** The Tool catalog: labels for reports, progress and the shared-dir ask. */
+  catalog: Pick<ToolCatalog, "toolLabelById" | "tools">;
   /** The surface module: Delete, Invocation edit and Change source are its dialogs. */
   surface: Pick<DialogDoor, "layer" | "openDialog" | "closeDialog" | "dismissDialog">;
 };
@@ -64,7 +66,13 @@ const NO_SKILLS: ManagedSkill[] = [];
  * Refresh-all keeps its refetch. This hook folds reports and never fans out
  * a sync of its own for a refresh.
  */
-export function useSkillLibrary({ t, reporter, sync, surface }: SkillLibraryDeps) {
+export function useSkillLibrary({
+  t,
+  reporter,
+  sync,
+  catalog: toolCatalog,
+  surface,
+}: SkillLibraryDeps) {
   const {
     loading,
     notify,
@@ -80,9 +88,8 @@ export function useSkillLibrary({ t, reporter, sync, surface }: SkillLibraryDeps
     effectiveSyncTargetIds,
     requestSharedDirConfirmation,
     syncSkillsToTools,
-    toolLabelById,
-    tools,
   } = sync;
+  const { toolLabelById, tools } = toolCatalog;
   const { layer, openDialog, closeDialog, dismissDialog } = surface;
 
   // null until the first load lands: a deep-linked focus must survive the
@@ -150,10 +157,8 @@ export function useSkillLibrary({ t, reporter, sync, surface }: SkillLibraryDeps
    * state: every call builds a fresh Channel for one command invocation.
    */
   const newRefreshProgressChannel = useCallback(
-    async () => {
-      const { Channel } = await import("@tauri-apps/api/core");
-      const onProgress = new Channel<RefreshProgressDto>();
-      onProgress.onmessage = (progress) => {
+    () =>
+      createProgressChannel<RefreshProgressDto>((progress) => {
         setActionMessage(
           t(
             progress.phase === "acquiring"
@@ -166,9 +171,7 @@ export function useSkillLibrary({ t, reporter, sync, surface }: SkillLibraryDeps
             },
           ),
         );
-      };
-      return onProgress;
-    },
+      }),
     [setActionMessage, t],
   );
 
@@ -439,13 +442,10 @@ export function useSkillLibrary({ t, reporter, sync, surface }: SkillLibraryDeps
    */
   const pickRepointFolder = useCallback(async (): Promise<string | null> => {
     try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({
-        directory: true,
-        multiple: false,
+      const [selected] = await pickFolder({
         title: t("changeSource.selectFolderTitle", { name: repointName }),
       });
-      return !selected || Array.isArray(selected) ? null : selected;
+      return selected ?? null;
     } catch (err) {
       setError(formatError(err));
       return null;

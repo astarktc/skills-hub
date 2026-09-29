@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // Backend calls go through the shared invokeTauri seam (src/lib/tauri.ts),
 // same as every world hook — one mock point for tests.
 import { invokeTauri } from "../../lib/tauri";
@@ -13,7 +13,6 @@ import type {
   IgnoreUpdateOptions,
   RemovalReport,
 } from "./types";
-import type { ManagedSkill, ToolStatusDto } from "../skills/types";
 
 /**
  * What a toggle did, as the backend decided it under the mutation guard:
@@ -37,8 +36,9 @@ export type ProjectState = {
    * disk — never treat it as "healthy".
    */
   assignmentsReconciled: boolean;
-  skills: ManagedSkill[];
-  toolStatus: ToolStatusDto | null;
+  // The matrix's skill rows are the library's catalog and the Tool list is
+  // the Tool catalog's — both passed to the view by the binder, never
+  // loaded here (one skill catalog, one Tool catalog).
   // Loading
   projectsLoading: boolean;
   matrixLoading: boolean;
@@ -77,6 +77,16 @@ export type ProjectState = {
   bulkAssign: (skillId: string) => Promise<ProjectSyncReport | undefined>;
   /** Inverse of `bulkAssign`: one skill off every Tool of the project. */
   bulkUnassign: (skillId: string) => Promise<RemovalReport | undefined>;
+  /**
+   * Assign one skill to every Tool of any project — the project-assignment
+   * verb other surfaces call (the skill action door, the inspector). The
+   * project need not be the selected one: its row updates, and its matrix
+   * too when it is shown. Resolves to the report, unread; a thrown command
+   * converges on the backend's view before rethrowing.
+   */
+  assignToProject: (projectId: string, skillId: string) => Promise<ProjectSyncReport>;
+  /** Inverse of `assignToProject`: one skill off every Tool of a project. */
+  unassignFromProject: (projectId: string, skillId: string) => Promise<RemovalReport>;
   resyncProject: () => Promise<ProjectSyncReport>;
   updateProjectPath: (
     projectId: string,
@@ -88,7 +98,6 @@ export type ProjectState = {
    * means the matrix shown may be stale).
    */
   resyncAll: () => Promise<{ report: ProjectSyncReport; viewRefreshed: boolean }>;
-  loadToolStatus: () => Promise<void>;
   /**
    * Make `tools` the selected project's tool set (one backend command).
    * A pending ignore intent rides along and is consumed only on success, so
@@ -136,8 +145,6 @@ export function useProjectState(): ProjectState {
     assignments,
     reconciled: assignmentsReconciled,
   } = selection;
-  const [skills, setSkills] = useState<ManagedSkill[]>([]);
-  const [toolStatus, setToolStatus] = useState<ToolStatusDto | null>(null);
 
   // Loading state
   const [projectsLoading, setProjectsLoading] = useState(true);
@@ -219,24 +226,15 @@ export function useProjectState(): ProjectState {
     }
   }, []);
 
-  const loadSkills = useCallback(async () => {
-    try {
-      const result = await invokeTauri("getManagedSkills");
-      setSkills(result);
-    } catch {
-      // Skills load failure is non-critical for projects tab
-    }
-  }, []);
-
-  // Load projects and skills on mount. Concurrent fire-and-forget, awaited
-  // inside an IIFE so the loaders' setState runs in an async continuation
-  // (satisfies react-hooks/set-state-in-effect). Promise.all preserves the
-  // original concurrent start; behavior is unchanged.
+  // Load the project list on mount — the binder composes this world at
+  // startup, so it lives as long as the app and survives navigation.
+  // Awaited inside an IIFE so the loader's setState runs in an async
+  // continuation (satisfies react-hooks/set-state-in-effect).
   useEffect(() => {
     void (async () => {
-      await Promise.all([loadProjects(), loadSkills()]);
+      await loadProjects();
     })();
-  }, [loadProjects, loadSkills]);
+  }, [loadProjects]);
 
   const selectProject = useCallback(
     async (id: string) => {
@@ -354,6 +352,36 @@ export function useProjectState(): ProjectState {
     [selectedProjectId, pendingCells, applyView, refreshView],
   );
 
+  const assignToProject = useCallback(
+    async (projectId: string, skillId: string): Promise<ProjectSyncReport> => {
+      try {
+        const result = await invokeTauri("bulkAssignSkill", projectId, skillId);
+        applyView(result.view);
+        return result.report;
+      } catch (err) {
+        await refreshView(projectId);
+        throw err;
+      }
+    },
+    [applyView, refreshView],
+  );
+
+  const unassignFromProject = useCallback(
+    async (projectId: string, skillId: string): Promise<RemovalReport> => {
+      try {
+        const result = await invokeTauri("bulkUnassignSkill", projectId, skillId);
+        // A row whose artifact stayed is kept with status `error`
+        // (ADR-0002); the view already shows it.
+        applyView(result.view);
+        return result.report;
+      } catch (err) {
+        await refreshView(projectId);
+        throw err;
+      }
+    },
+    [applyView, refreshView],
+  );
+
   const bulkAssign = useCallback(
     async (skillId: string): Promise<ProjectSyncReport | undefined> => {
       if (!selectedProjectId) return;
@@ -365,16 +393,7 @@ export function useProjectState(): ProjectState {
         return next;
       });
       try {
-        const result = await invokeTauri(
-          "bulkAssignSkill",
-          selectedProjectId,
-          skillId,
-        );
-        applyView(result.view);
-        return result.report;
-      } catch (err) {
-        await refreshView(selectedProjectId);
-        throw err;
+        return await assignToProject(selectedProjectId, skillId);
       } finally {
         setPendingCells((prev) => {
           const next = new Set(prev);
@@ -383,7 +402,7 @@ export function useProjectState(): ProjectState {
         });
       }
     },
-    [selectedProjectId, tools, applyView, refreshView],
+    [selectedProjectId, tools, assignToProject],
   );
 
   const bulkUnassign = useCallback(
@@ -399,18 +418,7 @@ export function useProjectState(): ProjectState {
         return next;
       });
       try {
-        const result = await invokeTauri(
-          "bulkUnassignSkill",
-          selectedProjectId,
-          skillId,
-        );
-        // A row whose artifact stayed is kept with status `error`
-        // (ADR-0002); the view already shows it.
-        applyView(result.view);
-        return result.report;
-      } catch (err) {
-        await refreshView(selectedProjectId);
-        throw err;
+        return await unassignFromProject(selectedProjectId, skillId);
       } finally {
         setPendingCells((prev) => {
           const next = new Set(prev);
@@ -419,7 +427,7 @@ export function useProjectState(): ProjectState {
         });
       }
     },
-    [selectedProjectId, assignments, applyView, refreshView],
+    [selectedProjectId, assignments, unassignFromProject],
   );
 
   const updateProjectPath = useCallback(
@@ -460,11 +468,6 @@ export function useProjectState(): ProjectState {
     const viewRefreshed = selectedProjectId ? await refreshView(selectedProjectId) : true;
     return { report: result.report, viewRefreshed };
   }, [selectedProjectId, refreshView]);
-
-  const loadToolStatus = useCallback(async () => {
-    const result = await invokeTauri("getProjectToolStatus");
-    setToolStatus(result);
-  }, []);
 
   const configureTools = useCallback(
     async (toolIds: string[]): Promise<RemovalReport | undefined> => {
@@ -519,32 +522,61 @@ export function useProjectState(): ProjectState {
     [],
   );
 
-  return {
-    projects,
-    selectedProjectId,
-    tools,
-    assignments,
-    assignmentsReconciled,
-    skills,
-    toolStatus,
-    projectsLoading,
-    matrixLoading,
-    pendingCells,
-    loadFailed,
-    loadProjects,
-    selectProject,
-    registerProject,
-    removeProject,
-    toggleAssignment,
-    bulkAssign,
-    bulkUnassign,
-    resyncProject,
-    updateProjectPath,
-    resyncAll,
-    loadToolStatus,
-    configureTools,
-    discardPendingIgnore,
-    getGitignoreStatus,
-    updateGitignore,
-  };
+  // One value per state change: the binder hands it to the view whole.
+  return useMemo(
+    () => ({
+      projects,
+      selectedProjectId,
+      tools,
+      assignments,
+      assignmentsReconciled,
+      projectsLoading,
+      matrixLoading,
+      pendingCells,
+      loadFailed,
+      loadProjects,
+      selectProject,
+      registerProject,
+      removeProject,
+      toggleAssignment,
+      bulkAssign,
+      bulkUnassign,
+      assignToProject,
+      unassignFromProject,
+      resyncProject,
+      updateProjectPath,
+      resyncAll,
+      configureTools,
+      discardPendingIgnore,
+      getGitignoreStatus,
+      updateGitignore,
+    }),
+    [
+      projects,
+      selectedProjectId,
+      tools,
+      assignments,
+      assignmentsReconciled,
+      projectsLoading,
+      matrixLoading,
+      pendingCells,
+      loadFailed,
+      loadProjects,
+      selectProject,
+      registerProject,
+      removeProject,
+      toggleAssignment,
+      bulkAssign,
+      bulkUnassign,
+      assignToProject,
+      unassignFromProject,
+      resyncProject,
+      updateProjectPath,
+      resyncAll,
+      configureTools,
+      discardPendingIgnore,
+      getGitignoreStatus,
+      updateGitignore,
+    ],
+  );
 }

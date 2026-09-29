@@ -139,7 +139,16 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   sync seam) — **world** hooks never import each other at runtime (type-only imports of another hook's
   types, narrowed with `Pick<>`, are the established pattern for declaring deps). A world may be built
   from smaller building-block hooks it owns (e.g. `useAddSkillFlow` instantiates `useCandidatePick`
-  twice); those are internal to that world, not a cross-world seam. **What is on screen is one module,
+  twice); those are internal to that world, not a cross-world seam. Every world — the project world
+  (`useProjectState`) included — is composed in App and lives as long as the app, so selection and loaded
+  data survive navigation; a view receives its world's value as a prop. **The Tool catalog is one module,
+  `src/hooks/useToolCatalog.ts`** (tool status, labels, installedness, `shared_with` map, the project tool
+  entries), read by sync, library, add flow and projects; `useSyncOrchestration` keeps only the saved
+  selection, the two target sets and the sync seam. **The app update is one module,
+  `src/hooks/useAppUpdate.ts`** (status, version, notes, `check`/`install`/`dismiss`/`ignore`), read by
+  Settings and the startup notice (`UpdateDialog`). A world reads another world's catalog only as a value
+  App passes in — the project world's skill rows are the library's `ManagedSkill[]` and its Tool entries
+  the Tool catalog's, handed to `ProjectsPage` by App, never fetched or imported. **What is on screen is one module,
   `src/hooks/useSurfaceState.ts`** (created first in App, passed to worlds as a narrowed door): the area,
   the focused subject, per-surface selection and the dialog stack (one union across worlds). World hooks
   keep data and actions and *ask* it to open/close (`openDialog`, `pushDialog` for a nested step, `ask`
@@ -169,7 +178,12 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
 - **Frontend tests are hook- and pure-function-level; no component rendering tests** (vitest + `renderHook`,
   jsdom; colocated `src/**/*.test.ts`,
   type-checked by `npm run build`): mock at module seams — `src/lib/tauri.ts` for backend calls,
-  `sonner` for toasts, `@tauri-apps/api/core` for `Channel`. Every hook **and component** calls the
+  `src/lib/platform.ts` for the native platform, `sonner` for toasts. **Everything native that is not a
+  command crosses `src/lib/platform.ts`** — `pickFolder({ title, multiple? })` (the one picker rule:
+  `string[]`, `[]` on cancel, a failure rejects and every caller catches), `createProgressChannel(onMessage)`,
+  `checkForUpdate()`, `setZoom()`, `appVersion()` — with the `isTauri` guard inside; no hook or component
+  imports a Tauri plugin or `@tauri-apps/api/*`, and the fixture installs its own adapter through
+  `installPlatformAdapter`. Every hook **and component** calls the
   backend only through the typed seam `invokeTauri(name, ...args)` (`src/lib/tauri.ts`, generic over
   the generated `commands` table: a wrong name, missing/extra arg, or wrong arg type fails
   `npm run build`); raw `@tauri-apps/api/core` `invoke` appears nowhere outside `src/bindings/index.ts`.
@@ -328,8 +342,11 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   `src/lib/preferences.ts` own persisted view preferences (the literal storage keys are a compat
   contract with existing users); `src/lib/reportOutcome.ts` owns turning every backend report (Refresh /
   Update batch-of-one, Edit, removal, global sync, import, install, delete) into an `Outcome` — toast, error and
-  warning entries, and a `completion` (reload / closeModal / conflict) the hook executes; precedence is
-  conflict › failure › skipped › success, actions carry a skill *id* the hook resolves at click time, and
+  warning entries, quiet `notes` (a declined pair), and a `completion` (reload / closeModal / conflict) the hook
+  executes; a batch's headline is the composite count line (`compositeHeadline`: done · failed · targets failed ·
+  skipped · declined · cancelled · to review, zeros omitted) and precedence only picks the toast `tone` (failure ›
+  conflict › skipped › declined › success; a cancel alone is neutral) — `declined` and `cancelled` are outcome kinds,
+  never failures (D10); the conflict completion fires independently; actions carry a skill *id* the hook resolves at click time, and
   hooks unpack response envelopes but never interpret nested report fields outside the fold. Components import pure functions (presentation, `describeCommandError`);
   the props App passes carry state — `notify`, `runAction`, data, actions — never a function that is
   only an import with an argument pre-bound.

@@ -100,4 +100,38 @@ describe("useNotificationHistory", () => {
     expect(result.current.notifications).toEqual([]);
     expect(result.current.unreadCount).toBe(0);
   });
+
+  it("recordRun stores a fold's headline over its entries as one block with one runId per call", () => {
+    const { result } = renderHook(() => useNotificationHistory());
+    let first = 0;
+    let second = 0;
+
+    act(() => {
+      result.current.record("info", "standalone");
+      first = result.current.recordRun(
+        { kind: "warning", title: "12 refreshed · 5 failed" },
+        [
+          { kind: "error", title: "alpha failed", message: "not found" },
+          { kind: "warning", title: "beta skipped", message: "gone" },
+        ],
+      );
+      second = result.current.recordRun(null, [{ kind: "error", title: "gamma failed" }]);
+    });
+
+    expect(second).toBeGreaterThan(first);
+    expect(
+      result.current.notifications.map(({ title, runId, role }) => ({ title, runId, role })),
+    ).toEqual([
+      { title: "gamma failed", runId: second, role: "entry" },
+      { title: "12 refreshed · 5 failed", runId: first, role: "headline" },
+      { title: "alpha failed", runId: first, role: "entry" },
+      { title: "beta skipped", runId: first, role: "entry" },
+      { title: "standalone", runId: undefined, role: undefined },
+    ]);
+    // Ids stay monotonic newest-first across the block.
+    const ids = result.current.notifications.map((n) => n.id);
+    expect([...ids].sort((a, b) => b - a)).toEqual(ids);
+    // A run's rows count toward unread like any other row.
+    expect(result.current.unreadCount).toBe(4);
+  });
 });

@@ -14,6 +14,11 @@ type AddProjectModalProps = {
   open: boolean;
   loading: boolean;
   projects: ProjectDto[];
+  /**
+   * The Browse button: the picked folder, or null when cancelled (a picker
+   * failure is reported by the caller, which also answers null).
+   */
+  onPickFolder: () => Promise<string | null>;
   onRegister: (
     path: string,
     gitignore: IgnoreUpdateOptions,
@@ -26,6 +31,7 @@ const AddProjectModal = ({
   open,
   loading,
   projects,
+  onPickFolder,
   onRegister,
   onRequestClose,
   t,
@@ -40,13 +46,8 @@ const AddProjectModal = ({
     projects.some((p) => p.path.replace(/[/\\]+$/, "") === normalizedPath);
 
   const handleBrowse = async () => {
-    const { open: pick } = await import("@tauri-apps/plugin-dialog");
-    const selected = await pick({
-      directory: true,
-      multiple: false,
-      title: t("projects.pathLabel"),
-    });
-    if (selected && !Array.isArray(selected)) setPath(selected);
+    const selected = await onPickFolder();
+    if (selected) setPath(selected);
   };
 
   const handleSubmit = async () => {

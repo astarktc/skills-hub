@@ -36,6 +36,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::refresh_managed_skills,
             commands::update_managed_skill,
             commands::repoint_skill_source,
+            commands::preview_repoint_source,
             commands::detach_skill_from_source,
             commands::import_onboarding_selection,
             commands::get_managed_skills,

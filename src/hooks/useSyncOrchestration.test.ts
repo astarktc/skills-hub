@@ -2,7 +2,8 @@
 // global selection, shared-dir group expansion, the batch sync command's
 // policy/channel wiring, and per-target failure surfacing. The backend is
 // mocked at the invokeTauri module seam with per-command responses; the
-// Tauri Channel is a minimal fake capturing onmessage.
+// progress channel comes from the platform seam, stubbed with a minimal fake
+// capturing onmessage. The Tool catalog is composed in, as App does.
 
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,16 +24,23 @@ vi.mock("../lib/tauri", () => ({
   invokeTauri: vi.fn(),
 }));
 
-// Minimal stand-in for Tauri's Channel: the hook only sets onmessage and
-// passes the instance to the command; tests drive onmessage directly.
+// Minimal stand-in for Tauri's Channel: the platform seam builds one per
+// batch with onmessage set; tests drive onmessage directly.
 class FakeChannel<T> {
   onmessage: ((message: T) => void) | null = null;
 }
-vi.mock("@tauri-apps/api/core", () => ({ Channel: FakeChannel }));
+vi.mock("../lib/platform", () => ({
+  createProgressChannel: async <T,>(onMessage: (message: T) => void) => {
+    const channel = new FakeChannel<T>();
+    channel.onmessage = onMessage;
+    return channel;
+  },
+}));
 
 import { invokeTauri, type CommandName } from "../lib/tauri";
 import { useSyncOrchestration } from "./useSyncOrchestration";
 import { useSurfaceState } from "./useSurfaceState";
+import { useToolCatalog } from "./useToolCatalog";
 
 // The seam is generic over the command table; the stub switches on the
 // command name, so it is typed loosely (positional args, unknown result).
@@ -153,11 +161,13 @@ function makeReporter(): Pick<
 function renderSync(reporter = makeReporter()) {
   return renderHook(() => {
     const surface = useSurfaceState();
-    const sync = useSyncOrchestration({ t, reporter, surface });
+    const catalog = useToolCatalog({ t });
+    const sync = useSyncOrchestration({ t, reporter, surface, catalog });
     const sharedDirPending = surface.pendingAsk("sharedDir");
     const overwritePending = surface.pendingAsk("overwrite");
     return {
       ...sync,
+      toolStatus: catalog.toolStatus,
       surface,
       showNewToolsModal: surface.isOpen("newTools"),
       showToolConfigModal: surface.isOpen("toolConfig"),

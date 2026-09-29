@@ -19,6 +19,22 @@ export type Notification = {
   action?: NotificationAction;
   /** Wall-clock time the notification was raised (ms since epoch). */
   at: number;
+  /**
+   * The run this row belongs to: every row `recordRun` writes for one fold
+   * call shares it (D11 groups the panel by it — ticket 14). Absent for a
+   * standalone notification.
+   */
+  runId?: number;
+  /** Within a run: its composite headline, or one of its entries. */
+  role?: "headline" | "entry";
+};
+
+/** One row of a run, before the ring stamps it. */
+export type RunRow = {
+  kind: NotificationKind;
+  title: string;
+  message?: string;
+  action?: NotificationAction;
 };
 
 /** The history keeps this many entries, newest first; older ones drop off. */
@@ -37,6 +53,13 @@ export type RecordFn = (
   action?: NotificationAction,
 ) => void;
 
+/**
+ * Appends one run — a fold's headline (when it has one) and its entries —
+ * as one block under a fresh `runId`, which it returns. The headline sits on
+ * top; the entries follow in report order.
+ */
+export type RecordRunFn = (headline: RunRow | null, entries: RunRow[]) => number;
+
 export type NotificationHistory = {
   /**
    * This session's notification history, newest first, bounded at
@@ -47,8 +70,10 @@ export type NotificationHistory = {
   notifications: Notification[];
   /** Errors and warnings recorded since the last `markAllRead`. */
   unreadCount: number;
-  /** The history's only writer. */
+  /** The history's writer for a standalone notification. */
   record: RecordFn;
+  /** The history's writer for one run of a batch action. */
+  recordRun: RecordRunFn;
   /** Opening the history panel: everything listed counts as seen. */
   markAllRead: () => void;
   /** Empties the history (and with it the unread count). */
@@ -66,6 +91,7 @@ export function useNotificationHistory(): NotificationHistory {
   // Every entry with an id above this watermark is unread; ids only grow.
   const [lastReadId, setLastReadId] = useState(0);
   const nextIdRef = useRef(1);
+  const nextRunIdRef = useRef(1);
 
   const record = useCallback<RecordFn>((kind, title, message, action) => {
     const entry: Notification = {
@@ -79,6 +105,35 @@ export function useNotificationHistory(): NotificationHistory {
     setNotifications((prev) =>
       [entry, ...prev].slice(0, NOTIFICATION_HISTORY_LIMIT),
     );
+  }, []);
+
+  const recordRun = useCallback<RecordRunFn>((headline, entries) => {
+    const runId = nextRunIdRef.current++;
+    const at = Date.now();
+    const rows: Array<RunRow & { role: "headline" | "entry" }> = [
+      ...(headline ? [{ ...headline, role: "headline" as const }] : []),
+      ...entries.map((entry) => ({ ...entry, role: "entry" as const })),
+    ];
+    // Newest first: the block's last row gets the smallest id, so the
+    // headline — recorded last — is on top and the entries read top-down.
+    const stamped: Notification[] = [];
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const { kind, title, message, action, role } = rows[i];
+      stamped.unshift({
+        id: nextIdRef.current++,
+        kind,
+        title,
+        message,
+        ...(action ? { action } : {}),
+        at,
+        runId,
+        role,
+      });
+    }
+    setNotifications((prev) =>
+      [...stamped, ...prev].slice(0, NOTIFICATION_HISTORY_LIMIT),
+    );
+    return runId;
   }, []);
 
   const unreadCount = useMemo(
@@ -97,5 +152,5 @@ export function useNotificationHistory(): NotificationHistory {
     setLastReadId(nextIdRef.current - 1);
   }, []);
 
-  return { notifications, unreadCount, record, markAllRead, clear };
+  return { notifications, unreadCount, record, recordRun, markAllRead, clear };
 }

@@ -344,7 +344,7 @@ describe("useCandidatePick batch install", () => {
     expect(afterBatch).toHaveBeenCalled();
     expect(showActionErrors).toHaveBeenCalledWith([]);
     expect(deps.reporter.notify).toHaveBeenCalledWith(
-      "success", "status.selectedSkillsInstalled", undefined,
+      "success", t("outcome.done.installed", { count: 1 }), undefined,
     );
     expect(result.current.visible).toBe(false);
     expect(result.current.candidates).toEqual([]);
@@ -409,7 +409,7 @@ afterEach(() => vi.restoreAllMocks());
 it.each([false, true])("picker executes fold completion=%s and publishes its outcome", async (complete) => {
   const { deps, afterBatch } = makeDeps();
   const { source, resetForm } = makeSource();
-  const outcome: folds.Outcome = { toast: { kind: "warning", message: "fold" }, errors: [{ title: "error", message: "detail" }], warnings: [], completion: { reload: complete, closeModal: complete, conflict: false } };
+  const outcome: folds.Outcome = { toast: { kind: "warning", tone: "failure", message: "fold" }, errors: [{ title: "error", message: "detail" }], warnings: [], notes: [], completion: { reload: complete, closeModal: complete, conflict: false } };
   const fold = vi.spyOn(folds, "installOutcome").mockReturnValue(outcome);
   const { result } = renderPick(source, deps);
   act(() => result.current.open("/base", [cand("alpha", "alpha")]));

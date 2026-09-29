@@ -13,6 +13,7 @@ import {
 } from "../bindings";
 import type { TranslateFn } from "../hooks/useStatusReporter";
 import { refreshOutcome } from "../lib/reportOutcome";
+import { skillSourceLabel } from "../lib/skillPresentation";
 import type { CommandName } from "../lib/tauri";
 import { createFixtureBackend, type FixtureBackend, type FixtureHandlers } from "./backend";
 import { SCENARIOS, globalRoot, type FixtureProject, type FixtureState, type ScenarioName } from "./model";
@@ -647,7 +648,7 @@ describe("S5: cancellation", () => {
     expect(report.skills.every((s) => s.status.status === "refreshed")).toBe(true);
   });
 
-  it("an early cancel answers per-skill CANCELLED rows, pre-settled skips last, nothing applied", async () => {
+  it("an early cancel answers per-skill cancelled rows, pre-settled skips last, nothing applied", async () => {
     const { handlers, armCancel } = cancellingBackend("failures");
     const before = await handlers.getManagedSkills();
     armCancel(1);
@@ -656,11 +657,13 @@ describe("S5: cancellation", () => {
     const kinds = report.skills.map((s) => s.status.status);
     const firstSkip = kinds.indexOf("skipped");
     expect(firstSkip).toBeGreaterThan(0);
-    expect(kinds.slice(0, firstSkip).every((k) => k === "failed")).toBe(true);
+    expect(kinds.slice(0, firstSkip).every((k) => k === "cancelled")).toBe(true);
     expect(kinds.slice(firstSkip).every((k) => k === "skipped")).toBe(true);
     for (const s of report.skills.slice(0, firstSkip)) {
-      expect(s.status).toEqual({ status: "failed", error: { code: "CANCELLED" } });
+      expect(s.status).toEqual({ status: "cancelled" });
     }
+    // D10: the fold reads it as a cancel, never "0 refreshed, N failed".
+    expect(refreshOutcome(report, { t }).toast).toMatchObject({ tone: "neutral", message: "outcome.refreshCancelled" });
     expect(progress.ticks).toEqual([]);
     expect(await handlers.getManagedSkills()).toEqual(before);
   });
@@ -674,23 +677,23 @@ describe("S5: cancellation", () => {
     const report = await handlers.refreshManagedSkills(null, { reassert_auto_sync: true }, progress.channel);
     expect(progress.ticks.map((tick) => tick.phase)).toEqual(["acquiring", "acquiring"]);
     expect(report.skills).toHaveLength(60);
-    expect(report.skills.every((s) => s.status.status === "failed" && s.status.error.code === "CANCELLED")).toBe(true);
+    expect(report.skills.every((s) => s.status.status === "cancelled")).toBe(true);
     expect(await handlers.getManagedSkills()).toEqual(before);
   });
 
-  it("Update and Re-point answer a CANCELLED report row and leave the skill unchanged", async () => {
+  it("Update and Re-point answer a cancelled report row and leave the skill unchanged", async () => {
     const update = cancellingBackend("rich");
     const tdd = await byName(update.handlers, "tdd");
     update.armCancel(2);
     const updated = await update.handlers.updateManagedSkill(tdd.id, { reassert_auto_sync: true }, sink().channel);
-    expect(updated.report.skills[0].status).toEqual({ status: "failed", error: { code: "CANCELLED" } });
+    expect(updated.report.skills[0].status).toEqual({ status: "cancelled" });
     expect(updated.skills.find((s) => s.id === tdd.id)).toEqual(tdd);
 
     const repoint = cancellingBackend("rich");
     const pdf = await byName(repoint.handlers, "pdf");
     repoint.armCancel(1);
     const repointed = await repoint.handlers.repointSkillSource(pdf.id, { kind: "local", path: "~/Projects/pi-lens/skill" }, { reassert_auto_sync: false });
-    expect(repointed.report.skills[0].status).toEqual({ status: "failed", error: { code: "CANCELLED" } });
+    expect(repointed.report.skills[0].status).toEqual({ status: "cancelled" });
     expect(repointed.skills.find((s) => s.id === pdf.id)).toEqual(pdf);
   });
 
@@ -1046,7 +1049,7 @@ describe("D9: Skill health and the failed / declined first sync (ticket 02)", ()
     pr.dto.health = null;
     cancelling.armCancel(1);
     const report = await cancelling.handlers.refreshManagedSkills([pr.dto.id], { reassert_auto_sync: false }, sink().channel);
-    expect(report.skills[0].status).toEqual({ status: "failed", error: { code: "CANCELLED" } });
+    expect(report.skills[0].status).toEqual({ status: "cancelled" });
     expect(pr.dto.health).toBeNull();
   });
 
@@ -1134,7 +1137,7 @@ describe("D9: Skill health and the failed / declined first sync (ticket 02)", ()
       { overwrite_if_same_content: true, overrides: [{ skill_id: zod.dto.id, tool: "cursor", decision: "keep" }] },
       sink().channel,
     );
-    expect(kept[0].status).toEqual({ status: "skipped", error: { code: "TARGET_DISABLED", tool: "cursor" } });
+    expect(kept[0].status).toEqual({ status: "declined" });
     expect(zod.dto.targets.find((t) => t.tool === "cursor")).toMatchObject({ status: "disabled", synced_at: null });
     expect(state.foreign.some((f) => f.tool === "cursor" && f.name === "zod-schema-first")).toBe(true);
 
@@ -1150,5 +1153,53 @@ describe("D9: Skill health and the failed / declined first sync (ticket 02)", ()
     const report = await handlers.enableSkillTargets({ kind: "skill_tool", skill_id: zod.dto.id, tool: "cursor" });
     expect(report.global[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS" } });
     expect(zod.dto.targets.find((t) => t.tool === "cursor")).toMatchObject({ status: "disabled", synced_at: null });
+  });
+});
+
+describe("fixture backend: Re-point preview (D15)", () => {
+  it("flags a name mismatch and writes nothing", async () => {
+    const { handlers } = backendFor("failures");
+    const helper = await byName(handlers, "deprecated-helper");
+    const before = await handlers.getManagedSkills();
+    const preview = await handlers.previewRepointSource(helper.id, {
+      kind: "git",
+      url: "https://github.com/mattpocock/skills/tree/main/skills/engineering/ts-error-fixer",
+    });
+    expect(preview).toEqual({
+      resolved_name: "ts-error-fixer",
+      ref: "main",
+      subpath: "skills/engineering/ts-error-fixer",
+      name_matches: false,
+      candidates: null,
+    });
+    expect(await handlers.getManagedSkills()).toEqual(before);
+  });
+
+  it("answers a multi-skill repository's candidates", async () => {
+    const { handlers } = backendFor("failures");
+    const helper = await byName(handlers, "deprecated-helper");
+    const preview = await handlers.previewRepointSource(helper.id, { kind: "git", url: "https://github.com/mattpocock/skills" });
+    expect(preview.resolved_name).toBeNull();
+    expect(preview.name_matches).toBe(false);
+    expect(preview.candidates?.map((c) => c.subpath)).toContain("skills/engineering/ts-error-fixer");
+    expect(preview.candidates!.length).toBeGreaterThan(1);
+  });
+
+  it("resolves a local folder and refuses a missing one typed", async () => {
+    const { handlers } = backendFor("failures");
+    const notes = await byName(handlers, "local-notes");
+    await expect(
+      handlers.previewRepointSource(notes.id, { kind: "local", path: "~/Projects/pi-lens/skill" }),
+    ).resolves.toEqual({ resolved_name: "pi-lens", ref: null, subpath: null, name_matches: false, candidates: null });
+    await expect(
+      handlers.previewRepointSource(notes.id, { kind: "local", path: "~/Downloads/scratchpad" }),
+    ).rejects.toEqual({ code: "SOURCE_PATH_MISSING", path: "/Users/alex/Downloads/scratchpad" });
+  });
+
+  it("carries a local skill's recorded folder, which the source label shows", async () => {
+    const { handlers } = backendFor("failures");
+    const scratchpad = await byName(handlers, "scratchpad");
+    expect(scratchpad.source_ref).toBe("/Users/alex/Downloads/scratchpad");
+    expect(skillSourceLabel(scratchpad)).toBe("/Users/alex/Downloads/scratchpad");
   });
 });

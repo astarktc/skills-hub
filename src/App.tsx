@@ -1,12 +1,9 @@
-import { useCallback, useEffect, useId, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import "./App.css";
 import { useTranslation } from "react-i18next";
 // The binder mounts the token-themed Toaster once; useStatusReporter makes
 // every toast call and owns toast lifetime.
 import { Toaster } from "@/components/ui/sonner";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import ExplorePage from "./components/skills/ExplorePage";
 import FilterBar from "./components/skills/FilterBar";
 import SkillDetailView, { type DetailSubject } from "./components/skills/SkillDetailView";
@@ -25,15 +22,18 @@ import NewToolsModal from "./components/skills/modals/NewToolsModal";
 import SharedDirModal from "./components/skills/modals/SharedDirModal";
 import OverwriteModal from "./components/skills/modals/OverwriteModal";
 import ToolConfigModal from "./components/shared/ToolConfigModal";
+import UpdateDialog from "./components/shared/UpdateDialog";
 import SettingsPage from "./components/skills/SettingsPage";
 import ProjectsPage from "./components/projects/ProjectsPage";
+import { useProjectState } from "./components/projects/useProjectState";
 import { useAddSkillFlow } from "./hooks/useAddSkillFlow";
 import { useExploreState } from "./hooks/useExploreState";
 import { useSettingsState } from "./hooks/useSettingsState";
 import { useSkillLibrary } from "./hooks/useSkillLibrary";
 import { useStatusReporter } from "./hooks/useStatusReporter";
 import { useSyncOrchestration } from "./hooks/useSyncOrchestration";
-import { useUpdateChecker } from "./hooks/useUpdateChecker";
+import { useToolCatalog } from "./hooks/useToolCatalog";
+import { useAppUpdate } from "./hooks/useAppUpdate";
 import { useListLens } from "./hooks/useListLens";
 import {
   useFocusReconciliation,
@@ -54,20 +54,25 @@ import type { ManagedSkill } from "./components/skills/types";
 // src/hooks/, not here.
 function App() {
   const { t } = useTranslation();
-  const updateTitleId = useId();
 
   // Surface state first: every world asks it to open and close surfaces.
   const surface = useSurfaceState();
 
-  // World hooks, wired in dependency order: reporter → sync → library →
-  // settings/explore/addFlow. Hooks never import each other; every
-  // cross-world need flows through the interfaces passed here.
+  // World hooks, wired in dependency order: reporter → update → Tool
+  // catalog → sync → library → projects → settings/explore/addFlow. Hooks
+  // never import each other; every cross-world need flows through the
+  // interfaces passed here.
   const reporter = useStatusReporter(t);
-  const updates = useUpdateChecker({ reporter, surface });
-  const sync = useSyncOrchestration({ t, reporter, surface });
-  const library = useSkillLibrary({ t, reporter, sync, surface });
+  const update = useAppUpdate({ reporter, surface });
+  const catalog = useToolCatalog({ t });
+  const sync = useSyncOrchestration({ t, reporter, surface, catalog });
+  const library = useSkillLibrary({ t, reporter, sync, catalog, surface });
   // A focused or selected skill that leaves the catalog clears itself.
   useFocusReconciliation(surface, "skill", library.managedSkillIds);
+  // The project world lives as long as the app: its selected project, matrix
+  // and the Tool catalog's project entries survive navigation. Its skill
+  // rows are the library's catalog, passed to its view below.
+  const projects = useProjectState();
 
   const { area, focused, focus, unfocus, open, openDialog, closeDialog, dismissDialog } =
     surface;
@@ -86,7 +91,7 @@ function App() {
     reporter,
     onOpenPreview: openExplorePreview,
   });
-  const addFlow = useAddSkillFlow({ t, reporter, sync, library, surface });
+  const addFlow = useAddSkillFlow({ t, reporter, sync, catalog, library, surface });
 
   // My Skills' list lens: query, sort, Grouped/Flat, view mode.
   const lens = useListLens({
@@ -115,16 +120,6 @@ function App() {
     markAllRead,
     clearNotifications,
   } = reporter;
-  const {
-    updateAvailableVersion,
-    updateBody,
-    updateInstalling,
-    updateDone,
-    dismissUpdate,
-    dismissUpdateForever,
-    updateNow,
-  } = updates;
-
   const handleOpenSettings = useCallback(() => {
     open("settings");
   }, [open]);
@@ -172,11 +167,16 @@ function App() {
     [explorePreview, focusedSkill],
   );
 
+  // The Projects tab returns to the project the world still holds (its
+  // matrix is loaded), as a real navigation; every other tab opens its area.
+  const { selectedProjectId } = projects;
   const handleViewChange = useCallback(
     (next: Exclude<Area, "settings">) => {
-      open(next);
+      if (next === "projects" && selectedProjectId)
+        focus({ kind: "project", id: selectedProjectId });
+      else open(next);
     },
-    [open],
+    [focus, open, selectedProjectId],
   );
 
   const handleOpenDetail = useCallback(
@@ -288,8 +288,8 @@ function App() {
             <SkillsList
               plan={addFlow.plan}
               lens={lens}
-              installedTools={sync.installedTools}
-              allTools={sync.tools}
+              installedTools={catalog.installedTools}
+              allTools={catalog.tools}
               loading={loading}
               onReviewImport={addFlow.handleReviewImport}
               onUpdateSkill={library.handleUpdateSkill}
@@ -309,6 +309,7 @@ function App() {
         ) : area === "settings" ? (
           <SettingsPage
             isTauri={isTauri}
+            update={update}
             storagePath={settings.storagePath}
             gitCacheCleanupDays={settings.gitCacheCleanupDays}
             gitCacheTtlSecs={settings.gitCacheTtlSecs}
@@ -333,11 +334,13 @@ function App() {
           />
         ) : area === "projects" ? (
           <ProjectsPage
+            state={projects}
+            skills={library.managedSkills}
+            catalog={catalog}
             surface={surface}
             notify={notify}
             notifyError={notifyError}
             showActionErrors={showActionErrors}
-            toolLabelById={sync.toolLabelById}
           />
         ) : (
           <ExplorePage
@@ -372,8 +375,8 @@ function App() {
         gitUrl={addFlow.gitUrl}
         gitName={addFlow.gitName}
         syncTargets={sync.syncTargets}
-        installedTools={sync.installedTools}
-        toolStatus={sync.toolStatus}
+        installedTools={catalog.installedTools}
+        toolStatus={catalog.toolStatus}
         onRequestClose={addFlow.handleCloseAdd}
         onTabChange={addFlow.setAddModalTab}
         onLocalPathChange={addFlow.setLocalPath}
@@ -426,7 +429,7 @@ function App() {
       <ToolConfigModal
         open={surface.isOpen("toolConfig")}
         loading={loading}
-        toolStatus={sync.toolStatus}
+        toolStatus={catalog.toolStatus}
         savedSelection={sync.globalSelectedTools}
         scanSelectedOnly={sync.scanSelectedToolsOnly}
         labels={{
@@ -466,6 +469,7 @@ function App() {
         <ChangeSourceModal
           key={`${library.pendingRepointSkill.id}:${library.repointSelection.preselect}`}
           skillName={library.pendingRepointSkill.name}
+          source={library.pendingRepointSkill}
           preselect={library.repointSelection.preselect}
           loading={loading}
           onRequestClose={library.handleCloseRepoint}
@@ -513,70 +517,7 @@ function App() {
         t={t}
       />
 
-      <Dialog
-        open={surface.isOpen("update") && Boolean(updateAvailableVersion)}
-        dismissible={!updateInstalling}
-        onOpenChange={(next) => {
-          if (!next) dismissUpdate();
-        }}
-      >
-        <DialogContent
-          size="sm"
-          showCloseButton={!updateDone}
-          aria-labelledby={updateTitleId}
-        >
-          <div className="update-modal">
-            <div className="update-modal-body">
-              <div className="update-modal-title" id={updateTitleId}>
-                {updateDone
-                  ? t("updateInstalledRestart")
-                  : t("updateAvailable")}
-              </div>
-              {!updateDone && (
-                <div className="update-modal-text">
-                  {t("updateBannerText", { version: updateAvailableVersion })}
-                </div>
-              )}
-              {!updateDone && updateBody && (
-                <div className="update-modal-notes">
-                  <Markdown remarkPlugins={[remarkGfm]}>{updateBody}</Markdown>
-                </div>
-              )}
-            </div>
-            <div className="update-modal-actions">
-              {updateDone ? (
-                <button
-                  className="btn btn-primary"
-                  type="button"
-                  onClick={dismissUpdate}
-                >
-                  {t("done")}
-                </button>
-              ) : (
-                <>
-                  <button
-                    className="btn btn-primary"
-                    type="button"
-                    disabled={updateInstalling}
-                    onClick={updateNow}
-                  >
-                    {updateInstalling ? t("installingUpdate") : t("updateNow")}
-                  </button>
-                  {!updateInstalling && (
-                    <button
-                      className="btn btn-secondary"
-                      type="button"
-                      onClick={dismissUpdateForever}
-                    >
-                      {t("updateBannerDismiss")}
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <UpdateDialog open={surface.isOpen("update")} update={update} t={t} />
     </div>
   );
 }

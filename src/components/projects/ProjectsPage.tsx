@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
+import { pickFolder } from "../../lib/platform";
 import {
   projectRemovalOutcome,
   projectSyncOutcome,
@@ -9,7 +9,7 @@ import {
   type Outcome,
   type PlainEntry,
 } from "../../lib/reportOutcome";
-import { useProjectState } from "./useProjectState";
+import type { ProjectState } from "./useProjectState";
 import ProjectList from "./ProjectList";
 import AssignmentMatrix from "./AssignmentMatrix";
 import AddProjectModal from "./AddProjectModal";
@@ -17,6 +17,8 @@ import EditProjectModal from "./EditProjectModal";
 import ToolConfigModal from "../shared/ToolConfigModal";
 import RemoveProjectModal from "./RemoveProjectModal";
 import type { IgnoreUpdateOptions } from "./types";
+import type { ManagedSkill } from "../skills/types";
+import type { ToolCatalog } from "../../hooks/useToolCatalog";
 import type {
   ActionErrorEntry,
   NotifyErrorFn,
@@ -30,18 +32,28 @@ import {
 const PROJECT_DIALOGS = ["projectAdd", "projectEdit", "projectToolConfig", "projectRemove"] as const;
 
 type ProjectsPageProps = {
+  /**
+   * The project world (`useProjectState`), composed by the binder so the
+   * selected project and its matrix outlive this page.
+   */
+  state: ProjectState;
+  /** The matrix's skill rows: the library's catalog, passed by the binder. */
+  skills: ManagedSkill[];
+  /**
+   * The Tool catalog: labels (removal toasts name tools even before the
+   * project tool status has loaded, round 14 D4) and the project tool
+   * entries the tool-config dialog offers.
+   */
+  catalog: Pick<
+    ToolCatalog,
+    "toolLabelById" | "projectToolStatus" | "loadProjectToolStatus"
+  >;
   /** The reporter's notification entry point, handed down by the binder. */
   notify: NotifyFn;
   /** The reporter's command-failure entry point: `notifyError(err)`. */
   notifyError: NotifyErrorFn;
   /** The reporter's per-target failure batch (one toast per kept artifact). */
   showActionErrors: (errors: ActionErrorEntry[]) => void;
-  /**
-   * Tool key → display label, owned by the sync world and loaded at startup;
-   * handed down by the binder so removal toasts name tools by label even
-   * before this world's own tool status has loaded (round 14 D4).
-   */
-  toolLabelById: Record<string, string>;
   /**
    * The surface module: the focused project (`#/projects/<id>`) and this
    * world's dialogs.
@@ -61,14 +73,16 @@ type ProjectsPageProps = {
 };
 
 const ProjectsPage = ({
+  state,
+  skills,
+  catalog,
   notify,
   notifyError,
   showActionErrors,
-  toolLabelById,
   surface,
 }: ProjectsPageProps) => {
   const { t } = useTranslation();
-  const state = useProjectState();
+  const { toolLabelById, projectToolStatus, loadProjectToolStatus } = catalog;
   const { focus, openDialog, closeDialog, dismissDialog } = surface;
 
   // The focused project is the surface's (hash-addressable); this world
@@ -125,12 +139,12 @@ const ProjectsPage = ({
         focus({ kind: "project", id: project.id });
         await state.selectProject(project.id);
         openDialog({ kind: "projectToolConfig" });
-        await state.loadToolStatus();
+        await loadProjectToolStatus();
       } catch (err) {
         notifyError(err);
       }
     },
-    [focus, notifyError, openDialog, state],
+    [focus, loadProjectToolStatus, notifyError, openDialog, state],
   );
 
   const handleToolConfigConfirm = useCallback(
@@ -262,16 +276,29 @@ const ProjectsPage = ({
   );
 
   const handleConfigureToolsFromToolbar = useCallback(async () => {
-    await state.loadToolStatus();
-    openDialog({ kind: "projectToolConfig" });
-  }, [openDialog, state]);
+    try {
+      await loadProjectToolStatus();
+      openDialog({ kind: "projectToolConfig" });
+    } catch (err) {
+      notifyError(err);
+    }
+  }, [loadProjectToolStatus, notifyError, openDialog]);
+
+  /** Add project's Browse: the picked folder, or null (cancelled / failed). */
+  const handlePickProjectFolder = useCallback(async () => {
+    try {
+      const [picked] = await pickFolder({ title: t("projects.pathLabel") });
+      return picked ?? null;
+    } catch (err) {
+      notifyError(err);
+      return null;
+    }
+  }, [notifyError, t]);
 
   const handleUpdatePath = useCallback(
     async (projectId: string) => {
       try {
-        const selected = await open({ directory: true, multiple: false });
-        if (!selected) return;
-        const newPath = typeof selected === "string" ? selected : selected[0];
+        const [newPath] = await pickFolder({ title: t("projects.updatePath") });
         if (!newPath) return;
         await state.updateProjectPath(projectId, newPath);
         notify("success", t("projects.updatePathSuccess"));
@@ -328,7 +355,7 @@ const ProjectsPage = ({
                   tools={state.tools}
                   assignments={state.assignments}
                   assignmentsReconciled={state.assignmentsReconciled}
-                  skills={state.skills}
+                  skills={skills}
                   pendingCells={state.pendingCells}
                   matrixLoading={state.matrixLoading}
                   onToggleAssignment={handleToggleAssignment}
@@ -349,6 +376,7 @@ const ProjectsPage = ({
         open={surface.layer("projectAdd") !== null}
         loading={false}
         projects={state.projects}
+        onPickFolder={handlePickProjectFolder}
         onRegister={handleAddProject}
         onRequestClose={() => closeDialog("projectAdd")}
         t={t}
@@ -366,7 +394,7 @@ const ProjectsPage = ({
       <ToolConfigModal
         open={surface.layer("projectToolConfig") !== null}
         loading={false}
-        toolStatus={state.toolStatus}
+        toolStatus={projectToolStatus}
         savedSelection={
           state.tools.length > 0 ? state.tools.map((ct) => ct.tool) : null
         }

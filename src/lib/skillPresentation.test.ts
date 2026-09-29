@@ -9,6 +9,7 @@ import {
   importedSourceLine,
   INDIVIDUAL_GROUP_KEY,
   repoInfo,
+  repointCurrentSource,
   repointKind,
   skillSourceLabel,
   sourceKind,
@@ -126,7 +127,7 @@ describe("repoInfo", () => {
 });
 
 describe("skillSourceLabel", () => {
-  it("uses the source ref for git skills and the central path otherwise", () => {
+  it("uses the source ref for git skills", () => {
     expect(
       skillSourceLabel(
         skill({
@@ -136,7 +137,38 @@ describe("skillSourceLabel", () => {
         }),
       ),
     ).toBe("https://github.com/o/r");
+  });
+
+  it("shows a local skill's recorded folder, not its central copy", () => {
+    expect(
+      skillSourceLabel(
+        skill({ name: "a", source_type: "local", source_ref: "/Users/me/Downloads/scratchpad" }),
+      ),
+    ).toBe("/Users/me/Downloads/scratchpad");
+  });
+
+  it("falls back to the central path only when no source is recorded", () => {
     expect(skillSourceLabel(skill({ name: "a" }))).toBe("/central/skill");
+    expect(skillSourceLabel(skill({ name: "a", source_ref: "  " }))).toBe("/central/skill");
+    expect(
+      skillSourceLabel(skill({ name: "a", source_type: "imported", source_ref: "/stale" })),
+    ).toBe("/central/skill");
+  });
+});
+
+describe("repointCurrentSource", () => {
+  it("answers the skill's own kind and ref", () => {
+    expect(
+      repointCurrentSource(skill({ name: "a", source_type: "git", source_ref: " https://github.com/o/r " })),
+    ).toEqual({ kind: "git", ref: "https://github.com/o/r" });
+    expect(
+      repointCurrentSource(skill({ name: "a", source_type: "local", source_ref: "/Users/me/Downloads/scratchpad" })),
+    ).toEqual({ kind: "local", ref: "/Users/me/Downloads/scratchpad" });
+  });
+
+  it("is null for an imported skill and for a record without a source", () => {
+    expect(repointCurrentSource(skill({ name: "a", source_type: "imported", source_ref: null }))).toBeNull();
+    expect(repointCurrentSource(skill({ name: "a", source_type: "local", source_ref: null }))).toBeNull();
   });
 });
 

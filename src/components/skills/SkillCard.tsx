@@ -230,6 +230,11 @@ const SkillCard = ({
               <AlertTriangle size={12} aria-hidden="true" />
               {t(UNLOCATABLE_STATE_KEY[unlocatable])}
             </span>
+            {unlocatable === "source_missing" && skill.source_ref ? (
+              <span className="mono" title={skill.source_ref}>
+                {t("repointSource.missingFolder", { path: skill.source_ref })}
+              </span>
+            ) : null}
             {repairs.map((repair) => (
               <button
                 key={repair.key}

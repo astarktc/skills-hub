@@ -11,9 +11,9 @@
 //!
 //!    Cancellation stops *dispatching* new acquisitions and lets in-flight
 //!    ones finish; once it has been observed, phase two runs for **no** skill
-//!    (there is no partial finalize) and every selected skill is reported as
-//!    [`SignalError::Cancelled`]. Staging dirs already acquired are dropped,
-//!    which deletes them.
+//!    (there is no partial finalize) and every selected skill is reported
+//!    [`SkillRefreshStatus::Cancelled`] — its own outcome kind, never a
+//!    failure. Staging dirs already acquired are dropped, which deletes them.
 //! 2. **Apply** each acquired skill under the mutation guard: finalize, then
 //!    Propagation. The guard is taken *per skill*, not once for the batch, so
 //!    listings and other mutations are not blocked for the whole run.
@@ -125,6 +125,13 @@ pub enum SkillRefreshStatus {
     Skipped { state: UnlocatableState },
     /// Acquired bytes were discarded at admission; no target was touched.
     SkippedAcquisition { reason: UpdateSkip },
+    /// The operator cancelled the run before this skill was applied: nothing
+    /// was finalized and no target was touched. Its own outcome kind (D10),
+    /// never `Failed { Cancelled }` — a cancellation is not a failure of the
+    /// skill and records no health. Every batch that honours the cancel token
+    /// reports the members it never reached with this kind, on the wire as
+    /// `{ "status": "cancelled" }`.
+    Cancelled,
 }
 
 #[derive(Debug, serde::Serialize, specta::Type)]
@@ -263,9 +270,7 @@ pub(crate) fn refresh_with_intent(
                 .map(|(skill_id, skill_name)| SkillRefreshOutcome {
                     skill_id,
                     skill_name,
-                    status: SkillRefreshStatus::Failed {
-                        error: CommandError::Cancelled,
-                    },
+                    status: SkillRefreshStatus::Cancelled,
                 })
                 .collect(),
         };
@@ -293,7 +298,17 @@ pub(crate) fn refresh_with_intent(
             Err(error) => {
                 // Reported and excluded from propagation and the re-assert;
                 // the acquisition failure settles here, as the skill's health.
+                // An acquisition that answered the cancellation signal is a
+                // cancelled row, not a failure, and records nothing.
                 let error = CommandError::from_anyhow(error);
+                if matches!(error, CommandError::Cancelled) {
+                    report.skills.push(SkillRefreshOutcome {
+                        skill_id,
+                        skill_name,
+                        status: SkillRefreshStatus::Cancelled,
+                    });
+                    continue;
+                }
                 mutation_guard::serialized(|| {
                     settle_failure_health(store, &skill_id, intent, &error)
                 });
@@ -599,6 +614,11 @@ fn reassert_auto_sync_unlocked(
                     other => PropagationStatus::Failed { error: other },
                 },
                 BatchTargetStatus::Failed { error } => PropagationStatus::Failed { error },
+                // The re-assert carries no overrides, so it never declines; a
+                // declined pair is recorded `disabled`, which is what it reads as.
+                BatchTargetStatus::Declined => PropagationStatus::Skipped {
+                    reason: PropagationSkip::Disabled,
+                },
             },
         })
         .collect())

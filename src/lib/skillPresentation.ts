@@ -132,15 +132,38 @@ export function importedSourceLine(
   return { tool, managedHere, importedFrom, text: `${managedHere} · ${importedFrom}` };
 }
 
-/** The label a skill's source is shown under when it has no repo. */
+/**
+ * The label a skill's source is shown under when it has no repo: a git
+ * skill's URL, a local skill's recorded folder — the one fact a "source
+ * folder missing" repair needs — and the central copy only when no source is
+ * recorded (an imported skill shows `importedSourceLine` instead).
+ */
 export function skillSourceLabel(
   skill: Pick<
     SkillPresentationFields,
     "source_type" | "source_ref" | "central_path"
   >,
 ): string {
-  if (sourceKind(skill) === "git" && skill.source_ref) return skill.source_ref;
+  const ref = skill.source_ref?.trim();
+  if (sourceKind(skill) !== "imported" && ref) return ref;
   return skill.central_path;
+}
+
+/** The source a Change source dialog starts from (`repointCurrentSource`). */
+export type RepointCurrentSource = { kind: RepointKind; ref: string };
+
+/**
+ * The skill's current source as a Re-point target of its own kind — the
+ * value the Change source dialog pre-fills and shows as "was: …". Null for an
+ * imported skill (it has no source) and for a record without a source ref.
+ */
+export function repointCurrentSource(
+  skill: Pick<SkillPresentationFields, "source_type" | "source_ref">,
+): RepointCurrentSource | null {
+  const kind = sourceKind(skill);
+  const ref = skill.source_ref?.trim();
+  if (kind === "imported" || !ref) return null;
+  return { kind, ref };
 }
 
 /**

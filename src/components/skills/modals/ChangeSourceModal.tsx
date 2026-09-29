@@ -9,12 +9,22 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { RepointTarget } from "../types";
-import type { RepointKind } from "../../../lib/skillPresentation";
+import {
+  repointCurrentSource,
+  type RepointKind,
+  type SkillPresentationFields,
+} from "../../../lib/skillPresentation";
 
 type ChangeSourceModalProps = {
   skillName: string;
   /** The kind the picker opens on (the skill's own, or `local` for a moved folder). */
   preselect: RepointKind;
+  /**
+   * The skill's recorded source. Its current source (`repointCurrentSource`)
+   * pre-fills the arm of its own kind and is shown as "was: …"; an imported
+   * skill has none.
+   */
+  source: Pick<SkillPresentationFields, "source_type" | "source_ref">;
   loading: boolean;
   onRequestClose: () => void;
   /** The folder dialog; resolves null when the operator cancels it. */
@@ -33,11 +43,13 @@ const KINDS: { kind: RepointKind; labelKey: string }[] = [
  * Each arm keeps its own input, so switching kinds loses nothing typed.
  */
 export default function ChangeSourceModal({
-  skillName, preselect, loading, onRequestClose, onPickFolder, onConfirm, t,
+  skillName, preselect, source, loading, onRequestClose, onPickFolder, onConfirm, t,
 }: ChangeSourceModalProps) {
+  // Read once: the dialog is keyed per skill, and edits must not be reset.
+  const [currentSource] = useState(() => repointCurrentSource(source));
   const [kind, setKind] = useState<RepointKind>(preselect);
-  const [url, setUrl] = useState("");
-  const [path, setPath] = useState("");
+  const [url, setUrl] = useState(currentSource?.kind === "git" ? currentSource.ref : "");
+  const [path, setPath] = useState(currentSource?.kind === "local" ? currentSource.ref : "");
   const id = useId();
   const value = (kind === "git" ? url : path).trim();
   const target: RepointTarget | null = !value
@@ -87,6 +99,11 @@ export default function ChangeSourceModal({
                 ))}
               </div>
             </fieldset>
+            {currentSource ? (
+              <div className="helper-text" title={currentSource.ref}>
+                {t("repointSource.was", { source: currentSource.ref })}
+              </div>
+            ) : null}
             {kind === "git" ? (
               <div className="form-group">
                 <label className="label" htmlFor={`${id}-url`}>{t("changeSource.urlLabel")}</label>

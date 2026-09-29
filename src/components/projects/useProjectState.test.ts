@@ -129,8 +129,6 @@ function stubBackend(options: { reconciled?: boolean } = {}) {
     switch (command) {
       case "listProjects":
         return Promise.resolve(projectIds.map(projectRow));
-      case "getManagedSkills":
-        return Promise.resolve([]);
       case "registerProject": {
         const id = `p${nextId++}`;
         projectIds.push(id);
@@ -1202,5 +1200,77 @@ describe("useProjectState edit-project gitignore", () => {
     expect(callsTo("updateProjectGitignore")).toEqual([
       ["p9", { add_to_gitignore: false, add_to_exclude: true }],
     ]);
+  });
+});
+
+describe("useProjectState project-assignment verbs (the door's entry points)", () => {
+  it("loads only the project list: skill rows and tool entries come from the binder", async () => {
+    await renderReady();
+    expect(commandOrder()).toEqual(["listProjects"]);
+  });
+
+  it("assigns and unassigns a skill on a project that is not the selected one", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    await act(async () => {
+      await result.current.registerProject("/work/p2", {
+        add_to_gitignore: false,
+        add_to_exclude: false,
+      });
+    });
+    await act(async () => {
+      await result.current.selectProject("p2");
+    });
+    await act(async () => {
+      await result.current.configureTools(["claude_code"]);
+    });
+    await act(async () => {
+      await result.current.selectProject("p1");
+    });
+
+    let report: ProjectSyncReport | undefined;
+    await act(async () => {
+      report = await result.current.assignToProject("p2", "s1");
+    });
+    expect(callsTo("bulkAssignSkill")).toEqual([["p2", "s1"]]);
+    expect(report?.items.map((item) => item.tool)).toEqual(["claude_code"]);
+    // p2's row took the view; the matrix shown is still p1's.
+    expect(result.current.projects.find((p) => p.id === "p2")?.assignment_count).toBe(1);
+    expect(result.current.selectedProjectId).toBe("p1");
+    expect(result.current.assignments).toEqual([]);
+
+    let removal: RemovalReport | undefined;
+    await act(async () => {
+      removal = await result.current.unassignFromProject("p2", "s1");
+    });
+    expect(callsTo("bulkUnassignSkill")).toEqual([["p2", "s1"]]);
+    expect(removal?.targets).toHaveLength(1);
+    expect(result.current.projects.find((p) => p.id === "p2")?.assignment_count).toBe(0);
+  });
+
+  it("on the selected project the matrix takes the view", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    await act(async () => {
+      await result.current.assignToProject("p1", "s1");
+    });
+    expect(result.current.assignments.map((a) => `${a.skill_id}:${a.tool}`)).toEqual(["s1:pi"]);
+  });
+
+  it("a thrown verb converges on the backend's view of that project before rethrowing", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    const base = mockInvoke.getMockImplementation()!;
+    const failure: CommandError = { code: "OTHER", message: "store failed" };
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "bulkAssignSkill" ? Promise.reject(failure) : base(command, ...args),
+    );
+    mockInvoke.mockClear();
+    await expect(
+      act(async () => {
+        await result.current.assignToProject("p1", "s1");
+      }),
+    ).rejects.toEqual(failure);
+    expect(callsTo("getProjectView")).toEqual([["p1"]]);
   });
 });

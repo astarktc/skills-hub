@@ -141,6 +141,10 @@ pub struct Acquired {
     /// The repo-relative subpath the bytes were taken from; `None` when the
     /// whole repo was taken. A named intent reports what it resolved.
     pub resolved_subpath: Option<String>,
+    /// The branch the bytes were taken from, as acquisition resolved it
+    /// (a slash branch repaired from refs included); `None` when the clone
+    /// followed the repository's default branch without naming it.
+    pub branch: Option<String>,
 }
 
 /// The coordinates one GitHub Contents API request needs.
@@ -382,6 +386,7 @@ fn fast_path(
         revision,
         strategy: AcquireStrategy::GithubApi,
         resolved_subpath: Some(coords.subpath.clone()),
+        branch: Some(coords.branch.clone()),
     })
 }
 
@@ -430,6 +435,7 @@ fn clone_path(req: &ResolvedRequest, known_subpath: Option<&str>) -> Result<Acqu
             sparse: known_subpath.is_some(),
         },
         resolved_subpath,
+        branch: req.source.branch.clone(),
     })
 }
 

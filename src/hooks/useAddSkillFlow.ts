@@ -10,10 +10,12 @@ import type {
 
 import { importOutcome, installOutcome, type InstallDeployment, type Outcome, type PlainEntry } from "../lib/reportOutcome";
 import { defaultImportVariantPath } from "../lib/skillPresentation";
+import { createProgressChannel, pickFolder } from "../lib/platform";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import { useCandidatePick } from "./useCandidatePick";
 import type { SkillLibrary } from "./useSkillLibrary";
 import type { SyncOrchestration } from "./useSyncOrchestration";
+import type { ToolCatalog } from "./useToolCatalog";
 import type { DialogDoor } from "./useSurfaceState";
 import type {
   StatusReporter,
@@ -37,9 +39,9 @@ export type AddSkillFlowDeps = {
     | "syncSkillsToTools"
     | "syncTargets"
     | "targetAllInstalled"
-    | "toolLabelById"
-    | "tools"
   >;
+  /** The Tool catalog: which tools a deploy target can name, and their labels. */
+  catalog: Pick<ToolCatalog, "toolLabelById" | "tools">;
   library: Pick<SkillLibrary, "isSkillNameTaken" | "loadManagedSkills">;
   /** The surface module: Add, Import and the two pickers are its dialogs. */
   surface: Pick<
@@ -57,6 +59,7 @@ export function useAddSkillFlow({
   t,
   reporter,
   sync,
+  catalog,
   library,
   surface,
 }: AddSkillFlowDeps) {
@@ -76,9 +79,8 @@ export function useAddSkillFlow({
     syncSkillsToTools,
     syncTargets,
     targetAllInstalled,
-    toolLabelById,
-    tools,
   } = sync;
+  const { toolLabelById, tools } = catalog;
   const { isSkillNameTaken, loadManagedSkills } = library;
 
   const [plan, setPlan] = useState<OnboardingPlan | null>(null);
@@ -257,17 +259,8 @@ export function useAddSkillFlow({
 
   const handlePickLocalPath = useCallback(async () => {
     try {
-      if (!isTauri) {
-        throw new Error(t("errors.notTauri"));
-      }
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: t("selectLocalFolder"),
-      });
-      if (!selected || Array.isArray(selected)) return;
-      setLocalPath(selected);
+      const [selected] = await pickFolder({ title: t("selectLocalFolder") });
+      if (selected) setLocalPath(selected);
     } catch (err) {
       setError(formatError(err));
     }
@@ -332,9 +325,7 @@ export function useAddSkillFlow({
         });
       }
 
-      const { Channel } = await import("@tauri-apps/api/core");
-      const onProgress = new Channel<ImportProgressDto>();
-      onProgress.onmessage = (progress) => {
+      const onProgress = await createProgressChannel<ImportProgressDto>((progress) => {
         setActionMessage(
           t(
             progress.phase === "admitting"
@@ -347,7 +338,7 @@ export function useAddSkillFlow({
             },
           ),
         );
-      };
+      });
       const report = await invokeTauri(
         "importOnboardingSelection",
         selections,

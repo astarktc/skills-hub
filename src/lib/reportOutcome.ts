@@ -18,14 +18,45 @@ export type OutcomeEntry = Omit<ActionErrorEntry, "action"> & {
   action?: { label: string; skillId: string; skillName: string };
 };
 export type PlainEntry = Omit<ActionErrorEntry, "action">;
+
+/**
+ * Which outcome kind decides a report's toast, by precedence (D10):
+ * failure › conflict › skipped › declined › success. `neutral` is a run the
+ * operator cancelled with nothing else to report. The tone chooses the toast
+ * kind; it never chooses the headline's words — the composite count line does.
+ */
+export type OutcomeTone =
+  | "failure"
+  | "conflict"
+  | "skipped"
+  | "declined"
+  | "success"
+  | "neutral";
+const TONE_KIND = {
+  failure: "warning",
+  conflict: "warning",
+  skipped: "warning",
+  declined: "info",
+  success: "success",
+  neutral: "info",
+} as const satisfies Record<OutcomeTone, "success" | "warning" | "info">;
+export type OutcomeToast = {
+  kind: (typeof TONE_KIND)[OutcomeTone];
+  tone: OutcomeTone;
+  /** The headline: a composite count line for a batch, one sentence otherwise. */
+  message: string;
+  detail?: string;
+};
 export type Outcome<Entry = OutcomeEntry> = {
-  toast: {
-    kind: "success" | "warning";
-    message: string;
-    detail?: string;
-  } | null;
+  toast: OutcomeToast | null;
   errors: Entry[];
   warnings: Entry[];
+  /**
+   * Quiet report lines that are neither errors nor warnings — a declined
+   * pair ("alpha: kept your existing Claude Code folder"). A fold with a
+   * toast also carries them as its `detail`.
+   */
+  notes: string[];
   completion: { reload: boolean; closeModal: boolean; conflict: boolean };
 };
 export type ReportContext = {
@@ -37,22 +68,140 @@ const empty = (): Outcome<PlainEntry> => ({
   toast: null,
   errors: [],
   warnings: [],
+  notes: [],
   completion: { reload: true, closeModal: true, conflict: false },
 });
 const label = (ctx: ReportContext, tool: string) =>
   ctx.toolLabelById?.[tool] ?? tool;
 const errorMessage = (ctx: ReportContext, error: unknown) =>
   describeCommandError(error, ctx.t) ?? "";
+const toast = (tone: OutcomeTone, message: string, detail?: string): OutcomeToast => ({
+  kind: TONE_KIND[tone],
+  tone,
+  message,
+  ...(detail ? { detail } : {}),
+});
+const detailOf = (lines: string[]) => (lines.length ? lines.join("\n") : undefined);
+
+// ---------------------------------------------------------------------------
+// The composite headline (D10)
+// ---------------------------------------------------------------------------
+
+/** The action a batch's "done" count is phrased with. */
+export type HeadlineVerb =
+  | "refreshed"
+  | "installed"
+  | "synced"
+  | "imported"
+  | "removed"
+  | "assigned"
+  | "enabled"
+  | "disabled";
+export const HEADLINE_DONE_KEY: Record<HeadlineVerb, string> = {
+  refreshed: "outcome.done.refreshed",
+  installed: "outcome.done.installed",
+  synced: "outcome.done.synced",
+  imported: "outcome.done.imported",
+  removed: "outcome.done.removed",
+  assigned: "outcome.done.assigned",
+  enabled: "outcome.done.enabled",
+  disabled: "outcome.done.disabled",
+};
+/**
+ * One count per outcome kind, in headline order. `failed` counts the batch's
+ * own units (skills, groups, pairs); `targetsFailed` counts Sync targets that
+ * failed under a unit that itself succeeded (a refreshed skill's Propagation,
+ * an installed skill's deployment). `review` is the fold's "to review" kind.
+ */
+export type HeadlineCounts = {
+  done: number;
+  failed: number;
+  targetsFailed: number;
+  skipped: number;
+  declined: number;
+  cancelled: number;
+  review: number;
+};
+const ZERO_COUNTS: HeadlineCounts = {
+  done: 0, failed: 0, targetsFailed: 0, skipped: 0, declined: 0, cancelled: 0, review: 0,
+};
+/** What the "to review" count is of. */
+export type ReviewKind = "edits" | "originals";
+const REVIEW_KEY: Record<ReviewKind, string> = {
+  edits: "outcome.review.edits",
+  originals: "outcome.review.originals",
+};
+/** The separator between headline parts; punctuation, not copy. */
+export const HEADLINE_SEPARATOR = " · ";
+
+/**
+ * The composite count line: "12 refreshed · 5 failed · 6 targets failed ·
+ * 4 skipped · 1 Edit to review". Fixed order — done · failed · targets failed
+ * · skipped · declined · cancelled · to review — and a zero count is omitted;
+ * when every count is zero the line is the done part at zero ("0 synced").
+ */
+export function compositeHeadline(
+  t: TranslateFn,
+  verb: HeadlineVerb,
+  partial: Partial<HeadlineCounts>,
+  review: ReviewKind = "edits",
+): string {
+  const counts = { ...ZERO_COUNTS, ...partial };
+  const parts: string[] = [];
+  const part = (key: string, count: number) => {
+    if (count > 0) parts.push(t(key, { count }));
+  };
+  part(HEADLINE_DONE_KEY[verb], counts.done);
+  part("outcome.failed", counts.failed);
+  part("outcome.targetsFailed", counts.targetsFailed);
+  part("outcome.skipped", counts.skipped);
+  part("outcome.declined", counts.declined);
+  part("outcome.cancelled", counts.cancelled);
+  part(REVIEW_KEY[review], counts.review);
+  if (parts.length === 0) parts.push(t(HEADLINE_DONE_KEY[verb], { count: 0 }));
+  return parts.join(HEADLINE_SEPARATOR);
+}
+
+/** The toast tone of a set of counts: the D10 precedence, cancelled last. */
+export function headlineTone(partial: Partial<HeadlineCounts>): OutcomeTone {
+  const counts = { ...ZERO_COUNTS, ...partial };
+  if (counts.failed > 0 || counts.targetsFailed > 0) return "failure";
+  if (counts.review > 0) return "conflict";
+  if (counts.skipped > 0) return "skipped";
+  if (counts.declined > 0) return "declined";
+  if (counts.cancelled > 0) return "neutral";
+  return "success";
+}
+
+/** A batch's toast: its composite line, toned by precedence. */
+function headlineToast(
+  t: TranslateFn,
+  verb: HeadlineVerb,
+  counts: Partial<HeadlineCounts>,
+  options: { review?: ReviewKind; detail?: string } = {},
+): OutcomeToast {
+  return toast(
+    headlineTone(counts),
+    compositeHeadline(t, verb, counts, options.review),
+    options.detail,
+  );
+}
+
+/** The quiet line of a pair the operator declined ("Keep existing"). */
+const declinedNote = (ctx: ReportContext, name: string, tool: string) =>
+  ctx.t("outcome.declinedLine", { name, tool: label(ctx, tool) });
 
 function refreshCounts(report: RefreshReport) {
-  const counts = { refreshed: 0, failed: 0, skipped: 0, target_failures: 0 };
+  const counts = { refreshed: 0, failed: 0, skipped: 0, cancelled: 0, conflicts: 0, target_failures: 0 };
   for (const { status } of report.skills) {
     if (status.status === "refreshed") {
       counts.refreshed++;
       counts.target_failures +=
         status.targets.filter((target) => target.status.status === "failed").length
         + Number(status.reassert_error !== null);
+      counts.conflicts += Number(status.edit_conflict !== null);
     } else if (status.status === "failed") counts.failed++;
+    else if (status.status === "cancelled") counts.cancelled++;
     else counts.skipped++;
   }
   return counts;
@@ -90,13 +239,20 @@ function importCounts(report: ImportReport) {
 
 /**
  * Update, Restore and BOTH Re-points use the same batch-of-one policy.
- * Conflict > failure (including targets/reassert) > skip > success, without
- * suppressing any detail entries. Batch reports reload; single-mutation
- * responses already supply the complete catalog, even on failure/skip.
- * Only a fully refreshed batch closes a repair modal; conflicts/target failures
- * do not undo central settlement. Thrown invocation errors are not reports.
- * A batch of one never shows the batch count summary: its failure or skip is
- * already the one entry, so a second toast would repeat it.
+ * Batch reports reload; single-mutation responses already supply the
+ * complete catalog, even on failure/skip. Only a fully refreshed batch closes
+ * a repair modal; conflicts/target failures do not undo central settlement.
+ * Thrown invocation errors are not reports.
+ *
+ * The batch headline is the composite count line (D10): refreshed · failed ·
+ * targets failed · skipped · cancelled · Edits to review, toned by precedence
+ * (failure › conflict › skipped › success) — a conflict is additive news about
+ * a skill that refreshed (ADR-0004), never a headline over failures. A run the
+ * operator cancelled before anything was applied reads "Refresh cancelled —
+ * nothing was changed", neutral; cancelled rows raise no entry.
+ * A batch of one never shows the count line: its failure or skip is already
+ * the one entry, so a second toast would repeat it; a conflict keeps its
+ * sentence (toned failure when a target failed too), a cancel its own.
  */
 export function refreshOutcome(
   report: RefreshReport,
@@ -136,7 +292,7 @@ export function refreshOutcome(
         title: t("errors.refreshSkippedTitle", { name: skill.skill_name }),
         message: t(ACQUISITION_SKIP_KEY[status.reason]),
       });
-    } else {
+    } else if (status.status === "refreshed") {
       targetErrors.push(...propagationErrors(status.targets, skill.skill_name, ctx));
       if (status.reassert_error)
         targetErrors.push({
@@ -144,6 +300,7 @@ export function refreshOutcome(
           message: errorMessage(ctx, status.reassert_error),
         });
     }
+    // A cancelled row is counted in the headline and raises no entry.
   }
   out.errors.push(...targetErrors);
   for (const skill of report.skills) {
@@ -165,27 +322,35 @@ export function refreshOutcome(
   const skipped = summary.skipped > 0;
   out.completion.closeModal =
     summary.refreshed > 0 && summary.failed === 0 && !skipped;
-  const counts = { refreshed: summary.refreshed, failed: summary.failed };
-  if (ctx.single && !out.completion.conflict && (failed || skipped)) {
+  const counts: HeadlineCounts = {
+    done: summary.refreshed,
+    failed: summary.failed,
+    targetsFailed: summary.target_failures,
+    skipped: summary.skipped,
+    declined: 0,
+    cancelled: summary.cancelled,
+    review: summary.conflicts,
+  };
+  // Cancelled before anything was applied: nothing changed, nothing failed.
+  if (summary.cancelled > 0 && summary.refreshed === 0 && !failed) {
+    out.toast = toast(
+      "neutral",
+      ctx.single
+        ? t("outcome.updateCancelled", { name: ctx.single.name })
+        : t("outcome.refreshCancelled"),
+    );
     return out;
   }
-  // Precedence is explicit: conflict > failure > skipped > success.
-  let message: string;
-  if (out.completion.conflict) {
-    message = ctx.single
-      ? t("invocationEdit.updateCompletedWithConflict", { name: ctx.single.name })
-      : t("invocationEdit.refreshCompletedWithEdits");
-  } else if (failed) {
-    message = summary.failed > 0 ? t("status.refreshSummary", counts) : t("partialFailure");
-  } else if (skipped) {
-    message = t("status.refreshSummarySkipped", { ...counts, skipped: summary.skipped });
-  } else {
-    message = ctx.single?.success ?? t("status.refreshCompleted");
+  if (ctx.single) {
+    if (out.completion.conflict)
+      out.toast = toast(
+        headlineTone(counts),
+        t("invocationEdit.updateCompletedWithConflict", { name: ctx.single.name }),
+      );
+    else if (!failed && !skipped) out.toast = toast("success", ctx.single.success);
+    return out;
   }
-  out.toast = {
-    kind: out.completion.conflict || failed || skipped ? "warning" : "success",
-    message,
-  };
+  out.toast = headlineToast(t, "refreshed", counts);
   return out;
 }
 
@@ -201,17 +366,26 @@ function propagationErrors(
 }
 
 /** Edit has already settled centrally, including a no-op or clear. Expected
- * propagation skips are silent; failures in either scope are notifications,
- * not a saved toast. The accompanying catalog replaces the whole library. */
+ * propagation skips are silent; a target failure is its notification plus a
+ * headline that still says the Edit was saved — "Invocation setting saved ·
+ * 2 targets failed", warning-toned (ADR-0004: the Edit did save). The
+ * accompanying catalog replaces the whole library. */
 export function invocationEditOutcome(
   report: InvocationEditReport,
   ctx: ReportContext,
 ): Outcome<PlainEntry> {
   const errors = propagationErrors(report.propagation.targets, report.skill_name, ctx);
+  const saved = ctx.t("invocationEdit.saved");
   return {
-    toast: errors.length ? null : { kind: "success", message: ctx.t("invocationEdit.saved") },
+    toast: errors.length
+      ? toast(
+          "failure",
+          [saved, ctx.t("outcome.targetsFailed", { count: errors.length })].join(HEADLINE_SEPARATOR),
+        )
+      : toast("success", saved),
     errors,
     warnings: [],
+    notes: [],
     completion: { reload: false, closeModal: true, conflict: false },
   };
 }
@@ -265,36 +439,24 @@ export function removalOutcome(
   if (ctx.action === "toggle") out.completion.reload = !failed;
   if (ctx.action === "bulkUnassign") out.completion.reload = false;
   if (nothingPlanned) {
-    out.toast = { kind: "warning", message: ctx.t("unsyncNothingPlanned") };
+    out.toast = toast("skipped", ctx.t("unsyncNothingPlanned"));
     return out;
   }
   if (ctx.action === "all")
-    out.toast = {
-      kind: failed ? "warning" : "success",
-      message: failed
-        ? ctx.t("unsyncPartial", {
-            count: counts.removed,
-            failed: counts.failed,
-          })
-        : ctx.t("unsyncAllComplete", { count: counts.removed }),
-    };
+    out.toast = failed
+      ? toast("failure", ctx.t("unsyncPartial", { count: counts.removed, failed: counts.failed }))
+      : toast("success", ctx.t("unsyncAllComplete", { count: counts.removed }));
   if (ctx.action === "toggle" && !failed)
-    out.toast = { kind: "success", message: ctx.t("status.syncDisabled") };
+    out.toast = toast("success", ctx.t("status.syncDisabled"));
   if (ctx.action === "bulkUnassign")
     out.toast = failed
-      ? {
-          kind: "warning",
-          message: ctx.t("projects.bulkUnassignPartial", {
-            count: counts.removed + counts.cleared,
-            failed: counts.failed,
-          }),
-        }
-      : {
-          kind: "success",
-          message: ctx.t("projects.bulkUnassignSuccess", {
-            count: counts.removed + counts.cleared,
-          }),
-        };
+      ? toast("failure", ctx.t("projects.bulkUnassignPartial", {
+          count: counts.removed + counts.cleared,
+          failed: counts.failed,
+        }))
+      : toast("success", ctx.t("projects.bulkUnassignSuccess", {
+          count: counts.removed + counts.cleared,
+        }));
   return out;
 }
 
@@ -350,34 +512,25 @@ export function projectSyncOutcome(
     case "toggleOn":
       if (!failed)
         out.toast = counts.skipped > 0
-          ? { kind: "warning", message: t("projects.assignedWhileDisabled") }
-          : { kind: "success", message: t("status.syncEnabled") };
+          ? toast("skipped", t("projects.assignedWhileDisabled"))
+          : toast("success", t("status.syncEnabled"));
       break;
     case "bulkAssign": {
       // A disabled skip is an assignment recorded but not synced — never
       // "already assigned", never a failure.
       const { synced: assigned, failed: failures, skipped } = counts;
       if (failed)
-        out.toast = {
-          kind: "warning",
-          message: skipped > 0
-            ? t("disabledSkips.bulkAssignPartial", { assigned, failed: failures, skipped })
-            : t("projects.bulkAssignPartial", { assigned, failed: failures }),
-        };
+        out.toast = toast("failure", skipped > 0
+          ? t("disabledSkips.bulkAssignPartial", { assigned, failed: failures, skipped })
+          : t("projects.bulkAssignPartial", { assigned, failed: failures }));
       else if (skipped > 0)
-        out.toast = {
-          kind: "warning",
-          message: assigned > 0
-            ? t("disabledSkips.bulkAssignMixed", { assigned, skipped })
-            : t("disabledSkips.bulkAssignNotSynced", { count: skipped }),
-        };
+        out.toast = toast("skipped", assigned > 0
+          ? t("disabledSkips.bulkAssignMixed", { assigned, skipped })
+          : t("disabledSkips.bulkAssignNotSynced", { count: skipped }));
       else
-        out.toast = {
-          kind: "success",
-          message: assigned > 0
-            ? t("projects.bulkAssignSuccess", { count: assigned })
-            : t("projects.bulkAssignNothing"),
-        };
+        out.toast = toast("success", assigned > 0
+          ? t("projects.bulkAssignSuccess", { count: assigned })
+          : t("projects.bulkAssignNothing"));
       break;
     }
     case "resync":
@@ -385,14 +538,13 @@ export function projectSyncOutcome(
       const all = ctx.action === "resyncAll";
       const { synced, failed: failures, skipped } = counts;
       const key = `${skipped > 0 ? "disabledSkips" : "projects"}.${all ? "resyncAll" : "resync"}${failed ? "Partial" : "Success"}`;
-      out.toast = {
-        kind: failed ? "warning" : "success",
-        message: t(key, {
-          synced,
-          ...(failed ? { failed: failures } : {}),
-          ...(skipped > 0 ? { skipped } : {}),
-        }),
-      };
+      // A disabled skip is counted in the copy but is by design: it keeps
+      // the success tone (the pre-D10 contract of this fold).
+      out.toast = toast(failed ? "failure" : "success", t(key, {
+        synced,
+        ...(failed ? { failed: failures } : {}),
+        ...(skipped > 0 ? { skipped } : {}),
+      }));
       break;
     }
   }
@@ -425,22 +577,16 @@ export function projectRemovalOutcome(
   out.completion.closeModal = !failed;
   if (ctx.action === "removeProject")
     out.toast = failed
-      ? {
-          kind: "warning",
-          message: ctx.t("projects.removeKept", {
-            count: counts.removed,
-            failed: counts.failed,
-          }),
-        }
-      : { kind: "success", message: ctx.t("projects.removeComplete") };
+      ? toast("failure", ctx.t("projects.removeKept", {
+          count: counts.removed,
+          failed: counts.failed,
+        }))
+      : toast("success", ctx.t("projects.removeComplete"));
   if (ctx.action === "configureTools" && failed)
-    out.toast = {
-      kind: "warning",
-      message: ctx.t("projects.toolRemovalKept", {
-        count: counts.removed,
-        failed: counts.failed,
-      }),
-    };
+    out.toast = toast("failure", ctx.t("projects.toolRemovalKept", {
+      count: counts.removed,
+      failed: counts.failed,
+    }));
   return out;
 }
 
@@ -478,23 +624,59 @@ function isDisabledSkip(result: BatchTargetOutcome): boolean {
   return result.status.status === "skipped" && result.status.error.code === "TARGET_DISABLED";
 }
 
+/** What a batch report's pairs settled as, beside the entries the fold raised. */
+type SyncTally = { synced: number; failed: number; skipped: number; declined: number };
+
 /** Bulk and install surface not-detected skips as per-tool warnings and
  * other bulk skips silently; selected install targets surface unwritable
  * skips; an explicit toggle surfaces every non-success, including
- * TARGET_EXISTS. */
+ * TARGET_EXISTS. A declined pair ("Keep existing") is never an entry: it is
+ * one quiet note. Bulk answers the composite count line ("7 synced · 1 failed
+ * · 2 skipped · 1 kept existing"); a toggle keeps its sentence, or the
+ * declined note itself; install leaves the toast to `installOutcome`. */
 export function syncOutcome(
   report: BatchTargetOutcome[],
   ctx: ReportContext & { action: "bulk" | "install" | "toggle" },
 ): Outcome<PlainEntry> {
+  const { out, tally, disabledSkip } = foldSync(report, ctx);
+  if (ctx.action === "bulk")
+    out.toast = headlineToast(ctx.t, "synced", {
+      done: tally.synced,
+      failed: tally.failed,
+      skipped: tally.skipped,
+      declined: tally.declined,
+    }, { detail: detailOf(out.notes) });
+  // No new copy: failed explicit actions have their error entries, not a success.
+  else if (ctx.action === "toggle" && out.errors.length === 0) {
+    if (tally.declined > 0) out.toast = toast("declined", out.notes.join("\n"));
+    else if (!disabledSkip) out.toast = toast("success", ctx.t("status.syncEnabled"));
+  }
+  return out;
+}
+
+function foldSync(
+  report: BatchTargetOutcome[],
+  ctx: ReportContext & { action: "bulk" | "install" | "toggle" },
+): { out: Outcome<PlainEntry>; tally: SyncTally; disabledSkip: boolean } {
   const out = empty();
+  const tally: SyncTally = { synced: 0, failed: 0, skipped: 0, declined: 0 };
   const skips = new NotInstalledSkips();
   let disabledSkip = false;
   for (const result of report) {
     const status = result.status;
-    if (status.status === "synced") continue;
+    if (status.status === "synced") {
+      tally.synced++;
+      continue;
+    }
+    if (status.status === "declined") {
+      tally.declined++;
+      out.notes.push(declinedNote(ctx, result.skill_name, result.tool_key));
+      continue;
+    }
     // A Disabled pair is skipped by design, never a failure: silent in bulk
     // and install; an explicit toggle says why nothing happened.
     if (isDisabledSkip(result)) {
+      tally.skipped++;
       if (ctx.action === "toggle") {
         disabledSkip = true;
         out.warnings.push({
@@ -507,13 +689,19 @@ export function syncOutcome(
       }
       continue;
     }
-    if (ctx.action !== "toggle" && skips.absorb(result)) continue;
+    if (ctx.action !== "toggle" && skips.absorb(result)) {
+      tally.skipped++;
+      continue;
+    }
     if (
       status.status !== "failed" &&
       ctx.action !== "toggle" &&
       !(ctx.action === "install" && status.error.code === "TOOL_NOT_WRITABLE")
-    )
+    ) {
+      tally.skipped++;
       continue;
+    }
+    tally.failed++;
     out.errors.push({
       title: ctx.t("errors.syncFailedTitle", {
         name: result.skill_name,
@@ -528,15 +716,7 @@ export function syncOutcome(
   out.warnings.push(...skips.warnings(ctx));
   out.completion.closeModal = out.errors.length === 0;
   out.completion.reload = ctx.action !== "toggle" || out.errors.length === 0;
-  // No new copy: failed explicit actions have their error entries, not a success.
-  if (ctx.action !== "install" && out.errors.length === 0 && !disabledSkip)
-    out.toast = {
-      kind: "success",
-      message: ctx.t(
-        ctx.action === "toggle" ? "status.syncEnabled" : "status.syncCompleted",
-      ),
-    };
-  return out;
+  return { out, tally, disabledSkip };
 }
 
 /**
@@ -554,17 +734,26 @@ export function enableOutcome(
   const projects = projectSyncOutcome(report.projects, { ...ctx, action: "toggleOn" });
   const errors = [...global.errors, ...projects.errors];
   const warnings = [...global.warnings, ...projects.warnings];
+  const notes = [...global.notes, ...projects.notes];
   return {
     toast:
-      errors.length || warnings.length
+      errors.length || warnings.length || notes.length
         ? null
-        : { kind: "success", message: ctx.t("status.targetsEnabled") },
+        : toast("success", ctx.t("status.targetsEnabled")),
     errors,
     warnings,
+    notes,
     completion: { reload: true, closeModal: errors.length === 0, conflict: false },
   };
 }
 
+/**
+ * Import's headline counts groups: imported (a Replace included) · failed ·
+ * targets failed (a target sync or an original's cleanup that failed under
+ * an imported group) · skipped (a managed name left alone) · kept existing ·
+ * originals to review (kept because they differ). Forced-tool lines and
+ * declined notes ride as the toast's detail.
+ */
 export function importOutcome(
   report: ImportReport,
   ctx: ReportContext,
@@ -574,6 +763,9 @@ export function importOutcome(
   const counts = importCounts(report);
   const forcedLines: string[] = [];
   const skips = new NotInstalledSkips();
+  let targetsFailed = 0;
+  let declined = 0;
+  let divergent = 0;
   for (const group of report.groups) {
     const name = group.group_name;
     if (group.status.status === "failed") {
@@ -604,6 +796,12 @@ export function importOutcome(
       // The same skip policy as the bulk sync fold: a Disabled pair is
       // skipped by design, silently — never a sync failure.
       if (isDisabledSkip(target)) continue;
+      if (target.status.status === "declined") {
+        declined++;
+        out.notes.push(declinedNote(ctx, name, target.tool_key));
+        continue;
+      }
+      targetsFailed++;
       out.errors.push({
         title: t("errors.syncFailedTitle", {
           name,
@@ -619,18 +817,21 @@ export function importOutcome(
     }
     for (const original of originals) {
       const tool = label(ctx, original.tool);
-      if (original.status.status === "kept_divergent")
+      if (original.status.status === "kept_divergent") {
+        divergent++;
         out.warnings.push({
           title: t("errors.importKeptDivergentTitle", { name, tool }),
           message: t("errors.importKeptDivergentMessage", {
             path: original.path,
           }),
         });
-      else if (original.status.status === "failed")
+      } else if (original.status.status === "failed") {
+        targetsFailed++;
         out.errors.push({
           title: t("errors.importCleanupFailedTitle", { name, tool }),
           message: errorMessage(ctx, original.status.error),
         });
+      }
     }
   }
   // Warnings keep the modal open (kept_divergent needs a look), but a stale
@@ -638,24 +839,21 @@ export function importOutcome(
   out.completion.closeModal =
     out.errors.length === 0 && out.warnings.length === 0;
   out.warnings.push(...skips.warnings(ctx));
-  out.toast = {
-    kind: out.completion.closeModal ? "success" : "warning",
-    message:
-      counts.failed > 0
-        ? t("status.importPartial", {
-            imported: counts.imported,
-            failed: counts.failed,
-          })
-        : out.completion.closeModal
-          ? t("status.importCompleted")
-          : t("partialFailure"),
-    ...(forcedLines.length ? { detail: forcedLines.join("\n") } : {}),
-  };
+  out.toast = headlineToast(t, "imported", {
+    done: counts.imported + counts.replaced,
+    failed: counts.failed,
+    targetsFailed,
+    skipped: counts.skipped,
+    declined,
+    review: divergent,
+  }, { review: "originals", detail: detailOf([...forcedLines, ...out.notes]) });
   return out;
 }
 
 /** Install commands return InstallResultDto (not a backend batch report).
- * The picker collects these settled results, including acquisition exceptions. */
+ * The picker collects these settled results, including acquisition exceptions.
+ * `cancelled` is a candidate the batch never reached once the operator
+ * cancelled — the shape ticket 04's install batch answers (D10). */
 export type InstallDeployment =
   | { status: "disabled" }
   | { status: "no-targets" }
@@ -668,48 +866,62 @@ export type InstallSettlement = { name: string } & (
       deployment: InstallDeployment;
     }
   | { status: "failed"; error: unknown }
+  | { status: "cancelled" }
 );
+/**
+ * The headline counts candidates: installed · failed · targets failed (a
+ * deployment problem under an installed skill) · kept existing · cancelled.
+ * A clean single git/local install keeps its sentence; nothing installed and
+ * nothing cancelled leaves the error entries alone, without a toast.
+ */
 export function installOutcome(
   report: InstallSettlement[],
   ctx: ReportContext & { source: "git" | "local" | "selection" },
 ): Outcome<PlainEntry> {
   const out = empty();
+  const counts = { done: 0, failed: 0, targetsFailed: 0, declined: 0, cancelled: 0 };
   for (const item of report) {
-    if (item.status === "failed")
+    if (item.status === "cancelled") {
+      counts.cancelled++;
+      continue;
+    }
+    if (item.status === "failed") {
+      counts.failed++;
       out.errors.push({
         title: ctx.t("errors.importFailedTitle", { name: item.name }),
         message: errorMessage(ctx, item.error),
       });
-    else {
-      const deployment = item.deployment;
-      if (deployment.status === "reported")
-        out.errors.push(
-          ...syncOutcome(deployment.report, { ...ctx, action: "install" })
-            .errors,
-        );
-      else if (deployment.status !== "disabled")
-        out.errors.push({
-          title: ctx.t("errors.unsyncedTitle", { name: item.result.name }),
-          message:
-            deployment.status === "no-targets"
-              ? ctx.t("errors.noSyncTargets")
-              : errorMessage(ctx, deployment.error),
-        });
+      continue;
+    }
+    counts.done++;
+    const deployment = item.deployment;
+    if (deployment.status === "reported") {
+      const { out: deployed, tally } = foldSync(deployment.report, { ...ctx, action: "install" });
+      counts.targetsFailed += deployed.errors.length;
+      counts.declined += tally.declined;
+      out.errors.push(...deployed.errors);
+      out.notes.push(...deployed.notes);
+    } else if (deployment.status !== "disabled") {
+      counts.targetsFailed++;
+      out.errors.push({
+        title: ctx.t("errors.unsyncedTitle", { name: item.result.name }),
+        message:
+          deployment.status === "no-targets"
+            ? ctx.t("errors.noSyncTargets")
+            : errorMessage(ctx, deployment.error),
+      });
     }
   }
-  out.completion.reload = report.some((item) => item.status === "installed");
+  out.completion.reload = counts.done > 0;
   out.completion.closeModal = out.completion.reload;
-  if (out.completion.reload)
-    out.toast = {
-      kind: out.errors.length ? "warning" : "success",
-      message: ctx.t(
-        out.errors.length ? "partialFailure" : ctx.source === "selection"
-          ? "status.selectedSkillsInstalled"
-          : ctx.source === "git"
-            ? "status.gitSkillCreated"
-            : "status.localSkillCreated",
-      ),
-    };
+  const clean = headlineTone(counts) === "success";
+  if (clean && counts.done > 0 && ctx.source !== "selection")
+    out.toast = toast(
+      "success",
+      ctx.t(ctx.source === "git" ? "status.gitSkillCreated" : "status.localSkillCreated"),
+    );
+  else if (counts.done > 0 || counts.cancelled > 0)
+    out.toast = headlineToast(ctx.t, "installed", counts, { detail: detailOf(out.notes) });
   return out;
 }
 
@@ -722,7 +934,7 @@ export function deleteOutcome(
   const failed = collectRemovalFailures(out, report, ctx, "errors.deleteKeptTargetTitle");
   out.completion.closeModal = !failed;
   out.toast = failed
-    ? { kind: "warning", message: ctx.t("status.skillDeleteKept", { failed: removalCounts(report).failed }) }
-    : { kind: "success", message: ctx.t("status.skillRemoved") };
+    ? toast("failure", ctx.t("status.skillDeleteKept", { failed: removalCounts(report).failed }))
+    : toast("success", ctx.t("status.skillRemoved"));
   return out;
 }

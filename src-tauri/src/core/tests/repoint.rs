@@ -1318,3 +1318,252 @@ fn a_git_to_local_repoint_replays_the_invocation_edit_onto_the_new_bytes() {
         "the operator's folder is never touched"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Preview (D15): resolve as the Re-point would, write nothing
+// ---------------------------------------------------------------------------
+
+use crate::core::repoint::{preview_repoint_source_with, RepointPreview};
+
+fn preview(
+    f: &Fixture,
+    target: RepointTarget,
+    api: &dyn GithubApi,
+) -> anyhow::Result<RepointPreview> {
+    preview_repoint_source_with(&f.paths, &f.store, &f.skill_id, target, None, api)
+}
+
+fn git_target(url: &str) -> RepointTarget {
+    RepointTarget::Git { url: url.into() }
+}
+
+fn local_target(folder: &Path) -> RepointTarget {
+    RepointTarget::Local {
+        path: folder.to_string_lossy().into_owned(),
+    }
+}
+
+/// Every path and byte the operator owns: the temp root (home with its Tool
+/// dirs, the central repo, the database file) and the skill's source folder.
+/// The app cache is excluded — a preview may clone into it, as listing does.
+fn owned_state(f: &Fixture) -> Vec<(PathBuf, Option<Vec<u8>>)> {
+    let mut out = Vec::new();
+    for root in [f._dir.path(), f._source.path()] {
+        for entry in walkdir::WalkDir::new(root).sort_by_file_name() {
+            let entry = entry.unwrap();
+            let relative = entry.path().strip_prefix(root).unwrap().to_path_buf();
+            if root == f._dir.path() && relative.starts_with("cache") {
+                continue;
+            }
+            let bytes = entry
+                .file_type()
+                .is_file()
+                .then(|| fs::read(entry.path()).unwrap());
+            out.push((entry.path().to_path_buf(), bytes));
+        }
+    }
+    out
+}
+
+/// No scratch bytes survive a preview.
+fn assert_no_scratch_left(f: &Fixture) {
+    let scratch = f.paths.cache_dir.join("repoint-preview");
+    let left: Vec<_> = fs::read_dir(&scratch)
+        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    assert!(left.is_empty(), "scratch left behind: {left:?}");
+}
+
+/// Downloads a skill whose manifest names `self.0`.
+struct NamedApi(&'static str);
+
+impl GithubApi for NamedApi {
+    fn matching_refs(
+        &self,
+        repo: &crate::core::git_acquisition::GithubRepo,
+        prefix: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        RepointApi.matching_refs(repo, prefix)
+    }
+    fn branch_sha(
+        &self,
+        coords: &crate::core::git_acquisition::GithubCoords,
+    ) -> anyhow::Result<String> {
+        RepointApi.branch_sha(coords)
+    }
+    fn download_directory(
+        &self,
+        _: &crate::core::git_acquisition::GithubCoords,
+        dest: &Path,
+        _: Option<&CancelToken>,
+    ) -> anyhow::Result<()> {
+        fs::create_dir_all(dest)?;
+        fs::write(
+            dest.join("SKILL.md"),
+            format!("---\nname: {}\n---\n", self.0),
+        )?;
+        Ok(())
+    }
+}
+
+#[test]
+fn preview_writes_nothing_for_either_target() {
+    let f = git_repoint_fixture();
+    let folder = new_folder(&f, "folder bytes");
+    let before = owned_state(&f);
+
+    let git = preview(
+        &f,
+        git_target("https://github.com/owner/repo/tree/feature/x/skills/alpha"),
+        &RepointApi,
+    )
+    .unwrap();
+    let local = preview(&f, local_target(&folder), &RepointApi).unwrap();
+
+    assert_eq!(owned_state(&f), before, "a preview changed operator state");
+    assert_no_scratch_left(&f);
+    assert_eq!(git.resolved_name.as_deref(), Some("alpha"));
+    assert_eq!(git.git_ref.as_deref(), Some("feature/x"));
+    assert_eq!(git.subpath.as_deref(), Some("skills/alpha"));
+    assert!(git.name_matches);
+    assert!(git.candidates.is_none());
+    assert_eq!(local.resolved_name.as_deref(), Some("alpha"));
+    assert_eq!((local.git_ref, local.subpath), (None, None));
+    assert!(local.name_matches && local.candidates.is_none());
+    // Still the old source: nothing was recorded.
+    assert_eq!(
+        record(&f).source_ref.as_deref(),
+        Some("https://github.com/owner/repo/tree/main/old")
+    );
+}
+
+#[test]
+fn preview_flags_a_name_mismatch_without_refusing() {
+    let f = git_repoint_fixture();
+    let git = preview(
+        &f,
+        git_target("https://github.com/owner/repo/tree/main/skills/engineering/ts-error-fixer"),
+        &NamedApi("ts-error-fixer"),
+    )
+    .unwrap();
+    assert_eq!(git.resolved_name.as_deref(), Some("ts-error-fixer"));
+    assert_eq!(
+        git.subpath.as_deref(),
+        Some("skills/engineering/ts-error-fixer")
+    );
+    assert_eq!(git.git_ref.as_deref(), Some("main"));
+    assert!(!git.name_matches);
+
+    let folder = f.paths.home.join("Documents/other");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join("SKILL.md"), "---\nname: Beta\n---\n").unwrap();
+    let local = preview(&f, local_target(&folder), &RepointApi).unwrap();
+    assert_eq!(local.resolved_name.as_deref(), Some("Beta"));
+    assert!(!local.name_matches);
+
+    // The match is case-insensitive, as skill matching is.
+    fs::write(folder.join("SKILL.md"), "---\nname: ALPHA\n---\n").unwrap();
+    assert!(
+        preview(&f, local_target(&folder), &RepointApi)
+            .unwrap()
+            .name_matches
+    );
+}
+
+#[test]
+fn preview_of_a_multi_skill_repo_answers_its_candidates() {
+    let f = git_repoint_fixture();
+    seed_repoint_repository(&f, false);
+    let before = owned_state(&f);
+
+    let answer = preview(&f, git_target("https://github.com/new/repo"), &RepointApi).unwrap();
+
+    assert_eq!(owned_state(&f), before);
+    assert_no_scratch_left(&f);
+    assert_eq!(answer.resolved_name, None);
+    assert!(!answer.name_matches);
+    let mut subpaths: Vec<_> = answer
+        .candidates
+        .expect("a multi-skill repo answers candidates")
+        .into_iter()
+        .map(|c| (c.name, c.subpath))
+        .collect();
+    subpaths.sort();
+    assert_eq!(
+        subpaths,
+        vec![
+            ("beta".to_string(), "skills/b".to_string()),
+            ("shared".to_string(), "skills/unrelated".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn preview_of_a_multi_skill_repo_resolving_the_name_still_offers_the_choice() {
+    let f = git_repoint_fixture();
+    seed_repoint_repository(&f, true);
+    let answer = preview(&f, git_target("https://github.com/new/repo"), &RepointApi).unwrap();
+    assert_eq!(answer.resolved_name.as_deref(), Some("alpha"));
+    assert_eq!(answer.subpath.as_deref(), Some("skills/a"));
+    assert!(answer.name_matches);
+    assert_eq!(answer.candidates.map(|c| c.len()), Some(2));
+}
+
+#[test]
+fn preview_refuses_typed_as_the_repoint_does() {
+    let f = git_repoint_fixture();
+    let err = preview(&f, git_target("owner/repo"), &RepointApi).unwrap_err();
+    assert!(matches!(
+        err.downcast_ref::<SignalError>(),
+        Some(SignalError::InvalidGithubUrl { .. })
+    ));
+
+    let gone = f.paths.home.join("Downloads/scratchpad");
+    let err = preview(&f, local_target(&gone), &RepointApi).unwrap_err();
+    assert!(matches!(
+        err.downcast_ref::<SignalError>(),
+        Some(SignalError::SourcePathMissing { .. })
+    ));
+
+    let claude = adapter_by_key("claude_code").unwrap();
+    mark_installed_in(&f.paths.home, claude);
+    let inside = f.paths.home.join(claude.relative_skills_dir).join("alpha");
+    fs::create_dir_all(&inside).unwrap();
+    fs::write(inside.join("SKILL.md"), "---\nname: alpha\n---\n").unwrap();
+    let err = preview(&f, local_target(&inside), &RepointApi).unwrap_err();
+    assert!(matches!(
+        err.downcast_ref::<SignalError>(),
+        Some(SignalError::LocalSourceInsideToolDir { .. })
+    ));
+
+    let err = preview_repoint_source_with(
+        &f.paths,
+        &f.store,
+        "missing",
+        git_target("https://github.com/owner/repo"),
+        None,
+        &RepointApi,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err.downcast_ref::<SignalError>(),
+        Some(SignalError::NotFound { .. })
+    ));
+
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    let err = preview_repoint_source_with(
+        &f.paths,
+        &f.store,
+        &f.skill_id,
+        git_target("https://github.com/owner/repo/tree/main/skills/alpha"),
+        Some(&cancel),
+        &RepointApi,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err.downcast_ref::<SignalError>(),
+        Some(SignalError::Cancelled)
+    ));
+    assert_no_scratch_left(&f);
+}

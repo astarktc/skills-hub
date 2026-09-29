@@ -5,14 +5,19 @@
 // Two seams, both installed before the first render (`src/main.tsx`):
 // - App commands: `invokeTauri` (`src/lib/tauri.ts`) routes to
 //   `fixtureInvoke` — typed per command, one handler each (`backend.ts`).
-// - Native plumbing: Tauri's own `mockIPC`/`mockWindows` stand in for the
-//   webview internals, so `new Channel()` works and plugin calls (dialog,
-//   updater, app version, webview zoom) get canned answers.
+// - The native platform: `src/lib/platform.ts`'s second adapter
+//   (`installPlatformAdapter`) — the folder picker rotates through the
+//   scenario's folders, progress channels are plain message sinks, the
+//   updater answers `?update=<version>` (none by default), zoom sets CSS
+//   zoom. Tauri's own `mockIPC`/`mockWindows` stay installed underneath as a
+//   backstop: a native call that bypasses the platform seam is logged loudly.
 //
 // Dev-only; reached only through the `VITE_MOCK_BACKEND` gate.
 
+import type { Channel } from "@tauri-apps/api/core";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { version } from "../../package.json";
+import { installPlatformAdapter, type PlatformAdapter } from "../lib/platform";
 import type { CommandName, Commands } from "../lib/tauri";
 import { createFixtureBackend, type FixtureBackend } from "./backend";
 import { SCENARIOS, type ScenarioName } from "./model";
@@ -80,43 +85,68 @@ export function fixtureInvoke<K extends CommandName>(
   return current().invoke(command, ...args);
 }
 
-/** What a native call answers: a picked folder, a version string, or nothing. */
-type NativeAnswer = string | null;
+/**
+ * `?update=<version>`: the updater finds that release (its install takes a
+ * moment and succeeds; `?update=<version>&updateFails` makes it fail), so the
+ * startup notice and Settings' update section can be driven. Absent: the
+ * fixture app is current.
+ */
+function updateFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get("update");
+}
 
-/** Canned answers for the native plugin calls the app makes. */
-function pluginAnswer(cmd: string, args: unknown): NativeAnswer {
-  const state = current().state;
-  switch (cmd) {
-    case "plugin:dialog|open": {
+/** The fixture's platform adapter: canned answers, nothing native. */
+function fixturePlatform(): PlatformAdapter {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    async pickFolder() {
       // A folder picker: rotate through the fixture's known folders.
+      const state = current().state;
       const pick = state.dialogPicks.shift() ?? null;
       if (pick) state.dialogPicks.push(pick);
-      return pick;
-    }
-    case "plugin:updater|check":
-      return null;
-    case "plugin:app|version":
+      return pick ? [pick] : [];
+    },
+    async createProgressChannel<T>(onMessage: (message: T) => void) {
+      // SAFETY: the channel only reaches `fixtureInvoke`, whose handlers only
+      // ever call `onmessage` (backend.ts `ProgressSink`); nothing serialises it.
+      return { onmessage: onMessage } as unknown as Channel<T>;
+    },
+    async checkForUpdate() {
+      const found = updateFromUrl();
+      if (!found) return null;
+      const fails = params.has("updateFails");
+      return {
+        version: found,
+        downloadAndInstall: async () => {
+          const latency = latencyFromUrl();
+          await sleepFor(latency !== null)(1200 * (latency ?? 1));
+          if (fails) throw new Error("fixture mode: the download failed");
+        },
+        releaseNotes: async () =>
+          `## What's new in ${found}\n\n- Fixture release notes (\`?update=${found}\`).`,
+      };
+    },
+    async setZoom(factor) {
+      document.documentElement.style.zoom = String(factor);
+    },
+    async appVersion() {
       return `${version}-fixture`;
-    case "plugin:app|name":
-      return "Skills Hub";
-    case "plugin:app|tauri_version":
-      return "2";
-    case "plugin:webview|set_webview_zoom": {
-      const value = (args as { value?: number } | undefined)?.value;
-      if (typeof value === "number") document.documentElement.style.zoom = String(value);
-      return null;
-    }
-    default:
-      console.warn(`[fixture] unhandled native call ${cmd}`, args);
-      throw new Error(`fixture mode: no answer for ${cmd}`);
-  }
+    },
+  };
+}
+
+/** Native calls that bypassed the platform seam: logged, then refused. */
+function unexpectedNativeCall(cmd: string, args: unknown): never {
+  console.warn(`[fixture] unhandled native call ${cmd}`, args);
+  throw new Error(`fixture mode: no answer for ${cmd}`);
 }
 
 /** Install both seams. Call once, before the app renders. */
 export function installFixtureBackend(): void {
   const { scenario } = current().state;
+  installPlatformAdapter(fixturePlatform());
   mockWindows("main");
-  mockIPC((cmd, args) => pluginAnswer(cmd, args));
+  mockIPC((cmd, args) => unexpectedNativeCall(cmd, args));
   document.title = `Skills Hub · fixture: ${scenario}`;
   document.documentElement.dataset.fixture = FIXTURE_MODE_MARKER;
   console.info(

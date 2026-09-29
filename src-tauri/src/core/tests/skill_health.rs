@@ -368,7 +368,11 @@ fn a_cancelled_acquisition_records_nothing() {
         UpdateIntent::Update,
     )
     .unwrap();
-    assert!(matches!(failed_error(&report), CommandError::Cancelled));
+    // A cancellation is its own outcome kind, never a failure (D10).
+    assert!(
+        matches!(report.skills[0].status, SkillRefreshStatus::Cancelled),
+        "{report:?}"
+    );
     assert!(f.health().is_none());
 }
 
@@ -572,12 +576,12 @@ fn a_target_exists_with_no_decision_records_no_row_and_a_kept_one_records_disabl
         1100,
         |_| {},
     );
-    assert!(matches!(
-        outcomes[0].status,
-        BatchTargetStatus::Skipped {
-            error: CommandError::TargetDisabled { .. }
-        }
-    ));
+    // The report row says what the operator did: declined, not skipped (D10).
+    assert!(
+        matches!(outcomes[0].status, BatchTargetStatus::Declined),
+        "{:?}",
+        outcomes[0].status
+    );
     let row = f
         .store
         .get_skill_target(&f.id, "claude_code")

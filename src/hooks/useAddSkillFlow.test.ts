@@ -30,12 +30,12 @@ vi.mock("../lib/tauri", () => ({
   isTauri: true,
   invokeTauri: vi.fn(),
 }));
-// The import batch streams progress over a Tauri Channel; the hook imports
-// it lazily, so the module seam is stubbed with a plain message sink.
-vi.mock("@tauri-apps/api/core", () => ({
-  Channel: class {
-    onmessage: ((message: unknown) => void) | null = null;
-  },
+// The import batch streams progress over a channel from the platform seam,
+// stubbed with a plain message sink; the folder picker is its other door.
+const pickFolder = vi.fn<(options: { title: string; multiple?: boolean }) => Promise<string[]>>();
+vi.mock("../lib/platform", () => ({
+  createProgressChannel: async (onMessage: (message: unknown) => void) => ({ onmessage: onMessage }),
+  pickFolder: (options: { title: string; multiple?: boolean }) => pickFolder(options),
 }));
 
 import { invokeTauri, type CommandName, type Commands } from "../lib/tauri";
@@ -184,6 +184,8 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
     syncSkillsToTools: vi.fn().mockResolvedValue([]),
     syncTargets: { claude: true, cursor: false, goose: true },
     targetAllInstalled: vi.fn(),
+  };
+  const catalog = {
     toolLabelById: { claude: "CLAUDE", cursor: "CURSOR" },
     tools: [
       { id: "claude", label: "CLAUDE" },
@@ -195,7 +197,7 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
     isSkillNameTaken: vi.fn((name: string) => taken.has(name.toLowerCase())),
     loadManagedSkills: vi.fn().mockResolvedValue(undefined),
   };
-  const deps: FlowDeps = { t, reporter, sync, library };
+  const deps: FlowDeps = { t, reporter, sync, catalog, library };
   return { deps, reporter, sync, library };
 }
 
@@ -687,7 +689,7 @@ describe("useAddSkillFlow import flow", () => {
     ]);
     // goose is selected but not installed and still named; cursor is deselected.
     expect(policy).toEqual({ auto_sync: true, tools: ["claude", "goose"], remove_originals: true });
-    expect(setup.reporter.notify).toHaveBeenCalledWith("success", "status.importCompleted", undefined);
+    expect(setup.reporter.notify).toHaveBeenCalledWith("success", t("outcome.done.imported", { count: 1 }), undefined);
     expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([]);
     expect(result.current.showImportModal).toBe(false);
   });
@@ -811,7 +813,7 @@ describe("useAddSkillFlow import flow", () => {
 
     // Every selected group imported, so the action completed: success toast
     // fires and the modal closes...
-    expect(setup.reporter.notify).toHaveBeenCalledWith("success", "status.importCompleted", undefined);
+    expect(setup.reporter.notify).toHaveBeenCalledWith("success", t("outcome.done.imported", { count: 1 }), undefined);
     expect(result.current.showImportModal).toBe(false);
     // ...while the reload failure is surfaced on its own, not as an import
     // failure.
@@ -822,7 +824,7 @@ describe("useAddSkillFlow import flow", () => {
   it.each([false, true])("applies import fold completion=%s and publishes its entries", async (complete) => {
     stubImportBackend([() => Promise.resolve(PLAN)]);
     const setup = makeDeps();
-    const outcome: folds.Outcome = { toast: { kind: "warning", message: "fold toast" }, errors: [{ title: "error", message: "detail" }], warnings: [{ title: "warning", message: "detail" }], completion: { reload: complete, closeModal: complete, conflict: false } };
+    const outcome: folds.Outcome = { toast: { kind: "warning", tone: "failure", message: "fold toast" }, errors: [{ title: "error", message: "detail" }], warnings: [{ title: "warning", message: "detail" }], notes: [], completion: { reload: complete, closeModal: complete, conflict: false } };
     const spy = vi.spyOn(folds, "importOutcome").mockReturnValue(outcome);
     const result = await runImport(setup);
     expect(spy).toHaveBeenCalledWith(report(importedGroup()), expect.objectContaining({ t }));
@@ -842,7 +844,7 @@ it.each(["git", "local"] as const)("%s install applies fold completion instead o
   for (const complete of [false, true]) {
     stubBackend({ gitCandidates: [gitCandidate("alpha", "alpha")], localCandidates: [{ name: "alpha", subpath: "alpha", description: null, valid: true, reason: null }] });
     const setup = makeDeps();
-    const outcome: folds.Outcome = { toast: { kind: "warning", message: "install fold" }, errors: [{ title: "error", message: "detail" }], warnings: [], completion: { reload: complete, closeModal: complete, conflict: false } };
+    const outcome: folds.Outcome = { toast: { kind: "warning", tone: "failure", message: "install fold" }, errors: [{ title: "error", message: "detail" }], warnings: [], notes: [], completion: { reload: complete, closeModal: complete, conflict: false } };
     const spy = vi.spyOn(folds, "installOutcome").mockReturnValue(outcome);
     const { result, unmount } = renderHook(() => useAddSkillFlow(setup.deps));
     act(() => {
@@ -871,7 +873,11 @@ it("an installed skill still completes when the deployment command throws", asyn
   expect(result.current.showAddModal).toBe(false);
   expect(setup.library.loadManagedSkills).toHaveBeenCalledTimes(1);
   expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([{ title: t("errors.unsyncedTitle", { name: "installed-skill" }), message: "deploy failed" }]);
-  expect(setup.reporter.notify).toHaveBeenCalledWith("warning", "partialFailure", undefined);
+  expect(setup.reporter.notify).toHaveBeenCalledWith(
+    "warning",
+    `${t("outcome.done.installed", { count: 1 })} · ${t("outcome.targetsFailed", { count: 1 })}`,
+    undefined,
+  );
 });
 
 it("an empty selection deploys nowhere and says so (no-targets), even with tools detected", async () => {
@@ -884,5 +890,30 @@ it("an empty selection deploys nowhere and says so (no-targets), even with tools
   expect(setup.sync.syncSkillsToTools).not.toHaveBeenCalled();
   expect(result.current.showAddModal).toBe(false);
   expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([{ title: t("errors.unsyncedTitle", { name: "installed-skill" }), message: t("errors.noSyncTargets") }]);
-  expect(setup.reporter.notify).toHaveBeenCalledWith("warning", "partialFailure", undefined);
+  expect(setup.reporter.notify).toHaveBeenCalledWith(
+    "warning",
+    `${t("outcome.done.installed", { count: 1 })} · ${t("outcome.targetsFailed", { count: 1 })}`,
+    undefined,
+  );
+});
+
+describe("useAddSkillFlow local folder picker (platform seam)", () => {
+  it("fills the local path from the picked folder; a cancel changes nothing; a failure is reported", async () => {
+    stubBackend();
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    pickFolder.mockResolvedValueOnce(["/home/op/my-skill"]);
+    await act(async () => { await result.current.handlePickLocalPath(); });
+    expect(pickFolder).toHaveBeenCalledWith({ title: "selectLocalFolder" });
+    expect(result.current.localPath).toBe("/home/op/my-skill");
+
+    pickFolder.mockResolvedValueOnce([]);
+    await act(async () => { await result.current.handlePickLocalPath(); });
+    expect(result.current.localPath).toBe("/home/op/my-skill");
+
+    pickFolder.mockRejectedValueOnce({ code: "OTHER", message: "dialog failed" });
+    await act(async () => { await result.current.handlePickLocalPath(); });
+    expect(setup.reporter.setError).toHaveBeenCalled();
+    expect(result.current.localPath).toBe("/home/op/my-skill");
+  });
 });

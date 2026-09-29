@@ -4,6 +4,7 @@ import type {
   SettingUpdate,
   SettingsBounds,
 } from "../components/skills/types";
+import { pickFolder, setZoom } from "../lib/platform";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import type { StatusReporter, TranslateFn } from "./useStatusReporter";
 import { themePreference as storedThemePreference } from "../lib/preferences";
@@ -201,11 +202,7 @@ export function useSettingsState({
           ? Math.min((curIdx >= 0 ? curIdx : 0) + 1, ZOOM_PRESETS.length - 1)
           : Math.max((curIdx >= 0 ? curIdx : ZOOM_PRESETS.length - 1) - 1, 0);
         const next = ZOOM_PRESETS[nextIdx];
-        import("@tauri-apps/api/webview").then(({ getCurrentWebview }) => {
-          getCurrentWebview()
-            .setZoom(next)
-            .catch(() => {});
-        });
+        setZoom(next).catch(() => {});
         writeSetting({ key: "ui_zoom_level", value: next }).catch(() => {});
         return next;
       });
@@ -216,16 +213,8 @@ export function useSettingsState({
 
   const handlePickStoragePath = useCallback(async () => {
     try {
-      if (!isTauri) {
-        throw new Error(t("errors.notTauri"));
-      }
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: t("selectStoragePath"),
-      });
-      if (!selected || Array.isArray(selected)) return;
+      const [selected] = await pickFolder({ title: t("selectStoragePath") });
+      if (!selected) return;
       await writeSetting({ key: "central_repo_path", value: selected });
       await onManagedSkillsChanged();
     } catch (err) {
@@ -357,8 +346,7 @@ export function useSettingsState({
       setZoomLevel(normalized);
       if (!isTauri) return;
       try {
-        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
-        await getCurrentWebview().setZoom(normalized);
+        await setZoom(normalized);
         await writeSetting({ key: "ui_zoom_level", value: normalized });
       } catch {
         /* ignore -- zoom is best-effort */

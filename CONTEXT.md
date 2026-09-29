@@ -61,7 +61,7 @@ The hash that says whether a copy still matches its central copy; computed at fi
 _Avoid_: content hash (the column), checksum, hand edit (of the central copy)
 
 **Sync target**:
-One (skill, tool) pair a sync batch attempts; each target resolves to synced, skipped, or failed as report data, never as a command error. A first sync onto a path something else already occupies follows one **overwrite rule**: byte-identical content is replaced silently (the batch's same-content policy, every call site); different content settles as a `TARGET_EXISTS` failure, which the one frontend sync seam turns into an **overwrite ask** listing every such pair — confirmed, one more batch runs with a per-pair override and those rows are replaced in the report; declined, the rows stand. Propagation (an already-recorded target) always overwrites.
+One (skill, tool) pair a sync batch attempts; each target resolves to synced, skipped, failed, or declined as report data, never as a command error. A first sync onto a path something else already occupies follows one **overwrite rule**: byte-identical content is replaced silently (the batch's same-content policy, every call site); different content settles as a `TARGET_EXISTS` failure, which the one frontend sync seam turns into an **overwrite ask** listing every such pair — confirmed, one more batch runs with a per-pair override and those rows are replaced in the report; answered "Keep existing", the retry records each pair `disabled` and reports it **declined** — the operator's answer, neither a skip nor a failure. Propagation (an already-recorded target) always overwrites.
 _Avoid_: sync pair, destination
 
 **Effective global target set**:

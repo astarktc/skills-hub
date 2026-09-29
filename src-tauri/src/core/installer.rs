@@ -273,7 +273,9 @@ pub fn list_git_skills(
     )
 }
 
-fn list_git_skills_with(
+/// The listing with the GitHub adapter and checkout injected: the one
+/// candidate admission, shared with the Re-point preview's picker answer.
+pub(crate) fn list_git_skills_with(
     repo_url: &str,
     target_name: Option<&str>,
     api: &dyn GithubApi,

@@ -51,6 +51,13 @@ export const commands = {
 	 */
 	repointSkillSource: (skillId: string, target: RepointTarget, policy: RefreshPolicyDto) => __TAURI_INVOKE<SkillMutationResultDto>("repoint_skill_source", { skillId, target, policy }),
 	/**
+	 *  Resolve a Re-point target for one skill without writing anything: what
+	 *  would land (name, ref, subpath), whether its name matches, and a
+	 *  multi-skill repository's candidates. Refusals throw as for the Re-point;
+	 *  honours the shared cancel token.
+	 */
+	previewRepointSource: (skillId: string, target: RepointTarget) => __TAURI_INVOKE<RepointPreview>("preview_repoint_source", { skillId, target }),
+	/**
 	 *  Detach a `local` skill from its vanished source folder: it becomes
 	 *  `imported` — the central copy is its truth from now on (ADR-0003).
 	 *  Store-only; no Sync target changes.
@@ -221,9 +228,17 @@ export type BatchTargetOutcome = {
  *  Per-(skill, tool) result. `Skipped` is the expected-and-ignorable class
  *  (tool absent, dir unwritable) — callers decide whether to surface it;
  *  `Failed` is everything else. Both carry the typed error, so no
- *  information is lost by the classification.
+ *  information is lost by the classification. `Declined` is the operator's
+ *  own answer, neither a skip nor a failure (D10).
  */
-export type BatchTargetStatus = { status: "synced"; outcome: SyncOutcome } | { status: "skipped"; error: CommandError } | { status: "failed"; error: CommandError };
+export type BatchTargetStatus = { status: "synced"; outcome: SyncOutcome } | { status: "skipped"; error: CommandError } | { status: "failed"; error: CommandError } | 
+/**
+ *  The operator answered the `TARGET_EXISTS` ask with "Keep existing"
+ *  (`OverrideDecision::Keep`): the folder in the way was left alone and
+ *  the pair is recorded `disabled`. Only this batch's override produces
+ *  it; a later pass reports the same pair as a Disabled skip.
+ */
+{ status: "declined" };
 
 /**
  *  The fan-out's fresh view plus its report: one item per configured Tool
@@ -954,6 +969,42 @@ export type RemoveProjectResultDto = {
 };
 
 /**
+ *  What a Re-point at a target would land, answered without landing it
+ *  (spec D15): the frontend shows it — and asks on a name mismatch — before
+ *  the real [`repoint_skill_source`] runs.
+ */
+export type RepointPreview = {
+	/**
+	 *  The landing skill's own name (its `SKILL.md` `name`, else its folder's
+	 *  name). `None` only when the target is a multi-skill repository the
+	 *  skill's name does not resolve — `candidates` then carries the choice.
+	 */
+	resolved_name: string | null,
+	/**
+	 *  The branch the bytes would come from, as acquisition resolved it;
+	 *  `None` for a local folder, or a clone of the repository's default branch.
+	 */
+	ref: string | null,
+	/**
+	 *  The repo-relative folder that would be recorded; `None` for the
+	 *  repository root and for a local folder.
+	 */
+	subpath: string | null,
+	/**
+	 *  Whether `resolved_name` is the skill's own name (case-insensitive).
+	 *  A mismatch is never a refusal — the Re-point would keep the skill's
+	 *  name and take the other skill's bytes.
+	 */
+	name_matches: boolean,
+	/**
+	 *  The repository's installable skills, by listing's admission, when the
+	 *  target URL names a repository (no skill folder) that holds more than
+	 *  one; `None` otherwise — always for a local folder.
+	 */
+	candidates: GitSkillCandidate[] | null,
+};
+
+/**
  *  Where a Re-point sends a skill. Crosses the wire as itself:
  *  `{ kind: "git", url }` or `{ kind: "local", path }`.
  */
@@ -1089,7 +1140,16 @@ export type SkillRefreshStatus =
  */
 { status: "skipped"; state: UnlocatableState } | 
 /**  Acquired bytes were discarded at admission; no target was touched. */
-{ status: "skipped_acquisition"; reason: UpdateSkip };
+{ status: "skipped_acquisition"; reason: UpdateSkip } | 
+/**
+ *  The operator cancelled the run before this skill was applied: nothing
+ *  was finalized and no target was touched. Its own outcome kind (D10),
+ *  never `Failed { Cancelled }` — a cancellation is not a failure of the
+ *  skill and records no health. Every batch that honours the cancel token
+ *  reports the members it never reached with this kind, on the wire as
+ *  `{ "status": "cancelled" }`.
+ */
+{ status: "cancelled" };
 
 export type SkillTargetDto = {
 	tool: string,

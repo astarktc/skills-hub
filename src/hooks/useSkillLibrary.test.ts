@@ -24,17 +24,13 @@ vi.mock("../lib/tauri", () => ({
   isTauri: true,
   invokeTauri: vi.fn(),
 }));
-// The refresh batch streams progress over a Tauri Channel; the hook imports
-// it lazily, so the module seam is stubbed with a plain message sink.
-vi.mock("@tauri-apps/api/core", () => ({
-  Channel: class {
-    onmessage: ((message: unknown) => void) | null = null;
-  },
-}));
-// Change source picks a folder through the dialog plugin (lazily imported).
-const pickFolder = vi.fn<(options?: unknown) => Promise<string | string[] | null>>();
-vi.mock("@tauri-apps/plugin-dialog", () => ({
-  open: (options?: unknown) => pickFolder(options),
+// The refresh batch streams progress over a channel from the platform seam,
+// stubbed with a plain message sink; Change source picks a folder through
+// the same seam's folder picker.
+const pickFolder = vi.fn<(options: { title: string; multiple?: boolean }) => Promise<string[]>>();
+vi.mock("../lib/platform", () => ({
+  createProgressChannel: async (onMessage: (message: unknown) => void) => ({ onmessage: onMessage }),
+  pickFolder: (options: { title: string; multiple?: boolean }) => pickFolder(options),
 }));
 
 import { invokeTauri, type CommandName } from "../lib/tauri";
@@ -263,6 +259,8 @@ function makeDeps(overrides?: {
     syncSkillsToTools: vi
       .fn()
       .mockResolvedValue(overrides?.syncReport ?? EMPTY_REPORT),
+  };
+  const catalog = {
     toolLabelById: { claude: "CLAUDE", cursor: "CURSOR", pi: "PI" },
     tools: [
       { id: "claude", label: "CLAUDE" },
@@ -271,7 +269,7 @@ function makeDeps(overrides?: {
     ],
   };
 
-  const deps: LibraryDeps = { t, reporter, sync };
+  const deps: LibraryDeps = { t, reporter, sync, catalog };
   return { deps, reporter, sync, skills };
 }
 
@@ -412,7 +410,10 @@ describe("single-mutation envelopes", () => {
       { title: 'errors.propagationFailedTitle {"name":"alpha","tool":"CLAUDE"}', message: "global blocked" },
       { title: 'errors.propagationFailedTitle {"name":"alpha","tool":"CURSOR"}', message: "project blocked" },
     ]);
-    expect(setup.reporter.notify).not.toHaveBeenCalled();
+    // The Edit saved centrally (ADR-0004): the headline says so, with the drift.
+    expect(setup.reporter.notify).toHaveBeenCalledWith(
+      "warning", 'invocationEdit.saved · outcome.targetsFailed {"count":2}', undefined,
+    );
     expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
     expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "getManagedSkills")).toHaveLength(0);
   });
@@ -512,21 +513,21 @@ describe("Change source", () => {
     const setup = makeDeps();
     const { result } = await renderLibrary(setup);
     act(() => result.current.handleRepointSkill(setup.skills[0]));
-    pickFolder.mockResolvedValueOnce("/new/alpha");
+    pickFolder.mockResolvedValueOnce(["/new/alpha"]);
     let picked: string | null = null;
     await act(async () => { picked = await result.current.pickRepointFolder(); });
     expect(picked).toBe("/new/alpha");
     expect(pickFolder).toHaveBeenCalledWith({
-      directory: true, multiple: false, title: 'changeSource.selectFolderTitle {"name":"alpha"}',
+      title: 'changeSource.selectFolderTitle {"name":"alpha"}',
     });
     expect(mockInvoke).not.toHaveBeenCalledWith("repointSkillSource", expect.anything(), expect.anything(), expect.anything());
   });
 
-  it.each([null, ["/a", "/b"]])("a cancelled or multi-select picker (%o) answers null and performs no action", async (answer) => {
+  it("a cancelled picker answers null and performs no action", async () => {
     const setup = makeDeps();
     const { result } = await renderLibrary(setup);
     act(() => result.current.handleRepointSkill(setup.skills[0]));
-    pickFolder.mockResolvedValueOnce(answer);
+    pickFolder.mockResolvedValueOnce([]);
     let picked: string | null = "unset";
     await act(async () => { picked = await result.current.pickRepointFolder(); });
     expect(picked).toBeNull();
@@ -862,9 +863,10 @@ describe("invoke → fold → completion", () => {
       if (action === "enable-skill") row.disabled_at = 1;
       const setup = makeDeps({ skills: [row] });
       const outcome: folds.Outcome = {
-        toast: { kind: "warning", message: "fold toast", detail: "detail" },
+        toast: { kind: "warning", tone: "failure", message: "fold toast", detail: "detail" },
         errors: [{ title: "fold error", message: "error detail" }],
         warnings: [{ title: "fold warning", message: "warning detail" }],
+        notes: [],
         completion: { reload: complete, closeModal: complete, conflict: true },
       };
       const spy = vi.spyOn(folds, fold).mockReturnValue(outcome);
@@ -930,7 +932,7 @@ describe("invoke → fold → completion", () => {
   it("resolves a notification id against a replaced row at click time", async () => {
     const setup = makeDeps();
     vi.spyOn(folds, "refreshOutcome").mockReturnValue({
-      toast: null, warnings: [], completion: { reload: false, closeModal: false, conflict: false },
+      toast: null, warnings: [], notes: [], completion: { reload: false, closeModal: false, conflict: false },
       errors: [{ title: "repair", message: "missing", action: { label: "repoint", skillId: "s1", skillName: "alpha" } }],
     });
     const { result } = await renderLibrary(setup);

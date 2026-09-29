@@ -41,6 +41,35 @@ fn acquisition_skips_cross_the_wire_without_counters() {
     }
 }
 
+/// D10: cancelled and declined are their own outcome kinds on the wire.
+#[test]
+fn cancelled_and_declined_rows_cross_the_wire_as_their_own_kinds() {
+    use crate::core::global_sync::{BatchTargetOutcome, BatchTargetStatus};
+    use crate::core::refresh::SkillRefreshOutcome;
+    let cancelled = SkillRefreshOutcome {
+        skill_id: "s1".into(),
+        skill_name: "alpha".into(),
+        status: SkillRefreshStatus::Cancelled,
+    };
+    assert_eq!(
+        serde_json::to_value(cancelled).unwrap(),
+        serde_json::json!({ "skill_id": "s1", "skill_name": "alpha", "status": { "status": "cancelled" } })
+    );
+    let declined = BatchTargetOutcome {
+        skill_id: "s1".into(),
+        skill_name: "alpha".into(),
+        tool_key: "claude_code".into(),
+        status: BatchTargetStatus::Declined,
+    };
+    assert_eq!(
+        serde_json::to_value(declined).unwrap(),
+        serde_json::json!({
+            "skill_id": "s1", "skill_name": "alpha", "tool_key": "claude_code",
+            "status": { "status": "declined" }
+        })
+    );
+}
+
 use crate::core::installer::{install_imported_skill, install_local_skill, InstallerPaths};
 use crate::core::propagation::{PropagationOutcome, PropagationScope, PropagationStatus};
 use crate::core::refresh::{
@@ -652,11 +681,10 @@ fn cancelling_mid_batch_finalizes_nothing() {
         "a cancelled batch never enters the apply phase: {phases:?}"
     );
     assert!(
-        report.skills.iter().all(|o| matches!(
-            &o.status,
-            SkillRefreshStatus::Failed { error }
-                if matches!(error, CommandError::Cancelled)
-        )),
+        report
+            .skills
+            .iter()
+            .all(|o| matches!(o.status, SkillRefreshStatus::Cancelled)),
         "cancelled skills are reported as cancelled: {report:?}"
     );
     let after: Vec<(String, i64)> = f
