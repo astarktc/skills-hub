@@ -795,6 +795,7 @@ function App() {
         onRequestClose={handleCloseNotifications}
         onClear={clearNotifications}
         copyToClipboard={copyToClipboard}
+        progress={dialogProgress}
         t={t}
       />
 

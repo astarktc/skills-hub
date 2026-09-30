@@ -78,8 +78,8 @@ keys through `keys-cdp.ts`; `summary.txt` is the readable transcript digest).
   project row prefixed "in {project}:", Copy named by its row, Copy all, Clear. The run "View report" asked for is
   expanded and focused, else the newest; the choice is made as the panel opens (a run recorded meanwhile never
   collapses it).
-- **Dismissed ask fold (11's audit Q4)**: a `TARGET_EXISTS` still in a report is an unanswered collision (every
-  producer asks first) — `HeadlineCounts.collisions`, "N folders to review", conflict tone, a `review` entry with
+- **Dismissed ask fold (11's audit Q4)**: a `TARGET_EXISTS` still in a report is an unresolved collision (the ask was
+  dismissed, or the producer raised none — Import does not ask yet, ticket 21) — `HeadlineCounts.collisions`, "N folders to review", conflict tone, a `review` entry with
   an `overwrite` repair, never an error; no retry, no implicit Keep. Across sync, enable, install, import, refresh
   (Propagation/re-assert), Edit and project folds (tests in `reportOutcome.test.ts`, door test with the real sync
   world).
@@ -162,3 +162,55 @@ Gate: see the dated comment below.
   Explore preview settles focus on MAIN rather than its heading (ticket 22).
 
 - 2026-09-30 — independent D31 audit of `86bb753`: **FIX-THEN-PASS**, report `.scratch/round19/review/ticket-14-audit.md`, fresh evidence `.scratch/round19/evidence/14-audit/`. Four **P1** findings: **A1** toast View report opens the panel but leaves focus on BODY at 300/2000 ms; **A2** Clear disables its focused button and likewise leaves BODY; **A3** Overwrite… on a dismissed Enable collision incorrectly dispatches ordinary Retry, which skips the still-disabled pair instead of raising the ask; **A4** panel source Retry exposes Cancel only behind the inert modal background. No P0. Core Refresh/browse/refusal/early Cancel/apply withdrawal, bulk Disable/Remove, Show/Settings, menu/Restore/Delete/late focus, grouped reports and reduced motion pass the exercised scope. Eight axe runs: zero violations; contrast minima header 8.31/8.16, panel 6.61/5.32. Full version+check rerun exits 0 (887 frontend / 807 Rust; initial run had one timeout). Six decisions: accept summary replacement; accept unresolved-collision folding but Import does **not** ask today (existing ticket-21 obligation); accept a new ask per Overwrite action but fix Enable routing; accept permanent apply-phase Cancel withdrawal; switches retained focus as SPAN role=switch in both tested layouts (15 Comment exists); 17 Comment exists but **22's Explore-focus Comment is missing**. P2 notes cover project identity on head/copy, one transient resize BODY gap, and documentation/handoff accuracy. Orchestrator should fix A1–A4, add 22's handoff, and use the report's bounded re-check scope; this comment does not grant D31 acceptance. A concurrent docs-only BACKLOG commit `bb64241` changed no audited application files.
+
+- 2026-09-30 — fix child for the D31 audit (A1–A4, N1, N3; uncommitted over `743324d`). Evidence
+  `.scratch/round19/evidence/14-fix/` (local-only; drivers `panel.ts` · `pointer.ts` · `enable.ts` · `a11y.ts` · the
+  audit's `flows.ts`, trusted CDP keys through `keys-cdp.ts`, session `r19-14-fix`, closed).
+  - **A1** (View report → BODY): sonner returns focus to the pre-toast element when focus leaves its toaster; the panel
+    took focus first, sonner pulled it back onto the page, inert then dropped it. `useStatusReporter.openReport` now
+    runs `settleToastFocus()` before it opens the layer — it blurs a focused toast control, so sonner's own return
+    completes (and clears its memory) while the page is still usable; the panel then takes initial focus from there
+    and returns there on close. No holds, no retries. Seam test `src/hooks/useStatusReporter.toaster.test.ts` mounts the
+    real sonner: keyboard and pointer activation, sonner's own toast removal included; fails without the fix (a focus
+    lands on the page after the panel took it). Browser: `panel-{dark-1280,light-960}.json`,
+    `pointer-{dark-1280,light-960}.json` — samples 0/300/2000 in the panel, never BODY; the only focus outside is
+    sonner's return before the panel opens; toast gone at 2000.
+  - **A2** (Clear → BODY): Clear and Copy all are `focusableWhenDisabled` (focus stays on Clear, D21 same control); the
+    empty state's message is the empty panel's initial focus (`data-run-initial`, so a panel opened empty does not land
+    on the disabled Clear). Browser: Clear 0/300/2000 on Clear; Tab → Copy all → Close; Escape → the page.
+  - **A3** (Overwrite… after a dismissed Enable ask runs ordinary sync): the repair keeps its route as data —
+    `EntryRepair.overwrite.via: "sync" | "enable"` (`reportOutcome.ts`: `enableOutcome` folds its global rows with
+    `collisionRoute: "enable"`; `RowAction.overwrite.via`, `notificationRuns.ts`). The panel dispatches `run("enable",
+    [id], { tool, answering: "collision" })` for an Enable collision (pair scope → `enable_skill_targets` with its
+    disabled-marker admission, the one per-pair ask, overrides on retry) and `run("retry", …)` otherwise. The door checks
+    the pair as it is now first (`staleCollision`: skill disabled since / pair disabled since / already deployed /
+    Enable's marker gone) and says so (`staleCollision.*` i18n, end of `en`) instead of acting. Real-door tests
+    (`useSkillActions.test.ts` "Overwrite… on a dismissed Enable collision"): Overwrite / Keep / dismiss / stale skill /
+    stale sync pair; pure tests in `notificationRuns.test.ts`, fold tests in `reportOutcome.test.ts`. Browser
+    `enable-{overwrite,keep,dismiss,stale}-{dark-1280,light-960}.json`: one ask each; Overwrite → claude_code `synced`,
+    foreign gone, "Enabled and synced."; Keep → pair `disabled`, foreign kept, "kept your existing Claude Code folder";
+    dismiss → unchanged, "1 folder to review"; stale (operator switched the skill off meanwhile) → no ask, state
+    byte-identical, "Nothing overwritten: retired-playbook has been disabled since this report…".
+  - **A4** (panel Retry's Cancel behind the inert page): `NotificationsModal` takes `progress` — App's same
+    `dialogProgress` (reporter `pending`, no second state) — at its foot. Browser: source Retry (Update slowed ×8 by a
+    harness timer shim, timing only) → foot "Updating pr-review … · Cancel", reached by Shift+Tab, Enter → "pr-review:
+    update cancelled — nothing was changed", focus back on Retry: pr-review 0/300/2000; target Retry (tdd, token-less)
+    shows no Cancel; the panel opened mid-Refresh shows "Refreshing 6/19 · Cancel", reachable by keyboard.
+  - **N1**: one project-aware presentation in `notificationRuns.ts` (`rowProject` / `rowTitle`, `rowText(row,
+    inProject)`, `historyText(groups, inProject)`) read by the run heading, the item and both copies; a resync-all
+    title that names its project already carries `subject.projectInTitle` and is not prefixed (it was doubled before).
+    Regression: a single failed project toggle promoted to the heading keeps "in monorepo:" on screen and in both copies.
+  - **N3**: `reportOutcome.ts`'s collision comment now says an unresolved collision (the ask dismissed, or none raised —
+    Import does not ask yet, ticket 21), not proof an ask happened; this ticket's Result wording corrected likewise.
+  - **N2** re-check (shared focus code touched by A1/A2): `flows-dark-1280-dialogClose,restore,resize,dismissed.json`
+    reproduces the same single `key Escape` BODY sample at the same step (Change source closed after the resize
+    round trip; next observation the sheet H2) — unchanged; light 960: 172 samples, 0 BODY.
+  - axe 4.10.3, 6 runs (panel with progress foot mid-Refresh, full report, emptied after Clear × dark 1280 / light 960):
+    0 violations (Base UI `aria-hidden-focus` incomplete as before); contrast minima foot 7.78/7.60, panel 6.61/5.32,
+    empty 7.78/8.36; 0 pairs < 4.5.
+  - Gate `npm run version:check && npm run check` exit 0 (`gate.txt`): Version OK (1.2.18); eslint ok; styles:check ok,
+    App.css 1882 (ceiling), 26 migrated; vitest 42 files / 900 tests; `tsc -b && vite build` ok; cargo fmt / clippy
+    ok; cargo 807 passed. Bindings unchanged (no backend change).
+  - Re-check focus: the toaster hand-off (a toast whose pre-toast element is gone or inert; VoiceOver); the stale
+    rules in `staleCollision` (an Enable pair the operator re-disabled by hand is indistinguishable from the collision's
+    marker and is answered by Enable); the empty-state initial focus; the panel foot during an ask above the panel.

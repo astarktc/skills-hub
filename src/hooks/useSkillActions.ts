@@ -26,6 +26,7 @@ import {
   resolveFirst,
   type FocusTarget,
 } from "../lib/actionLifecycle";
+import { staleCollision, type StaleCollision } from "../lib/notificationRuns";
 import { createProgressChannel } from "../lib/platform";
 import { invokeTauri } from "../lib/tauri";
 import {
@@ -46,7 +47,11 @@ import type { CountVerb, DialogDoor } from "./useSurfaceState";
  * Every verb the skills world has, with what each takes beyond the skills it
  * acts on. A verb without a confirming option (`target`, `mode`,
  * `confirmed`) opens its dialog instead of acting: the door decides where
- * confirmation happens.
+ * confirmation happens. `answering: "collision"` (Retry / Enable of one
+ * pair) says the verb answers a collision recorded in a report (the
+ * Notifications panel's Overwrite…, by the route that met it): the door
+ * first checks the pair as it is now (`staleCollision`) and says so instead
+ * of acting when the report went stale.
  */
 export type SkillVerbOptions = {
   /**
@@ -61,7 +66,7 @@ export type SkillVerbOptions = {
    * one `tool`, or those of `tools` (a health row's Tools), else every such
    * row of each skill.
    */
-  retry: { tool?: string; tools?: readonly string[] };
+  retry: { tool?: string; tools?: readonly string[]; answering?: "collision" };
   /**
    * Disable at pair grain (`tool`) or skill grain. Over several skills
    * without `confirmed` it opens the count-bearing confirmation; one skill is
@@ -69,7 +74,7 @@ export type SkillVerbOptions = {
    */
   disable: { tool?: string; confirmed?: boolean };
   /** Enable at pair grain (`tool`) or skill grain; over several, `confirmed` as Disable. */
-  enable: { tool?: string; confirmed?: boolean };
+  enable: { tool?: string; confirmed?: boolean; answering?: "collision" };
   /** Over several skills (or "all") without `confirmed`: the count-bearing confirmation. */
   update: { confirmed?: boolean };
   restore: Record<string, never>;
@@ -188,6 +193,14 @@ const toSyncItem = (skill: ManagedSkill) => ({
 /** Every door sync replaces identical content silently; a differing folder is asked (D12). */
 const SYNC_POLICY: SyncPolicy = { overwriteIfSameContent: true };
 
+/** What the operator reads when Overwrite… on a recorded collision no longer applies. */
+const STALE_COLLISION_KEY: Record<StaleCollision, string> = {
+  skillDisabled: "staleCollision.skillDisabled",
+  pairDisabled: "staleCollision.pairDisabled",
+  resolved: "staleCollision.resolved",
+  changed: "staleCollision.changed",
+};
+
 /** The target statuses a central-to-target re-sync repairs. */
 const RETRYABLE = new Set(["error", "missing", "stale"]);
 
@@ -296,6 +309,18 @@ export function useSkillActions({
     // the run shows in the header progress over a browsable library (D19) —
     // never under a modal. Its counts describe a state that is about to go.
     if (confirmed) dismissDialog("confirmCount");
+
+    // A recorded collision answered now: only while the pair still holds it
+    // (the report is history). A stale one runs nothing and says why.
+    if (opts.answering === "collision" && (verb === "retry" || verb === "enable")) {
+      const tool = opts.tool as string | undefined;
+      if (!single || tool === undefined) return;
+      const stale = staleCollision(single, tool, verb === "enable" ? "enable" : "sync");
+      if (stale) {
+        notify("info", t(STALE_COLLISION_KEY[stale], { name: single.name, tool: toolLabelById[tool] ?? tool }));
+        return;
+      }
+    }
 
     /** Run `body` under the lifecycle, with the verb's reload rule. */
     const settle = async <T,>(

@@ -1226,6 +1226,14 @@ export const resources = {
       notificationCopy: {
         named: "Copy: {{title}}",
       },
+      // Ticket 14 audit A3 — Overwrite… on a recorded collision the pair no longer holds.
+      staleCollision: {
+        skillDisabled: "Nothing overwritten: {{name}} has been disabled since this report. Enable it to deploy it again.",
+        pairDisabled:
+          "Nothing overwritten: {{name}} has been disabled on {{tool}} since this report. Enable it there to deploy it again.",
+        resolved: "Nothing to overwrite: {{name}} is already deployed to {{tool}}.",
+        changed: "Nothing overwritten: {{name}} on {{tool}} has changed since this report. Show it to see where it stands.",
+      },
     },
   },
 } as const;

@@ -17,7 +17,7 @@ import type {
   SkillMutationResultDto,
   ToolStatusDto,
 } from "../components/skills/types";
-import type { PropagationOutcome } from "../bindings";
+import type { DisableScope, PropagationOutcome } from "../bindings";
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
@@ -40,6 +40,7 @@ import { useSurfaceState } from "./useSurfaceState";
 import { useSyncOrchestration, type CollisionPart, type SyncOrchestration } from "./useSyncOrchestration";
 import { useToolCatalog } from "./useToolCatalog";
 import { skillHealth } from "../lib/skillPresentation";
+import { rowActions } from "../lib/notificationRuns";
 
 const mockInvoke = vi.mocked(
   invokeTauri as unknown as (command: CommandName, ...args: unknown[]) => Promise<unknown>,
@@ -954,7 +955,7 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     const rows = rendered.result.current.reporter.notifications;
     expect(rows.filter((row) => row.kind === "error")).toEqual([]);
     expect(rows.filter((row) => row.review)).toMatchObject([
-      { role: "entry", kind: "warning", subject: { skillId: "s1", tool: "cursor" }, repair: { verb: "overwrite", tool: "cursor" } },
+      { role: "entry", kind: "warning", subject: { skillId: "s1", tool: "cursor" }, repair: { verb: "overwrite", tool: "cursor", via: "sync" } },
     ]);
     expect(rows.find((row) => row.role === "headline")).toMatchObject({ kind: "warning" });
   });
@@ -1043,6 +1044,118 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     expect(asked).toEqual([["global:s1:claude", "global:s1:cursor"]]);
     expect(calls("syncSkillsToTools").map(([, , tools]) => tools)).toEqual([["claude", "cursor"], ["claude", "cursor"]]);
     expect(runIds(rendered).size).toBe(1);
+  });
+
+  // Ticket 14 audit A3: the panel's Overwrite… on an Enable's collision (the ask
+  // dismissed) answers it by the pair's Enable — an ordinary sync skips a disabled pair.
+  describe("Overwrite… on a dismissed Enable collision answers it by Enable (A3)", () => {
+    const PAIR: DisableScope = { kind: "skill_tool", skill_id: "s1", tool: "claude" };
+    /** alpha, disabled at skill grain; after its Enable met a folder in the way, on again with the pair a disabled marker. */
+    const before = () => ({
+      ...skill("s1", "alpha", ["claude"]),
+      disabled_at: 3,
+      targets: [{ tool: "claude", mode: "symlink" as const, status: "disabled" as const, target_path: "/tools/claude/alpha", synced_at: null }],
+    });
+    const after = () => ({ ...before(), disabled_at: null });
+
+    /** The backend: the catalog now (`catalog.current`) and queued Enable answers. */
+    function backendNow(catalog: { current: ManagedSkill[] }, enables: unknown[]) {
+      mockInvoke.mockImplementation((command) => {
+        if (command === "getSettings") return Promise.resolve(SETTINGS);
+        if (command === "getToolStatus") return Promise.resolve(TOOL_STATUS);
+        if (command === "getManagedSkills") return Promise.resolve(catalog.current);
+        if (command === "enableSkillTargets") return Promise.resolve(enables.shift() ?? null);
+        return Promise.resolve(null);
+      });
+    }
+
+    /** Enable \u2192 the ask \u2192 dismissed; the report's row, and the panel's action for it. */
+    async function dismissedEnable(enables: unknown[]) {
+      const catalog = { current: [before()] as ManagedSkill[] };
+      backendNow(catalog, [{ global: [collided("s1", "claude")], projects: { items: [] } }, ...enables]);
+      const rendered = renderReal();
+      await ready(rendered, catalog.current);
+      // The backend keeps the pair disabled (a marker owning nothing) and turns the skill on.
+      catalog.current = [after()];
+      const asked = await drive(rendered, () => rendered.result.current.actions.run("enable", ["s1"]), "dismiss");
+      expect(asked).toEqual([["global:s1:claude"]]);
+      expect(calls("enableSkillTargets")).toEqual([["enableSkillTargets", { kind: "skill", skill_id: "s1" }, []]]);
+      const row = rendered.result.current.reporter.notifications.find((n) => n.review)!;
+      expect(row).toMatchObject({ repair: { verb: "overwrite", tool: "claude", via: "enable" } });
+      const overwrite = rowActions(row, () => true).find((action) => action.kind === "overwrite");
+      expect(overwrite).toEqual({ kind: "overwrite", skillId: "s1", tool: "claude", via: "enable" });
+      mockInvoke.mockClear();
+      return { rendered, catalog };
+    }
+
+    /** What the panel's Overwrite\u2026 dispatches for a row whose route is Enable. */
+    const overwriteFromPanel = (rendered: ReturnType<typeof renderReal>) => () =>
+      rendered.result.current.actions.run("enable", ["s1"], { tool: "claude", answering: "collision" });
+
+    it("Overwrite: one ask, then the pair's Enable with the overwrite answer \u2014 never an ordinary sync", async () => {
+      const { rendered } = await dismissedEnable([
+        { global: [collided("s1", "claude")], projects: { items: [] } },
+        { global: [done("s1", "claude")], projects: { items: [] } },
+      ]);
+      const asked = await drive(rendered, overwriteFromPanel(rendered), "confirmed");
+      expect(asked).toEqual([["global:s1:claude"]]);
+      expect(calls("enableSkillTargets")).toEqual([
+        ["enableSkillTargets", PAIR, []],
+        ["enableSkillTargets", PAIR, [{ skill_id: "s1", tool: "claude", decision: "overwrite" }]],
+      ]);
+      expect(calls("syncSkillsToTools")).toEqual([]);
+      const latest = rendered.result.current.reporter.notifications[0];
+      expect(latest).toMatchObject({ role: "headline", kind: "success", title: "status.targetsEnabled" });
+      expect(rendered.result.current.reporter.pending).toBeNull();
+    });
+
+    it("Keep existing: the pair's Enable with a keep answer \u2014 the pair stays disabled, reported declined", async () => {
+      const { rendered } = await dismissedEnable([
+        { global: [collided("s1", "claude")], projects: { items: [] } },
+        { global: [pair("s1", "claude", { status: "declined" })], projects: { items: [] } },
+      ]);
+      const asked = await drive(rendered, overwriteFromPanel(rendered), "declined");
+      expect(asked).toHaveLength(1);
+      expect(calls("enableSkillTargets")[1]).toEqual(["enableSkillTargets", PAIR, [{ skill_id: "s1", tool: "claude", decision: "keep" }]]);
+      const rows = rendered.result.current.reporter.notifications;
+      expect(rows.filter((row) => row.kind === "error")).toEqual([]);
+      expect(rows[0]).toMatchObject({ kind: "info", title: expect.stringMatching(/^outcome\.declinedLine \{"name":"alpha"/) });
+    });
+
+    it("dismissed again: nothing retried, the collision is to review once more", async () => {
+      const { rendered } = await dismissedEnable([{ global: [collided("s1", "claude")], projects: { items: [] } }]);
+      const asked = await drive(rendered, overwriteFromPanel(rendered), "dismiss");
+      expect(asked).toHaveLength(1);
+      expect(calls("enableSkillTargets")).toEqual([["enableSkillTargets", PAIR, []]]);
+      expect(rendered.result.current.reporter.notifications.filter((row) => row.kind === "error")).toEqual([]);
+      expect(rendered.result.current.reporter.notifications.filter((row) => row.review)).toHaveLength(2);
+    });
+
+    it("stale: the skill was disabled since \u2014 nothing runs, and the panel says so", async () => {
+      const { rendered, catalog } = await dismissedEnable([]);
+      catalog.current = [before()];
+      await act(async () => {
+        await rendered.result.current.library.loadManagedSkills();
+      });
+      mockInvoke.mockClear();
+      const asked = await drive(rendered, overwriteFromPanel(rendered), "confirmed");
+      expect(asked).toEqual([]);
+      expect(calls("enableSkillTargets")).toEqual([]);
+      expect(calls("syncSkillsToTools")).toEqual([]);
+      expect(rendered.result.current.reporter.notifications[0]).toMatchObject({
+        kind: "info",
+        title: expect.stringMatching(/^staleCollision\.skillDisabled \{"name":"alpha"/),
+      });
+    });
+
+    it("a sync's collision whose pair was disabled since is stale too (a Disable is never overwritten)", async () => {
+      const { rendered } = await dismissedEnable([]);
+      await drive(rendered, () => rendered.result.current.actions.run("retry", ["s1"], { tool: "claude", answering: "collision" }), "confirmed");
+      expect(calls("syncSkillsToTools")).toEqual([]);
+      expect(rendered.result.current.reporter.notifications[0]).toMatchObject({
+        title: expect.stringMatching(/^staleCollision\.pairDisabled \{"name":"alpha"/),
+      });
+    });
   });
 
   it("a stale target's repair re-syncs that Tool from the central copy, never an upstream Update (S5)", async () => {

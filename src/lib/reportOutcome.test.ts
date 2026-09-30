@@ -860,6 +860,10 @@ describe("projectSyncOutcome", () => {
     expect(out.errors[0]?.title).toBe(
       t("errors.syncFailedInProjectTitle", { name: "s1-name", tool: "CLAUDE", project: "My App" }),
     );
+    // The title names the project: the panel's presentation does not prefix it again (N1).
+    expect(out.errors[0]?.subject).toMatchObject({ projectId: "p1", projectInTitle: true });
+    const one = projectSyncOutcome(report, { ...ctx, action: "toggleOn" });
+    expect(one.errors[0]?.subject?.projectInTitle).toBeUndefined();
   });
 
   it("derives the counters per action: failure outranks success", () => {
@@ -1101,11 +1105,16 @@ describe("syncOutcome", () => {
           message: t("runReport.collisionMessage", { path: "/conflict" }),
           subject: { skillId: syncReport[0].skill_id, skillName: "git", tool: "claude" },
           error: exists,
-          repair: { verb: "overwrite", tool: "claude" },
+          repair: { verb: "overwrite", tool: "claude", via: "sync" },
           review: true,
         },
       ]);
       expect(out.completion).toEqual({ reload: true, closeModal: true, conflict: false });
+    });
+    it("an Enable's collision keeps its route: Overwrite… answers it by Enable, not an ordinary sync (ticket 14 audit A3)", () => {
+      const out = enableOutcome({ global: [unanswered("failed")], projects: { items: [] } }, ctx);
+      expect(out.errors).toEqual([]);
+      expect(out.warnings).toMatchObject([{ review: true, repair: { verb: "overwrite", tool: "claude", via: "enable" } }]);
     });
     it("a bulk sync counts it in the headline as to review, beside what synced", () => {
       const out = syncOutcome([syncReport[0], { ...unanswered("failed"), tool_key: "cursor" }], { ...ctx, action: "bulk" });

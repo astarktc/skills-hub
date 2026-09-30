@@ -27,6 +27,11 @@ export type EntrySubject = {
   skillName: string;
   tool?: string;
   projectId?: string;
+  /**
+   * The entry's title already names its project (a resync of every project):
+   * the panel's project-aware presentation does not prefix it again.
+   */
+  projectInTitle?: true;
 };
 
 /**
@@ -37,9 +42,24 @@ export type EntrySubject = {
  */
 export type EntryRepair =
   | { verb: "retry"; tool: string }
-  | { verb: "overwrite"; tool: string }
+  | {
+      verb: "overwrite";
+      tool: string;
+      /**
+       * The route that met the collision, kept as data so answering it later
+       * takes the same one (ticket 14 audit A3): `sync` — a sync, Refresh's
+       * Propagation / re-assert, Edit, install or import (the ordinary re-sync
+       * asks again); `enable` — an Enable, whose pair stays a disabled marker
+       * until answered, so only the Enable path (its disabled-marker
+       * admission) can reach it — an ordinary sync skips a disabled pair.
+       */
+      via: CollisionRoute;
+    }
   | { verb: "update" }
   | { verb: "delete" };
+
+/** Which operator path met a collision: its answer goes the same way. */
+export type CollisionRoute = "sync" | "enable";
 
 /**
  * One report entry. Declarative only — no closures — so it survives catalog
@@ -270,12 +290,12 @@ const declinedNote = (ctx: ReportContext, name: string, tool: string) =>
 type TargetExists = Extract<CommandError, { code: "TARGET_EXISTS" }>;
 
 /**
- * A `TARGET_EXISTS` that reached a fold: every producer routes its
- * collisions through the one overwrite ask first (D12), and an answered row
- * is replaced by its retry (or becomes `declined`), so a collision a report
- * still carries is one the operator did not answer — the ask was dismissed.
- * It is "to review": the pair stays as it was, nothing was retried, nothing
- * failed (D10).
+ * A `TARGET_EXISTS` that reached a fold is an unresolved collision: an
+ * answered row is replaced by its retry (or becomes `declined`), so one a
+ * report still carries was not answered — the ask was dismissed, or the
+ * producer raised none (Import does not ask yet: ticket 21). This is not
+ * proof that an ask happened. It is "to review": the pair stays as it was,
+ * nothing was retried, nothing failed (D10).
  */
 const unansweredCollision = (error: CommandError): TargetExists | null =>
   error.code === "TARGET_EXISTS" ? error : null;
@@ -285,6 +305,7 @@ function collisionEntry(
   ctx: ReportContext,
   error: TargetExists,
   subject: EntrySubject & { tool: string },
+  via: CollisionRoute = "sync",
 ): OutcomeEntry {
   return {
     title: ctx.t("runReport.collisionTitle", { name: subject.skillName, tool: label(ctx, subject.tool) }),
@@ -292,7 +313,7 @@ function collisionEntry(
     subject,
     error,
     // A project assignment is answered from its matrix; a global pair here.
-    ...(subject.projectId === undefined ? { repair: { verb: "overwrite" as const, tool: subject.tool } } : {}),
+    ...(subject.projectId === undefined ? { repair: { verb: "overwrite" as const, tool: subject.tool, via } } : {}),
     review: true,
   };
 }
@@ -692,8 +713,9 @@ export function projectSyncOutcome(
       out.warnings.push(collisionEntry(ctx, collision, subject));
       continue;
     }
+    const namesProject = ctx.action === "resyncAll";
     const title =
-      ctx.action === "resyncAll"
+      namesProject
         ? ctx.t("errors.syncFailedInProjectTitle", {
             name: item.skill_name,
             tool: label(ctx, item.tool),
@@ -703,7 +725,12 @@ export function projectSyncOutcome(
             name: item.skill_name,
             tool: label(ctx, item.tool),
           });
-    out.errors.push({ title, message: errorMessage(ctx, item.status.error), subject, error: item.status.error });
+    out.errors.push({
+      title,
+      message: errorMessage(ctx, item.status.error),
+      subject: namesProject ? { ...subject, projectInTitle: true } : subject,
+      error: item.status.error,
+    });
   }
   // An unanswered collision is "to review", never counted as failed (D10).
   counts.failed -= collisions;
@@ -877,7 +904,11 @@ export function syncOutcome(
 
 function foldSync(
   report: BatchTargetOutcome[],
-  ctx: ReportContext & { action: "bulk" | "install" | "toggle" },
+  ctx: ReportContext & {
+    action: "bulk" | "install" | "toggle";
+    /** The route that produced the report (default `sync`): Enable's collisions are answered by Enable. */
+    collisionRoute?: CollisionRoute;
+  },
 ): { out: Outcome<PlainEntry>; tally: SyncTally; disabledSkip: boolean } {
   const out = empty();
   const tally: SyncTally = { synced: 0, failed: 0, skipped: 0, declined: 0, collisions: 0 };
@@ -912,12 +943,12 @@ function foldSync(
       }
       continue;
     }
-    // Every sync path asks about a collision first (D12); one still here
-    // was not answered: "to review", never a failure or a skip.
+    // An unresolved collision (the ask dismissed, or none raised):
+    // "to review", never a failure or a skip.
     const collision = unansweredCollision(status.error);
     if (collision) {
       tally.collisions++;
-      out.warnings.push(collisionEntry(ctx, collision, subject));
+      out.warnings.push(collisionEntry(ctx, collision, subject, ctx.collisionRoute));
       continue;
     }
     if (ctx.action !== "toggle" && skips.absorb(result)) {
@@ -964,7 +995,7 @@ export function enableOutcome(
     batch?: boolean;
   },
 ): Outcome<PlainEntry> {
-  const { out: global, tally } = foldSync(report.global, { ...ctx, action: "toggle" });
+  const { out: global, tally } = foldSync(report.global, { ...ctx, action: "toggle", collisionRoute: "enable" });
   const projects = projectSyncOutcome(report.projects, { ...ctx, action: "toggleOn" });
   const projectCounts = projectSyncCounts(report.projects);
   const projectCollisions = report.projects.items.filter(

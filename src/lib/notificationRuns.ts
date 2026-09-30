@@ -6,6 +6,8 @@
  */
 
 import type { Notification, NotificationKind } from "../hooks/useNotificationHistory";
+import type { SkillTargetDto } from "../bindings";
+import type { CollisionRoute } from "./reportOutcome";
 
 /** One run as the panel shows it: its group row, and the items it expands to. */
 export type RunGroup = {
@@ -99,8 +101,11 @@ export type RowAction =
   | { kind: "show"; skillId: string }
   /** Re-sync the pair from the central copy (`run("retry", …, { tool })`). */
   | { kind: "retry"; skillId: string; tool: string }
-  /** Answer the collision: the same re-sync raises the one overwrite ask (D12). */
-  | { kind: "overwrite"; skillId: string; tool: string }
+  /**
+   * Answer the collision by the route that met it (`via`: a re-sync, or the
+   * pair's Enable): the folder still in the way raises the one overwrite ask (D12).
+   */
+  | { kind: "overwrite"; skillId: string; tool: string; via: CollisionRoute }
   /** Run the skill's Update again. */
   | { kind: "update"; skillId: string }
   /** Open the Delete dialog again to finish removing it (D16). */
@@ -109,6 +114,34 @@ export type RowAction =
   | { kind: "changeSource"; skillId: string }
   /** Auth or rate limit: the GitHub token lives in Settings. */
   | { kind: "githubSettings" };
+
+/**
+ * Why answering a recorded collision no longer applies: the report is
+ * history, the pair is now. `skillDisabled` / `pairDisabled` — the operator
+ * disabled it since (never overridden by an Overwrite); `resolved` — it is
+ * deployed there already; `changed` — an Enable's pair is no longer the
+ * disabled marker the collision left, so there is nothing of it to answer.
+ */
+export type StaleCollision = "skillDisabled" | "pairDisabled" | "resolved" | "changed";
+
+/**
+ * Whether Overwrite… on a recorded collision still meets it (null), checked
+ * against the skill as the catalog has it now. A sync's collision is answered
+ * by re-syncing the pair, which a Disable made since must stop; an Enable's
+ * left the pair `disabled` (a marker owning nothing) until answered, so it is
+ * answered only while the pair still is that marker and the skill is on.
+ */
+export function staleCollision(
+  skill: { disabled_at: number | null; targets: readonly Pick<SkillTargetDto, "tool" | "status">[] },
+  tool: string,
+  via: CollisionRoute,
+): StaleCollision | null {
+  if (skill.disabled_at !== null) return "skillDisabled";
+  const status = skill.targets.find((target) => target.tool === tool)?.status;
+  if (status === "synced") return "resolved";
+  if (via === "enable") return status === "disabled" ? null : "changed";
+  return status === "disabled" ? "pairDisabled" : null;
+}
 
 /** A failure the GitHub token can fix: authentication, or the API's rate limit. */
 function isGithubAccessError(row: Notification): boolean {
@@ -132,8 +165,10 @@ export function rowActions(row: Notification, exists: (skillId: string) => boole
     const { repair } = row;
     switch (repair.verb) {
       case "retry":
+        actions.push({ kind: "retry", skillId, tool: repair.tool });
+        break;
       case "overwrite":
-        actions.push({ kind: repair.verb, skillId, tool: repair.tool });
+        actions.push({ kind: "overwrite", skillId, tool: repair.tool, via: repair.via });
         break;
       case "update":
       case "delete":
@@ -145,9 +180,34 @@ export function rowActions(row: Notification, exists: (skillId: string) => boole
   return actions;
 }
 
-/** What "Copy" copies for one row: its title, then its message beneath it. */
-export function rowText(row: Notification): string {
-  return row.message ? `${row.title}\n${row.message}` : row.title;
+/**
+ * The words that place a project row in its project ("in monorepo:"), for a
+ * project id; the panel supplies them (it owns the i18n and the labels).
+ */
+export type ProjectPrefix = (projectId: string) => string;
+
+/**
+ * A row's project prefix, or null for a row about no project. The one
+ * project-aware presentation: the panel's run heading and item, and both
+ * copies, read it — a project item promoted to its run's heading (a single
+ * failed toggle has no headline) keeps its project.
+ */
+export function rowProject(row: Notification, inProject: ProjectPrefix): string | null {
+  const projectId = row.subject?.projectId;
+  // A title that names its project already (resync of every project) is not prefixed twice.
+  return projectId === undefined || row.subject?.projectInTitle ? null : inProject(projectId);
+}
+
+/** A row's title as read out of the panel: its project prefix, then the title. */
+export function rowTitle(row: Notification, inProject: ProjectPrefix): string {
+  const project = rowProject(row, inProject);
+  return project ? `${project} ${row.title}` : row.title;
+}
+
+/** What "Copy" copies for one row: its (project-placed) title, then its message beneath it. */
+export function rowText(row: Notification, inProject: ProjectPrefix): string {
+  const title = rowTitle(row, inProject);
+  return row.message ? `${title}\n${row.message}` : title;
 }
 
 /**
@@ -155,14 +215,14 @@ export function rowText(row: Notification): string {
  * absolute timestamp and its action's name, its items indented beneath —
  * so it can be pasted into a bug report.
  */
-export function historyText(groups: readonly RunGroup[]): string {
+export function historyText(groups: readonly RunGroup[], inProject: ProjectPrefix): string {
   return groups
     .map((group) => {
       const label = group.label ? ` ${group.label}:` : "";
-      const head = `${new Date(group.at).toISOString()} [${group.kind}]${label} ${group.head.title}`;
+      const head = `${new Date(group.at).toISOString()} [${group.kind}]${label} ${rowTitle(group.head, inProject)}`;
       const lines = [head, ...(group.head.message ? [`    ${group.head.message}`] : [])];
       for (const item of group.items) {
-        lines.push(`  - [${item.review ? "review" : item.kind}] ${item.title}`);
+        lines.push(`  - [${item.review ? "review" : item.kind}] ${rowTitle(item, inProject)}`);
         if (item.message) lines.push(`      ${item.message}`);
       }
       return lines.join("\n");

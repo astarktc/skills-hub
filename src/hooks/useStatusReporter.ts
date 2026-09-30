@@ -81,6 +81,24 @@ function showToast(
   }
 }
 
+/**
+ * The toaster's focus return, completed before another layer takes focus.
+ * Sonner remembers the element focused before a toast and, when focus leaves
+ * its toaster (blur, or the toaster unmounting), sends focus back there.
+ * "View report" moves focus from a toast into the Notifications panel: if
+ * the panel took focus first, that return would pull it out again, onto a
+ * page the modal is about to make inert — `<body>` (D21). So the reporter
+ * lets the return happen now, while the page is still usable (blurring the
+ * focused toast control runs sonner's own restoration synchronously and
+ * clears its memory), and only then opens the layer, which takes focus from
+ * there and returns it there on close. No-op when focus is not in a toast.
+ */
+function settleToastFocus(): void {
+  if (typeof document === "undefined") return;
+  const active = document.activeElement;
+  if (active instanceof HTMLElement && active.closest("[data-sonner-toaster]")) active.blur();
+}
+
 export type TranslateFn = (
   key: string,
   opts?: Record<string, unknown>,
@@ -464,6 +482,9 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
   const openReport = useCallback(
     (runId?: number) => {
       markAllRead();
+      // Before the panel exists: the toaster's return is over by the time
+      // the panel takes initial focus (A1).
+      settleToastFocus();
       toast.dismiss();
       const current = doorRef.current;
       if (!current) return;

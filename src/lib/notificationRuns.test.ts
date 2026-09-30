@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Notification } from "../hooks/useNotificationHistory";
-import { groupRuns, historyText, rowActions, rowText } from "./notificationRuns";
+import { groupRuns, historyText, rowActions, rowText, rowTitle, staleCollision } from "./notificationRuns";
 
 let nextId = 100;
 const row = (over: Partial<Notification>): Notification => ({
@@ -51,16 +51,23 @@ describe("rowActions (D11: rows carry actions)", () => {
     expect(rowActions(row({}), exists)).toEqual([]);
   });
 
-  it("a failed pair offers Retry; an unanswered collision offers Overwrite… (the one ask)", () => {
+  it("a failed pair offers Retry; an unanswered collision offers Overwrite… by the route that met it (A3)", () => {
     expect(rowActions(row({ subject: { ...subject, tool: "cursor" }, repair: { verb: "retry", tool: "cursor" } }), exists)).toEqual([
       { kind: "show", skillId: "s1" },
       { kind: "retry", skillId: "s1", tool: "cursor" },
     ]);
     expect(
-      rowActions(row({ subject: { ...subject, tool: "cursor" }, repair: { verb: "overwrite", tool: "cursor" }, review: true }), exists),
+      rowActions(row({ subject: { ...subject, tool: "cursor" }, repair: { verb: "overwrite", tool: "cursor", via: "sync" }, review: true }), exists),
     ).toEqual([
       { kind: "show", skillId: "s1" },
-      { kind: "overwrite", skillId: "s1", tool: "cursor" },
+      { kind: "overwrite", skillId: "s1", tool: "cursor", via: "sync" },
+    ]);
+    // An Enable's collision keeps its route: answered by the pair's Enable, never an ordinary sync.
+    expect(
+      rowActions(row({ subject: { ...subject, tool: "cursor" }, repair: { verb: "overwrite", tool: "cursor", via: "enable" }, review: true }), exists),
+    ).toEqual([
+      { kind: "show", skillId: "s1" },
+      { kind: "overwrite", skillId: "s1", tool: "cursor", via: "enable" },
     ]);
   });
 
@@ -96,20 +103,89 @@ describe("rowActions (D11: rows carry actions)", () => {
   });
 });
 
+const inProject = (projectId: string) => `in ${projectId === "p1" ? "monorepo" : projectId}:`;
+
 describe("copy text", () => {
   it("a row copies its title then its message; the history copies each run with its items", () => {
-    expect(rowText(row({ title: "t", message: "m" }))).toBe("t\nm");
-    expect(rowText(row({ title: "t" }))).toBe("t");
+    expect(rowText(row({ title: "t", message: "m" }), inProject)).toBe("t\nm");
+    expect(rowText(row({ title: "t" }), inProject)).toBe("t");
     const groups = groupRuns([
       row({ runId: 1, role: "headline", kind: "warning", title: "1 synced · 1 folder to review", runLabel: "Sync" }),
       row({ runId: 1, role: "entry", kind: "warning", title: "alpha → Cursor", message: "/c", review: true }),
     ]);
-    expect(historyText(groups)).toBe(
+    expect(historyText(groups, inProject)).toBe(
       [
         "2023-11-14T22:13:20.000Z [warning] Sync: 1 synced · 1 folder to review",
         "  - [review] alpha → Cursor",
         "      /c",
       ].join("\n"),
     );
+  });
+});
+
+describe("project identity (N1: one project-aware presentation)", () => {
+  const projectSubject = { skillId: "s1", skillName: "alpha", tool: "claude_code", projectId: "p1" };
+
+  it("a single failed project toggle promoted to its run's heading keeps its project — on screen and in both copies", () => {
+    const groups = groupRuns([
+      row({
+        runId: 1,
+        role: "entry",
+        kind: "error",
+        runLabel: "Sync",
+        title: "Sync failed: alpha -> Claude Code",
+        message: "Permission denied",
+        subject: projectSubject,
+      }),
+    ]);
+    expect(groups[0].head.role).toBe("entry");
+    expect(rowTitle(groups[0].head, inProject)).toBe("in monorepo: Sync failed: alpha -> Claude Code");
+    expect(rowText(groups[0].head, inProject)).toBe("in monorepo: Sync failed: alpha -> Claude Code\nPermission denied");
+    expect(historyText(groups, inProject)).toBe(
+      "2023-11-14T22:13:20.000Z [error] Sync: in monorepo: Sync failed: alpha -> Claude Code\n    Permission denied",
+    );
+  });
+
+  it("a project item under a headline is placed too; a title that names its project already is not prefixed twice", () => {
+    const groups = groupRuns([
+      row({ runId: 2, role: "headline", kind: "warning", title: "3 synced · 1 failed", runLabel: "Re-sync all" }),
+      row({ runId: 2, role: "entry", kind: "error", title: "alpha -> Cursor", subject: { ...projectSubject, projectId: "p2" } }),
+      row({
+        runId: 2,
+        role: "entry",
+        kind: "error",
+        title: "Sync failed in monorepo: alpha -> Claude Code",
+        subject: { ...projectSubject, projectInTitle: true },
+      }),
+    ]);
+    expect(groups[0].items.map((item) => rowTitle(item, inProject))).toEqual([
+      "in p2: alpha -> Cursor",
+      "Sync failed in monorepo: alpha -> Claude Code",
+    ]);
+    // A headline is about the run, never one project.
+    expect(rowTitle(groups[0].head, inProject)).toBe("3 synced · 1 failed");
+  });
+});
+
+describe("staleCollision (A3: the report is history, the pair is now)", () => {
+  const skill = (disabled_at: number | null, status?: "disabled" | "synced" | "error") => ({
+    disabled_at,
+    targets: status ? [{ tool: "claude", status }] : [],
+  });
+
+  it("an Enable's collision is answered while the pair is still its disabled marker and the skill is on", () => {
+    expect(staleCollision(skill(null, "disabled"), "claude", "enable")).toBeNull();
+    expect(staleCollision(skill(9, "disabled"), "claude", "enable")).toBe("skillDisabled");
+    expect(staleCollision(skill(null, "synced"), "claude", "enable")).toBe("resolved");
+    expect(staleCollision(skill(null, "error"), "claude", "enable")).toBe("changed");
+    expect(staleCollision(skill(null), "claude", "enable")).toBe("changed");
+  });
+
+  it("a sync's collision is answered by re-syncing, never over a Disable made since", () => {
+    expect(staleCollision(skill(null), "claude", "sync")).toBeNull();
+    expect(staleCollision(skill(null, "error"), "claude", "sync")).toBeNull();
+    expect(staleCollision(skill(null, "disabled"), "claude", "sync")).toBe("pairDisabled");
+    expect(staleCollision(skill(3), "claude", "sync")).toBe("skillDisabled");
+    expect(staleCollision(skill(null, "synced"), "claude", "sync")).toBe("resolved");
   });
 });

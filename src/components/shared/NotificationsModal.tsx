@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Bell,
   Check,
@@ -25,7 +25,16 @@ import { cn } from "@/lib/utils";
 import type { SkillActions } from "../../hooks/useSkillActions";
 import type { CopyToClipboardFn, Notification, NotificationKind } from "../../hooks/useStatusReporter";
 import type { SurfaceState } from "../../hooks/useSurfaceState";
-import { groupRuns, historyText, rowActions, rowText, type RowAction, type RunGroup } from "../../lib/notificationRuns";
+import {
+  groupRuns,
+  historyText,
+  rowActions,
+  rowProject,
+  rowText,
+  type ProjectPrefix,
+  type RowAction,
+  type RunGroup,
+} from "../../lib/notificationRuns";
 import { formatRelativeTime } from "../../lib/skillPresentation";
 
 type NotificationsModalProps = {
@@ -51,6 +60,12 @@ type NotificationsModalProps = {
    * notification; the button's own "done" state is local.
    */
   copyToClipboard: CopyToClipboardFn;
+  /**
+   * The header progress at the panel's foot while an action runs (a Retry
+   * started here, or a Refresh the panel was opened over): the page behind
+   * the modal is inert, so its Cancel must be the panel's (D19/D20).
+   */
+  progress?: ReactNode;
   t: TFunction;
 };
 
@@ -109,6 +124,7 @@ const NotificationsModal = ({
   onRequestClose,
   onClear,
   copyToClipboard,
+  progress,
   t,
 }: NotificationsModalProps) => {
   // Show / Settings → GitHub leave the panel for another place: the panel
@@ -165,12 +181,13 @@ const NotificationsModal = ({
           copyToClipboard={copyToClipboard}
           t={t}
         />
+        {progress}
       </DialogContent>
     </Dialog>
   );
 };
 
-type ReportBodyProps = Omit<NotificationsModalProps, "open" | "onRequestClose"> & {
+type ReportBodyProps = Omit<NotificationsModalProps, "open" | "onRequestClose" | "progress"> & {
   /** Close the panel for another place, whose element (`selector`) then takes focus. */
   leave: (selector: string, go: () => void) => void;
 };
@@ -220,6 +237,11 @@ function ReportBody({
   );
 
   const exists = useCallback((skillId: string) => skillId in skillNames, [skillNames]);
+  // The one project-aware presentation: heading, item and both copies.
+  const inProject = useCallback<ProjectPrefix>(
+    (projectId) => t("runReport.inProject", { project: projectLabelById[projectId] ?? projectId }),
+    [projectLabelById, t],
+  );
   const { run } = actions;
   const { focus } = surface;
   const act = (action: RowAction) => {
@@ -233,9 +255,17 @@ function ReportBody({
         leave("#settings-github-token", () => focus({ kind: "settings", pane: "github" }));
         return;
       case "retry":
-      case "overwrite":
-        // The same re-sync: a folder still in the way raises the one ask (D12).
         void run("retry", [action.skillId], { tool: action.tool });
+        return;
+      case "overwrite":
+        // Answer the recorded collision by the route that produced it (a sync
+        // re-syncs; an Enable enables the pair): the folder still in the way
+        // raises the one ask (D12). The door checks the pair's state now and
+        // says so when the report went stale.
+        void run(action.via === "enable" ? "enable" : "retry", [action.skillId], {
+          tool: action.tool,
+          answering: "collision",
+        });
         return;
       case "update":
         void run("update", [action.skillId]);
@@ -256,7 +286,11 @@ function ReportBody({
         {isEmpty ? (
           <div className="flex flex-col items-center gap-1.5 px-8 pt-11 pb-10 text-center">
             <Bell aria-hidden="true" className="mb-1.5 size-7 text-faint" />
-            <p className="m-0 text-sm font-semibold text-foreground">{t("notifications.empty")}</p>
+            {/* An empty panel opens on what it says (Clear and Copy all stay
+                focusable while disabled, so they are not the landing). */}
+            <p data-run-initial="" tabIndex={-1} className={cn("m-0 rounded-sm text-sm font-semibold text-foreground", focusRing)}>
+              {t("notifications.empty")}
+            </p>
             <p className="m-0 max-w-[36ch] text-xs text-muted-foreground">{t("notifications.emptyHint")}</p>
           </div>
         ) : (
@@ -272,7 +306,7 @@ function ReportBody({
                 }
                 exists={exists}
                 skillNames={skillNames}
-                projectLabelById={projectLabelById}
+                inProject={inProject}
                 blockedReason={blockedReason}
                 copied={copied}
                 onCopy={copy}
@@ -284,10 +318,12 @@ function ReportBody({
         )}
       </DialogBody>
       <DialogFooter className="justify-between">
-        <Button onClick={onClear} disabled={isEmpty}>
+        {/* Clear empties what it acts on: it stays focusable while disabled,
+            so focus stays on it (D21) instead of dropping to <body>. */}
+        <Button onClick={onClear} disabled={isEmpty} focusableWhenDisabled>
           {t("notifications.clear")}
         </Button>
-        <Button onClick={() => void copy("all", historyText(groups))} disabled={isEmpty}>
+        <Button onClick={() => void copy("all", historyText(groups, inProject))} disabled={isEmpty} focusableWhenDisabled>
           {copied === "all" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
           {copied === "all" ? t("copied") : t("notifications.copyAll")}
         </Button>
@@ -299,7 +335,7 @@ function ReportBody({
 type RowSharedProps = {
   exists: (skillId: string) => boolean;
   skillNames: Readonly<Record<string, string>>;
-  projectLabelById: Readonly<Record<string, string>>;
+  inProject: ProjectPrefix;
   blockedReason: string | null;
   copied: CopyTarget | null;
   onCopy: (key: CopyTarget, text: string) => void;
@@ -315,14 +351,19 @@ function RunRowView({
   onToggle,
   ...shared
 }: RowSharedProps & { group: RunGroup; initial: boolean; expanded: boolean; onToggle: () => void }) {
-  const { t } = shared;
+  const { t, inProject } = shared;
   const itemsId = useId();
   const { head, items } = group;
   const Icon = KIND_ICON[group.kind];
   const at = new Date(group.at);
+  // A project item promoted to the heading keeps its project (N1).
+  const project = rowProject(head, inProject);
   const title = (
     <span className="flex min-w-0 flex-col">
-      <span className="text-sm font-semibold break-words text-foreground">{head.title}</span>
+      <span className="text-sm font-semibold break-words text-foreground">
+        {project ? <span className="font-normal text-muted-foreground">{project} </span> : null}
+        {head.title}
+      </span>
       <span className="text-xs text-muted-foreground">
         {group.label ? `${group.label} · ` : null}
         <time dateTime={at.toISOString()} title={at.toLocaleString()}>
@@ -380,10 +421,10 @@ function RunRowView({
 
 /** One item of a run: kind, words (a project row names its project), actions, Copy. */
 function ItemRow({ item, ...shared }: RowSharedProps & { item: Notification }) {
-  const { t, projectLabelById } = shared;
+  const { t, inProject } = shared;
   const Icon = item.review ? CircleDot : KIND_ICON[item.kind];
   const kindLabel = item.review ? t("runReport.kindReview") : t(`notifications.kind.${item.kind}`);
-  const projectId = item.subject?.projectId;
+  const project = rowProject(item, inProject);
   return (
     <li className="grid grid-cols-[16px_minmax(0,1fr)_auto] items-start gap-x-3 py-2.5 pr-5 pl-10">
       <span role="img" aria-label={kindLabel} className={cn("mt-0.5 inline-flex", item.review ? "text-stale" : KIND_TEXT[item.kind])}>
@@ -391,11 +432,7 @@ function ItemRow({ item, ...shared }: RowSharedProps & { item: Notification }) {
       </span>
       <div className="flex min-w-0 flex-col gap-1">
         <p className="m-0 text-sm break-words text-foreground">
-          {projectId !== undefined ? (
-            <span className="text-muted-foreground">
-              {t("runReport.inProject", { project: projectLabelById[projectId] ?? projectId })}{" "}
-            </span>
-          ) : null}
+          {project ? <span className="text-muted-foreground">{project} </span> : null}
           {item.title}
         </p>
         {item.message ? (
@@ -439,10 +476,10 @@ function RowActionsView({ row, exists, skillNames, blockedReason, onAct, t }: Ro
 }
 
 /** Copy one row: named by the row it copies ("Copy: alpha failed"). */
-function CopyButton({ rowKey, row, copied, onCopy, t }: RowSharedProps & { rowKey: string; row: Notification }) {
+function CopyButton({ rowKey, row, copied, onCopy, inProject, t }: RowSharedProps & { rowKey: string; row: Notification }) {
   const name = t("notificationCopy.named", { title: row.title });
   return (
-    <Button variant="ghost" size="icon-sm" aria-label={name} title={name} onClick={() => onCopy(rowKey, rowText(row))}>
+    <Button variant="ghost" size="icon-sm" aria-label={name} title={name} onClick={() => onCopy(rowKey, rowText(row, inProject))}>
       {copied === rowKey ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
     </Button>
   );
