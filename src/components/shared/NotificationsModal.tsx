@@ -284,12 +284,30 @@ function ReportBody({
   // shows meanwhile, and focus is never moved to it.
   const [openedWith] = useState(() => groups[0]?.key ?? null);
   const arrival = arrivalAnnouncement(groups, openedWith, inProject);
+  // Published once per arrival *identity* (the group's key): two arrivals that
+  // read the same still each speak — the region is emptied on this task and
+  // refilled on the next, so the text node changes (ticket 15 audit A1). The
+  // region itself stays mounted (a freshly mounted populated region is not a
+  // reliable announcement); a rerender with the same arrival publishes nothing.
+  const [spoken, setSpoken] = useState("");
+  const spokenKey = useRef<string | null>(null);
+  const arrivalKey = arrival?.key ?? null;
+  const arrivalText = arrival?.text ?? "";
+  useEffect(() => {
+    // Keyed on the primitives: a rerender that keeps the same arrival must not
+    // cancel the pending refill.
+    if (arrivalKey === null || arrivalKey === spokenKey.current) return;
+    spokenKey.current = arrivalKey;
+    setSpoken("");
+    const timer = window.setTimeout(() => setSpoken(arrivalText), 0);
+    return () => window.clearTimeout(timer);
+  }, [arrivalKey, arrivalText]);
 
   const isEmpty = groups.length === 0;
   return (
     <>
       <p role="status" aria-atomic="true" data-run-arrival="" className="sr-only">
-        {arrival}
+        {spoken}
       </p>
       <DialogBody variant="flush" className="max-h-[min(70vh,560px)]">
         {isEmpty ? (

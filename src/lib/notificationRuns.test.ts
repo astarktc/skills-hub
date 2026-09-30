@@ -195,26 +195,38 @@ describe("arrivalAnnouncement (ticket 14 audit N4: what the open panel announces
   const opened = groupRuns([row({ runId: 1, role: "headline", kind: "success", title: "3 synced" })]);
 
   it("announces nothing while the newest group is the one the panel opened on", () => {
-    expect(arrivalAnnouncement(opened, "run:1", inProject)).toBe("");
-    expect(arrivalAnnouncement([], null, inProject)).toBe("");
+    expect(arrivalAnnouncement(opened, "run:1", inProject)).toBeNull();
+    expect(arrivalAnnouncement([], null, inProject)).toBeNull();
   });
 
   it("announces a standalone note recorded while open (a stale collision's answer)", () => {
     const note = row({ kind: "info", title: "Nothing to overwrite: alpha is already deployed to Cursor." });
     const groups = groupRuns([note, ...opened.map((group) => group.head)]);
-    expect(arrivalAnnouncement(groups, "run:1", inProject)).toBe(
-      "Nothing to overwrite: alpha is already deployed to Cursor.",
-    );
+    expect(arrivalAnnouncement(groups, "run:1", inProject)).toEqual({
+      key: groups[0].key,
+      text: "Nothing to overwrite: alpha is already deployed to Cursor.",
+    });
+  });
+
+  it("two consecutive arrivals that read the same carry distinct identities (ticket 15 audit A1)", () => {
+    const title = "Nothing to overwrite: alpha is already deployed to Cursor.";
+    const first = groupRuns([row({ kind: "info", title }), ...opened.map((group) => group.head)]);
+    const second = groupRuns([row({ kind: "info", title }), ...first.map((group) => group.head)]);
+    const a = arrivalAnnouncement(first, "run:1", inProject);
+    const b = arrivalAnnouncement(second, "run:1", inProject);
+    expect(a?.text).toBe(title);
+    expect(b?.text).toBe(title);
+    expect(a?.key).not.toBe(b?.key);
   });
 
   it("announces a run settled from the panel by its headline, a project row with its project", () => {
     const retried = groupRuns([
       row({ runId: 2, role: "entry", kind: "error", title: "alpha failed", subject: { skillId: "a", skillName: "alpha", projectId: "mono" } }),
     ]);
-    expect(arrivalAnnouncement(retried, "run:1", inProject)).toBe("in mono: alpha failed");
+    expect(arrivalAnnouncement(retried, "run:1", inProject)?.text).toBe("in mono: alpha failed");
   });
 
   it("announces the first arrival after the panel opened empty, or after Clear", () => {
-    expect(arrivalAnnouncement(opened, null, inProject)).toBe("3 synced");
+    expect(arrivalAnnouncement(opened, null, inProject)?.text).toBe("3 synced");
   });
 });

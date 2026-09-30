@@ -42,7 +42,7 @@ describe("Button", () => {
   it("focusable while disabled: keeps focus, and its ring is not dimmed to the disabled 50 % while focused", () => {
     const onClick = vi.fn();
     render(
-      <Button disabled focusableWhenDisabled title="Refresh is running">
+      <Button disabled focusableWhenDisabled title="Refresh is running" onClick={onClick}>
         Add skill
       </Button>,
     );

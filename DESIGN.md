@@ -413,7 +413,10 @@ budget: a large import completing, an install landing) may run as a *sequence* o
 `prefers-reduced-motion: reduce` removes all motion. The base layer zeroes every transition and animation duration
 (`!important`; legacy `App.css` loops and third-party layers included), and each moving element also carries its own
 `motion-reduce:` / `motion-safe:` counterpart, so nothing is left mid-way: the rail and the strip light appear
-settled, the fill jumps, the header spinner is hidden, Button spinners do not run — text and counts only.
+settled, the fill jumps, the header spinner is hidden, Button spinners do not run — text and counts only. The
+guarantee is **no interpolated motion**: every element is settled on its first *visible* frame. Sonner still stages
+a toast for one DOM frame at opacity 0 before it mounts (`data-mounted=false`, no transition, nothing running) —
+invisible, not motion — so "first DOM frame" is not claimed for toasts.
 
 ## Target size
 

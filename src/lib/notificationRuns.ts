@@ -210,17 +210,23 @@ export function rowTitle(row: Notification, inProject: ProjectPrefix): string {
  * from the panel, or a standalone note such as a stale collision's "Nothing
  * to overwrite…" — once that group is no longer the one that was newest as the
  * panel opened (`openedWith`: that group's key, null for an empty history).
- * `""` when nothing arrived. No toast shows while the panel is open, so this is
- * the arrival's only announcement; focus stays where the operator left it.
+ * `null` when nothing arrived. The arrival carries its group's `key` beside
+ * the text: two consecutive arrivals can read the same (a repeated stale
+ * note, two equal headlines) and the live region must still speak the second
+ * one — the panel republishes by identity, not by text. No toast shows while
+ * the panel is open, so this is the arrival's only announcement; focus stays
+ * where the operator left it.
  */
+export type Arrival = { key: string; text: string };
+
 export function arrivalAnnouncement(
   groups: readonly RunGroup[],
   openedWith: string | null,
   inProject: ProjectPrefix,
-): string {
+): Arrival | null {
   const newest = groups[0];
-  if (!newest || newest.key === openedWith) return "";
-  return rowTitle(newest.head, inProject);
+  if (!newest || newest.key === openedWith) return null;
+  return { key: newest.key, text: rowTitle(newest.head, inProject) };
 }
 
 /** What "Copy" copies for one row: its (project-placed) title, then its message beneath it. */
