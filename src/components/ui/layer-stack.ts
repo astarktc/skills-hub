@@ -46,6 +46,24 @@ export function popupBelow(id: string): HTMLElement | null {
   return index > 0 ? stack[index - 1].popup : null;
 }
 
+/**
+ * Whether `element` will still be inert once layer `id` has closed — the
+ * question a closing dialog asks of its focus target. The dialog decides
+ * where focus returns *while it is still open*, when everything behind it
+ * carries this module's `inert`; that inert goes with the layer. What stays
+ * inert: someone else's `inert` ancestor, and — while other layers remain —
+ * anything outside the layer that will then be on top.
+ */
+export function staysInertAfterClose(id: string, element: Element): boolean {
+  for (let node: Element | null = element; node; node = node.parentElement) {
+    if (node.hasAttribute("inert") && !inertedByUs.has(node as HTMLElement)) return true;
+  }
+  const remaining = stack.filter((layer) => layer.id !== id);
+  if (remaining.length === 0) return false;
+  const top = remaining[remaining.length - 1].popup;
+  return !(top && top.contains(element));
+}
+
 export function openLayerCount(): number {
   return stack.length;
 }

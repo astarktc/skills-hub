@@ -32,8 +32,8 @@ use super::credentials::CredentialStore;
 use super::environment::expand_home_path_in;
 use super::errors::SignalError;
 use super::git_acquisition::{
-    acquire, parse_full_github_url, AcquireRequest, GitSource, GithubApi, HttpGithubApi,
-    SkillIntent,
+    acquire, parse_full_github_url, AcquireRequest, GitSelection, GitSource, GitSourceResolution,
+    GithubApi, HttpGithubApi, SkillIntent,
 };
 use super::git_cache::{fetch_through_cache, FetchRequest};
 use super::install_finalize::StagingDir;
@@ -52,17 +52,43 @@ use super::skill_update::{acquire_git_repoint, UpdateRequest};
 use super::tool_adapters::tool_holding_path;
 
 /// Where a Re-point sends a skill. Crosses the wire as itself:
-/// `{ kind: "git", url }` or `{ kind: "local", path }`.
+/// `{ kind: "git", url, selection? }` or `{ kind: "local", path }`.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RepointTarget {
     /// A full GitHub repository or skill URL — HTTP, HTTPS or schemeless
     /// `github.com/…`, tree/blob links and a `.git` suffix; not `owner/repo`
-    /// shorthand. Stored as given (trimmed).
-    Git { url: String },
+    /// shorthand. Stored as given (trimmed). `selection` names the candidate
+    /// the operator picked when the URL is a multi-skill repository.
+    Git {
+        url: String,
+        #[serde(default)]
+        selection: Option<RepointSelection>,
+    },
     /// A skill folder outside every Tool's skills directory, as the operator
     /// typed or picked it; `~` expands against the operator's home.
     Local { path: String },
+}
+
+/// A candidate picked from a multi-skill repository's listing (a preview's
+/// `candidates`): its repo-relative folder and the listing's branch decision,
+/// a deliberate default branch included. A URL cannot carry the latter — a
+/// repository cloned on its default branch has no branch name to put in a
+/// `/tree/<ref>/` link — so the choice crosses the wire as itself, exactly
+/// as Add's install batch carries it (`GitSelection`).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, specta::Type)]
+pub struct RepointSelection {
+    pub subpath: String,
+    pub resolution: Option<GitSourceResolution>,
+}
+
+impl RepointSelection {
+    fn as_git_selection(&self) -> GitSelection<'_> {
+        GitSelection {
+            subpath: &self.subpath,
+            resolution: self.resolution.as_ref(),
+        }
+    }
 }
 
 /// Re-point one Managed skill at `target` and Update from it. Only an
@@ -127,10 +153,14 @@ pub(crate) fn repoint_skill_source_with(
                 UpdateIntent::Repoint,
             )
         }
-        RepointTarget::Git { url } => {
+        RepointTarget::Git {
+            url,
+            selection: pick,
+        } => {
             let url = url.trim();
             let source = parse_full_github_url(url)?;
             let ttl_ms = super::settings::git_cache_ttl_ms(store);
+            let pick = pick.as_ref().map(RepointSelection::as_git_selection);
             refresh_with_intent(
                 paths,
                 store,
@@ -140,7 +170,7 @@ pub(crate) fn repoint_skill_source_with(
                 now,
                 on_progress,
                 &|id, cancel| {
-                    acquire_git_repoint(paths, store, id, cancel, api, ttl_ms, url, &source)
+                    acquire_git_repoint(paths, store, id, cancel, api, ttl_ms, url, &source, pick)
                 },
                 UpdateIntent::Repoint,
             )
@@ -229,11 +259,12 @@ pub(crate) fn preview_repoint_source_with(
                 candidates: None,
             })
         }
-        RepointTarget::Git { url } => {
+        RepointTarget::Git { url, selection } => {
             let url = url.trim();
             let source = parse_full_github_url(url)?;
             let ttl_ms = super::settings::git_cache_ttl_ms(store);
-            preview_git(paths, &record, url, &source, ttl_ms, cancel, api)
+            let selection = selection.as_ref().map(RepointSelection::as_git_selection);
+            preview_git(paths, &record, url, &source, selection, ttl_ms, cancel, api)
         }
     }
 }
@@ -242,11 +273,13 @@ pub(crate) fn preview_repoint_source_with(
 /// never inside the central repo.
 const PREVIEW_SCRATCH_DIR: &str = "repoint-preview";
 
+#[allow(clippy::too_many_arguments)]
 fn preview_git(
     paths: &InstallerPaths,
     record: &SkillRecord,
     url: &str,
     source: &GitSource,
+    selection: Option<GitSelection<'_>>,
     ttl_ms: i64,
     cancel: Option<&CancelToken>,
     api: &dyn GithubApi,
@@ -259,7 +292,10 @@ fn preview_git(
     let acquired = acquire(
         &AcquireRequest {
             source,
-            intent: SkillIntent::ByName(Some(&record.name)),
+            intent: match selection {
+                Some(selection) => SkillIntent::Selection(selection),
+                None => SkillIntent::ByName(Some(&record.name)),
+            },
             dest: scratch.path(),
             cache_dir: &paths.cache_dir,
             ttl_ms,
@@ -268,8 +304,9 @@ fn preview_git(
         },
         api,
     );
-    // A URL naming no skill folder may name a multi-skill repository.
-    let names_repository = source.subpath.is_none();
+    // A URL naming no skill folder may name a multi-skill repository; a
+    // picked candidate is already the choice.
+    let names_repository = source.subpath.is_none() && selection.is_none();
     let acquired = match acquired {
         Err(err) if names_repository && is_multi_skills(&err) => {
             let candidates = list_candidates(paths, url, ttl_ms, cancel, api)?;

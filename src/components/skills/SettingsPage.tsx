@@ -3,6 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { AppUpdate } from "../../hooks/useAppUpdate";
 import type { SettingsBounds } from "./types";
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 
 type SettingsPageProps = {
@@ -96,12 +97,14 @@ const SettingsPage = ({
 
   return (
     <div className="settings-page">
-      <div className="detail-header">
-        <button className="detail-back-btn" type="button" onClick={onBack}>
-          <ArrowLeft size={16} />
+      {/* The former detail header (its App.css rules left with the detail,
+          ticket 12); the Settings panes are ticket 20's. */}
+      <div className="mx-auto flex w-full max-w-[560px] flex-col items-start gap-1.5 pt-6">
+        <Button variant="ghost" size="sm" onClick={onBack}>
+          <ArrowLeft aria-hidden="true" />
           {t("detail.back")}
-        </button>
-        <div className="detail-skill-name">{t("settings")}</div>
+        </Button>
+        <h1 className="m-0 text-lg font-semibold text-foreground">{t("settings")}</h1>
       </div>
       <div className="settings-page-body">
         <div className="settings-field">

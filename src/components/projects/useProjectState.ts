@@ -97,6 +97,14 @@ export type ProjectState = {
    * ran). Resolves to whether the view was applied.
    */
   refreshView: (projectId: string) => Promise<boolean>;
+  /**
+   * Where one skill is assigned, for a surface outside the matrix (the
+   * inspector's Projects section, the Assign picker): every project's view
+   * read — nothing applied — as each project with its configured Tools and
+   * that skill's assignment rows. Reads only; the caller re-asks when
+   * `projects` changes (every assignment mutation replaces its row).
+   */
+  readSkillPlacement: (skillId: string) => Promise<SkillPlacement[]>;
   resyncProject: () => Promise<ProjectSyncReport>;
   updateProjectPath: (
     projectId: string,
@@ -123,6 +131,13 @@ export type ProjectState = {
     projectId: string,
     options: IgnoreUpdateOptions,
   ) => Promise<void>;
+};
+
+/** One project as seen from one skill: its configured Tools and the skill's rows there. */
+export type SkillPlacement = {
+  project: ProjectDto;
+  tools: ProjectToolDto[];
+  assignments: ProjectSkillAssignmentDto[];
 };
 
 /**
@@ -438,6 +453,18 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
     [applyView],
   );
 
+  const readSkillPlacement = useCallback(
+    async (skillId: string): Promise<SkillPlacement[]> => {
+      const views = await Promise.all(projects.map((project) => invokeTauri("getProjectView", project.id)));
+      return views.map((view) => ({
+        project: view.project,
+        tools: view.tools,
+        assignments: view.assignments.filter((row) => row.skill_id === skillId),
+      }));
+    },
+    [projects],
+  );
+
   const resyncProject = useCallback(async (): Promise<ProjectSyncReport> => {
     if (!selectedProjectId) throw new Error("No project selected");
     try {
@@ -548,6 +575,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       assignToProject,
       unassignFromProject,
       refreshView,
+      readSkillPlacement,
       resyncProject,
       updateProjectPath,
       resyncAll,
@@ -575,6 +603,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       assignToProject,
       unassignFromProject,
       refreshView,
+      readSkillPlacement,
       resyncProject,
       updateProjectPath,
       resyncAll,

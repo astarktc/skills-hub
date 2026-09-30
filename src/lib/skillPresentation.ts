@@ -944,6 +944,12 @@ export function syncedStrip(
   };
 }
 
+/** A mark's accessible name: "Amp: failed — the last sync did not complete". */
+export function stripMarkName(mark: StripMark, t: Translate): string {
+  const tool = mark.detected ? mark.label : t("strip.notDetected", { name: mark.label });
+  return t(STRIP_MARK_NAME_KEY[mark.nameKey], { tool });
+}
+
 /** A skill has an issue when its loudest health row is failed or stale. */
 export function skillHasIssues(skill: SkillHealthFields): boolean {
   const { severity } = skillHealth(skill, { t: KEY_ONLY });

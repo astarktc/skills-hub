@@ -63,14 +63,16 @@ export type SkillVerbOptions = {
   restore: Record<string, never>;
   /** Without `target`: open Change source (on `preselect`, else the skill's kind). */
   repoint: { preselect?: RepointKind; target?: RepointTarget };
-  detach: Record<string, never>;
+  /** Without `confirmed`: open the Detach confirmation (it states the consequence). */
+  detach: { confirmed?: boolean };
   /** Without `confirmed`: open the Delete confirmation. */
   delete: { confirmed?: boolean };
   /** Without `mode`: open the Invocation dialog; `null` clears the override. */
   editInvocation: { mode?: InvocationMode | null };
   /** The operator's Dismiss of a stored health kind (`import_failed` only). */
   dismissHealth: { kind: SkillOutcomeKind };
-  assignToProject: { projectId: string };
+  /** Without `projectId`: open the Assign-to-project picker (one skill). */
+  assignToProject: { projectId?: string };
   unassignFromProject: { projectId: string };
   /** A group's Deploy all: Enable what is disabled, sync what is not deployed. */
   deployGroup: Record<string, never>;
@@ -267,18 +269,56 @@ export function useSkillActions({
      */
     const restoreFocus = () => {
       if (verb === "delete" || typeof window === "undefined") return;
-      if (trigger?.closest("[role='dialog'], [role='alertdialog']")) return;
+      // (The inspector's sheet is a dialog too, but the verbs in it are its
+      // own controls, not a confirmation: the rule applies there.)
+      if (trigger?.closest("[role='dialog']:not([data-inspector]), [role='alertdialog']")) return;
       const target = focusAfter({ verb, removed: false }, { skillId: single?.id ?? null, order, surface: "skills" });
       const chain = [target, { kind: "trigger" } as const, ...(single ? [{ kind: "row", skillId: single.id } as const] : [])];
+      // Focus counts as lost on <body>, on the trigger, on the main landmark
+      // (a closing layer's last fallback) — and while a layer holds it that
+      // is not the target's own: the progress overlay of a streamed action
+      // (until ticket 14 retires it) keeps focus until it closes, then hands
+      // it to the layer beneath (the inspector's sheet) or the landmark.
       const attempt = (left: number) => {
         const active = document.activeElement;
-        if (active && active !== document.body && active !== trigger) return;
+        const lost = !active || active === document.body || active === trigger || active.tagName === "MAIN";
+        const layer = active?.closest("[role='dialog'], [role='alertdialog']") ?? null;
+        if (!lost && !layer) return;
         const element = resolveFirst(chain, trigger);
-        if (element) element.focus();
-        // The settled render may not have re-enabled the control yet.
-        else if (left > 0) window.setTimeout(() => attempt(left - 1), 16);
+        const blocked = !element || (layer !== null && !layer.contains(element));
+        if (!blocked) {
+          element.focus();
+          if (document.activeElement === element) {
+            hold(element);
+            return;
+          }
+        }
+        // The settled render may not have re-enabled the control, or the
+        // closing overlay may still hold focus or keep the page inert.
+        if (left > 0) window.setTimeout(() => attempt(left - 1), 16);
       };
-      window.setTimeout(() => attempt(5), 0);
+      // A closing overlay hands focus back a frame or two after it left the
+      // DOM; until the operator presses a key or a pointer, the placement
+      // holds against that late return.
+      const hold = (element: HTMLElement) => {
+        let acted = false;
+        const act = () => {
+          acted = true;
+        };
+        window.addEventListener("keydown", act, true);
+        window.addEventListener("pointerdown", act, true);
+        let frames = 12;
+        const check = () => {
+          if (!acted && element.isConnected && document.activeElement !== element) element.focus();
+          if (!acted && frames-- > 0) window.requestAnimationFrame(check);
+          else {
+            window.removeEventListener("keydown", act, true);
+            window.removeEventListener("pointerdown", act, true);
+          }
+        };
+        window.requestAnimationFrame(check);
+      };
+      window.setTimeout(() => attempt(12), 0);
     };
 
     /**
@@ -490,7 +530,9 @@ export function useSkillActions({
         }
         // A folder may be typed with `~`; the backend expands it.
         const trimmed: RepointTarget =
-          target.kind === "git" ? { kind: "git", url: target.url.trim() } : { kind: "local", path: target.path.trim() };
+          target.kind === "git"
+            ? { ...target, url: target.url.trim() }
+            : { kind: "local", path: target.path.trim() };
         const completion = await refreshOne(
           single,
           {
@@ -506,6 +548,11 @@ export function useSkillActions({
       }
       case "detach": {
         if (!single) return;
+        const { confirmed } = opts as SkillVerbOptions["detach"];
+        if (!confirmed) {
+          openDialog({ kind: "detachSkill", skillId: single.id });
+          return;
+        }
         await settle(
           {
             subject,
@@ -516,6 +563,7 @@ export function useSkillActions({
           async () => {
             await invokeTauri("detachSkillFromSource", single.id);
             await loadManagedSkills();
+            dismissDialog("detachSkill");
           },
         );
         return;
@@ -575,6 +623,10 @@ export function useSkillActions({
       case "assignToProject":
       case "unassignFromProject": {
         const { projectId } = opts as SkillVerbOptions["assignToProject"];
+        if (projectId === undefined) {
+          if (verb === "assignToProject" && single) openDialog({ kind: "assignProject", skillId: single.id });
+          return;
+        }
         const ids = skills.map((skill) => skill.id);
         await settle({ subject, label: t("lifecycle.verbs.assign") }, async () => {
           // The project world assigns the set (the backend command is per

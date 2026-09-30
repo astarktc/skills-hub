@@ -10,6 +10,7 @@ import {
   openLayer,
   popupBelow,
   setLayerPopup,
+  staysInertAfterClose,
 } from "./layer-stack";
 import { Button } from "./button";
 import { mainLandmarkFocus } from "./focus-fallback";
@@ -122,14 +123,28 @@ const sizeClass = {
   xl: "w-[min(720px,calc(100vw-48px))]",
 } as const;
 
+/**
+ * Where the popup sits: `center` (default) — the modal card; `sheet` — a
+ * full-height panel on the right edge that leaves the 56 px icon rail
+ * visible (the inspector below the shell breakpoint, D23). Same focus,
+ * inert and dismissal rules; no motion either.
+ */
+const placementClass = {
+  center:
+    "top-1/2 left-1/2 max-h-[calc(100vh-48px)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border-strong",
+  sheet: "inset-y-0 right-0 h-full w-[min(560px,calc(100vw-56px))] border-l border-border-strong",
+} as const;
+
 type FocusTarget = DialogPrimitive.Popup.Props["finalFocus"];
 
 type DialogContentProps = Omit<
   DialogPrimitive.Popup.Props,
   "className" | "render" | "finalFocus"
 > & {
-  /** Popup width: sm 400 · md 520 · lg 600 · xl 720 (capped at viewport − 48). */
+  /** Popup width: sm 400 · md 520 · lg 600 · xl 720 (capped at viewport − 48). Centre only. */
   size?: keyof typeof sizeClass;
+  /** `center` (default) or `sheet` (full height, right edge; see `placementClass`). */
+  placement?: keyof typeof placementClass;
   /** Header ✕ (32 × 32); disabled while the dialog is not dismissible. */
   showCloseButton?: boolean;
   /**
@@ -149,6 +164,7 @@ type DialogContentProps = Omit<
 
 function DialogContent({
   size = "md",
+  placement = "center",
   showCloseButton = true,
   initialFocus,
   finalFocus,
@@ -173,8 +189,24 @@ function DialogContent({
       if (typeof finalFocus === "boolean") return finalFocus;
       if (finalFocus) return finalFocus.current;
       const target = openerRef.current;
-      if (target?.isConnected && !target.closest("[inert]")) return target;
-      return fallbackFocus?.() ?? popupBelow(layerId) ?? mainLandmarkFocus() ?? true;
+      // Decided while this layer is still open: the inert it applied is
+      // about to go, so only inert that stays disqualifies a target.
+      if (target?.isConnected && !staysInertAfterClose(layerId, target)) return target;
+      const fallback = fallbackFocus?.() ?? popupBelow(layerId);
+      if (fallback) return fallback;
+      // Opened with focus nowhere (a startup layer): nothing to return to.
+      if (!target) return false;
+      // The landmark itself, not its first control: Base UI hands focus to a
+      // returned element's first tabbable child when the element is not
+      // tabbable (the landmark is `tabindex="-1"`), so it is focused here,
+      // once this layer has released the page.
+      const landmark = mainLandmarkFocus(layerId);
+      if (!landmark) return true;
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (!active || active === document.body) landmark.focus();
+      });
+      return false;
     },
     [fallbackFocus, finalFocus, layerId],
   );
@@ -188,12 +220,14 @@ function DialogContent({
       />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
+        data-placement={placement}
         ref={popupRef}
         initialFocus={initialFocus}
         finalFocus={resolveFinalFocus}
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100vh-48px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border-strong bg-popover text-sm text-popover-foreground shadow-lg outline-none",
-          sizeClass[size],
+          "fixed z-50 flex flex-col overflow-hidden bg-popover text-sm text-popover-foreground shadow-lg outline-none",
+          placementClass[placement],
+          placement === "center" && sizeClass[size],
           className,
         )}
         {...props}

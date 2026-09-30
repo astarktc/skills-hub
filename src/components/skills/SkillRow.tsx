@@ -78,6 +78,8 @@ type SkillRowProps = {
   /** A muted inline source label (Flat, and the "Individual sources" group). */
   sourceLabel: string | null;
   selected: boolean;
+  /** The inspector shows this skill: the row carries `aria-current` and an iris edge. */
+  focused: boolean;
   onToggleSelect: (skillId: string) => void;
   /** The action running now; this row's own shows inline (`aria-busy`). */
   pending: PendingAction | null;
@@ -103,6 +105,7 @@ const SkillRow = ({
   layout,
   sourceLabel,
   selected,
+  focused,
   onToggleSelect,
   pending,
   blockedReason,
@@ -297,10 +300,12 @@ const SkillRow = ({
     return (
       <li
         data-selected={selected || undefined}
+        data-focused={focused || undefined}
+        aria-current={focused ? "true" : undefined}
         aria-busy={busyHere || undefined}
         onClick={handleRowClick}
         className={cn(
-          "flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-card p-3 hover:border-border-strong data-selected:bg-raised",
+          "flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-card p-3 hover:border-border-strong data-selected:bg-raised data-focused:border-ring",
           busyHere && "opacity-70",
         )}
       >
@@ -329,10 +334,12 @@ const SkillRow = ({
   return (
     <li
       data-selected={selected || undefined}
+      data-focused={focused || undefined}
+      aria-current={focused ? "true" : undefined}
       aria-busy={busyHere || undefined}
       onClick={handleRowClick}
       className={cn(
-        "grid h-row items-center gap-x-3 border-b border-border px-3 hover:bg-card data-selected:bg-raised",
+        "grid h-row items-center gap-x-3 border-b border-border px-3 hover:bg-card data-selected:bg-raised data-focused:bg-raised data-focused:ring-1 data-focused:ring-ring data-focused:ring-inset",
         LIST_COLUMNS,
         busyHere && "opacity-70",
       )}

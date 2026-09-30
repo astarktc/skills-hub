@@ -39,3 +39,12 @@ Escape closes only the ask; 960×640; contrast; `npm run check`.
 ## Result
 
 (child fills in)
+
+## Comments
+
+
+- 2026-09-30 — from ticket 12: Re-point's multi-skill case lists the repository's candidates as a radio step
+  inside `RepointModal` (single choice), because `GitPickModal` is multi-select and bound to `useAddSkillFlow`. When
+  the one picker lands, give it a single-choice mode and use it there. A pick crosses the wire as
+  `RepointTarget::Git { url, selection: { subpath, resolution } }` (new; the preview's `ref` is null for a
+  default-branch repository, so no URL can name the folder) — the same shape Add's batch sends.

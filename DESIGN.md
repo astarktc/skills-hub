@@ -148,8 +148,7 @@ Re-measure them after any change to `faint`, `primary`, `stale` or the grounds.
 
 - Disabled controls.
 - `border` / `border-strong` hairlines.
-- The legacy decorative `·` separator in the detail header (`.detail-meta-dot`, 1.65 / 1.49). It goes when the detail
-  surface migrates (ticket 12).
+- ~~The legacy decorative `·` separator in the detail header (`.detail-meta-dot`)~~ — gone with the detail (ticket 12).
 
 ## Non-colour scale
 
@@ -272,6 +271,18 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
 - **Name.** `<DialogTitle>` names the popup through `aria-labelledby`.
 - **Close.** The corner ✕ is 32 × 32 and named.
 - **Size.** `sm` 400 · `md` 520 (default) · `lg` 600 · `xl` 720, each capped at viewport − 48.
+- **Placement** (`DialogContent placement`): `center` (default) is the card above; `sheet` is a full-height panel on
+  the right edge, `min(560px, 100vw − 56px)` wide so the 56 px icon rail stays visible, with a `border-strong` left
+  edge. Same focus, inert, dismissal and no-motion rules. The inspector below the shell breakpoint is its one user
+  (ticket 12); its width grows to `100vw − 56px` (layout `className`) when its Files expand.
+- **Focus return is decided while the layer is still open**, when everything behind it carries the stack's own
+  `inert`. So the opener (and the main landmark) are judged by `staysInertAfterClose` — only inert that outlives
+  the layer disqualifies them (ticket 12: the plain `closest("[inert]")` check sent every opener to the fallback in
+  Chrome). A layer opened with focus nowhere (a startup overlay) returns it nowhere. The landmark is focused itself,
+  not its first control (Base UI would hand a non-tabbable return element's focus to its first tabbable child).
+- **Keep the shell mounted.** A dialog that is mounted only while open never returns focus (Base UI returns it on
+  close, and an unmounted popup does not close). Re-point, Invocation, Detach and Assign keep one `Dialog` +
+  `DialogContent` for the app's life and key only their body per subject.
 - **Body.** `DialogBody` `variant`: `default` (padded) or `flush` (edge-to-edge lists).
 - **Motion.** None: dialogs appear and leave instantly.
 
@@ -360,8 +371,9 @@ above). `useStatusReporter` owns toast lifetime; the binder mounts the one `<Toa
 
 - **Minimum window**: 960 × 640 (`tauri.conf.json`).
 - **Breakpoint**: one structural collapse at **1200 px** (`--breakpoint-shell: 75rem` in `theme.css`, the
-  `max-shell:` variant; spec D23). Below it the sidebar is a 56 px icon rail (ticket 11), the inspector a sheet
-  (ticket 12) and the Projects list a header select (ticket 17).
+  `max-shell:` variant; spec D23; `SHELL_WIDE_QUERY` in `hooks/useMediaQuery.ts` is the same value for script). Below
+  it the sidebar is a 56 px icon rail (ticket 11), the inspector a sheet (ticket 12) and the Projects list a header
+  select (ticket 17).
 - **How 1200 was measured** (ticket 11, fixture `failures`, 2026-09-29): the 36 px row's fixed columns (checkbox
   32 · strip 8 marks × 16 + N/M 40 = 168 · scope 24 · switch 40 · overflow 32 · six 12 px gaps · 24 px padding)
   take 392 px; name and description share the rest in one track, the name group holding at least 60 % of it (the
@@ -453,6 +465,53 @@ skill. Shape carries the state; colour only reinforces it; the strip was checked
   completes, the imported rows' strips light mark by mark, left to right, 20 ms apart (opacity 0 → 1, each
   ≤ 120 ms, `ease-out`), once, and the header summary reads "12 skills imported · all synced" for one run.
   Nothing else moves; reduced motion shows the settled strip at once.
+
+## The inspector (ticket 12)
+
+The focused skill — surface state's `focused`, a selection not a route (D3). Files:
+`components/skills/inspector/{SkillInspector,InspectorSection,HealthSection,TargetsSection,SourceSection,EditsSection,ProjectsSection,FilesSection}.tsx`,
+`components/skills/{SkillFiles,StripMarkIcon,ExplorePreviewView}.tsx`, `modals/{RepointModal,DetachModal,AssignProjectModal}.tsx`.
+Composed from primitives and tokens; the one new variant is Dialog `placement="sheet"`.
+
+- **Placement.** ≥ 1200 px: an `<aside>` (landmark, `aria-labelledby` its `h2`) on `card`, beside the list below the
+  header and filter bar — `max(22.5rem, ⅓)` of My Skills, `border` left edge. < 1200 px: the same content in a Dialog
+  `sheet`. Header: name (`lg` semibold, the `data-inspector-heading` focus target) · description (`sm`
+  `muted-foreground`, 3 lines) · Close (`ghost icon`, 32 px).
+- **The focused row** shows it: `aria-current="true"`, `raised` ground and a 1 px inset `ring` edge (the ≥ 3:1 cue:
+  6.01 dark / 5.04 light on `raised`); a selected (checked) row has the ground only.
+- **Sections** (`h3` `sm` semibold, a `border` hairline between): Health · Sync targets · Source · Edits · Projects ·
+  Files, then Remove (`outline danger sm`) in a footer. Section controls are `sm` (24 px) Buttons.
+- **Health** reads `skillHealth` alone: per row an icon (⊗ `failed`, ⚠ `stale`, ⊖ `faint`), the label (`sm` medium),
+  what happened (`xs` `muted-foreground`: the typed error in words, the Tools, when) and its repairs (`outline sm`; the
+  first repair of the first row `accent`, removal `danger`). Healthy is one quiet line. The section is Restore's
+  focus target (`data-inspector-health`).
+- **Sync targets** (D22): a list by default — the strip's glyph (`StripMarkIcon`, shared with the row), the Tool,
+  `link`/`copy` in `faint`, the state in words (`failed` text for failed / missing / broken, else
+  `muted-foreground`), inline actions: Retry (`outline`), Disable / Enable / Sync (`ghost`). A row's first action is
+  the same element as it changes role, so focus stays on it. Disable shows "Removed from {Tool}" (`role="status"`)
+  with **Undo** (`ghost accent`) for 5 s. The grid (Segmented List / Grid, persisted `skills-inspector-targetsView`)
+  is `outline md` tiles, glyph + Tool; each names its state and what a press does. A skill off everywhere or with
+  its central copy gone offers no per-Tool action — Health carries the repair.
+- **Source**: icon · the source line (`sm` underlined link for a repo; a recorded folder in `font-mono xs`) · Copy
+  (`ghost icon-sm`) · provenance (`xs`; a missing folder in `stale`) · "Last updated" (`faint`) · Update, Change
+  source…, Detach.
+- **Edits**: the invocation mode as a term/definition pair; a conflict in `stale` text and the Edit button toned
+  `stale` ("Resolve…"). The Edit dialog then leads with the plain choice: **Keep yours ({mode})** (`solid accent`) ·
+  **Use the skill's ({mode})** (`outline`).
+- **Projects**: each project with its Tools' statuses (`failed` text for failed / missing) and Remove (`ghost sm`);
+  **Assign to project…** opens a picker listing every project with its configured Tools (radio rows; a project with
+  no Tools, or already on all of them, cannot be chosen).
+- **Files**: tree (28 px items, `raised` when open) above a reader (max 28 rem, a scroll region that is one Tab stop;
+  Markdown under `.prose`, 72 ch). **Expand** covers My Skills in place (the list stays mounted and `inert`
+  underneath, its scroll and focused row kept); tree 256 px beside the reader. Escape collapses first.
+- **Re-point** (D15): pre-filled with the current source; **Check source** resolves it first; the summary
+  "Replaces *X*'s bytes with **Y** (`subpath @ ref`)" takes focus; a name mismatch adds a `stale` "Different name"
+  Badge and the confirm reads **Continue with Y**; a multi-skill repository lists its skills as radio rows first.
+  Refusals render under the field (`FieldError`), never as a toast over the dialog.
+- **Focus** (D21, D23): opening from a row leaves focus on the row, and Tab from the row's last control enters the
+  inspector's heading (Shift+Tab walks back; Tab from its last control continues after the row); an arrival without
+  a row (deep link, history) focuses the heading; the sheet opens on its heading; a resize that reparents a focused
+  inspector focuses the new heading; closing returns to the row; Restore lands on Health.
 
 ## Migration rule
 

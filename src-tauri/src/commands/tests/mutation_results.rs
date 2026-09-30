@@ -207,7 +207,10 @@ fn git_repoint_catalog_has_replaced_source_and_repaired_central() {
         &f.paths,
         &f.store,
         &f.id,
-        RepointTarget::Git { url: url.into() },
+        RepointTarget::Git {
+            url: url.into(),
+            selection: None,
+        },
         RefreshPolicy::default(),
         None,
         5000,

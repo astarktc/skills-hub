@@ -31,6 +31,8 @@ type SkillsListProps = {
   isDetected: (tool: string) => boolean;
   /** The surface's selection (surface state, D4); the rail lands in ticket 13. */
   selection: ReadonlySet<string>;
+  /** The skill the inspector shows (surface state's `focused`), marked on its row. */
+  focusedId: string | null;
   onToggleSelect: (skillId: string) => void;
   pending: PendingAction | null;
   blockedReason: string | null;
@@ -64,6 +66,7 @@ const SkillsList = ({
   labelOf,
   isDetected,
   selection,
+  focusedId,
   onToggleSelect,
   pending,
   blockedReason,
@@ -108,6 +111,7 @@ const SkillsList = ({
           layout={layout}
           sourceLabel={inlineSource ? skillSourceLine(skill, t).label : null}
           selected={selection.has(skill.id)}
+          focused={focusedId === skill.id}
           onToggleSelect={onToggleSelect}
           pending={pending}
           blockedReason={blockedReason}
@@ -168,6 +172,7 @@ const SkillsList = ({
 
   return (
     <div
+      data-skill-list=""
       className="@container min-h-0 flex-1 overflow-y-auto"
       style={paneStyle}
       aria-label={t("library.list")}

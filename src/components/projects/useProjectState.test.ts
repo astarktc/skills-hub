@@ -1284,3 +1284,30 @@ describe("useProjectState project-assignment verbs (the door's entry points)", (
     expect(callsTo("getProjectView")).toEqual([["p1"]]);
   });
 });
+
+describe("useProjectState reads where one skill is placed", () => {
+  it("reads every project's view — applying nothing — as its Tools and that skill's rows", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi", "cursor"]);
+    await act(async () => {
+      await result.current.bulkAssign("s1");
+      await result.current.bulkAssign("s2");
+    });
+    mockInvoke.mockClear();
+
+    let placement: Awaited<ReturnType<typeof result.current.readSkillPlacement>> = [];
+    await act(async () => {
+      placement = await result.current.readSkillPlacement("s1");
+    });
+
+    expect(commandOrder()).toEqual(["getProjectView"]);
+    expect(placement.map((row) => row.project.id)).toEqual(["p1"]);
+    expect(placement[0].tools.map((tool) => tool.tool)).toEqual(["pi", "cursor"]);
+    expect(placement[0].assignments.map((row) => [row.skill_id, row.tool])).toEqual([
+      ["s1", "pi"],
+      ["s1", "cursor"],
+    ]);
+    // The matrix shown is untouched: it still has both skills.
+    expect(result.current.assignments).toHaveLength(4);
+  });
+});

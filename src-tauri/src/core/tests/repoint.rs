@@ -40,7 +40,10 @@ fn repoint_git(
         paths,
         store,
         skill_id,
-        RepointTarget::Git { url: url.into() },
+        RepointTarget::Git {
+            url: url.into(),
+            selection: None,
+        },
         policy,
         cancel,
         now,
@@ -1014,6 +1017,7 @@ fn an_unknown_skill_is_refused_typed_for_either_target() {
         },
         RepointTarget::Git {
             url: "https://github.com/owner/repo".into(),
+            selection: None,
         },
     ] {
         let err = repoint_skill_source_with(
@@ -1334,7 +1338,10 @@ fn preview(
 }
 
 fn git_target(url: &str) -> RepointTarget {
-    RepointTarget::Git { url: url.into() }
+    RepointTarget::Git {
+        url: url.into(),
+        selection: None,
+    }
 }
 
 fn local_target(folder: &Path) -> RepointTarget {
@@ -1507,6 +1514,131 @@ fn preview_of_a_multi_skill_repo_resolving_the_name_still_offers_the_choice() {
     assert_eq!(answer.subpath.as_deref(), Some("skills/a"));
     assert!(answer.name_matches);
     assert_eq!(answer.candidates.map(|c| c.len()), Some(2));
+}
+
+/// The candidate the operator picked from a multi-skill repository's
+/// preview, as the Re-point dialog sends it back (spec D15, ticket 12): the
+/// repository is on its default branch, so no `/tree/<ref>/` URL could name
+/// the folder — the selection carries it.
+fn picked(answer: &RepointPreview, name: &str) -> crate::core::repoint::RepointSelection {
+    let candidate = answer
+        .candidates
+        .as_ref()
+        .expect("candidates")
+        .iter()
+        .find(|c| c.name == name)
+        .expect("the candidate")
+        .clone();
+    crate::core::repoint::RepointSelection {
+        subpath: candidate.subpath,
+        resolution: candidate.resolution,
+    }
+}
+
+/// Downloads the folder the coordinates name, its manifest named after the
+/// folder's `SKILL.md` in the seeded repository (`skills/b` is `beta`).
+struct SeededFolderApi;
+
+impl GithubApi for SeededFolderApi {
+    fn matching_refs(
+        &self,
+        repo: &crate::core::git_acquisition::GithubRepo,
+        prefix: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        RepointApi.matching_refs(repo, prefix)
+    }
+    fn branch_sha(
+        &self,
+        coords: &crate::core::git_acquisition::GithubCoords,
+    ) -> anyhow::Result<String> {
+        RepointApi.branch_sha(coords)
+    }
+    fn download_directory(
+        &self,
+        coords: &crate::core::git_acquisition::GithubCoords,
+        dest: &Path,
+        _: Option<&CancelToken>,
+    ) -> anyhow::Result<()> {
+        let name = if coords.subpath.ends_with("skills/b") {
+            "beta"
+        } else {
+            "alpha"
+        };
+        fs::create_dir_all(dest)?;
+        fs::write(dest.join("SKILL.md"), format!("---\nname: {name}\n---\n"))?;
+        Ok(())
+    }
+}
+
+#[test]
+fn preview_of_a_picked_candidate_resolves_that_folder_on_the_default_branch() {
+    let f = git_repoint_fixture();
+    seed_repoint_repository(&f, false);
+    let url = "https://github.com/new/repo";
+    let listing = preview(&f, git_target(url), &RepointApi).unwrap();
+    assert_eq!(listing.git_ref, None, "a default-branch clone names no ref");
+    let before = owned_state(&f);
+
+    let answer = preview(
+        &f,
+        RepointTarget::Git {
+            url: url.into(),
+            selection: Some(picked(&listing, "beta")),
+        },
+        &SeededFolderApi,
+    )
+    .unwrap();
+
+    assert_eq!(owned_state(&f), before);
+    assert_no_scratch_left(&f);
+    assert_eq!(answer.resolved_name.as_deref(), Some("beta"));
+    assert_eq!(answer.subpath.as_deref(), Some("skills/b"));
+    assert!(!answer.name_matches, "beta is not alpha");
+    assert!(
+        answer.candidates.is_none(),
+        "the pick is already the choice"
+    );
+}
+
+#[test]
+fn repoint_to_a_picked_candidate_lands_that_folder_and_records_it() {
+    let f = git_repoint_fixture();
+    seed_repoint_repository(&f, false);
+    let url = "https://github.com/new/repo";
+    let listing = preview(&f, git_target(url), &RepointApi).unwrap();
+
+    let report = repoint_skill_source_with(
+        &f.paths,
+        &f.store,
+        &f.skill_id,
+        RepointTarget::Git {
+            url: url.into(),
+            selection: Some(picked(&listing, "beta")),
+        },
+        RefreshPolicy::default(),
+        None,
+        3000,
+        |_| {},
+        &SeededFolderApi,
+    )
+    .unwrap();
+
+    assert!(
+        matches!(
+            report.skills[0].status,
+            SkillRefreshStatus::Refreshed { .. }
+        ),
+        "{report:?}"
+    );
+    let after = record(&f);
+    assert_eq!(after.name, "alpha", "a Re-point keeps the skill's name");
+    assert_eq!(after.source_ref.as_deref(), Some(url));
+    assert_eq!(after.source_subpath.as_deref(), Some("skills/b"));
+    assert!(
+        fs::read_to_string(Path::new(&after.central_path).join("SKILL.md"))
+            .unwrap()
+            .contains("name: beta")
+    );
 }
 
 #[test]

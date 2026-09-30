@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { useTranslation } from "react-i18next";
 // The binder mounts the token-themed Toaster once; useStatusReporter makes
@@ -7,7 +7,9 @@ import { Toaster } from "@/components/ui/sonner";
 import { mainLandmarkFocus } from "@/components/ui/focus-fallback";
 import ExplorePage from "./components/skills/ExplorePage";
 import FilterBar from "./components/skills/FilterBar";
-import SkillDetailView, { type DetailSubject } from "./components/skills/SkillDetailView";
+import ExplorePreviewView from "./components/skills/ExplorePreviewView";
+import SkillInspector from "./components/skills/inspector/SkillInspector";
+import { useInspectorTabOrder } from "./components/skills/inspector/useInspectorTabOrder";
 import AppSidebar from "./components/shell/AppSidebar";
 import LibraryHeader from "./components/skills/LibraryHeader";
 import LoadingOverlay from "./components/skills/LoadingOverlay";
@@ -15,7 +17,9 @@ import SkillsList from "./components/skills/SkillsList";
 import NotificationsModal from "./components/shared/NotificationsModal";
 import AddSkillModal from "./components/skills/modals/AddSkillModal";
 import DeleteModal from "./components/skills/modals/DeleteModal";
-import ChangeSourceModal from "./components/skills/modals/ChangeSourceModal";
+import RepointModal from "./components/skills/modals/RepointModal";
+import DetachModal from "./components/skills/modals/DetachModal";
+import AssignProjectModal from "./components/skills/modals/AssignProjectModal";
 import InvocationModeModal from "./components/skills/modals/InvocationModeModal";
 import GitPickModal from "./components/skills/modals/GitPickModal";
 import LocalPickModal from "./components/skills/modals/LocalPickModal";
@@ -38,6 +42,7 @@ import { useSyncOrchestration } from "./hooks/useSyncOrchestration";
 import { useToolCatalog } from "./hooks/useToolCatalog";
 import { useAppUpdate } from "./hooks/useAppUpdate";
 import { useListLens } from "./hooks/useListLens";
+import { SHELL_WIDE_QUERY, useMediaQuery } from "./hooks/useMediaQuery";
 import {
   useFocusReconciliation,
   useSurfaceState,
@@ -48,8 +53,14 @@ import {
   groupByRepoPreference,
   viewModePreference,
 } from "./lib/preferences";
-import { invokeTauri, isTauri } from "./lib/tauri";
-import { describeRefusal, resolveFocusTarget } from "./lib/actionLifecycle";
+import { isTauri } from "./lib/tauri";
+import {
+  describeRefusal,
+  dialogFallback,
+  resolveFirst,
+  resolveFocusTarget,
+  showsProgressSurface,
+} from "./lib/actionLifecycle";
 import { SKILL_FILTERS, libraryExceptions } from "./lib/skillPresentation";
 import type { ManagedSkill } from "./components/skills/types";
 
@@ -221,21 +232,13 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [area]);
 
-  // What the detail shows: the focused Managed skill, or the Explore preview.
+  // What the inspector shows: the focused Managed skill (a selection beside
+  // the list, D3); an Explore preview replaces Explore's list.
   const focusedSkill =
     focused?.kind === "skill"
       ? (library.managedSkills.find((skill) => skill.id === focused.id) ?? null)
       : null;
   const explorePreview = focused?.kind === "explore" ? focused.ref : null;
-  const detailSubject = useMemo<DetailSubject | null>(
-    () =>
-      explorePreview
-        ? { kind: "explore", preview: explorePreview }
-        : focusedSkill
-          ? { kind: "managed", skill: focusedSkill }
-          : null,
-    [explorePreview, focusedSkill],
-  );
 
   // The Projects tab returns to the project the world still holds (its
   // matrix is loaded), as a real navigation; every other tab opens its area.
@@ -249,8 +252,15 @@ function App() {
     [focus, open, selectedProjectId],
   );
 
-  // Opening a skill from its row moves focus into what replaced the list
-  // (the detail's first control until ticket 12's inspector), never <body>.
+  // The inspector (D3, D23): beside the list at and above the shell
+  // breakpoint, a sheet over it below. Opening from a row leaves focus on the
+  // row (Tab enters the inspector after it); arriving without a row (a deep
+  // link, history) — or a resize that reparents a focused inspector — puts
+  // focus on the inspector's heading; closing returns it to the row.
+  const wide = useMediaQuery(SHELL_WIDE_QUERY);
+  const placement = wide ? "side" : "sheet";
+  const focusedSkillId = focused?.kind === "skill" ? focused.id : null;
+  const handleCloseDetail = unfocus;
   const openedFromRow = useRef(false);
   const handleOpenDetail = useCallback(
     (skill: ManagedSkill) => {
@@ -259,39 +269,157 @@ function App() {
     },
     [focus],
   );
+  const focusInspectorHeading = useCallback((skillId: string) => {
+    const heading = document.querySelector<HTMLElement>(`[data-inspector-heading="${CSS.escape(skillId)}"]`);
+    heading?.focus();
+    return heading !== null;
+  }, []);
 
-  // Leaving a skill — Back, Escape or browser history — returns focus to its
-  // row (D21: the sheet closes → the focused row), when focus was left inside
-  // the closed detail (now <body>).
-  const focusedSkillId = focused?.kind === "skill" ? focused.id : null;
-  const handleCloseDetail = unfocus;
+  // The sheet never opens underneath the progress overlay: two modal layers
+  // opened in that order (overlay first) fight over focus and starve the
+  // page. An arrival — a deep link at startup — waits for the overlay to
+  // close (ticket 14 retires the overlay); a sheet already open simply has
+  // the overlay above it. Derived state, latched during render.
+  const progressShowing = showsProgressSurface(reporter.pending);
+  const [sheetOpenFor, setSheetOpenFor] = useState<string | null>(null);
+  if (sheetOpenFor !== focusedSkillId && (!progressShowing || focusedSkillId === null)) {
+    setSheetOpenFor(focusedSkillId);
+  }
+  const inspectorMounted = placement === "side" || (focusedSkillId !== null && sheetOpenFor === focusedSkillId);
+
+  // Files expanded to the full width, per skill: another skill opens collapsed.
+  const [expandedFilesOf, setExpandedFilesOf] = useState<string | null>(null);
+  const filesExpanded = focusedSkillId !== null && expandedFilesOf === focusedSkillId;
+  const filesCover = filesExpanded && placement === "side";
+  const setFilesExpanded = useCallback(
+    (expanded: boolean) => setExpandedFilesOf(expanded ? focusedSkillId : null),
+    [focusedSkillId],
+  );
+
+  // The operator's last key or pointer press: a focus placement the app
+  // makes on its own never overrides one made after it.
+  const lastInteraction = useRef(0);
+  useEffect(() => {
+    const mark = () => {
+      lastInteraction.current += 1;
+    };
+    window.addEventListener("keydown", mark, true);
+    window.addEventListener("pointerdown", mark, true);
+    return () => {
+      window.removeEventListener("keydown", mark, true);
+      window.removeEventListener("pointerdown", mark, true);
+    };
+  }, []);
+
+  // Keyed on the skill the inspector shows (a deep link's skill appears once
+  // the catalog lands), not on the address alone.
+  const shownSkillId = focusedSkill?.id ?? null;
   const lastFocusedSkill = useRef<string | null>(null);
   useEffect(() => {
     const left = lastFocusedSkill.current;
-    lastFocusedSkill.current = focusedSkillId;
-    if (focusedSkillId) {
+    lastFocusedSkill.current = shownSkillId;
+    const isLost = (active: Element | null) =>
+      !active || active === document.body || active.tagName === "MAIN";
+    // A layer that holds focus now (the startup progress overlay) is waited
+    // out: when it closes, focus it left nowhere is placed.
+    // The layer's own focus return lands a frame or two after it leaves the
+    // DOM (on the main landmark when it had no opener), so a placement is
+    // re-checked for a few frames.
+    // Until the operator acts (a key or a pointer), a placement also
+    // overrides where such a layer put focus on its own.
+    const since = lastInteraction.current;
+    const whenSettled = (place: () => void, frames = 90, guard = 0) => {
+      const active = document.activeElement;
+      if (active?.closest("[role='dialog'], [role='alertdialog']") && frames > 0) {
+        window.requestAnimationFrame(() => whenSettled(place, frames - 1, guard));
+        return;
+      }
+      const untouched = lastInteraction.current === since;
+      if (isLost(active) || (untouched && !active?.closest("[data-inspector]"))) place();
+      if (guard < 6 && untouched) window.requestAnimationFrame(() => whenSettled(place, 0, guard + 1));
+    };
+    if (shownSkillId) {
       const fromRow = openedFromRow.current;
       openedFromRow.current = false;
-      // From the row, or arriving by history with focus lost to <body>.
-      if (!fromRow && document.activeElement && document.activeElement !== document.body) return;
-      const main = document.querySelector("main");
-      (main?.querySelector<HTMLElement>("button, a[href]") ?? mainLandmarkFocus())?.focus();
+      // The sheet moves focus in itself (its heading); beside the list, a
+      // row keeps it, and an arrival with focus nowhere takes the heading.
+      if (placement === "side" && !fromRow) {
+        window.requestAnimationFrame(() =>
+          whenSettled(() => {
+            if (!focusInspectorHeading(shownSkillId)) mainLandmarkFocus()?.focus();
+          }),
+        );
+      }
       return;
     }
-    if (!left || (document.activeElement && document.activeElement !== document.body)) return;
-    resolveFocusTarget({ kind: "row", skillId: left })?.focus();
+    if (left) whenSettled(() => resolveFocusTarget({ kind: "row", skillId: left })?.focus());
+  }, [focusInspectorHeading, shownSkillId, placement]);
+
+  // A resize across the breakpoint reparents the inspector (aside ↔ sheet):
+  // focus that was inside it goes to the new place's heading (D23).
+  const focusWasInInspector = useRef(false);
+  useEffect(() => {
+    const onFocusIn = (event: FocusEvent) => {
+      focusWasInInspector.current =
+        event.target instanceof Element && event.target.closest("[data-inspector]") !== null;
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, []);
+  const lastPlacement = useRef(placement);
+  useEffect(() => {
+    if (lastPlacement.current === placement) return;
+    lastPlacement.current = placement;
+    if (!focusedSkillId || !focusWasInInspector.current) return;
+    // The sheet focuses its heading as it opens; the aside needs a hand.
+    if (placement === "side") {
+      const id = focusedSkillId;
+      window.setTimeout(() => focusInspectorHeading(id), 0);
+    }
+  }, [focusInspectorHeading, focusedSkillId, placement]);
+  // The sheet closing returns to the focused row — unless it closed because
+  // the window widened and the inspector moved beside the list.
+  const sheetFinalFocus = useCallback((): HTMLElement | boolean => {
+    if (window.matchMedia?.(SHELL_WIDE_QUERY).matches) return false;
+    const left = lastFocusedSkill.current ?? focusedSkillId;
+    return (left ? resolveFocusTarget({ kind: "row", skillId: left }) : null) ?? true;
   }, [focusedSkillId]);
+
+  useInspectorTabOrder(focusedSkillId, placement === "side" && !filesExpanded);
+
+  // A skill dialog whose opener is gone when it closes (Re-point, Detach and
+  // Edit remove the control that opened them) returns focus by D21's chain:
+  // the focused row, then the surface heading.
+  const skillDialogFallback = useCallback(
+    () => resolveFirst(dialogFallback({ focusedSkillId, surface: "skills" })),
+    [focusedSkillId],
+  );
+
+  // Escape beside the list: collapse expanded Files first, then close the
+  // inspector (the sheet's Escape is the Dialog's own).
   const layerOpen = surface.stack.length > 0;
   useEffect(() => {
-    if (!focusedSkillId || layerOpen) return;
+    if (!focusedSkillId || layerOpen || placement !== "side") return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       if (document.querySelector("[role='dialog'], [role='alertdialog'], [role='menu']")) return;
+      if (filesExpanded) {
+        setExpandedFilesOf(null);
+        window.setTimeout(() => document.querySelector<HTMLElement>("[data-files-toggle]")?.focus(), 0);
+        return;
+      }
       handleCloseDetail();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [focusedSkillId, handleCloseDetail, layerOpen]);
+  }, [filesExpanded, focusedSkillId, handleCloseDetail, layerOpen, placement]);
+
+  // Project Tool labels for the inspector's Projects section and the picker.
+  const { projectToolStatus, loadProjectToolStatus } = catalog;
+  useEffect(() => {
+    if (!focusedSkillId || projectToolStatus || !isTauri) return;
+    void loadProjectToolStatus().catch(() => undefined);
+  }, [focusedSkillId, loadProjectToolStatus, projectToolStatus]);
 
   const { handleOpenAdd, setAddModalTab } = addFlow;
   const handleAddGit = useCallback(() => {
@@ -311,7 +439,7 @@ function App() {
   const discoveryLeads = (addFlow.plan?.group_count ?? 0) >= Math.max(1, librarySize);
 
   const { handleExploreInstall } = addFlow;
-  const handleExploreInstallFromDetail = useCallback(() => {
+  const handleExploreInstallFromPreview = useCallback(() => {
     if (!explorePreview) return;
     handleExploreInstall(explorePreview.sourceUrl);
     unfocus();
@@ -384,56 +512,79 @@ function App() {
       />
 
       <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {detailSubject ? (
-          <SkillDetailView
-            subject={detailSubject}
-            actions={actions}
-            blockedReason={blockedReason}
-            onBack={detailSubject.kind === "managed" ? handleCloseDetail : unfocus}
-            invokeTauri={invokeTauri}
-            notify={notify}
+        {explorePreview ? (
+          <ExplorePreviewView
+            preview={explorePreview}
+            onBack={unfocus}
+            onInstall={handleExploreInstallFromPreview}
             t={t}
-            onInstall={
-              detailSubject.kind === "explore"
-                ? handleExploreInstallFromDetail
-                : undefined
-            }
           />
         ) : area === "skills" ? (
-          <>
-            <LibraryHeader
-              librarySize={librarySize}
-              exceptions={exceptions}
-              onViewIssues={handleViewIssues}
-              blockedReason={blockedReason}
-              onRefreshAll={() => void run("update", "all")}
-              onConfigureTools={sync.handleOpenToolConfig}
-              onAddSkill={handleOpenAdd}
-              addIsPrimary={!discoveryLeads}
-              t={t}
-            />
-            {librarySize > 0 ? <FilterBar lens={lens} t={t} /> : null}
-            <SkillsList
-              lens={lens}
-              librarySize={librarySize}
-              plan={addFlow.plan}
-              stripTools={stripTools}
-              labelOf={labelOfTool}
-              isDetected={isToolDetected}
-              selection={surface.selection.skills}
-              onToggleSelect={toggleSkillSelection}
-              pending={pending}
-              blockedReason={blockedReason}
-              actions={actions}
-              onOpen={handleOpenDetail}
-              onReviewImport={addFlow.handleReviewImport}
-              discoveryLeads={discoveryLeads}
-              onAddGit={handleAddGit}
-              onAddLocal={handleAddLocal}
-              onExplore={handleOpenExplore}
-              t={t}
-            />
-          </>
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            {/* Header and filters span My Skills; the inspector sits beside
+                the list below them (its right third). Expanded Files covers
+                the whole area in place: what it covers stays mounted — the
+                list's scroll, the focused row — and inert. */}
+            <div className="flex shrink-0 flex-col" inert={filesCover}>
+              <LibraryHeader
+                librarySize={librarySize}
+                exceptions={exceptions}
+                onViewIssues={handleViewIssues}
+                blockedReason={blockedReason}
+                onRefreshAll={() => void run("update", "all")}
+                onConfigureTools={sync.handleOpenToolConfig}
+                onAddSkill={handleOpenAdd}
+                addIsPrimary={!discoveryLeads}
+                t={t}
+              />
+              {librarySize > 0 ? <FilterBar lens={lens} t={t} /> : null}
+            </div>
+            <div className="flex min-h-0 flex-1">
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col" inert={filesCover}>
+                <SkillsList
+                  lens={lens}
+                  librarySize={librarySize}
+                  plan={addFlow.plan}
+                  stripTools={stripTools}
+                  labelOf={labelOfTool}
+                  isDetected={isToolDetected}
+                  selection={surface.selection.skills}
+                  focusedId={focusedSkillId}
+                  onToggleSelect={toggleSkillSelection}
+                  pending={pending}
+                  blockedReason={blockedReason}
+                  actions={actions}
+                  onOpen={handleOpenDetail}
+                  onReviewImport={addFlow.handleReviewImport}
+                  discoveryLeads={discoveryLeads}
+                  onAddGit={handleAddGit}
+                  onAddLocal={handleAddLocal}
+                  onExplore={handleOpenExplore}
+                  t={t}
+                />
+              </div>
+              {focusedSkill && inspectorMounted ? (
+                <SkillInspector
+                  key={`${focusedSkill.id}:${placement}`}
+                  skill={focusedSkill}
+                  placement={placement}
+                  stripTools={stripTools}
+                  labelOf={labelOfTool}
+                  isDetected={isToolDetected}
+                  actions={actions}
+                  blockedReason={blockedReason}
+                  readSkillPlacement={projects.readSkillPlacement}
+                  projectCount={projects.projects.length}
+                  copyToClipboard={copyToClipboard}
+                  filesExpanded={filesExpanded}
+                  onFilesExpandedChange={setFilesExpanded}
+                  onClose={handleCloseDetail}
+                  sheetFinalFocus={sheetFinalFocus}
+                  t={t}
+                />
+              ) : null}
+            </div>
+          </div>
         ) : area === "settings" ? (
           <SettingsPage
             isTauri={isTauri}
@@ -585,34 +736,61 @@ function App() {
         t={t}
       />
 
-      {library.invocationEditSkill ? (
-        <InvocationModeModal
-          key={library.invocationEditSkill.id}
-          skill={library.invocationEditSkill}
-          loading={loading}
-          onRequestClose={library.closeInvocationEdit}
-          onConfirm={(mode) => {
-            if (library.invocationEditSkill) void run("editInvocation", [library.invocationEditSkill], { mode });
-          }}
-          t={t}
-        />
-      ) : null}
+      <InvocationModeModal
+        skill={library.invocationEditSkill}
+        loading={loading}
+        onRequestClose={library.closeInvocationEdit}
+        fallbackFocus={skillDialogFallback}
+        onConfirm={(mode) => {
+          if (library.invocationEditSkill) void run("editInvocation", [library.invocationEditSkill], { mode });
+        }}
+        t={t}
+      />
 
-      {library.pendingRepointSkill && library.repointSelection ? (
-        <ChangeSourceModal
-          key={`${library.pendingRepointSkill.id}:${library.repointSelection.preselect}`}
-          skillName={library.pendingRepointSkill.name}
-          source={library.pendingRepointSkill}
-          preselect={library.repointSelection.preselect}
-          loading={loading}
-          onRequestClose={library.handleCloseRepoint}
-          onPickFolder={library.pickRepointFolder}
-          onConfirm={(target) => {
-            if (library.pendingRepointSkill) void run("repoint", [library.pendingRepointSkill], { target });
-          }}
-          t={t}
-        />
-      ) : null}
+      <RepointModal
+        request={
+          library.pendingRepointSkill && library.repointSelection
+            ? { skill: library.pendingRepointSkill, preselect: library.repointSelection.preselect }
+            : null
+        }
+        loading={loading}
+        previewRepoint={library.previewRepoint}
+        onRequestClose={library.handleCloseRepoint}
+        onPickFolder={library.pickRepointFolder}
+        fallbackFocus={skillDialogFallback}
+        onConfirm={(target) => {
+          if (library.pendingRepointSkill) void run("repoint", [library.pendingRepointSkill], { target });
+        }}
+        t={t}
+      />
+
+      <DetachModal
+        skill={library.pendingDetachSkill}
+        loading={loading}
+        onRequestClose={library.handleCloseDetach}
+        fallbackFocus={skillDialogFallback}
+        onConfirm={() => {
+          if (library.pendingDetachSkill) void run("detach", [library.pendingDetachSkill], { confirmed: true });
+        }}
+        t={t}
+      />
+
+      <AssignProjectModal
+        skill={library.assignProjectSkill}
+        loading={loading}
+        readSkillPlacement={projects.readSkillPlacement}
+        labelOf={labelOfTool}
+        onRequestClose={library.handleCloseAssignProject}
+        onConfirm={(projectId) => {
+          const skill = library.assignProjectSkill;
+          if (!skill) return;
+          void (async () => {
+            await run("assignToProject", [skill], { projectId });
+            dismissDialog("assignProject");
+          })();
+        }}
+        t={t}
+      />
 
       <DeleteModal
         open={surface.isOpen("deleteSkill")}

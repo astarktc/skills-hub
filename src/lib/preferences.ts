@@ -36,3 +36,13 @@ export const themePreference = unionPreference(
 export const ignoredUpdateVersionPreference = stringPreference(
   "skills-ignored-update-version",
 );
+
+/**
+ * The inspector's Targets section: the per-Tool list (default, D22) or the
+ * click-to-sync grid behind its toggle. New in round 19 (ticket 12).
+ */
+export const inspectorTargetsViewPreference = unionPreference(
+  "skills-inspector-targetsView",
+  ["list", "grid"] as const,
+  "list",
+);

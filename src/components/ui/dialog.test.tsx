@@ -449,3 +449,34 @@ describe("ConfirmDialog", () => {
     expect(screen.queryByRole("button", { name: "close" })).toBeNull();
   });
 });
+
+describe("Dialog placed as a sheet", () => {
+  function Sheet() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>
+          Open docx
+        </button>
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogContent placement="sheet" showCloseButton={false} aria-labelledby="sheet-heading">
+            <h2 id="sheet-heading">docx</h2>
+            <button type="button">Restore</button>
+          </DialogContent>
+        </Dialog>
+      </>
+    );
+  }
+
+  it("keeps the dialog contract: named by its own heading, Escape closes, focus returns", async () => {
+    render(<Sheet />);
+    const trigger = screen.getByRole("button", { name: "Open docx" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const sheet = await openedDialog("docx");
+    expect(sheet.dataset.placement).toBe("sheet");
+    pressEscape();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+});

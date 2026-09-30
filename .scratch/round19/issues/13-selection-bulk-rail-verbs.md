@@ -43,3 +43,11 @@ them → Enable re-syncs; select-all → Disable on all Tools confirmation shows
 ## Comments
 
 - 2026-09-29 — from ticket 09: the door (`useSkillActions.run(verb, skills | ids | "all", opts)`) exists; a verb called without its confirming option opens its dialog. Count-bearing confirmations need a new ask kind in `useSurfaceState` (04 owned the ask kinds this round; add `{kind:'confirm-count', …}` here). The toolbar's library-wide Disable still has no confirmation until this ticket lands. Ticket 03 left project/removal/disable-all/delete/enable toasts on their old sentences — move them to the count line here with the rail.
+
+- 2026-09-30 — from ticket 12: the inspector is the focused skill (surface `focused`), the rail acts on
+  `selection.skills` — they are independent. A checked row shows `raised`; the focused row adds `aria-current` and a
+  1 px inset `ring` edge, so both can coexist. `useInspectorTabOrder` moves Tab from the focused row's last control
+  into the inspector (and back): if the rail inserts controls into a row, keep the row's last tabbable last, or adjust
+  the hook. `run("assignToProject", ids)` without `projectId` opens the picker for **one** skill only (the dialog
+  holds a `skillId`); the rail's multi-skill assign should pass `projectId` from its own picker or widen the dialog
+  kind. Detach now confirms (`detach` without `confirmed` opens `detachSkill`).

@@ -46,3 +46,12 @@ reduced-motion emulation via CSS coverage (no `animation` without a `motion-redu
 - 2026-09-29 — from tickets 03/09/10: `useNotificationHistory.recordRun(headline, entries)` is called by the reporter's `applyOutcome` (one block per run); the reporter exposes `pending { kind, id? }` and the batch `{ label, done, total, cancellable }` — the `LoadingOverlay` still renders it; replace with the header progress here. `useAppUpdate` feeds the passive title-bar affordance. Focus gap to close: an overwrite ask opened mid-action and then closed does not return focus to the triggering control.
 
 - 2026-09-29 — from ticket 11's audit re-check (Astra, `review/ticket-11-audit.md` § Re-check Q4): an **unanswered `TARGET_EXISTS` row after a dismissed overwrite ask currently folds as a failure** ("Sync failed … Target folder already exists" toast, error tone) — it must fold as **conflict / "to review"** (or a quiet dismissal), never `failed`, per D10/D12 ("a dismissed ask sends nothing"; `declined`/`cancelled` are outcome kinds, never failures). Preserve: no retry, no implicit Keep, the pair stays as it was. The fold lives in `src/lib/reportOutcome.ts` (09's `compositeHeadline` / conflict completion) — do the semantic correction here in 14 since 09 is closed, with a pure-fold unit test; the notification history block then shows the "to review" kind.
+
+- 2026-09-30 — from ticket 12: while the `LoadingOverlay` lives, the door's `restoreFocus` waits for it and holds the
+  D21 target for ~12 frames against the overlay's late focus return (`useSkillActions.ts`); App's arrival/close
+  placement does the same (`whenSettled`). Retiring the overlay should let both shrink. A modal sheet (the inspector
+  < 1200) must not open *under* the overlay — App latches the sheet until progress clears (`sheetOpenFor`); header
+  progress makes that latch unnecessary. The Dialog primitive now returns focus to its opener in Chrome (it was
+  judged while its own `inert` was on) — a layer opened with focus nowhere returns nowhere. The Targets section's
+  "Removed from {Tool} · Undo" is a 5 s inline affordance (`UNDO_WINDOW_MS`), not a toast; keep it out of the run's
+  notification block or record the Undo as its own run.

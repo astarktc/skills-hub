@@ -65,6 +65,8 @@ export type DialogState =
   | { kind: "deleteSkill"; skillId: string }
   | { kind: "invocationEdit"; skillId: string }
   | { kind: "repoint"; skillId: string; name: string; preselect: RepointKind }
+  | { kind: "detachSkill"; skillId: string }
+  | { kind: "assignProject"; skillId: string }
   // Tools + sync world
   | { kind: "toolConfig" }
   | { kind: "newTools" }
@@ -223,6 +225,8 @@ const subjectOf = (layer: DialogLayer): { kind: "skill" | "project"; id: string 
     case "deleteSkill":
     case "invocationEdit":
     case "repoint":
+    case "detachSkill":
+    case "assignProject":
       return { kind: "skill", id: layer.skillId };
     case "projectEdit":
     case "projectRemove":

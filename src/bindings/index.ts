@@ -1150,16 +1150,30 @@ export type RepointPreview = {
 };
 
 /**
+ *  A candidate picked from a multi-skill repository's listing (a preview's
+ *  `candidates`): its repo-relative folder and the listing's branch decision,
+ *  a deliberate default branch included. A URL cannot carry the latter — a
+ *  repository cloned on its default branch has no branch name to put in a
+ *  `/tree/<ref>/` link — so the choice crosses the wire as itself, exactly
+ *  as Add's install batch carries it (`GitSelection`).
+ */
+export type RepointSelection = {
+	subpath: string,
+	resolution: GitSourceResolution | null,
+};
+
+/**
  *  Where a Re-point sends a skill. Crosses the wire as itself:
- *  `{ kind: "git", url }` or `{ kind: "local", path }`.
+ *  `{ kind: "git", url, selection? }` or `{ kind: "local", path }`.
  */
 export type RepointTarget = 
 /**
  *  A full GitHub repository or skill URL — HTTP, HTTPS or schemeless
  *  `github.com/…`, tree/blob links and a `.git` suffix; not `owner/repo`
- *  shorthand. Stored as given (trimmed).
+ *  shorthand. Stored as given (trimmed). `selection` names the candidate
+ *  the operator picked when the URL is a multi-skill repository.
  */
-{ kind: "git"; url: string } | 
+{ kind: "git"; url: string; selection?: RepointSelection | null } | 
 /**
  *  A skill folder outside every Tool's skills directory, as the operator
  *  typed or picked it; `~` expands against the operator's home.

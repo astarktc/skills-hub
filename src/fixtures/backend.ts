@@ -1727,7 +1727,11 @@ export function createFixtureBackend(
         const repo = state.repos.find((r) => r.slug.toLowerCase() === parsed.slug.toLowerCase());
         if (!repo) return refused({ code: "GIT_CLONE_FAILED", kind: "notFound", detail: `remote: Repository not found (${parsed.slug})` });
         if (repo.listingError) return refused(repo.listingError);
-        const pick = parsed.subpath
+        // A candidate the operator picked (Rust `RepointSelection`) is that folder.
+        const chosen = target.kind === "git" ? (target.selection?.subpath ?? null) : null;
+        const pick = chosen
+          ? repo.candidates.find((c) => c.subpath === chosen)
+          : parsed.subpath
           ? repo.candidates.find((c) => c.subpath === parsed.subpath)
           : repo.candidates.length === 1
             ? repo.candidates[0]
@@ -1782,6 +1786,15 @@ export function createFixtureBackend(
       await pause(500);
       if (state.cancelRequested) fail({ code: "CANCELLED" });
       const { repo } = findRepo(target.url);
+      if (target.selection) {
+        // A picked candidate (Rust `RepointSelection`): acquired as that
+        // folder, on the listing's branch — the pick is already the choice.
+        const chosen = target.selection.subpath;
+        const pick =
+          repo.candidates.find((c) => c.subpath === chosen) ?? fail({ code: "SUBPATH_MISSING", subpath: chosen });
+        const branch = target.selection.resolution?.branch ?? parsed.branch;
+        return { resolved_name: pick.name, ref: branch, subpath: pick.subpath, name_matches: sameName(pick.name), candidates: null };
+      }
       if (parsed.subpath) {
         // The fast path: a named folder, on the named (or assumed) branch.
         const branch = parsed.branch ?? "main";

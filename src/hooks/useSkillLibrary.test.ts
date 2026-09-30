@@ -7,6 +7,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ManagedSkill } from "../components/skills/types";
 import type { SkillLibraryDeps } from "./useSkillLibrary";
+import type { StatusReporter } from "./useStatusReporter";
 
 vi.mock("../lib/tauri", () => ({
   isTauri: true,
@@ -73,7 +74,15 @@ function makeDeps(skills: ManagedSkill[] = [skill("s1", "alpha")]) {
   mockInvoke.mockImplementation((command) =>
     Promise.resolve(command === "getManagedSkills" ? skills : null),
   );
-  const reporter = { loading: false, notify: vi.fn(), notifyError: vi.fn() };
+  const reporter = {
+    loading: false,
+    notify: vi.fn(),
+    notifyError: vi.fn(),
+    // The lifecycle stand-in: run the body once, answer its value.
+    runAction: vi.fn(async (_opts: unknown, body: (action: unknown) => Promise<unknown>) =>
+      body({}),
+    ) as unknown as StatusReporter["runAction"],
+  };
   return { deps: { t, reporter }, reporter, skills };
 }
 
@@ -213,5 +222,42 @@ describe("Change source's folder button", () => {
     });
     expect(picked).toBeNull();
     expect(setup.reporter.notifyError).toHaveBeenCalledWith(failure);
+  });
+});
+
+describe("the Re-point preview (D15)", () => {
+  it("is a cancellable read under the lifecycle, answering the resolved target", async () => {
+    const setup = makeDeps();
+    const preview = { resolved_name: "beta", ref: "main", subpath: "skills/b", name_matches: false, candidates: null };
+    mockInvoke.mockImplementation((command) =>
+      Promise.resolve(command === "getManagedSkills" ? setup.skills : command === "previewRepointSource" ? preview : null),
+    );
+    const { result } = await renderLibrary(setup);
+    let answer: unknown;
+    await act(async () => {
+      answer = await result.current.previewRepoint("s1", { kind: "git", url: "https://github.com/o/r" });
+    });
+    expect(answer).toEqual({ kind: "preview", preview });
+    expect(mockInvoke).toHaveBeenCalledWith("previewRepointSource", "s1", { kind: "git", url: "https://github.com/o/r" });
+    expect(setup.reporter.runAction).toHaveBeenCalledWith(
+      expect.objectContaining({ read: true, cancel: "previewRepointSource", subject: { kind: "skill", id: "s1" } }),
+      expect.any(Function),
+    );
+  });
+
+  it("answers a refusal as a typed value for the field, never a notification", async () => {
+    const setup = makeDeps();
+    const refusal = { code: "INVALID_GITHUB_URL", url: "owner/repo" };
+    mockInvoke.mockImplementation((command) =>
+      command === "previewRepointSource" ? Promise.reject(refusal) : Promise.resolve(command === "getManagedSkills" ? setup.skills : null),
+    );
+    const { result } = await renderLibrary(setup);
+    let answer: unknown;
+    await act(async () => {
+      answer = await result.current.previewRepoint("s1", { kind: "git", url: "owner/repo" });
+    });
+    expect(answer).toEqual({ kind: "error", error: refusal });
+    expect(setup.reporter.notify).not.toHaveBeenCalled();
+    expect(setup.reporter.notifyError).not.toHaveBeenCalled();
   });
 });

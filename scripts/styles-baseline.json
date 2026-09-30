@@ -1,6 +1,6 @@
 {
   "$comment": "Baseline for scripts/check-styles.mjs (ADR-0006 §6). appCssCeiling: App.css's non-blank, non-comment line count — lower it in the same change that shrinks App.css; null once App.css is deleted. migrated: files whose surface has migrated (they may reference no App.css class) — append, never remove. rawColourExempt: files excused from the raw-colour rule, each with its reason.",
-  "appCssCeiling": 2316,
+  "appCssCeiling": 2076,
   "migrated": [
     "src/App.tsx",
     "src/components/shell/AppSidebar.tsx",
@@ -8,7 +8,21 @@
     "src/components/skills/FilterBar.tsx",
     "src/components/skills/SkillsList.tsx",
     "src/components/skills/SkillRow.tsx",
-    "src/components/skills/SyncedStrip.tsx"
+    "src/components/skills/SyncedStrip.tsx",
+    "src/components/skills/inspector/SkillInspector.tsx",
+    "src/components/skills/inspector/InspectorSection.tsx",
+    "src/components/skills/inspector/HealthSection.tsx",
+    "src/components/skills/inspector/TargetsSection.tsx",
+    "src/components/skills/inspector/SourceSection.tsx",
+    "src/components/skills/inspector/EditsSection.tsx",
+    "src/components/skills/inspector/ProjectsSection.tsx",
+    "src/components/skills/inspector/FilesSection.tsx",
+    "src/components/skills/SkillFiles.tsx",
+    "src/components/skills/StripMarkIcon.tsx",
+    "src/components/skills/ExplorePreviewView.tsx",
+    "src/components/skills/modals/RepointModal.tsx",
+    "src/components/skills/modals/DetachModal.tsx",
+    "src/components/skills/modals/AssignProjectModal.tsx"
   ],
   "rawColourExempt": [
     {

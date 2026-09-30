@@ -183,7 +183,8 @@ const focusable = (element: Element | null): HTMLElement | null =>
 
 /**
  * The element a target names, or null when it is not on screen. Rows carry
- * `data-skill-row`, health rows `data-skill-health`, headings
+ * `data-skill-row`, health rows `data-inspector-health` (the inspector's
+ * Health section) or `data-skill-health` (the row's marks), headings
  * `data-surface-heading`; a heading that is not there yet falls back to the
  * main landmark (never `<body>`).
  */
@@ -200,7 +201,12 @@ export function resolveFocusTarget(
     case "row":
       return focusable(document.querySelector(`[data-skill-row="${escape(target.skillId)}"]`));
     case "health":
-      return focusable(document.querySelector(`[data-skill-health="${escape(target.skillId)}"]`));
+      // The inspector's Health section when it is showing the skill, else
+      // the row's exception marks.
+      return focusable(
+        document.querySelector(`[data-inspector-health="${escape(target.skillId)}"]`) ??
+          document.querySelector(`[data-skill-health="${escape(target.skillId)}"]`),
+      );
     case "heading":
       return (
         focusable(document.querySelector(`[data-surface-heading="${target.surface}"]`)) ??

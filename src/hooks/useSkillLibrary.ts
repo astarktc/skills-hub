@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ManagedSkill } from "../components/skills/types";
+import type { CommandError } from "../bindings";
+import type { ManagedSkill, RepointPreview, RepointTarget } from "../components/skills/types";
+import { toCommandError } from "../commandError";
 import { pickFolder } from "../lib/platform";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import type { DialogDoor } from "./useSurfaceState";
@@ -7,12 +9,21 @@ import type { StatusReporter, TranslateFn } from "./useStatusReporter";
 
 export type SkillLibraryDeps = {
   t: TranslateFn;
-  reporter: Pick<StatusReporter, "loading" | "notify" | "notifyError">;
+  reporter: Pick<StatusReporter, "loading" | "notify" | "notifyError" | "runAction">;
   /** The surface module: Delete, Invocation edit and Change source are its dialogs. */
   surface: Pick<DialogDoor, "layer" | "closeDialog" | "dismissDialog">;
 };
 
 const NO_SKILLS: ManagedSkill[] = [];
+
+/**
+ * What a Re-point preview answered: the target resolved (D15), or the typed
+ * refusal the dialog shows beside its field — never a toast over it.
+ * `undefined` from `previewRepoint`: the read did not run (disposed / stale).
+ */
+export type RepointPreviewAnswer =
+  | { kind: "preview"; preview: RepointPreview }
+  | { kind: "error"; error: CommandError };
 
 /**
  * Skill library world: the managed-skill catalog and which skill each of
@@ -23,7 +34,7 @@ const NO_SKILLS: ManagedSkill[] = [];
  * reloads it (`loadManagedSkills`).
  */
 export function useSkillLibrary({ t, reporter, surface }: SkillLibraryDeps) {
-  const { loading, notify, notifyError } = reporter;
+  const { loading, notify, notifyError, runAction } = reporter;
   const { layer, closeDialog, dismissDialog } = surface;
 
   // null until the first load lands: a deep-linked focus must survive the
@@ -98,6 +109,42 @@ export function useSkillLibrary({ t, reporter, surface }: SkillLibraryDeps) {
     }
   }, [dismissDialog, repointSelection, notify, repointSkillGone, t]);
 
+  /**
+   * Resolve a Re-point target without landing it (`preview_repoint_source`,
+   * D15) — a read under the lifecycle: it waits its turn, blocks mutations
+   * while it runs, and its Cancel stops the acquisition (a token-taking
+   * command). A refusal is answered as a value for the dialog's field.
+   */
+  const previewRepoint = useCallback(
+    (skillId: string, target: RepointTarget) =>
+      runAction<RepointPreviewAnswer>(
+        {
+          read: true,
+          subject: { kind: "skill", id: skillId },
+          label: t("repoint.previewing"),
+          cancel: "previewRepointSource",
+        },
+        async () => {
+          try {
+            return { kind: "preview", preview: await invokeTauri("previewRepointSource", skillId, target) };
+          } catch (err) {
+            return { kind: "error", error: toCommandError(err) };
+          }
+        },
+      ),
+    [runAction, t],
+  );
+
+  // Detach's consequence confirmation and the Assign-to-project picker.
+  const pendingDetachSkill = findSkill(layer("detachSkill")?.skillId);
+  const handleCloseDetach = useCallback(() => {
+    if (!loading) closeDialog("detachSkill");
+  }, [closeDialog, loading]);
+  const assignProjectSkill = findSkill(layer("assignProject")?.skillId);
+  const handleCloseAssignProject = useCallback(() => {
+    closeDialog("assignProject");
+  }, [closeDialog]);
+
   const repointName = repointSelection?.name ?? "";
   /**
    * The Change source modal's folder button. A cancelled picker answers
@@ -129,6 +176,11 @@ export function useSkillLibrary({ t, reporter, surface }: SkillLibraryDeps) {
     pendingRepointSkill,
     handleCloseRepoint,
     pickRepointFolder,
+    previewRepoint,
+    pendingDetachSkill,
+    handleCloseDetach,
+    assignProjectSkill,
+    handleCloseAssignProject,
   };
 }
 

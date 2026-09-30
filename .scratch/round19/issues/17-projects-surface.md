@@ -42,3 +42,10 @@ All with a missing folder yields one line; contrast; `npm run check`.
 ## Comments
 
 - 2026-09-27 — round-18 extract: the fixture's unwritable dirs affect writes only, so ADR-0002's kept row on project removal is not reproducible (`round18/review/flows.md` § Fixture gaps) — seed one locked project artifact so the Remove Project kept-row path is walkable.
+
+- 2026-09-30 — from ticket 12: the inspector's **Assign to project…** assigns to *every* configured Tool of the
+  chosen project (`useProjectState.assignToProject` → `bulk_assign_skill`); its picker shows each project's Tools and
+  what assigning adds, and leaves per-Tool choice to the matrix (D26). New read `readSkillPlacement(skillId)` reads
+  every project's view (no apply) for the inspector's Projects section — N `get_project_view` calls; a per-skill
+  backend read would be cheaper if the Projects surface wants the same "where is this skill" view. Project Tool
+  labels come from `catalog.loadProjectToolStatus`, which App now also loads when a skill is focused.

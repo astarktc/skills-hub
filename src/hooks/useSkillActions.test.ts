@@ -353,6 +353,8 @@ describe("where confirmation happens", () => {
     ["delete", {}, "deleteSkill"],
     ["editInvocation", {}, "invocationEdit"],
     ["repoint", { preselect: "git" }, "repoint"],
+    ["detach", {}, "detachSkill"],
+    ["assignToProject", {}, "assignProject"],
   ] as const)("%s without its confirming option opens its dialog and calls nothing", async (verb, opts, dialog) => {
     const s = setup();
     const { result } = await render(s);
@@ -377,6 +379,27 @@ describe("where confirmation happens", () => {
       expect(s.sync.enableSkillTargets).not.toHaveBeenCalled();
     },
   );
+
+  it("a confirmed Detach runs the command, reloads and closes its confirmation", async () => {
+    const s = setup();
+    const { result } = await render(s);
+    act(() => void result.current.actions.run("detach", [s.skills[0]]));
+    expect(result.current.surface.layer("detachSkill")).toMatchObject({ skillId: "s1" });
+    await act(async () => {
+      await result.current.actions.run("detach", [s.skills[0]], { confirmed: true });
+    });
+    expect(commands()).toEqual(["detachSkillFromSource", "getManagedSkills"]);
+    expect(result.current.surface.layer("detachSkill")).toBeNull();
+  });
+
+  it("an Assign picker's answer assigns through the project world", async () => {
+    const s = setup();
+    const { result } = await render(s);
+    await act(async () => {
+      await result.current.actions.run("assignToProject", [s.skills[0]], { projectId: "p1" });
+    });
+    expect(s.projects.assignToProject).toHaveBeenCalledWith("p1", ["s1"]);
+  });
 
   it("a sync with no effective targets is reported, never silent", async () => {
     const s = setup({ effective: [] });

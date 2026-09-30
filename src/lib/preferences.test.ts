@@ -20,3 +20,11 @@ describe("pre-paint theme script", () => {
     expect(themePreference.read()).toBe("system");
   });
 });
+
+describe("inspector Targets view preference", () => {
+  it("persists under its own key, defaulting to the per-Tool list", async () => {
+    const { inspectorTargetsViewPreference } = await import("./preferences");
+    expect(inspectorTargetsViewPreference.key).toBe("skills-inspector-targetsView");
+    expect(inspectorTargetsViewPreference.read()).toBe("list");
+  });
+});

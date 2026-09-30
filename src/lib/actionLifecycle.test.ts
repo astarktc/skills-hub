@@ -78,6 +78,15 @@ describe("resolveFocusTarget", () => {
     expect(resolveFocusTarget({ kind: "row", skillId: "gone" })).toBeNull();
   });
 
+  it("a health target prefers the inspector's Health section over the row's marks", () => {
+    document.body.innerHTML = `
+      <main>
+        <div data-skill-health="a" tabindex="-1"></div>
+        <aside><section data-inspector-health="a" tabindex="-1"></section></aside>
+      </main>`;
+    expect(resolveFocusTarget({ kind: "health", skillId: "a" })?.dataset.inspectorHealth).toBe("a");
+  });
+
   it("a heading that is not on screen falls back to the main landmark, never body", () => {
     document.body.innerHTML = "<main></main>";
     expect(resolveFocusTarget({ kind: "heading", surface: "skills" })?.tagName).toBe("MAIN");

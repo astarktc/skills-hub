@@ -12,7 +12,8 @@ use super::{
     content_identity,
     errors::{CommandError, SignalError},
     git_acquisition::{
-        acquire, parse_github_url, AcquireRequest, Acquired, GitSource, GithubApi, SkillIntent,
+        acquire, parse_github_url, AcquireRequest, Acquired, GitSelection, GitSource, GithubApi,
+        SkillIntent,
     },
     install_finalize::{finalize_update, StagingDir},
     installer::{ensure_installable_skill_dir, InstallerPaths},
@@ -320,7 +321,8 @@ pub(crate) fn acquire_update(
 /// `local` or `imported` alike (the skill's current provenance is
 /// irrelevant: the source is being replaced). The URL was validated by the
 /// Re-point module. The skill is resolved in the new source by its existing
-/// name, and the staged bytes must pass install's manifest gate. The new
+/// name — or, when the operator picked a candidate of a multi-skill
+/// repository, as that `selection` — and the staged bytes must pass install's manifest gate. The new
 /// source is carried only in the proposal: nothing is written until apply
 /// settles it through finalize.
 #[allow(clippy::too_many_arguments)]
@@ -333,9 +335,15 @@ pub(crate) fn acquire_git_repoint(
     ttl_ms: i64,
     url: &str,
     source: &GitSource,
+    selection: Option<GitSelection<'_>>,
 ) -> Result<UpdateRequest> {
     let record = require_record(store, skill_id)?;
-    let intent = SkillIntent::ByName(Some(&record.name));
+    // A candidate picked from a multi-skill repository is acquired as that
+    // folder (as Add installs it); otherwise the skill is found by its name.
+    let intent = match selection {
+        Some(selection) => SkillIntent::Selection(selection),
+        None => SkillIntent::ByName(Some(&record.name)),
+    };
     let (staged, acquired) = stage_git(paths, &record, source, intent, cancel, api, ttl_ms)?;
     ensure_installable_skill_dir(staged.path())?;
     let proposal = SourceProposal {
