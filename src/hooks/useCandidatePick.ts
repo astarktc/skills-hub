@@ -225,7 +225,7 @@ export function useCandidatePick<C extends PickCandidate, Ctx>(
     }
     const name = picked.length === 1 && customName ? customName : null;
     await runAction(
-      { cancel: "installSelection" },
+      { cancel: "installSelection", label: t("activity.labels.add"), activity: t("activity.adding") },
       async (action) => {
         // One backend batch for the whole selection (D12): per-candidate
         // failures and a cancelled tail are report data, and every

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 import type { TFunction } from "i18next";
 import { Badge } from "@/components/ui/badge";
@@ -377,6 +377,8 @@ type RepointModalProps = Omit<RepointBodyProps, "skill" | "preselect"> & {
   request: { skill: ManagedSkill; preselect: RepointKind } | null;
   /** Where focus goes when the opener is gone after closing (D21: the focused row). */
   fallbackFocus?: FocusFallback;
+  /** The header progress at the dialog's foot while its Re-point runs (its Cancel, D20). */
+  progress?: ReactNode;
 };
 
 /**
@@ -385,7 +387,7 @@ type RepointModalProps = Omit<RepointBodyProps, "skill" | "preselect"> & {
  * inspector's Change source…); only the body is keyed per skill and kind,
  * so its drafts start fresh for every opening.
  */
-export default function RepointModal({ request, loading, onRequestClose, fallbackFocus, ...rest }: RepointModalProps) {
+export default function RepointModal({ request, loading, onRequestClose, fallbackFocus, progress, ...rest }: RepointModalProps) {
   return (
     <Dialog
       open={request !== null}
@@ -409,6 +411,7 @@ export default function RepointModal({ request, loading, onRequestClose, fallbac
             {...rest}
           />
         ) : null}
+        {progress}
       </DialogContent>
     </Dialog>
   );

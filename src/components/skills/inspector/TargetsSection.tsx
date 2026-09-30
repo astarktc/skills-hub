@@ -133,6 +133,8 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
       tone="accent"
       aria-label={t("inspector.targets.undoLabel", { tool: label })}
       disabled={busy}
+      focusableWhenDisabled
+      aria-description={blockedReason ?? undefined}
       title={blockedReason ?? undefined}
       onClick={(event) => undo(tool, event.currentTarget)}
     >
@@ -203,6 +205,8 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
                         aria-label={t(ACTION_LABEL[action].long, { tool: mark.label })}
                         aria-describedby={action === "retry" ? `retry-hint-${skill.id}` : undefined}
                         disabled={busy}
+                        focusableWhenDisabled
+                        aria-description={blockedReason ?? undefined}
                         title={blockedReason ?? t(ACTION_LABEL[action].long, { tool: mark.label })}
                         onClick={() => void act(action, mark.tool)}
                       >
@@ -234,6 +238,8 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
                     }
                     title={blockedReason ?? name}
                     disabled={busy || !primary}
+                    focusableWhenDisabled={busy}
+                    aria-description={blockedReason ?? undefined}
                     onClick={() => primary && void act(primary, mark.tool)}
                   >
                     <StripMarkIcon state={mark.state} />

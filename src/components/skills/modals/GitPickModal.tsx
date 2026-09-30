@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, type ReactNode } from 'react'
 import type { TFunction } from 'i18next'
 import {
   Dialog,
@@ -20,6 +20,8 @@ type GitPickModalProps = {
   onToggleAll: (checked: boolean) => void
   onToggleCandidate: (subpath: string, checked: boolean) => void
   onInstall: () => void
+  /** The header progress at the dialog's foot while its action runs (D19; the page behind is inert). */
+  progress?: ReactNode
   t: TFunction
 }
 
@@ -33,6 +35,7 @@ const GitPickModal = ({
   onToggleAll,
   onToggleCandidate,
   onInstall,
+  progress,
   t,
 }: GitPickModalProps) => {
   const selectedCount = gitCandidates.filter(
@@ -100,6 +103,7 @@ const GitPickModal = ({
             {t('installSelected')}
           </button>
         </DialogFooter>
+        {progress}
       </DialogContent>
     </Dialog>
   )

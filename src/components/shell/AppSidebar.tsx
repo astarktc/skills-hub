@@ -1,5 +1,5 @@
 import { memo, type ReactNode } from "react";
-import { Bell, Compass, FolderKanban, Keyboard, Layers, Monitor, Moon, Settings, Sun } from "lucide-react";
+import { ArrowUpCircle, Bell, Compass, FolderKanban, Keyboard, Layers, Monitor, Moon, Settings, Sun } from "lucide-react";
 import type { TFunction } from "i18next";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import type { Area } from "../../hooks/useSurfaceState";
+import type { AppUpdate } from "../../hooks/useAppUpdate";
 
 type ThemePreference = "system" | "light" | "dark";
 
@@ -26,6 +27,8 @@ type AppSidebarProps = {
   onOpenNotifications: () => void;
   themePreference: ThemePreference;
   onThemeChange: (theme: ThemePreference) => void;
+  /** The update module: a found release is a quiet item here (D8), never a startup modal. */
+  update: Pick<AppUpdate, "announced" | "status" | "version" | "open">;
   t: TFunction;
 };
 
@@ -96,6 +99,7 @@ const AppSidebar = ({
   onOpenNotifications,
   themePreference,
   onThemeChange,
+  update,
   t,
 }: AppSidebarProps) => {
   const bellLabel =
@@ -103,6 +107,12 @@ const AppSidebar = ({
       ? t("notifications.bellUnread", { count: unreadNotifications })
       : t("notifications.bell");
   const themeLabel = t("shell.theme", { theme: t(`themeOptions.${themePreference}`) });
+  const updateLabel =
+    update.status === "done"
+      ? t("appUpdate.installed")
+      : update.status === "installing"
+        ? t("appUpdate.installing", { version: update.version })
+        : t("appUpdate.available", { version: update.version });
   // My Skills' keymap (`useSkillListKeymap`), in the order one uses it.
   const shortcuts: [string, string][] = [
     ["/", t("shell.shortcutSearch")],
@@ -150,6 +160,20 @@ const AppSidebar = ({
       </nav>
 
       <div className="mt-auto flex flex-col gap-0.5 border-t border-sidebar-border p-2">
+        {/* The passive update affordance (D8): quiet, in the shell, opening the update dialog. */}
+        {update.announced ? (
+          <button
+            type="button"
+            className={itemClass}
+            title={updateLabel}
+            aria-haspopup="dialog"
+            data-update-affordance=""
+            onClick={update.open}
+          >
+            <ArrowUpCircle aria-hidden="true" className="text-ring" />
+            <span className={labelClass}>{updateLabel}</span>
+          </button>
+        ) : null}
         <button type="button" className={itemClass} title={bellLabel} onClick={onOpenNotifications}>
           <Bell aria-hidden="true" />
           <span className={labelClass}>{bellLabel}</span>

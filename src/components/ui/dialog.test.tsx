@@ -315,6 +315,56 @@ describe("Dialog", () => {
   });
 });
 
+describe("Dialog opened from a menu item (ticket 14, D21)", () => {
+  function FromMenu() {
+    const [menu, setMenu] = useState(false);
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button type="button" id="row-menu" aria-haspopup="menu" onClick={() => setMenu(true)}>
+          More actions
+        </button>
+        {menu ? (
+          <div role="menu" aria-labelledby="row-menu">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                // The dialog opens from the item; the menu closes after it
+                // (as Base UI's menu does, once the press has settled).
+                setOpen(true);
+                setTimeout(() => setMenu(false), 0);
+              }}
+            >
+              Change source…
+            </button>
+          </div>
+        ) : null}
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Change source</DialogTitle>
+            </DialogHeader>
+          </DialogContent>
+        </Dialog>
+      </>
+    );
+  }
+
+  it("returns focus to the menu's trigger, not the item that is gone", async () => {
+    render(<FromMenu />);
+    const trigger = screen.getByRole("button", { name: "More actions" });
+    fireEvent.click(trigger);
+    const item = screen.getByRole("menuitem", { name: "Change source…" });
+    item.focus();
+    fireEvent.click(item);
+    await openedDialog("Change source");
+    pressEscape();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+});
+
 describe("Dialog without a fallback, when its lone opener is removed", () => {
   it("returns focus to the main landmark, never to <body>", async () => {
     render(

@@ -723,30 +723,8 @@ describe("Change source opens on the skill's kind", () => {
   });
 });
 
-describe("report actions", () => {
-  it("resolves an entry's Change source action by id when clicked", async () => {
-    const s = setup();
-    vi.spyOn(folds, "refreshOutcome").mockReturnValue({
-      toast: null,
-      warnings: [],
-      notes: [],
-      completion: { reload: false, closeModal: false, conflict: false },
-      errors: [{ title: "gone", message: "missing upstream", action: { label: "repoint", skillId: "s1", skillName: "alpha" } }],
-    });
-    const { result } = await render(s);
-    await act(async () => {
-      await result.current.actions.run("update", "all", { confirmed: true });
-    });
-    const entry = result.current.reporter.notifications.find((n) => n.title === "gone");
-    act(() => entry?.action?.onClick());
-    expect(result.current.surface.layer("repoint")).toMatchObject({ skillId: "s1", preselect: "git" });
-    // Clicked after the skill left the catalog: warned, withdrawn.
-    act(() => result.current.library.replaceCatalog([s.skills[1]]));
-    await waitFor(() => expect(result.current.surface.layer("repoint")).toBeNull());
-    expect(result.current.reporter.notifications[0]).toMatchObject({ kind: "warning" });
-  });
-
-  it("the fold is told every managed skill can change its source", async () => {
+describe("report data (D11)", () => {
+  it("a Refresh tells the fold each skill's Tools before the run (its re-assert additions are announced)", async () => {
     const s = setup();
     const spy = vi.spyOn(folds, "refreshOutcome");
     const { result } = await render(s);
@@ -754,8 +732,42 @@ describe("report actions", () => {
       await result.current.actions.run("update", "all", { confirmed: true });
     });
     const ctx = spy.mock.calls[0][1];
-    expect(ctx.canRepoint?.("s1")).toBe(true);
-    expect(ctx.canRepoint?.("missing")).toBe(false);
+    expect(ctx.priorGlobalTools).toEqual(
+      Object.fromEntries(
+        s.skills.map((skill) => [skill.id, skill.targets.filter((target) => target.status !== "disabled").map((target) => target.tool)]),
+      ),
+    );
+  });
+
+  it("an entry lands in the run's history block as data — its subject and typed error, no callback", async () => {
+    const s = setup();
+    vi.spyOn(folds, "refreshOutcome").mockReturnValue({
+      toast: null,
+      warnings: [],
+      notes: [],
+      completion: { reload: false, closeModal: false, conflict: false },
+      errors: [
+        {
+          title: "gone",
+          message: "missing upstream",
+          subject: { skillId: "s1", skillName: "alpha" },
+          error: { code: "GITHUB_SKILL_NOT_FOUND", url: "https://github.com/o/r" },
+          repair: { verb: "update" },
+        },
+      ],
+    });
+    const { result } = await render(s);
+    await act(async () => {
+      await result.current.actions.run("update", "all", { confirmed: true });
+    });
+    const entry = result.current.reporter.notifications.find((n) => n.title === "gone");
+    expect(entry).toMatchObject({
+      role: "entry",
+      runLabel: "lifecycle.verbs.refresh",
+      subject: { skillId: "s1", skillName: "alpha" },
+      error: { code: "GITHUB_SKILL_NOT_FOUND" },
+    });
+    expect(entry?.action).toBeUndefined();
   });
 });
 
@@ -929,16 +941,22 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     },
   );
 
-  it("a dismissed ask retries nothing and the collisions stay reported failures", async () => {
+  it("a dismissed ask retries nothing; the collision is to review, never an error (ticket 11 audit Q4)", async () => {
     const skills = [skill("s1", "alpha", ["claude"])];
     backend(skills, { updateManagedSkill: [{ report: refreshedWith([occupiedTarget("cursor")]), skills }] });
     const rendered = renderReal();
     await ready(rendered, skills);
     const asked = await drive(rendered, () => rendered.result.current.actions.run("update", [skills[0]!]), "dismiss");
     expect(asked).toHaveLength(1);
+    // No retry, no implicit Keep: the pair stays as it was.
     expect(calls("syncSkillsToTools")).toEqual([]);
     expect(calls("resolveProjectCollisions")).toEqual([]);
-    expect(rendered.result.current.reporter.notifications.filter((row) => row.kind === "error")).toHaveLength(1);
+    const rows = rendered.result.current.reporter.notifications;
+    expect(rows.filter((row) => row.kind === "error")).toEqual([]);
+    expect(rows.filter((row) => row.review)).toMatchObject([
+      { role: "entry", kind: "warning", subject: { skillId: "s1", tool: "cursor" }, repair: { verb: "overwrite", tool: "cursor" } },
+    ]);
+    expect(rows.find((row) => row.role === "headline")).toMatchObject({ kind: "warning" });
   });
 
   it("Refresh (all): Keep existing retries with a keep decision and the kept pair is a declined note, not a failure", async () => {

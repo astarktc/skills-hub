@@ -91,6 +91,8 @@ export default function ProjectsSection({
                 variant="ghost"
                 aria-label={t("inspector.projects.unassignLabel", { name: skill.name, project: project.name })}
                 disabled={busy}
+                focusableWhenDisabled
+                aria-description={blockedReason ?? undefined}
                 title={blockedReason ?? undefined}
                 onClick={() => void actions.run("unassignFromProject", [skill], { projectId: project.id })}
               >
@@ -104,6 +106,8 @@ export default function ProjectsSection({
         <Button
           size="sm"
           disabled={busy || projectCount === 0}
+          focusableWhenDisabled={busy}
+          aria-description={blockedReason ?? undefined}
           title={blockedReason ?? undefined}
           aria-haspopup="dialog"
           onClick={() => void actions.run("assignToProject", [skill])}

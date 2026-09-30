@@ -146,6 +146,8 @@ function SkillInspector({
             variant="outline"
             tone="danger"
             disabled={busy}
+            focusableWhenDisabled
+            aria-description={blockedReason ?? undefined}
             title={blockedReason ?? undefined}
             aria-haspopup="dialog"
             onClick={() => void actions.run("delete", [skill])}

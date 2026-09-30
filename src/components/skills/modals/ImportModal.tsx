@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, type ReactNode } from 'react'
 import { Download } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import {
@@ -22,6 +22,8 @@ type ImportModalProps = {
   onToggleGroup: (groupName: string, checked: boolean) => void
   onSelectVariant: (groupName: string, path: string) => void
   onImport: () => void
+  /** The header progress at the dialog's foot while its action runs (D19; the page behind is inert). */
+  progress?: ReactNode
   t: TFunction
 }
 
@@ -36,6 +38,7 @@ const ImportModal = ({
   onToggleGroup,
   onSelectVariant,
   onImport,
+  progress,
   t,
 }: ImportModalProps) => {
   return (
@@ -149,6 +152,7 @@ const ImportModal = ({
             {t('close')}
           </button>
         </DialogFooter>
+        {progress}
       </DialogContent>
     </Dialog>
   )

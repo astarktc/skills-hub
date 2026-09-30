@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo } from "react";
 import { ArrowLeft } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { AppUpdate } from "../../hooks/useAppUpdate";
@@ -49,6 +49,12 @@ type SettingsPageProps = {
   onAutoSyncChange: (enabled: boolean) => void;
   /** Why the toggle is disabled while an action runs (D19), or null. */
   autoSyncBlockedReason: string | null;
+  /**
+   * The pane the address names (`#/settings/github`): the Notifications
+   * panel's "Open Settings → GitHub" lands on the token field. The panes
+   * themselves are ticket 20's.
+   */
+  focusPane: string | null;
   onBack: () => void;
   t: TFunction;
 };
@@ -78,9 +84,16 @@ const SettingsPage = ({
   autoSyncEnabled,
   onAutoSyncChange,
   autoSyncBlockedReason,
+  focusPane,
   onBack,
   t,
 }: SettingsPageProps) => {
+  useEffect(() => {
+    if (focusPane !== "github") return;
+    const field = document.getElementById("settings-github-token");
+    field?.scrollIntoView({ block: "center" });
+    field?.focus();
+  }, [focusPane]);
   const {
     status: updateStatus,
     version: updateVersion,

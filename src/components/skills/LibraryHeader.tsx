@@ -2,7 +2,9 @@ import { memo } from "react";
 import { Plus, RefreshCw, Wrench } from "lucide-react";
 import type { TFunction } from "i18next";
 import { Button } from "@/components/ui/button";
+import { showsHeaderProgress, type PendingAction } from "../../lib/actionLifecycle";
 import type { LibraryExceptions } from "../../lib/skillPresentation";
+import HeaderProgress from "../shell/HeaderProgress";
 
 type LibraryHeaderProps = {
   librarySize: number;
@@ -11,6 +13,11 @@ type LibraryHeaderProps = {
   onViewIssues: () => void;
   /** Why the verbs are disabled while an action runs (D19), or null. */
   blockedReason: string | null;
+  /** The reporter's running action and step line, for the header progress (D19). */
+  pending: PendingAction | null;
+  actionMessage: string | null;
+  /** The reporter's `cancelPending` (offered only while the action is cancellable). */
+  onCancel: () => void;
   onRefreshAll: () => void;
   onConfigureTools: () => void;
   onAddSkill: () => void;
@@ -24,14 +31,20 @@ type LibraryHeaderProps = {
 
 /**
  * The My Skills header row: title + count, the exception summary (from the
- * health fold; healthy is silent), a region for the header progress (ticket
- * 14), Configure Tools and Refresh all (secondary), Add skill (the primary).
+ * health fold; healthy is silent) — or, while a batch runs, the header
+ * progress in its place (D19: "Refreshing 12/80 · Cancel"; the summary is
+ * stale until the run settles, and the Issues chip still filters) — then
+ * Configure Tools and Refresh all (secondary), Add skill (the primary). While anything runs the verbs stay focusable, disabled with
+ * the reason as their tooltip and description ("Refresh is running").
  */
 const LibraryHeader = ({
   librarySize,
   exceptions,
   onViewIssues,
   blockedReason,
+  pending,
+  actionMessage,
+  onCancel,
   onRefreshAll,
   onConfigureTools,
   onAddSkill,
@@ -39,7 +52,15 @@ const LibraryHeader = ({
   t,
 }: LibraryHeaderProps) => {
   const blocked = blockedReason !== null;
+  // A disabled verb keeps focus and says why (tooltip + description).
+  const blockedProps = {
+    disabled: blocked,
+    focusableWhenDisabled: true,
+    title: blockedReason ?? undefined,
+    "aria-description": blockedReason ?? undefined,
+  };
   const { failedTargets, staleTargets, skillsWithIssues } = exceptions;
+  const running = showsHeaderProgress(pending);
   return (
     <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-2">
       <div className="flex min-w-0 items-baseline gap-2">
@@ -53,7 +74,7 @@ const LibraryHeader = ({
         <span className="text-sm text-faint tabular-nums">{t("library.count", { count: librarySize })}</span>
       </div>
 
-      {skillsWithIssues > 0 ? (
+      {skillsWithIssues > 0 && !running ? (
         <p className="m-0 flex min-w-0 items-center gap-2 text-sm">
           {failedTargets > 0 ? (
             <span className="text-failed">{t("library.summary.failedTargets", { count: failedTargets })}</span>
@@ -69,11 +90,10 @@ const LibraryHeader = ({
         </p>
       ) : null}
 
-      {/* Ticket 14 renders the running action's progress here ("Refreshing 12/80 · Cancel"). */}
-      <div data-slot="header-progress" aria-label={t("library.progressRegion")} role="status" className="min-w-0" />
+      <HeaderProgress pending={pending} message={actionMessage} onCancel={onCancel} placement="header" t={t} />
 
       <div className="ml-auto flex items-center gap-2">
-        <Button variant="ghost" onClick={onConfigureTools} disabled={blocked} title={blockedReason ?? undefined}>
+        <Button variant="ghost" onClick={onConfigureTools} {...blockedProps}>
           <Wrench />
           {t("configureTools")}
         </Button>
@@ -81,7 +101,7 @@ const LibraryHeader = ({
             a folder); Refresh all and Add skill join once a skill exists. */}
         {librarySize > 0 ? (
           <>
-            <Button onClick={onRefreshAll} disabled={blocked} title={blockedReason ?? undefined}>
+            <Button onClick={onRefreshAll} {...blockedProps}>
               <RefreshCw />
               {t("library.refreshAll")}
             </Button>
@@ -89,8 +109,7 @@ const LibraryHeader = ({
               variant={addIsPrimary ? "solid" : "outline"}
               tone={addIsPrimary ? "accent" : "neutral"}
               onClick={onAddSkill}
-              disabled={blocked}
-              title={blockedReason ?? undefined}
+              {...blockedProps}
             >
               <Plus />
               {t("addSkillButton")}

@@ -266,9 +266,11 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
   the skill dialogs' chain is the focused row, the inspector's heading, the surface heading, so beside the list the
   row takes focus and inside the sheet (which keeps the row inert) the sheet's heading does (ticket 12 I1).
 - **A layer closing beneath another moves no focus.** Its return chain (opener + fallback) passes to every layer
-  above that it opened (whose opener lay inside it, or is gone): Re-point closed while the progress overlay its own
-  action raised is still up hands its chain to the overlay, which returns focus by it when it closes
-  (`layer-stack.handOverReturn`).
+  above that it opened (whose opener lay inside it, or is gone): a count confirmation closed while the overwrite ask
+  its action raised is still up hands its chain to the ask, which returns focus by it when it closes
+  (`layer-stack.handOverReturn`). Progress is never a layer (D19, ticket 14).
+- **Opened from a menu item** (a row's "More actions" → Change source…), the opener is the menu's trigger (the
+  popup's `aria-labelledby`), not the item, which is gone once the menu closes (ticket 14, D21).
 - **Where the opener can disappear** (a removal: Delete skill, Remove project), the dialog passes `fallbackFocus`.
   Today both removal dialogs pass `mainLandmarkFocus`; the row-level target (the next row, then the list heading) is
   ticket 09's surface lifecycle, which will supply it through the same prop.
@@ -287,7 +289,7 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
 - **Focus return is decided while the layer is still open**, when everything behind it carries the stack's own
   `inert`. So the opener (and the main landmark) are judged by `staysInertAfterClose` — only inert that outlives
   the layer disqualifies them (ticket 12: the plain `closest("[inert]")` check sent every opener to the fallback in
-  Chrome). A layer opened with focus nowhere (a startup overlay) returns it nowhere. The landmark is focused itself,
+  Chrome). A layer opened with focus nowhere returns it nowhere. The landmark is focused itself,
   not its first control (Base UI would hand a non-tabbable return element's focus to its first tabbable child).
 - **Keep the shell mounted.** A dialog that is mounted only while open never returns focus (Base UI returns it on
   close, and an unmounted popup does not close). Re-point, Invocation, Detach and Assign keep one `Dialog` +
@@ -328,7 +330,10 @@ Escape closes them and returns focus to the trigger.
 
 The toaster is `sonner`, themed entirely by tokens: every colour it draws is one of our variables, so no JavaScript
 theme value is needed. State toasts put state-coloured text on an 8 % tint of that state over `popover` (ratios
-above). `useStatusReporter` owns toast lifetime; the binder mounts the one `<Toaster>`.
+above). `useStatusReporter` owns toast lifetime; the binder mounts the one `<Toaster>`. A run shows **one** toast —
+its composite headline (no description) with **View report**, which opens the Notifications panel on that run — and
+no toast is shown while the panel is open (opening it dismisses those on screen): a toast never covers its header
+(ticket 14).
 
 ## Focus ring
 
@@ -348,7 +353,7 @@ above). `useStatusReporter` owns toast lifetime; the binder mounts the one `<Toa
 
 ## Motion
 
-- **What moves**: only the ⌘K palette, the bulk rail and the switch thumb. The motion is opacity and transform only,
+- **What moves**: only the ⌘K palette, the bulk rail, the switch thumb and the header progress bar's fill. The motion is opacity and transform only,
   **≤ 120 ms**, on `ease-out` (`cubic-bezier(0.16, 1, 0.3, 1)`).
 - **The bulk rail** rises on entry only: `@starting-style` (`starting:opacity-0 starting:translate-y-2`) with
   `transition-[opacity,translate] duration-(--motion-fast) ease-out`, so it is interactive from its first frame and
@@ -360,7 +365,8 @@ above). `useStatusReporter` owns toast lifetime; the binder mounts the one `<Toa
   surface tickets); reduced motion already zeroes them.
 - **Reduced motion.** `prefers-reduced-motion: reduce` removes all motion. The base layer zeroes every transition and
   animation, legacy App.css loops included, and primitives also carry `motion-reduce:` / `motion-safe:`. Spinners
-  (`pending`, the progress overlay) stop under reduce.
+  (`pending`) stop under reduce; the header progress hides its spinner and its bar's fill jumps — text and counts
+  only.
 
 ## Target size
 
@@ -538,7 +544,7 @@ Composed from primitives and tokens; the one new variant is Dialog `placement="s
   inspector's heading (Shift+Tab walks back; Tab from its last control continues after the row); an arrival without
   a row (deep link, history) focuses the heading; the sheet opens on its heading; a resize that reparents a focused
   inspector focuses the new heading; closing returns to the row; Restore lands on Health. A resize never reorders
-  layers: while a dialog (or the progress overlay) is open above the inspector it keeps its placement, and the new
+  layers: while a dialog is open above the inspector it keeps its placement, and the new
   one lands when the last layer closes. The Projects section and the picker read the project world's held views,
   which every assignment's returned view updates — no read follows a successful assignment.
 
@@ -582,6 +588,36 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
   **Reveal in Finder** (`outline sm`; selects the recorded path — or its nearest existing ancestor — in the file
   manager, never opens it; a path the app does not record is refused); footer Close · Retry (`solid danger`, the kept skills only). The heading is
   `tabIndex=-1` (focusable, never a Tab stop).
+
+## Header progress and the report by run (ticket 14)
+
+- **Header progress** (`shell/HeaderProgress.tsx`, D19) reads the reporter's `pending` alone: the action's own words
+  (`activity`: "Refreshing", "Adding", "Removing beta"; else "{label} running") · `done/total` (`tabular-nums`,
+  `muted-foreground`) · a 64 × 4 px determinate bar (`raised` track, `primary` fill, `scaleX` over
+  `--motion-fast`, `motion-reduce:transition-none`) · the step line (`xs muted`, truncated) · **Cancel** (`ghost sm`,
+  named "Cancel {label}") only while `cancellable` — withdrawn once the action enters a phase its command no longer
+  cancels (a Refresh's apply phase) — reading "Cancelling…" until the command returns. A 14 px
+  `LoaderCircle` spins `motion-safe` and is hidden `motion-reduce`. It sits in My Skills' header slot, as a
+  `border-b` strip above any other area, and at a dialog's foot (`border-t`, `card`) while that dialog's action runs
+  — the page behind a modal is inert. Never a layer, never focus-taking; its live region announces the activity,
+  not each tick. A bulk Remove stays the Delete dialog's (one surface). In My Skills' header it takes the exception
+  summary's place while it runs (the summary is stale until the run settles), so the row never wraps at 960 px.
+- **Focus when an action settles** (D21, `actionLifecycle.returnLostFocus`): focus that was lost — `<body>`, the
+  main landmark, a layer's popup itself, or the vanished Cancel — returns to the control that started the action;
+  the skill door's `focusAfter` (Restore → Health, Delete → next row) then applies its own rule. Verbs keep focus
+  while disabled (`focusableWhenDisabled`), so a pending action never drops it.
+- **Refusal** (D19): verbs stay focusable while anything runs (`focusableWhenDisabled`), with the reason as `title`
+  and `aria-description` ("Refresh is running — wait for it to finish"). A row whose skill is in the running action
+  shows its overflow button `pending` (spinner, `aria-busy`, keeps focus); the row `li` is `aria-busy`.
+- **Notifications panel** (`NotificationsModal.tsx`, `lg` dialog, `flush` body): one row per run — kind glyph
+  (state token), the headline (`sm semibold`), "{action} · {relative time} · N items" (`xs muted`), a disclosure
+  (`aria-expanded`) when it has items. Items (`card` ground, indented) carry a kind glyph (**To review** is
+  `CircleDot` in `stale`), words (a project row prefixed "in {project}:"), and actions: **Show** (`outline sm`),
+  Retry / Overwrite… / Change source… / Remove… (`ghost accent sm`, disabled with the reason while an action runs),
+  Open Settings → GitHub. Every Copy is named by its row ("Copy: alpha failed"). The run "View report" asked for is
+  expanded and focused; otherwise the newest.
+- **Update affordance** (D8): a sidebar-foot item above the bell, `ArrowUpCircle` in `ring`, "1.3.1 available" —
+  opens the update dialog; nothing is raised on startup.
 
 ## Migration rule
 

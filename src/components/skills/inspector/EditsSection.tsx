@@ -47,6 +47,8 @@ export default function EditsSection({ skill, actions, blockedReason, t }: Edits
           size="sm"
           tone={override?.conflict ? "stale" : "neutral"}
           disabled={busy || centralMissing}
+          focusableWhenDisabled={busy}
+          aria-description={blockedReason ?? undefined}
           title={blockedReason ?? undefined}
           aria-haspopup="dialog"
           onClick={() => void actions.run("editInvocation", [skill])}

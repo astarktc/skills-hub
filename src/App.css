@@ -255,15 +255,6 @@
   z-index: 999;
 }
 
-.loading-backdrop {
-  z-index: 2000;
-}
-
-/* A confirmation raised while an action runs sits above the loading overlay. */
-.modal-backdrop-over-loading {
-  z-index: 2001;
-}
-
 .overwrite-list {
   list-style: none;
   margin: 12px 0 0;
@@ -360,134 +351,10 @@
   gap: 12px;
 }
 
-/* Notification history panel — a quiet utility list. */
-.modal-notifications {
-  width: min(600px, 100%);
-}
-
-.modal-notifications .notif-body {
-  padding: 0;
-  gap: 0;
-  max-height: min(70vh, 560px);
-  overflow-y: auto;
-}
-
-.notif-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.notif-row {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto 32px;
-  column-gap: 12px;
-  align-items: start;
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.notif-row:last-child {
-  border-bottom: none;
-}
-
-.notif-row:hover {
-  background: var(--bg-panel);
-}
-
-.notif-glyph {
-  display: inline-flex;
-  margin-top: 1px;
-  color: var(--text-tertiary);
-}
-
-.notif-error .notif-glyph {
-  color: var(--status-error);
-}
-
-.notif-warning .notif-glyph {
-  color: var(--status-warning);
-}
-
-.notif-success .notif-glyph {
-  color: var(--status-success);
-}
-
-.notif-info .notif-glyph {
-  color: var(--status-info);
-}
-
-.notif-text {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.notif-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
-.notif-message {
-  font-size: 12px;
-  color: var(--text-secondary);
-  line-height: 1.45;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 /* A notification's message may carry several lines (one per forced source
-   Tool on import); the toast keeps them as lines, like .notif-message. */
+   Tool on import); the toast keeps them as lines. */
 [data-sonner-toast] [data-description] {
   white-space: pre-wrap;
-}
-
-.notif-time {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  line-height: 18px;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.notif-copy {
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.notif-row:hover .notif-copy,
-.notif-copy:focus-visible {
-  opacity: 1;
-}
-
-.notif-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: 6px;
-  padding: 44px 32px 40px;
-}
-
-.notif-empty-icon {
-  color: var(--text-tertiary);
-  margin-bottom: 6px;
-}
-
-.notif-empty-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.notif-empty-hint {
-  font-size: 12px;
-  color: var(--text-secondary);
-  max-width: 36ch;
 }
 
 .delete-title {
@@ -538,17 +405,6 @@
   transform: translateY(-1px);
 }
 
-.processing-row {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-
-.processing-main {
-  flex: 1;
-  min-width: 0;
-}
-
 .spinner {
   width: 18px;
   height: 18px;
@@ -557,95 +413,6 @@
   border-top-color: var(--accent-primary);
   animation: spin 0.9s linear infinite;
   margin-top: 2px;
-}
-
-.loading-modal {
-  width: min(520px, 100%);
-}
-
-.loading-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 32px 20px;
-  text-align: center;
-  gap: 10px;
-}
-
-.loading-cancel-btn {
-  margin-top: 8px;
-}
-
-.loader-spinner {
-  width: 24px;
-  height: 24px;
-  border: 2px solid var(--border-subtle);
-  border-top-color: var(--accent-primary);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-.loading-text {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.loading-subtext {
-  font-size: 13px;
-  color: var(--text-tertiary);
-  font-family: var(--font-mono);
-}
-
-.loading-subtext-delayed {
-  opacity: 0;
-  animation: loadingSubtextFadeIn 0.18s ease 1.5s forwards;
-}
-
-.loading-backdrop .loading-subtext-delayed {
-  will-change: opacity, transform;
-}
-
-@keyframes loadingSubtextFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(2px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.loading-stage {
-  font-size: 14px;
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
-.progress-bar {
-  height: 6px;
-  background: var(--bg-element);
-  border-radius: 999px;
-  width: 220px;
-  overflow: hidden;
-  margin-top: 8px;
-}
-
-.progress-fill {
-  height: 100%;
-  background: var(--accent-primary);
-  width: 60%;
-  border-radius: 999px;
-  animation: shimmer 1.5s infinite linear;
-  background: linear-gradient(
-    90deg,
-    var(--accent-primary) 0%,
-    var(--accent-primary-hover) 50%,
-    var(--accent-primary) 100%
-  );
-  background-size: 200% 100%;
 }
 
 @keyframes shimmer {

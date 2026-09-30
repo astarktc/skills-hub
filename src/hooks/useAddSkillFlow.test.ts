@@ -219,6 +219,7 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
       if (outcome.completion.closeModal) handlers.closeModal?.();
       return outcome.completion;
     }),
+    openReport: vi.fn(),
     notify,
     notifications: [],
     unreadCount: 0,
@@ -630,6 +631,7 @@ describe("useAddSkillFlow local flow", () => {
       {
         title: t("errors.importFailedTitle", { name: "alpha" }),
         message: describeCommandError(refusal, t),
+        error: refusal,
       },
     ]);
     // Nothing was installed, so no ask and no success.
@@ -938,10 +940,11 @@ it("an installed skill still completes when the overwrite retry throws", async (
   expect(result.current.showAddModal).toBe(false);
   expect(setup.library.loadManagedSkills).toHaveBeenCalledTimes(1);
   expect(setup.reporter.setError).toHaveBeenCalledWith("retry failed");
-  // The collided row settles as it first answered: a target failure.
+  // The collided row settles as it first answered: a collision nobody's
+  // answer changed — "to review" (D10), never a failure.
   expect(setup.reporter.notify).toHaveBeenCalledWith(
     "warning",
-    `${t("outcome.done.installed", { count: 1 })} · ${t("outcome.targetsFailed", { count: 1 })}`,
+    `${t("outcome.done.installed", { count: 1 })} · ${t("runReport.collisions", { count: 1 })}`,
     undefined,
   );
 });
@@ -996,7 +999,13 @@ it("an empty selection deploys nowhere and says so (no-targets), even with tools
   await act(async () => { await result.current.handleCreate(); });
   expect(installCalls()[0][1]).toMatchObject({ tools: [], deploy: true });
   expect(result.current.showAddModal).toBe(false);
-  expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([{ title: t("errors.unsyncedTitle", { name: "installed-skill" }), message: t("errors.noSyncTargets") }]);
+  expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
+    {
+      title: t("errors.unsyncedTitle", { name: "installed-skill" }),
+      message: t("errors.noSyncTargets"),
+      subject: { skillId: "new-id", skillName: "installed-skill" },
+    },
+  ]);
   expect(setup.reporter.notify).toHaveBeenCalledWith(
     "warning",
     `${t("outcome.done.installed", { count: 1 })} · ${t("outcome.targetsFailed", { count: 1 })}`,

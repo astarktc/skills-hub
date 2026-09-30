@@ -30,7 +30,7 @@ import { mainLandmarkFocus } from "./focus-fallback";
  *     a main landmark. Every candidate is tested before it is chosen: it
  *     must be connected and not inert once this layer has closed (a row
  *     behind a sheet that stays open is skipped). A dialog closing while a
- *     layer it opened is still above it (the progress overlay its own action
+ *     layer it opened is still above it (the overwrite ask its own action
  *     raised) moves no focus: that layer inherits its return chain;
  *   - a background that is `inert` (not only aria-hidden) while open;
  *   - Escape and outside press dismiss the **top** layer only, and only when
@@ -213,7 +213,7 @@ function DialogContent({
     Extract<FocusTarget, (...args: never[]) => unknown>
   >(
     (closeType) => {
-      // Closing beneath a layer it opened (the overlay its action raised):
+      // Closing beneath a layer it opened (the ask its action raised):
       // nothing here can take focus now — that layer returns it, by this
       // layer's chain once its own opener is gone.
       if (hasLayerAbove(layerId)) {
@@ -300,9 +300,7 @@ function LayerRegistration({
   fallbackRef: React.RefObject<FocusFallback | undefined>;
 }) {
   React.useLayoutEffect(() => {
-    const active = document.activeElement;
-    openerRef.current =
-      active instanceof HTMLElement && active !== document.body ? active : null;
+    openerRef.current = openerOf(document.activeElement);
     openLayer(layerId, {
       opener: openerRef.current,
       fallback: (usable) => fallbackRef.current?.(usable) ?? null,
@@ -318,6 +316,19 @@ function LayerRegistration({
     };
   }, [fallbackRef, layerId, openerRef]);
   return null;
+}
+
+/**
+ * The control that opened a layer: the focused element — or, when that is an
+ * item of a menu (a row's "More actions" → Change source…), the menu's
+ * trigger (the popup is labelled by it): the item is gone once the menu has
+ * closed, and D21 returns focus to the control the operator pressed.
+ */
+function openerOf(active: Element | null): HTMLElement | null {
+  if (!(active instanceof HTMLElement) || active === document.body) return null;
+  const labelledBy = active.closest("[role='menu']")?.getAttribute("aria-labelledby");
+  const trigger = labelledBy ? document.getElementById(labelledBy) : null;
+  return trigger ?? active;
 }
 
 /** The header ✕: 32 × 32 target, named, disabled when not dismissible. */

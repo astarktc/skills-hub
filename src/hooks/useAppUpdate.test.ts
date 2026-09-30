@@ -1,5 +1,5 @@
 // Tests at the AppUpdate seam: the one updater lifecycle that Settings, the
-// startup notice and (later) the title bar read. The updater crosses the
+// passive header item and the update dialog it opens read. The updater crosses the
 // platform seam (mocked here), the ignored version is a preference (mocked),
 // and the notice is a surface dialog (the real surface module, as App
 // composes it).
@@ -61,14 +61,18 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("useAppUpdate startup check", () => {
-  it("offers the notice for a found release and fetches its notes", async () => {
+  it("announces a found release passively — no dialog on startup (D8) — and fetches its notes", async () => {
     checkForUpdate.mockResolvedValue(release("9.9.9"));
     const { result } = renderUpdate();
     await waitFor(() => expect(result.current.notes).toBe("notes for 9.9.9"));
     expect(result.current.status).toBe("available");
     expect(result.current.version).toBe("9.9.9");
-    expect(result.current.noticeOpen).toBe(true);
+    expect(result.current.announced).toBe(true);
+    expect(result.current.noticeOpen).toBe(false);
     expect(result.current.currentVersion).toBe("1.2.18");
+    // The item's press opens the dialog through surface state.
+    act(() => result.current.open());
+    expect(result.current.noticeOpen).toBe(true);
   });
 
   it("stays quiet when current, ignored, or failing", async () => {
@@ -82,6 +86,7 @@ describe("useAppUpdate startup check", () => {
       await waitFor(() => expect(checkForUpdate).toHaveBeenCalled());
       await waitFor(() => expect(result.current.status).toBe("idle"));
       expect(result.current.noticeOpen).toBe(false);
+      expect(result.current.announced).toBe(false);
       expect(result.current.error).toBeNull();
       expect(reporter.notify).not.toHaveBeenCalled();
       unmount();
@@ -94,9 +99,12 @@ describe("useAppUpdate — one state for Settings and the notice", () => {
   it("a release found at startup is what Settings shows, and dismissing the notice keeps it", async () => {
     checkForUpdate.mockResolvedValue(release("9.9.9"));
     const { result } = renderUpdate();
-    await waitFor(() => expect(result.current.noticeOpen).toBe(true));
+    await waitFor(() => expect(result.current.status).toBe("available"));
+    act(() => result.current.open());
+    expect(result.current.noticeOpen).toBe(true);
     act(() => result.current.dismiss());
     expect(result.current.noticeOpen).toBe(false);
+    expect(result.current.announced).toBe(true);
     expect(result.current.status).toBe("available");
     expect(result.current.version).toBe("9.9.9");
     expect(ignored.value).toBeNull();
@@ -162,12 +170,16 @@ describe("useAppUpdate — one state for Settings and the notice", () => {
     expect(reporter.notify).toHaveBeenCalledWith("error", "formatted:disk full");
   });
 
-  it("Don't remind me records the version and closes the notice", async () => {
+  it("Don't remind me records the version, closes the dialog and quiets the item", async () => {
     checkForUpdate.mockResolvedValue(release("9.9.9"));
     const { result } = renderUpdate();
-    await waitFor(() => expect(result.current.noticeOpen).toBe(true));
+    await waitFor(() => expect(result.current.announced).toBe(true));
+    act(() => result.current.open());
     act(() => result.current.ignore());
     expect(ignored.value).toBe("9.9.9");
     expect(result.current.noticeOpen).toBe(false);
+    expect(result.current.announced).toBe(false);
+    // Settings still knows the release.
+    expect(result.current.version).toBe("9.9.9");
   });
 });

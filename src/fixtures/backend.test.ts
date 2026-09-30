@@ -537,7 +537,9 @@ describe("S1: the auto-sync re-assert is report data", () => {
     });
     const fold = refreshOutcome(report, { t, single: { name: zod.name, success: "UPDATED" } });
     expect(fold.toast?.kind).not.toBe("success");
-    expect(fold.errors.length).toBeGreaterThan(0);
+    // Folded without an answer (the ask is the door's): "to review", never an error (D10).
+    expect(fold.toast?.tone).toBe("conflict");
+    expect(fold.warnings.some((entry) => entry.review)).toBe(true);
     expect((await byName(handlers, "zod-schema-first")).targets.some((row) => row.tool === "cursor")).toBe(false);
   });
 

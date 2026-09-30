@@ -17,7 +17,7 @@ type UpdateDialogProps = {
 };
 
 /**
- * The startup update notice: the found release, its notes, Update now /
+ * The update dialog (opened from the passive sidebar item): the found release, its notes, Update now /
  * Don't remind me, then "installed — restart". A view of the update module;
  * Settings reads the same module, so both show one release.
  */

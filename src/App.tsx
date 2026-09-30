@@ -12,8 +12,8 @@ import ExplorePreviewView from "./components/skills/ExplorePreviewView";
 import SkillInspector, { type InspectorPlacement } from "./components/skills/inspector/SkillInspector";
 import { useInspectorTabOrder } from "./components/skills/inspector/useInspectorTabOrder";
 import AppSidebar from "./components/shell/AppSidebar";
+import HeaderProgress from "./components/shell/HeaderProgress";
 import LibraryHeader from "./components/skills/LibraryHeader";
-import LoadingOverlay from "./components/skills/LoadingOverlay";
 import SkillsList from "./components/skills/SkillsList";
 import NotificationsModal from "./components/shared/NotificationsModal";
 import AddSkillModal from "./components/skills/modals/AddSkillModal";
@@ -65,7 +65,6 @@ import {
   dialogFallback,
   resolveFirst,
   resolveFocusTarget,
-  showsProgressSurface,
 } from "./lib/actionLifecycle";
 import { SKILL_FILTERS, libraryExceptions } from "./lib/skillPresentation";
 import type { ManagedSkill } from "./components/skills/types";
@@ -84,7 +83,9 @@ function App() {
   // catalog → sync → library → projects → settings/explore/addFlow. Hooks
   // never import each other; every cross-world need flows through the
   // interfaces passed here.
-  const reporter = useStatusReporter(t);
+  // The reporter reads the surface for the Notifications panel: a toast
+  // never covers it, and "View report" opens it on a run.
+  const reporter = useStatusReporter(t, surface);
   const update = useAppUpdate({ reporter, surface });
   const catalog = useToolCatalog({ t });
   const sync = useSyncOrchestration({ t, reporter, surface, catalog });
@@ -96,7 +97,7 @@ function App() {
   // rows are the library's catalog, passed to its view below.
   const projects = useProjectState({ settleCollisions: sync.settleProjectCollisions });
 
-  const { area, focused, focus, unfocus, open, openDialog, closeDialog, dismissDialog } =
+  const { area, focused, focus, unfocus, open, closeDialog, dismissDialog } =
     surface;
   const openExplorePreview = useCallback(
     (preview: ExplorePreview) => focus({ kind: "explore", ref: preview }),
@@ -196,6 +197,7 @@ function App() {
     notifications,
     unreadCount,
     markAllRead,
+    openReport,
     clearNotifications,
   } = reporter;
   // One mutation at a time (D19): while one runs, every verb is disabled
@@ -213,15 +215,14 @@ function App() {
     open("skills");
   }, [open]);
 
-  // Opening the history marks it read.
-  const handleOpenNotifications = useCallback(() => {
-    markAllRead();
-    openDialog({ kind: "notifications" });
-  }, [markAllRead, openDialog]);
+  // Opening the history marks it read (the reporter's `openReport`); what
+  // was listed while it stood open counts as seen when it closes.
+  const handleOpenNotifications = useCallback(() => openReport(), [openReport]);
 
   const handleCloseNotifications = useCallback(() => {
+    markAllRead();
     closeDialog("notifications");
-  }, [closeDialog]);
+  }, [closeDialog, markAllRead]);
 
   // Explore loads its lists whenever it becomes the area — from the tab, a
   // link or Back alike.
@@ -263,13 +264,12 @@ function App() {
   // focus on the inspector's heading; closing returns it to the row.
   const wide = useMediaQuery(SHELL_WIDE_QUERY);
   const wantedPlacement: InspectorPlacement = wide ? "side" : "sheet";
-  // A presentation change never reorders layers (I2): while any dialog —
-  // or the progress overlay — is open above the inspector, it keeps its
-  // place, so the sheet never registers above a child it opened. The change
-  // lands once the last layer has closed, after that layer's own focus
-  // return (a microtask of the commit that closed it).
-  const progressShowing = showsProgressSurface(reporter.pending);
-  const layerAboveInspector = surface.stack.length > 0 || progressShowing;
+  // A presentation change never reorders layers (I2): while any dialog is
+  // open above the inspector, it keeps its place, so the sheet never
+  // registers above a child it opened. The change lands once the last layer
+  // has closed, after that layer's own focus return (a microtask of the
+  // commit that closed it). Progress is the header's, never a layer (D19).
+  const layerAboveInspector = surface.stack.length > 0;
   const [placement, setPlacement] = useState<InspectorPlacement>(wantedPlacement);
   useEffect(() => {
     if (layerAboveInspector || placement === wantedPlacement) return;
@@ -291,17 +291,6 @@ function App() {
     heading?.focus();
     return heading !== null;
   }, []);
-
-  // The sheet never opens underneath the progress overlay: two modal layers
-  // opened in that order (overlay first) fight over focus and starve the
-  // page. An arrival — a deep link at startup — waits for the overlay to
-  // close (ticket 14 retires the overlay); a sheet already open simply has
-  // the overlay above it. Derived state, latched during render.
-  const [sheetOpenFor, setSheetOpenFor] = useState<string | null>(null);
-  if (sheetOpenFor !== focusedSkillId && (!progressShowing || focusedSkillId === null)) {
-    setSheetOpenFor(focusedSkillId);
-  }
-  const inspectorMounted = placement === "side" || (focusedSkillId !== null && sheetOpenFor === focusedSkillId);
 
   // Files expanded to the full width, per skill: another skill opens collapsed.
   const [expandedFilesOf, setExpandedFilesOf] = useState<string | null>(null);
@@ -340,50 +329,39 @@ function App() {
   useEffect(() => {
     const left = lastFocusedSkill.current;
     lastFocusedSkill.current = shownSkillId;
-    // Every placement scheduled here is disposed with this run: a later
-    // subject, placement or area never inherits a stale one.
-    let disposed = false;
+    // One placement, once this commit is painted: a layer that closed in the
+    // same commit (the Notifications panel's Show, which returns focus
+    // nowhere) has released the page by then. Nothing is re-asserted: no
+    // layer competes for focus (the progress is the header's, D19). Focus
+    // the operator placed since — a key or a pointer — is never overridden,
+    // and a later subject, placement or area disposes it.
     const areaAtStart = areaRef.current;
-    const stale = () => disposed || areaRef.current !== areaAtStart;
+    const since = lastInteraction.current;
     const isLost = (active: Element | null) =>
       !active || active === document.body || active.tagName === "MAIN";
-    // A layer that holds focus now (the startup progress overlay) is waited
-    // out: when it closes, focus it left nowhere is placed.
-    // The layer's own focus return lands a frame or two after it leaves the
-    // DOM (on the main landmark when it had no opener), so a placement is
-    // re-checked for a few frames.
-    // Until the operator acts (a key or a pointer), a placement also
-    // overrides where such a layer put focus on its own.
-    const since = lastInteraction.current;
-    const whenSettled = (place: () => void, frames = 90, guard = 0) => {
-      if (stale()) return;
-      const active = document.activeElement;
-      if (active?.closest("[role='dialog'], [role='alertdialog']") && frames > 0) {
-        window.requestAnimationFrame(() => whenSettled(place, frames - 1, guard));
-        return;
-      }
-      const untouched = lastInteraction.current === since;
-      if (isLost(active) || (untouched && !active?.closest("[data-inspector]"))) place();
-      if (guard < 6 && untouched) window.requestAnimationFrame(() => whenSettled(place, 0, guard + 1));
-    };
+    const whenPainted = (place: () => void, override: boolean) =>
+      window.requestAnimationFrame(() => {
+        if (areaRef.current !== areaAtStart) return;
+        const active = document.activeElement;
+        const untouched = lastInteraction.current === since;
+        const elsewhere = !active?.closest("[data-inspector], [role='dialog'], [role='alertdialog']");
+        if (isLost(active) || (override && untouched && elsewhere)) place();
+      });
+    let frame = 0;
     if (shownSkillId) {
       const fromRow = openedFromRow.current;
       openedFromRow.current = false;
       // The sheet moves focus in itself (its heading); beside the list, a
       // row keeps it, and an arrival with focus nowhere takes the heading.
       if (placement === "side" && !fromRow) {
-        window.requestAnimationFrame(() =>
-          whenSettled(() => {
-            if (!focusInspectorHeading(shownSkillId)) mainLandmarkFocus()?.focus();
-          }),
-        );
+        frame = whenPainted(() => {
+          if (!focusInspectorHeading(shownSkillId)) mainLandmarkFocus()?.focus();
+        }, true);
       }
     } else if (left) {
-      whenSettled(() => resolveFocusTarget({ kind: "row", skillId: left })?.focus());
+      frame = whenPainted(() => resolveFocusTarget({ kind: "row", skillId: left })?.focus(), false);
     }
-    return () => {
-      disposed = true;
-    };
+    return () => window.cancelAnimationFrame(frame);
   }, [focusInspectorHeading, shownSkillId, placement]);
 
   // A resize across the breakpoint reparents the inspector (aside ↔ sheet):
@@ -564,18 +542,24 @@ function App() {
   const sharedDirAsk = surface.pendingAsk("sharedDir");
   const overwriteAsk = surface.pendingAsk("overwrite");
 
+  // A dialog whose own action runs shows the header progress at its foot:
+  // the page behind a modal is inert, so its Cancel must be the dialog's.
+  const dialogProgress = (
+    <HeaderProgress pending={pending} message={actionMessage} onCancel={cancelPending} placement="dialog" t={t} />
+  );
+  // The panel's catalog: a row's skill actions exist only while its skill does.
+  const skillNames = useMemo(
+    () => Object.fromEntries(library.managedSkills.map((skill) => [skill.id, skill.name])),
+    [library.managedSkills],
+  );
+  const reportRunId = surface.layer("notifications")?.runId ?? null;
+
   return (
     <div className="flex h-full overflow-hidden bg-background text-foreground">
       {/* Toast lifetime is owned by useStatusReporter, per kind. Errors
           never auto-dismiss, so the visible stack is raised above sonner's
           default of 3: a fourth open error shows without hovering. */}
       <Toaster position="top-right" richColors visibleToasts={5} />
-      <LoadingOverlay
-        pending={pending}
-        actionMessage={actionMessage}
-        onCancel={cancelPending}
-        t={t}
-      />
 
       <AppSidebar
         activeArea={area}
@@ -585,10 +569,22 @@ function App() {
         onOpenNotifications={handleOpenNotifications}
         themePreference={settings.themePreference}
         onThemeChange={settings.handleThemeChange}
+        update={update}
         t={t}
       />
 
       <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {/* The header progress (D19) of an area without a header slot for
+            it (My Skills has one): a strip above the area, never a layer. */}
+        {area !== "skills" || explorePreview ? (
+          <HeaderProgress
+            pending={pending}
+            message={actionMessage}
+            onCancel={cancelPending}
+            placement="bar"
+            t={t}
+          />
+        ) : null}
         {explorePreview ? (
           <ExplorePreviewView
             preview={explorePreview}
@@ -608,6 +604,9 @@ function App() {
                 exceptions={exceptions}
                 onViewIssues={handleViewIssues}
                 blockedReason={blockedReason}
+                pending={pending}
+                actionMessage={actionMessage}
+                onCancel={cancelPending}
                 onRefreshAll={() => void run("update", "all", { confirmed: true })}
                 onConfigureTools={sync.handleOpenToolConfig}
                 onAddSkill={handleOpenAdd}
@@ -653,7 +652,7 @@ function App() {
                   t={t}
                 />
               </div>
-              {focusedSkill && inspectorMounted ? (
+              {focusedSkill ? (
                 <SkillInspector
                   key={`${focusedSkill.id}:${placement}`}
                   skill={focusedSkill}
@@ -703,6 +702,7 @@ function App() {
             autoSyncEnabled={sync.autoSyncEnabled}
             onAutoSyncChange={sync.handleAutoSyncToggle}
             autoSyncBlockedReason={blockedReason}
+            focusPane={focused?.kind === "settings" ? focused.pane : null}
             onBack={handleCloseSettings}
             t={t}
           />
@@ -762,6 +762,7 @@ function App() {
         onGitNameChange={addFlow.setGitName}
         onSyncTargetChange={sync.handleSyncTargetChange}
         onSubmit={addFlow.handleCreate}
+        progress={dialogProgress}
         t={t}
       />
 
@@ -777,13 +778,20 @@ function App() {
           onToggleGroup={addFlow.handleToggleGroup}
           onSelectVariant={addFlow.handleSelectVariant}
           onImport={addFlow.handleImport}
+          progress={dialogProgress}
           t={t}
         />
       ) : null}
 
       <NotificationsModal
         open={surface.isOpen("notifications")}
+        runId={reportRunId}
         notifications={notifications}
+        skillNames={skillNames}
+        projectLabelById={projectLabelById}
+        actions={actions}
+        surface={surface}
+        blockedReason={blockedReason}
         onRequestClose={handleCloseNotifications}
         onClear={clearNotifications}
         copyToClipboard={copyToClipboard}
@@ -850,6 +858,7 @@ function App() {
         onRequestClose={library.handleCloseRepoint}
         onPickFolder={library.pickRepointFolder}
         fallbackFocus={skillDialogFallback}
+        progress={dialogProgress}
         onConfirm={async (target) =>
           library.pendingRepointSkill ? run("repoint", [library.pendingRepointSkill], { target }) : null
         }
@@ -931,6 +940,7 @@ function App() {
         onToggleAll={addFlow.local.toggleAll}
         onToggleCandidate={addFlow.local.toggle}
         onInstall={addFlow.local.install}
+        progress={dialogProgress}
         t={t}
       />
 
@@ -944,6 +954,7 @@ function App() {
         onToggleAll={addFlow.git.toggleAll}
         onToggleCandidate={addFlow.git.toggle}
         onInstall={addFlow.git.install}
+        progress={dialogProgress}
         t={t}
       />
 

@@ -92,6 +92,8 @@ export default function HealthSection({ skill, health, labelOf, actions, blocked
                         variant="outline"
                         tone={DANGER_REPAIRS.has(key) ? "danger" : rowIndex === 0 && index === 0 ? "accent" : "neutral"}
                         disabled={busy}
+                        focusableWhenDisabled
+                        aria-description={blockedReason ?? undefined}
                         title={blockedReason ?? undefined}
                         aria-haspopup={key === "delete" || key === "repoint" || key === "detach" || key === "editInvocation" ? "dialog" : undefined}
                         onClick={() => void actions.repair(skill, row, key)}

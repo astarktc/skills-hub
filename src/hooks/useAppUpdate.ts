@@ -25,19 +25,19 @@ export type AppUpdateStatus =
 
 /**
  * App-update world — the one updater lifecycle, read by Settings, the
- * startup notice (`UpdateDialog`) and, later, the title-bar affordance. A
- * version found at startup is the version Settings shows, and a version
- * found from Settings is the one the notice would install.
+ * passive header item (`UpdateAffordance`, D8) and the update dialog it
+ * opens (`UpdateDialog`). A version found at startup is the version Settings
+ * shows, and a version found from Settings is the one the dialog installs.
  *
  * On mount it reads the running version and checks once, silently: a
  * failure leaves it `idle`, and a found release the operator ignored
  * ("Don't remind me") stays `idle` too. A found release that may be
- * announced is offered as the `update` dialog, so it waits for any dialog
- * already up (the new-tools announcement raised at the same startup).
+ * announced is only *available* — a quiet item in the shell ("1.3.1
+ * available") that opens the dialog (`open`); nothing is raised on startup.
  * Settings' `check()` is the operator's own ask: it reports every outcome,
  * the ignored version included, and never raises the dialog.
  *
- * It never touches the loading overlay (update failures must not mix with
+ * It never touches the header progress (update failures must not mix with
  * skill-operation status), but an install failure is a notification like
  * any other, so it also lands in the history through the reporter.
  */
@@ -46,15 +46,17 @@ export function useAppUpdate({
   surface,
 }: {
   reporter: Pick<StatusReporter, "notify" | "formatError">;
-  surface: Pick<DialogDoor, "offerDialog" | "closeDialog">;
+  surface: Pick<DialogDoor, "openDialog" | "closeDialog">;
 }) {
   const { notify, formatError } = reporter;
-  const { offerDialog, closeDialog } = surface;
+  const { openDialog, closeDialog } = surface;
   const [status, setStatus] = useState<AppUpdateStatus>("idle");
   const [version, setVersion] = useState<string | null>(null);
   const [notes, setNotes] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentVersion, setCurrentVersion] = useState<string | null>(null);
+  // "Don't remind me" this session: the passive item stops announcing it.
+  const [ignoredVersion, setIgnoredVersion] = useState<string | null>(null);
   const handleRef = useRef<AppUpdateHandle | null>(null);
   // A check answers only if it is still the latest one asked.
   const checkSeq = useRef(0);
@@ -92,7 +94,6 @@ export function useAppUpdate({
           return;
         }
         adopt(handle);
-        if (mode === "startup") offerDialog({ kind: "update" });
       } catch (err) {
         if (seq !== checkSeq.current) return;
         if (mode === "startup") {
@@ -103,7 +104,7 @@ export function useAppUpdate({
         setStatus("error");
       }
     },
-    [adopt, formatError, offerDialog],
+    [adopt, formatError],
   );
 
   useEffect(() => {
@@ -142,30 +143,44 @@ export function useAppUpdate({
     }
   }, [formatError, notify]);
 
-  /** Close the notice; the release stays known (Settings still shows it). */
+  /** The passive item's press: the update dialog, through surface state. */
+  const open = useCallback(() => {
+    openDialog({ kind: "update" });
+  }, [openDialog]);
+
+  /** Close the dialog; the release stays known (Settings and the item still show it). */
   const dismiss = useCallback(() => {
     closeDialog("update");
   }, [closeDialog]);
 
-  /** "Don't remind me": no startup notice for this version again. */
+  /** "Don't remind me": the item no longer shows this version (Settings still does). */
   const ignore = useCallback(() => {
     if (version) ignoredUpdateVersionPreference.write(version);
+    setIgnoredVersion(version);
     closeDialog("update");
   }, [closeDialog, version]);
+
+  /** Whether the passive item shows: a release to install (not ignored), installing, or installed. */
+  const announced =
+    (status === "available" && version !== null && version !== ignoredVersion) ||
+    status === "installing" ||
+    status === "done";
 
   return useMemo(
     () => ({
       status,
+      announced,
       version,
       notes,
       error,
       currentVersion,
+      open,
       check,
       install,
       dismiss,
       ignore,
     }),
-    [status, version, notes, error, currentVersion, check, install, dismiss, ignore],
+    [status, announced, version, notes, error, currentVersion, open, check, install, dismiss, ignore],
   );
 }
 

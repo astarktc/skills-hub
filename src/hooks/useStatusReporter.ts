@@ -5,6 +5,7 @@ import { invokeTauri } from "../lib/tauri";
 import {
   describeRefusal,
   refusalFor,
+  returnLostFocus,
   type CancellableCommand,
   type MutationRefusal,
   type PendingAction,
@@ -12,6 +13,7 @@ import {
   type PendingSubject,
 } from "../lib/actionLifecycle";
 import type { Outcome, OutcomeEntry } from "../lib/reportOutcome";
+import type { SurfaceState } from "./useSurfaceState";
 import {
   useNotificationHistory,
   type Notification,
@@ -187,12 +189,18 @@ function completionToastParts(value: CompletionToast): {
 }
 
 export type RunActionOptions<T> = {
-  /** Initial progress line for the loading overlay. */
+  /** Initial step line under the header progress (a streamed action replaces it). */
   message?: string;
+  /**
+   * What the header progress says while this runs, in the progressive and
+   * specific to the action ("Refreshing", "Adding", "Removing beta"). Omitted
+   * falls back to the label ("Sync running").
+   */
+  activity?: string;
   /**
    * What the action is about (default: a batch). A skill or cell action
    * shows inline pending on its subject; a batch (or a streamed/cancellable
-   * action) shows the progress surface.
+   * action) shows the header progress (D19) — never a layer.
    */
   subject?: PendingSubject;
   /** What is running, in the operator's words — a refused action names it. */
@@ -203,7 +211,7 @@ export type RunActionOptions<T> = {
    */
   cancel?: CancellableCommand;
   /**
-   * A read that runs under the lifecycle (its overlay, its error toast) but
+   * A read that runs under the lifecycle (its progress, its error toast) but
    * changes nothing — the onboarding plan scan, an Explore preview. A read is
    * never refused: it waits for the running action to settle, then runs.
    * Only mutations are refused (D19).
@@ -223,8 +231,14 @@ export type RunActionOptions<T> = {
   successToast?: CompletionToast | ((value: T) => CompletionToast);
 };
 
-/** A streamed step: `done` of `total`, with the line the progress surface shows. */
-export type ProgressTick = PendingProgress & { message?: string | null };
+/**
+ * A streamed step: `done` of `total`, with the line the header progress
+ * shows. `cancellable: false` says the action has entered a phase its
+ * command no longer cancels (a Refresh's apply phase — the token is checked
+ * between acquisitions only): Cancel is withdrawn for the rest of the action
+ * (D20: offered only where honoured).
+ */
+export type ProgressTick = PendingProgress & { message?: string | null; cancellable?: false };
 
 /** How an Outcome's completion is carried out by the caller that knows how. */
 export type OutcomeHandlers = {
@@ -232,8 +246,6 @@ export type OutcomeHandlers = {
   reload?: () => Promise<unknown>;
   /** Close the dialog the action ran from (`completion.closeModal`). */
   closeModal?: () => void;
-  /** Resolve an entry's declarative action (by skill id) when it is clicked. */
-  onAction?: (action: NonNullable<OutcomeEntry["action"]>) => void;
 };
 
 /** The completion an executed Outcome answers with. */
@@ -241,9 +253,15 @@ export type OutcomeCompletion = Outcome["completion"];
 
 /** The reporter's Outcome executor as a value (`applyOutcome(outcome, handlers)`). */
 export type ApplyOutcomeFn = (
-  outcome: Outcome<OutcomeEntry> | Outcome<Omit<OutcomeEntry, "action">>,
+  outcome: Outcome<OutcomeEntry>,
   handlers?: OutcomeHandlers,
 ) => Promise<OutcomeCompletion>;
+
+/**
+ * The surface door the reporter needs for the Notifications panel: whether
+ * it is open (a toast never covers it — D11), and opening it to a run.
+ */
+export type ReportDoor = Pick<SurfaceState, "isOpen" | "pushDialog" | "updateDialog">;
 
 /**
  * The one shared status surface: every world hook reports its action
@@ -291,11 +309,19 @@ export type StatusReporter = {
   reportProgress: (tick: ProgressTick) => void;
   /**
    * Execute a fold's Outcome: reload first when the completion asks (so the
-   * toast describes the catalog on screen), then the entries' toasts, the
-   * headline toast, one history block for the run (`recordRun`: headline +
-   * entries + quiet notes), and `closeModal`. Resolves to the completion.
+   * toast describes the catalog on screen), then one history block for the
+   * run (`recordRun`: headline + entries + quiet notes, named by the running
+   * action), ONE toast — the composite headline (or, with none, the first
+   * entry's title) with "View report" when the run has more to show — and
+   * `closeModal`. Resolves to the completion.
    */
   applyOutcome: ApplyOutcomeFn;
+  /**
+   * Open the Notifications panel (to a run, when given — "View report"):
+   * everything listed counts as read, and the toasts leave the screen; while
+   * the panel is open no toast is shown (every notification is in the panel).
+   */
+  openReport: (runId?: number) => void;
   /**
    * The single entry point for a standalone notification: shows the toast
    * for `kind` with the lifetime the reporter owns and records the entry in
@@ -359,7 +385,7 @@ export type StatusReporter = {
   cancelPending: () => void;
 };
 
-export function useStatusReporter(t: TranslateFn): StatusReporter {
+export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusReporter {
   const [pending, setPendingState] = useState<PendingAction | null>(null);
   // The one-at-a-time rule reads the ref: two clicks in one tick must not
   // both see "nothing running".
@@ -381,6 +407,26 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
     (update: (current: PendingAction | null) => PendingAction | null) => {
       pendingRef.current = update(pendingRef.current);
       setPendingState(pendingRef.current);
+    },
+    [],
+  );
+  // The panel's state, read when a toast would show: a toast never covers the
+  // open Notifications panel (D11) — the panel lists the notification anyway.
+  const panelOpen = door?.isOpen("notifications") ?? false;
+  const panelOpenRef = useRef(panelOpen);
+  useEffect(() => {
+    panelOpenRef.current = panelOpen;
+    if (panelOpen) toast.dismiss();
+  }, [panelOpen]);
+  const doorRef = useRef(door);
+  useEffect(() => {
+    doorRef.current = door;
+  });
+  /** The one toast call site: nothing is toasted while the panel is open. */
+  const toastUnlessPanel = useCallback(
+    (kind: NotificationKind, title: string, message?: string, action?: NotificationAction) => {
+      if (panelOpenRef.current) return;
+      showToast(kind, title, message, action);
     },
     [],
   );
@@ -409,10 +455,23 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
 
   const notify = useCallback<NotifyFn>(
     (kind, title, message) => {
-      showToast(kind, title, message);
+      toastUnlessPanel(kind, title, message);
       record(kind, title, message);
     },
-    [record],
+    [record, toastUnlessPanel],
+  );
+
+  const openReport = useCallback(
+    (runId?: number) => {
+      markAllRead();
+      toast.dismiss();
+      const current = doorRef.current;
+      if (!current) return;
+      const layer = { kind: "notifications" as const, ...(runId !== undefined ? { runId } : {}) };
+      if (current.isOpen("notifications")) current.updateDialog(layer);
+      else current.pushDialog(layer);
+    },
+    [markAllRead],
   );
 
   // One toast per batch kind: the head entry plus "+N more". Entries with
@@ -426,9 +485,9 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
         visible.length > 1
           ? t("errors.moreCount", { count: visible.length - 1 })
           : "";
-      showToast(kind, head.title, `${head.message}${more}`, head.action);
+      toastUnlessPanel(kind, head.title, `${head.message}${more}`, head.action);
     },
-    [t],
+    [t, toastUnlessPanel],
   );
 
   // One batch rule for both kinds: one toast (head + "+N more"), every
@@ -460,19 +519,10 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
   const applyOutcome = useCallback<ApplyOutcomeFn>(
     async (outcome, handlers = {}) => {
       if (outcome.completion.reload && handlers.reload) await handlers.reload();
-      const toEntry = (entry: OutcomeEntry): ActionErrorEntry => {
-        const { action, ...rest } = entry;
-        const onAction = handlers.onAction;
-        return action && onAction
-          ? { ...rest, action: { label: action.label, onClick: () => onAction(action) } }
-          : rest;
-      };
-      const errors = (outcome.errors as OutcomeEntry[]).map(toEntry).filter((e) => e.message);
-      const warnings = (outcome.warnings as OutcomeEntry[]).map(toEntry).filter((e) => e.message);
-      toastBatch("error", errors);
-      toastBatch("warning", warnings);
+      // Entries with an empty message are silenced failures (a cancellation).
+      const errors = outcome.errors.filter((entry) => entry.message);
+      const warnings = outcome.warnings.filter((entry) => entry.message);
       const { toast: headline } = outcome;
-      if (headline) showToast(headline.kind, headline.message, headline.detail);
       // One history block per run: the headline over its entries; quiet
       // notes are their own rows only when no headline carries them.
       const rows: RunRow[] = [
@@ -481,17 +531,34 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
         ...(headline ? [] : outcome.notes.map((note) => ({ kind: "info" as const, title: note }))),
       ];
       if (headline || rows.length > 0) {
-        recordRun(
+        const runId = recordRun(
           headline
             ? { kind: headline.kind, title: headline.message, message: headline.detail }
             : null,
           rows,
+          pendingRef.current?.label ?? null,
+        );
+        // ONE toast per run (D11): the headline — or, without one, the first
+        // entry's title ("+N more") — and "View report" when there is more
+        // to read than the toast says. Toned by the fold.
+        const head = headline
+          ? { kind: headline.kind, title: headline.message }
+          : {
+              kind: errors.length ? ("error" as const) : warnings.length ? ("warning" as const) : ("info" as const),
+              title: rows[0].title + (rows.length > 1 ? t("errors.moreCount", { count: rows.length - 1 }) : ""),
+            };
+        const more = rows.length > 0 || Boolean(headline?.detail);
+        toastUnlessPanel(
+          head.kind,
+          head.title,
+          undefined,
+          more ? { label: t("runReport.viewReport"), onClick: () => openReport(runId) } : undefined,
         );
       }
       if (outcome.completion.closeModal) handlers.closeModal?.();
       return outcome.completion;
     },
-    [recordRun, toastBatch],
+    [openReport, recordRun, t, toastUnlessPanel],
   );
 
   const notifyError = useCallback<NotifyErrorFn>(
@@ -510,10 +577,10 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
         notify("error", t("copyFailed"));
         return false;
       }
-      showToast("success", t("copied"));
+      toastUnlessPanel("success", t("copied"));
       return true;
     },
-    [notify, t],
+    [notify, t, toastUnlessPanel],
   );
 
   useEffect(() => {
@@ -538,9 +605,17 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
     });
   }, [error, notify]);
 
+  // Cancel withdrawn for the rest of the running action (a phase its command
+  // no longer cancels); reset when the next action starts.
+  const cancelWithdrawnRef = useRef(false);
   const reportProgress = useCallback(
-    ({ done, total, message }: ProgressTick) => {
-      setPending((current) => (current ? { ...current, progress: { done, total } } : current));
+    ({ done, total, message, cancellable }: ProgressTick) => {
+      if (cancellable === false) cancelWithdrawnRef.current = true;
+      setPending((current) =>
+        current
+          ? { ...current, progress: { done, total }, ...(cancellable === false ? { cancellable: false } : {}) }
+          : current,
+      );
       if (message !== undefined) setActionMessage(message);
     },
     [setPending],
@@ -571,12 +646,16 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
       const refusal = refusalFor(pendingRef.current);
       if (refusal) {
         // Refused, not queued: say why, record nothing (it never ran).
-        showToast("info", describeRefusal(refusal, t));
+        toastUnlessPanel("info", describeRefusal(refusal, t));
         return undefined;
       }
+      cancelWithdrawnRef.current = false;
+      // The control that started it: focus lost while it ran returns there (D21).
+      const trigger = typeof document !== "undefined" ? document.activeElement : null;
       setPending(() => ({
         subject: opts.subject ?? { kind: "batch" },
         label: opts.label ?? null,
+        activity: opts.activity ?? null,
         startedAt: Date.now(),
         cancellable: opts.cancel !== undefined,
         cancelling: false,
@@ -593,7 +672,9 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
             try {
               return await run();
             } finally {
-              setPending((current) => (current ? { ...current, cancellable: declared } : current));
+              setPending((current) =>
+                current ? { ...current, cancellable: declared && !cancelWithdrawnRef.current } : current,
+              );
             }
           },
           cancelRequested: () => pendingRef.current?.cancelling === true,
@@ -616,11 +697,12 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
       } finally {
         setPending(() => null);
         setActionMessage(null);
+        returnLostFocus(trigger);
         const waiters = idleWaitersRef.current.splice(0);
         for (const wake of waiters) wake();
       }
     },
-    [formatError, notify, setPending, t],
+    [formatError, notify, setPending, t, toastUnlessPanel],
   );
 
   const refusal = useMemo(() => refusalFor(pending), [pending]);
@@ -634,6 +716,7 @@ export function useStatusReporter(t: TranslateFn): StatusReporter {
     setActionMessage,
     reportProgress,
     applyOutcome,
+    openReport,
     notify,
     notifications,
     unreadCount,

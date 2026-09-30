@@ -19,10 +19,10 @@ import {
   refreshOutcome,
   removalOutcome,
   syncOutcome,
-  type OutcomeEntry,
 } from "../lib/reportOutcome";
 import {
   focusAfter,
+  isFocusLost,
   resolveFirst,
   type FocusTarget,
 } from "../lib/actionLifecycle";
@@ -232,22 +232,24 @@ export function useSkillActions({
   // Where focus goes when the Delete dialog closes over a removed skill.
   const afterDialogRef = useRef<FocusTarget | null>(null);
 
-  const foldContext = {
-    t,
-    toolLabelById,
-    canRepoint: (id: string) => managedSkills.some((skill) => skill.id === id),
-  };
-  // A report entry's action (Change source for a skill gone upstream)
-  // resolves its skill id when clicked, against the list on screen then.
-  const onAction = (action: NonNullable<OutcomeEntry["action"]>) =>
-    openDialog({ kind: "repoint", skillId: action.skillId, name: action.skillName, preselect: "git" });
+  const foldContext = { t, toolLabelById };
   const reload = () => loadManagedSkills();
+  // Each skill's global Tools as the operator acted on them: a Refresh
+  // report's synced global target outside this set is a re-assert addition,
+  // announced in the run's report ("also deployed to Cursor, Pi").
+  const priorGlobalTools = (skills: readonly ManagedSkill[]) =>
+    Object.fromEntries(
+      skills.map((skill) => [skill.id, skill.targets.filter((target) => target.status !== "disabled").map((target) => target.tool)]),
+    );
 
   const newRefreshProgressChannel = () =>
     createProgressChannel<RefreshProgressDto>((progress) => {
       reportProgress({
         done: progress.index,
         total: progress.total,
+        // The token is honoured between acquisitions only: once a skill is
+        // being applied, nothing would stop (D20) — Cancel goes.
+        ...(progress.phase === "applying" ? { cancellable: false as const } : {}),
         message: t(
           progress.phase === "acquiring" ? "actions.refreshFetchStep" : "actions.refreshApplyStep",
           { index: progress.index, total: progress.total, name: progress.skill_name },
@@ -270,9 +272,10 @@ export function useSkillActions({
     // `CommandError | null`, so its no-op and dialog-opening exits say null.
     if (skills.length === 0 && verb !== "update") return verb === "repoint" ? null : undefined;
     const single = skills.length === 1 ? skills[0] : null;
-    const subject = single ? ({ kind: "skill", id: single.id } as const) : ({ kind: "batch" } as const);
-    const trigger = typeof document !== "undefined" ? document.activeElement : null;
     const skillIds = skills.map((skill) => skill.id);
+    // A batch names its skills: each row carries the pending mark (D19).
+    const subject = single ? ({ kind: "skill", id: single.id } as const) : ({ kind: "batch", ids: skillIds } as const);
+    const trigger = typeof document !== "undefined" ? document.activeElement : null;
 
     // A wide verb (several skills, or the library) states its counts before
     // it runs: without `confirmed` it opens the count-bearing confirmation,
@@ -288,11 +291,11 @@ export function useSkillActions({
       openDialog({ kind: "confirmCount", verb: verb as CountVerb, skillIds });
       return;
     }
-    // A count confirmation that ran its verb closes once the verb settled,
-    // whatever the report said: its counts describe a state that is gone.
-    const closeCount = () => {
-      if (confirmed) dismissDialog("confirmCount");
-    };
+    // A count confirmation has done its work once confirmed: it closes as
+    // the verb starts (focus returns to its opener, the rail's button), so
+    // the run shows in the header progress over a browsable library (D19) —
+    // never under a modal. Its counts describe a state that is about to go.
+    if (confirmed) dismissDialog("confirmCount");
 
     /** Run `body` under the lifecycle, with the verb's reload rule. */
     const settle = async <T,>(
@@ -314,9 +317,12 @@ export function useSkillActions({
     /**
      * D21: after the action, focus goes where the rule says — the same
      * control, or Restore's health row — once the settled render is on
-     * screen (a control disabled while pending dropped focus to `<body>`).
-     * A verb confirmed in a dialog leaves focus to the Dialog primitive's
-     * return; focus the operator moved elsewhere is never taken back.
+     * screen (a control disabled while pending dropped focus to `<body>`;
+     * an overwrite ask raised mid-action returned it to nothing). A verb
+     * confirmed in a dialog leaves focus to the Dialog primitive's return;
+     * focus the operator moved elsewhere is never taken back. One placement,
+     * no hold: no layer competes for focus once the action settled (the
+     * progress is the header's, never a layer — D19).
      */
     const restoreFocus = () => {
       if (verb === "delete" || typeof window === "undefined") return;
@@ -325,51 +331,18 @@ export function useSkillActions({
       if (trigger?.closest("[role='dialog']:not([data-inspector]), [role='alertdialog']")) return;
       const target = focusAfter({ verb, removed: false }, { skillId: single?.id ?? null, order, surface: "skills" });
       const chain = [target, { kind: "trigger" } as const, ...(single ? [{ kind: "row", skillId: single.id } as const] : [])];
-      // Focus counts as lost on <body>, on the trigger, on the main landmark
-      // (a closing layer's last fallback) — and while a layer holds it that
-      // is not the target's own: the progress overlay of a streamed action
-      // (until ticket 14 retires it) keeps focus until it closes, then hands
-      // it to the layer beneath (the inspector's sheet) or the landmark.
-      const attempt = (left: number) => {
+      const place = (settling: boolean) => {
         const active = document.activeElement;
-        const lost = !active || active === document.body || active === trigger || active.tagName === "MAIN";
-        const layer = active?.closest("[role='dialog'], [role='alertdialog']") ?? null;
-        if (!lost && !layer) return;
-        const element = resolveFirst(chain, trigger);
-        const blocked = !element || (layer !== null && !layer.contains(element));
-        if (!blocked) {
-          element.focus();
-          if (document.activeElement === element) {
-            hold(element);
-            return;
-          }
+        if (!isFocusLost(active) && active !== trigger) return;
+        // The settled render re-enables the control a frame later at most:
+        // until then the rule's own target waits (one frame), then the chain.
+        if (settling && !resolveFirst([target], trigger)) {
+          window.requestAnimationFrame(() => place(false));
+          return;
         }
-        // The settled render may not have re-enabled the control, or the
-        // closing overlay may still hold focus or keep the page inert.
-        if (left > 0) window.setTimeout(() => attempt(left - 1), 16);
+        resolveFirst(chain, trigger)?.focus();
       };
-      // A closing overlay hands focus back a frame or two after it left the
-      // DOM; until the operator presses a key or a pointer, the placement
-      // holds against that late return.
-      const hold = (element: HTMLElement) => {
-        let acted = false;
-        const act = () => {
-          acted = true;
-        };
-        window.addEventListener("keydown", act, true);
-        window.addEventListener("pointerdown", act, true);
-        let frames = 12;
-        const check = () => {
-          if (!acted && element.isConnected && document.activeElement !== element) element.focus();
-          if (!acted && frames-- > 0) window.requestAnimationFrame(check);
-          else {
-            window.removeEventListener("keydown", act, true);
-            window.removeEventListener("pointerdown", act, true);
-          }
-        };
-        window.requestAnimationFrame(check);
-      };
-      window.setTimeout(() => attempt(12), 0);
+      window.setTimeout(() => place(true), 0);
     };
 
     /**
@@ -413,14 +386,18 @@ export function useSkillActions({
     };
 
     const refreshOne = (skill: ManagedSkill, copy: { message: string; success: string; label: string }, request: (action: ActionHandle) => Promise<SkillMutationResultDto | ActionExit>, cancel: "updateManagedSkill" | "repointSkillSource") =>
-      settle({ message: copy.message, label: copy.label, subject: { kind: "skill", id: skill.id }, cancel }, async (action) => {
+      settle({ message: copy.message, activity: copy.message, label: copy.label, subject: { kind: "skill", id: skill.id }, cancel }, async (action) => {
         const response = await request(action);
         if (response instanceof ActionExit) return response;
         replaceCatalog(response.skills);
         const { report, declined } = await settleRefresh(action, response.report, response.skills);
         return applyOutcome(
-          refreshOutcome(report, { ...foldContext, single: { name: skill.name, success: copy.success }, declined }),
-          { onAction },
+          refreshOutcome(report, {
+            ...foldContext,
+            single: { name: skill.name, success: copy.success },
+            declined,
+            priorGlobalTools: priorGlobalTools([skill]),
+          }),
         );
       });
 
@@ -430,7 +407,7 @@ export function useSkillActions({
         if (tool !== undefined) {
           if (!single || !(await confirmPair(tool))) return;
           const toolLabel = toolLabelById[tool] ?? tool;
-          await settle({ message: t("actions.syncing", { name: single.name, tool: toolLabel }), subject, label: t("lifecycle.verbs.sync") }, async () => {
+          await settle({ message: t("actions.syncing", { name: single.name, tool: toolLabel }), subject, label: t("lifecycle.verbs.sync"), activity: t("activity.syncing") }, async () => {
             const report = await syncSkillsToTools([toSyncItem(single)], [tool], { overwriteIfSameContent: true });
             await applyOutcome(syncOutcome(report, { ...foldContext, action: "toggle" }), { reload });
           });
@@ -443,11 +420,10 @@ export function useSkillActions({
           notify("warning", t("noSyncTargets"));
           return;
         }
-        await settle({ subject, label: t("lifecycle.verbs.sync") }, async () => {
+        await settle({ subject, label: t("lifecycle.verbs.sync"), activity: t("activity.syncing") }, async () => {
           const report = await syncSkillsToTools(skills.map(toSyncItem), [...targets], { overwriteIfSameContent: true });
           await applyOutcome(syncOutcome(report, { ...foldContext, action: "bulk" }), { reload });
         });
-        closeCount();
         return;
       }
       case "retry": {
@@ -469,7 +445,7 @@ export function useSkillActions({
           bySet.set(key, batch);
         }
         if (bySet.size === 0) return;
-        await settle({ subject, label: t("lifecycle.verbs.sync") }, async (action) => {
+        await settle({ subject, label: t("lifecycle.verbs.sync"), activity: t("activity.syncing") }, async (action) => {
           // Every batch first, then one ask over all their collisions.
           const parts: CollisionPart[] = [];
           for (const batch of bySet.values()) {
@@ -496,6 +472,7 @@ export function useSkillActions({
           {
             subject,
             label: t("lifecycle.verbs.disable"),
+            activity: t("activity.disabling"),
             ...(single && tool !== undefined
               ? { message: t("actions.unsyncing", { name: single.name, tool: toolLabelById[tool] ?? tool }) }
               : {}),
@@ -505,7 +482,6 @@ export function useSkillActions({
             await applyOutcome(removalOutcome(report, { ...foldContext, action }), { reload });
           },
         );
-        closeCount();
         return;
       }
       case "enable": {
@@ -517,11 +493,10 @@ export function useSkillActions({
             : single
               ? { kind: "skill", skill_id: single.id }
               : { kind: "skills", skill_ids: skills.map((skill) => skill.id) };
-        await settle({ subject, label: t("lifecycle.verbs.enable") }, async () => {
+        await settle({ subject, label: t("lifecycle.verbs.enable"), activity: t("activity.enabling") }, async () => {
           const report = await enableSkillTargets(scope);
           await applyOutcome(enableOutcome(report, { ...foldContext, batch: scope.kind === "skills" }), { reload });
         });
-        closeCount();
         return;
       }
       case "update": {
@@ -542,7 +517,14 @@ export function useSkillActions({
           return;
         }
         if (managedSkills.length === 0) return;
-        await settle({ subject: { kind: "batch" }, label: t("lifecycle.verbs.refresh"), cancel: "refreshManagedSkills" }, async (action) => {
+        const refreshed = all ? managedSkills : skills;
+        await settle({
+          // The rows it will refresh pend (a skill with no source is not in the run).
+          subject: { kind: "batch", ids: refreshed.filter((skill) => skill.refreshable).map((skill) => skill.id) },
+          label: t("lifecycle.verbs.refresh"),
+          activity: t("activity.refreshing"),
+          cancel: "refreshManagedSkills",
+        }, async (action) => {
           const settled = await invokeTauri(
             "refreshManagedSkills",
             all ? null : skills.map((skill) => skill.id),
@@ -551,12 +533,10 @@ export function useSkillActions({
           );
           const { report, declined, retried } = await settleRefresh(action, settled, managedSkills);
           // A retry already re-read the catalog.
-          await applyOutcome(refreshOutcome(report, { ...foldContext, declined }), {
+          await applyOutcome(refreshOutcome(report, { ...foldContext, declined, priorGlobalTools: priorGlobalTools(refreshed) }), {
             reload: retried ? undefined : reload,
-            onAction,
           });
         });
-        closeCount();
         return;
       }
       case "restore": {
@@ -652,6 +632,7 @@ export function useSkillActions({
           {
             subject: deleteSubject,
             label: t("lifecycle.verbs.delete"),
+            activity: single ? t("actions.removing", { name: single.name }) : t("activity.removing"),
             message: single ? t("actions.removing", { name: single.name }) : undefined,
           },
           async () => {
@@ -727,7 +708,7 @@ export function useSkillActions({
           return;
         }
         const ids = skills.map((skill) => skill.id);
-        await settle({ subject, label: t("lifecycle.verbs.assign") }, async () => {
+        await settle({ subject, label: t("lifecycle.verbs.assign"), activity: t("activity.assigning") }, async () => {
           // The project world assigns the set (the backend command is per
           // skill) and asks about every collision once; one report, one fold.
           if (verb === "assignToProject") {
@@ -752,7 +733,7 @@ export function useSkillActions({
           notify("warning", t("noSyncTargets"));
           return;
         }
-        await settle({ subject: { kind: "batch" }, label: t("lifecycle.verbs.deploy") }, async (action) => {
+        await settle({ subject: { kind: "batch", ids: [...toEnable, ...toSync].map((skill) => skill.id) }, label: t("lifecycle.verbs.deploy"), activity: t("activity.deploying") }, async (action) => {
           // Both reports first, then one ask over both, one fold, one run.
           const scope: DisableScope = { kind: "skills", skill_ids: toEnable.map((skill) => skill.id) };
           const items = toSync.map(toSyncItem);

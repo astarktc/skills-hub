@@ -56,7 +56,7 @@ export function useProjectActions({ t, state, catalog, reporter, surface }: Proj
     async (path: string, gitignore: IgnoreUpdateOptions) => {
       // The ignore intent rides along with registration; the hook hands it
       // to the backend once the tool set is confirmed.
-      const project = await runAction({ subject: batch, label: t("lifecycle.verbs.registerProject") }, async () => {
+      const project = await runAction({ subject: batch, label: t("lifecycle.verbs.registerProject"), activity: t("activity.addingProject") }, async () => {
         const registered = await state.registerProject(path, gitignore);
         await state.selectProject(registered.id);
         return registered;
@@ -90,7 +90,7 @@ export function useProjectActions({ t, state, catalog, reporter, surface }: Proj
   const removeDialog = surface.layer("projectRemove");
   const handleRemoveProject = useCallback(async () => {
     if (!removeDialog) return;
-    await runAction({ subject: batch, label }, async () => {
+    await runAction({ subject: batch, label, activity: t("activity.removingProject") }, async () => {
       const report = await state.removeProject(removeDialog.projectId);
       await applyOutcome(
         projectRemovalOutcome(report, { t, toolLabelById, action: "removeProject" }),
@@ -145,14 +145,14 @@ export function useProjectActions({ t, state, catalog, reporter, surface }: Proj
   );
 
   const handleResyncProject = useCallback(async () => {
-    await runAction({ subject: batch, label }, async () => {
+    await runAction({ subject: batch, label, activity: t("activity.syncingProjects") }, async () => {
       const report = await state.resyncProject();
       await applyOutcome(projectSyncOutcome(report, { t, toolLabelById, action: "resync" }));
     });
   }, [applyOutcome, label, runAction, state, t, toolLabelById]);
 
   const handleResyncAll = useCallback(async () => {
-    await runAction({ subject: batch, label }, async () => {
+    await runAction({ subject: batch, label, activity: t("activity.syncingProjects") }, async () => {
       const { report, viewRefreshed } = await state.resyncAll();
       const projectLabelById = Object.fromEntries(
         state.projects.map((project) => [project.id, project.name]),

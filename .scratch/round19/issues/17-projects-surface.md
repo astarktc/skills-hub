@@ -58,3 +58,11 @@ All with a missing folder yields one line; contrast; `npm run check`.
   keymap pattern (`useSkillListKeymap`: one handler, off while typing or under a layer, clearing from inside a rail
   rescues focus) is reusable there. (4) Assign to project… over a selection (`assignProject` with `skillIds`) assigns
   every skill to all the project's configured Tools through the project world's `assignToProject(projectId, ids)`.
+
+- 2026-09-30 — from ticket 14: the Projects area shows the header progress as a strip above the area
+  (`placement="bar"`); resync / resync-all / remove / register set `activity` ("Syncing projects", "Removing
+  project", "Adding project"). The project dialogs (add / edit / remove / tool config) get no dialog-foot progress
+  yet — add `progress` like the skills dialogs. `projectSyncOutcome` folds an unanswered `TARGET_EXISTS` as "N folders
+  to review" (conflict tone, `review` entry with the project in its subject; no overwrite repair from the panel —
+  answered from the matrix). The Notifications panel names a project row "in {project}:" from the labels App passes.
+

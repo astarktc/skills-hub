@@ -26,3 +26,14 @@ Contrast table still holds; `npm run check`; a short `preview_recording` of the 
 ## Result
 
 (child fills in)
+
+## Comments
+
+- 2026-09-30 — from ticket 14: motion added — the header progress's bar fill (`scaleX`, `--motion-fast`,
+  `motion-reduce:transition-none`) and its spinner (`motion-safe:animate-spin`, `motion-reduce:hidden`); the row's
+  pending mark is the overflow Button's `pending` spinner. The LoadingOverlay's spinner/shimmer/fade are gone
+  (`shimmer` keyframes stay for `.skeleton-row`, `spin` for `.spinner`). Worth an Emil look: the header's
+  summary ↔ progress swap is instant (no crossfade), the run toast is headline-only with "View report", and the
+  Switch primitive has no `focusableWhenDisabled` (a pressed row switch drops focus while its action runs; the door
+  restores it after).
+

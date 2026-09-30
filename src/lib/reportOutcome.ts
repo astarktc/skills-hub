@@ -1,5 +1,6 @@
 import type {
   BatchTargetOutcome,
+  CommandError,
   EnableReport,
   ImportReport,
   InstallBatchReport,
@@ -10,16 +11,54 @@ import type {
   RefreshReport,
   RemovalReport,
 } from "../bindings";
-import { describeCommandError } from "../commandError";
+import { describeCommandError, toCommandError } from "../commandError";
 import type { DeclinedPair } from "./overwriteAsk";
-import type { ActionErrorEntry, TranslateFn } from "../hooks/useStatusReporter";
+import type { TranslateFn } from "../hooks/useStatusReporter";
 import { ACQUISITION_SKIP_KEY, INVOCATION_LABEL_KEY, SKIPPED_REASON_KEY } from "./skillPresentation";
 
-/** Declarative actions survive list replacement; only the hook resolves the id. */
-export type OutcomeEntry = Omit<ActionErrorEntry, "action"> & {
-  action?: { label: string; skillId: string; skillName: string };
+/**
+ * What one report entry is about: the skill (by id — resolved when the
+ * operator acts, against the catalog then), the Tool and, for a project
+ * assignment, the project. The Notifications panel names a project row by it
+ * and derives the row's actions from it (`notificationRuns.rowActions`).
+ */
+export type EntrySubject = {
+  skillId?: string;
+  skillName: string;
+  tool?: string;
+  projectId?: string;
 };
-export type PlainEntry = Omit<ActionErrorEntry, "action">;
+
+/**
+ * The repair a report entry offers, decided where the entry is folded (the
+ * fold knows what failed): re-sync the pair from the central copy, answer a
+ * collision (the overwrite ask again), re-run the skill's Update, or ask to
+ * remove it again. The panel maps it onto the door's verb.
+ */
+export type EntryRepair =
+  | { verb: "retry"; tool: string }
+  | { verb: "overwrite"; tool: string }
+  | { verb: "update" }
+  | { verb: "delete" };
+
+/**
+ * One report entry. Declarative only — no closures — so it survives catalog
+ * replacement and lands in the session history as data: `subject` and
+ * `error` (the typed failure, when there is one) let the panel offer Show,
+ * Retry, Overwrite…, Change source… and Open Settings → GitHub.
+ * `review` marks an entry of the "to review" kind: a collision the operator
+ * has not answered (D10/D12), never a failure.
+ */
+export type OutcomeEntry = {
+  title: string;
+  message: string;
+  subject?: EntrySubject;
+  error?: CommandError;
+  repair?: EntryRepair;
+  review?: true;
+};
+/** The entry every fold produces (one shape; kept as a name for the folds' signatures). */
+export type PlainEntry = OutcomeEntry;
 
 /**
  * Which outcome kind decides a report's toast, by precedence (D10):
@@ -81,7 +120,6 @@ export type OutcomeTally = {
 export type ReportContext = {
   t: TranslateFn;
   toolLabelById?: Readonly<Record<string, string>>;
-  canRepoint?: (skillId: string) => boolean;
 };
 const empty = (): Outcome<PlainEntry> => ({
   toast: null,
@@ -140,9 +178,15 @@ export type HeadlineCounts = {
   declined: number;
   cancelled: number;
   review: number;
+  /**
+   * Sync targets occupied by a different folder that nobody answered — the
+   * overwrite ask was dismissed (D12: "a dismissed ask sends nothing"): the
+   * pair stays as it was, "to review", never a failure (D10).
+   */
+  collisions: number;
 };
 const ZERO_COUNTS: HeadlineCounts = {
-  done: 0, failed: 0, targetsFailed: 0, skipped: 0, declined: 0, cancelled: 0, review: 0,
+  done: 0, failed: 0, targetsFailed: 0, skipped: 0, declined: 0, cancelled: 0, review: 0, collisions: 0,
 };
 /** What the "to review" count is of. */
 export type ReviewKind = "edits" | "originals";
@@ -188,6 +232,7 @@ function tallyHeadline(t: TranslateFn, tally: OutcomeTally): string {
   part("outcome.declined", counts.declined);
   part("outcome.cancelled", counts.cancelled);
   part(REVIEW_KEY[review], counts.review);
+  part("runReport.collisions", counts.collisions);
   const [first] = tally.done;
   if (parts.length === 0 && first) parts.push(t(HEADLINE_DONE_KEY[first.verb], { count: 0 }));
   return parts.join(HEADLINE_SEPARATOR);
@@ -197,7 +242,7 @@ function tallyHeadline(t: TranslateFn, tally: OutcomeTally): string {
 export function headlineTone(partial: Partial<HeadlineCounts>): OutcomeTone {
   const counts = { ...ZERO_COUNTS, ...partial };
   if (counts.failed > 0 || counts.targetsFailed > 0) return "failure";
-  if (counts.review > 0) return "conflict";
+  if (counts.review > 0 || counts.collisions > 0) return "conflict";
   if (counts.skipped > 0) return "skipped";
   if (counts.declined > 0) return "declined";
   if (counts.cancelled > 0) return "neutral";
@@ -222,14 +267,47 @@ function headlineToast(
 const declinedNote = (ctx: ReportContext, name: string, tool: string) =>
   ctx.t("outcome.declinedLine", { name, tool: label(ctx, tool) });
 
+type TargetExists = Extract<CommandError, { code: "TARGET_EXISTS" }>;
+
+/**
+ * A `TARGET_EXISTS` that reached a fold: every producer routes its
+ * collisions through the one overwrite ask first (D12), and an answered row
+ * is replaced by its retry (or becomes `declined`), so a collision a report
+ * still carries is one the operator did not answer — the ask was dismissed.
+ * It is "to review": the pair stays as it was, nothing was retried, nothing
+ * failed (D10).
+ */
+const unansweredCollision = (error: CommandError): TargetExists | null =>
+  error.code === "TARGET_EXISTS" ? error : null;
+
+/** The "to review" entry of an unanswered collision (global pair or project assignment). */
+function collisionEntry(
+  ctx: ReportContext,
+  error: TargetExists,
+  subject: EntrySubject & { tool: string },
+): OutcomeEntry {
+  return {
+    title: ctx.t("runReport.collisionTitle", { name: subject.skillName, tool: label(ctx, subject.tool) }),
+    message: ctx.t("runReport.collisionMessage", { path: error.path }),
+    subject,
+    error,
+    // A project assignment is answered from its matrix; a global pair here.
+    ...(subject.projectId === undefined ? { repair: { verb: "overwrite" as const, tool: subject.tool } } : {}),
+    review: true,
+  };
+}
+
 function refreshCounts(report: RefreshReport) {
-  const counts = { refreshed: 0, failed: 0, skipped: 0, cancelled: 0, conflicts: 0, target_failures: 0 };
+  const counts = { refreshed: 0, failed: 0, skipped: 0, cancelled: 0, conflicts: 0, target_failures: 0, collisions: 0 };
   for (const { status } of report.skills) {
     if (status.status === "refreshed") {
       counts.refreshed++;
-      counts.target_failures +=
-        status.targets.filter((target) => target.status.status === "failed").length
-        + Number(status.reassert_error !== null);
+      for (const target of status.targets) {
+        if (target.status.status !== "failed") continue;
+        if (unansweredCollision(target.status.error)) counts.collisions++;
+        else counts.target_failures++;
+      }
+      counts.target_failures += Number(status.reassert_error !== null);
       counts.conflicts += Number(status.edit_conflict !== null);
     } else if (status.status === "failed") counts.failed++;
     else if (status.status === "cancelled") counts.cancelled++;
@@ -285,6 +363,11 @@ function importCounts(report: ImportReport) {
  * A batch of one never shows the count line: its failure or skip is already
  * the one entry, so a second toast would repeat it; a conflict keeps its
  * sentence (toned failure when a target failed too), a cancel its own.
+ *
+ * Re-assert additions are announced ("alpha also deployed to Cursor, Pi"):
+ * a global target the report synced that the skill did not have before the
+ * run (`priorGlobalTools`, the catalog the operator acted on) was created
+ * by the auto-sync re-assert. A collision nobody answered is "to review".
  */
 export function refreshOutcome(
   report: RefreshReport,
@@ -292,6 +375,8 @@ export function refreshOutcome(
     single?: { name: string; success: string };
     /** Pairs the operator kept in the overwrite ask the report's collisions raised. */
     declined?: readonly DeclinedPair[];
+    /** Each skill's global Tools before the run (skill id → tools); absent = unknown, nothing announced. */
+    priorGlobalTools?: Readonly<Record<string, readonly string[]>>;
   },
 ): Outcome {
   const out: Outcome = empty();
@@ -299,44 +384,60 @@ export function refreshOutcome(
   const { t } = ctx;
   const summary = refreshCounts(report);
   const targetErrors: OutcomeEntry[] = [];
+  const additions: string[] = [];
   for (const skill of report.skills) {
     const status = skill.status;
+    const subject: EntrySubject = { skillId: skill.skill_id, skillName: skill.skill_name };
     if (status.status === "failed") {
       out.errors.push({
         title: t("errors.updateFailedTitle", { name: skill.skill_name }),
         message: errorMessage(ctx, status.error),
-        ...(status.error.code === "GITHUB_SKILL_NOT_FOUND" &&
-        ctx.canRepoint?.(skill.skill_id)
-          ? {
-              action: {
-                label: t("changeSource.action"),
-                skillId: skill.skill_id,
-                skillName: skill.skill_name,
-              },
-            }
-          : {}),
+        subject,
+        error: status.error,
+        repair: { verb: "update" },
       });
     } else if (status.status === "skipped") {
       out.warnings.push({
         title: t("errors.refreshSkippedTitle", { name: skill.skill_name }),
         message: t(SKIPPED_REASON_KEY[status.state]),
+        subject,
       });
     } else if (status.status === "skipped_acquisition") {
       out.warnings.push({
         title: t("errors.refreshSkippedTitle", { name: skill.skill_name }),
         message: t(ACQUISITION_SKIP_KEY[status.reason]),
+        subject,
       });
     } else if (status.status === "refreshed") {
-      targetErrors.push(...propagationErrors(status.targets, skill.skill_name, ctx));
+      const { errors, reviews } = propagationEntries(status.targets, subject, ctx);
+      targetErrors.push(...errors);
+      out.warnings.push(...reviews);
       if (status.reassert_error)
         targetErrors.push({
           title: t("errors.reassertFailedTitle", { name: skill.skill_name }),
           message: errorMessage(ctx, status.reassert_error),
+          subject,
+          error: status.reassert_error,
         });
+      const prior = ctx.priorGlobalTools?.[skill.skill_id];
+      if (prior) {
+        const added = status.targets.flatMap((target) =>
+          target.scope.scope === "global" &&
+          target.status.status === "synced" &&
+          !prior.includes(target.scope.tool)
+            ? [label(ctx, target.scope.tool)]
+            : [],
+        );
+        if (added.length > 0)
+          additions.push(
+            t("runReport.alsoDeployed", { name: skill.skill_name, tools: added.join(t("common.listSeparator")) }),
+          );
+      }
     }
     // A cancelled row is counted in the headline and raises no entry.
   }
   out.errors.push(...targetErrors);
+  out.notes.push(...additions);
   for (const pair of ctx.declined ?? []) out.notes.push(declinedNote(ctx, pair.skillName, pair.tool));
   for (const skill of report.skills) {
     if (skill.status.status !== "refreshed" || !skill.status.edit_conflict)
@@ -344,6 +445,7 @@ export function refreshOutcome(
     const conflict = skill.status.edit_conflict;
     out.completion.conflict = true;
     out.warnings.push({
+      subject: { skillId: skill.skill_id, skillName: skill.skill_name },
       title: t("invocationEdit.warningTitle", { name: skill.skill_name }),
       message: t("invocationEdit.refreshWarning", {
         name: skill.skill_name,
@@ -365,6 +467,7 @@ export function refreshOutcome(
     declined: ctx.declined?.length ?? 0,
     cancelled: summary.cancelled,
     review: summary.conflicts,
+    collisions: summary.collisions,
   };
   // Cancelled before anything was applied: nothing changed, nothing failed.
   if (summary.cancelled > 0 && summary.refreshed === 0 && !failed) {
@@ -383,22 +486,52 @@ export function refreshOutcome(
         t("invocationEdit.updateCompletedWithConflict", { name: ctx.single.name }),
       );
     else if (!failed && !skipped)
-      out.toast = toast(headlineTone(counts), ctx.single.success, detailOf(out.notes));
+      out.toast = toast(
+        headlineTone(counts),
+        [ctx.single.success, ...(counts.collisions > 0 ? [t("runReport.collisions", { count: counts.collisions })] : [])].join(
+          HEADLINE_SEPARATOR,
+        ),
+        detailOf(out.notes),
+      );
     return out;
   }
   out.toast = headlineToast(t, "refreshed", counts, { detail: detailOf(out.notes) });
   return out;
 }
 
-function propagationErrors(
+/**
+ * One skill's Propagation targets as entries: a failed target is an error
+ * (a global one offers Retry); a collision nobody answered is "to review".
+ */
+function propagationEntries(
   targets: PropagationOutcome[],
-  name: string,
+  skill: EntrySubject,
   ctx: ReportContext,
-): PlainEntry[] {
-  return targets.flatMap((target) => target.status.status === "failed" ? [{
-    title: ctx.t("errors.propagationFailedTitle", { name, tool: label(ctx, target.scope.tool) }),
-    message: errorMessage(ctx, target.status.error),
-  }] : []);
+): { errors: OutcomeEntry[]; reviews: OutcomeEntry[] } {
+  const errors: OutcomeEntry[] = [];
+  const reviews: OutcomeEntry[] = [];
+  for (const target of targets) {
+    if (target.status.status !== "failed") continue;
+    const { tool } = target.scope;
+    const subject: EntrySubject & { tool: string } = {
+      ...skill,
+      tool,
+      ...(target.scope.scope === "project" ? { projectId: target.scope.project_id } : {}),
+    };
+    const collision = unansweredCollision(target.status.error);
+    if (collision) {
+      reviews.push(collisionEntry(ctx, collision, subject));
+      continue;
+    }
+    errors.push({
+      title: ctx.t("errors.propagationFailedTitle", { name: skill.skillName, tool: label(ctx, tool) }),
+      message: errorMessage(ctx, target.status.error),
+      subject,
+      error: target.status.error,
+      ...(target.scope.scope === "global" ? { repair: { verb: "retry" as const, tool } } : {}),
+    });
+  }
+  return { errors, reviews };
 }
 
 /** Edit has already settled centrally, including a no-op or clear. Expected
@@ -410,20 +543,25 @@ export function invocationEditOutcome(
   report: InvocationEditReport,
   ctx: ReportContext & { declined?: readonly DeclinedPair[] },
 ): Outcome<PlainEntry> {
-  const errors = propagationErrors(report.propagation.targets, report.skill_name, ctx);
+  const { errors, reviews } = propagationEntries(
+    report.propagation.targets,
+    { skillId: report.skill_id, skillName: report.skill_name },
+    ctx,
+  );
   const saved = ctx.t("invocationEdit.saved");
   // Pairs kept in the overwrite ask its collisions raised: quiet notes.
   const notes = (ctx.declined ?? []).map((pair) => declinedNote(ctx, pair.skillName, pair.tool));
+  const parts = [
+    saved,
+    ...(errors.length ? [ctx.t("outcome.targetsFailed", { count: errors.length })] : []),
+    ...(reviews.length ? [ctx.t("runReport.collisions", { count: reviews.length })] : []),
+  ];
   return {
-    toast: errors.length
-      ? toast(
-          "failure",
-          [saved, ctx.t("outcome.targetsFailed", { count: errors.length })].join(HEADLINE_SEPARATOR),
-          detailOf(notes),
-        )
+    toast: errors.length || reviews.length
+      ? toast(errors.length ? "failure" : "conflict", parts.join(HEADLINE_SEPARATOR), detailOf(notes))
       : toast(notes.length ? "declined" : "success", saved, detailOf(notes)),
     errors,
-    warnings: [],
+    warnings: reviews,
     notes,
     completion: { reload: false, closeModal: true, conflict: false },
   };
@@ -439,6 +577,8 @@ function collectRemovalFailures(
   report: RemovalReport,
   ctx: ReportContext,
   titleKey: string,
+  /** Skill names by id, when the fold knows them (a Delete names its skill). */
+  skillNames?: Readonly<Record<string, string>>,
 ): boolean {
   for (const target of report.targets) {
     if (target.status.status !== "failed") continue;
@@ -446,6 +586,13 @@ function collectRemovalFailures(
       out.errors.push({
         title: ctx.t(titleKey, { tool: label(ctx, row.tool) }),
         message: errorMessage(ctx, target.status.error),
+        subject: {
+          skillId: row.skill_id,
+          skillName: skillNames?.[row.skill_id] ?? "",
+          tool: row.tool,
+          ...(row.scope === "assignment" ? { projectId: row.project_id } : {}),
+        },
+        error: target.status.error,
       });
     }
   }
@@ -529,6 +676,7 @@ export function projectSyncOutcome(
   const out = empty();
   out.completion.reload = false;
   const counts = projectSyncCounts(report);
+  let collisions = 0;
   for (const item of report.items) {
     // "Keep existing" in the overwrite ask (ticket 04): a quiet note, never
     // an error — the row is kept `disabled` (D9, D10).
@@ -537,6 +685,13 @@ export function projectSyncOutcome(
       continue;
     }
     if (item.status.status !== "failed") continue;
+    const subject = { skillId: item.skill_id, skillName: item.skill_name, tool: item.tool, projectId: item.project_id };
+    const collision = unansweredCollision(item.status.error);
+    if (collision) {
+      collisions++;
+      out.warnings.push(collisionEntry(ctx, collision, subject));
+      continue;
+    }
     const title =
       ctx.action === "resyncAll"
         ? ctx.t("errors.syncFailedInProjectTitle", {
@@ -548,8 +703,10 @@ export function projectSyncOutcome(
             name: item.skill_name,
             tool: label(ctx, item.tool),
           });
-    out.errors.push({ title, message: errorMessage(ctx, item.status.error) });
+    out.errors.push({ title, message: errorMessage(ctx, item.status.error), subject, error: item.status.error });
   }
+  // An unanswered collision is "to review", never counted as failed (D10).
+  counts.failed -= collisions;
   const failed = counts.failed > 0;
   out.completion.closeModal = !failed;
   const { t } = ctx;
@@ -598,6 +755,20 @@ export function projectSyncOutcome(
   // Declined pairs ride as the detail of a count-bearing project toast.
   if (out.toast && ctx.action !== "toggleOn" && out.notes.length && !out.toast.detail)
     out.toast = { ...out.toast, detail: detailOf(out.notes) };
+  // Unanswered collisions join the headline as "to review" (conflict tone
+  // unless something failed).
+  if (collisions > 0) {
+    const line = t("runReport.collisions", { count: collisions });
+    // A toggle-on that synced nothing says only what is to review.
+    const sentence = ctx.action === "toggleOn" && counts.synced === 0 ? null : out.toast;
+    out.toast = sentence && out.toast
+      ? toast(
+          out.toast.tone === "failure" ? "failure" : "conflict",
+          [out.toast.message, line].join(HEADLINE_SEPARATOR),
+          out.toast.detail,
+        )
+      : toast(failed ? "failure" : "conflict", line);
+  }
   return out;
 }
 
@@ -675,7 +846,7 @@ function isDisabledSkip(result: BatchTargetOutcome): boolean {
 }
 
 /** What a batch report's pairs settled as, beside the entries the fold raised. */
-type SyncTally = { synced: number; failed: number; skipped: number; declined: number };
+type SyncTally = { synced: number; failed: number; skipped: number; declined: number; collisions: number };
 
 /** Bulk and install surface not-detected skips as per-tool warnings and
  * other bulk skips silently; selected install targets surface unwritable
@@ -690,13 +861,15 @@ export function syncOutcome(
 ): Outcome<PlainEntry> {
   const { out, tally, disabledSkip } = foldSync(report, ctx);
   if (ctx.action === "bulk") {
-    const counts = { failed: tally.failed, skipped: tally.skipped, declined: tally.declined };
+    const counts = { failed: tally.failed, skipped: tally.skipped, declined: tally.declined, collisions: tally.collisions };
     out.toast = headlineToast(ctx.t, "synced", { done: tally.synced, ...counts }, { detail: detailOf(out.notes) });
     out.tally = { done: [{ verb: "synced", count: tally.synced }], counts };
   }
   // No new copy: failed explicit actions have their error entries, not a success.
   else if (ctx.action === "toggle" && out.errors.length === 0) {
-    if (tally.declined > 0) out.toast = toast("declined", out.notes.join("\n"));
+    // A dismissed ask: the pair stays as it was, "to review" (D10/D12).
+    if (tally.collisions > 0) out.toast = toast("conflict", ctx.t("runReport.collisions", { count: tally.collisions }));
+    else if (tally.declined > 0) out.toast = toast("declined", out.notes.join("\n"));
     else if (!disabledSkip) out.toast = toast("success", ctx.t("status.syncEnabled"));
   }
   return out;
@@ -707,7 +880,7 @@ function foldSync(
   ctx: ReportContext & { action: "bulk" | "install" | "toggle" },
 ): { out: Outcome<PlainEntry>; tally: SyncTally; disabledSkip: boolean } {
   const out = empty();
-  const tally: SyncTally = { synced: 0, failed: 0, skipped: 0, declined: 0 };
+  const tally: SyncTally = { synced: 0, failed: 0, skipped: 0, declined: 0, collisions: 0 };
   const skips = new NotInstalledSkips();
   let disabledSkip = false;
   for (const result of report) {
@@ -723,6 +896,7 @@ function foldSync(
     }
     // A Disabled pair is skipped by design, never a failure: silent in bulk
     // and install; an explicit toggle says why nothing happened.
+    const subject = { skillId: result.skill_id, skillName: result.skill_name, tool: result.tool_key };
     if (isDisabledSkip(result)) {
       tally.skipped++;
       if (ctx.action === "toggle") {
@@ -733,8 +907,17 @@ function foldSync(
             tool: label(ctx, result.tool_key),
           }),
           message: errorMessage(ctx, status.error),
+          subject,
         });
       }
+      continue;
+    }
+    // Every sync path asks about a collision first (D12); one still here
+    // was not answered: "to review", never a failure or a skip.
+    const collision = unansweredCollision(status.error);
+    if (collision) {
+      tally.collisions++;
+      out.warnings.push(collisionEntry(ctx, collision, subject));
       continue;
     }
     if (ctx.action !== "toggle" && skips.absorb(result)) {
@@ -755,10 +938,10 @@ function foldSync(
         name: result.skill_name,
         tool: label(ctx, result.tool_key),
       }),
-      message:
-        ctx.action === "toggle" && status.error.code === "TARGET_EXISTS"
-          ? ctx.t("errors.targetExistsDetail", { path: status.error.path })
-          : errorMessage(ctx, status.error),
+      message: errorMessage(ctx, status.error),
+      subject,
+      error: status.error,
+      repair: { verb: "retry", tool: result.tool_key },
     });
   }
   out.warnings.push(...skips.warnings(ctx));
@@ -784,6 +967,9 @@ export function enableOutcome(
   const { out: global, tally } = foldSync(report.global, { ...ctx, action: "toggle" });
   const projects = projectSyncOutcome(report.projects, { ...ctx, action: "toggleOn" });
   const projectCounts = projectSyncCounts(report.projects);
+  const projectCollisions = report.projects.items.filter(
+    (item) => item.status.status === "failed" && unansweredCollision(item.status.error),
+  ).length;
   const errors = [...global.errors, ...projects.errors];
   const warnings = [...global.warnings, ...projects.warnings];
   const notes = [...global.notes, ...projects.notes];
@@ -792,17 +978,21 @@ export function enableOutcome(
   const enabledTally: OutcomeTally = {
     done: [{ verb: "enabled", count: tally.synced + projectCounts.synced + projectCounts.alreadyAssigned }],
     counts: {
-      failed: tally.failed + projectCounts.failed,
+      failed: tally.failed + projectCounts.failed - projectCollisions,
       skipped: tally.skipped + projectCounts.skipped,
       declined: tally.declined + projectCounts.declined,
+      collisions: tally.collisions + projectCollisions,
     },
   };
+  const collisions = enabledTally.counts.collisions ?? 0;
   return {
     toast: ctx.batch
       ? toast(headlineTone(enabledTally.counts), tallyHeadline(ctx.t, enabledTally), detailOf(notes))
-      : errors.length || warnings.length || notes.length
-        ? null
-        : toast("success", ctx.t("status.targetsEnabled")),
+      : collisions > 0 && errors.length === 0
+        ? toast("conflict", ctx.t("runReport.collisions", { count: collisions }))
+        : errors.length || warnings.length || notes.length
+          ? null
+          : toast("success", ctx.t("status.targetsEnabled")),
     errors,
     warnings,
     notes,
@@ -830,15 +1020,21 @@ export function importOutcome(
   let targetsFailed = 0;
   let declined = 0;
   let divergent = 0;
+  let collisions = 0;
   for (const group of report.groups) {
     const name = group.group_name;
     if (group.status.status === "failed") {
       out.errors.push({
         title: t("errors.importFailedTitle", { name }),
         message: errorMessage(ctx, group.status.error),
+        error: group.status.error,
       });
       continue;
     }
+    const skill: EntrySubject =
+      group.status.status === "skipped"
+        ? { skillName: name }
+        : { skillId: group.status.skill_id, skillName: group.status.skill_name };
     // A managed name with no Replace decision: nothing was touched.
     if (group.status.status === "skipped") {
       out.warnings.push({
@@ -865,18 +1061,23 @@ export function importOutcome(
         out.notes.push(declinedNote(ctx, name, target.tool_key));
         continue;
       }
+      const subject = { ...skill, tool: target.tool_key };
+      const collision = unansweredCollision(target.status.error);
+      if (collision) {
+        collisions++;
+        out.warnings.push(collisionEntry(ctx, collision, subject));
+        continue;
+      }
       targetsFailed++;
       out.errors.push({
         title: t("errors.syncFailedTitle", {
           name,
           tool: label(ctx, target.tool_key),
         }),
-        message:
-          target.status.error.code === "TARGET_EXISTS"
-            ? t("errors.syncTargetExistsMessage", {
-                path: target.status.error.path,
-              })
-            : errorMessage(ctx, target.status.error),
+        message: errorMessage(ctx, target.status.error),
+        subject,
+        error: target.status.error,
+        repair: { verb: "retry", tool: target.tool_key },
       });
     }
     for (const original of originals) {
@@ -888,12 +1089,15 @@ export function importOutcome(
           message: t("errors.importKeptDivergentMessage", {
             path: original.path,
           }),
+          subject: { ...skill, tool: original.tool },
         });
       } else if (original.status.status === "failed") {
         targetsFailed++;
         out.errors.push({
           title: t("errors.importCleanupFailedTitle", { name, tool }),
           message: errorMessage(ctx, original.status.error),
+          subject: { ...skill, tool: original.tool },
+          error: original.status.error,
         });
       }
     }
@@ -901,7 +1105,7 @@ export function importOutcome(
   // Warnings keep the modal open (kept_divergent needs a look), but a stale
   // selection is not the import's problem: the skip warnings do not.
   out.completion.closeModal =
-    out.errors.length === 0 && out.warnings.length === 0;
+    out.errors.length === 0 && out.warnings.length === collisions;
   out.warnings.push(...skips.warnings(ctx));
   out.toast = headlineToast(t, "imported", {
     done: counts.imported + counts.replaced,
@@ -910,6 +1114,7 @@ export function importOutcome(
     skipped: counts.skipped,
     declined,
     review: divergent,
+    collisions,
   }, { review: "originals", detail: detailOf([...forcedLines, ...out.notes]) });
   return out;
 }
@@ -968,7 +1173,7 @@ export function installOutcome(
   ctx: ReportContext & { source: "git" | "local" | "selection" },
 ): Outcome<PlainEntry> {
   const out = empty();
-  const counts = { done: 0, failed: 0, targetsFailed: 0, declined: 0, cancelled: 0 };
+  const counts = { done: 0, failed: 0, targetsFailed: 0, declined: 0, cancelled: 0, collisions: 0 };
   for (const item of report) {
     if (item.status === "cancelled") {
       counts.cancelled++;
@@ -976,9 +1181,11 @@ export function installOutcome(
     }
     if (item.status === "failed") {
       counts.failed++;
+      const error = toCommandError(item.error);
       out.errors.push({
         title: ctx.t("errors.importFailedTitle", { name: item.name }),
         message: errorMessage(ctx, item.error),
+        error,
       });
       continue;
     }
@@ -988,11 +1195,14 @@ export function installOutcome(
       const { out: deployed, tally } = foldSync(deployment.report, { ...ctx, action: "install" });
       counts.targetsFailed += deployed.errors.length;
       counts.declined += tally.declined;
+      counts.collisions += tally.collisions;
       out.errors.push(...deployed.errors);
+      out.warnings.push(...deployed.warnings.filter((entry) => entry.review));
       out.notes.push(...deployed.notes);
     } else if (deployment.status !== "disabled") {
       counts.targetsFailed++;
       out.errors.push({
+        subject: { skillId: item.result.skill_id, skillName: item.result.name },
         title: ctx.t("errors.unsyncedTitle", { name: item.result.name }),
         message:
           deployment.status === "no-targets"
@@ -1052,20 +1262,27 @@ export function deleteOutcome(
   let keptTargets = 0;
   for (const settlement of settled) {
     if (cancelledDelete(settlement)) continue;
+    const subject = { skillId: settlement.skillId, skillName: settlement.name };
     if (!("report" in settlement)) {
       out.errors.push({
         title: ctx.t("deleteReport.failedTitle", { name: settlement.name }),
         message: errorMessage(ctx, settlement.error),
+        subject,
+        error: toCommandError(settlement.error),
+        repair: { verb: "delete" },
       });
       continue;
     }
     const part = empty();
-    collectRemovalFailures(part, settlement.report, ctx, "errors.deleteKeptTargetTitle");
+    collectRemovalFailures(part, settlement.report, ctx, "errors.deleteKeptTargetTitle", {
+      [settlement.skillId]: settlement.name,
+    });
     keptTargets += removalCounts(settlement.report).failed;
+    // A kept target is finished by removing the skill again (the Delete
+    // dialog, D16), never by a sync.
+    const kept = part.errors.map((entry): OutcomeEntry => ({ ...entry, repair: { verb: "delete" } }));
     out.errors.push(
-      ...(batch
-        ? part.errors.map((entry) => ({ ...entry, title: `${settlement.name}: ${entry.title}` }))
-        : part.errors),
+      ...(batch ? kept.map((entry) => ({ ...entry, title: `${settlement.name}: ${entry.title}` })) : kept),
     );
   }
   const removed = settled.filter(deleted).length;
@@ -1177,7 +1394,7 @@ const strongest = (tones: OutcomeTone[]): OutcomeTone | null =>
 function mergeTallies(tallies: OutcomeTally[]): OutcomeTally {
   const done: OutcomeTally["done"] = [];
   const counts: Record<Exclude<keyof HeadlineCounts, "done">, number> = {
-    failed: 0, targetsFailed: 0, skipped: 0, declined: 0, cancelled: 0, review: 0,
+    failed: 0, targetsFailed: 0, skipped: 0, declined: 0, cancelled: 0, review: 0, collisions: 0,
   };
   let review: ReviewKind | undefined;
   for (const tally of tallies) {

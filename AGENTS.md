@@ -146,7 +146,7 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   entries), read by sync, library, add flow and projects; `useSyncOrchestration` keeps only the saved
   selection, the two target sets and the sync seam. **The app update is one module,
   `src/hooks/useAppUpdate.ts`** (status, version, notes, `check`/`install`/`dismiss`/`ignore`), read by
-  Settings and the startup notice (`UpdateDialog`). A world reads another world's catalog only as a value
+  Settings, the passive sidebar item and the `UpdateDialog` it opens (no dialog on startup, D8). A world reads another world's catalog only as a value
   App passes in — the project world's skill rows are the library's `ManagedSkill[]` and its Tool entries
   the Tool catalog's, handed to `ProjectsPage` by App, never fetched or imported. **Every verb on a skill goes
   through one door, `src/hooks/useSkillActions.ts`**: `run(verb, skills | ids | "all", opts)` over `syncToTargets ·

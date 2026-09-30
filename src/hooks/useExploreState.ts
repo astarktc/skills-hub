@@ -139,7 +139,7 @@ export function useExploreState({
       const generation = ++previewGenerationRef.current;
       const stillWanted = () =>
         previewGenerationRef.current === generation && (isActive?.() ?? true);
-      await runAction({ read: true, cancel: "cloneExploreSkill", stillWanted }, async () => {
+      await runAction({ read: true, cancel: "cloneExploreSkill", stillWanted, label: t("activity.labels.preview"), activity: t("activity.previewing") }, async () => {
         const cachePath = await invokeTauri(
           "cloneExploreSkill",
           sourceUrl,
@@ -157,7 +157,7 @@ export function useExploreState({
         });
       });
     },
-    [isActive, onOpenPreview, runAction],
+    [isActive, onOpenPreview, runAction, t],
   );
 
   return {

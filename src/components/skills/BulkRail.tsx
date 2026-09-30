@@ -57,10 +57,10 @@ const BulkRail = ({ selected, actions, blockedReason, onClear, t }: BulkRailProp
         </span>
       </p>
       <div className="ml-auto flex flex-wrap items-center gap-1.5">
-        <Button size="sm" focusableWhenDisabled onClick={() => void run("syncToTargets", selected)} disabled={busy} title={reason(null)}>
+        <Button size="sm" focusableWhenDisabled onClick={() => void run("syncToTargets", selected)} disabled={busy} title={reason(null)} aria-description={reason(null)}>
           {t("bulk.sync")}
         </Button>
-        <Button size="sm" focusableWhenDisabled onClick={() => void run("assignToProject", selected)} disabled={busy} title={reason(null)}>
+        <Button size="sm" focusableWhenDisabled onClick={() => void run("assignToProject", selected)} disabled={busy} title={reason(null)} aria-description={reason(null)}>
           {t("bulk.assignAction")}
         </Button>
         <Button
@@ -68,7 +68,7 @@ const BulkRail = ({ selected, actions, blockedReason, onClear, t }: BulkRailProp
           focusableWhenDisabled
           onClick={() => void run("disable", selected)}
           disabled={busy || nothingToDisable}
-          title={reason(nothingToDisable ? t("bulk.nothingToDisable") : null)}
+          title={reason(nothingToDisable ? t("bulk.nothingToDisable") : null)} aria-description={reason(nothingToDisable ? t("bulk.nothingToDisable") : null)}
         >
           {t("bulk.disable")}
         </Button>
@@ -77,7 +77,7 @@ const BulkRail = ({ selected, actions, blockedReason, onClear, t }: BulkRailProp
           focusableWhenDisabled
           onClick={() => void run("enable", selected)}
           disabled={busy || nothingToEnable}
-          title={reason(nothingToEnable ? t("bulk.nothingToEnable") : null)}
+          title={reason(nothingToEnable ? t("bulk.nothingToEnable") : null)} aria-description={reason(nothingToEnable ? t("bulk.nothingToEnable") : null)}
         >
           {t("bulk.enable")}
         </Button>
@@ -86,11 +86,11 @@ const BulkRail = ({ selected, actions, blockedReason, onClear, t }: BulkRailProp
           focusableWhenDisabled
           onClick={() => void run("update", selected)}
           disabled={busy || nothingToUpdate}
-          title={reason(nothingToUpdate ? t("bulk.nothingToUpdate") : null)}
+          title={reason(nothingToUpdate ? t("bulk.nothingToUpdate") : null)} aria-description={reason(nothingToUpdate ? t("bulk.nothingToUpdate") : null)}
         >
           {t("bulk.update")}
         </Button>
-        <Button size="sm" focusableWhenDisabled tone="danger" onClick={() => void run("delete", selected)} disabled={busy} title={reason(null)}>
+        <Button size="sm" focusableWhenDisabled tone="danger" onClick={() => void run("delete", selected)} disabled={busy} title={reason(null)} aria-description={reason(null)}>
           {t("bulk.remove")}
         </Button>
         <Button variant="ghost" size="icon-sm" onClick={onClear} aria-label={t("bulk.clear")} title={t("bulk.clear")}>

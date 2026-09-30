@@ -320,12 +320,12 @@ export function useAddSkillFlow({
   }, []);
 
   /**
-   * fetchPlan as its own action (loading overlay, error toast). Resolves to
+   * fetchPlan as its own action (header progress, error toast). Resolves to
    * the plan, or undefined when loading it failed.
    */
   const loadPlan = useCallback(
-    () => runAction({ read: true }, fetchPlan),
-    [fetchPlan, runAction],
+    () => runAction({ read: true, label: t("activity.labels.scan"), activity: t("activity.scanning") }, fetchPlan),
+    [fetchPlan, runAction, t],
   );
 
   useEffect(() => {
@@ -334,7 +334,7 @@ export function useAddSkillFlow({
     // whenever the saved tool configuration changes: the backend resolves
     // the scan's scope from it, so the banner, its count and the reviewed
     // plan must follow the configuration, never a plan from before it.
-    // loadPlan's intentional eager loading-overlay setState is preserved.
+    // loadPlan's intentional eager progress setState is preserved.
     void (async () => {
       await loadPlan();
     })();
@@ -344,7 +344,7 @@ export function useAddSkillFlow({
     openDialog({ kind: "addSkill" });
   }, [openDialog]);
 
-  /** Modals stay put while an action runs (the overlay owns the screen). */
+  /** Modals stay put while their action runs (its progress and Cancel are at the dialog's foot). */
   const handleCloseAdd = useCallback(() => {
     if (!loading) closeDialog("addSkill");
   }, [closeDialog, loading]);
@@ -365,11 +365,14 @@ export function useAddSkillFlow({
     const generation = ++reviewGenerationRef.current;
     const stillWanted = () =>
       reviewGenerationRef.current === generation && (isReviewWanted?.() ?? true);
-    const result = await runAction({ read: true, stillWanted }, fetchPlan);
+    const result = await runAction(
+      { read: true, stillWanted, label: t("activity.labels.scan"), activity: t("activity.scanning") },
+      fetchPlan,
+    );
     if (result && stillWanted()) {
       openDialog({ kind: "import" });
     }
-  }, [fetchPlan, isReviewWanted, openDialog, runAction]);
+  }, [fetchPlan, isReviewWanted, openDialog, runAction, t]);
 
   const handlePickLocalPath = useCallback(async () => {
     try {
@@ -419,7 +422,7 @@ export function useAddSkillFlow({
    */
   const handleImport = async () => {
     if (!plan) return;
-    await runAction({}, async () => {
+    await runAction({ label: t("activity.labels.import"), activity: t("activity.importing") }, async () => {
       const selections: OnboardingSelectionDto[] = [];
       for (const group of plan.groups) {
         if (!selected[group.name]) continue;
@@ -482,6 +485,8 @@ export function useAddSkillFlow({
       // and here, before a picker would open.
       {
         message: t("actions.creatingLocalSkill"),
+        label: t("activity.labels.add"),
+        activity: t("activity.adding"),
         cancel: "installSelection",
       },
       async (action) => {
@@ -528,6 +533,8 @@ export function useAddSkillFlow({
       // and here, before a picker would open.
       {
         message: t("actions.creatingGitSkill"),
+        label: t("activity.labels.add"),
+        activity: t("activity.adding"),
         cancel: "installSelection",
       },
       async (action) => {

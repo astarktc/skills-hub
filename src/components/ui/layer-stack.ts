@@ -1,6 +1,6 @@
 /**
- * The stack of open modal layers (Dialog, ConfirmDialog, the progress
- * overlay), most recently opened on top. It gives the Dialog primitive the
+ * The stack of open modal layers (Dialog, ConfirmDialog, the overwrite and
+ * shared-dir asks), most recently opened on top. It gives the Dialog primitive the
  * two guarantees Base UI cannot give sibling dialogs on its own:
  *
  *   - **Top layer only.** Escape and outside presses dismiss only the top
@@ -12,8 +12,8 @@
  *     layer can be focused, clicked or found.
  *
  * It also carries each layer's **return chain** — the element that opened it
- * and its caller's fallback — so a layer closing *beneath* another (a dialog
- * dismissed while the progress overlay it raised is still up) hands its
+ * and its caller's fallback — so a layer closing *beneath* another (a count
+ * confirmation dismissed while the overwrite ask its verb raised is up) hands its
  * chain to the layer it opened instead of aiming focus into an inert page.
  *
  * Module state, not React state: the stack is a property of the document,

@@ -13,7 +13,8 @@ import {
   refusalFor,
   resolveFirst,
   resolveFocusTarget,
-  showsProgressSurface,
+  progressActivity,
+  showsHeaderProgress,
   type PendingAction,
 } from "./actionLifecycle";
 
@@ -23,6 +24,7 @@ const t = (key: string, opts?: Record<string, unknown>) =>
 const pending = (over: Partial<PendingAction> = {}): PendingAction => ({
   subject: { kind: "batch" },
   label: "Refresh",
+  activity: null,
   startedAt: 1,
   cancellable: false,
   cancelling: false,
@@ -156,8 +158,22 @@ describe("pending subjects", () => {
     ["a cell action (inline)", pending({ subject: { kind: "cell", ids: ["s1:pi"] } }), false],
     ["a bulk Remove (its dialog shows it), even streamed", pending({ subject: { kind: "skills", ids: ["s1", "s2"] }, progress: { done: 1, total: 2 } }), false],
     ["nothing running", null, false],
-  ] as const)("%s shows the progress surface: %s", (_name, value, expected) => {
-    expect(showsProgressSurface(value)).toBe(expected);
+  ] as const)("%s shows the header progress: %s", (_name, value, expected) => {
+    expect(showsHeaderProgress(value)).toBe(expected);
+  });
+
+  it("a batch that names its skills marks each of their rows pending (D19), no other", () => {
+    const refresh = pending({ subject: { kind: "batch", ids: ["s1", "s2"] } });
+    expect(isPendingSkill(refresh, "s1")).toBe(true);
+    expect(isPendingSkill(refresh, "s3")).toBe(false);
+    expect(isPendingSkill(pending(), "s1")).toBe(false);
+  });
+
+  it("the header says the action's own words, else its name running — never one line for every batch", () => {
+    expect(progressActivity(pending({ activity: "Refreshing" }), t)).toBe("Refreshing");
+    expect(progressActivity(pending(), t)).toBe('activity.running {"action":"Refresh"}');
+    expect(progressActivity(pending({ label: null }), t)).toBe("activity.working");
+    expect(progressActivity(pending({ activity: "Refreshing", cancelling: true }), t)).toBe("lifecycle.cancelling");
   });
 });
 

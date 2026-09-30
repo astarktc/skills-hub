@@ -4,7 +4,8 @@
  * mutation is refused, and where focus goes once an action settles. The
  * reporter (`useStatusReporter`) owns the one pending cell and executes an
  * Outcome; the skill action door (`useSkillActions`) and the surfaces read
- * this module. Pure except `resolveFocusTarget`, the one DOM reader.
+ * this module. Pure except the DOM readers at its end (`resolveFocusTarget`,
+ * `returnLostFocus`).
  */
 
 import type { CommandName } from "./tauri";
@@ -32,7 +33,12 @@ export type PendingSubject =
    * surface's.
    */
   | { kind: "skills"; ids: readonly string[] }
-  | { kind: "batch"; id?: string };
+  /**
+   * A batch shown in the header progress (D19). `ids` names the skills it
+   * acts on, when it knows them: each of their rows carries the pending mark
+   * while the batch runs (the library stays browsable around them).
+   */
+  | { kind: "batch"; id?: string; ids?: readonly string[] };
 
 /** A streamed batch's count (`done` of `total`), for the header progress. */
 export type PendingProgress = { done: number; total: number };
@@ -42,6 +48,12 @@ export type PendingAction = {
   subject: PendingSubject;
   /** What is running, in the operator's words ("Refresh") — the refusal names it. */
   label: string | null;
+  /**
+   * What the header progress says while it runs, action-specific and in the
+   * progressive ("Refreshing", "Adding", "Removing beta") — never one
+   * generic line for every batch. Null falls back to the label.
+   */
+  activity: string | null;
   startedAt: number;
   /**
    * Cancel is offered: the action declared a token-taking command
@@ -72,20 +84,33 @@ export const CANCELLABLE_COMMANDS = [
 ] as const satisfies readonly CommandName[];
 export type CancellableCommand = (typeof CANCELLABLE_COMMANDS)[number];
 
-/** Whether the overlay/progress surface shows for this action (a batch or a streamed one). */
-export function showsProgressSurface(pending: PendingAction | null): boolean {
+/**
+ * Whether the header progress shows this action (D19): a batch, a streamed
+ * action, or one that can be cancelled (its Cancel must be reachable). A
+ * small action on one skill or cell pends inline on its subject instead, and
+ * a bulk Remove (`skills`) shows its count in the Delete dialog —
+ * one surface for it, never both.
+ */
+export function showsHeaderProgress(pending: PendingAction | null): boolean {
   if (!pending) return false;
-  return (
-    pending.subject.kind === "batch" ||
-    (pending.progress !== null && pending.subject.kind !== "skills") ||
-    pending.cancellable
-  );
+  if (pending.subject.kind === "skills") return false;
+  return pending.subject.kind === "batch" || pending.progress !== null || pending.cancellable;
 }
 
-/** Whether `pending` is about this skill (its card shows inline pending). */
+/** What the header progress says: the action's own words, else its name, else a generic line. */
+export function progressActivity(pending: PendingAction, t: Translate): string {
+  if (pending.cancelling) return t("lifecycle.cancelling");
+  if (pending.activity) return pending.activity;
+  return pending.label ? t("activity.running", { action: pending.label }) : t("activity.working");
+}
+
+/** Whether `pending` is about this skill (its row shows the pending mark). */
 export function isPendingSkill(pending: PendingAction | null, skillId: string): boolean {
-  if (pending?.subject.kind === "skills") return pending.subject.ids.includes(skillId);
-  return pending?.subject.kind === "skill" && pending.subject.id === skillId;
+  if (!pending) return false;
+  const { subject } = pending;
+  if (subject.kind === "skills") return subject.ids.includes(skillId);
+  if (subject.kind === "batch") return subject.ids?.includes(skillId) ?? false;
+  return subject.kind === "skill" && subject.id === skillId;
 }
 
 /** The matrix cells in flight (`${skillId}:${tool}`); empty unless a cell action runs. */
@@ -262,4 +287,50 @@ export function resolveFirst(
     if (element && usable(element)) return element;
   }
   return null;
+}
+
+/**
+ * Whether focus is "lost" once an action settled: on `<body>`, on the main
+ * landmark (a closing layer's last fallback), on a layer's popup itself
+ * (where a modal parks focus when the control holding it went away — the
+ * inspector sheet's Restore), or on the header progress, whose Cancel goes
+ * away with the action it cancelled.
+ */
+export function isFocusLost(active: Element | null): boolean {
+  return (
+    !active ||
+    active === document.body ||
+    active.tagName === "MAIN" ||
+    active.matches("[role='dialog'], [role='alertdialog']") ||
+    active.closest("[data-slot='header-progress']") !== null
+  );
+}
+
+/**
+ * D21's floor for every action, whoever ran it: once it has settled, focus
+ * that was lost (`isFocusLost`: the control holding it went away, or was
+ * disabled while pending) returns to the control that started the action,
+ * when it is still there and usable. Focus the operator placed is kept; the
+ * skill door's own rule (`focusAfter`, e.g. Restore → Health) runs after
+ * this and takes over. A trigger that is gone leaves focus to the main
+ * landmark, never `<body>`. One check once the settled render is on screen
+ * (a frame later at most, for a control the render re-enables); no hold.
+ */
+export function returnLostFocus(trigger: Element | null): void {
+  if (typeof window === "undefined" || !(trigger instanceof HTMLElement) || trigger === document.body) return;
+  if (trigger.closest("[data-slot='header-progress']")) return;
+  const place = (settling: boolean) => {
+    const active = document.activeElement;
+    if (!isFocusLost(active)) return;
+    const usable = trigger.isConnected && !trigger.closest("[inert]");
+    if (usable && (trigger as HTMLButtonElement).disabled && settling) {
+      window.requestAnimationFrame(() => place(false));
+      return;
+    }
+    if (usable && !(trigger as HTMLButtonElement).disabled) trigger.focus();
+    // The control went with what it acted on (an Explore card the preview
+    // replaced): never `<body>` — the main landmark, as a closing layer does.
+    else if (!active || active === document.body) mainLandmarkFocus()?.focus();
+  };
+  window.setTimeout(() => place(true), 0);
 }

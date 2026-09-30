@@ -87,7 +87,8 @@ export type DialogState =
   | { kind: "toolConfig" }
   | { kind: "newTools" }
   // App shell
-  | { kind: "notifications" }
+  /** The session's report, grouped by run (D11); `runId` opens it on one run ("View report"). */
+  | { kind: "notifications"; runId?: number }
   | { kind: "update" }
   // Project world (formerly its own `ProjectDialog` union)
   | { kind: "projectAdd" }

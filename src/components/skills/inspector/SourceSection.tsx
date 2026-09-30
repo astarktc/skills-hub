@@ -82,6 +82,8 @@ export default function SourceSection({ skill, health, actions, copyToClipboard,
           <Button
             size="sm"
             disabled={busy}
+            focusableWhenDisabled
+            aria-description={blockedReason ?? undefined}
             title={blockedReason ?? undefined}
             onClick={() => void actions.run("update", [skill])}
           >
@@ -91,6 +93,8 @@ export default function SourceSection({ skill, health, actions, copyToClipboard,
         <Button
           size="sm"
           disabled={busy}
+          focusableWhenDisabled
+          aria-description={blockedReason ?? undefined}
           title={blockedReason ?? undefined}
           aria-haspopup="dialog"
           onClick={() => void actions.run("repoint", [skill])}
@@ -102,6 +106,8 @@ export default function SourceSection({ skill, health, actions, copyToClipboard,
             size="sm"
             variant="ghost"
             disabled={busy}
+            focusableWhenDisabled
+            aria-description={blockedReason ?? undefined}
             title={blockedReason ?? undefined}
             aria-haspopup="dialog"
             onClick={() => void actions.run("detach", [skill])}

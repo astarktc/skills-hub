@@ -53,3 +53,11 @@ Escape closes only the ask; 960×640; contrast; `npm run check`.
   gained `anchor` (a triggerless, controlled popover with `initialFocus` / `finalFocus`) — both documented in
   DESIGN.md. The Sync-to-Tools pick in `CountConfirmModal` (a two-column checkbox FieldSet over the installed Tools,
   counts from `lib/bulkCounts.syncCounts` following the pick) is a candidate for Add's Tool-scope step.
+
+- 2026-09-30 — from ticket 14: the Add dialog, both pickers and Import render `<HeaderProgress placement="dialog">`
+  at their foot (a `progress` prop App passes) — "Adding · Cancel" while `installSelection` / the listing runs; Cancel
+  there is the header's (the page behind is inert). Callers set `activity` / `label` on `runAction`
+  (`activity.adding`, `activity.labels.add`); a one-surface Add should keep the progress in its sticky summary instead.
+  `installOutcome` folds an unanswered collision as "N folders to review" (never "targets failed"). After a cancelled
+  listing `returnLostFocus` puts focus back on Install.
+

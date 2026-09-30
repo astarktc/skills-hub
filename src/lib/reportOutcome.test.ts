@@ -40,8 +40,15 @@ const t = (key: string, opts?: Record<string, unknown>) =>
 const ctx = {
   t,
   toolLabelById: { claude: "CLAUDE" },
-  canRepoint: (id: string) => id === "git",
 };
+/** An entry's words (title + message): the shape most assertions compare; the
+ * declarative subject / error / repair are pinned by their own tests. */
+const words = (entries: readonly { title: string; message: string }[]) =>
+  entries.map(({ title, message }) => ({ title, message }));
+/** An Outcome with its entries reduced to their words. */
+const plain = <O extends { errors: readonly { title: string; message: string }[]; warnings: readonly { title: string; message: string }[] }>(
+  outcome: O,
+) => ({ ...outcome, errors: words(outcome.errors), warnings: words(outcome.warnings) });
 const refreshed = (id = "git"): SkillRefreshOutcome => ({
   skill_id: id,
   skill_name: id,
@@ -385,7 +392,7 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
 
   it("acquisition skips preserve both reasons; the batch line counts them", () => {
     const out = refreshOutcome(refreshReport([skippedGone, skippedStale]), ctx);
-    expect(out.warnings).toEqual([
+    expect(words(out.warnings)).toEqual([
       { title: 'errors.refreshSkippedTitle {"name":"gone"}', message: "errors.refreshSkippedSkillGone" },
       { title: 'errors.refreshSkippedTitle {"name":"stale"}', message: "errors.refreshSkippedStaleAcquisition" },
     ]);
@@ -393,34 +400,30 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
     expect(out.toast).toEqual({ kind: "warning", tone: "skipped", message: line(["outcome.skipped", 2]) });
   });
 
-  it("returns a repair id, never a callback or captured ManagedSkill", () => {
+  it("an entry is declarative data — subject, typed error, repair — never a callback or captured ManagedSkill", () => {
     const out = refreshOutcome(refreshReport([failed]), ctx);
-    expect(out.errors[0].action).toEqual({
-      label: "changeSource.action",
-      skillId: "git",
-      skillName: "git",
-    });
-    expect(out.errors[0].message).toContain("https://github.com/old/repo");
-    expect(
-      refreshOutcome(refreshReport([failed]), {
-        ...ctx,
-        canRepoint: () => false,
-      }).errors[0].action,
-    ).toBeUndefined();
-    expect(
-      refreshOutcome(
-        refreshReport([
-          {
-            ...failed,
-            status: {
-              status: "failed",
-              error: { code: "OTHER", message: "other" },
-            },
-          },
-        ]),
-        ctx,
-      ).errors[0].action,
-    ).toBeUndefined();
+    const [entry] = out.errors;
+    expect(entry.subject).toEqual({ skillId: "git", skillName: "git" });
+    expect(entry.error?.code).toBe("GITHUB_SKILL_NOT_FOUND");
+    expect(entry.repair).toEqual({ verb: "update" });
+    expect(entry.message).toContain("https://github.com/old/repo");
+    expect(Object.values(entry).some((value) => typeof value === "function")).toBe(false);
+  });
+
+  it("announces the re-assert's additions: global Tools the skill did not have before the run", () => {
+    const success = refreshed("alpha");
+    if (success.status.status !== "refreshed") throw new Error("fixture");
+    success.status.targets.push(
+      { scope: { scope: "global", tool: "claude" }, status: { status: "synced", mode_used: "symlink" } },
+      { scope: { scope: "global", tool: "cursor" }, status: { status: "synced", mode_used: "symlink" } },
+      { scope: { scope: "global", tool: "pi" }, status: { status: "synced", mode_used: "symlink" } },
+    );
+    const out = refreshOutcome(refreshReport([success]), { ...ctx, priorGlobalTools: { alpha: ["claude"] } });
+    const line = t("runReport.alsoDeployed", { name: "alpha", tools: `cursor${t("common.listSeparator")}pi` });
+    expect(out.notes).toEqual([line]);
+    expect(out.toast?.detail).toBe(line);
+    // Unknown prior state announces nothing.
+    expect(refreshOutcome(refreshReport([success]), ctx).notes).toEqual([]);
   });
 
   it("orders skill errors before target/reassert errors, skips before conflicts; silent propagation skips", () => {
@@ -446,7 +449,7 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
       t("errors.propagationFailedTitle", { name: "git", tool: "CLAUDE" }),
       t("errors.reassertFailedTitle", { name: "git" }),
     ]);
-    expect(out.warnings).toEqual([
+    expect(words(out.warnings)).toEqual([
       {
         title: t("errors.refreshSkippedTitle", { name: "local" }),
         message: "errors.refreshSkippedSourceMissing",
@@ -503,7 +506,7 @@ describe("invocationEditOutcome", () => {
   ] satisfies { name: string; propagation: InvocationEditReport["propagation"]["targets"]; errors: { title: string; message: string }[] }[])("$name: central-settled completion, saved even with drift", ({ propagation, errors }) => {
     const report: InvocationEditReport = { skill_id: "s1", skill_name: "alpha", propagation: { targets: propagation } };
     const before = JSON.stringify(report);
-    expect(invocationEditOutcome(report, ctx)).toEqual({
+    expect(plain(invocationEditOutcome(report, ctx))).toEqual({
       // The Edit saved centrally either way (ADR-0004): drift says so, warning-toned.
       toast: errors.length
         ? { kind: "warning", tone: "failure", message: `invocationEdit.saved · ${t("outcome.targetsFailed", { count: errors.length })}` }
@@ -567,7 +570,7 @@ describe("removalOutcome", () => {
       [configure, "errors.projectRemovalFailedTitle"],
       [deleted, "errors.deleteKeptTargetTitle"],
     ] as const) {
-      expect(out.errors).toEqual([
+      expect(words(out.errors)).toEqual([
         { title: t(key, { tool: "CLAUDE" }), message: t("errors.pathOutsideToolDirs", { path: "/kept" }) },
         { title: t(key, { tool: "unknown" }), message: t("errors.pathOutsideToolDirs", { path: "/kept" }) },
         { title: t(key, { tool: "pi" }), message: "busy" },
@@ -600,7 +603,7 @@ describe("removalOutcome", () => {
     (action) => {
       for (const fail of [false, true]) {
         const out = removalOutcome(removal(fail), { ...ctx, action });
-        expect(out.errors).toEqual(
+        expect(words(out.errors)).toEqual(
           fail
             ? [
                 {
@@ -638,7 +641,7 @@ describe("removalOutcome", () => {
         kind: "warning", tone: "skipped",
         message: "unsyncNothingPlanned",
       });
-      expect(out.errors).toEqual([]);
+      expect(words(out.errors)).toEqual([]);
       expect(out.completion.closeModal).toBe(false);
     }
   });
@@ -676,7 +679,7 @@ describe("removalOutcome", () => {
         },
       ],
     };
-    expect(removalOutcome(kept, { ...ctx, action: "bulkUnassign" })).toEqual({
+    expect(plain(removalOutcome(kept, { ...ctx, action: "bulkUnassign" }))).toEqual({
       toast: {
         kind: "warning", tone: "failure",
         message: t("projects.bulkUnassignPartial", { count: 1, failed: 1 }),
@@ -707,14 +710,14 @@ describe("removalOutcome", () => {
     const kept = [
       { title: t("errors.projectRemovalFailedTitle", { tool: "pi" }), message: "denied" },
     ];
-    expect(projectRemovalOutcome(report, { ...ctx, action: "removeProject" })).toEqual({
+    expect(plain(projectRemovalOutcome(report, { ...ctx, action: "removeProject" }))).toEqual({
       toast: { kind: "warning", tone: "failure", message: t("projects.removeKept", { count: 1, failed: 1 }) },
       errors: kept,
       warnings: [],
       notes: [],
       completion: { reload: false, closeModal: false, conflict: false },
     });
-    expect(projectRemovalOutcome(report, { ...ctx, action: "configureTools" })).toEqual({
+    expect(plain(projectRemovalOutcome(report, { ...ctx, action: "configureTools" }))).toEqual({
       toast: { kind: "warning", tone: "failure", message: t("projects.toolRemovalKept", { count: 1, failed: 1 }) },
       errors: kept,
       warnings: [],
@@ -745,7 +748,7 @@ describe("removalOutcome", () => {
     for (const toolLabelById of [{}, { pi: "Pi" }] as Record<string, string>[]) {
       for (const action of ["removeProject", "configureTools"] as const) {
         expect(
-          projectRemovalOutcome(report, { ...ctx, toolLabelById, action }).errors,
+          words(projectRemovalOutcome(report, { ...ctx, toolLabelById, action }).errors),
         ).toEqual([
           { title: t("errors.projectRemovalFailedTitle", { tool: "claude" }), message: "denied" },
         ]);
@@ -769,14 +772,14 @@ describe("removalOutcome", () => {
     };
     const nothing: RemovalReport = { targets: [], central_removed: false, record_deleted: false, cleared_markers: [] };
     for (const report of [clean, nothing]) {
-      expect(projectRemovalOutcome(report, { ...ctx, action: "removeProject" })).toEqual({
+      expect(plain(projectRemovalOutcome(report, { ...ctx, action: "removeProject" }))).toEqual({
         toast: { kind: "success", tone: "success", message: "projects.removeComplete" },
         errors: [],
         warnings: [],
         notes: [],
         completion: { reload: false, closeModal: true, conflict: false },
       });
-      expect(projectRemovalOutcome(report, { ...ctx, action: "configureTools" })).toEqual({
+      expect(plain(projectRemovalOutcome(report, { ...ctx, action: "configureTools" }))).toEqual({
         toast: null,
         errors: [],
         warnings: [],
@@ -833,14 +836,14 @@ describe("projectSyncOutcome", () => {
         action === "resyncAll"
           ? t("errors.syncFailedInProjectTitle", { name, tool, project: "p1" })
           : t("errors.syncFailedTitle", { name, tool });
-      expect(out.errors).toEqual([
+      expect(words(out.errors)).toEqual([
         { title: title("s2-name", "CLAUDE"), message: "denied" },
         {
           title: title("s1-name", "unknown"),
           message: t("errors.pathOutsideToolDirs", { path: "/x" }),
         },
       ]);
-      expect(out.warnings).toEqual([]);
+      expect(words(out.warnings)).toEqual([]);
       // The project world applies the view the mutation returned.
       expect(out.completion).toEqual({ reload: false, closeModal: false, conflict: false });
     }
@@ -913,7 +916,7 @@ describe("projectSyncOutcome", () => {
       message: t("projects.resyncAllSuccess", { synced: 1 }),
     });
     for (const out of Object.values(outs)) {
-      expect(out.errors).toEqual([]);
+      expect(words(out.errors)).toEqual([]);
       expect(out.completion).toEqual({ reload: false, closeModal: true, conflict: false });
     }
   });
@@ -988,14 +991,14 @@ describe("syncOutcome", () => {
     ({ action, errors, warnings }) => {
       const out = syncOutcome(syncReport, { ...ctx, action });
       expect(out.errors).toHaveLength(errors);
-      expect(out.errors[0]).toEqual({
+      expect(words(out.errors)[0]).toEqual({
         title: t("errors.syncFailedTitle", { name: "git", tool: "unknown" }),
         message: "failed",
       });
       // A not-detected skip is a per-tool warning for bulk/install (the
       // selection is stale, nothing failed); an explicit toggle keeps it
       // as the error it already was.
-      expect(out.warnings).toEqual(
+      expect(words(out.warnings)).toEqual(
         warnings
           ? [
               {
@@ -1028,7 +1031,7 @@ describe("syncOutcome", () => {
       [syncReport[0]],
       { ...ctx, action },
     );
-    expect(out.errors).toEqual([]);
+    expect(words(out.errors)).toEqual([]);
     expect(out.completion).toEqual({
       reload: true,
       closeModal: true,
@@ -1058,8 +1061,8 @@ describe("syncOutcome", () => {
       [syncReport[0], skip("a", "claude"), skip("b", "claude"), skip("a", "absent")],
       { ...ctx, action: "bulk" },
     );
-    expect(out.errors).toEqual([]);
-    expect(out.warnings).toEqual([
+    expect(words(out.errors)).toEqual([]);
+    expect(words(out.warnings)).toEqual([
       {
         title: t("errors.syncSkippedNotInstalledTitle", { tool: "CLAUDE" }),
         message: t("errors.syncSkippedNotInstalledMessage", { count: 2 }),
@@ -1078,24 +1081,75 @@ describe("syncOutcome", () => {
       message: line(["outcome.done.synced", 1], ["outcome.skipped", 3]),
     });
   });
-  it("explicit TARGET_EXISTS toggle shows the path and neither reloads nor succeeds", () => {
-    const out = syncOutcome(
-      [
-          {
-            ...syncReport[0],
-            status: {
-              status: "skipped",
-              error: { code: "TARGET_EXISTS", path: "/conflict", modifiedAt: null, sameContent: false },
-            },
-          },
-      ],
-      { ...ctx, action: "toggle" },
-    );
-    expect(out.errors[0].message).toBe(
-      t("errors.targetExistsDetail", { path: "/conflict" }),
-    );
-    expect(out.completion.reload).toBe(false);
-    expect(out.toast).toBeNull();
+  // Ticket 11 audit Q4 / D10 / D12: a TARGET_EXISTS still in a report is a
+  // collision the operator did not answer — the ask was dismissed. It is "to
+  // review" (conflict tone), never a failure: no error entry, no retry, no
+  // implicit Keep; the pair stays as it was.
+  describe("a dismissed overwrite ask folds as \"to review\", never failed", () => {
+    const exists = { code: "TARGET_EXISTS", path: "/conflict", modifiedAt: 7, sameContent: false } as const;
+    const unanswered = (status: "failed" | "skipped"): BatchTargetOutcome => ({
+      ...syncReport[0],
+      status: { status, error: exists },
+    });
+    it.each(["failed", "skipped"] as const)("an explicit toggle (%s row): conflict toast, a review entry, no error", (status) => {
+      const out = syncOutcome([unanswered(status)], { ...ctx, action: "toggle" });
+      expect(out.errors).toEqual([]);
+      expect(out.toast).toEqual({ kind: "warning", tone: "conflict", message: t("runReport.collisions", { count: 1 }) });
+      expect(out.warnings).toEqual([
+        {
+          title: t("runReport.collisionTitle", { name: "git", tool: "CLAUDE" }),
+          message: t("runReport.collisionMessage", { path: "/conflict" }),
+          subject: { skillId: syncReport[0].skill_id, skillName: "git", tool: "claude" },
+          error: exists,
+          repair: { verb: "overwrite", tool: "claude" },
+          review: true,
+        },
+      ]);
+      expect(out.completion).toEqual({ reload: true, closeModal: true, conflict: false });
+    });
+    it("a bulk sync counts it in the headline as to review, beside what synced", () => {
+      const out = syncOutcome([syncReport[0], { ...unanswered("failed"), tool_key: "cursor" }], { ...ctx, action: "bulk" });
+      expect(out.errors).toEqual([]);
+      expect(out.toast).toMatchObject({
+        tone: "conflict",
+        message: line(["outcome.done.synced", 1], ["runReport.collisions", 1]),
+      });
+      expect(out.tally?.counts.collisions).toBe(1);
+    });
+    it("a failure beside it still wins the tone; the collision is never counted failed", () => {
+      const out = syncOutcome([syncReport[1], { ...unanswered("failed"), tool_key: "cursor" }], { ...ctx, action: "bulk" });
+      expect(out.toast).toMatchObject({
+        tone: "failure",
+        message: line(["outcome.failed", 1], ["runReport.collisions", 1]),
+      });
+      expect(out.errors).toHaveLength(1);
+      expect(out.warnings.filter((entry) => entry.review)).toHaveLength(1);
+    });
+    it("a Refresh's Propagation collision is to review, not a target failure", () => {
+      const success = refreshed("alpha");
+      if (success.status.status !== "refreshed") throw new Error("fixture");
+      success.status.targets.push({ scope: { scope: "global", tool: "cursor" }, status: { status: "failed", error: exists } });
+      const out = refreshOutcome(refreshReport([success]), ctx);
+      expect(out.errors).toEqual([]);
+      expect(out.toast).toMatchObject({
+        tone: "conflict",
+        message: line(["outcome.done.refreshed", 1], ["runReport.collisions", 1]),
+      });
+    });
+    it("a project assignment collision is to review and names the project in its subject", () => {
+      const report: ProjectSyncReport = {
+        items: [
+          { assignment_id: "a1", project_id: "p1", skill_id: "s1", skill_name: "tdd", tool: "claude", status: { status: "failed", error: exists } },
+        ],
+      };
+      const out = projectSyncOutcome(report, { ...ctx, action: "toggleOn" });
+      expect(out.errors).toEqual([]);
+      expect(out.toast).toEqual({ kind: "warning", tone: "conflict", message: t("runReport.collisions", { count: 1 }) });
+      expect(out.warnings[0]).toMatchObject({ review: true, subject: { projectId: "p1", skillId: "s1", tool: "claude" } });
+      // A project row is answered from its matrix: no overwrite repair here.
+      expect(out.warnings[0].repair).toBeUndefined();
+      expect(out.completion.closeModal).toBe(true);
+    });
   });
 
   // D10: "Keep existing" is the operator's answer — never an error entry,
@@ -1127,7 +1181,7 @@ describe("syncOutcome", () => {
       notes,
       completion: { reload: true, closeModal: true, conflict: false },
       // The structured counts behind the line, for combineOutcomes.
-      tally: { done: [{ verb: "synced", count: 0 }], counts: { failed: 0, skipped: 0, declined: 2 } },
+      tally: { done: [{ verb: "synced", count: 0 }], counts: { failed: 0, skipped: 0, declined: 2, collisions: 0 } },
     });
   });
   it("a declined pair beside synced ones keeps the declined tone; beside a failure, failure wins", () => {
@@ -1151,7 +1205,7 @@ describe("syncOutcome", () => {
       tone: "declined",
       message: t("outcome.declinedLine", { name: "ts-reset", tool: "CLAUDE" }),
     });
-    expect(out.errors).toEqual([]);
+    expect(words(out.errors)).toEqual([]);
     expect(out.completion).toEqual({ reload: true, closeModal: true, conflict: false });
   });
 });
@@ -1215,7 +1269,7 @@ describe("importOutcome", () => {
             ...syncReport[0],
             status: {
               status: "failed",
-              error: { code: "TARGET_EXISTS", path: "/conflict", modifiedAt: null, sameContent: false },
+              error: { code: "OTHER", message: "disk full" },
             },
           },
         ],
@@ -1313,8 +1367,8 @@ describe("importOutcome", () => {
           },
         ],
       } as ImportGroupStatus,
-      errors: 1,
-      warnings: 0,
+      errors: 0,
+      warnings: 1,
     },
   ])("$name", ({ name, status, errors, warnings }) => {
     const out = importOutcome(importReport(status), ctx);
@@ -1322,7 +1376,7 @@ describe("importOutcome", () => {
     expect(out.warnings).toHaveLength(warnings);
     expect(out.completion).toEqual({
       reload: true,
-      closeModal: errors + warnings === 0,
+      closeModal: errors + warnings === 0 || name === "replace answered TARGET_EXISTS",
       conflict: false,
     });
     const imported1: [string, number] = ["outcome.done.imported", 1];
@@ -1337,15 +1391,15 @@ describe("importOutcome", () => {
       "original left in place by choice": ["success", line(imported1)],
       "managed name without a decision": ["skipped", line(["outcome.skipped", 1])],
       "replaced over an identical copy": ["success", line(imported1)],
-      "replace answered TARGET_EXISTS": ["failure", line(imported1, ["outcome.targetsFailed", 1])],
+      "replace answered TARGET_EXISTS": ["conflict", line(imported1, ["runReport.collisions", 1])],
     };
     const [tone, message] = expected[name];
     expect(out.toast).toEqual({ kind: tone === "success" ? "success" : "warning", tone, message });
   });
   it("reports a not-detected target as a per-tool warning that does not hold the import open", () => {
     const out = importOutcome(importReport(imported({ targets: [syncReport[2]] })), ctx);
-    expect(out.errors).toEqual([]);
-    expect(out.warnings).toEqual([
+    expect(words(out.errors)).toEqual([]);
+    expect(words(out.warnings)).toEqual([
       {
         title: t("errors.syncSkippedNotInstalledTitle", { tool: "absent" }),
         message: t("errors.syncSkippedNotInstalledMessage", { count: 1 }),
@@ -1396,10 +1450,12 @@ describe("importOutcome", () => {
       ),
       ctx,
     );
-    expect(out.errors[0].message).toBe(
-      t("errors.syncTargetExistsMessage", { path: "/conflict" }),
+    // The collision nobody answered is to review, its path in the words.
+    expect(out.errors).toEqual([]);
+    expect(out.warnings.find((entry) => entry.review)?.message).toBe(
+      t("runReport.collisionMessage", { path: "/conflict" }),
     );
-    expect(out.warnings[0]).toEqual({
+    expect(words(out.warnings.filter((entry) => !entry.review))[0]).toEqual({
       title: t("errors.importKeptDivergentTitle", {
         name: "git",
         tool: "CLAUDE",
@@ -1416,7 +1472,7 @@ describe("importOutcome", () => {
       ctx,
     );
     const note = t("outcome.declinedLine", { name: "git", tool: "cursor" });
-    expect(out.errors).toEqual([]);
+    expect(words(out.errors)).toEqual([]);
     expect(out.notes).toEqual([note]);
     expect(out.completion).toEqual({ reload: true, closeModal: true, conflict: false });
     expect(out.toast).toEqual({
@@ -1522,7 +1578,7 @@ describe("installOutcome", () => {
       ],
       { ...ctx, source: "selection" },
     );
-    expect(out.errors).toEqual([
+    expect(words(out.errors)).toEqual([
       {
         title: t("errors.importFailedTitle", { name: "first" }),
         message: "clone failed",
@@ -1550,8 +1606,8 @@ describe("installOutcome", () => {
       [clean("a"), clean("b"), cancelledCandidate("c"), cancelledCandidate("d"), cancelledCandidate("e")],
       { ...ctx, source: "selection" },
     );
-    expect(out.errors).toEqual([]);
-    expect(out.warnings).toEqual([]);
+    expect(words(out.errors)).toEqual([]);
+    expect(words(out.warnings)).toEqual([]);
     expect(out.toast).toEqual({
       kind: "info",
       tone: "neutral",
@@ -1592,7 +1648,7 @@ describe("installOutcome", () => {
       { ...ctx, source: "git" },
     );
     const note = t("outcome.declinedLine", { name: "git", tool: "cursor" });
-    expect(out.errors).toEqual([]);
+    expect(words(out.errors)).toEqual([]);
     expect(out.notes).toEqual([note]);
     expect(out.toast).toEqual({
       kind: "info",
@@ -1668,7 +1724,7 @@ describe("projectSyncOutcome counts disabled skips", () => {
       kind: "warning", tone: "skipped",
       message: t("disabledSkips.bulkAssignNotSynced", { count: 2 }),
     });
-    expect(out.errors).toEqual([]);
+    expect(words(out.errors)).toEqual([]);
     expect(out.completion.closeModal).toBe(true);
   });
   it("mixed synced/skipped and synced/skipped/failed bulk assigns carry every count", () => {
@@ -1710,7 +1766,7 @@ describe("removalOutcome with cleared markers", () => {
     };
     const out = removalOutcome(report, { ...ctx, action: "toggle" });
     expect(out.toast).toEqual({ kind: "success", tone: "success", message: "status.syncDisabled" });
-    expect(out.errors).toEqual([]);
+    expect(words(out.errors)).toEqual([]);
   });
 
   // N1: a cleared marker is an unassignment, so bulk unassign counts it (the
@@ -1787,7 +1843,7 @@ describe("ticket 04: the install batch report and the project Keep", () => {
       },
       { t, action: "toggleOn" },
     );
-    expect(out.errors).toEqual([]);
+    expect(words(out.errors)).toEqual([]);
     expect(out.notes).toHaveLength(1);
     expect(out.toast?.tone).toBe("declined");
   });
@@ -1799,7 +1855,7 @@ describe("an answered overwrite ask inside Propagation-shaped reports (ticket 09
       ...ctx,
       declined: [{ skillName: "a", tool: "claude" }],
     });
-    expect(out.errors).toEqual([]);
+    expect(words(out.errors)).toEqual([]);
     expect(out.notes).toEqual(['outcome.declinedLine {"name":"a","tool":"CLAUDE"}']);
     expect(out.toast).toMatchObject({ tone: "declined", detail: out.notes[0] });
     expect(out.toast?.message).toContain("outcome.declined");
@@ -1988,7 +2044,7 @@ describe("Delete over several skills (ticket 13, D16)", () => {
       tone: "failure",
       message: [t("outcome.done.removed", { count: 1 }), t("outcome.failed", { count: 2 })].join(" · "),
     });
-    expect(out.errors).toEqual([
+    expect(words(out.errors)).toEqual([
       { title: `release-train: ${t("errors.deleteKeptTargetTitle", { tool: "CLAUDE" })}`, message: "Permission denied" },
       { title: t("deleteReport.failedTitle", { name: "beta" }), message: "store locked" },
     ]);
@@ -2022,14 +2078,14 @@ describe("Delete over several skills (ticket 13, D16)", () => {
         t("outcome.cancelled", { count: 1 }),
       ].join(" · "),
     });
-    expect(withFailure.errors).toEqual([{ title: t("deleteReport.failedTitle", { name: "beta" }), message: "store locked" }]);
+    expect(words(withFailure.errors)).toEqual([{ title: t("deleteReport.failedTitle", { name: "beta" }), message: "store locked" }]);
     expect(withFailure.completion.closeModal).toBe(false);
   });
 
   it("a single skill that threw before planning reads as not deleted, never as 0 kept targets", () => {
     const out = deleteOutcome([settled[2]], ctx);
     expect(out.toast).toEqual({ kind: "warning", tone: "failure", message: t("deleteReport.failedTitle", { name: "beta" }) });
-    expect(out.errors).toEqual([{ title: t("deleteReport.failedTitle", { name: "beta" }), message: "store locked" }]);
+    expect(words(out.errors)).toEqual([{ title: t("deleteReport.failedTitle", { name: "beta" }), message: "store locked" }]);
     // A kept target still names its count.
     expect(deleteOutcome([settled[1]], ctx).toast).toEqual({
       kind: "warning",

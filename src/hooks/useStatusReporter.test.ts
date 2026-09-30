@@ -12,6 +12,7 @@ vi.mock("sonner", () => ({
     error: vi.fn(),
     warning: vi.fn(),
     info: vi.fn(),
+    dismiss: vi.fn(),
   },
 }));
 vi.mock("../lib/tauri", () => ({
@@ -492,6 +493,43 @@ describe("useStatusReporter", () => {
     expect(result.current.pending).toBeNull();
   });
 
+  it("a tick that enters an uncancellable phase withdraws Cancel for the rest of the action (D20)", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    let applying: () => void = () => {};
+    const applied = new Promise<void>((resolve) => (applying = resolve));
+    let asked: () => void = () => {};
+    const answered = new Promise<void>((resolve) => (asked = resolve));
+    let settle: () => void = () => {};
+    const tail = new Promise<void>((resolve) => (settle = resolve));
+    let run: Promise<unknown> = Promise.resolve();
+    act(() => {
+      run = result.current.runAction({ cancel: "refreshManagedSkills" }, async (action) => {
+        await applied;
+        // The ask's phase ends, but the apply phase already withdrew Cancel.
+        await action.uncancellable(() => answered);
+        await tail;
+      });
+    });
+    expect(result.current.pending?.cancellable).toBe(true);
+    act(() => result.current.reportProgress({ done: 1, total: 3, cancellable: false }));
+    expect(result.current.pending).toMatchObject({ cancellable: false, progress: { done: 1, total: 3 } });
+    await act(async () => applying());
+    await act(async () => asked());
+    // Still running: Cancel stays withdrawn after the uncancellable phase.
+    expect(result.current.pending).toMatchObject({ cancellable: false });
+    await act(async () => {
+      settle();
+      await run;
+    });
+    // The next action offers Cancel again.
+    let finish: () => void = () => {};
+    act(() => {
+      void result.current.runAction({ cancel: "refreshManagedSkills" }, () => new Promise<void>((resolve) => (finish = resolve)));
+    });
+    expect(result.current.pending?.cancellable).toBe(true);
+    await act(async () => finish());
+  });
+
   it("cancelPending does nothing for an action whose command cannot be cancelled", async () => {
     const { result } = renderHook(() => useStatusReporter(t));
     let finish: () => void = () => {};
@@ -902,7 +940,13 @@ describe("useStatusReporter applyOutcome", () => {
   const outcome = (over: Partial<Outcome> = {}): Outcome => ({
     toast: { kind: "warning", tone: "failure", message: "1 refreshed · 1 failed", detail: "a note" },
     errors: [
-      { title: "alpha failed", message: "offline", action: { label: "Change source", skillId: "s1", skillName: "alpha" } },
+      {
+        title: "alpha failed",
+        message: "offline",
+        subject: { skillId: "s1", skillName: "alpha" },
+        error: { code: "GITHUB_SKILL_NOT_FOUND", url: "https://github.com/o/r" },
+        repair: { verb: "update" },
+      },
       { title: "silenced", message: "" },
     ],
     warnings: [{ title: "beta skipped", message: "not found" }],
@@ -911,7 +955,7 @@ describe("useStatusReporter applyOutcome", () => {
     ...over,
   });
 
-  it("reloads first, then toasts, records one run block and closes the dialog", async () => {
+  it("reloads first, records one run block, shows ONE headline toast with View report, closes the dialog", async () => {
     const { result } = renderHook(() => useStatusReporter(t));
     const order: string[] = [];
     const reload = vi.fn(async () => {
@@ -926,10 +970,15 @@ describe("useStatusReporter applyOutcome", () => {
     await act(async () => {
       completion = await result.current.applyOutcome(outcome(), { reload, closeModal });
     });
-    expect(order[0]).toBe("reload");
+    expect(order).toEqual(["reload", "toast:1 refreshed · 1 failed"]);
     expect(closeModal).toHaveBeenCalled();
     expect(completion).toEqual({ reload: true, closeModal: true, conflict: false });
-    expect(toast.error).toHaveBeenCalledTimes(1);
+    // Only the headline is toasted (D11): the entries live in the report.
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.warning).toHaveBeenCalledTimes(1);
+    const [, options] = vi.mocked(toast.warning).mock.calls[0] as unknown as [string, { description?: string; action?: { label: string } }];
+    expect(options.description).toBeUndefined();
+    expect(options.action?.label).toBe("runReport.viewReport");
     const rows = result.current.notifications;
     // headline over its entries, silenced entry dropped, one runId.
     expect(rows.map((row) => [row.role, row.kind, row.title])).toEqual([
@@ -938,6 +987,28 @@ describe("useStatusReporter applyOutcome", () => {
       ["entry", "warning", "beta skipped"],
     ]);
     expect(new Set(rows.map((row) => row.runId)).size).toBe(1);
+    // Entries keep their data for the panel's actions.
+    expect(rows[1]).toMatchObject({ subject: { skillId: "s1" }, error: { code: "GITHUB_SKILL_NOT_FOUND" }, repair: { verb: "update" } });
+  });
+
+  it("names the run by the action that produced it", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    await act(async () => {
+      await result.current.runAction({ label: "Refresh" }, async () => {
+        await result.current.applyOutcome(outcome());
+      });
+    });
+    expect(result.current.notifications.every((row) => row.runLabel === "Refresh")).toBe(true);
+  });
+
+  it("without a headline, the first entry heads the one toast (+N more), error-toned when anything failed", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    await act(async () => {
+      await result.current.applyOutcome(outcome({ toast: null }));
+    });
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toBe('alpha failederrors.moreCount {"count":2}');
+    expect(toast.warning).not.toHaveBeenCalled();
   });
 
   it("does not reload or close when the completion says not to", async () => {
@@ -954,17 +1025,6 @@ describe("useStatusReporter applyOutcome", () => {
     expect(closeModal).not.toHaveBeenCalled();
   });
 
-  it("an entry's declarative action resolves through the caller when clicked", async () => {
-    const { result } = renderHook(() => useStatusReporter(t));
-    const onAction = vi.fn();
-    await act(async () => {
-      await result.current.applyOutcome(outcome(), { onAction });
-    });
-    const row = result.current.notifications.find((n) => n.title === "alpha failed");
-    row?.action?.onClick();
-    expect(onAction).toHaveBeenCalledWith({ label: "Change source", skillId: "s1", skillName: "alpha" });
-  });
-
   it("quiet notes are their own rows only when no headline carries them", async () => {
     const { result } = renderHook(() => useStatusReporter(t));
     await act(async () => {
@@ -977,12 +1037,80 @@ describe("useStatusReporter applyOutcome", () => {
     ]);
   });
 
-  it("an empty outcome records nothing", async () => {
+  it("an empty outcome records nothing and toasts nothing", async () => {
     const { result } = renderHook(() => useStatusReporter(t));
     await act(async () => {
       await result.current.applyOutcome(outcome({ toast: null, errors: [], warnings: [], notes: [] }));
     });
     expect(result.current.notifications).toEqual([]);
+    expect(toast.info).not.toHaveBeenCalled();
+  });
+
+  it("a clean success toasts its headline alone: nothing more to report", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    await act(async () => {
+      await result.current.applyOutcome(
+        outcome({ toast: { kind: "success", tone: "success", message: "3 synced" }, errors: [], warnings: [], notes: [] }),
+      );
+    });
+    expect(toast.success).toHaveBeenCalledWith("3 synced", { description: undefined, duration: 2000 });
+  });
+});
+
+describe("useStatusReporter and the Notifications panel (D11)", () => {
+  /** A minimal surface door: the panel's open state and the stack writes. */
+  function door() {
+    const stack: Array<{ kind: string; runId?: number }> = [];
+    return {
+      stack,
+      isOpen: (kind: string) => stack.some((layer) => layer.kind === kind),
+      pushDialog: vi.fn((layer: { kind: string; runId?: number }) => {
+        stack.push(layer);
+      }),
+      updateDialog: vi.fn((layer: { kind: string; runId?: number }) => {
+        stack[stack.findIndex((l) => l.kind === layer.kind)] = layer;
+      }),
+    };
+  }
+
+  it("View report opens the panel on that run, marks everything read and clears the toasts", async () => {
+    const surface = door();
+    const { result } = renderHook(() => useStatusReporter(t, surface as never));
+    await act(async () => {
+      await result.current.applyOutcome({
+        toast: { kind: "warning", tone: "failure", message: "1 failed" },
+        errors: [{ title: "alpha failed", message: "offline" }],
+        warnings: [],
+        notes: [],
+        completion: { reload: false, closeModal: false, conflict: false },
+      });
+    });
+    expect(result.current.unreadCount).toBe(2);
+    const [, options] = vi.mocked(toast.warning).mock.calls[0] as unknown as [string, { action: { onClick: () => void } }];
+    act(() => options.action.onClick());
+    const runId = result.current.notifications[0].runId;
+    expect(surface.pushDialog).toHaveBeenCalledWith({ kind: "notifications", runId });
+    expect(result.current.unreadCount).toBe(0);
+    expect(toast.dismiss).toHaveBeenCalled();
+  });
+
+  it("while the panel is open no toast covers it: notifications are recorded, not toasted", async () => {
+    const surface = door();
+    surface.stack.push({ kind: "notifications" });
+    const { result } = renderHook(() => useStatusReporter(t, surface as never));
+    act(() => result.current.notify("error", "boom"));
+    await act(async () => {
+      await result.current.applyOutcome({
+        toast: { kind: "success", tone: "success", message: "3 synced" },
+        errors: [],
+        warnings: [],
+        notes: [],
+        completion: { reload: false, closeModal: false, conflict: false },
+      });
+    });
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(result.current.notifications.map((n) => n.title)).toEqual(["3 synced", "boom"]);
   });
 });
 

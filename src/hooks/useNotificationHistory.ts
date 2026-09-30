@@ -1,4 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
+import type { CommandError } from "../bindings";
+import type { EntryRepair, EntrySubject } from "../lib/reportOutcome";
 
 /** The severity of one user-visible notification. */
 export type NotificationKind = "error" | "warning" | "success" | "info";
@@ -27,6 +29,20 @@ export type Notification = {
   runId?: number;
   /** Within a run: its composite headline, or one of its entries. */
   role?: "headline" | "entry";
+  /** The action the run was ("Refresh", "Sync") — the panel's group row names it. */
+  runLabel?: string | null;
+} & RowFacts;
+
+/**
+ * What a report entry is about, kept as data on its row so the panel can
+ * offer its actions (`notificationRuns.rowActions`) long after the run.
+ */
+export type RowFacts = {
+  subject?: EntrySubject;
+  error?: CommandError;
+  repair?: EntryRepair;
+  /** The "to review" kind: an unanswered collision, never a failure (D10). */
+  review?: true;
 };
 
 /** One row of a run, before the ring stamps it. */
@@ -35,7 +51,7 @@ export type RunRow = {
   title: string;
   message?: string;
   action?: NotificationAction;
-};
+} & RowFacts;
 
 /** The history keeps this many entries, newest first; older ones drop off. */
 export const NOTIFICATION_HISTORY_LIMIT = 100;
@@ -56,9 +72,14 @@ export type RecordFn = (
 /**
  * Appends one run — a fold's headline (when it has one) and its entries —
  * as one block under a fresh `runId`, which it returns. The headline sits on
- * top; the entries follow in report order.
+ * top; the entries follow in report order. `label` names the action the run
+ * was (the reporter's pending label), for the panel's group row.
  */
-export type RecordRunFn = (headline: RunRow | null, entries: RunRow[]) => number;
+export type RecordRunFn = (
+  headline: RunRow | null,
+  entries: RunRow[],
+  label?: string | null,
+) => number;
 
 export type NotificationHistory = {
   /**
@@ -107,7 +128,7 @@ export function useNotificationHistory(): NotificationHistory {
     );
   }, []);
 
-  const recordRun = useCallback<RecordRunFn>((headline, entries) => {
+  const recordRun = useCallback<RecordRunFn>((headline, entries, label = null) => {
     const runId = nextRunIdRef.current++;
     const at = Date.now();
     const rows: Array<RunRow & { role: "headline" | "entry" }> = [
@@ -118,16 +139,14 @@ export function useNotificationHistory(): NotificationHistory {
     // headline — recorded last — is on top and the entries read top-down.
     const stamped: Notification[] = [];
     for (let i = rows.length - 1; i >= 0; i--) {
-      const { kind, title, message, action, role } = rows[i];
+      const { action, ...row } = rows[i];
       stamped.unshift({
+        ...row,
         id: nextIdRef.current++,
-        kind,
-        title,
-        message,
         ...(action ? { action } : {}),
         at,
         runId,
-        role,
+        runLabel: label,
       });
     }
     setNotifications((prev) =>

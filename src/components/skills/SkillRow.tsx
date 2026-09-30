@@ -305,11 +305,15 @@ const SkillRow = ({
             size="icon-sm"
             aria-label={t("library.row.more", { name: skill.name })}
             title={blockedTitle ?? t("library.row.more", { name: skill.name })}
+            aria-description={blockedTitle}
             disabled={busy}
+            // The row's pending mark (D19): its skill is in the running
+            // action — a batch that names it, or its own verb.
+            pending={busyHere}
           />
         }
       >
-        <Ellipsis />
+        {busyHere ? null : <Ellipsis />}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-56">
         {fixes.length > 0 ? (
@@ -385,7 +389,6 @@ const SkillRow = ({
         className={cn(
           "relative flex min-w-0 flex-col gap-2 overflow-hidden rounded-lg border border-border bg-card p-3 hover:border-border-strong data-selected:bg-raised data-focused:border-ring",
           SELECTED_EDGE,
-          busyHere && "opacity-70",
         )}
       >
         <div className="flex min-w-0 items-center gap-2">
@@ -422,7 +425,6 @@ const SkillRow = ({
         "relative grid h-row items-center gap-x-3 border-b border-border px-3 hover:bg-card data-selected:bg-raised data-focused:bg-raised data-focused:ring-1 data-focused:ring-ring data-focused:ring-inset",
         SELECTED_EDGE,
         LIST_COLUMNS,
-        busyHere && "opacity-70",
       )}
     >
       <span className="flex items-center justify-center">{checkbox}</span>

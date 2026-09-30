@@ -171,7 +171,6 @@ export const resources = {
         empty: "Nothing to report yet",
         emptyHint:
           "Outcomes of this session's actions — installs, syncs, failures — are listed here.",
-        copyEntry: "Copy this notification",
         copyAll: "Copy all",
         clear: "Clear",
         kind: {
@@ -239,10 +238,6 @@ export const resources = {
       localFolder: "Local Folder",
       install: "Install",
       installSelected: "Install selected",
-      processingTitle: "Installing Skills...",
-      processingTipShort: "Cloning repository and syncing to tools",
-      processingTipLong:
-        "Running file/network operations. First fetch may take a while depending on network; subsequent installs use cache and are faster.",
       newToolsTitle: "New tools detected",
       newToolsBody:
         "We detected newly installed tools: {{tools}}. Sync managed skills to the ones you have selected?",
@@ -285,8 +280,6 @@ export const resources = {
         skillExistsInHubNamed:
           '"{{name}}" already exists in Hub. Go to My Skills to update it.',
         targetExists: "Target folder already exists and was left in place.",
-        targetExistsDetail:
-          "Target folder already exists: {{path}}. It was left in place.",
         toolNotInstalled:
           "The selected tool is not installed. Please refresh and retry.",
         toolNotWritable:
@@ -374,8 +367,6 @@ export const resources = {
           "Custom name is not supported when installing multiple skills. Leave it empty or select one.",
         syncFailedTitle: "Sync failed: {{name}} -> {{tool}}",
         syncFailedInProjectTitle: "Sync failed in {{project}}: {{name}} -> {{tool}}",
-        syncTargetExistsMessage:
-          "Target folder already exists: {{path}}.\nIt was left in place.",
         importFailedTitle: "Import failed: {{name}}",
         updateFailedTitle: "Update failed: {{name}}",
         skillGone: "{{name}} is no longer in your library",
@@ -798,7 +789,6 @@ export const resources = {
           viewIssues_one: "View {{count}} skill with issues",
           viewIssues_other: "View {{count}} skills with issues",
         },
-        progressRegion: "Progress",
         refreshAll: "Refresh all",
         searchLabel: "Search skills",
         searchPlaceholder: "Name or source",
@@ -1175,6 +1165,66 @@ export const resources = {
       // Ticket 13 audit A4 — a Delete that settled as cancelled (D10: neutral, never a failure).
       deleteCancel: {
         single: "Delete of {{name}} cancelled \u2014 it is kept.",
+      },
+      // Ticket 14 — the header progress (D19): what is running, in its own words.
+      activity: {
+        running: "{{action}} running",
+        working: "Working\u2026",
+        count: "{{done}}/{{total}}",
+        cancelAction: "Cancel {{action}}",
+        refreshing: "Refreshing",
+        syncing: "Syncing",
+        disabling: "Disabling",
+        enabling: "Enabling",
+        removing: "Removing",
+        deploying: "Deploying",
+        assigning: "Assigning to project",
+        adding: "Adding",
+        importing: "Importing",
+        scanning: "Scanning Tools",
+        previewing: "Loading preview",
+        addingProject: "Adding project",
+        removingProject: "Removing project",
+        syncingProjects: "Syncing projects",
+        labels: {
+          add: "Add",
+          import: "Import",
+          scan: "Scan",
+          preview: "Preview",
+        },
+      },
+      // Ticket 14 — the Notifications panel grouped by run (D11), and the
+      // "to review" kind of a collision nobody answered (D10/D12).
+      runReport: {
+        viewReport: "View report",
+        runs: "Runs",
+        items_one: "{{count}} item",
+        items_other: "{{count}} items",
+        kindReview: "To review",
+        inProject: "in {{project}}:",
+        actionNamed: "{{action}}: {{name}}",
+        collisions_one: "{{count}} folder to review",
+        collisions_other: "{{count}} folders to review",
+        collisionTitle: "{{name}} \u2192 {{tool}}: a different folder is in the way",
+        collisionMessage: "Nothing was changed. {{path}}",
+        alsoDeployed: "{{name}} also deployed to {{tools}}",
+        actions: {
+          show: "Show",
+          retry: "Retry",
+          overwrite: "Overwrite\u2026",
+          delete: "Remove\u2026",
+          changeSource: "Change source\u2026",
+          githubSettings: "Open Settings \u2192 GitHub",
+        },
+      },
+      // Ticket 14 — the passive update item (D8).
+      appUpdate: {
+        available: "{{version}} available",
+        installing: "Installing {{version}}\u2026",
+        installed: "Update installed \u2014 restart",
+      },
+      notificationCopy: {
+        named: "Copy: {{title}}",
       },
     },
   },
