@@ -1,6 +1,6 @@
 # 14 — Notifications grouped by run with actioned rows; header progress; Cancel policy; focus rules applied
 
-Status: ready-for-agent
+Status: implemented
 Blocked by: 03, 09, 12, 13
 Spec: `.scratch/round19/spec.md` — D11, D19, D20, D21. Sources: `flows.md` X1–X3, X5, R-X1–R-X3, Flow 2 gaps 1, 3, 7;
 `critique-astra` F13; `audit.md` Notifications/Motion rows.
@@ -214,3 +214,7 @@ Gate: see the dated comment below.
   - Re-check focus: the toaster hand-off (a toast whose pre-toast element is gone or inert; VoiceOver); the stale
     rules in `staleCollision` (an Enable pair the operator re-disabled by hand is indistinguishable from the collision's
     marker and is answered by Enable); the empty-state initial focus; the panel foot during an ask above the panel.
+
+- 2026-09-30 — independent bounded re-check of `f9e4e0e`: **PASS for A1–A4**, N1/N3 closed; report `.scratch/round19/review/ticket-14-audit.md` § Re-check (2026-09-30), fresh evidence `.scratch/round19/evidence/14-recheck/`. Both layouts pass keyboard/pointer toast handoff (including real-Sonner entering/stacked stress), Clear/empty landing, reachable panel Cancel and Retry return; Enable Overwrite/Keep/dismiss each raises exactly one ask, preserves unrelated targets, and uses Enable rather than ordinary sync. Stale skill/already-deployed repairs do not run; ordinary sync repair still takes Sync. No non-toast blur, whole-skill admission bypass, or stale closure found. Re-disabling an already-disabled collision marker is indistinguishable in the store (a no-op); a later explicit Overwrite… legitimately requests pair Enable with a fresh ask, not automatic redeployment. **P2 residuals:** N2's transient resize BODY sample unchanged; new N4 stale-report note is not live-announced; new N5 header progress remains visible behind the scrim alongside the active panel foot (one accessible Cancel, not one visual copy). Orchestrator owns explicit disposition of those notes; Import stays ticket 21 and native VoiceOver stays release smoke. Ticket 11 Escape/Keep/Overwrite → switch and Delete → next row regressions pass. Six axe checks: zero violations; contrast/reduced motion pass measured scope. Fresh version+full check exits 0 (**900 frontend / 807 Rust**); affected suite **246 passed**; bindings unchanged. Application source untouched; browser session closed; no commit.
+
+- 2026-09-30 — **D31 gate passed** (orchestrator). Astra's re-check closed A1–A4 and N1/N3 (gate 900 / 807, bindings unchanged, 6 axe runs clean). Concern (a) ruled: an explicit Overwrite… legitimately takes the pair's Enable path with a fresh ask; a hand re-Disable of an already-disabled collision marker records no distinguishable new intent, so nothing to fix. Three P2 notes **deferred to ticket 15** (Comments there): N2 the sub-frame BODY sample during deferred inspector reparenting on resize; N4 the stale-collision note is written to history but not announced live; N5 while the panel is open, progress renders in both the inert header and the panel foot (one Cancel is reachable — decide whether the header copy should hide while a dialog owns the foot).

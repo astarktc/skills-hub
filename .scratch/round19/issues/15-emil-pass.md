@@ -37,3 +37,5 @@ Contrast table still holds; `npm run check`; a short `preview_recording` of the 
   Switch primitive has no `focusableWhenDisabled` (a pressed row switch drops focus while its action runs; the door
   restores it after).
 
+
+- 2026-09-30 — from ticket 14's audit re-check (P2s deferred here): **N2** a single sub-frame `activeElement === BODY` sample when the inspector reparents side↔sheet on a resize while a dialog closes (`App.tsx` deferred placement) — preserve focus across the unmount/mount boundary or document it as a non-settled transition; **N4** the stale-collision note ("this pair changed since the report") is recorded in history but not announced — a polite live region when the panel adds a note while open; **N5** with the panel open during a run, progress shows in the inert header *and* the panel foot — pick one surface (hide the header copy while a dialog owns the foot) so there is never a duplicate progress statement. Also from 14's Result: the Switch primitive lacks `focusableWhenDisabled`, so a pressed row switch loses focus (to its SPAN control, never BODY) while its action runs.
