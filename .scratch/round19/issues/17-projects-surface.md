@@ -66,3 +66,9 @@ All with a missing folder yields one line; contrast; `npm run check`.
   to review" (conflict tone, `review` entry with the project in its subject; no overwrite repair from the panel —
   answered from the matrix). The Notifications panel names a project row "in {project}:" from the labels App passes.
 
+- 2026-09-30 — from ticket 15: `Switch` gained `focusableWhenDisabled` (Base UI 1.8's Switch has none; the primitive holds focus
+  read-only with `aria-disabled`) — use it for any matrix / project toggle disabled by its own running action. A focused
+  `aria-disabled` control draws at 75 % (ring 4.42 dark / 3.49 light). The legacy `.project-item .remove-btn` hover
+  reveal, `.matrix-cell` background fade and the matrix tooltip fade lost their `transition` (instant now; motion table
+  in DESIGN.md § Motion) — keep them instant when migrating. `.cell-spinner` (0.6 s) and the list skeleton shimmer
+  (1.5 s) remain the only legacy loops; the base layer stops them under reduced motion.

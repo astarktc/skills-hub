@@ -61,3 +61,12 @@ Escape closes only the ask; 960×640; contrast; `npm run check`.
   `installOutcome` folds an unanswered collision as "N folders to review" (never "targets failed"). After a cancelled
   listing `returnLostFocus` puts focus back on Install.
 
+- 2026-09-30 — from ticket 15 (Emil pass): (1) **One visible progress** — `App.tsx`'s `progressInDialog` lists the dialogs
+  whose foot shows the progress (Add, Import, the two pickers, Re-point, Notifications); the page copy yields while one
+  is open (`HeaderProgress yielded`). When Add becomes one stepped surface, keep that list true (drop the pickers if
+  they merge into it). (2) **Motion**: DESIGN.md § Motion now has the motion table; "an install landing" is one of the
+  two permitted rare moments — decide whether it moves at all (≤ 120 ms steps, opacity/transform, reduce removes);
+  the strip light (`useSyncLight`) already lights a new install's marks as they become synced. (3) `App.css`'s
+  `transition: all` declarations are gone (hover/focus on the legacy `.input`, `.btn`, `.discovered-list` rules is now
+  instant) — nothing to restore; migrate onto the primitives. (4) A Button/Switch that holds focus while disabled draws
+  at 75 % while focused (ring ≥ 3:1) — use `focusableWhenDisabled` / `pending` rather than a local opacity.

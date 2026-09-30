@@ -26,6 +26,7 @@ import type { SkillActions } from "../../hooks/useSkillActions";
 import type { CopyToClipboardFn, Notification, NotificationKind } from "../../hooks/useStatusReporter";
 import type { SurfaceState } from "../../hooks/useSurfaceState";
 import {
+  arrivalAnnouncement,
   groupRuns,
   historyText,
   rowActions,
@@ -279,9 +280,17 @@ function ReportBody({
     }
   };
 
+  // What arrives while the panel is open is announced here (N4): no toast
+  // shows meanwhile, and focus is never moved to it.
+  const [openedWith] = useState(() => groups[0]?.key ?? null);
+  const arrival = arrivalAnnouncement(groups, openedWith, inProject);
+
   const isEmpty = groups.length === 0;
   return (
     <>
+      <p role="status" aria-atomic="true" data-run-arrival="" className="sr-only">
+        {arrival}
+      </p>
       <DialogBody variant="flush" className="max-h-[min(70vh,560px)]">
         {isEmpty ? (
           <div className="flex flex-col items-center gap-1.5 px-8 pt-11 pb-10 text-center">
@@ -426,7 +435,7 @@ function ItemRow({ item, ...shared }: RowSharedProps & { item: Notification }) {
   const kindLabel = item.review ? t("runReport.kindReview") : t(`notifications.kind.${item.kind}`);
   const project = rowProject(item, inProject);
   return (
-    <li className="grid grid-cols-[16px_minmax(0,1fr)_auto] items-start gap-x-3 py-2.5 pr-5 pl-10">
+    <li className="grid grid-cols-[16px_minmax(0,1fr)_auto] items-start gap-x-3 py-2 pr-5 pl-10">
       <span role="img" aria-label={kindLabel} className={cn("mt-0.5 inline-flex", item.review ? "text-stale" : KIND_TEXT[item.kind])}>
         <Icon aria-hidden="true" className="size-4" />
       </span>

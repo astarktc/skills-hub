@@ -1234,6 +1234,10 @@ export const resources = {
         resolved: "Nothing to overwrite: {{name}} is already deployed to {{tool}}.",
         changed: "Nothing overwritten: {{name}} on {{tool}} has changed since this report. Show it to see where it stands.",
       },
+      // Ticket 15 — the row menu's Remove opens the Delete dialog, so it carries the ellipsis like its siblings.
+      rowMenu: {
+        remove: "Remove\u2026",
+      },
     },
   },
 } as const;

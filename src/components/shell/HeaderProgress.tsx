@@ -19,6 +19,13 @@ type HeaderProgressProps = {
    * is inert, so its Cancel must be the dialog's).
    */
   placement: "header" | "bar" | "dialog";
+  /**
+   * A dialog's foot shows this same progress (its action runs, or it was
+   * opened over one): the page copy behind the modal yields — it keeps its
+   * live region but draws nothing — so there is one visible progress at a
+   * time (ticket 14 audit N5).
+   */
+  yielded?: boolean;
   t: TFunction;
 };
 
@@ -33,9 +40,10 @@ type HeaderProgressProps = {
  * each tick; the count is plain text beside it. Under reduced motion there is
  * no spinner and the bar does not glide — text and counts only.
  */
-const HeaderProgress = ({ pending, message, onCancel, placement, t }: HeaderProgressProps) => {
-  const shown = pending !== null && showsHeaderProgress(pending);
-  const activity = shown ? progressActivity(pending, t) : "";
+const HeaderProgress = ({ pending, message, onCancel, placement, yielded = false, t }: HeaderProgressProps) => {
+  const running = pending !== null && showsHeaderProgress(pending);
+  const activity = running ? progressActivity(pending, t) : "";
+  const shown = running && !yielded;
   const progress = shown ? pending.progress : null;
   const fraction = progress && progress.total > 0 ? Math.min(1, progress.done / progress.total) : null;
   const step = shown && message && message !== activity && !pending.cancelling ? message : null;

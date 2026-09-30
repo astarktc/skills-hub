@@ -11,6 +11,16 @@ import { Toaster as Sonner, type ToasterProps } from "sonner";
  * it over the popover surface (measured ≥ 4.5:1 in both themes, DESIGN.md).
  * Sonner honours prefers-reduced-motion itself (and the base layer's
  * reduced-motion rule covers it too).
+ *
+ * Motion is the world's (DESIGN.md § Motion): sonner's own 400 ms slide,
+ * fade and height glide become a 120 ms (`--motion-fast`) transform + opacity
+ * on `ease-out` — the toast still enters from and leaves through the edge it
+ * sits on (spatial consistency), it no longer animates its height (layout),
+ * and a swipe-out, the stack's lift and its content fade share the same
+ * 120 ms. Inline styles outrank sonner's injected (unlayered) CSS; the content
+ * fade is on the toast's children, so it takes an important child utility.
+ * Under reduced motion sonner's `transition: none !important` and the base
+ * layer both still win.
  */
 const tint = (token: string) =>
   `color-mix(in oklab, var(${token}) 8%, var(--popover))`;
@@ -38,8 +48,32 @@ const tokenStyle = {
   "--border-radius": "var(--radius-md)",
 } as React.CSSProperties;
 
-function Toaster(props: ToasterProps) {
-  return <Sonner style={tokenStyle} {...props} />;
+const toasterMotion = {
+  transitionDuration: "var(--motion-fast)",
+  transitionTimingFunction: "var(--ease-out)",
+} as React.CSSProperties;
+
+const toastMotion = {
+  transitionProperty: "transform, opacity",
+  transitionDuration: "var(--motion-fast)",
+  transitionTimingFunction: "var(--ease-out)",
+  animationDuration: "var(--motion-fast)",
+} as React.CSSProperties;
+
+const toastContentMotion = "*:duration-(--motion-fast)! *:ease-out!";
+
+function Toaster({ toastOptions, ...props }: ToasterProps) {
+  return (
+    <Sonner
+      style={{ ...tokenStyle, ...toasterMotion }}
+      toastOptions={{
+        ...toastOptions,
+        style: { ...toastMotion, ...toastOptions?.style },
+        className: [toastContentMotion, toastOptions?.className].filter(Boolean).join(" "),
+      }}
+      {...props}
+    />
+  );
 }
 
 export { Toaster };

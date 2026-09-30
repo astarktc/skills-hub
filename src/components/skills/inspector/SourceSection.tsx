@@ -50,9 +50,9 @@ export default function SourceSection({ skill, health, actions, copyToClipboard,
             href={source.href}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex min-w-0 items-center gap-1 rounded-sm text-sm text-foreground underline decoration-border-strong underline-offset-3 hover:decoration-foreground"
+            className="inline-flex h-6 min-w-0 items-center gap-1 rounded-sm text-sm text-foreground underline decoration-border-strong underline-offset-3 hover:decoration-foreground"
           >
-            <span className="truncate">{source.label}</span>
+            <span className="truncate" title={source.title ?? source.label}>{source.label}</span>
             <ExternalLink aria-hidden="true" className="size-3 shrink-0 text-faint" />
           </a>
         ) : (

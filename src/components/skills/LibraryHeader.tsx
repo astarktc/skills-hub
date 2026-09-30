@@ -18,6 +18,8 @@ type LibraryHeaderProps = {
   actionMessage: string | null;
   /** The reporter's `cancelPending` (offered only while the action is cancellable). */
   onCancel: () => void;
+  /** A dialog's foot shows the progress now: the header's copy yields (one visible progress). */
+  progressYielded: boolean;
   onRefreshAll: () => void;
   onConfigureTools: () => void;
   onAddSkill: () => void;
@@ -45,6 +47,7 @@ const LibraryHeader = ({
   pending,
   actionMessage,
   onCancel,
+  progressYielded,
   onRefreshAll,
   onConfigureTools,
   onAddSkill,
@@ -90,7 +93,14 @@ const LibraryHeader = ({
         </p>
       ) : null}
 
-      <HeaderProgress pending={pending} message={actionMessage} onCancel={onCancel} placement="header" t={t} />
+      <HeaderProgress
+        pending={pending}
+        message={actionMessage}
+        onCancel={onCancel}
+        placement="header"
+        yielded={progressYielded}
+        t={t}
+      />
 
       <div className="ml-auto flex items-center gap-2">
         <Button variant="ghost" onClick={onConfigureTools} {...blockedProps}>

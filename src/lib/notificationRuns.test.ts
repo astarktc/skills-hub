@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Notification } from "../hooks/useNotificationHistory";
-import { groupRuns, historyText, rowActions, rowText, rowTitle, staleCollision } from "./notificationRuns";
+import { arrivalAnnouncement, groupRuns, historyText, rowActions, rowText, rowTitle, staleCollision } from "./notificationRuns";
 
 let nextId = 100;
 const row = (over: Partial<Notification>): Notification => ({
@@ -187,5 +187,34 @@ describe("staleCollision (A3: the report is history, the pair is now)", () => {
     expect(staleCollision(skill(null, "disabled"), "claude", "sync")).toBe("pairDisabled");
     expect(staleCollision(skill(3), "claude", "sync")).toBe("skillDisabled");
     expect(staleCollision(skill(null, "synced"), "claude", "sync")).toBe("resolved");
+  });
+});
+
+describe("arrivalAnnouncement (ticket 14 audit N4: what the open panel announces)", () => {
+  const inProject = (id: string) => `in ${id}:`;
+  const opened = groupRuns([row({ runId: 1, role: "headline", kind: "success", title: "3 synced" })]);
+
+  it("announces nothing while the newest group is the one the panel opened on", () => {
+    expect(arrivalAnnouncement(opened, "run:1", inProject)).toBe("");
+    expect(arrivalAnnouncement([], null, inProject)).toBe("");
+  });
+
+  it("announces a standalone note recorded while open (a stale collision's answer)", () => {
+    const note = row({ kind: "info", title: "Nothing to overwrite: alpha is already deployed to Cursor." });
+    const groups = groupRuns([note, ...opened.map((group) => group.head)]);
+    expect(arrivalAnnouncement(groups, "run:1", inProject)).toBe(
+      "Nothing to overwrite: alpha is already deployed to Cursor.",
+    );
+  });
+
+  it("announces a run settled from the panel by its headline, a project row with its project", () => {
+    const retried = groupRuns([
+      row({ runId: 2, role: "entry", kind: "error", title: "alpha failed", subject: { skillId: "a", skillName: "alpha", projectId: "mono" } }),
+    ]);
+    expect(arrivalAnnouncement(retried, "run:1", inProject)).toBe("in mono: alpha failed");
+  });
+
+  it("announces the first arrival after the panel opened empty, or after Clear", () => {
+    expect(arrivalAnnouncement(opened, null, inProject)).toBe("3 synced");
   });
 });

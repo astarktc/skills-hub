@@ -23,3 +23,10 @@ three rows selected; screen-reader semantics of the listbox; `npm run check`.
 ## Result
 
 (child fills in)
+
+## Comments
+
+- 2026-09-30 — from ticket 15: DESIGN.md § Motion's table reserves the palette's row: opacity + transform, ≤ 120 ms
+  (`--motion-fast`, `ease-out`), `motion-reduce:` counterpart, owned by its primitive. Frequency first: ⌘K opens many
+  times a day and from the keyboard — the rubric (Emil) says no open/close animation at all is the better default;
+  decide there, and record it in the table.

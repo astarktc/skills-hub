@@ -32,17 +32,27 @@ export const fieldFocusRing =
 export const insetFocusRing =
   "outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring";
 
-/** Disabled (native or aria-disabled) and pending (aria-busy) presentation. */
+/**
+ * Disabled (native or aria-disabled) and pending (aria-busy) presentation.
+ *
+ * A control that stays focusable while disabled (`focusableWhenDisabled`,
+ * `pending`: it keeps focus while its action runs, or says why it is
+ * refused) draws its ring through the element's own opacity. At 50 % the
+ * ring measured 2.5:1 on the dark ground, so while such a control holds
+ * keyboard focus it steps up to 75 %: the ring measures ≥ 3:1 in both themes
+ * and the control still reads dimmed (ticket 15; DESIGN.md § Focus ring).
+ */
 export const disabledState =
-  "disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 aria-busy:cursor-progress";
+  "disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 aria-disabled:focus-visible:opacity-75 aria-busy:cursor-progress";
 
 /** Icons inside a control size themselves from the control, never per call site. */
 export const iconSlot =
   "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
 
 /**
- * Floating layers (popover, menu, tooltip) appear and leave instantly: the
- * world moves only the palette, the bulk rail and the switch (≤ 120 ms).
+ * Floating layers (popover, menu, tooltip) appear and leave instantly: what
+ * moves, and for how long, is DESIGN.md § Motion's table (≤ 120 ms, opacity
+ * and transform only).
  */
 export const floatingSurface =
   "rounded-md border border-border bg-popover text-popover-foreground shadow-lg outline-none";

@@ -177,7 +177,10 @@ const SkillRow = ({
       data-skill-row={skill.id}
       onClick={() => onOpen(skill)}
       title={skill.name}
-      className="min-w-0 truncate rounded-sm text-left text-sm font-medium text-foreground hover:underline"
+      // 24 px tall and at least 24 px wide (the dense target floor, D28): a
+      // short name ("tdd") still gets a whole target; longer names truncate
+      // (the full name is the title).
+      className="h-6 min-w-6 truncate rounded-sm text-left text-sm leading-6 font-medium text-foreground hover:underline"
     >
       {skill.name}
     </button>
@@ -259,8 +262,12 @@ const SkillRow = ({
         checked={enabled}
         onCheckedChange={onSwitch}
         disabled={busy}
+        // A pressed switch keeps focus while its own action runs (D21), and
+        // every switch says why it is refused meanwhile (D19).
+        focusableWhenDisabled
         aria-label={t("library.row.enabled", { name: skill.name })}
         title={blockedTitle}
+        aria-description={blockedTitle}
       />
       <Popover open={askingEnable} onOpenChange={setAskingEnable}>
         <PopoverContent
@@ -356,7 +363,7 @@ const SkillRow = ({
         <DropdownMenuSeparator />
         {!fixed.has("delete") ? (
           <DropdownMenuItem variant="destructive" onClick={() => void run("delete", [skill])}>
-            {t("remove")}
+            {t("rowMenu.remove")}
           </DropdownMenuItem>
         ) : null}
       </DropdownMenuContent>

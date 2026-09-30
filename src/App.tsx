@@ -271,11 +271,28 @@ function App() {
   // commit that closed it). Progress is the header's, never a layer (D19).
   const layerAboveInspector = surface.stack.length > 0;
   const [placement, setPlacement] = useState<InspectorPlacement>(wantedPlacement);
+  //
+  // Focus inside the inspector crosses the reparent in one task (14 audit
+  // N2): the old placement unmounts and the new one mounts synchronously, and
+  // its heading takes focus before the task ends, so no frame — and no
+  // sample — ever finds it on <body> between the two. The sheet's own initial
+  // focus (the same heading) and the aside's hand-over below then agree.
+  const reparentWithFocus = useCallback((next: InspectorPlacement, skillId: string | null) => {
+    const active = document.activeElement;
+    const held = active instanceof Element && active.closest("[data-inspector]") !== null;
+    flushSync(() => setPlacement(next));
+    if (!held || !skillId) return;
+    const inside = document.activeElement?.closest("[data-inspector]");
+    if (!inside) {
+      document.querySelector<HTMLElement>(`[data-inspector-heading="${CSS.escape(skillId)}"]`)?.focus();
+    }
+  }, []);
+  const placementSubject = focused?.kind === "skill" ? focused.id : null;
   useEffect(() => {
     if (layerAboveInspector || placement === wantedPlacement) return;
-    const timer = window.setTimeout(() => setPlacement(wantedPlacement), 0);
+    const timer = window.setTimeout(() => reparentWithFocus(wantedPlacement, placementSubject), 0);
     return () => window.clearTimeout(timer);
-  }, [layerAboveInspector, placement, wantedPlacement]);
+  }, [layerAboveInspector, placement, wantedPlacement, reparentWithFocus, placementSubject]);
   const focusedSkillId = focused?.kind === "skill" ? focused.id : null;
   const handleCloseDetail = unfocus;
   const openedFromRow = useRef(false);
@@ -547,6 +564,15 @@ function App() {
   const dialogProgress = (
     <HeaderProgress pending={pending} message={actionMessage} onCancel={cancelPending} placement="dialog" t={t} />
   );
+  // While one of those dialogs is open its foot is the progress; the page
+  // copy under the scrim yields, so a run never shows twice (14 audit N5).
+  const progressInDialog =
+    addFlow.showAddModal ||
+    (addFlow.showImportModal && addFlow.plan !== null) ||
+    surface.isOpen("notifications") ||
+    (library.pendingRepointSkill !== null && library.repointSelection !== null) ||
+    addFlow.local.visible ||
+    addFlow.git.visible;
   // The panel's catalog: a row's skill actions exist only while its skill does.
   const skillNames = useMemo(
     () => Object.fromEntries(library.managedSkills.map((skill) => [skill.id, skill.name])),
@@ -582,6 +608,7 @@ function App() {
             message={actionMessage}
             onCancel={cancelPending}
             placement="bar"
+            yielded={progressInDialog}
             t={t}
           />
         ) : null}
@@ -607,6 +634,7 @@ function App() {
                 pending={pending}
                 actionMessage={actionMessage}
                 onCancel={cancelPending}
+                progressYielded={progressInDialog}
                 onRefreshAll={() => void run("update", "all", { confirmed: true })}
                 onConfigureTools={sync.handleOpenToolConfig}
                 onAddSkill={handleOpenAdd}

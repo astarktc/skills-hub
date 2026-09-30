@@ -30,3 +30,8 @@ managed inspector; contrast both themes; 960×640; `npm run check`.
 ## Comments
 
 - 2026-09-30 — from ticket 14 (recorded by the orchestrator; the 14 child noted it only in its Result): the Explore preview leaves focus on the main landmark rather than its own heading when it opens (`ExplorePreviewView.tsx`, which now uses `useSkillDocument`). Move the arrival focus to the preview's heading (`tabindex="-1"`, D21) and return to the row on close, the way the inspector does.
+
+- 2026-09-30 — from ticket 15: `.explore-skill-item`, `.explore-search-input`, `.explore-card`, `.explore-btn-install`,
+  `.explore-btn-view` and `.explore-btn-hide` lost their `transition` declarations (the built CSS carries no
+  `transition: all`; hover is instant, as in every primitive). Keep hover instant when the rows migrate; DESIGN.md
+  § Motion lists what may move.

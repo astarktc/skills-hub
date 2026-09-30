@@ -35,3 +35,8 @@ Replace; auto-sync-off path shows the checkbox and the button text changes; coun
 ## Comments
 
 - 2026-09-29 — from tickets 02/05: rename `list_all_skill_target_paths` to say "owned" (it now returns only rows the app materialised); the `replaced` group's `TARGET_EXISTS` rows route into ticket 04's one ask — decide whether the review's "Replace" button is the confirmation or raises the ask (05 chose not to force-overwrite from the plan because a copy can change between review and import).
+
+- 2026-09-30 — from ticket 15: the strip light exists — `StripMarkIcon` + `useSyncLight` fade a mark that *becomes* synced
+  on screen from opacity 0 over 120 ms (`@starting-style`, never on mount; reduced motion shows it settled). The rare
+  delight (DESIGN.md § Empty and first-run) only has to add the stagger: a per-mark `transition-delay` (20 ms × index)
+  for the imported rows, once. It is one of the two permitted rare moments in DESIGN.md § Motion.

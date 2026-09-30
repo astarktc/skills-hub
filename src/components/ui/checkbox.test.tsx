@@ -3,7 +3,7 @@
 
 import { useState } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Checkbox } from "./checkbox";
 import { Switch } from "./switch";
 
@@ -67,6 +67,83 @@ describe("Switch", () => {
     fireEvent.click(control);
 
     expect(control.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("disabled is aria-disabled, out of the tab order and not activatable", () => {
+    const onCheckedChange = vi.fn();
+    render(<Switch aria-label="Pi" checked disabled onCheckedChange={onCheckedChange} />);
+    const control = screen.getByRole("switch", { name: "Pi" });
+    expect(control.getAttribute("aria-disabled")).toBe("true");
+    expect(control.getAttribute("tabindex")).toBe("-1");
+    fireEvent.click(control);
+    expect(onCheckedChange).not.toHaveBeenCalled();
+    expect(control.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("focusableWhenDisabled keeps focus and the tab stop, says aria-disabled, and refuses every change", () => {
+    const onCheckedChange = vi.fn();
+    render(
+      <Switch
+        aria-label="alpha enabled"
+        checked
+        disabled
+        focusableWhenDisabled
+        onCheckedChange={onCheckedChange}
+      />,
+    );
+    const control = screen.getByRole("switch", { name: "alpha enabled" });
+    expect(control.getAttribute("aria-disabled")).toBe("true");
+    expect(control.getAttribute("aria-readonly")).toBeNull();
+    expect(control.getAttribute("tabindex")).toBe("0");
+    control.focus();
+    expect(document.activeElement).toBe(control);
+
+    fireEvent.click(control);
+    fireEvent.keyDown(control, { key: " " });
+    fireEvent.keyUp(control, { key: " " });
+    fireEvent.keyDown(control, { key: "Enter" });
+
+    expect(onCheckedChange).not.toHaveBeenCalled();
+    expect(control.getAttribute("aria-checked")).toBe("true");
+    expect(document.activeElement).toBe(control);
+  });
+
+  it("keeps focus on the switch when its own action disables it, and works again once enabled", () => {
+    function RowSwitch() {
+      const [checked, setChecked] = useState(true);
+      const [running, setRunning] = useState(false);
+      return (
+        <>
+          <Switch
+            aria-label="beta enabled"
+            checked={checked}
+            disabled={running}
+            focusableWhenDisabled
+            onCheckedChange={(next) => {
+              setChecked(next);
+              setRunning(true);
+            }}
+          />
+          <button type="button" onClick={() => setRunning(false)}>
+            settle
+          </button>
+        </>
+      );
+    }
+    render(<RowSwitch />);
+    const control = screen.getByRole("switch", { name: "beta enabled" });
+    control.focus();
+    fireEvent.click(control);
+
+    expect(control.getAttribute("aria-checked")).toBe("false");
+    expect(control.getAttribute("aria-disabled")).toBe("true");
+    expect(control.getAttribute("tabindex")).toBe("0");
+    expect(document.activeElement).toBe(control);
+
+    fireEvent.click(screen.getByRole("button", { name: "settle" }));
+    expect(control.getAttribute("aria-disabled")).toBeNull();
+    fireEvent.click(control);
+    expect(control.getAttribute("aria-checked")).toBe("true");
   });
 
   it("removes the thumb's slide under reduced motion", () => {

@@ -160,7 +160,7 @@ Re-measure them after any change to `faint`, `primary`, `stale` or the grounds.
 | Row height | 36 px (rows, headers, palette items) | `h-row` |
 | Spacing | Tailwind's 4 px base | — |
 | Elevation | `shadow-sm`, `shadow-lg` (floating layers only) | — |
-| Motion | 120 ms; `ease-out` = `cubic-bezier(0.16, 1, 0.3, 1)` | `duration-(--motion-fast)`, default transition |
+| Motion | 120 ms (`--motion-fast`); `ease-out` = `cubic-bezier(0.16, 1, 0.3, 1)` (see [Motion](#motion)) | `duration-(--motion-fast)`, default transition |
 | Shell breakpoint | 1200 px (`--breakpoint-shell: 75rem`; see [Layout](#layout)) | `shell:` / `max-shell:` |
 
 The Tailwind palette (`red-500`, `gray-900`, …) is removed (`--color-*: initial`). A palette utility therefore
@@ -201,7 +201,8 @@ Props: `variant` · `tone` · `size`, plus `pending`.
 
 - `pending`: the button's work is running. It gets `aria-busy`, stops being activatable, shows a spinner
   (`motion-safe` only) and **keeps focus**.
-- `disabled`: not activatable, 50 % opacity (contrast-exempt).
+- `disabled`: not activatable, 50 % opacity (contrast-exempt); 75 % while a `focusableWhenDisabled` / `pending`
+  button holds keyboard focus, so its ring stays ≥ 3:1 (§ Focus ring).
 - An icon-only button needs `aria-label`.
 
 ### Badge and Chip (`badge.tsx`)
@@ -243,6 +244,10 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
 - **Switch**: `role="switch"`. `size` is `md` (20 × 36, standalone) or `sm` (16 × 28 with a 24 px hit area, dense
   rows). "On" is **neutral** (`muted-foreground`), not iris: a column of switches must not make the accent mean
   "normal". The thumb slides in 120 ms, and reduced motion removes the slide.
+  - `focusableWhenDisabled` (ticket 15): a switch disabled *because its own action runs* keeps its Tab stop and
+    focus, says `aria-disabled="true"` (never `aria-readonly`) and refuses every change — click, Space, Enter. Base
+    UI's Switch has no such option (1.8), so the primitive renders it read-only while it holds focus. The row
+    switch uses it with the refusal reason as `title` + `aria-description` (D19, D21); `checkbox.test.tsx` pins it.
 
 ### Tabs and Segmented (`tabs.tsx`, `segmented.tsx`)
 
@@ -335,6 +340,12 @@ its composite headline (no description) with **View report**, which opens the No
 no toast is shown while the panel is open (opening it dismisses those on screen): a toast never covers its header
 (ticket 14).
 
+Motion (ticket 15): sonner's own 400 ms slide, fade and height glide are replaced, inside the primitive, by the
+world's 120 ms (`--motion-fast`) transform + opacity on `ease-out` — inline styles on the toaster and each toast
+(they outrank sonner's injected CSS), an important child utility for the content fade of a stacked toast. The toast
+enters from and leaves through its own edge; its height never animates; a swipe-out takes the same 120 ms. Reduced
+motion: sonner's `transition: none !important` and the base layer both still win.
+
 ## Focus ring
 
 - One ring everywhere: a **2 px solid `ring` outline, offset 2 px** (1 px for text fields, −2 px inside menu items),
@@ -346,6 +357,11 @@ no toast is shown while the panel is open (opening it dismisses those on screen)
   primitive in both themes (ticket 07, 2026-09-29).
 - **No transition**: the ring never animates in.
 - It measures ≥ 5.04:1 against every ground in both themes.
+- **A control that holds focus while disabled** (`focusableWhenDisabled`, `pending` — it keeps focus while its action
+  runs, or is refused with a reason) is drawn at 50 % opacity, and the ring with it: 2.60 dark / 2.19 light. While it
+  holds keyboard focus it steps up to **75 %** (`aria-disabled:focus-visible:opacity-75`, in the shared
+  `disabledState`), so the ring measures **4.42 dark / 3.49 light** (≥ 3:1) and the control still reads dimmed
+  (ticket 15, measured on Add skill and a row switch mid-Refresh).
 - Primitives draw it through the ring constants in `ui/styles.ts`. The base layer (`index.css`) gives every other element the
   same ring, legacy surfaces included.
 - A legacy rule that removes the outline must replace it with an `accent-primary` (iris) edge. Every current one
@@ -353,20 +369,51 @@ no toast is shown while the panel is open (opening it dismisses those on screen)
 
 ## Motion
 
-- **What moves**: only the ⌘K palette, the bulk rail, the switch thumb and the header progress bar's fill. The motion is opacity and transform only,
-  **≤ 120 ms**, on `ease-out` (`cubic-bezier(0.16, 1, 0.3, 1)`).
-- **The bulk rail** rises on entry only: `@starting-style` (`starting:opacity-0 starting:translate-y-2`) with
-  `transition-[opacity,translate] duration-(--motion-fast) ease-out`, so it is interactive from its first frame and
-  leaves instantly; `motion-reduce:transition-none` (measured: 0 → 1 opacity in ≤ 112 ms of rAF samples; under
-  reduce the first frame is already opacity 1, `transition: none`).
-- **What does not move**: dialogs, popovers, menus and tooltips appear and leave instantly.
-- **Hover and press** change colour instantly in the primitives, which use no `transition: all`. Legacy `App.css`
-  still carries 14 `transition: all` declarations (22 before My Skills migrated; mostly 200 ms) until its surfaces migrate (ticket 15 and the
-  surface tickets); reduced motion already zeroes them.
-- **Reduced motion.** `prefers-reduced-motion: reduce` removes all motion. The base layer zeroes every transition and
-  animation, legacy App.css loops included, and primitives also carry `motion-reduce:` / `motion-safe:`. Spinners
-  (`pending`) stop under reduce; the header progress hides its spinner and its bar's fill jumps — text and counts
-  only.
+Frequency first (round-18 D6, Emil's rubric): what the operator does tens or hundreds of times a day does not move;
+what moves is **opacity and transform only**, **≤ 120 ms** (`--motion-fast`), on `ease-out`
+(`--ease-out: cubic-bezier(0.16, 1, 0.3, 1)`, `theme.css`), interruptible (CSS transitions, which retarget — never
+keyframes on anything that can fire twice), and **gone under `prefers-reduced-motion: reduce`**. No `transition: all`
+anywhere: the built CSS has none, `App.css` included since ticket 15. Every motion is owned by a primitive or by the
+one component that owns the moving element — never by a call site's `className`.
+
+### What moves (the motion table)
+
+| What moves | When (frequency) | Property | Duration | Easing | Reduced motion | Owner |
+|---|---|---|---|---|---|---|
+| Switch thumb | a switch is toggled (tens a day) | `translate` of the thumb | 120 ms | `ease-out` | no slide (`motion-reduce:transition-none`) | `ui/switch.tsx` |
+| Bulk rail | the first row is selected (occasional) | opacity 0 → 1 and `translate` 8 px → 0, **entry only** (`@starting-style`); it leaves instantly | 120 ms | `ease-out` | appears settled | `skills/BulkRail.tsx` |
+| Synced strip light — the signature interaction | a mark **becomes** synced on screen (a sync, Retry, Enable or Update completing); never on mount, filter or scroll | opacity 0 → 1 of the new glyph (`@starting-style`) | 120 ms | `ease-out` | shown at once | `skills/StripMarkIcon.tsx` + `useSyncLight` |
+| Header progress fill | each tick of a streamed action | `transform: scaleX`, retargeting tick to tick | 120 ms | `ease-out` | jumps | `shell/HeaderProgress.tsx` |
+| Toast | once per settled run (occasional) | `transform` from its own edge + opacity; never height | 120 ms | `ease-out` | none | `ui/sonner.tsx` |
+| Spinners: Button `pending`, header progress, Files loading | while work runs | rotation loop (`animate-spin`) | 1 s period | linear | hidden (header) / not running (`motion-safe:` only) | `ui/button.tsx`, `HeaderProgress`, `SkillFiles` |
+| ⌘K palette (ticket 23) | open / close | opacity + transform | ≤ 120 ms | `ease-out` | none | the palette's primitive |
+
+The loops are the only durations over 120 ms in the built CSS, and they are periods, not transitions: `animate-spin`
+1 s, and the legacy `.spinner` 0.9 s, `.cell-spinner` 0.6 s and `.skeleton-row` shimmer 1.5 s in `App.css` (Add,
+Projects) — all stopped by the base layer's reduced-motion rule. **The two permitted rare moments** (D6's delight
+budget: a large import completing, an install landing) may run as a *sequence* of ≤ 120 ms steps: the import cascade
+(§ Empty and first-run, ticket 21 — the strip light above, staggered 20 ms per mark) and an install landing (ticket
+16 decides whether it moves at all). Neither is built yet.
+
+### What does not move (decided)
+
+- **Row focus, selection and hover**: instant ground and edge changes. `j` / `k` / `x` are keyboard actions, and
+  keyboard actions never animate.
+- **The inspector** opening, closing and switching skills beside the list, and **the sheet** below 1200 px: both
+  follow every row click, and a panel that slides on each click is exactly the frequent motion Emil forbids.
+- **Dialogs, popovers, menus and tooltips** appear and leave instantly.
+- **The header's exception summary ↔ progress swap** is instant: a crossfade would show two statements at once, and
+  the swap happens at the start and end of every run.
+- **Hover and press** change colour instantly in every primitive (no press scale — "practical, not flashy"). The
+  focus ring never animates in. Disclosure chevrons turn instantly.
+- **Files expand / collapse** and the Sync targets list ↔ grid toggle are instant layout changes.
+
+### Reduced motion
+
+`prefers-reduced-motion: reduce` removes all motion. The base layer zeroes every transition and animation duration
+(`!important`; legacy `App.css` loops and third-party layers included), and each moving element also carries its own
+`motion-reduce:` / `motion-safe:` counterpart, so nothing is left mid-way: the rail and the strip light appear
+settled, the fill jumps, the header spinner is hidden, Button spinners do not run — text and counts only.
 
 ## Target size
 
@@ -426,13 +473,13 @@ Composed from the primitives and tokens only; no variant was added. Files: `comp
   Settings. Items are 32 px; the current area has `aria-current="page"`, a `raised` ground and an iris icon
   (6.01 dark / 5.04 light on `raised`). In the icon rail every label stays in the accessibility tree (`sr-only`)
   and is the hover title.
-- **Header row** (48 px): title (`lg`, the `data-surface-heading` focus target) + count (`faint`) · the
+- **Header row** (48 px + its 1 px hairline: 8 px around 32 px controls): title (`lg`, the `data-surface-heading` focus target) + count (`faint`) · the
   exception summary · a status region reserved for ticket 14's progress · Configure Tools (`ghost`) · Refresh
   all (`outline`) · **Add skill** (`solid accent`, the one primary). The summary reads the health fold over the
   whole library: "N failed targets" (`failed` text) · "N stale" (`stale` text) · "View N skills with issues"
   (`ghost accent` Button that presses the Issues chip). Zero parts are dropped; a healthy library shows nothing.
   A skill has an issue when its loudest fold row is failed or stale — the Issues chip keeps exactly those.
-- **Filter bar** (40 px): search (`Input sm`, labelled "Search skills" through a Field; `/` focuses it, Escape
+- **Filter bar** (48 px + hairline, measured ticket 15 — 8 px around the 32 px Segmented and Sort controls; chips and search are 24 px; every bar is a 4 px multiple plus its hairline, rows are 36 px including theirs): search (`Input sm`, labelled "Search skills" through a Field; `/` focuses it, Escape
   clears it) · Chips All · Issues · Edited · Disabled with their counts (`faint`) · Segmented Grouped / Flat · one
   "Sort and view" menu (radio groups). Auto-sync moved to Settings; library-wide Disable is the bulk rail's
   (ticket 13) — nothing library-wide is one click away.
@@ -444,7 +491,8 @@ Composed from the primitives and tokens only; no variant was added. Files: `comp
   icons (`neutral` gains ⊖) with the words kept as their accessible text and tooltip, so the name keeps its room) · description (`muted-foreground`; it shares the name's track and yields to a long
   name + marks; in Flat and in "Individual sources" preceded by the source in `font-mono xs faint`) ·
   **Synced strip** + N/M · scope (globe when some target is live) · Switch `sm` (= skill-grain Disable / Enable
-  through the door) · overflow (`ghost icon-sm` → DropdownMenu:
+  through the door; `focusableWhenDisabled`, so a pressed switch keeps focus while its action runs and every switch
+  says why it is refused meanwhile) · overflow (`ghost icon-sm` → DropdownMenu:
   a "Fix" group of the fold's repairs, then Update, Change source…, Detach, Edit invocation…, Remove).
   Clicking anywhere but a control opens the skill.
 - **Group header** (36 px, sticky, `card`): source icon · name (`h2`, links to the repo; the text inside the link
@@ -491,7 +539,8 @@ skill. Shape carries the state; colour only reinforces it; the strip was checked
 - **The rare delight** (D6; implemented with Import's migration, ticket 21): when an import of ≥ 10 skills
   completes, the imported rows' strips light mark by mark, left to right, 20 ms apart (opacity 0 → 1, each
   ≤ 120 ms, `ease-out`), once, and the header summary reads "12 skills imported · all synced" for one run.
-  Nothing else moves; reduced motion shows the settled strip at once.
+  Nothing else moves; reduced motion shows the settled strip at once. The per-mark light exists since ticket 15
+  (§ Motion, `useSyncLight`); the cascade adds only the stagger (a `transition-delay` per mark index).
 
 ## The inspector (ticket 12)
 
@@ -543,7 +592,9 @@ Composed from primitives and tokens; the one new variant is Dialog `placement="s
 - **Focus** (D21, D23): opening from a row leaves focus on the row, and Tab from the row's last control enters the
   inspector's heading (Shift+Tab walks back; Tab from its last control continues after the row); an arrival without
   a row (deep link, history) focuses the heading; the sheet opens on its heading; a resize that reparents a focused
-  inspector focuses the new heading; closing returns to the row; Restore lands on Health. A resize never reorders
+  inspector focuses the new heading — in the same task as the reparent (`flushSync`), so no frame finds focus on
+  `<body>` between the old placement and the new (ticket 15, 14 audit N2); closing returns to the row; Restore lands
+  on Health. A resize never reorders
   layers: while a dialog is open above the inspector it keeps its placement, and the new
   one lands when the last layer closes. The Projects section and the picker read the project world's held views,
   which every assignment's returned view updates — no read follows a successful assignment.
@@ -600,7 +651,9 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
   `LoaderCircle` spins `motion-safe` and is hidden `motion-reduce`. It sits in My Skills' header slot, as a
   `border-b` strip above any other area, and at a dialog's foot (`border-t`, `card`) while that dialog's action runs
   — the page behind a modal is inert. Never a layer, never focus-taking; its live region announces the activity,
-  not each tick. A bulk Remove stays the Delete dialog's (one surface). In My Skills' header it takes the exception
+  not each tick. A bulk Remove stays the Delete dialog's (one surface). **One visible progress** (ticket 15, 14
+  audit N5): while a dialog whose foot shows the progress is open (Add, Import, the pickers, Re-point, Notifications),
+  the header's (or the bar's) copy under the scrim yields — it keeps its live region and draws nothing. In My Skills' header it takes the exception
   summary's place while it runs (the summary is stale until the run settles), so the row never wraps at 960 px.
 - **Focus when an action settles** (D21, `actionLifecycle.returnLostFocus`): focus that was lost — `<body>`, the
   main landmark, a layer's popup itself, or the vanished Cancel — returns to the control that started the action;
@@ -615,7 +668,9 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
   `CircleDot` in `stale`), words (a project row prefixed "in {project}:"), and actions: **Show** (`outline sm`),
   Retry / Overwrite… / Change source… / Remove… (`ghost accent sm`, disabled with the reason while an action runs),
   Open Settings → GitHub. Every Copy is named by its row ("Copy: alpha failed"). The run "View report" asked for is
-  expanded and focused; otherwise the newest.
+  expanded and focused; otherwise the newest. What arrives while the panel stands open — a run started from it, or
+  a note such as a stale collision's "Nothing to overwrite…" — is announced once through the panel's polite
+  `role="status"` (its title), since no toast shows meanwhile; focus stays put (ticket 15, 14 audit N4).
 - **Update affordance** (D8): a sidebar-foot item above the bell, `ArrowUpCircle` in `ring`, "1.3.1 available" —
   opens the update dialog; nothing is raised on startup.
 

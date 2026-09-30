@@ -255,19 +255,22 @@ const SkillsList = ({
                       href={group.href}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex min-w-0 rounded-sm hover:underline"
+                      className="flex h-6 min-w-0 items-center rounded-sm hover:underline"
                     >
-                      <span className="truncate">{group.label}</span>
+                      <span className="truncate" title={group.label}>{group.label}</span>
                     </a>
                   ) : (
-                    <span className="truncate">{group.label}</span>
+                    <span className="truncate" title={group.label}>{group.label}</span>
                   )}
                 </h2>
                 <span className="shrink-0 text-xs text-faint tabular-nums">
                   {t("library.group.count", { count: group.skills.length })}
                 </span>
                 {parts.length > 0 ? (
-                  <span className="flex min-w-0 items-center gap-2 truncate text-xs">
+                  <span
+                    className="flex min-w-0 items-center gap-2 truncate text-xs"
+                    title={parts.map(([key, count]) => t(`library.group.${key}`, { count })).join(" · ")}
+                  >
                     {parts.map(([key, count, tone]) => (
                       <span key={key} className={tone}>
                         {t(`library.group.${key}`, { count })}

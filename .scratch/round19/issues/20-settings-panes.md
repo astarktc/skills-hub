@@ -26,3 +26,9 @@ contrast; 960×640; `npm run check`.
 ## Result
 
 (child fills in)
+
+## Comments
+
+- 2026-09-30 — from ticket 15: the legacy `.settings-toggle-knob` now slides on the tokens (`--motion-fast`, `--ease-out`)
+  instead of 200 ms `ease`; the pane migration should replace it with the `Switch` primitive (which also offers
+  `focusableWhenDisabled`). `.settings-select` / `.settings-theme-btn` lost their `transition: all` (instant hover).

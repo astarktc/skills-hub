@@ -5,6 +5,15 @@ import { disabledState, focusRing } from "./styles";
 type SwitchProps = Omit<SwitchPrimitive.Root.Props, "className"> & {
   /** `md` 20 × 36 (standalone), `sm` 16 × 28 (in a dense row; 24 px hit area). */
   size?: "sm" | "md";
+  /**
+   * While `disabled`, keep the switch in the tab order and holding focus
+   * (`aria-disabled`, not activatable) — for a switch disabled *because* its
+   * own action is running, so focus never leaves it (D21). Base UI's Switch
+   * has no such option (1.8), so the primitive renders a disabled switch it
+   * keeps focusable as read-only (Base UI refuses every change) and says
+   * `aria-disabled` instead of `aria-readonly`.
+   */
+  focusableWhenDisabled?: boolean;
   /** Layout only. */
   className?: string;
 };
@@ -12,10 +21,19 @@ type SwitchProps = Omit<SwitchPrimitive.Root.Props, "className"> & {
 /**
  * Switch — `role="switch"` with `aria-checked`. "On" is neutral
  * (muted-foreground), not iris: a column of switches must not make the
- * accent mean "normal". The thumb slides in 120 ms; reduced motion removes
- * the slide. Off-state edge is `input` (≥ 3:1).
+ * accent mean "normal". The thumb slides in 120 ms (`--motion-fast`,
+ * `ease-out`, transform only); reduced motion removes the slide. Off-state
+ * edge is `input` (≥ 3:1).
  */
-function Switch({ size = "md", className, ...props }: SwitchProps) {
+function Switch({
+  size = "md",
+  className,
+  disabled = false,
+  focusableWhenDisabled = false,
+  readOnly,
+  ...props
+}: SwitchProps) {
+  const heldFocus = disabled && focusableWhenDisabled;
   return (
     <SwitchPrimitive.Root
       data-slot="switch"
@@ -30,7 +48,10 @@ function Switch({ size = "md", className, ...props }: SwitchProps) {
         "data-disabled:opacity-50",
         className,
       )}
+      disabled={heldFocus ? false : disabled}
+      readOnly={heldFocus || readOnly}
       {...props}
+      {...(heldFocus ? { "aria-disabled": true, "aria-readonly": undefined } : null)}
     >
       <SwitchPrimitive.Thumb
         data-slot="switch-thumb"
