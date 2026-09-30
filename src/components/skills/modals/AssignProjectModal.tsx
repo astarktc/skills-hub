@@ -13,22 +13,23 @@ import {
 import { FieldLegend, FieldSet } from "@/components/ui/field";
 import { focusRing } from "@/components/ui/styles";
 import { cn } from "@/lib/utils";
-import type { SkillPlacement } from "../../projects/useProjectState";
+import type { SkillPlacement, SkillPlacementValue } from "../../projects/useProjectState";
 import type { ManagedSkill } from "../types";
 
 type AssignProjectModalProps = {
   /** The skill to assign; null = closed (one dialog identity for its life). */
   skill: ManagedSkill | null;
   loading: boolean;
-  readSkillPlacement: (skillId: string) => Promise<SkillPlacement[]>;
+  /** Where the skill is assigned: the project world's held views. */
+  placement: SkillPlacementValue;
+  /** The explicit read of every project's view (stable), made as the picker opens. */
+  loadPlacementViews: () => Promise<void>;
   labelOf: (tool: string) => string;
   /** Assign to the chosen project's configured Tools (the door's `assignToProject`). */
   onConfirm: (projectId: string) => void;
   onRequestClose: () => void;
   t: TFunction;
 };
-
-type Loaded = { skillId: string; rows: SkillPlacement[] | null };
 
 /**
  * Assign to project…: one project, and the skill lands on every Tool that
@@ -40,34 +41,23 @@ type Loaded = { skillId: string; rows: SkillPlacement[] | null };
 export default function AssignProjectModal({
   skill,
   loading,
-  readSkillPlacement,
+  placement,
+  loadPlacementViews,
   labelOf,
   onConfirm,
   onRequestClose,
   t,
 }: AssignProjectModalProps) {
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [choice, setChoice] = useState<{ skillId: string; projectId: string } | null>(null);
   const formId = useId();
   const skillId = skill?.id ?? null;
 
   useEffect(() => {
-    if (!skillId) return;
-    let stale = false;
-    void (async () => {
-      try {
-        const rows = await readSkillPlacement(skillId);
-        if (!stale) setLoaded({ skillId, rows });
-      } catch {
-        if (!stale) setLoaded({ skillId, rows: null });
-      }
-    })();
-    return () => {
-      stale = true;
-    };
-  }, [readSkillPlacement, skillId]);
+    if (skillId) void loadPlacementViews();
+  }, [loadPlacementViews, skillId]);
 
-  const rows = loaded?.skillId === skillId ? loaded.rows : undefined;
+  // undefined while the views are read; null when the read failed.
+  const rows = placement.failed ? null : (placement.rows ?? undefined);
   // The list arrives after the dialog opened: its first available project
   // takes focus then, unless the operator already moved it.
   const listReady = rows !== undefined && rows !== null;

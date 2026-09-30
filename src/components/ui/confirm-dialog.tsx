@@ -8,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "./dialog";
+import type { FocusFallback } from "./dialog";
 
 /**
  * ConfirmDialog — a question the operator answers with one of two buttons.
@@ -33,7 +34,7 @@ type ConfirmDialogProps = {
   confirmDisabled?: boolean;
   cancelDisabled?: boolean;
   size?: React.ComponentProps<typeof DialogContent>["size"];
-  fallbackFocus?: () => HTMLElement | null;
+  fallbackFocus?: FocusFallback;
 };
 
 function ConfirmDialog({

@@ -1,5 +1,5 @@
 import { memo, type MouseEvent } from "react";
-import { AlertTriangle, CircleX, Ellipsis, Globe, Pencil } from "lucide-react";
+import { AlertTriangle, CircleMinus, CircleX, Ellipsis, Globe, Pencil } from "lucide-react";
 import type { TFunction } from "i18next";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -175,24 +175,35 @@ const SkillRow = ({
     </Button>
   ) : null;
 
+  // In a list narrower than 48rem (the inspector beside it, D3) the
+  // description has gone and the marks compact to their icons, so the name
+  // keeps its room (I3): each label stays the mark's accessible text and its
+  // tooltip. The card and a wider list show the words.
+  const compact = layout === "list";
   const exceptionMarks =
     marks.length > 0 ? (
       <span
         data-skill-health={skill.id}
         tabIndex={-1}
-        className="flex shrink-0 items-center gap-1 rounded-sm"
+        className="relative flex shrink-0 items-center gap-1 rounded-sm"
       >
-        {marks.map((row) => (
-          <Badge
-            key={row.kind}
-            tone={row.severity === "failed" ? "failed" : row.severity === "stale" ? "stale" : "neutral"}
-            title={markTitle(row)}
-          >
-            {row.severity === "failed" ? <CircleX aria-hidden="true" /> : null}
-            {row.severity === "stale" ? <AlertTriangle aria-hidden="true" /> : null}
-            {rowLabel(row)}
-          </Badge>
-        ))}
+        {marks.map((row) => {
+          const detail = markTitle(row);
+          return (
+            <Badge
+              key={row.kind}
+              tone={row.severity === "failed" ? "failed" : row.severity === "stale" ? "stale" : "neutral"}
+              title={compact ? (detail ? `${rowLabel(row)} — ${detail}` : rowLabel(row)) : detail}
+            >
+              {row.severity === "failed" ? <CircleX aria-hidden="true" /> : null}
+              {row.severity === "stale" ? <AlertTriangle aria-hidden="true" /> : null}
+              {row.severity !== "failed" && row.severity !== "stale" && compact ? (
+                <CircleMinus aria-hidden="true" className="hidden @max-3xl:block" />
+              ) : null}
+              <span className={cn(compact && "@max-3xl:sr-only")}>{rowLabel(row)}</span>
+            </Badge>
+          );
+        })}
       </span>
     ) : null;
 

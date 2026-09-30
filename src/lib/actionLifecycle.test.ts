@@ -49,9 +49,10 @@ describe("focusAfter (D21)", () => {
     expect(focusAfter({ verb, removed }, ctx)).toEqual(expected);
   });
 
-  it("a dialog's fallback chain is the focused row, then the surface heading", () => {
+  it("a dialog's fallback chain is the focused row, the inspector's heading, then the surface heading", () => {
     expect(dialogFallback({ focusedSkillId: "b", surface: "skills" })).toEqual([
       { kind: "row", skillId: "b" },
+      { kind: "inspector", skillId: "b" },
       { kind: "heading", surface: "skills" },
     ]);
     expect(dialogFallback({ focusedSkillId: null, surface: "projects" })).toEqual([
@@ -101,6 +102,18 @@ describe("resolveFocusTarget", () => {
     ).toBe("b");
     trigger?.removeAttribute("disabled");
     expect(resolveFocusTarget({ kind: "trigger" }, trigger)).toBe(trigger);
+  });
+
+  it("a chain walked with a closing layer's usable test skips a row the sheet keeps inert (I1)", () => {
+    document.body.innerHTML = `
+      <main><button data-skill-row="b">b</button></main>
+      <div role="dialog" data-inspector="b"><h2 data-inspector-heading="b" tabindex="-1">b</h2></div>`;
+    const chain = dialogFallback({ focusedSkillId: "b", surface: "skills" });
+    // Beside the list nothing stays inert: the row.
+    expect(resolveFirst(chain)?.dataset.skillRow).toBe("b");
+    // Under the sheet the row stays inert: the sheet's heading.
+    const behindSheet = (element: Element) => !element.closest("main");
+    expect(resolveFirst(chain, null, behindSheet)?.dataset.inspectorHeading).toBe("b");
   });
 });
 

@@ -1,5 +1,6 @@
 import { useId, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { insetFocusRing } from "@/components/ui/styles";
 
 type InspectorSectionProps = {
   title: string;
@@ -24,6 +25,10 @@ export default function InspectorSection({ title, actions, sectionProps, grow = 
       {...sectionProps}
       className={cn(
         "flex flex-col gap-2 border-b border-border px-4 py-3 last:border-b-0",
+        // A section that takes focus (Restore lands on Health, D21) spans the
+        // scroll container edge to edge, which would clip an outer ring: its
+        // ring is drawn inside it.
+        sectionProps?.tabIndex !== undefined && insetFocusRing,
         grow && "min-h-0 flex-1",
       )}
     >

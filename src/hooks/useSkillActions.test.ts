@@ -300,6 +300,34 @@ describe("the door, verb by verb", () => {
     expect(result.current.surface.layer("repoint")).toBeNull();
   });
 
+  it("answers Re-point's final refusal to its dialog, which stays open; a cancel answers nothing (I4)", async () => {
+    const s = setup();
+    const { result } = await render(s);
+    act(() => void result.current.actions.run("repoint", [s.skills[0]]));
+    const refusal = { code: "GIT_CLONE_FAILED", kind: "auth", detail: "403" };
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "repointSkillSource" ? Promise.reject(refusal) : base(command, ...args),
+    );
+    let answer: unknown;
+    await act(async () => {
+      answer = await result.current.actions.run("repoint", [s.skills[0]], { target: { kind: "git", url: "https://github.com/o/r" } });
+    });
+    expect(answer).toEqual(refusal);
+    expect(result.current.surface.layer("repoint")).toMatchObject({ skillId: "s1" });
+    expect(result.current.reporter.notifications).toEqual([]);
+    expect(result.current.reporter.pending).toBeNull();
+
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "repointSkillSource" ? Promise.reject({ code: "CANCELLED" }) : base(command, ...args),
+    );
+    await act(async () => {
+      answer = await result.current.actions.run("repoint", [s.skills[0]], { target: { kind: "git", url: "https://github.com/o/r" } });
+    });
+    expect(answer).toBeNull();
+    expect(result.current.reporter.notifications).toEqual([]);
+  });
+
   it("dismisses an incomplete import through clearSkillHealth and reloads", async () => {
     const s = setup();
     const { result } = await render(s);
@@ -445,11 +473,19 @@ describe("the reload rule on a thrown request", () => {
     const rendered = renderHook(() => useDoor(s));
     await waitFor(() => expect(rendered.result.current.library.managedSkills).toEqual(s.skills));
     mockInvoke.mockClear();
+    let answer: unknown;
     await act(async () => {
-      await rendered.result.current.actions.run(row.verb, pick(row, s.skills), row.opts as never);
+      answer = await rendered.result.current.actions.run(row.verb, pick(row, s.skills), row.opts as never);
     });
     expect(reloads() > 0).toBe(RELOAD_ON_THROW[row.verb]);
-    expect(rendered.result.current.reporter.notifications[0]).toMatchObject({ kind: "error" });
+    if (row.verb === "repoint") {
+      // Re-point's final refusal is answered to its dialog (D15, I4): shown
+      // by the chosen target, never a toast over it.
+      expect(answer).toEqual(failure);
+      expect(rendered.result.current.reporter.notifications).toEqual([]);
+    } else {
+      expect(rendered.result.current.reporter.notifications[0]).toMatchObject({ kind: "error" });
+    }
     expect(rendered.result.current.reporter.pending).toBeNull();
   });
 });
@@ -702,7 +738,7 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
       });
       const rendered = renderReal();
       await ready(rendered, skills);
-      const asked = await drive(rendered, () => rendered.result.current.actions.run(verb, [skills[0]!], opts as never), "confirmed");
+      const asked = await drive(rendered, async () => { await rendered.result.current.actions.run(verb, [skills[0]!], opts as never); }, "confirmed");
       expect(asked).toEqual([["global:s1:cursor", "p1:s1:claude"]]);
       expect(calls("syncSkillsToTools").map(([, items, tools, policy]) => [items, tools, policy])).toEqual([
         [

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 // Backend calls go through the shared invokeTauri seam (src/lib/tauri.ts),
 // same as every world hook — one mock point for tests.
 import { invokeTauri } from "../../lib/tauri";
@@ -98,13 +98,21 @@ export type ProjectState = {
    */
   refreshView: (projectId: string) => Promise<boolean>;
   /**
-   * Where one skill is assigned, for a surface outside the matrix (the
-   * inspector's Projects section, the Assign picker): every project's view
-   * read — nothing applied — as each project with its configured Tools and
-   * that skill's assignment rows. Reads only; the caller re-asks when
-   * `projects` changes (every assignment mutation replaces its row).
+   * Every project's view, as the world holds it for surfaces outside the
+   * matrix (the inspector's Projects section, the Assign picker): read
+   * explicitly by `loadPlacementViews`, then kept current by every view a
+   * mutation returns (`applyView`) — an assignment settles here with no
+   * follow-up read (I5). Only a collision retry or a failure re-reads.
    */
-  readSkillPlacement: (skillId: string) => Promise<SkillPlacement[]>;
+  placementViews: PlacementViews;
+  /**
+   * The explicit read of every project's view (a surface opening, or a
+   * skills-world mutation that answers no project view). A view a mutation
+   * applied while the read was in flight is kept, not overwritten.
+   */
+  loadPlacementViews: () => Promise<void>;
+  /** Where one skill is assigned, from `placementViews` (pure; no read). */
+  placementOf: (skillId: string) => SkillPlacementValue;
   resyncProject: () => Promise<ProjectSyncReport>;
   updateProjectPath: (
     projectId: string,
@@ -139,6 +147,42 @@ export type SkillPlacement = {
   tools: ProjectToolDto[];
   assignments: ProjectSkillAssignmentDto[];
 };
+
+/** Every project's view the world holds, by project id, and how the last read went. */
+export type PlacementViews = {
+  status: "idle" | "loading" | "ready" | "failed";
+  views: Readonly<Record<string, ProjectViewDto>>;
+};
+
+/** One skill across projects: `rows` null until read (or when the read failed). */
+export type SkillPlacementValue = { rows: SkillPlacement[] | null; failed: boolean };
+
+const NO_PLACEMENT_VIEWS: PlacementViews = { status: "idle", views: {} };
+
+/**
+ * One skill across the projects listed, from the views held: each project
+ * (its row as its view last said) with its configured Tools and that skill's
+ * assignment rows. Pure.
+ */
+export function skillPlacement(
+  projects: readonly ProjectDto[],
+  placement: PlacementViews,
+  skillId: string,
+): SkillPlacementValue {
+  if (placement.status === "failed") return { rows: null, failed: true };
+  if (placement.status !== "ready") return { rows: null, failed: false };
+  return {
+    rows: projects.map((project) => {
+      const view = placement.views[project.id];
+      return {
+        project: view?.project ?? project,
+        tools: view?.tools ?? [],
+        assignments: view?.assignments.filter((row) => row.skill_id === skillId) ?? [],
+      };
+    }),
+    failed: false,
+  };
+}
 
 /**
  * The selected project together with the matrix shown for it. One value so
@@ -204,6 +248,12 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
   // Version counter for stale result discard on project selection.
   const selectVersionRef = useRef(0);
 
+  // Every project's view for surfaces outside the matrix. A view applied
+  // after a read started (stamped) outranks what that read brings back.
+  const [placementViews, setPlacementViews] = useState<PlacementViews>(NO_PLACEMENT_VIEWS);
+  const viewStampRef = useRef({ next: 0, byProject: new Map<string, number>() });
+  const placementReadRef = useRef(0);
+
   /**
    * Apply one backend view: the project row replaces its entry in the list,
    * and the matrix takes the view's tools and assignments wholesale. Every
@@ -212,6 +262,12 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
    * updates that project's row.
    */
   const applyView = useCallback((view: ProjectViewDto) => {
+    const stamps = viewStampRef.current;
+    stamps.byProject.set(view.project.id, ++stamps.next);
+    setPlacementViews((current) => ({
+      ...current,
+      views: { ...current.views, [view.project.id]: view },
+    }));
     setProjects((prev) => {
       const index = prev.findIndex((p) => p.id === view.project.id);
       if (index === -1) return [view.project, ...prev];
@@ -345,6 +401,12 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
         setSelection((current) =>
           current.projectId === id ? NO_SELECTION : current,
         );
+        setPlacementViews((current) => {
+          if (!(id in current.views)) return current;
+          const views = { ...current.views };
+          delete views[id];
+          return { ...current, views };
+        });
       }
       return report;
     },
@@ -453,16 +515,39 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
     [applyView],
   );
 
-  const readSkillPlacement = useCallback(
-    async (skillId: string): Promise<SkillPlacement[]> => {
-      const views = await Promise.all(projects.map((project) => invokeTauri("getProjectView", project.id)));
-      return views.map((view) => ({
-        project: view.project,
-        tools: view.tools,
-        assignments: view.assignments.filter((row) => row.skill_id === skillId),
-      }));
-    },
-    [projects],
+  // The read takes the project list as it is when called (a stable
+  // function: surfaces key their read on what they show, never on it).
+  // (A layout effect: a surface's passive effect may read it in the same commit.)
+  const projectsRef = useRef(projects);
+  useLayoutEffect(() => {
+    projectsRef.current = projects;
+  });
+  const loadPlacementViews = useCallback(async (): Promise<void> => {
+    const read = ++placementReadRef.current;
+    const started = viewStampRef.current.next;
+    // A re-read keeps what is shown until it lands.
+    setPlacementViews((current) => (current.status === "ready" ? current : { ...current, status: "loading" }));
+    try {
+      const views = await Promise.all(
+        projectsRef.current.map((project) => invokeTauri("getProjectView", project.id)),
+      );
+      if (placementReadRef.current !== read) return;
+      const stamps = viewStampRef.current.byProject;
+      setPlacementViews((current) => {
+        const next = { ...current.views };
+        for (const view of views) {
+          if ((stamps.get(view.project.id) ?? 0) <= started) next[view.project.id] = view;
+        }
+        return { status: "ready", views: next };
+      });
+    } catch {
+      if (placementReadRef.current !== read) return;
+      setPlacementViews((current) => ({ ...current, status: "failed" }));
+    }
+  }, []);
+  const placementOf = useCallback(
+    (skillId: string) => skillPlacement(projects, placementViews, skillId),
+    [placementViews, projects],
   );
 
   const resyncProject = useCallback(async (): Promise<ProjectSyncReport> => {
@@ -575,7 +660,9 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       assignToProject,
       unassignFromProject,
       refreshView,
-      readSkillPlacement,
+      placementViews,
+      loadPlacementViews,
+      placementOf,
       resyncProject,
       updateProjectPath,
       resyncAll,
@@ -603,7 +690,9 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       assignToProject,
       unassignFromProject,
       refreshView,
-      readSkillPlacement,
+      placementViews,
+      loadPlacementViews,
+      placementOf,
       resyncProject,
       updateProjectPath,
       resyncAll,

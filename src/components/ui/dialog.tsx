@@ -6,11 +6,15 @@ import { cn } from "@/lib/utils";
 import {
   applyInert,
   closeLayer,
+  handOverReturn,
+  hasLayerAbove,
   isTopLayer,
   openLayer,
   popupBelow,
+  returnChains,
   setLayerPopup,
   staysInertAfterClose,
+  type FocusFallback,
 } from "./layer-stack";
 import { Button } from "./button";
 import { mainLandmarkFocus } from "./focus-fallback";
@@ -23,10 +27,15 @@ import { mainLandmarkFocus } from "./focus-fallback";
  *     element that opened it — or, when that element is gone, to the
  *     caller's `fallbackFocus`, then to the layer beneath, then to the main
  *     landmark (`mainLandmarkFocus`) — never to `<body>` while the app has
- *     a main landmark;
+ *     a main landmark. Every candidate is tested before it is chosen: it
+ *     must be connected and not inert once this layer has closed (a row
+ *     behind a sheet that stays open is skipped). A dialog closing while a
+ *     layer it opened is still above it (the progress overlay its own action
+ *     raised) moves no focus: that layer inherits its return chain;
  *   - a background that is `inert` (not only aria-hidden) while open;
  *   - Escape and outside press dismiss the **top** layer only, and only when
- *     `dismissible`;
+ *     `dismissible`; `interceptEscape` lets the top layer spend an Escape
+ *     on something of its own first (collapse an expansion) and stay open;
  *   - a name: `<DialogTitle>` labels the popup through `aria-labelledby`
  *     (or pass `aria-labelledby` to `<DialogContent>` for a custom heading);
  *   - no motion: dialogs appear and leave instantly.
@@ -53,12 +62,19 @@ type DialogProps = Omit<
    * work runs).
    */
   dismissible?: boolean;
+  /**
+   * Offered an Escape meant for this layer (it is on top) before it closes;
+   * answer `true` when it was spent (an expansion collapsed) and the dialog
+   * stays open. Only the next Escape then dismisses.
+   */
+  interceptEscape?: () => boolean;
 };
 
 function Dialog({
   open,
   onOpenChange,
   dismissible = true,
+  interceptEscape,
   children,
   ...props
 }: DialogProps) {
@@ -84,6 +100,10 @@ function Dialog({
           details.cancel();
           return;
         }
+        if (details.reason === "escape-key" && interceptEscape?.()) {
+          details.cancel();
+          return;
+        }
         if (dismissal && !dismissible) {
           details.cancel();
           return;
@@ -91,7 +111,7 @@ function Dialog({
       }
       onOpenChange(next);
     },
-    [dismissible, layerId, onOpenChange],
+    [dismissible, interceptEscape, layerId, onOpenChange],
   );
 
   return (
@@ -155,9 +175,12 @@ type DialogContentProps = Omit<
   finalFocus?: FocusTarget;
   /**
    * Focus target when the opener no longer exists (e.g. a deleted row).
-   * Pass it wherever the dialog's action can remove its opener.
+   * Pass it wherever the dialog's action can remove its opener. It is given
+   * the closing layer's `usable` test to pick the first target of its chain
+   * that will take focus (a row behind a sheet that stays open will not);
+   * its answer is tested again.
    */
-  fallbackFocus?: () => HTMLElement | null;
+  fallbackFocus?: FocusFallback;
   /** Layout only (never colour or type). */
   className?: string;
 };
@@ -175,6 +198,11 @@ function DialogContent({
 }: DialogContentProps) {
   const { layerId } = useDialogContext("DialogContent");
   const openerRef = React.useRef<HTMLElement | null>(null);
+  // The registered chain reads the current fallback (its identity may change).
+  const fallbackRef = React.useRef(fallbackFocus);
+  React.useLayoutEffect(() => {
+    fallbackRef.current = fallbackFocus;
+  });
 
   const popupRef = React.useCallback(
     (node: HTMLDivElement | null) => setLayerPopup(layerId, node),
@@ -185,15 +213,31 @@ function DialogContent({
     Extract<FocusTarget, (...args: never[]) => unknown>
   >(
     (closeType) => {
+      // Closing beneath a layer it opened (the overlay its action raised):
+      // nothing here can take focus now — that layer returns it, by this
+      // layer's chain once its own opener is gone.
+      if (hasLayerAbove(layerId)) {
+        handOverReturn(layerId);
+        return false;
+      }
       if (typeof finalFocus === "function") return finalFocus(closeType);
       if (typeof finalFocus === "boolean") return finalFocus;
       if (finalFocus) return finalFocus.current;
       const target = openerRef.current;
       // Decided while this layer is still open: the inert it applied is
-      // about to go, so only inert that stays disqualifies a target.
-      if (target?.isConnected && !staysInertAfterClose(layerId, target)) return target;
-      const fallback = fallbackFocus?.() ?? popupBelow(layerId);
-      if (fallback) return fallback;
+      // about to go, so only inert that stays disqualifies a target — for
+      // the opener and every fallback alike.
+      const usable = (element: Element) =>
+        element.isConnected && !staysInertAfterClose(layerId, element);
+      const registered = returnChains(layerId);
+      const chains = registered.length > 0 ? registered : [{ opener: target, fallback: fallbackRef.current ?? null }];
+      for (const chain of chains) {
+        if (chain.opener && usable(chain.opener)) return chain.opener;
+        const fallback = chain.fallback?.(usable) ?? null;
+        if (fallback && usable(fallback)) return fallback;
+      }
+      const below = popupBelow(layerId);
+      if (below) return below;
       // Opened with focus nowhere (a startup layer): nothing to return to.
       if (!target) return false;
       // The landmark itself, not its first control: Base UI hands focus to a
@@ -208,7 +252,7 @@ function DialogContent({
       });
       return false;
     },
-    [fallbackFocus, finalFocus, layerId],
+    [finalFocus, layerId],
   );
 
   return (
@@ -232,7 +276,7 @@ function DialogContent({
         )}
         {...props}
       >
-        <LayerRegistration layerId={layerId} openerRef={openerRef} />
+        <LayerRegistration layerId={layerId} openerRef={openerRef} fallbackRef={fallbackRef} />
         {children}
         {showCloseButton ? <DialogCloseCorner /> : null}
       </DialogPrimitive.Popup>
@@ -249,15 +293,20 @@ function DialogContent({
 function LayerRegistration({
   layerId,
   openerRef,
+  fallbackRef,
 }: {
   layerId: string;
   openerRef: React.RefObject<HTMLElement | null>;
+  fallbackRef: React.RefObject<FocusFallback | undefined>;
 }) {
   React.useLayoutEffect(() => {
     const active = document.activeElement;
     openerRef.current =
       active instanceof HTMLElement && active !== document.body ? active : null;
-    openLayer(layerId);
+    openLayer(layerId, {
+      opener: openerRef.current,
+      fallback: (usable) => fallbackRef.current?.(usable) ?? null,
+    });
     let second = 0;
     const first = requestAnimationFrame(() => {
       second = requestAnimationFrame(applyInert);
@@ -267,7 +316,7 @@ function LayerRegistration({
       cancelAnimationFrame(second);
       closeLayer(layerId);
     };
-  }, [layerId, openerRef]);
+  }, [fallbackRef, layerId, openerRef]);
   return null;
 }
 
@@ -389,3 +438,4 @@ export {
   DialogHeader,
   DialogTitle,
 };
+export type { FocusFallback };

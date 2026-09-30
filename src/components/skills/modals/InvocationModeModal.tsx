@@ -8,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { FocusFallback } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import type { InvocationMode, ManagedSkill } from "../types";
 import { INVOCATION_MODES, INVOCATION_LABEL_KEY, INVOCATION_TOOLTIP_KEY } from "../../../lib/skillPresentation";
@@ -23,6 +24,9 @@ type Props = {
 function InvocationBody({ skill, loading, onRequestClose, onConfirm, t }: Props) {
   const current = skill.invocation_override?.mode ?? null;
   const [selection, setSelection] = useState<InvocationMode | null>(current);
+  // The plain choice pressed: it shows the pending action and keeps focus
+  // while it runs (a disabled control would drop focus to <body>).
+  const [chosen, setChosen] = useState<"keep" | "use" | null>(null);
   const id = useId();
   const base = t(INVOCATION_LABEL_KEY[skill.invocation_override?.base_mode ?? skill.invocation_mode]);
   // Saving the same override is meaningful when it resolves a conflict.
@@ -40,10 +44,28 @@ function InvocationBody({ skill, loading, onRequestClose, onConfirm, t }: Props)
                 <p className="invocation-edit-warning" role="status">{t("invocationEdit.conflictBanner", { mode: base })}</p>
                 {/* The plain choice (ticket 12): keep the Edit, or take the skill's own setting. */}
                 <div role="group" aria-label={t("invocationConflict.legend")} className="mb-3 flex flex-wrap gap-2">
-                  <Button type="button" variant="solid" tone="accent" disabled={loading} onClick={() => onConfirm(conflict.mode)}>
+                  <Button
+                    type="button"
+                    variant="solid"
+                    tone="accent"
+                    disabled={loading}
+                    pending={loading && chosen === "keep"}
+                    onClick={() => {
+                      setChosen("keep");
+                      onConfirm(conflict.mode);
+                    }}
+                  >
                     {t("invocationConflict.keepYours", { mode: t(INVOCATION_LABEL_KEY[conflict.mode]) })}
                   </Button>
-                  <Button type="button" disabled={loading} onClick={() => onConfirm(null)}>
+                  <Button
+                    type="button"
+                    disabled={loading}
+                    pending={loading && chosen === "use"}
+                    onClick={() => {
+                      setChosen("use");
+                      onConfirm(null);
+                    }}
+                  >
                     {t("invocationConflict.useSkills", { mode: base })}
                   </Button>
                 </div>
@@ -85,7 +107,7 @@ export default function InvocationModeModal({
 }: Omit<Props, "skill"> & {
   skill: ManagedSkill | null;
   /** Where focus goes when the opener is gone after closing (D21: the focused row). */
-  fallbackFocus?: () => HTMLElement | null;
+  fallbackFocus?: FocusFallback;
 }) {
   return (
     <Dialog

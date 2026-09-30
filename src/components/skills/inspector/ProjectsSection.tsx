@@ -1,16 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import type { TFunction } from "i18next";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import type { SkillPlacement } from "../../projects/useProjectState";
+import type { SkillPlacementValue } from "../../projects/useProjectState";
 import type { SkillActions } from "../../../hooks/useSkillActions";
 import type { ManagedSkill } from "../types";
 import InspectorSection from "./InspectorSection";
 
 type ProjectsSectionProps = {
   skill: ManagedSkill;
-  /** The project world's read of where a skill is assigned (a new identity after any project change). */
-  readSkillPlacement: (skillId: string) => Promise<SkillPlacement[]>;
+  /** Where the skill is assigned: the project world's held views (kept current by every assignment it settles). */
+  placement: SkillPlacementValue;
+  /** The explicit read of every project's view (stable). */
+  loadPlacementViews: () => Promise<void>;
   /** How many projects exist (0 = nothing to assign to). */
   projectCount: number;
   labelOf: (tool: string) => string;
@@ -18,8 +20,6 @@ type ProjectsSectionProps = {
   blockedReason: string | null;
   t: TFunction;
 };
-
-type Placement = { skillId: string; rows: SkillPlacement[] | null; failed: boolean };
 
 /** Assignment status words: a problem is coloured, the rest stay quiet. */
 const TROUBLE = new Set(["error", "missing"]);
@@ -32,41 +32,32 @@ const TROUBLE = new Set(["error", "missing"]);
  */
 export default function ProjectsSection({
   skill,
-  readSkillPlacement,
+  placement,
+  loadPlacementViews,
   projectCount,
   labelOf,
   actions,
   blockedReason,
   t,
 }: ProjectsSectionProps) {
-  const [placement, setPlacement] = useState<Placement | null>(null);
   const busy = blockedReason !== null;
 
+  // The explicit read: on opening, for another skill, when a skills-world
+  // verb touched its rows (`updated_at` / `disabled_at` — those answer no
+  // project view), or when projects come or go. An assignment made here
+  // settles through the views it returned: no read follows it.
   useEffect(() => {
-    let stale = false;
-    void (async () => {
-      try {
-        const rows = await readSkillPlacement(skill.id);
-        if (!stale) setPlacement({ skillId: skill.id, rows, failed: false });
-      } catch {
-        if (!stale) setPlacement({ skillId: skill.id, rows: null, failed: true });
-      }
-    })();
-    return () => {
-      stale = true;
-    };
-    // `updated_at` / targets change when a skill-grain verb touched its rows.
-  }, [readSkillPlacement, skill.id, skill.updated_at, skill.disabled_at]);
+    void loadPlacementViews();
+  }, [loadPlacementViews, skill.id, skill.updated_at, skill.disabled_at, projectCount]);
 
-  const current = placement?.skillId === skill.id ? placement : null;
-  const assigned = current?.rows?.filter((row) => row.assignments.length > 0) ?? [];
+  const assigned = placement.rows?.filter((row) => row.assignments.length > 0) ?? [];
 
   return (
     <InspectorSection title={t("inspector.sections.projects")}>
-      {current === null ? (
-        <p className="m-0 text-sm text-muted-foreground">{t("inspector.projects.loading")}</p>
-      ) : current.failed ? (
+      {placement.failed ? (
         <p className="m-0 text-sm text-failed">{t("inspector.projects.loadError")}</p>
+      ) : placement.rows === null ? (
+        <p className="m-0 text-sm text-muted-foreground">{t("inspector.projects.loading")}</p>
       ) : projectCount === 0 ? (
         <p className="m-0 text-sm text-muted-foreground">{t("inspector.projects.noProjects")}</p>
       ) : assigned.length === 0 ? (

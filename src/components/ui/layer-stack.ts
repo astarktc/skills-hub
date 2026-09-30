@@ -11,18 +11,70 @@
  *     carry `inert` — not only `aria-hidden` — so nothing behind the top
  *     layer can be focused, clicked or found.
  *
+ * It also carries each layer's **return chain** — the element that opened it
+ * and its caller's fallback — so a layer closing *beneath* another (a dialog
+ * dismissed while the progress overlay it raised is still up) hands its
+ * chain to the layer it opened instead of aiming focus into an inert page.
+ *
  * Module state, not React state: the stack is a property of the document,
  * and the dismissal check must read it synchronously inside a key event.
  */
 
-type Layer = { id: string; popup: HTMLElement | null };
+/**
+ * A caller's focus target for when a layer's opener is gone. It receives the
+ * closing layer's `usable` test (connected, and not inert once the layer has
+ * closed) so it can walk its own chain to the first target that will take
+ * focus; whatever it answers is tested again.
+ */
+export type FocusFallback = (usable: (element: Element) => boolean) => HTMLElement | null;
+
+/** Where a layer returns focus: its opener, then its caller's fallback. */
+export type ReturnChain = { opener: HTMLElement | null; fallback: FocusFallback | null };
+
+type Layer = {
+  id: string;
+  popup: HTMLElement | null;
+  own: ReturnChain;
+  /** Chains handed over by layers that closed beneath this one (nearest first). */
+  inherited: ReturnChain[];
+};
 
 const stack: Layer[] = [];
 /** Elements this module made inert, so it never clears someone else's. */
 const inertedByUs = new Set<HTMLElement>();
 
-export function openLayer(id: string): void {
-  if (!stack.some((layer) => layer.id === id)) stack.push({ id, popup: null });
+export function openLayer(id: string, own: ReturnChain = { opener: null, fallback: null }): void {
+  if (!stack.some((layer) => layer.id === id)) stack.push({ id, popup: null, own, inherited: [] });
+}
+
+/** Whether `id` is open with another layer above it. */
+export function hasLayerAbove(id: string): boolean {
+  const index = stack.findIndex((layer) => layer.id === id);
+  return index >= 0 && index < stack.length - 1;
+}
+
+/**
+ * Layer `id` is closing beneath another: every layer above it that it
+ * opened — its opener lies inside this layer's popup, or is already gone —
+ * inherits this layer's return chain (and what it had inherited), so the
+ * layer that closes last returns focus where this one would have.
+ */
+export function handOverReturn(id: string): void {
+  const index = stack.findIndex((layer) => layer.id === id);
+  if (index < 0) return;
+  const closing = stack[index];
+  const chains = [closing.own, ...closing.inherited];
+  for (const above of stack.slice(index + 1)) {
+    const opener = above.own.opener;
+    const openedHere = !opener || !opener.isConnected || (closing.popup?.contains(opener) ?? false);
+    if (openedHere) above.inherited = [...chains, ...above.inherited];
+  }
+}
+
+/** A layer's return chains, in the order it tries them: its own, then the inherited ones. */
+export function returnChains(id: string): ReturnChain[] {
+  const layer = stack.find((entry) => entry.id === id);
+  return layer ? [layer.own, ...layer.inherited] : [];
 }
 
 export function setLayerPopup(id: string, popup: HTMLElement | null): void {

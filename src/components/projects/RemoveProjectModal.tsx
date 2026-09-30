@@ -35,7 +35,7 @@ const RemoveProjectModal = ({
         if (!next) onRequestClose();
       }}
     >
-      <DialogContent aria-labelledby={titleId} fallbackFocus={mainLandmarkFocus}>
+      <DialogContent aria-labelledby={titleId} fallbackFocus={() => mainLandmarkFocus()}>
         <DialogBody>
           <div className="delete-title" id={titleId}>
             <TriangleAlert size={20} />

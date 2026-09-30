@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import "./App.css";
 import { useTranslation } from "react-i18next";
 // The binder mounts the token-themed Toaster once; useStatusReporter makes
@@ -8,7 +9,7 @@ import { mainLandmarkFocus } from "@/components/ui/focus-fallback";
 import ExplorePage from "./components/skills/ExplorePage";
 import FilterBar from "./components/skills/FilterBar";
 import ExplorePreviewView from "./components/skills/ExplorePreviewView";
-import SkillInspector from "./components/skills/inspector/SkillInspector";
+import SkillInspector, { type InspectorPlacement } from "./components/skills/inspector/SkillInspector";
 import { useInspectorTabOrder } from "./components/skills/inspector/useInspectorTabOrder";
 import AppSidebar from "./components/shell/AppSidebar";
 import LibraryHeader from "./components/skills/LibraryHeader";
@@ -258,7 +259,20 @@ function App() {
   // link, history) — or a resize that reparents a focused inspector — puts
   // focus on the inspector's heading; closing returns it to the row.
   const wide = useMediaQuery(SHELL_WIDE_QUERY);
-  const placement = wide ? "side" : "sheet";
+  const wantedPlacement: InspectorPlacement = wide ? "side" : "sheet";
+  // A presentation change never reorders layers (I2): while any dialog —
+  // or the progress overlay — is open above the inspector, it keeps its
+  // place, so the sheet never registers above a child it opened. The change
+  // lands once the last layer has closed, after that layer's own focus
+  // return (a microtask of the commit that closed it).
+  const progressShowing = showsProgressSurface(reporter.pending);
+  const layerAboveInspector = surface.stack.length > 0 || progressShowing;
+  const [placement, setPlacement] = useState<InspectorPlacement>(wantedPlacement);
+  useEffect(() => {
+    if (layerAboveInspector || placement === wantedPlacement) return;
+    const timer = window.setTimeout(() => setPlacement(wantedPlacement), 0);
+    return () => window.clearTimeout(timer);
+  }, [layerAboveInspector, placement, wantedPlacement]);
   const focusedSkillId = focused?.kind === "skill" ? focused.id : null;
   const handleCloseDetail = unfocus;
   const openedFromRow = useRef(false);
@@ -280,7 +294,6 @@ function App() {
   // page. An arrival — a deep link at startup — waits for the overlay to
   // close (ticket 14 retires the overlay); a sheet already open simply has
   // the overlay above it. Derived state, latched during render.
-  const progressShowing = showsProgressSurface(reporter.pending);
   const [sheetOpenFor, setSheetOpenFor] = useState<string | null>(null);
   if (sheetOpenFor !== focusedSkillId && (!progressShowing || focusedSkillId === null)) {
     setSheetOpenFor(focusedSkillId);
@@ -295,6 +308,12 @@ function App() {
     (expanded: boolean) => setExpandedFilesOf(expanded ? focusedSkillId : null),
     [focusedSkillId],
   );
+  // Escape's first step while Files is expanded (beside the list and in the
+  // sheet alike): collapse, and focus its toggle once it is back in place.
+  const collapseFiles = useCallback(() => {
+    flushSync(() => setExpandedFilesOf(null));
+    document.querySelector<HTMLElement>("[data-files-toggle]")?.focus();
+  }, []);
 
   // The operator's last key or pointer press: a focus placement the app
   // makes on its own never overrides one made after it.
@@ -318,6 +337,11 @@ function App() {
   useEffect(() => {
     const left = lastFocusedSkill.current;
     lastFocusedSkill.current = shownSkillId;
+    // Every placement scheduled here is disposed with this run: a later
+    // subject, placement or area never inherits a stale one.
+    let disposed = false;
+    const areaAtStart = areaRef.current;
+    const stale = () => disposed || areaRef.current !== areaAtStart;
     const isLost = (active: Element | null) =>
       !active || active === document.body || active.tagName === "MAIN";
     // A layer that holds focus now (the startup progress overlay) is waited
@@ -329,6 +353,7 @@ function App() {
     // overrides where such a layer put focus on its own.
     const since = lastInteraction.current;
     const whenSettled = (place: () => void, frames = 90, guard = 0) => {
+      if (stale()) return;
       const active = document.activeElement;
       if (active?.closest("[role='dialog'], [role='alertdialog']") && frames > 0) {
         window.requestAnimationFrame(() => whenSettled(place, frames - 1, guard));
@@ -350,9 +375,12 @@ function App() {
           }),
         );
       }
-      return;
+    } else if (left) {
+      whenSettled(() => resolveFocusTarget({ kind: "row", skillId: left })?.focus());
     }
-    if (left) whenSettled(() => resolveFocusTarget({ kind: "row", skillId: left })?.focus());
+    return () => {
+      disposed = true;
+    };
   }, [focusInspectorHeading, shownSkillId, placement]);
 
   // A resize across the breakpoint reparents the inspector (aside ↔ sheet):
@@ -371,27 +399,35 @@ function App() {
     if (lastPlacement.current === placement) return;
     lastPlacement.current = placement;
     if (!focusedSkillId || !focusWasInInspector.current) return;
-    // The sheet focuses its heading as it opens; the aside needs a hand.
+    // The sheet focuses its heading as it opens; the aside needs a hand
+    // (cancelled if the subject or placement changes first).
     if (placement === "side") {
       const id = focusedSkillId;
-      window.setTimeout(() => focusInspectorHeading(id), 0);
+      const timer = window.setTimeout(() => focusInspectorHeading(id), 0);
+      return () => window.clearTimeout(timer);
     }
   }, [focusInspectorHeading, focusedSkillId, placement]);
   // The sheet closing returns to the focused row — unless it closed because
-  // the window widened and the inspector moved beside the list.
+  // the window widened and the inspector moved beside the list. A row a
+  // Delete removed hands over to that Delete's own target (D21: the next
+  // row, the previous one, the heading).
+  const { dialogFallbackFocus } = actions;
   const sheetFinalFocus = useCallback((): HTMLElement | boolean => {
     if (window.matchMedia?.(SHELL_WIDE_QUERY).matches) return false;
     const left = lastFocusedSkill.current ?? focusedSkillId;
-    return (left ? resolveFocusTarget({ kind: "row", skillId: left }) : null) ?? true;
-  }, [focusedSkillId]);
+    return (left ? resolveFocusTarget({ kind: "row", skillId: left }) : null) ?? dialogFallbackFocus() ?? true;
+  }, [dialogFallbackFocus, focusedSkillId]);
 
   useInspectorTabOrder(focusedSkillId, placement === "side" && !filesExpanded);
 
   // A skill dialog whose opener is gone when it closes (Re-point, Detach and
   // Edit remove the control that opened them) returns focus by D21's chain:
-  // the focused row, then the surface heading.
+  // the focused row, the inspector's heading, the surface heading — the
+  // first the closing layer finds usable (inside the sheet the row stays
+  // inert, so the sheet's heading).
   const skillDialogFallback = useCallback(
-    () => resolveFirst(dialogFallback({ focusedSkillId, surface: "skills" })),
+    (usable: (element: Element) => boolean) =>
+      resolveFirst(dialogFallback({ focusedSkillId, surface: "skills" }), null, usable),
     [focusedSkillId],
   );
 
@@ -404,15 +440,14 @@ function App() {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       if (document.querySelector("[role='dialog'], [role='alertdialog'], [role='menu']")) return;
       if (filesExpanded) {
-        setExpandedFilesOf(null);
-        window.setTimeout(() => document.querySelector<HTMLElement>("[data-files-toggle]")?.focus(), 0);
+        collapseFiles();
         return;
       }
       handleCloseDetail();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [filesExpanded, focusedSkillId, handleCloseDetail, layerOpen, placement]);
+  }, [collapseFiles, filesExpanded, focusedSkillId, handleCloseDetail, layerOpen, placement]);
 
   // Project Tool labels for the inspector's Projects section and the picker.
   const { projectToolStatus, loadProjectToolStatus } = catalog;
@@ -573,11 +608,13 @@ function App() {
                   isDetected={isToolDetected}
                   actions={actions}
                   blockedReason={blockedReason}
-                  readSkillPlacement={projects.readSkillPlacement}
+                  projectPlacement={projects.placementOf(focusedSkill.id)}
+                  loadPlacementViews={projects.loadPlacementViews}
                   projectCount={projects.projects.length}
                   copyToClipboard={copyToClipboard}
                   filesExpanded={filesExpanded}
                   onFilesExpandedChange={setFilesExpanded}
+                  onCollapseFiles={collapseFiles}
                   onClose={handleCloseDetail}
                   sheetFinalFocus={sheetFinalFocus}
                   t={t}
@@ -758,9 +795,9 @@ function App() {
         onRequestClose={library.handleCloseRepoint}
         onPickFolder={library.pickRepointFolder}
         fallbackFocus={skillDialogFallback}
-        onConfirm={(target) => {
-          if (library.pendingRepointSkill) void run("repoint", [library.pendingRepointSkill], { target });
-        }}
+        onConfirm={async (target) =>
+          library.pendingRepointSkill ? run("repoint", [library.pendingRepointSkill], { target }) : null
+        }
         t={t}
       />
 
@@ -778,7 +815,8 @@ function App() {
       <AssignProjectModal
         skill={library.assignProjectSkill}
         loading={loading}
-        readSkillPlacement={projects.readSkillPlacement}
+        placement={projects.placementOf(library.assignProjectSkill?.id ?? "")}
+        loadPlacementViews={projects.loadPlacementViews}
         labelOf={labelOfTool}
         onRequestClose={library.handleCloseAssignProject}
         onConfirm={(projectId) => {

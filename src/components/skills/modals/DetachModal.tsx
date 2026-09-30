@@ -1,5 +1,6 @@
 import type { TFunction } from "i18next";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import type { FocusFallback } from "@/components/ui/dialog";
 import type { ManagedSkill } from "../types";
 
 type DetachModalProps = {
@@ -9,7 +10,7 @@ type DetachModalProps = {
   onConfirm: () => void;
   onRequestClose: () => void;
   /** Where focus goes when the opener (Detach) is gone after it ran (D21: the focused row). */
-  fallbackFocus?: () => HTMLElement | null;
+  fallbackFocus?: FocusFallback;
   t: TFunction;
 };
 

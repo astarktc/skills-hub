@@ -213,3 +213,68 @@ Also ran `cargo test --all` independently: **794 passed**, no failures (`cargo-a
 7. Re-run the affected four-condition keyboard matrix, eight axe conditions, contrast if pair/layout changes, reduced-motion including pending, bindings drift and the full version+check gate. Operator native/VoiceOver closure remains separate.
 
 Suggested repair order: `/impeccable harden` (focus, nesting, errors), `/impeccable adapt` (name budget), targeted project-world settlement fix, then bounded `/impeccable audit` and `/impeccable polish`. No unrelated redesign is requested.
+
+## Re-check (2026-09-30)
+
+**FIX-THEN-PASS: I1–I4 and I6–I8 closed; I5 partially fixed, not closed. No reproduced P0.** Independently checked the uncommitted **25-file, +955/−187** fix over `b53fd8220925d8c8d91caef434b6015fe31da5d7`. I9 remains the accepted **BACKLOG #65** disposition, not a new blocker. Application source was not edited; no revert, stash or commit.
+
+### Evidence and scope
+
+**R = `.scratch/round19/evidence/12-recheck/`** (gitignored). Reused fixture server 5175, default latency, never Tauri. Read the requested shared-seam/component/test/design diffs and the implementer's evidence; adapted the saved drivers into R and **executed them anew**. Headless sessions `r19-12-recheck` and suffixed fresh sessions isolate harness failures. Primary action/keyboard transcripts use trusted keys, no injected `.focus()`. Hash navigation and fault/stack instrumentation are explicitly supplemental. The desktop Files second-Escape run hit the reported `about:blank` harness failure; T3 preview supplied the fallback (`i6-1280-t3preview.json`). Failed exploratory runs remain in `*.txt`; only the named successful runs below support closure.
+
+### Per-finding closure
+
+| Finding | Verdict | Fresh measurement / evidence in R |
+|---|---|---|
+| **I1 P1** dialog settlement | **Closed** | `i1-dark-{960,1280}.json`: Detach local-notes, Re-point deprecated-helper→grill-me, api-style→Keep yours, each sampled at **0/300/2000/5000 ms after the initiating CLI command**: **24 samples, 0 BODY**. Pending Re-point focuses overlay Cancel; settled sheet actions land on their **H2**, desktop actions on their **row**. Detach/Edit are there by 300 ms; Re-point by 2000 ms, stable at 5000. Re-point is a real **partial target settlement**: Amp propagation fails, report toast remains, modal closes and focus is valid (`i4-i5.json`, retry). |
+| **I2 P1** placement/layer ordering | **Closed** | `i2-{repoint,assign,edit,ask}.json`, `i2-ask-960to1280.json`: both directions, and resize back while open. Existing child stays focused/top; existing sheet remains inert beneath it. Escape closes the child, then new inspector H2 takes focus. `placement-adversarial.json`: bare resize→H2 both ways; `/audit-preserved-draft` survives resize + hash navigation; closing on Settings returns to MAIN, **0 registered layers**, root not inert. Late Re-point completion after navigation remains on Settings MAIN at 2.3 s and 5.3 s, no stale inspector return. `fast-second-action.json`: immediate Escape→Tab→Tab→Enter opens the next Re-point above the newly placed sheet, field focused, sheet inert. |
+| **I3 P1** squeezed identity | **Closed** | `i3.json`: dark/light × **1200/1280/960** with local-notes open; scratchpad **69.781 px**, `scrollWidth=clientWidth=70`, zero truncated names. List widths **640/720/904 px**. Document dimensions equal viewport (**1200×800, 1280×800, 960×640**); full-width A3/A4 measurements unchanged. `compact-marks.json`: compact badges **26 px** each, labels retained as absolutely positioned sr-only text, full label + explanation in `title`, wrapper `position:relative`. |
+| **I4 P1** final refusal channel | **Closed** | `i4-i5.json`: one-shot typed `GIT_CLONE_FAILED/auth` after valid preview, desktop dark + sheet light; fault fired, **0 toasts**, inline role=alert linked by Continue's `aria-describedby`, Continue retains focus. Retrying the retained target settles; target failures remain report data. CommandError now uses skills shim. Five targeted test files pass, including the door's refusal/cancellation and other verbs. |
+| **I5 P1** placement settlement | **Not closed** | Success-tail defect is fixed: `i4-i5.json` measures **0 reads** after Assign at both widths; `i5-adversarial.json` measures **4 explicit opening reads, 0 post-Assign, 0 post-Unassign** and correct returned-view rows. **But a subsequent failed explicit read hides the last good placement**, including after the picker closes. Details below. |
+| **I6 P2** Files Escape | **Closed** | `i6-fresh.txt`: 960 first Escape→Expand focused, same skill hash/sheet; second→local-notes row, `#/skills`. Desktop fallback `i6-1280-t3preview.json`: identical collapse-then-close result, root released. Top-layer check precedes interception in Dialog; overwrite resize/escape regressions also pass. |
+| **I7 P2** grid Undo | **Closed** | `i678-i7-{1280,960}.json`: Disable→**Removed from Pi** status + named Undo; tile stays focused. At **5.6 s** status/Undo absent; a separate Undo cycle re-enables Pi and focuses its **synced — Disable** tile. Reload retains **grid preference** (fixture skill data itself resets on reload; no durable backend-state claim). |
+| **I8 P2** Health ring | **Closed** | `i678-i8.json` + four `i8-health-*.png`: solid **2 px**, **−2 px offset**, all four edges inside scroller. Side outline box **(921,199)–(1280,276)**; sheet **(401,81)–(960,158)**. Screenshots independently inspected: four-sided ring paints in dark/light. |
+
+### Remaining findings and shared-seam adversarial review
+
+**R1 / residual I5 — P1 — Failed refresh still replaces known placement with a load error.**
+
+- **Location:** `src/components/projects/useProjectState.ts:172,525–546`; consumers `inspector/ProjectsSection.tsx:59–64`, `modals/AssignProjectModal.tsx:60`.
+- **Reproduction:** Assign local-notes to quartermaster, observe Claude Code + Pi synced; open Assign again and inject one `getProjectView` rejection (transparent Array.find stack interceptor, restored immediately). `i5-adversarial.json` records before: quartermaster/two synced rows; after: **“Project assignments could not be read.”** in both inspector and picker. Escape leaves the inspector showing only that error. No mutation failed and the successful view is still cached.
+- **Cause:** catch sets `status:"failed"` on the retained views; `skillPlacement` immediately answers `{rows:null,failed:true}` for that status. `applyView` also preserves failed status, so an applied mutation view alone cannot repair that presentation. The new failed-read test covers **initial failure only**, not failure after a last-good load. The successful assign/unassign and in-flight-success tests are useful/load-bearing, but do not close this clause.
+- **Fix:** represent read failure independently of last-good view availability. Keep and expose/render the last confirmed rows with an explicit stale/read-error indication; a never-loaded failure must not invent empty assignments. Decide conservatively whether the picker disables stale choices until retry, without hiding known placements. Add hook tests for **good load→failed refresh**, **applied view racing a failed refresh**, and **subsequent recovery**; retain zero-read success assertions. No success-path read tail is needed.
+
+**R2 — P2 note — The new generic answer type overpromises on Re-point's no-op/open branches.** `SkillVerbAnswer<"repoint">` promises `CommandError | null`, but `run`'s missing-selection guard and Re-point's no-target/dialog-opening branch return `undefined`; `as RunSkillAction` hides that mismatch (`useSkillActions.ts:99–108,242–252,534–542,717`). Current callers are safe: open-only call sites ignore the result and the modal checks truthiness. Still, make all Re-point exits return null, or honestly include undefined, and assert those answers in the door tests. **Not an additional acceptance blocker.** The generic entry point remains one door; no per-verb API leaked into product components beyond the Re-point modal's needed answer.
+
+Other shared-seam conclusions (no additional blocking findings):
+
+- **Return chains:** held only on registered layer records, not a global orphan map. `closeLayer` splices the record on registration cleanup, including unmount. An indefinitely open overlay necessarily retains its chain; closing/unmounting releases it. Resolution rechecks connection/inertness, so detached inherited openers are skipped. The successful hand-over/partial runs and navigation probe leave **0 layers / root not inert** when no sheet/dialog should remain. Unmount without a normal close can lose a hand-over opportunity, but no stale-chain leak or post-navigation BODY settlement was reproduced. Tests cover normal hand-over; arbitrary multi-layer unmount permutations are not exhaustively certified.
+- **Escape composition:** lower layers cancel before `interceptEscape`; the interceptor therefore cannot consume a higher ask's Escape. The primitive test covers collapse then dismiss; actual ask runs guard top-only behavior.
+- **Placement hold:** timer cleanup and stale callback guards are present. Bare resize, draft preservation, child resize in both directions, hash navigation mid-hold, late completion, and immediate next action pass. The trusted double-Enter probe actually pressed the progress overlay's Cancel (not D19 refusal); it cleanly retained Re-point/Continue, so it is **not** represented as proof of a second mutation. The existing door test “refuses a second verb while an Update runs, then accepts once it settled” passes in the fresh targeted gate. Keep the prior **ticket-14 removal note** in force; do not extend the overlay-specific machinery.
+- **Project reads:** `view-read-sites.txt` enumerates the only direct reads: `refreshView`, project selection, explicit `loadPlacementViews`. Remaining refreshes are failure/collision recovery or the documented selected-project `resyncAll` exception. Applied views update the placement cache; resync-all's other cached views refresh explicitly when inspector mounts. No new success-path assignment read tail found.
+
+### Regression and gate evidence
+
+- `ask-*.json`: all **6** ticket-11 Escape/Keep/Overwrite cases return to `frontend-design enabled`; **0 dialogs, 0 closed ghosts, root not inert**; next Tab→overflow.
+- `delete-unfiltered.json`: alias-skill→**api-style row** at 2000/5000 ms in both placements. **Known pre-existing pending-focus debt:** BODY at 0/300 ms while legacy Delete disables Confirm. Keep this with **ticket 13**; not a regression introduced by these fixes, not an assertion of an entirely BODY-free Delete flow.
+- `keyboard-{dark,light}-{1280,960}.json`: **20/17 stops per placement, 74 total**, **0 BODY**, all `:focus-visible`, solid 2 px; Restore→Health, Escape→docx row.
+- Eight `axe-*.json`: **0 violations** each; sheet retains known Base UI `aria-hidden-focus` incompletes. Eight fresh rendered-pair measures: **0 text/mark failures**, minimum observed text **5.124:1**, mark **3.519:1** in this re-check's settled inspector inventories (not a replacement for the prior wider dialog/specimen table). Eight reduced-motion runs show zero nonzero-duration entries. `pending-motion.json`: pending Restore's named legacy animations have **0s** duration; its one Animation is **finished / activeDuration 0**.
+- `targeted-tests.txt`: **5 files / 155 tests passed** (door, project world, Dialog, layer stack, lifecycle). Full gate below covers every other verb/caller and TS compatibility.
+- `bindings-test.txt`: **1 passed, 793 filtered**; before/after SHA-256 identical: `308651273303ab1991be76ccfee6017537a51c06f1555e9872c2d2142f4aa9ea`. `git diff --stat -- src/bindings/index.ts` is **empty**.
+
+Fresh `npm run version:check && npm run check` (`gate.txt`, warnings in `gate-stderr.txt`):
+
+```text
+Version OK (1.2.18)
+styles:check ok — App.css 2076 counted lines (ceiling), 21 migrated file(s)
+Test Files  38 passed (38)
+Tests       811 passed (811)
+tsc -b && vite build: passed
+cargo fmt --check; cargo clippy -- -D warnings: passed
+test result: ok. 794 passed; 0 failed
+RECHECK_GATE_EXIT=0
+```
+
+### Acceptance verdict
+
+**FIX-THEN-PASS, narrowly on R1 / residual I5.** Further mandatory work is limited to preserving/exposing last-good placement after failed refresh and the corresponding hook tests. Re-check good→failed→recovered reads in inspector/picker, mutation-during-failed-read preservation, and the zero-success-read Assign/Unassign trace; rerun the affected tests and full version+check gate. No reason to repeat all closed browser matrices unless their seams change. R2 is a small nonblocking type-contract cleanup. Orchestrator should retain ticket 13's pending Delete focus obligation and ticket 14's prior overlay-removal obligation; I9 is already accepted as #65. Native/VoiceOver release verification remains separate.

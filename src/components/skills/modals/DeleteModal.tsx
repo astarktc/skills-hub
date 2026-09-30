@@ -7,6 +7,7 @@ import {
   DialogContent,
   DialogFooter,
 } from '@/components/ui/dialog'
+import type { FocusFallback } from '@/components/ui/dialog'
 import { mainLandmarkFocus } from '@/components/ui/focus-fallback'
 
 type DeleteModalProps = {
@@ -19,7 +20,7 @@ type DeleteModalProps = {
    * Where focus goes when the dialog closes and its opener (the row) is gone:
    * the lifecycle's post-Delete target (D21). Falls back to the main landmark.
    */
-  fallbackFocus?: () => HTMLElement | null
+  fallbackFocus?: FocusFallback
   t: TFunction
 }
 
@@ -40,7 +41,7 @@ const DeleteModal = ({
         if (!next) onRequestClose()
       }}
     >
-      <DialogContent aria-labelledby={titleId} fallbackFocus={() => fallbackFocus?.() ?? mainLandmarkFocus()}>
+      <DialogContent aria-labelledby={titleId} fallbackFocus={(usable) => fallbackFocus?.(usable) ?? mainLandmarkFocus()}>
         <DialogBody>
           <div className="delete-title" id={titleId}>
             <TriangleAlert size={20} />

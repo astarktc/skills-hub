@@ -480,3 +480,189 @@ describe("Dialog placed as a sheet", () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 });
+
+describe("Dialog return targets are tested, and a layer closing beneath another hands over (ticket 12 I1)", () => {
+  /**
+   * The inspector's shape: a sheet opened from a row; inside it a repair
+   * opens a confirmation whose action removes the repair. The fallback chain
+   * is row → sheet heading; the sheet stays open, so the row stays inert.
+   */
+  function SheetWithRepair() {
+    const [sheet, setSheet] = useState(false);
+    const [confirm, setConfirm] = useState(false);
+    const [repairable, setRepairable] = useState(true);
+    const row = useRef<HTMLButtonElement>(null);
+    const heading = useRef<HTMLHeadingElement>(null);
+    return (
+      <>
+        <button ref={row} type="button" onClick={() => setSheet(true)}>
+          local-notes
+        </button>
+        <Dialog open={sheet} onOpenChange={setSheet}>
+          <DialogContent placement="sheet" showCloseButton={false} aria-labelledby="repair-sheet-heading">
+            <h2 ref={heading} id="repair-sheet-heading" tabIndex={-1}>
+              local-notes
+            </h2>
+            {repairable ? (
+              <button type="button" onClick={() => setConfirm(true)}>
+                Detach
+              </button>
+            ) : null}
+          </DialogContent>
+        </Dialog>
+        <Dialog open={confirm} onOpenChange={setConfirm}>
+          <DialogContent
+            fallbackFocus={(usable) => [row.current, heading.current].find((el) => el && usable(el)) ?? null}
+          >
+            <DialogHeader>
+              <DialogTitle>Detach local-notes?</DialogTitle>
+            </DialogHeader>
+            <DialogFooter>
+              <button
+                type="button"
+                onClick={() => {
+                  setRepairable(false);
+                  setConfirm(false);
+                }}
+              >
+                Confirm detach
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </>
+    );
+  }
+
+  it("skips a fallback the remaining sheet keeps inert: focus lands on the sheet's heading, never the row", async () => {
+    render(<SheetWithRepair />);
+    fireEvent.click(screen.getByRole("button", { name: "local-notes" }));
+    await openedDialog("local-notes");
+    const repair = screen.getByRole("button", { name: "Detach" });
+    repair.focus();
+    fireEvent.click(repair);
+    await openedDialog("Detach local-notes?");
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm detach" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Detach local-notes?" })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("heading", { name: "local-notes" })));
+    expect(screen.getByRole("dialog", { name: "local-notes" })).toBeTruthy();
+  });
+
+  /**
+   * Re-point's shape: the dialog's Continue raises a progress layer above it;
+   * the action closes the dialog while that layer is still up, removing the
+   * control that opened the dialog; then the progress layer closes.
+   */
+  function ActionUnderProgress() {
+    const [source, setSource] = useState(true);
+    const [dialog, setDialog] = useState(false);
+    const [progress, setProgress] = useState(false);
+    const heading = useRef<HTMLHeadingElement>(null);
+    return (
+      <>
+        <h2 ref={heading} tabIndex={-1}>
+          deprecated-helper
+        </h2>
+        {source ? (
+          <button type="button" onClick={() => setDialog(true)}>
+            Change source
+          </button>
+        ) : null}
+        <Dialog open={dialog} onOpenChange={setDialog}>
+          <DialogContent fallbackFocus={(usable) => (heading.current && usable(heading.current) ? heading.current : null)}>
+            <DialogHeader>
+              <DialogTitle>Change source</DialogTitle>
+            </DialogHeader>
+            <DialogFooter>
+              <button type="button" onClick={() => setProgress(true)}>
+                Continue
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={progress} onOpenChange={() => {}} dismissible={false}>
+          <DialogContent showCloseButton={false}>
+            <DialogHeader>
+              <DialogTitle>Working</DialogTitle>
+            </DialogHeader>
+            <DialogFooter>
+              <button
+                type="button"
+                onClick={() => {
+                  setSource(false);
+                  setDialog(false);
+                }}
+              >
+                Settle
+              </button>
+              <button type="button" onClick={() => setProgress(false)}>
+                Finish
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </>
+    );
+  }
+
+  it("the dialog beneath moves no focus as it closes; the layer above returns it by the dialog's chain", async () => {
+    render(<ActionUnderProgress />);
+    const opener = screen.getByRole("button", { name: "Change source" });
+    opener.focus();
+    fireEvent.click(opener);
+    await openedDialog("Change source");
+    const cont = screen.getByRole("button", { name: "Continue" });
+    cont.focus();
+    fireEvent.click(cont);
+    const progress = await openedDialog("Working");
+
+    const settle = screen.getByRole("button", { name: "Settle" });
+    settle.focus();
+    fireEvent.click(settle);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Change source" })).toBeNull());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    // Nothing stole focus out of the layer still on top.
+    expect(progress.contains(document.activeElement)).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("heading", { name: "deprecated-helper" })));
+  });
+});
+
+describe("Dialog interceptEscape (ticket 12 I6)", () => {
+  function Expandable() {
+    const [open, setOpen] = useState(true);
+    const [expanded, setExpanded] = useState(true);
+    return (
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        interceptEscape={() => {
+          if (!expanded) return false;
+          setExpanded(false);
+          return true;
+        }}
+      >
+        <DialogContent placement="sheet" aria-labelledby="files-heading">
+          <h2 id="files-heading">Files</h2>
+          <button type="button">{expanded ? "Collapse" : "Expand"}</button>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  it("spends the first Escape on the layer's own step and stays open; the next one dismisses", async () => {
+    render(<Expandable />);
+    await openedDialog("Files");
+    pressEscape();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Expand" })).toBeTruthy());
+    expect(screen.getByRole("dialog", { name: "Files" })).toBeTruthy();
+    pressEscape();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+});

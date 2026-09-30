@@ -116,6 +116,8 @@ export type FocusTarget =
   | { kind: "row"; skillId: string }
   /** A skill's health row (Restore lands there). */
   | { kind: "health"; skillId: string }
+  /** The inspector's heading while it shows the skill (beside the list or as a sheet). */
+  | { kind: "inspector"; skillId: string }
   /** The showing surface's heading (the list emptied). */
   | { kind: "heading"; surface: "skills" | "projects" };
 
@@ -158,8 +160,11 @@ export function focusAfter(outcome: FocusOutcome, context: FocusContext): FocusT
 
 /**
  * The fallback chain when a dialog closes and its trigger is gone (D21):
- * the focused row, then the surface heading. (The Dialog primitive tries the
- * trigger itself first, and the main landmark last.)
+ * the focused row, then the inspector's heading, then the surface heading.
+ * The Dialog primitive walks it with its `usable` test, so beside the list
+ * the row takes focus, and inside the sheet — whose layer keeps the row
+ * inert — the sheet's heading does. (The primitive tries the trigger itself
+ * first, and the main landmark last.)
  */
 export function dialogFallback(context: {
   focusedSkillId: string | null;
@@ -167,7 +172,10 @@ export function dialogFallback(context: {
 }): FocusTarget[] {
   return [
     ...(context.focusedSkillId
-      ? [{ kind: "row", skillId: context.focusedSkillId } as const]
+      ? ([
+          { kind: "row", skillId: context.focusedSkillId },
+          { kind: "inspector", skillId: context.focusedSkillId },
+        ] as const)
       : []),
     { kind: "heading", surface: context.surface },
   ];
@@ -200,6 +208,8 @@ export function resolveFocusTarget(
     }
     case "row":
       return focusable(document.querySelector(`[data-skill-row="${escape(target.skillId)}"]`));
+    case "inspector":
+      return focusable(document.querySelector(`[data-inspector-heading="${escape(target.skillId)}"]`));
     case "health":
       // The inspector's Health section when it is showing the skill, else
       // the row's exception marks.
@@ -215,14 +225,19 @@ export function resolveFocusTarget(
   }
 }
 
-/** The first target of a chain that is on screen. */
+/**
+ * The first target of a chain that is on screen — and, given a closing
+ * layer's `usable` test (the Dialog primitive's `fallbackFocus` argument),
+ * that will take focus once the layer has closed.
+ */
 export function resolveFirst(
   targets: readonly FocusTarget[],
   trigger: Element | null = null,
+  usable: (element: Element) => boolean = () => true,
 ): HTMLElement | null {
   for (const target of targets) {
     const element = resolveFocusTarget(target, trigger);
-    if (element) return element;
+    if (element && usable(element)) return element;
   }
   return null;
 }

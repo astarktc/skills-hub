@@ -7,7 +7,8 @@ import type {
   SkillMutationResultDto,
   SkillOutcomeKind,
 } from "../components/skills/types";
-import type { BatchSyncSkillDto, DisableScope, RefreshReport } from "../bindings";
+import type { BatchSyncSkillDto, CommandError, DisableScope, RefreshReport } from "../bindings";
+import { toCommandError } from "../commandError";
 import {
   combineOutcomes,
   deleteOutcome,
@@ -35,7 +36,7 @@ import {
 } from "../lib/skillPresentation";
 import type { ProjectState } from "../components/projects/useProjectState";
 import type { SkillLibrary } from "./useSkillLibrary";
-import type { ActionHandle, StatusReporter, TranslateFn } from "./useStatusReporter";
+import { ActionExit, type ActionHandle, type StatusReporter, type TranslateFn } from "./useStatusReporter";
 import type { CollisionPart, SyncOrchestration, SyncPolicy } from "./useSyncOrchestration";
 import type { ToolCatalog } from "./useToolCatalog";
 import type { DialogDoor } from "./useSurfaceState";
@@ -87,12 +88,21 @@ type VerbArgs<V extends SkillVerb> =
     ? [opts?: SkillVerbOptions[V]]
     : [opts: SkillVerbOptions[V]];
 
+/**
+ * What a verb answers its caller. Only Re-point answers anything: its final
+ * command's whole-command refusal (D15 — the dialog shows it by its choice,
+ * never a toast over it), or null when there is none to show (it settled,
+ * was cancelled, or never ran). Target fan-out failures stay report data,
+ * folded like any Re-point's.
+ */
+export type SkillVerbAnswer<V extends SkillVerb> = V extends "repoint" ? CommandError | null : void;
+
 /** The door's one entry point — the handle card, inspector, bulk rail and palette call. */
 export type RunSkillAction = <V extends SkillVerb>(
   verb: V,
   skills: SkillSelection,
   ...opts: VerbArgs<V>
-) => Promise<void>;
+) => Promise<SkillVerbAnswer<V>>;
 
 /**
  * The door's reload rule, per verb: a thrown request re-reads the catalog
@@ -228,7 +238,8 @@ export function useSkillActions({
       });
     });
 
-  const run: RunSkillAction = async (verb, selection, ...rest) => {
+  // Typed at the handle (`RunSkillAction`): each verb's answer is `SkillVerbAnswer`.
+  const run = (async (verb: SkillVerb, selection: SkillSelection, ...rest: [opts?: unknown]): Promise<CommandError | null | void> => {
     const opts = (rest[0] ?? {}) as Partial<SkillVerbOptions[SkillVerb]> & Record<string, unknown>;
     const all = selection === "all";
     const skills: ManagedSkill[] = all
@@ -246,7 +257,7 @@ export function useSkillActions({
     /** Run `body` under the lifecycle, with the verb's reload rule. */
     const settle = async <T,>(
       runOpts: Parameters<typeof runAction>[0],
-      body: (action: ActionHandle) => Promise<T>,
+      body: (action: ActionHandle) => Promise<T | ActionExit>,
     ): Promise<T | undefined> => {
       const value = await runAction(runOpts, async (action) => {
         try {
@@ -361,9 +372,10 @@ export function useSkillActions({
       return { report: part.report, declined: part.declined, retried };
     };
 
-    const refreshOne = (skill: ManagedSkill, copy: { message: string; success: string; label: string }, request: () => Promise<SkillMutationResultDto>, cancel: "updateManagedSkill" | "repointSkillSource") =>
+    const refreshOne = (skill: ManagedSkill, copy: { message: string; success: string; label: string }, request: (action: ActionHandle) => Promise<SkillMutationResultDto | ActionExit>, cancel: "updateManagedSkill" | "repointSkillSource") =>
       settle({ message: copy.message, label: copy.label, subject: { kind: "skill", id: skill.id }, cancel }, async (action) => {
-        const response = await request();
+        const response = await request(action);
+        if (response instanceof ActionExit) return response;
         replaceCatalog(response.skills);
         const { report, declined } = await settleRefresh(action, response.report, response.skills);
         return applyOutcome(
@@ -533,6 +545,11 @@ export function useSkillActions({
           target.kind === "git"
             ? { ...target, url: target.url.trim() }
             : { kind: "local", path: target.path.trim() };
+        // The final command's own refusal (a clone that fails after a good
+        // preview, a folder gone since) is answered to the dialog, which
+        // shows it by the chosen target — one action, no toast over it. A
+        // cancellation stays silent; report failures stay the fold's.
+        let refusal: CommandError | null = null;
         const completion = await refreshOne(
           single,
           {
@@ -540,11 +557,22 @@ export function useSkillActions({
             success: t("status.repointed", { name: single.name }),
             label: t("lifecycle.verbs.repoint"),
           },
-          () => invokeTauri("repointSkillSource", single.id, trimmed, { reassert_auto_sync: autoSyncEnabled }),
+          async (action) => {
+            try {
+              return await invokeTauri("repointSkillSource", single.id, trimmed, { reassert_auto_sync: autoSyncEnabled });
+            } catch (err) {
+              const error = toCommandError(err);
+              if (error.code === "CANCELLED") throw err;
+              // A thrown Re-point may have settled rows first (RELOAD_ON_THROW).
+              await loadManagedSkills();
+              refusal = error;
+              return action.handOff();
+            }
+          },
           "repointSkillSource",
         );
         if (completion?.closeModal) dismissDialog("repoint");
-        return;
+        return refusal;
       }
       case "detach": {
         if (!single) return;
@@ -686,7 +714,7 @@ export function useSkillActions({
         return;
       }
     }
-  };
+  }) as RunSkillAction;
 
   /**
    * The Delete dialog's `fallbackFocus` (D21): its opener (the row) is gone
@@ -695,7 +723,10 @@ export function useSkillActions({
    * Dialog primitive's own chain (layer beneath, main landmark).
    */
   const dialogFallbackFocus = useCallback(
-    () => (afterDialogRef.current ? resolveFirst([afterDialogRef.current, { kind: "heading", surface: "skills" }]) : null),
+    (usable?: (element: Element) => boolean) =>
+      afterDialogRef.current
+        ? resolveFirst([afterDialogRef.current, { kind: "heading", surface: "skills" }], null, usable)
+        : null,
     [],
   );
 
@@ -709,7 +740,8 @@ export function useSkillActions({
       case "restore":
         return run("restore", [skill]);
       case "repoint":
-        return run("repoint", [skill], row.kind === "source_missing" ? { preselect: "local" } : {});
+        // Without a target it only opens the dialog: nothing to answer.
+        return run("repoint", [skill], row.kind === "source_missing" ? { preselect: "local" } : {}).then(() => undefined);
       case "detach":
         return run("detach", [skill]);
       case "update":

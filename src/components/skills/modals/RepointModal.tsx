@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { FocusFallback } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldError, FieldLabel, FieldSet, FieldLegend, Input } from "@/components/ui/field";
 import { Segmented, SegmentedItem } from "@/components/ui/segmented";
 import { focusRing } from "@/components/ui/styles";
@@ -19,8 +20,7 @@ import { cn } from "@/lib/utils";
 import { describeCommandError } from "../../../commandError";
 import type { RepointPreviewAnswer } from "../../../hooks/useSkillLibrary";
 import { repointCurrentSource, type RepointKind } from "../../../lib/skillPresentation";
-import type { CommandError } from "../../../bindings";
-import type { GitSkillCandidate, ManagedSkill, RepointPreview, RepointTarget } from "../types";
+import type { CommandError, GitSkillCandidate, ManagedSkill, RepointPreview, RepointTarget } from "../types";
 
 type RepointBodyProps = {
   skill: ManagedSkill;
@@ -32,8 +32,12 @@ type RepointBodyProps = {
   previewRepoint: (skillId: string, target: RepointTarget) => Promise<RepointPreviewAnswer | undefined>;
   /** The folder dialog; resolves null when the operator cancels it. */
   onPickFolder: () => Promise<string | null>;
-  /** The confirmed target: the door's `repoint` runs it. */
-  onConfirm: (target: RepointTarget) => void;
+  /**
+   * The confirmed target: the door's `repoint` runs it and answers its final
+   * command's refusal (null when there is none to show) — shown here, by
+   * the chosen target, which stays chosen.
+   */
+  onConfirm: (target: RepointTarget) => Promise<CommandError | null>;
   onRequestClose: () => void;
   t: TFunction;
 };
@@ -56,7 +60,9 @@ type Step =
  * highlighted and needs an explicit Continue — never a refusal. A
  * multi-skill repository lists its skills to pick from; the pick crosses the
  * wire as a `selection` (a default-branch repository has no URL naming the
- * folder). A refusal renders by the field, never as a toast over the dialog.
+ * folder). A refusal renders by the field, never as a toast over the dialog
+ * — the preview's by the input, the final command's under the confirmed
+ * choice, which stays chosen for a retry.
  */
 function RepointBody({
   skill,
@@ -74,8 +80,11 @@ function RepointBody({
   const [url, setUrl] = useState(currentSource?.kind === "git" ? currentSource.ref : "");
   const [path, setPath] = useState(currentSource?.kind === "local" ? currentSource.ref : "");
   const [error, setError] = useState<CommandError | null>(null);
+  // The final command's refusal, for the confirmation it was raised from.
+  const [finalError, setFinalError] = useState<{ step: Step; error: CommandError } | null>(null);
   const [step, setStep] = useState<Step>({ kind: "form" });
   const formId = useId();
+  const finalErrorId = useId();
   const pickId = useId();
   const fieldRef = useRef<HTMLInputElement | null>(null);
   const value = (kind === "git" ? url : path).trim();
@@ -149,6 +158,16 @@ function RepointBody({
       ? t("repoint.where", { subpath, ref: preview.ref })
       : t("repoint.whereDefaultBranch", { subpath });
   };
+
+  const confirm = (current: Extract<Step, { kind: "confirm" }>) => {
+    if (loading) return;
+    setFinalError(null);
+    void (async () => {
+      const refusal = await onConfirm(current.target);
+      if (refusal) setFinalError({ step: current, error: refusal });
+    })();
+  };
+  const refusal = finalError && finalError.step === step ? describeCommandError(finalError.error, t) : null;
 
   const title = t("changeSource.title", { name: skill.name });
 
@@ -312,6 +331,7 @@ function RepointBody({
                   </p>
                 </div>
               ) : null}
+              <FieldError id={finalErrorId}>{refusal}</FieldError>
               {step.candidates && step.target.kind === "git" ? (
                 <Button
                   size="sm"
@@ -338,9 +358,8 @@ function RepointBody({
                 variant="solid"
                 tone="accent"
                 pending={loading}
-                onClick={() => {
-                  if (!loading) onConfirm(step.target);
-                }}
+                aria-describedby={refusal ? finalErrorId : undefined}
+                onClick={() => confirm(step)}
               >
                 {step.preview.name_matches
                   ? t("repoint.confirm")
@@ -357,7 +376,7 @@ type RepointModalProps = Omit<RepointBodyProps, "skill" | "preselect"> & {
   /** What the dialog is about; null = closed. */
   request: { skill: ManagedSkill; preselect: RepointKind } | null;
   /** Where focus goes when the opener is gone after closing (D21: the focused row). */
-  fallbackFocus?: () => HTMLElement | null;
+  fallbackFocus?: FocusFallback;
 };
 
 /**

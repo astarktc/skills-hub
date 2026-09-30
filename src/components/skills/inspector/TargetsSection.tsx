@@ -112,10 +112,34 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
     }
   };
 
-  const undo = (tool: string) => {
+  const undo = (tool: string, from: HTMLElement) => {
+    // Undo is the pair's Enable, started from the Tool's own control (D21:
+    // focus stays on it): in the list that is this button; under the grid,
+    // the Tool's tile — the Undo line goes as it runs.
+    const own = from.closest("section")?.querySelector<HTMLElement>(`[data-target-action="${CSS.escape(tool)}"]`);
+    if (own && own !== from) own.focus();
     setRemoved(null);
     void actions.run("enable", [skill], { tool });
   };
+
+  // The one Undo control, in the list (at the row's first action) and under
+  // the grid alike: the pair's Enable, labelled as the undo it is.
+  const undoButton = (tool: string, label: string, position?: number, targetAction?: string) => (
+    <Button
+      key={position}
+      data-target-action={targetAction}
+      size="sm"
+      variant="ghost"
+      tone="accent"
+      aria-label={t("inspector.targets.undoLabel", { tool: label })}
+      disabled={busy}
+      title={blockedReason ?? undefined}
+      onClick={(event) => undo(tool, event.currentTarget)}
+    >
+      {t("inspector.targets.undo")}
+    </Button>
+  );
+  const undoMark = undoTool ? (strip.marks.find((mark) => mark.tool === undoTool) ?? null) : null;
 
   const modeLabel = (tool: string) => {
     const target = byTool.get(tool);
@@ -169,19 +193,7 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
                       Retry → Disable), so focus stays on it (D21). */}
                   {(undoTool === mark.tool ? (["undo"] as const) : offered).map((action, index) =>
                     action === "undo" ? (
-                      <Button
-                        key={index}
-                        size="sm"
-                        variant="ghost"
-                        tone="accent"
-                        data-target-action={mark.tool}
-                        aria-label={t("inspector.targets.undoLabel", { tool: mark.label })}
-                        disabled={busy}
-                        title={blockedReason ?? undefined}
-                        onClick={() => undo(mark.tool)}
-                      >
-                        {t("inspector.targets.undo")}
-                      </Button>
+                      undoButton(mark.tool, mark.label, index, mark.tool)
                     ) : (
                       <Button
                         key={index}
@@ -231,6 +243,14 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
               );
             })}
           </ul>
+          {/* The same "Removed from {Tool} · Undo" as the list: the tile keeps
+              focus (it is now the pair's Enable); the line lives five seconds. */}
+          <div className="flex min-h-7 items-center gap-2">
+            <span role="status" className="text-xs text-muted-foreground">
+              {undoMark ? t("inspector.targets.removed", { tool: undoMark.label }) : null}
+            </span>
+            {undoMark ? undoButton(undoMark.tool, undoMark.label) : null}
+          </div>
         </>
       )}
       {skillOff ? <p className="m-0 text-xs text-muted-foreground">{t("inspector.targets.skillOff")}</p> : null}

@@ -1285,8 +1285,8 @@ describe("useProjectState project-assignment verbs (the door's entry points)", (
   });
 });
 
-describe("useProjectState reads where one skill is placed", () => {
-  it("reads every project's view — applying nothing — as its Tools and that skill's rows", async () => {
+describe("useProjectState holds where one skill is placed", () => {
+  it("reads every project's view once — applying no matrix — as its Tools and that skill's rows", async () => {
     const { result } = await renderReady();
     await withSelectedProject(result, ["pi", "cursor"]);
     await act(async () => {
@@ -1295,19 +1295,117 @@ describe("useProjectState reads where one skill is placed", () => {
     });
     mockInvoke.mockClear();
 
-    let placement: Awaited<ReturnType<typeof result.current.readSkillPlacement>> = [];
     await act(async () => {
-      placement = await result.current.readSkillPlacement("s1");
+      await result.current.loadPlacementViews();
     });
 
     expect(commandOrder()).toEqual(["getProjectView"]);
-    expect(placement.map((row) => row.project.id)).toEqual(["p1"]);
-    expect(placement[0].tools.map((tool) => tool.tool)).toEqual(["pi", "cursor"]);
-    expect(placement[0].assignments.map((row) => [row.skill_id, row.tool])).toEqual([
+    const placement = result.current.placementOf("s1");
+    expect(placement.failed).toBe(false);
+    expect(placement.rows?.map((row) => row.project.id)).toEqual(["p1"]);
+    expect(placement.rows?.[0].tools.map((tool) => tool.tool)).toEqual(["pi", "cursor"]);
+    expect(placement.rows?.[0].assignments.map((row) => [row.skill_id, row.tool])).toEqual([
       ["s1", "pi"],
       ["s1", "cursor"],
     ]);
     // The matrix shown is untouched: it still has both skills.
     expect(result.current.assignments).toHaveLength(4);
+  });
+
+  it("is not read until asked, and says so", async () => {
+    const { result } = await renderReady();
+    expect(result.current.placementOf("s1")).toEqual({ rows: null, failed: false });
+  });
+
+  it("a successful assign and unassign update the placement from the returned views, with no view read (I5)", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    // A second project that is not the selected one, with its own Tools.
+    await act(async () => {
+      await result.current.registerProject("/work/p2", { add_to_gitignore: false, add_to_exclude: false });
+    });
+    await act(async () => {
+      await result.current.selectProject("p2");
+    });
+    await act(async () => {
+      await result.current.configureTools(["claude_code", "cursor"]);
+    });
+    await act(async () => {
+      await result.current.selectProject("p1");
+    });
+    await act(async () => {
+      await result.current.loadPlacementViews();
+    });
+    expect(result.current.placementOf("s1").rows?.flatMap((row) => row.assignments)).toEqual([]);
+    mockInvoke.mockClear();
+
+    await act(async () => {
+      await result.current.assignToProject("p2", ["s1"]);
+    });
+    expect(callsTo("getProjectView")).toEqual([]);
+    const assigned = result.current.placementOf("s1").rows?.find((row) => row.project.id === "p2");
+    expect(assigned?.assignments.map((row) => row.tool)).toEqual(["claude_code", "cursor"]);
+    expect(assigned?.project.assignment_count).toBe(2);
+
+    await act(async () => {
+      await result.current.unassignFromProject("p2", ["s1"]);
+    });
+    expect(callsTo("getProjectView")).toEqual([]);
+    expect(result.current.placementOf("s1").rows?.find((row) => row.project.id === "p2")?.assignments).toEqual([]);
+  });
+
+  it("a view a mutation applied while a read was in flight outranks what the read brings back", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    const base = mockInvoke.getMockImplementation()!;
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // The read answers the view as it was before the assignment.
+    const before = (await base("getProjectView", "p1")) as ProjectViewDto;
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "getProjectView" ? held.then(() => before) : base(command, ...args),
+    );
+    let reading: Promise<void> = Promise.resolve();
+    act(() => {
+      reading = result.current.loadPlacementViews();
+    });
+    await act(async () => {
+      await result.current.assignToProject("p1", ["s1"]);
+    });
+    await act(async () => {
+      release();
+      await reading;
+    });
+    expect(result.current.placementOf("s1").rows?.[0].assignments.map((row) => row.tool)).toEqual(["pi"]);
+  });
+
+  it("a collision retry and a thrown verb still re-read the project's view", async () => {
+    const settleCollisions = vi.fn(async (report: ProjectSyncReport) => ({ report, resolved: true }));
+    const { result } = await renderReady({ settleCollisions });
+    await withSelectedProject(result, ["pi"]);
+    await act(async () => {
+      await result.current.loadPlacementViews();
+    });
+    mockInvoke.mockClear();
+    await act(async () => {
+      await result.current.assignToProject("p1", ["s1"]);
+    });
+    expect(callsTo("getProjectView")).toEqual([["p1"]]);
+    expect(result.current.placementOf("s1").rows?.[0].assignments.map((row) => row.tool)).toEqual(["pi"]);
+  });
+
+  it("a failed read says so instead of showing nothing", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "getProjectView" ? Promise.reject({ code: "OTHER", message: "db" }) : base(command, ...args),
+    );
+    await act(async () => {
+      await result.current.loadPlacementViews();
+    });
+    expect(result.current.placementOf("s1")).toEqual({ rows: null, failed: true });
   });
 });

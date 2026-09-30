@@ -192,3 +192,70 @@ Implemented 2026-09-30 (child, Opus 5.5). Nothing committed. Evidence: `.scratch
   once (timers throttled, the fixture's overlay looked stuck) — a fresh session fixed it; not an app defect.
 
 - 2026-09-30 — independent D31 auditor: **fix-then-pass; not accepted yet**. Full report `.scratch/round19/review/ticket-12-audit.md`, evidence `.scratch/round19/evidence/12-audit/`. **P1 I1–I5:** successful Detach/Re-point/conflict Edit from the sheet leave focus on BODY; narrowing with Re-point open puts the sheet above its child modal; at 1200 with inspector open scratchpad's name is 0px wide; a final Re-point command rejection appears as a toast over the still-open modal instead of inline; successful assignment triggers four all-project view reads despite applyView. **P2 I6–I9:** sheet Escape closes expanded Files instead of collapsing; grid Disable lacks Removed/Undo; Restore's Health ring is clipped; target-error/ref-SHA/detached-origin metadata require explicit wire-scope dispositions. Ticket 11's overwrite Escape/Keep/Overwrite paths pass at default latency; axe is zero violations in eight theme/size/scenario runs, measured contrast passes, reduced motion (including pending) has zero active duration, bindings regenerate byte-identically. Fresh version+check exit 0: 38 frontend files / 801 tests, 794 Rust tests; cargo --all also passes. The report gives exact fixes and re-check scope, including the ticket-14 overlay-removal note. No application source changed.
+
+- 2026-09-30 — fix child (I1–I8 of the D31 audit; I9 is BACKLOG #65, untouched; nothing committed). Evidence
+  `.scratch/round19/evidence/12-fix/` (gitignored; drivers beside their JSON; headless `agent-browser`, trusted keys, no
+  `.focus()` in primary transcripts, default latency).
+  - **I1** — root cause: the Dialog primitive validated only the opener, not `fallbackFocus`'s answer, so the row behind
+    a sheet that stays open was returned (inert → BODY); and a dialog closing *beneath* the progress overlay its own
+    action raised aimed focus into an inert page. Fix: every return target passes the closing layer's `usable` test
+    (`FocusFallback = (usable) => …`); a layer closing beneath a layer it opened moves no focus and hands its return
+    chain to it (`layer-stack.handOverReturn` / `returnChains`); the skill dialogs' D21 chain is row → inspector heading
+    → surface heading (`actionLifecycle.dialogFallback`, new `inspector` target, `resolveFirst(…, usable)`); the
+    Invocation conflict buttons stay focusable while pending. Files: `ui/dialog.tsx`, `ui/layer-stack.ts`,
+    `ui/confirm-dialog.tsx`, `lib/actionLifecycle.ts`, `App.tsx`, `modals/{InvocationMode,Detach,Delete,Repoint}Modal.tsx`,
+    `projects/RemoveProjectModal.tsx`. Evidence `i1-{dark,light}-{960,1280}.json` + png: 12 flows × 4 samples
+    (0/300/2000/5000 ms), **0 BODY**; 960 → the sheet's heading, Tab → Close details; 1280 → the row, Tab → its switch.
+    (Re-point's settle is a partial one — the fold reports Amp failed — so partial settlement is covered.)
+  - **I2** — root cause: placement followed the media query at once, remounting the inspector (a new sheet layer
+    registered above the open child) and scheduled focus work was never disposed. Fix: App latches the placement
+    while any surface dialog or the progress overlay is open, and applies it one task after the last one closes
+    (after its focus return); the arrival/row-return rAF chains and the reparent timer are disposed on
+    subject/placement/area change. Files: `App.tsx`. Evidence `i2-{repoint,assign,edit,ask}.json`,
+    `i2-ask-960to1280.json` + png: both directions, and back again, with Re-point / Assign / Edit / the overwrite ask
+    open: the child stays top, keeps focus, the sheet stays inert beneath it; Escape closes the child, then the new
+    placement's heading takes focus.
+  - **I3** — root cause: exception badges never shrink; with the inspector beside it the list (640 px at 1200) left the
+    name 0 px. Fix: in a list narrower than 48 rem (where the description already collapses) the marks compact to
+    their icons (neutral gains ⊖), the words kept as sr-only text + tooltip, the marks wrapper positioned (A4). Files:
+    `SkillRow.tsx`, `DESIGN.md`. Evidence `i3.json` + png: scratchpad 69.781 px, scrollWidth 70 = clientWidth 70, no
+    truncated name, no document overflow at 1200 / 1280 / 960 × dark/light with the inspector open; ticket 11's
+    full-width 960 number unchanged (69.781).
+  - **I4** — root cause: the door ran the final `repoint_skill_source` through `runAction`, whose catch toasts. Fix:
+    `run` is typed per verb (`SkillVerbAnswer`): Re-point answers its final command's whole-command refusal (still one
+    `runAction`, reload per `RELOAD_ON_THROW`, a cancel stays silent, report failures stay the fold's); the modal shows
+    it with `describeCommandError` in a `FieldError` under the summary, target kept, Continue `aria-describedby` it;
+    `CommandError` now comes through the skills shim. Files: `useSkillActions.ts` (+ test), `RepointModal.tsx`,
+    `skills/types.ts`, `App.tsx`. Evidence `i4-i5.json`, `i4-repoint-final-error-*.png` (auditor's one-shot injection):
+    inline "Cannot access this repository…", 0 toasts, focus on Continue; a retry then settles.
+  - **I5** — root cause: `readSkillPlacement` was a read whose identity changed with every applied view. Fix: the project
+    world holds `placementViews` (explicit `loadPlacementViews`, kept current by `applyView`; a view applied during a
+    read outranks it) and `placementOf(skillId)` (pure `skillPlacement`); inspector and picker consume the value.
+    Files: `useProjectState.ts` (+ 6 hook tests incl. assign/unassign with **no** `getProjectView`),
+    `ProjectsSection.tsx`, `AssignProjectModal.tsx`, `SkillInspector.tsx`, `App.tsx`. Evidence: recorder **0** reads
+    after a successful Assign at 1280 and 960; positive control 4 reads on opening the picker (`i5-control.json`).
+  - **I6** — `Dialog interceptEscape` (primitive, tested, DESIGN.md): the sheet spends Escape collapsing Files, focus to
+    Expand; the side path uses the same `collapseFiles` (flushSync, no timer). Evidence `i678-i6.json` (960: Esc →
+    collapsed + Expand focused, Esc → closed, row focused), `i6-1280-t3preview.json` (1280, see concerns).
+  - **I7** — the grid shows the same "Removed from {Tool}" (persistent `role=status`) + Undo line; Undo from the grid
+    starts from the Tool's tile so focus stays on it. File: `TargetsSection.tsx`. Evidence `i678-i7-{1280,960}.json`,
+    `i7-list.json`: tile keeps focus, status + Undo shown, gone after 5.6 s, Undo → tile "Pi: synced — Disable", grid
+    persists across reload; list Undo unchanged.
+  - **I8** — a focusable `InspectorSection` draws `insetFocusRing`. Evidence `i678-i8.json` + png: outline −2 px offset,
+    box inside the clipping scroller on all four sides, both themes/sizes.
+  - Regression guards: ticket 11 ask Escape/Keep/Overwrite (dark 1280, light 960) → switch, root not inert, 0 dialogs,
+    Tab → overflow (`ask-*.json`); Delete from the inspector → next row api-style both placements
+    (`delete-unfiltered.json`); keyboard matrix `keyboard-{dark,light}-{1280,960}.json` 20/17 stops, 0 BODY, all
+    `:focus-visible` solid 2 px, Restore → Health, Escape → docx row; axe 8/8 **0 violations** (sheet runs keep the
+    known Base UI `aria-hidden-focus` incomplete); measured text/mark contrast 0 failures; reduced motion 0 running.
+  - Gate (`gate.txt`): Version OK (1.2.18); styles:check 2076 (ceiling) / 21 migrated; vitest 38 files / 811 tests;
+    build ok; rustfmt + clippy clean; cargo 794 passed; exit 0.
+  - For Astra's re-check: the hand-over path (Re-point success/partial under the overlay, both placements); the
+    placement latch (resize with each child open, then immediate second action); `placementViews` staleness after
+    project-page mutations that answer no view (resync-all) — the inspector re-reads on mount; compact marks at
+    list widths just under/over 48 rem. Open: agent-browser 0.31.1 replaces the page with `about:blank` on some later
+    Escape presses in one session (not reproducible in the T3 preview, where the same sequence keeps the page), so
+    I6's 1280 second Escape was driven there; the legacy Delete dialog's disabled Confirm still drops focus to BODY
+    for the ~300 ms the delete runs (pre-existing; ticket 13's D16 dialog).
+
+- 2026-09-30 — independent bounded re-check of the uncommitted fixes over `b53fd82`: **fix-then-pass, only residual I5 blocks**. Appended `.scratch/round19/review/ticket-12-audit.md` § Re-check; fresh evidence `.scratch/round19/evidence/12-recheck/`. I1–I4 and I6–I8 closed: 24 settlement samples with no BODY, correct sheet/row returns, both-direction child-dialog resize holds, scratchpad 70/70 scroll/client width, final Re-point refusal inline with zero toasts, Files Escape twice, grid Undo/expiry/persistence, four-sided Health ring. Assign/Unassign now have zero success-tail reads (picker opening explicitly reads four views), but a failed later read still hides last-good quartermaster placements: preserve those rows with stale/error indication and test good→failed→recovered plus mutation racing failed read. Nonblocking P2 R2: Re-point's generic answer promises null but its open/no-op branches return undefined; normalize or widen the type. Six overwrite regressions, four-condition keyboard matrix (74 stops, zero BODY), eight axe runs (zero violations), pending reduced-motion and byte-identical bindings pass. Fresh full version+check: 38 frontend files / 811 tests, 794 Rust, exit 0; targeted five files / 155 tests pass. Retain legacy Delete's pending BODY interval under ticket 13 and the existing ticket-14 overlay-removal note; I9 remains accepted BACKLOG #65. No application source changed, no commit.

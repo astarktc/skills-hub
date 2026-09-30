@@ -258,16 +258,25 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
 
 - **Focus.** It moves focus in on open (Base UI; `initialFocus` accepts a ref or a function of the interaction type)
   and traps it while open. On close it returns focus to the element that opened it. If that element is gone, focus
-  goes to `fallbackFocus()`, then to the layer beneath, then to the app's main landmark (`mainLandmarkFocus`,
+  goes to `fallbackFocus(usable)`, then to the layer beneath, then to the app's main landmark (`mainLandmarkFocus`,
   `ui/focus-fallback.ts`: `<main>` made programmatically focusable with `tabindex="-1"`, never a Tab stop). While the
   app renders a `<main>`, focus does not land on `<body>`.
+- **Every return target is tested**, the fallback's as well as the opener: connected, and not inert once this layer
+  has closed. `fallbackFocus` receives that `usable` test (type `FocusFallback`) and walks its own chain with it —
+  the skill dialogs' chain is the focused row, the inspector's heading, the surface heading, so beside the list the
+  row takes focus and inside the sheet (which keeps the row inert) the sheet's heading does (ticket 12 I1).
+- **A layer closing beneath another moves no focus.** Its return chain (opener + fallback) passes to every layer
+  above that it opened (whose opener lay inside it, or is gone): Re-point closed while the progress overlay its own
+  action raised is still up hands its chain to the overlay, which returns focus by it when it closes
+  (`layer-stack.handOverReturn`).
 - **Where the opener can disappear** (a removal: Delete skill, Remove project), the dialog passes `fallbackFocus`.
   Today both removal dialogs pass `mainLandmarkFocus`; the row-level target (the next row, then the list heading) is
   ticket 09's surface lifecycle, which will supply it through the same prop.
 - **Background.** Everything behind the top layer is `inert`, not only `aria-hidden`: the app and every lower layer's
   popup.
 - **Dismissal.** Escape and outside press dismiss **the top layer only**, and only when `dismissible`. A
-  non-dismissible layer also disables its ✕.
+  non-dismissible layer also disables its ✕. `interceptEscape` (on `Dialog`) is offered the top layer's Escape
+  first; answering `true` spends it (the inspector sheet collapses expanded Files) and the layer stays open.
 - **Name.** `<DialogTitle>` names the popup through `aria-labelledby`.
 - **Close.** The corner ✕ is 32 × 32 and named.
 - **Size.** `sm` 400 · `md` 520 (default) · `lg` 600 · `xl` 720, each capped at viewport − 48.
@@ -414,7 +423,8 @@ Composed from the primitives and tokens only; no variant was added. Files: `comp
   (`sm` medium; the Tab stop that opens the skill) + Edit pencil (`ghost icon-sm`, only when overridden) +
   **exception marks** (soft Badges: `failed` with a ⊗ icon, `stale` with a ⚠ icon, `neutral` for "Not
   deployed"; skill-level rows first, then target-level, in the fold's order; Disabled rows stay silent because the
-  strip and switch say them) · description (`muted-foreground`; it shares the name's track and yields to a long
+  strip and switch say them; in a list narrower than 48 rem — the inspector beside it — the marks compact to their
+  icons (`neutral` gains ⊖) with the words kept as their accessible text and tooltip, so the name keeps its room) · description (`muted-foreground`; it shares the name's track and yields to a long
   name + marks; in Flat and in "Individual sources" preceded by the source in `font-mono xs faint`) ·
   **Synced strip** + N/M · scope (globe when some target is live) · Switch `sm` (= skill-grain Disable / Enable
   through the door) · overflow (`ghost icon-sm` → DropdownMenu:
@@ -484,12 +494,14 @@ Composed from primitives and tokens; the one new variant is Dialog `placement="s
 - **Health** reads `skillHealth` alone: per row an icon (⊗ `failed`, ⚠ `stale`, ⊖ `faint`), the label (`sm` medium),
   what happened (`xs` `muted-foreground`: the typed error in words, the Tools, when) and its repairs (`outline sm`; the
   first repair of the first row `accent`, removal `danger`). Healthy is one quiet line. The section is Restore's
-  focus target (`data-inspector-health`).
+  focus target (`data-inspector-health`); spanning the scroll area edge to edge, it draws its ring inset
+  (`insetFocusRing`) so all four sides paint.
 - **Sync targets** (D22): a list by default — the strip's glyph (`StripMarkIcon`, shared with the row), the Tool,
   `link`/`copy` in `faint`, the state in words (`failed` text for failed / missing / broken, else
   `muted-foreground`), inline actions: Retry (`outline`), Disable / Enable / Sync (`ghost`). A row's first action is
   the same element as it changes role, so focus stays on it. Disable shows "Removed from {Tool}" (`role="status"`)
-  with **Undo** (`ghost accent`) for 5 s. The grid (Segmented List / Grid, persisted `skills-inspector-targetsView`)
+  with **Undo** (`ghost accent`) for 5 s — in the list on the Tool's row, under the grid as one line (the tile keeps
+  focus). The grid (Segmented List / Grid, persisted `skills-inspector-targetsView`)
   is `outline md` tiles, glyph + Tool; each names its state and what a press does. A skill off everywhere or with
   its central copy gone offers no per-Tool action — Health carries the repair.
 - **Source**: icon · the source line (`sm` underlined link for a repo; a recorded folder in `font-mono xs`) · Copy
@@ -503,15 +515,20 @@ Composed from primitives and tokens; the one new variant is Dialog `placement="s
   no Tools, or already on all of them, cannot be chosen).
 - **Files**: tree (28 px items, `raised` when open) above a reader (max 28 rem, a scroll region that is one Tab stop;
   Markdown under `.prose`, 72 ch). **Expand** covers My Skills in place (the list stays mounted and `inert`
-  underneath, its scroll and focused row kept); tree 256 px beside the reader. Escape collapses first.
+  underneath, its scroll and focused row kept); tree 256 px beside the reader. Escape collapses first — in the sheet
+  too (`interceptEscape`) — and focus returns to Expand; the next Escape closes.
 - **Re-point** (D15): pre-filled with the current source; **Check source** resolves it first; the summary
   "Replaces *X*'s bytes with **Y** (`subpath @ ref`)" takes focus; a name mismatch adds a `stale` "Different name"
   Badge and the confirm reads **Continue with Y**; a multi-skill repository lists its skills as radio rows first.
-  Refusals render under the field (`FieldError`), never as a toast over the dialog.
+  Refusals render under the field (`FieldError`), never as a toast over the dialog — the preview's under the input,
+  the final command's (the door answers it to the dialog) under the summary, with the chosen target kept.
 - **Focus** (D21, D23): opening from a row leaves focus on the row, and Tab from the row's last control enters the
   inspector's heading (Shift+Tab walks back; Tab from its last control continues after the row); an arrival without
   a row (deep link, history) focuses the heading; the sheet opens on its heading; a resize that reparents a focused
-  inspector focuses the new heading; closing returns to the row; Restore lands on Health.
+  inspector focuses the new heading; closing returns to the row; Restore lands on Health. A resize never reorders
+  layers: while a dialog (or the progress overlay) is open above the inspector it keeps its placement, and the new
+  one lands when the last layer closes. The Projects section and the picker read the project world's held views,
+  which every assignment's returned view updates — no read follows a successful assignment.
 
 ## Migration rule
 

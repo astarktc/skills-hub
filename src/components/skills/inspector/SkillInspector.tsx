@@ -4,7 +4,7 @@ import type { TFunction } from "i18next";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import type { SkillPlacement } from "../../projects/useProjectState";
+import type { SkillPlacementValue } from "../../projects/useProjectState";
 import type { SkillActions } from "../../../hooks/useSkillActions";
 import type { CopyToClipboardFn } from "../../../hooks/useStatusReporter";
 import { skillHealth, syncedStrip } from "../../../lib/skillPresentation";
@@ -29,11 +29,15 @@ type SkillInspectorProps = {
   actions: Pick<SkillActions, "run" | "repair">;
   /** Why every verb is disabled while an action runs (null = they may run). */
   blockedReason: string | null;
-  readSkillPlacement: (skillId: string) => Promise<SkillPlacement[]>;
+  /** Where the skill is assigned across projects: the project world's held views. */
+  projectPlacement: SkillPlacementValue;
+  loadPlacementViews: () => Promise<void>;
   projectCount: number;
   copyToClipboard: CopyToClipboardFn;
   filesExpanded: boolean;
   onFilesExpandedChange: (expanded: boolean) => void;
+  /** Escape's first step while Files is expanded: collapse, focus back on its toggle. */
+  onCollapseFiles: () => void;
   onClose: () => void;
   /** Where the sheet returns focus when it closes (D23: the focused row). */
   sheetFinalFocus: () => HTMLElement | boolean;
@@ -57,11 +61,13 @@ function SkillInspector({
   isDetected,
   actions,
   blockedReason,
-  readSkillPlacement,
+  projectPlacement,
+  loadPlacementViews,
   projectCount,
   copyToClipboard,
   filesExpanded,
   onFilesExpandedChange,
+  onCollapseFiles,
   onClose,
   sheetFinalFocus,
   t,
@@ -121,7 +127,8 @@ function SkillInspector({
             <EditsSection skill={skill} actions={actions} blockedReason={blockedReason} t={t} />
             <ProjectsSection
               skill={skill}
-              readSkillPlacement={readSkillPlacement}
+              placement={projectPlacement}
+              loadPlacementViews={loadPlacementViews}
               projectCount={projectCount}
               labelOf={labelOf}
               actions={actions}
@@ -156,6 +163,13 @@ function SkillInspector({
         open
         onOpenChange={(open) => {
           if (!open) onClose();
+        }}
+        // Escape collapses expanded Files first (as beside the list); the
+        // next one closes the sheet.
+        interceptEscape={() => {
+          if (!filesExpanded) return false;
+          onCollapseFiles();
+          return true;
         }}
       >
         <DialogContent
