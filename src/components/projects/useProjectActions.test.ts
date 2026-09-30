@@ -113,6 +113,9 @@ const OTHER_MUTATIONS: [string, (result: Rendered) => Promise<unknown>][] = [
   ["toggle another cell", (r) => r.current.actions.handleToggleAssignment("s2", "cursor")],
   ["assign a row", (r) => r.current.actions.handleBulkAssign("s2")],
   ["unassign a row", (r) => r.current.actions.handleBulkUnassign("s2")],
+  // Re-review B1 remainder: Add Project's Browse is refused before its picker
+  // opens, like a path update (the dialog also disables it with the reason).
+  ["browse for a project to add", (r) => r.current.actions.handlePickProjectFolder()],
 ];
 
 beforeEach(() => {
@@ -145,7 +148,8 @@ describe("useProjectActions: one mutation at a time (D19)", () => {
       await mutate(result);
     });
     expect(mockInvoke).not.toHaveBeenCalled();
-    // A path update does not even open the picker: its choice could not apply.
+    // Neither a path update nor Add's Browse opens the picker: its choice
+    // could not apply.
     expect(pickFolder).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -168,6 +172,14 @@ describe("useProjectActions: one mutation at a time (D19)", () => {
     });
     expect(mockInvoke.mock.calls.map(([command]) => command)).toEqual(["updateProjectGitignore", "updateProjectPath"]);
     expect(pickFolder).toHaveBeenCalledTimes(1);
+    // Add's Browse opens the picker when nothing runs, and sends no command.
+    let picked: string | null = null;
+    await act(async () => {
+      picked = await result.current.actions.handlePickProjectFolder();
+    });
+    expect(picked).toBe("/work/moved");
+    expect(pickFolder).toHaveBeenLastCalledWith({ title: "projects.pathLabel" });
+    expect(mockInvoke).toHaveBeenCalledTimes(2);
     expect(result.current.reporter.notifications.map((n) => n.title)).toEqual([
       "projects.updatePathSuccess",
       "projects.configureProject",

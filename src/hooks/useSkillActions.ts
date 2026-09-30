@@ -613,10 +613,14 @@ export function useSkillActions({
             { kind: "enable", report: enabled ?? { global: [], projects: { items: [] } }, scope },
             { kind: "sync", report: synced, skills: items, policy: SYNC_POLICY },
           ] as const);
-          // The sync's composite count line heads the run when it ran.
+          // One composite count line over both parts ("1 synced · 1 enabled"), toned
+          // by the strongest outcome of either.
           const outcome = combineOutcomes(
-            ...(syncRunnable ? [syncOutcome(syncPart.report, { ...foldContext, action: "bulk" })] : []),
-            ...(enabled ? [enableOutcome(enablePart.report, foldContext)] : []),
+            [
+              ...(syncRunnable ? [syncOutcome(syncPart.report, { ...foldContext, action: "bulk" })] : []),
+              ...(enabled ? [enableOutcome(enablePart.report, foldContext)] : []),
+            ],
+            foldContext,
           );
           // The undeployed part with no target to go to is reported, never silent.
           if (toSync.length > 0 && !syncRunnable)

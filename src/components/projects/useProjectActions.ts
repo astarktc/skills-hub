@@ -34,10 +34,11 @@ export type ProjectActionsDeps = {
  * the Edit dialog's ignore write, a path update, tool configuration,
  * removal, resync, the matrix's cells and rows — runs under the reporter's
  * `runAction`, so while one runs every other is refused and never sends a
- * command (D19). A folder pick stays outside (it changes nothing); the
- * mutation it leads to is gated. `blockedReason` is the refusal in words:
- * the list, matrix and dialogs disable their mutation controls with it as
- * the title while anything runs; `pendingCells` marks only the cells the
+ * command (D19). A folder pick stays outside (it changes nothing) but is not
+ * opened while refused; the mutation it leads to is gated. `blockedReason`
+ * is the refusal in words: the list, matrix and dialogs (Add, Edit, Tool
+ * configuration, Remove) disable their mutation controls with it as the
+ * title while anything runs; `pendingCells` marks only the cells the
  * running action is about.
  */
 export function useProjectActions({ t, state, catalog, reporter, surface }: ProjectActionsDeps) {
@@ -222,8 +223,16 @@ export function useProjectActions({ t, state, catalog, reporter, surface }: Proj
     }
   }, [loadProjectToolStatus, notifyError, openDialog]);
 
-  /** Add project's Browse: the picked folder, or null (cancelled / failed). */
+  /**
+   * Add project's Browse: the picked folder, or null (cancelled / failed /
+   * refused). Like a path update, refused before the picker opens while
+   * another action runs — the registration it leads to could not run either.
+   */
   const handlePickProjectFolder = useCallback(async () => {
+    if (refusalFor(reporter.pending)) {
+      await runAction({ subject: batch }, async () => undefined);
+      return null;
+    }
     try {
       const [picked] = await pickFolder({ title: t("projects.pathLabel") });
       return picked ?? null;
@@ -231,7 +240,7 @@ export function useProjectActions({ t, state, catalog, reporter, surface }: Proj
       notifyError(err);
       return null;
     }
-  }, [notifyError, t]);
+  }, [notifyError, reporter.pending, runAction, t]);
 
   return {
     pendingCells,

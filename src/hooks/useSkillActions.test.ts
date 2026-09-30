@@ -774,6 +774,12 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     expect(calls("syncSkillsToTools")[1]!.slice(1, 3)).toEqual([[{ skill_id: "s2", name: "beta", source_path: "/hub/beta" }], ["cursor"]]);
     expect(runIds(rendered).size).toBe(1);
     expect(rendered.result.current.reporter.notifications.filter((row) => row.kind === "error")).toEqual([]);
+    // One complete report (B3-R1): both of B's synced pairs AND A's enabled
+    // target are in the one headline, not only the sync's half.
+    expect(rendered.result.current.reporter.notifications.map(({ kind, title }) => ({ kind, title }))).toContainEqual({
+      kind: "success",
+      title: 'outcome.done.synced {"count":2} \u00b7 outcome.done.enabled {"count":1}',
+    });
   });
 
   it("retry over two occupied Tools: one batch, one ask with both pairs, one retry of exactly them", async () => {

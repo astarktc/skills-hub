@@ -60,6 +60,23 @@ export type Outcome<Entry = OutcomeEntry> = {
    */
   notes: string[];
   completion: { reload: boolean; closeModal: boolean; conflict: boolean };
+  /**
+   * The structured counts behind a count-bearing fold's headline, carried so
+   * `combineOutcomes` can build one composite line and one tone over several
+   * reports without reading a toast's words. Set by the folds whose parts an
+   * operator action may combine (the bulk sync, Enable).
+   */
+  tally?: OutcomeTally;
+};
+/**
+ * A fold's headline counts: its done count(s), each phrased by its own verb
+ * ("1 synced · 1 enabled"), and the kinds every verb shares — the units are
+ * the same Sync targets, so they sum.
+ */
+export type OutcomeTally = {
+  done: { verb: HeadlineVerb; count: number }[];
+  counts: Omit<Partial<HeadlineCounts>, "done">;
+  review?: ReviewKind;
 };
 export type ReportContext = {
   t: TranslateFn;
@@ -148,19 +165,31 @@ export function compositeHeadline(
   partial: Partial<HeadlineCounts>,
   review: ReviewKind = "edits",
 ): string {
-  const counts = { ...ZERO_COUNTS, ...partial };
+  return tallyHeadline(t, {
+    done: [{ verb, count: partial.done ?? 0 }],
+    counts: partial,
+    review,
+  });
+}
+
+/** The composite line of a tally: every done count first (in the tally's
+ * order), then the shared kinds in headline order. */
+function tallyHeadline(t: TranslateFn, tally: OutcomeTally): string {
+  const counts = { ...ZERO_COUNTS, ...tally.counts };
+  const review = tally.review ?? "edits";
   const parts: string[] = [];
   const part = (key: string, count: number) => {
     if (count > 0) parts.push(t(key, { count }));
   };
-  part(HEADLINE_DONE_KEY[verb], counts.done);
+  for (const { verb, count } of tally.done) part(HEADLINE_DONE_KEY[verb], count);
   part("outcome.failed", counts.failed);
   part("outcome.targetsFailed", counts.targetsFailed);
   part("outcome.skipped", counts.skipped);
   part("outcome.declined", counts.declined);
   part("outcome.cancelled", counts.cancelled);
   part(REVIEW_KEY[review], counts.review);
-  if (parts.length === 0) parts.push(t(HEADLINE_DONE_KEY[verb], { count: 0 }));
+  const [first] = tally.done;
+  if (parts.length === 0 && first) parts.push(t(HEADLINE_DONE_KEY[first.verb], { count: 0 }));
   return parts.join(HEADLINE_SEPARATOR);
 }
 
@@ -660,13 +689,11 @@ export function syncOutcome(
   ctx: ReportContext & { action: "bulk" | "install" | "toggle" },
 ): Outcome<PlainEntry> {
   const { out, tally, disabledSkip } = foldSync(report, ctx);
-  if (ctx.action === "bulk")
-    out.toast = headlineToast(ctx.t, "synced", {
-      done: tally.synced,
-      failed: tally.failed,
-      skipped: tally.skipped,
-      declined: tally.declined,
-    }, { detail: detailOf(out.notes) });
+  if (ctx.action === "bulk") {
+    const counts = { failed: tally.failed, skipped: tally.skipped, declined: tally.declined };
+    out.toast = headlineToast(ctx.t, "synced", { done: tally.synced, ...counts }, { detail: detailOf(out.notes) });
+    out.tally = { done: [{ verb: "synced", count: tally.synced }], counts };
+  }
   // No new copy: failed explicit actions have their error entries, not a success.
   else if (ctx.action === "toggle" && out.errors.length === 0) {
     if (tally.declined > 0) out.toast = toast("declined", out.notes.join("\n"));
@@ -751,8 +778,9 @@ export function enableOutcome(
   report: EnableReport,
   ctx: ReportContext,
 ): Outcome<PlainEntry> {
-  const global = syncOutcome(report.global, { ...ctx, action: "toggle" });
+  const { out: global, tally } = foldSync(report.global, { ...ctx, action: "toggle" });
   const projects = projectSyncOutcome(report.projects, { ...ctx, action: "toggleOn" });
+  const projectCounts = projectSyncCounts(report.projects);
   const errors = [...global.errors, ...projects.errors];
   const warnings = [...global.warnings, ...projects.warnings];
   const notes = [...global.notes, ...projects.notes];
@@ -765,6 +793,16 @@ export function enableOutcome(
     warnings,
     notes,
     completion: { reload: true, closeModal: errors.length === 0, conflict: false },
+    // Counted in targets, global and project alike: an assignment already in
+    // place is enabled too.
+    tally: {
+      done: [{ verb: "enabled", count: tally.synced + projectCounts.synced + projectCounts.alreadyAssigned }],
+      counts: {
+        failed: tally.failed + projectCounts.failed,
+        skipped: tally.skipped + projectCounts.skipped,
+        declined: tally.declined + projectCounts.declined,
+      },
+    },
   };
 }
 
@@ -985,40 +1023,91 @@ export function deleteOutcome(
   return out;
 }
 
+/** D10's precedence as a rank: the strongest tone of several parts wins. */
+const TONE_RANK: Record<OutcomeTone, number> = {
+  failure: 5,
+  conflict: 4,
+  skipped: 3,
+  declined: 2,
+  neutral: 1,
+  success: 0,
+};
+const strongest = (tones: OutcomeTone[]): OutcomeTone | null =>
+  tones.reduce<OutcomeTone | null>(
+    (best, tone) => (best === null || TONE_RANK[tone] > TONE_RANK[best] ? tone : best),
+    null,
+  );
+
+/** Several tallies as one: done counts per verb (first-seen order), shared kinds summed. */
+function mergeTallies(tallies: OutcomeTally[]): OutcomeTally {
+  const done: OutcomeTally["done"] = [];
+  const counts: Record<Exclude<keyof HeadlineCounts, "done">, number> = {
+    failed: 0, targetsFailed: 0, skipped: 0, declined: 0, cancelled: 0, review: 0,
+  };
+  let review: ReviewKind | undefined;
+  for (const tally of tallies) {
+    for (const { verb, count } of tally.done) {
+      const same = done.find((entry) => entry.verb === verb);
+      if (same) same.count += count;
+      else done.push({ verb, count });
+    }
+    for (const key of Object.keys(counts) as (keyof typeof counts)[])
+      counts[key] += tally.counts[key] ?? 0;
+    review ??= tally.review;
+  }
+  return { done, counts, ...(review ? { review } : {}) };
+}
+
 /**
  * One operator action that settled several reports (a group's Deploy all:
- * a first sync and an Enable, asked once) as one Outcome: the entries and
- * notes of every part; the first part with a toast heads it — re-toned to a
- * failure when another part failed, carrying the other parts' quiet notes
- * as detail (a headline hides notes as rows) — and one completion (reload /
- * conflict if any part asks; close only when every part may). The reporter
- * executes it once: one toast set, one history block.
+ * a first sync and an Enable, asked once) as one Outcome — nothing a part
+ * said is lost. The parts that carry a `tally` make ONE composite count line
+ * ("1 synced · 1 enabled · 1 kept existing"), every done verb and every
+ * shared kind summed; with no tally the first toast heads. The tone is the
+ * strongest across every part (D10: failure › conflict › skipped › declined ›
+ * success) — any part's counts, any other toast, any error entry. Every
+ * part's entries and notes are kept; the notes (and an untallied part's
+ * toast sentence) ride as the detail. One completion: reload / conflict if
+ * any part asks; close only when every part may. The reporter executes it
+ * once: one toast set, one history block.
  */
-export function combineOutcomes<Entry>(...parts: Outcome<Entry>[]): Outcome<Entry> {
+export function combineOutcomes<Entry>(
+  parts: Outcome<Entry>[],
+  ctx: Pick<ReportContext, "t">,
+): Outcome<Entry> {
   const errors = parts.flatMap((part) => part.errors);
-  const headPart = parts.find((part) => part.toast) ?? null;
-  const head = headPart?.toast ?? null;
-  const others = parts.filter((part) => part !== headPart);
-  const detail = detailOf([
-    ...(head?.detail ? [head.detail] : []),
-    ...others.flatMap((part) => part.notes),
+  const notes = parts.flatMap((part) => part.notes);
+  const tallies = parts.flatMap((part) => (part.tally ? [part.tally] : []));
+  const tally = tallies.length ? mergeTallies(tallies) : undefined;
+  const headPart = tally ? null : (parts.find((part) => part.toast) ?? null);
+  // A sentence toast not already heading the line survives as a detail line
+  // (a declined toast's sentence is its notes, already there).
+  const sentences = parts.flatMap((part) =>
+    !part.tally && part !== headPart && part.toast && part.toast.tone !== "declined"
+      ? [part.toast.message]
+      : [],
+  );
+  const tone = strongest([
+    ...(tally ? [headlineTone(tally.counts)] : []),
+    ...parts.flatMap((part) => (part.toast ? [part.toast.tone] : [])),
+    ...(errors.length ? (["failure"] as const) : []),
   ]);
-  const toastOut = head
-    ? toast(
-        head.tone !== "failure" && others.some((part) => part.errors.length > 0) ? "failure" : head.tone,
-        head.message,
-        detail,
-      )
-    : null;
+  const message = tally ? tallyHeadline(ctx.t, tally) : (headPart?.toast?.message ?? null);
+  const detail = detailOf([
+    ...(headPart?.toast?.detail ? [headPart.toast.detail] : []),
+    ...sentences,
+    ...parts.filter((part) => part !== headPart).flatMap((part) => part.notes),
+  ]);
   return {
-    toast: toastOut,
+    toast: message !== null && tone ? toast(tone, message, detail) : null,
     errors,
     warnings: parts.flatMap((part) => part.warnings),
-    notes: parts.flatMap((part) => part.notes),
+    notes,
     completion: {
       reload: parts.some((part) => part.completion.reload),
       closeModal: parts.every((part) => part.completion.closeModal),
       conflict: parts.some((part) => part.completion.conflict),
     },
+    ...(tally ? { tally } : {}),
   };
 }

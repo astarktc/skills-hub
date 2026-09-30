@@ -12,7 +12,8 @@ import type { IgnoreUpdateOptions, ProjectDto } from "./types";
 
 type AddProjectModalProps = {
   open: boolean;
-  loading: boolean;
+  /** Why Browse and Register are disabled — another action is running — or null. */
+  blockedReason: string | null;
   projects: ProjectDto[];
   /**
    * The Browse button: the picked folder, or null when cancelled (a picker
@@ -29,7 +30,7 @@ type AddProjectModalProps = {
 
 const AddProjectModal = ({
   open,
-  loading,
+  blockedReason,
   projects,
   onPickFolder,
   onRegister,
@@ -90,6 +91,8 @@ const AddProjectModal = ({
                 className="btn btn-secondary input-action"
                 type="button"
                 onClick={handleBrowse}
+                disabled={blockedReason !== null}
+                title={blockedReason ?? undefined}
               >
                 {t("projects.browse")}
               </button>
@@ -126,7 +129,8 @@ const AddProjectModal = ({
           <button
             className="btn btn-primary"
             onClick={handleSubmit}
-            disabled={!path.trim() || isDuplicate || loading}
+            disabled={!path.trim() || isDuplicate || blockedReason !== null}
+            title={blockedReason ?? undefined}
           >
             {t("projects.register")}
           </button>

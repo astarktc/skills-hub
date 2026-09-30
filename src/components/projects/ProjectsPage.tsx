@@ -231,7 +231,7 @@ const ProjectsPage = ({
 
       <AddProjectModal
         open={surface.layer("projectAdd") !== null}
-        loading={pending !== null}
+        blockedReason={blockedReason}
         projects={state.projects}
         onPickFolder={handlePickProjectFolder}
         onRegister={handleAddProject}
@@ -252,6 +252,7 @@ const ProjectsPage = ({
       <ToolConfigModal
         open={surface.layer("projectToolConfig") !== null}
         loading={pending !== null}
+        blockedReason={blockedReason}
         toolStatus={projectToolStatus}
         savedSelection={
           state.tools.length > 0 ? state.tools.map((ct) => ct.tool) : null
@@ -271,7 +272,7 @@ const ProjectsPage = ({
 
       <RemoveProjectModal
         open={removeDialog !== null}
-        loading={pending !== null}
+        blockedReason={blockedReason}
         projectName={
           state.projects.find((p) => p.id === removeDialog?.projectId)?.name ?? null
         }

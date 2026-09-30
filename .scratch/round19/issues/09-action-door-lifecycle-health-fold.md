@@ -382,3 +382,34 @@ Fresh final restored-snapshot gates: Rust requested filters **10 / 33 / 36 / 8 /
 extra stored-identity/relocation Rust **1 / 14**. Bindings unchanged. Two residual scratch probes fail on the reviewed
 implementation as described; both were removed. Scratch worktree restored clean and removed. Only review/ticket
 appendices edited in main; no commit, archive, move or status advancement.
+
+### 2026-09-29 — re-review residuals fixed (B1 remainder, B3-R1), child Opus. Status stays `implemented`.
+
+- **B1 remainder** — `useProjectActions.handlePickProjectFolder` (Add Project's Browse) is refused before
+  `pickFolder` opens while any action runs (same shape as `handleUpdatePath`: a refused `runAction`, answers null).
+  The project dialogs now take the running reason instead of a bare `loading`: `AddProjectModal` (Browse + Register
+  disabled, `title` = reason), `RemoveProjectModal` (Cancel + Remove disabled, Remove titled), and the shared
+  `ToolConfigModal` gained an optional `blockedReason` (Confirm disabled + titled; App's global use is unchanged).
+  `ProjectsPage` passes `blockedReason` to all three (Edit already had it). Tests (`useProjectActions.test.ts`): the
+  held-toggle table gains "while a cell toggle runs, 'browse for a project to add' is refused and sends no command"
+  (zero `invokeTauri`, zero `pickFolder`, `blockedReason` names the running action); the unblocked case asserts Browse
+  opens the picker (`{ title: "projects.pathLabel" }`), returns the path and sends no command. Dialog prop wiring by
+  inspection (no product-component JSX tests by design).
+- **B3-R1** — `Outcome` carries an optional structured `tally` (`OutcomeTally`: done count(s) per verb + the shared
+  failed/targetsFailed/skipped/declined/cancelled/review counts); the bulk `syncOutcome` and `enableOutcome` set it
+  (Enable in targets: global synced + project synced/already assigned as `enabled`, failures/skips/declines summed
+  from global and project rows). `combineOutcomes(parts, { t })` (signature changed) merges the tallies into **one**
+  composite line (`"1 synced · 1 enabled · 1 kept existing"`, via the shared `tallyHeadline` behind
+  `compositeHeadline`), picks the tone as the strongest over the merged counts, every part's toast tone and any
+  error entry (D10 rank), keeps every error/warning/note, and carries all notes (plus any untallied part's sentence)
+  as the detail. No toast string is parsed. The door's `deployGroup` passes both parts. Tests
+  (`reportOutcome.test.ts` "combineOutcomes …"): table "fresh sync success + Enable with {one synced target → success
+  `1 synced · 1 enabled`; one declined target (Keep) → declined `1 synced · 1 kept existing`; one Disabled skip →
+  skipped; one failed target → failure `1 synced · 1 failed`}" over the real `syncOutcome` / `enableOutcome` /
+  `combineOutcomes`; "sums a project row of Enable with the global parts, in targets"; the two no-tally cases kept.
+  The real-sync-world door test "deploy a group: … one ask with both pairs, one run" now also asserts the one success
+  headline `2 synced · 1 enabled`. The exact-shape bulk-declined `syncOutcome` test pins the new `tally`.
+- **BACKLOG #64** records the four accepted command-API compromises (source: `round19/review/ticket-09-review.md`
+  § Re-review); next free number bumped to #65.
+- Gate: `npm run version:check && npm run check` → exit 0 — Version OK (1.2.18); eslint clean; styles:check ok;
+  vitest 34 files / 768 tests; build ok; fmt; clippy; `cargo test` 792 passed.

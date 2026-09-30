@@ -11,7 +11,8 @@ import { mainLandmarkFocus } from "@/components/ui/focus-fallback";
 
 type RemoveProjectModalProps = {
   open: boolean;
-  loading: boolean;
+  /** Why the dialog's buttons are disabled — an action (this removal included) is running — or null. */
+  blockedReason: string | null;
   projectName: string | null;
   onConfirm: () => Promise<void>;
   onRequestClose: () => void;
@@ -20,7 +21,7 @@ type RemoveProjectModalProps = {
 
 const RemoveProjectModal = ({
   open,
-  loading,
+  blockedReason,
   projectName,
   onConfirm,
   onRequestClose,
@@ -54,14 +55,15 @@ const RemoveProjectModal = ({
           <button
             className="btn btn-secondary"
             onClick={onRequestClose}
-            disabled={loading}
+            disabled={blockedReason !== null}
           >
             {t("cancel")}
           </button>
           <button
             className="btn btn-danger-solid"
             onClick={onConfirm}
-            disabled={loading}
+            disabled={blockedReason !== null}
+            title={blockedReason ?? undefined}
           >
             {t("projects.removeConfirm")}
           </button>

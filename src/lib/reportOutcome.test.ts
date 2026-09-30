@@ -1120,6 +1120,8 @@ describe("syncOutcome", () => {
       warnings: [],
       notes,
       completion: { reload: true, closeModal: true, conflict: false },
+      // The structured counts behind the line, for combineOutcomes.
+      tally: { done: [{ verb: "synced", count: 0 }], counts: { failed: 0, skipped: 0, declined: 2 } },
     });
   });
   it("a declined pair beside synced ones keeps the declined tone; beside a failure, failure wins", () => {
@@ -1827,14 +1829,17 @@ describe("combineOutcomes (one action, several reports, one run)", () => {
     ...over,
   });
 
-  it("heads with the first toast, re-tones it when another part failed, and carries the others' notes", () => {
+  it("with no tally, heads with the first toast, re-tones it when another part failed, and carries the others' notes", () => {
     const out = combineOutcomes(
-      part({ toast: { kind: "success", tone: "success", message: "3 synced" } }),
-      part({
-        errors: [{ title: "e", message: "m" }],
-        notes: ["kept"],
-        completion: { reload: true, closeModal: false, conflict: false },
-      }),
+      [
+        part({ toast: { kind: "success", tone: "success", message: "3 synced" } }),
+        part({
+          errors: [{ title: "e", message: "m" }],
+          notes: ["kept"],
+          completion: { reload: true, closeModal: false, conflict: false },
+        }),
+      ],
+      ctx,
     );
     expect(out.toast).toMatchObject({ tone: "failure", kind: "warning", message: "3 synced", detail: "kept" });
     expect(out.errors).toHaveLength(1);
@@ -1842,9 +1847,100 @@ describe("combineOutcomes (one action, several reports, one run)", () => {
     expect(out.completion).toEqual({ reload: true, closeModal: false, conflict: false });
   });
 
-  it("no part with a toast: none, and the notes stay rows", () => {
-    const out = combineOutcomes(part({ notes: ["a"] }), part({ notes: ["b"] }));
+  it("no part with a toast or a tally: none, and the notes stay rows", () => {
+    const out = combineOutcomes([part({ notes: ["a"] }), part({ notes: ["b"] })], ctx);
     expect(out.toast).toBeNull();
     expect(out.notes).toEqual(["a", "b"]);
+  });
+
+  // Re-review B3-R1 (ticket 09): Deploy all = a fresh first sync + an Enable,
+  // folded by the real folds. Every part's counts reach one composite line,
+  // and the tone is the strongest of both (failure › conflict › skipped ›
+  // declined › success) — an Enable Keep never reads as success.
+  const target = (skill: string, tool: string, status: BatchTargetOutcome["status"]): BatchTargetOutcome => ({
+    skill_id: skill,
+    skill_name: skill,
+    tool_key: tool,
+    status,
+  });
+  const synced: BatchTargetOutcome["status"] = {
+    status: "synced",
+    outcome: { mode_used: "symlink", target_path: "/t", replaced: false },
+  };
+  const fresh = [target("beta", "claude", synced)];
+  const enabledName = "alpha";
+  const syncedN = (count: number) => ["outcome.done.synced", count] as [string, number];
+  const enabledN = (count: number) => ["outcome.done.enabled", count] as [string, number];
+  it.each([
+    {
+      enable: "one synced target",
+      status: synced,
+      tone: "success",
+      message: line(syncedN(1), enabledN(1)),
+      errors: 0,
+      notes: 0,
+    },
+    {
+      enable: "one declined target (Keep)",
+      status: { status: "declined" } as BatchTargetOutcome["status"],
+      tone: "declined",
+      message: line(syncedN(1), ["outcome.declined", 1]),
+      errors: 0,
+      notes: 1,
+    },
+    {
+      enable: "one Disabled skip",
+      status: { status: "skipped", error: { code: "TARGET_DISABLED", tool: "cursor" } } as BatchTargetOutcome["status"],
+      tone: "skipped",
+      message: line(syncedN(1), ["outcome.skipped", 1]),
+      errors: 0,
+      notes: 0,
+    },
+    {
+      enable: "one failed target",
+      status: { status: "failed", error: { code: "OTHER", message: "denied" } } as BatchTargetOutcome["status"],
+      tone: "failure",
+      message: line(syncedN(1), ["outcome.failed", 1]),
+      errors: 1,
+      notes: 0,
+    },
+  ] as const)(
+    "fresh sync success + Enable with $enable: one line, tone $tone",
+    ({ status, tone, message, errors, notes }) => {
+      const out = combineOutcomes(
+        [
+          syncOutcome(fresh, { ...ctx, action: "bulk" }),
+          enableOutcome({ global: [target(enabledName, "cursor", status)], projects: { items: [] } }, ctx),
+        ],
+        ctx,
+      );
+      expect(out.toast).toMatchObject({ tone, message });
+      expect(out.errors).toHaveLength(errors);
+      expect(out.notes).toHaveLength(notes);
+      // A declined pair's quiet line rides as the detail of the one headline.
+      if (notes) expect(out.toast?.detail).toBe(out.notes.join("\n"));
+      expect(out.completion.reload).toBe(true);
+    },
+  );
+
+  it("sums a project row of Enable with the global parts, in targets", () => {
+    const out = combineOutcomes(
+      [
+        syncOutcome([...fresh, target("beta", "cursor", { status: "declined" })], { ...ctx, action: "bulk" }),
+        enableOutcome(
+          {
+            global: [target(enabledName, "claude", synced)],
+            projects: { items: [projectItem("claude", { status: "declined" })] },
+          },
+          ctx,
+        ),
+      ],
+      ctx,
+    );
+    expect(out.toast).toMatchObject({
+      tone: "declined",
+      message: line(syncedN(1), enabledN(1), ["outcome.declined", 2]),
+    });
+    expect(out.notes).toHaveLength(2);
   });
 });

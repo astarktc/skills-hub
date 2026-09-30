@@ -40,6 +40,11 @@ export type ToolConfigModalLabels = {
 type ToolConfigModalProps = {
   open: boolean;
   loading: boolean;
+  /**
+   * Why Confirm is disabled — another action is running — shown as its
+   * title; null or absent when nothing blocks it.
+   */
+  blockedReason?: string | null;
   toolStatus: ToolStatusDto | null;
   /** Saved selection baseline; null = nothing saved yet, default to installed tools. */
   savedSelection: string[] | null;
@@ -59,6 +64,7 @@ type ToolConfigModalProps = {
 
 const ToolConfigModalInner = ({
   loading,
+  blockedReason = null,
   toolStatus,
   savedSelection,
   scanSelectedOnly: savedScanSelectedOnly,
@@ -182,7 +188,8 @@ const ToolConfigModalInner = ({
           <button
             className="btn btn-primary"
             onClick={handleConfirm}
-            disabled={loading}
+            disabled={loading || blockedReason !== null}
+            title={blockedReason ?? undefined}
           >
             {labels.confirmLabel}
           </button>
