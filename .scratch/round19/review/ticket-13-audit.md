@@ -138,3 +138,89 @@ Also independently ran **cargo test --all: 798 passed / 0 failed**, exit 0 (`car
 2. **A3:** tests for known-resource admission and safe reveal-only fallback, including outside/unknown/relative paths, `~` policy, `.app`, ordinary executable-file ancestor, dangling link and vanished target. Mock opener; no app/script execution in the test. Regenerate bindings if signature/types change; verify typed error copy and fixture Reveal/Retry path.
 3. Repeat affected four-condition keyboard/Delete flows, eight axe states if shared keyboard/dialog primitives change, reduced-motion first frame and inspector Tab bridge. Rerun version+check and binding drift. Keep #66, ticket 14 and ticket 17 handoffs; explicitly accept or fix P2 A4 rather than claiming cancellation works.
 4. Operator VoiceOver/native release half remains outstanding as designed. Suggested work: targeted `/impeccable harden`, bounded audit re-check, then `/impeccable polish` only if the repairs change presentation.
+
+## Re-check (2026-09-30)
+
+**FIX-THEN-PASS on `98212ef451d96b99eb04e2ded31beb6d3bcc88c9`. A1, A2 and A4 are closed. A3's launch hazard is fixed, but its managed-resource admission is not fully closed: R1 (P1) below. R2 is a P2 input-normalization defect.** No new reproduced keyboard, focus, or modal-layer failure.
+
+### Scope and method
+
+Read the originating Acceptance, ticket Comments, complete application diff of `98212ef`, the selection/inspector/Dialog seams, Delete settlement/planning, platform adapter, generated error binding and EN descriptions. Standards and spec were checked in this terminal reviewer, without further delegation. The tree and HEAD were unchanged before the two permitted documentation appends. No application source edits, revert, stash, commit, Tauri launch, native opener invocation, or operator-library/DB operations.
+
+**E = `.scratch/round19/evidence/13-recheck/`**, gitignored. Fixture HTTP 5175 was already listening (200). One isolated headless session, `r19-13-recheck`, closed afterward; the pre-existing fixture server was left alone. Read and copied the fix child's drivers, changing only their evidence/session destinations; every keyboard input used **`keys-cdp.ts`**, never agent-browser `press`, native key codes, DOM focus, or synthetic keyboard events. All four `keys-*` runs completed without retries. Added independently asserted `extra.ts` for an expanded reader, a focusable reader descendant, dialog isolation, listener inventory and reduced motion. Its one inserted reader link is explicitly supplemental DOM setup, reached with trusted Tab; the rest of the primary flows use the seeded fixture unchanged. `verify-evidence.ts` asserts the completed outputs, document continuity, selection, switches, focus destinations and axe results (`verified-summary.txt`: **ALL RECHECK EVIDENCE ASSERTIONS PASSED**).
+
+### A1–A4 dispositions
+
+| Finding | Re-check | Evidence and reasoning |
+| --- | --- | --- |
+| **A1 — reader shortcut isolation** | **Closed** | `keys-{dark,light}-1280.json`: selected and unselected reader retains focus and library selection under x/j/k///⌘A. Native text selection grows **0 → 2714** characters with local-notes selected (**0 → 2683** unselected). `extra-{dark,light}.json` repeats inside expanded Files and on a reader descendant; all **14 recorded keydowns per run are trusted**. Reader Escape clears selection while retaining the reader, then collapses to **Expand files**, then closes to **local-notes**. Keys inside the Keyboard shortcuts dialog above expanded Files leave the library alone. Hook tests cover the reader, its descendant, inspector heading and sidebar, including unprevented native ⌘A. |
+| **A2 — covered-list Escape** | **Closed** | `keys-*` in dark/light at **1280×800 and 960×640**: desktop without selection collapses → closes; with selection clears → collapses → closes. Row keys cannot reach the covered list. At 960, expanded sheet collapses → closes to row → clears background selection on the next Escape. Child Keyboard shortcuts above expanded desktop Files closes alone; Change source above the side inspector and above the sheet closes alone. No ordinary child-dialog trigger is reachable while the 960 sheet's Files are expanded (other sections are removed and the sidebar is inert), so no fabricated primary flow is claimed for that combination. |
+| **A3 — safe, admitted Reveal** | **Not fully closed** | `reveal_path` now delegates admission/resolution to core and calls **only `reveal_item_in_dir`**. Existing `.app`/executable ancestors are selected, never sent to `open_path`; arbitrary outside paths are refused. Real-store temp-dir tests cover an owned global target and project assignment; failed removal keeps both records, so their Reveal paths remain admitted. But the central-prefix branch admits an outside file through an intermediate symlink (**R1**), and malformed/trailing-separator handling has **R2**. |
+| **A4 — Delete CANCELLED** | **Closed** | `deleteOutcome` excludes cancellation from failures and error entries; a cancellation alone is neutral and closes the dialog. Fold tests assert single, mixed-success and mixed-failure counts/tones/closure, and distinguish a pre-plan failure from zero failed targets. The door test exercises an actual mocked command rejection through the real fold/reporter and checks neutral tone, no error history and closed dialog. These assert the changed behavior, not merely invocation. No action Cancel affordance or token capability was added; existing confirmation Cancel is unchanged. This remains a defensive contract, not a claim that current Delete is operator-cancellable. |
+
+**One semantic keyboard owner, not literally one listener of any kind.** CDP `getEventListeners(window)` in both extra runs finds the list handler once, the unrelated zoom handler, App's capture-only interaction marker, and this probe's recording observer. The list handler's `layerOpen()`/consumed guard steps aside for dialogs and menus; Dialog's top-layer check and `interceptEscape` retain ownership of the sheet. No shared primitive changed. The inspector Tab bridge is also re-proved: **More actions for local-notes → H2 local-notes**, in both themes.
+
+### Remaining findings
+
+#### R1 — P1 — Central-repo prefix admission can reveal an unrecorded outside file
+
+**Location:** `src-tauri/src/core/log_reveal.rs:78–82` (`path.starts_with(&central)`), then `path_reveal_item:90–94`; command `src-tauri/src/commands/mod.rs:289–292`.
+
+**Fresh safe reproduction:** `E/reveal-probe.rs` includes the actual production `log_reveal.rs` verbatim, stubbing only its integration dependencies (the expansion helper matches `environment.rs`). In a disposable temp tree, create `home/.skillshub/escape` as a directory symlink to `outside`, and create the audit sentinel `outside/private.txt`. With **no known targets**, request `home/.skillshub/escape/private.txt`. Admission succeeds, `symlink_metadata` follows the intermediate link, and the resolver returns that pathname to be revealed. `reveal-probe.txt` proves its canonical destination is the outside sentinel (`outside=true`). Nothing was opened or executed. This is a demonstrated **resource-admission bypass**, not the old launch exploit, shell injection, or a claim of a remote exploit.
+
+A lexical prefix does not establish that the selected descendant is a managed central resource. The existing dangling-link test covers a **leaf** link only; it does not cover traversal through one. Keeping the safe reveal-only operation is necessary but does not make the new admission claim true.
+
+**Concrete fix:** for D16, the narrowest door is an exact app-recorded artifact/central-copy identity; it does not need arbitrary central descendants. If central-descendant Reveal remains a deliberate feature, validate the selected item's **ancestor traversal** against the resolved central root before passing it to the opener. Preserve selection of the final symlink itself (including a dangling link), and handle a configured central root that is itself a symlink; simply canonicalizing/rejecting every leaf link is not the fix. Add real temp-dir tests for an outside-pointing intermediate link, an in-root link, a symlinked root, missing descendants and a dangling leaf. Retain the exact recorded-target branch and reveal-only native operation.
+
+#### R2 — P2 — “Plain absolute” does not reject malformed input or normalize leaf separators
+
+**Location:** `src-tauri/src/core/log_reveal.rs:73–82,131–139`.
+
+The same pure probe demonstrates:
+
+- `~/.skillshub/bad\0name` is **admitted**. Its stat fails, and the fallback selects the central folder rather than returning `notManaged`. Invalid input is misreported as a legitimate vanished item.
+- `~/.skillshub/./file` is admitted despite the stated “no `.`” policy: Rust `Path::components()` normalizes interior `.` before the check. This alone does not escape the root.
+- A trailing slash is accepted, but the original string is returned. On Unix, `symlink_metadata(link/)` follows a directory link (`is_symlink=false` versus true without the slash). A **dangling leaf** with `/` falls back to the central folder instead of selecting the link; the bare spelling correctly selects it.
+
+**Concrete fix:** reject NUL before any filesystem probe; make dot handling explicitly reject raw dot segments or explicitly normalize/document them; normalize harmless trailing separators before admission/probing so equivalent accepted paths keep leaf-link semantics. Preserve `..` refusal after `~` expansion (both tested forms are already refused). Add these cases to the real tests. This is lower severity than R1 and does not recreate executable launch.
+
+### Verdicts on the implementer's four questions
+
+1. **Recorded owned targets + central resources is a reasonable intended boundary, but not the current lexical implementation.** Project assignments are included via Delete's own `resolve_assignment_artifact` planner, not a second naming rule. A random path under a Tool's skills directory is correctly refused, as are never-owned markers. After a partial Delete, **successful** rows are no longer recorded and are not admitted; that is correct because `DeleteModal` offers Reveal only for **failed/kept** targets, whose owning rows survive under ADR-0002. If a later action removes that record, refusing the stale report path is preferable to giving arbitrary old strings permanent authority. Do not widen admission to whole Tool directories to fix this nonexistent report mismatch. Fix R1, or narrow central admission to recorded identities.
+2. **Selecting the nearest existing ancestor is acceptable; do not require `gone` for every vanished leaf.** It gives the operator a useful filesystem location and, crucially, never invokes a default app handler. A recorded path below an `.app` or executable ancestor now selects that ancestor safely. `gone` means no selectable ancestor, not merely a missing leaf. On a real mounted filesystem `/Volumes` or `/` can remain, so the all-probes-false `gone` test is a failure-policy test, not proof that an ordinary missing volume necessarily produces `gone`. Malformed input must be refused before fallback (R2).
+3. **Accept the narrower list-key scope, including inspector buttons and sidebar.** The signature contract says **row navigation**, not global next/previous while operating on an inspector control. The operator can return through the established Tab bridge/Escape route. Preserving a local control's context and native reader selection is safer than silently retargeting the library; no requirement demands inspector-local j/k.
+4. **Accept sheet-first Escape.** A modal sheet owns the keyboard; mutating selection in the inert background first would violate that boundary. Expanded sheet → collapse → close → clear selection once back in the list is intentional responsive behavior, not a defect to equalize with the nonmodal desktop inspector. It matches the original Acceptance's explicit sheet qualification.
+
+### Fresh flow, accessibility and gate evidence
+
+- `gate-dark-1280.json` and `gate-light-960.json`: **92 sampled stops each**, no BODY or document reset; three rows → Disable (Cancel initially focused) → all eight marks disabled per row → Refresh leaves them disabled → Enable re-syncs. Subsequent select-all confirmation and independent state total agree: **25 skills / 8 Tools / 80 targets / 12 assignments / 1 already off** (post-Refresh, not the pristine 63-target state).
+- `delete-dark-1280.json` and `delete-light-960.json`: **35 sampled stops each**, no BODY or document reset; locked release-train → report H2, named kept global/project paths, fixture Reveal records the global path; explicitly supplemental fixture unlock → trusted Retry → dialog gone, skill absent, **retired-playbook row** focused. This checks the UI/platform wiring, not native admission (which is checked separately above). Total primary sampled stops: **254, zero BODY**; no claim about unsampled micro-intervals.
+- **Four axe 4.10.3 runs**: failures/dark/1280 and failures/light/960, each rail + count dialog, **zero violations**. Incompletes: rail color-contrast (6 dark / 13 light), dialog aria-hidden-focus (2 each). Rendered enabled text minima: rail **5.22 dark / 4.95 light**; confirmation **4.68 dark / 4.95 light**. `extra-*` reduced-motion first frame: opacity 1, translate none, transition none/0s, non-inert. Inspected fresh `rail-dark-1280.png` and `delete-report-light-960.png`; detector over changed UI returns `[]`. No whole-app or native accessibility certification is inferred.
+- `cargo test log_reveal`: **14 passed** (10 Reveal admission/selection tests, four log-folder cases), opener not invoked. `cargo test export_bindings`: **1 passed / 803 filtered**. **`git diff --stat -- src/bindings/index.ts` empty** (`binding-drift.txt`, zero bytes). The committed binding's only semantic wire change is `REVEAL_PATH_FAILED.reason` and its exported three-value type; generated documentation changes accompany it. Command arguments remain `revealPath(path: string)`. All three reason branches and EN keys are present (`opener` retains existing `revealPath.failed`); description tests pass.
+- Focused frontend suite: **4 files / 245 tests passed** (`frontend-targeted.txt`). Additional `cargo test --all`: **804 passed** (`cargo-all.txt`).
+
+Fresh command `npm run version:check && npm run check`, `E/gate.txt`:
+
+```text
+Version OK (1.2.18)
+styles:check ok — App.css 2076 counted lines (ceiling), 24 migrated file(s)
+Test Files  40 passed (40)
+Tests       864 passed (864)
+tsc -b && vite build: passed (built in 2.04s)
+cargo fmt --check: passed
+cargo clippy -- -D warnings: passed
+cargo test: 804 passed; 0 failed
+RECHECK_GATE_EXIT=0
+```
+
+### Acceptance
+
+**FIX-THEN-PASS — ticket 13's full D31 acceptance remains ungranted solely on the Reveal admission boundary (R1); R2 is a documented P2 companion fix.** The affected keyboard/selection/Delete fixture scope passes, A1/A2/A4 are closed, and the original executable-opening branch is gone. This is not a fresh whole-product audit or a reopening of accepted BACKLOG #66, ticket 14's progress-overlay debt, or ticket 17's fold/CSS handoff.
+
+The next bounded check needs only the corrected Reveal admission/normalization rule, real temp-dir adversarial cases above, safe `.app`/executable/dangling/vanished handling, typed error/binding drift, and the normal gate. Do not repeat the UI matrix unless the fix changes UI or keyboard/dialog ownership. The orchestrator must retain this fix gate (recommended) or explicitly decide that central admission is only a lexical namespace hint, not managed-resource confinement; the present docs must not claim the latter without enforcing it. Operator VoiceOver/native release verification remains outstanding as before.
+
+### Residuals closed (2026-09-30, orchestrator)
+
+- **R1**: a central admission is now a lexical claim only — `admit_reveal_path` answers `(path, RevealAdmission::{RecordedTarget, CentralRepo})`, and `resolve_reveal_item` requires `central_contains` for a central item: the item is the root itself, or its **parent** canonicalises under the canonical root (the command passes `fs::canonicalize`). The leaf is never canonicalised, so a leaf link — dangling included — is selected as the link; an intermediate link that leaves the repo is `NotManaged`; a symlinked root contains its children by either spelling; a root that is not there is `Gone`. A recorded target stays an exact identity with no containment step. Tests: the pure `central_contains` matrix (escape link, leaf link, dangling leaf, symlinked root, missing root) and a store-backed run (escape → `NotManaged`; `escape/not-there` → the link itself selected; dangling selected; root gone → `Gone`).
+- **R2**: NUL refused before any probe; a `.` / `..` segment refused **as written** (`has_dot_segment` over the raw string, since `Path::components` drops interior `.`); the admitted path is normalised through `components()` so a trailing separator is dropped and a leaf link keeps its link semantics under the presence probe. Tests added.
+- Gate: `npm run version:check && npm run check` exit 0 — vitest 864, cargo 807 (17 `log_reveal`), App.css 2076 / 24 migrated, bindings unchanged. **D31 gate passed** for ticket 13. The four verdicts stand: recorded targets + physically-contained central descendants are the boundary; a vanished path selects its nearest existing ancestor (revealed, never opened); sidebar/inspector controls do not reach the row keys; the sheet closes before the background selection clears.

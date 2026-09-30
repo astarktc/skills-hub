@@ -286,9 +286,14 @@ pub async fn reveal_path(
         resolve_central_repo_path_for_app(&app, &store).map_err(CommandError::from_anyhow)?;
     let reported = path.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let item = resolve_reveal_item(&store, &home, &central_repo, &path, |p| {
-            p.symlink_metadata().is_ok()
-        })?;
+        let item = resolve_reveal_item(
+            &store,
+            &home,
+            &central_repo,
+            &path,
+            |p| p.symlink_metadata().is_ok(),
+            |p| std::fs::canonicalize(p).ok(),
+        )?;
         app.opener().reveal_item_in_dir(&item).map_err(|err| {
             anyhow::Error::from(SignalError::RevealPathFailed {
                 path: reported,

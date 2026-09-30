@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::core::errors::{RevealPathFailure, SignalError};
 use crate::core::log_reveal::{
-    admit_reveal_path, log_reveal_target, path_reveal_item, resolve_reveal_item, LogRevealTarget,
+    admit_reveal_path, central_contains, log_reveal_target, path_reveal_item, resolve_reveal_item,
+    LogRevealTarget, RevealAdmission,
 };
 use crate::core::project_sync;
 use crate::core::skill_store::{
@@ -88,7 +89,11 @@ fn known() -> Vec<PathBuf> {
 }
 
 fn admit(requested: &str) -> Option<PathBuf> {
-    admit_reveal_path(requested, Path::new(HOME), Path::new(CENTRAL), &known())
+    admit_reveal_path(requested, Path::new(HOME), Path::new(CENTRAL), &known()).map(|(p, _)| p)
+}
+
+fn admission(requested: &str) -> Option<RevealAdmission> {
+    admit_reveal_path(requested, Path::new(HOME), Path::new(CENTRAL), &known()).map(|(_, via)| via)
 }
 
 /// A path the store records (the identity a Delete report carries) is
@@ -107,6 +112,39 @@ fn a_recorded_target_or_a_central_repo_path_is_admitted() {
     );
     assert!(admit("/Users/u/.skillshub/release-train/SKILL.md").is_some());
     assert!(admit("/Users/u/.skillshub").is_some());
+    assert_eq!(
+        admission("/Users/u/.claude/skills/release-train"),
+        Some(RevealAdmission::RecordedTarget)
+    );
+    assert_eq!(
+        admission("/Users/u/.skillshub/release-train"),
+        Some(RevealAdmission::CentralRepo)
+    );
+}
+
+/// Malformed input is refused before any probe: a NUL byte, a `.` segment
+/// as written (`Path::components` would silently drop it), `..` anywhere.
+/// A harmless trailing separator is normalised away so a leaf link keeps
+/// its link semantics under the presence probe.
+#[test]
+fn malformed_input_is_refused_and_a_trailing_separator_is_normalised() {
+    for requested in [
+        "/Users/u/.skillshub/bad\0name",
+        "~/.skillshub/bad\0name",
+        "/Users/u/.skillshub/./release-train",
+        "/Users/u/./.skillshub/release-train",
+        "/Users/u/.claude/skills/release-train/.",
+    ] {
+        assert_eq!(admit(requested), None, "{requested:?} must be refused");
+    }
+    assert_eq!(
+        admit("/Users/u/.skillshub/release-train/"),
+        Some(PathBuf::from("/Users/u/.skillshub/release-train"))
+    );
+    assert_eq!(
+        admit("/Users/u/.skillshub/release-train//"),
+        Some(PathBuf::from("/Users/u/.skillshub/release-train"))
+    );
 }
 
 /// Anything else is refused before the filesystem is touched: an app
@@ -232,6 +270,118 @@ fn a_path_with_no_existing_ancestor_has_no_item() {
     );
 }
 
+// ── Reveal in Finder: physical containment under the central repo ────────
+
+/// A central admission is a lexical claim; the item selected must sit in
+/// the repo physically: an intermediate directory link pointing outside
+/// fails, a leaf link (dangling too) is selected as the link, a symlinked
+/// root still contains its own children, the root itself always counts.
+#[cfg(unix)]
+#[test]
+fn central_containment_follows_ancestors_but_never_the_leaf() {
+    let tmp = tempfile::tempdir().unwrap();
+    let central = tmp.path().join("home/.skillshub");
+    let outside = tmp.path().join("outside");
+    fs::create_dir_all(central.join("release-train")).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("private.txt"), "secret").unwrap();
+    std::os::unix::fs::symlink(&outside, central.join("escape")).unwrap();
+    std::os::unix::fs::symlink(tmp.path().join("gone"), central.join("dangling")).unwrap();
+    std::os::unix::fs::symlink(&outside, central.join("leaf-link")).unwrap();
+    let root_link = tmp.path().join("central-link");
+    std::os::unix::fs::symlink(&central, &root_link).unwrap();
+    let canonical = |p: &Path| fs::canonicalize(p).ok();
+
+    assert_eq!(central_contains(&central, &central, canonical), Some(true));
+    assert_eq!(
+        central_contains(&central, &central.join("release-train"), canonical),
+        Some(true)
+    );
+    // Through the escape link: the parent resolves outside.
+    assert_eq!(
+        central_contains(&central, &central.join("escape/private.txt"), canonical),
+        Some(false)
+    );
+    // The leaf may be a link — selected, not followed.
+    assert_eq!(
+        central_contains(&central, &central.join("leaf-link"), canonical),
+        Some(true)
+    );
+    assert_eq!(
+        central_contains(&central, &central.join("dangling"), canonical),
+        Some(true)
+    );
+    // A symlinked root contains its children by either spelling.
+    assert_eq!(
+        central_contains(&root_link, &root_link.join("release-train"), canonical),
+        Some(true)
+    );
+    assert_eq!(
+        central_contains(&root_link, &central.join("release-train"), canonical),
+        Some(true)
+    );
+    // A root that is not there resolves nothing.
+    assert_eq!(
+        central_contains(
+            &tmp.path().join("nope"),
+            &tmp.path().join("nope/x"),
+            canonical
+        ),
+        None
+    );
+}
+
+/// Through the store: a request under the central repo that traverses an
+/// outside-pointing link is `NotManaged`; the link itself (a leaf in the
+/// repo) and a dangling leaf are selected; a request whose root is gone is
+/// `Gone`.
+#[cfg(unix)]
+#[test]
+fn a_central_request_through_an_outside_link_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let central = home.join(".skillshub");
+    let store = make_store(tmp.path());
+    let outside = tmp.path().join("outside");
+    fs::create_dir_all(&central).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("private.txt"), "secret").unwrap();
+    std::os::unix::fs::symlink(&outside, central.join("escape")).unwrap();
+    let dangling = central.join("dangling");
+    std::os::unix::fs::symlink(tmp.path().join("gone"), &dangling).unwrap();
+    let probe = |p: &Path| p.symlink_metadata().is_ok();
+    let canonical = |p: &Path| fs::canonicalize(p).ok();
+    let reveal = |requested: &Path| {
+        resolve_reveal_item(
+            &store,
+            &home,
+            &central,
+            &requested.to_string_lossy(),
+            probe,
+            canonical,
+        )
+    };
+
+    assert_eq!(
+        refusal(reveal(&central.join("escape/private.txt"))),
+        RevealPathFailure::NotManaged
+    );
+    // Nothing under the link: the fallback lands on the link itself, which
+    // sits in the repo — selected as the link, never followed.
+    assert_eq!(
+        reveal(&central.join("escape/not-there")).unwrap(),
+        central.join("escape")
+    );
+    assert_eq!(reveal(&dangling).unwrap(), dangling);
+    assert_eq!(reveal(&central).unwrap(), central);
+
+    fs::remove_dir_all(&central).unwrap();
+    assert_eq!(
+        refusal(reveal(&central.join("release-train"))),
+        RevealPathFailure::Gone
+    );
+}
+
 // ── Reveal in Finder: against the store (temp dirs) ──────────────────────
 
 fn make_store(base: &Path) -> SkillStore {
@@ -330,7 +480,14 @@ fn a_reported_target_is_selected_and_a_vanished_one_selects_its_ancestor() {
     fs::create_dir_all(&assigned).unwrap();
     let probe = |p: &Path| p.symlink_metadata().is_ok();
     let reveal = |requested: &Path| {
-        resolve_reveal_item(&store, &home, &central, &requested.to_string_lossy(), probe)
+        resolve_reveal_item(
+            &store,
+            &home,
+            &central,
+            &requested.to_string_lossy(),
+            probe,
+            |p| fs::canonicalize(p).ok(),
+        )
     };
 
     assert_eq!(reveal(&global).unwrap(), global);
@@ -372,7 +529,8 @@ fn an_unrecorded_path_is_refused_and_a_vanished_volume_is_gone() {
                 &home,
                 &central,
                 &requested.to_string_lossy(),
-                probe
+                probe,
+                |p| fs::canonicalize(p).ok(),
             )),
             RevealPathFailure::NotManaged,
             "{requested:?}"
@@ -384,7 +542,8 @@ fn an_unrecorded_path_is_refused_and_a_vanished_volume_is_gone() {
             &home,
             &central,
             &global.to_string_lossy(),
-            |_| false
+            |_| false,
+            |p| fs::canonicalize(p).ok(),
         )),
         RevealPathFailure::Gone
     );
