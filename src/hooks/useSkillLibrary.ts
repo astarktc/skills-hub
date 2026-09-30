@@ -86,9 +86,28 @@ export function useSkillLibrary({ t, reporter, surface }: SkillLibraryDeps) {
     if (!loading) closeDialog("invocationEdit");
   }, [closeDialog, loading]);
 
-  const pendingDeleteSkill = findSkill(layer("deleteSkill")?.skillId);
+  const findSkills = (ids: readonly string[] | undefined) =>
+    (ids ?? []).flatMap((id) => {
+      const found = findSkill(id);
+      return found ? [found] : [];
+    });
+
+  // Delete (D16): the skills it is about (those still in the catalog) and,
+  // once a Delete left something behind, its report — one dialog, two states.
+  const deleteLayer = layer("deleteSkill");
+  const pendingDelete = deleteLayer
+    ? { skills: findSkills(deleteLayer.skillIds), report: deleteLayer.report ?? null }
+    : null;
   const handleCloseDelete = useCallback(() => {
     if (!loading) closeDialog("deleteSkill");
+  }, [closeDialog, loading]);
+
+  // A wide verb's count-bearing confirmation (the bulk rail): the verb and
+  // the skills it would act on, resolved now.
+  const countLayer = layer("confirmCount");
+  const countConfirm = countLayer ? { verb: countLayer.verb, skills: findSkills(countLayer.skillIds) } : null;
+  const handleCloseCountConfirm = useCallback(() => {
+    if (!loading) closeDialog("confirmCount");
   }, [closeDialog, loading]);
 
   // Change source: which skill the modal is open for and the kind it opens on.
@@ -140,7 +159,7 @@ export function useSkillLibrary({ t, reporter, surface }: SkillLibraryDeps) {
   const handleCloseDetach = useCallback(() => {
     if (!loading) closeDialog("detachSkill");
   }, [closeDialog, loading]);
-  const assignProjectSkill = findSkill(layer("assignProject")?.skillId);
+  const assignProjectSkills = findSkills(layer("assignProject")?.skillIds);
   const handleCloseAssignProject = useCallback(() => {
     closeDialog("assignProject");
   }, [closeDialog]);
@@ -170,8 +189,10 @@ export function useSkillLibrary({ t, reporter, surface }: SkillLibraryDeps) {
     isSkillNameTaken,
     invocationEditSkill,
     closeInvocationEdit,
-    pendingDeleteSkill,
+    pendingDelete,
     handleCloseDelete,
+    countConfirm,
+    handleCloseCountConfirm,
     repointSelection,
     pendingRepointSkill,
     handleCloseRepoint,
@@ -179,7 +200,7 @@ export function useSkillLibrary({ t, reporter, surface }: SkillLibraryDeps) {
     previewRepoint,
     pendingDetachSkill,
     handleCloseDetach,
-    assignProjectSkill,
+    assignProjectSkills,
     handleCloseAssignProject,
   };
 }

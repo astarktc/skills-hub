@@ -22,7 +22,10 @@
     "src/components/skills/ExplorePreviewView.tsx",
     "src/components/skills/modals/RepointModal.tsx",
     "src/components/skills/modals/DetachModal.tsx",
-    "src/components/skills/modals/AssignProjectModal.tsx"
+    "src/components/skills/modals/AssignProjectModal.tsx",
+    "src/components/skills/modals/DeleteModal.tsx",
+    "src/components/skills/modals/CountConfirmModal.tsx",
+    "src/components/skills/BulkRail.tsx"
   ],
   "rawColourExempt": [
     {

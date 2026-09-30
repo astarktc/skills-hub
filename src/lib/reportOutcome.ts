@@ -481,10 +481,10 @@ export function removalOutcome(
     out.toast = toast("skipped", ctx.t("unsyncNothingPlanned"));
     return out;
   }
+  // A Disable over several skills (the bulk rail, D8) reads as the count
+  // line over its Sync targets: "412 disabled · 3 failed" (D10).
   if (ctx.action === "all")
-    out.toast = failed
-      ? toast("failure", ctx.t("unsyncPartial", { count: counts.removed, failed: counts.failed }))
-      : toast("success", ctx.t("unsyncAllComplete", { count: counts.removed }));
+    out.toast = headlineToast(ctx.t, "disabled", { done: counts.removed + counts.cleared, failed: counts.failed });
   if (ctx.action === "toggle" && !failed)
     out.toast = toast("success", ctx.t("status.syncDisabled"));
   if (ctx.action === "bulkUnassign")
@@ -776,7 +776,10 @@ function foldSync(
  */
 export function enableOutcome(
   report: EnableReport,
-  ctx: ReportContext,
+  ctx: ReportContext & {
+    /** Several skills (the bulk rail): the headline is the count line over the targets, always. */
+    batch?: boolean;
+  },
 ): Outcome<PlainEntry> {
   const { out: global, tally } = foldSync(report.global, { ...ctx, action: "toggle" });
   const projects = projectSyncOutcome(report.projects, { ...ctx, action: "toggleOn" });
@@ -784,25 +787,27 @@ export function enableOutcome(
   const errors = [...global.errors, ...projects.errors];
   const warnings = [...global.warnings, ...projects.warnings];
   const notes = [...global.notes, ...projects.notes];
+  // Counted in targets, global and project alike: an assignment already in
+  // place is enabled too.
+  const enabledTally: OutcomeTally = {
+    done: [{ verb: "enabled", count: tally.synced + projectCounts.synced + projectCounts.alreadyAssigned }],
+    counts: {
+      failed: tally.failed + projectCounts.failed,
+      skipped: tally.skipped + projectCounts.skipped,
+      declined: tally.declined + projectCounts.declined,
+    },
+  };
   return {
-    toast:
-      errors.length || warnings.length || notes.length
+    toast: ctx.batch
+      ? toast(headlineTone(enabledTally.counts), tallyHeadline(ctx.t, enabledTally), detailOf(notes))
+      : errors.length || warnings.length || notes.length
         ? null
         : toast("success", ctx.t("status.targetsEnabled")),
     errors,
     warnings,
     notes,
     completion: { reload: true, closeModal: errors.length === 0, conflict: false },
-    // Counted in targets, global and project alike: an assignment already in
-    // place is enabled too.
-    tally: {
-      done: [{ verb: "enabled", count: tally.synced + projectCounts.synced + projectCounts.alreadyAssigned }],
-      counts: {
-        failed: tally.failed + projectCounts.failed,
-        skipped: tally.skipped + projectCounts.skipped,
-        declined: tally.declined + projectCounts.declined,
-      },
-    },
+    tally: enabledTally,
   };
 }
 
@@ -1009,18 +1014,133 @@ export function installOutcome(
   return out;
 }
 
-/** Delete keeps failed rows and the confirmation available for retry. */
+/**
+ * One skill's Delete as it settled: its `RemovalReport`, or the whole-command
+ * error its `delete_managed_skill` threw (a skill of a bulk Remove that could
+ * not even be planned). A bulk Remove is one settlement per skill, folded as
+ * one run.
+ */
+export type DeleteSettlement = { skillId: string; name: string } & (
+  | { report: RemovalReport }
+  | { error: unknown }
+);
+
+const deleted = (settlement: DeleteSettlement) =>
+  "report" in settlement && settlement.report.record_deleted;
+
+/**
+ * Delete keeps failed rows and the dialog available for retry (it becomes the
+ * report, D16). One skill reads as a sentence; several as the count line over
+ * skills ("10 removed · 2 failed", D10). Each kept target is an error entry
+ * (named by skill in a batch); a thrown skill is one entry of its own. The
+ * dialog closes only when every skill went.
+ */
 export function deleteOutcome(
-  report: RemovalReport,
+  settled: readonly DeleteSettlement[],
   ctx: ReportContext,
 ): Outcome<PlainEntry> {
   const out = empty();
-  const failed = collectRemovalFailures(out, report, ctx, "errors.deleteKeptTargetTitle");
-  out.completion.closeModal = !failed;
-  out.toast = failed
-    ? toast("failure", ctx.t("status.skillDeleteKept", { failed: removalCounts(report).failed }))
-    : toast("success", ctx.t("status.skillRemoved"));
+  const batch = settled.length > 1;
+  let keptTargets = 0;
+  for (const settlement of settled) {
+    if (!("report" in settlement)) {
+      out.errors.push({
+        title: ctx.t("deleteReport.failedTitle", { name: settlement.name }),
+        message: errorMessage(ctx, settlement.error),
+      });
+      continue;
+    }
+    const part = empty();
+    collectRemovalFailures(part, settlement.report, ctx, "errors.deleteKeptTargetTitle");
+    keptTargets += removalCounts(settlement.report).failed;
+    out.errors.push(
+      ...(batch
+        ? part.errors.map((entry) => ({ ...entry, title: `${settlement.name}: ${entry.title}` }))
+        : part.errors),
+    );
+  }
+  const removed = settled.filter(deleted).length;
+  const failed = settled.length - removed;
+  out.completion.closeModal = failed === 0;
+  if (batch) out.toast = headlineToast(ctx.t, "removed", { done: removed, failed });
+  else
+    out.toast = failed
+      ? toast("failure", ctx.t("status.skillDeleteKept", { failed: keptTargets }))
+      : toast("success", ctx.t("status.skillRemoved"));
   return out;
+}
+
+/** One kept target of a Delete, as the report dialog shows it. */
+export type DeleteKeptTarget = {
+  path: string;
+  /** Tool labels whose rows describe the path (a project's are "Tool · project"). */
+  tools: string[];
+  /** The typed failure, and its words (`describeCommandError`). */
+  error: unknown;
+  message: string;
+};
+
+/** One skill of a Delete, as the report dialog shows it (D16). */
+export type DeleteReportRow = {
+  skillId: string;
+  name: string;
+  deleted: boolean;
+  /** Where it was removed from: Tool labels (project rows "Tool · project"). */
+  removedFrom: string[];
+  kept: DeleteKeptTarget[];
+  /** A whole-command failure for this skill (nothing was planned), in words. */
+  failure: string | null;
+};
+
+/**
+ * The Delete dialog's report state: one row per skill, kept skills first
+ * (they carry Reveal / Retry), in settlement order otherwise. Only the
+ * `RemovalReport` decides what went and what stayed; the words come from the
+ * Tool catalog's labels and `describeCommandError`.
+ */
+export function deleteReportRows(
+  settled: readonly DeleteSettlement[],
+  ctx: ReportContext & { projectLabelById?: Readonly<Record<string, string>> },
+): DeleteReportRow[] {
+  const rowLabel = (row: RemovalReport["targets"][number]["rows"][number]) =>
+    row.scope === "assignment"
+      ? `${label(ctx, row.tool)} · ${ctx.projectLabelById?.[row.project_id] ?? row.project_id}`
+      : label(ctx, row.tool);
+  const unique = (values: string[]) => [...new Set(values)];
+  const rows = settled.map((settlement): DeleteReportRow => {
+    if (!("report" in settlement))
+      return {
+        skillId: settlement.skillId,
+        name: settlement.name,
+        deleted: false,
+        removedFrom: [],
+        kept: [],
+        failure: errorMessage(ctx, settlement.error),
+      };
+    const { report } = settlement;
+    return {
+      skillId: settlement.skillId,
+      name: settlement.name,
+      deleted: report.record_deleted,
+      removedFrom: unique(
+        report.targets.filter((target) => target.status.status === "removed").flatMap((target) => target.rows.map(rowLabel)),
+      ),
+      kept: report.targets.flatMap((target) =>
+        target.status.status === "failed"
+          ? [
+              {
+                path: target.path,
+                tools: unique(target.rows.map(rowLabel)),
+                error: target.status.error,
+                message: errorMessage(ctx, target.status.error),
+              },
+            ]
+          : [],
+      ),
+      failure: null,
+    };
+  });
+  return [...rows.filter((row) => !row.deleted), ...rows.filter((row) => row.deleted)];
 }
 
 /** D10's precedence as a rank: the strongest tone of several parts wins. */

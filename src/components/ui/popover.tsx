@@ -7,7 +7,10 @@ import { floatingSurface } from "./styles";
  * Popover — non-modal floating panel anchored to its trigger (Base UI:
  * collision-aware, origin-aware, Escape closes it and returns focus to the
  * trigger). Appears instantly. Pass the trigger through `render`:
- * `<PopoverTrigger render={<Button />}>…</PopoverTrigger>`.
+ * `<PopoverTrigger render={<Button />}>…</PopoverTrigger>`. A popover a
+ * control raises on its own terms (a row switch's inline confirmation) has no
+ * Trigger: it is controlled (`open`), positioned on `anchor`, and names
+ * where focus goes in (`initialFocus`) and back (`finalFocus`).
  */
 const Popover = PopoverPrimitive.Root;
 const PopoverTrigger = PopoverPrimitive.Trigger;
@@ -19,11 +22,12 @@ function PopoverContent({
   alignOffset = 0,
   side = "bottom",
   sideOffset = 4,
+  anchor,
   ...props
 }: Omit<PopoverPrimitive.Popup.Props, "className"> &
   Pick<
     PopoverPrimitive.Positioner.Props,
-    "align" | "alignOffset" | "side" | "sideOffset"
+    "align" | "alignOffset" | "side" | "sideOffset" | "anchor"
   > & {
     /** Layout only (width). */
     className?: string;
@@ -35,6 +39,7 @@ function PopoverContent({
         alignOffset={alignOffset}
         side={side}
         sideOffset={sideOffset}
+        anchor={anchor}
         className="z-50"
       >
         <PopoverPrimitive.Popup

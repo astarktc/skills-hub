@@ -49,6 +49,17 @@ describe("focusAfter (D21)", () => {
     expect(focusAfter({ verb, removed }, ctx)).toEqual(expected);
   });
 
+  it.each([
+    ["a bulk Delete steps past every removed row to the next", ["b", "c"], ["a", "b", "c", "d"], { kind: "row", skillId: "d" }],
+    ["a bulk Delete of the tail → the nearest row before the first removed", ["c", "d"], ["a", "b", "c", "d"], { kind: "row", skillId: "b" }],
+    ["a bulk Delete of scattered rows → the first after the last removed", ["a", "c"], ["a", "b", "c", "d"], { kind: "row", skillId: "d" }],
+    ["a bulk Delete of every row → the surface heading", ["a", "b"], ["a", "b"], { kind: "heading", surface: "skills" }],
+  ] as const)("%s", (_name, removedIds, rows, expected) => {
+    expect(
+      focusAfter({ verb: "delete", removed: true }, { skillId: removedIds[0], removedIds, order: rows, surface: "skills" }),
+    ).toEqual(expected);
+  });
+
   it("a dialog's fallback chain is the focused row, the inspector's heading, then the surface heading", () => {
     expect(dialogFallback({ focusedSkillId: "b", surface: "skills" })).toEqual([
       { kind: "row", skillId: "b" },
@@ -132,6 +143,9 @@ describe("pending subjects", () => {
     expect(isPendingSkill(skill, "s2")).toBe(false);
     expect([...pendingCellKeys(pending({ subject: { kind: "cell", ids: ["s1:pi"] } }))]).toEqual(["s1:pi"]);
     expect(pendingCellKeys(skill).size).toBe(0);
+    const several = pending({ subject: { kind: "skills", ids: ["s1", "s2"] } });
+    expect(isPendingSkill(several, "s2")).toBe(true);
+    expect(isPendingSkill(several, "s3")).toBe(false);
   });
 
   it.each([
@@ -140,6 +154,7 @@ describe("pending subjects", () => {
     ["a cancellable skill action", pending({ subject: { kind: "skill", id: "s1" }, cancellable: true }), true],
     ["a small skill action (inline)", pending({ subject: { kind: "skill", id: "s1" } }), false],
     ["a cell action (inline)", pending({ subject: { kind: "cell", ids: ["s1:pi"] } }), false],
+    ["a bulk Remove (its dialog shows it), even streamed", pending({ subject: { kind: "skills", ids: ["s1", "s2"] }, progress: { done: 1, total: 2 } }), false],
     ["nothing running", null, false],
   ] as const)("%s shows the progress surface: %s", (_name, value, expected) => {
     expect(showsProgressSurface(value)).toBe(expected);

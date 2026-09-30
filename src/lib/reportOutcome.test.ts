@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { resources } from "../i18n/resources";
 import type {
   BatchTargetOutcome,
+  EnableReport,
   ImportGroupStatus,
   ImportReport,
   InstallResultDto,
@@ -17,6 +18,7 @@ import {
   combineOutcomes,
   compositeHeadline,
   deleteOutcome,
+  deleteReportRows,
   HEADLINE_DONE_KEY,
   headlineTone,
   enableOutcome,
@@ -558,7 +560,7 @@ describe("removalOutcome", () => {
     const unsync = removalOutcome(report, { ...ctx, action: "all" });
     const project = projectRemovalOutcome(report, { ...ctx, action: "removeProject" });
     const configure = projectRemovalOutcome(report, { ...ctx, action: "configureTools" });
-    const deleted = deleteOutcome(report, ctx);
+    const deleted = deleteOutcome([{ skillId: "s1", name: "alpha", report }], ctx);
     for (const [out, key] of [
       [unsync, "errors.unsyncFailedTitle"],
       [project, "errors.projectRemovalFailedTitle"],
@@ -572,7 +574,11 @@ describe("removalOutcome", () => {
       ]);
       expect(out.completion.closeModal).toBe(false);
     }
-    expect(unsync.toast).toEqual({ kind: "warning", tone: "failure", message: t("unsyncPartial", { count: 2, failed: 3 }) });
+    expect(unsync.toast).toEqual({
+      kind: "warning",
+      tone: "failure",
+      message: [t("outcome.done.disabled", { count: 2 }), t("outcome.failed", { count: 3 })].join(" · "),
+    });
     expect(project.toast).toEqual({ kind: "warning", tone: "failure", message: t("projects.removeKept", { count: 2, failed: 3 }) });
     expect(configure.toast).toEqual({ kind: "warning", tone: "failure", message: t("projects.toolRemovalKept", { count: 2, failed: 3 }) });
     expect(deleted.toast).toEqual({ kind: "warning", tone: "failure", message: t("status.skillDeleteKept", { failed: 3 }) });
@@ -581,7 +587,7 @@ describe("removalOutcome", () => {
   });
 
   it("delete succeeds for removed targets and has kept/retry copy", () => {
-    expect(deleteOutcome({ ...removal(false), central_removed: true, record_deleted: true, cleared_markers: [] }, ctx)).toEqual({
+    expect(deleteOutcome([{ skillId: "s1", name: "alpha", report: { ...removal(false), central_removed: true, record_deleted: true, cleared_markers: [] } }], ctx)).toEqual({
       toast: { kind: "success", tone: "success", message: "status.skillRemoved" },
       errors: [], warnings: [], notes: [], completion: { reload: true, closeModal: true, conflict: false },
     });
@@ -614,8 +620,8 @@ describe("removalOutcome", () => {
             ? {
                 kind: fail ? "warning" : "success", tone: fail ? "failure" : "success",
                 message: fail
-                  ? t("unsyncPartial", { count: 0, failed: 1 })
-                  : t("unsyncAllComplete", { count: 1 }),
+                  ? t("outcome.failed", { count: 1 })
+                  : t("outcome.done.disabled", { count: 1 }),
               }
             : action === "toggle" && !fail
               ? { kind: "success", tone: "success", message: "status.syncDisabled" }
@@ -780,7 +786,7 @@ describe("removalOutcome", () => {
     }
   });
   it("delete's successful report reloads and closes", () => {
-    expect(deleteOutcome({ targets: [], central_removed: true, record_deleted: true, cleared_markers: [] }, ctx)).toEqual({
+    expect(deleteOutcome([{ skillId: "s1", name: "alpha", report: { targets: [], central_removed: true, record_deleted: true, cleared_markers: [] } }], ctx)).toEqual({
       toast: { kind: "success", tone: "success", message: "status.skillRemoved" },
       errors: [],
       warnings: [],
@@ -1942,5 +1948,90 @@ describe("combineOutcomes (one action, several reports, one run)", () => {
       message: line(syncedN(1), enabledN(1), ["outcome.declined", 2]),
     });
     expect(out.notes).toHaveLength(2);
+  });
+});
+
+describe("Delete over several skills (ticket 13, D16)", () => {
+  const kept: RemovalReport = {
+    targets: [
+      {
+        path: "/tools/codex/release-train",
+        rows: [{ scope: "global_target", id: "t1", skill_id: "rt", tool: "codex" }],
+        status: { status: "removed" },
+      },
+      {
+        path: "/tools/claude/release-train",
+        rows: [{ scope: "global_target", id: "t2", skill_id: "rt", tool: "claude" }],
+        status: { status: "failed", error: { code: "OTHER", message: "Permission denied" } },
+      },
+      {
+        path: "/work/mono/.agents/skills/release-train",
+        rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "rt", tool: "claude" }],
+        status: { status: "removed" },
+      },
+    ],
+    central_removed: false,
+    record_deleted: false,
+    cleared_markers: [],
+  };
+  const gone: RemovalReport = { targets: [], central_removed: true, record_deleted: true, cleared_markers: [] };
+  const settled = [
+    { skillId: "a", name: "alpha", report: gone },
+    { skillId: "rt", name: "release-train", report: kept },
+    { skillId: "b", name: "beta", error: { code: "OTHER", message: "store locked" } },
+  ];
+
+  it("reads as the count line over skills, names each kept target by skill and closes only when all went", () => {
+    const out = deleteOutcome(settled, ctx);
+    expect(out.toast).toEqual({
+      kind: "warning",
+      tone: "failure",
+      message: [t("outcome.done.removed", { count: 1 }), t("outcome.failed", { count: 2 })].join(" · "),
+    });
+    expect(out.errors).toEqual([
+      { title: `release-train: ${t("errors.deleteKeptTargetTitle", { tool: "CLAUDE" })}`, message: "Permission denied" },
+      { title: t("deleteReport.failedTitle", { name: "beta" }), message: "store locked" },
+    ]);
+    expect(out.completion).toEqual({ reload: true, closeModal: false, conflict: false });
+    const clean = deleteOutcome([settled[0], { ...settled[0], skillId: "c" }], ctx);
+    expect(clean.toast).toEqual({ kind: "success", tone: "success", message: t("outcome.done.removed", { count: 2 }) });
+    expect(clean.completion.closeModal).toBe(true);
+  });
+
+  it("turns each settlement into a report row: kept first, removed-from labels, kept paths with their words", () => {
+    const rows = deleteReportRows(settled, { ...ctx, projectLabelById: { p1: "monorepo" } });
+    expect(rows.map((row) => row.skillId)).toEqual(["rt", "b", "a"]);
+    expect(rows[0]).toEqual({
+      skillId: "rt",
+      name: "release-train",
+      deleted: false,
+      removedFrom: ["codex", "CLAUDE · monorepo"],
+      kept: [
+        {
+          path: "/tools/claude/release-train",
+          tools: ["CLAUDE"],
+          error: { code: "OTHER", message: "Permission denied" },
+          message: "Permission denied",
+        },
+      ],
+      failure: null,
+    });
+    expect(rows[1]).toMatchObject({ deleted: false, kept: [], failure: "store locked" });
+    expect(rows[2]).toMatchObject({ deleted: true, kept: [], removedFrom: [] });
+  });
+});
+
+describe("Enable over several skills (ticket 13)", () => {
+  it("reads as the count line over targets, even when clean", () => {
+    const report: EnableReport = {
+      global: [
+        { skill_id: "a", skill_name: "alpha", tool_key: "claude", status: { status: "synced", outcome: { mode_used: "symlink", target_path: "/x", replaced: false } } },
+      ],
+      projects: { items: [] },
+    };
+    const single = enableOutcome(report, ctx);
+    expect(single.toast?.message).toBe("status.targetsEnabled");
+    const batch = enableOutcome(report, { ...ctx, batch: true });
+    expect(batch.toast).toEqual({ kind: "success", tone: "success", message: t("outcome.done.enabled", { count: 1 }) });
   });
 });

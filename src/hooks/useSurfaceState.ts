@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { RepointKind } from "../lib/skillPresentation";
 import type { OverwriteChoice, OverwriteRow } from "../lib/overwriteAsk";
+import type { DeleteSettlement } from "../lib/reportOutcome";
 
 /**
  * Surface state: "what is on screen", as one value — the area, the focused
@@ -55,6 +56,13 @@ export type FocusedSubject = NonNullable<Route["focused"]>;
 /** A list surface that owns a selection (D4). */
 export type SelectionSurface = "skills" | "matrix" | "explore";
 
+/**
+ * The wide verbs whose count-bearing confirmation is a `confirmCount` dialog
+ * (ticket 13): the door opens it for a verb over several skills called
+ * without `confirmed`; its Confirm re-runs the verb with `confirmed: true`.
+ */
+export type CountVerb = "syncToTargets" | "disable" | "enable" | "update";
+
 /** Every modal the app shows, and what it is about. One union across worlds. */
 export type DialogState =
   // Skills world
@@ -62,11 +70,19 @@ export type DialogState =
   | { kind: "import" }
   | { kind: "gitPick" }
   | { kind: "localPick" }
-  | { kind: "deleteSkill"; skillId: string }
+  /**
+   * Delete (D16): the confirmation for one or several skills, and — once a
+   * Delete left something behind — the same dialog as its report (`report`,
+   * one settlement per skill).
+   */
+  | { kind: "deleteSkill"; skillIds: readonly string[]; report?: readonly DeleteSettlement[] }
+  /** A wide verb's count-bearing confirmation (Sync to Tools carries its Tool pick). */
+  | { kind: "confirmCount"; verb: CountVerb; skillIds: readonly string[] }
   | { kind: "invocationEdit"; skillId: string }
   | { kind: "repoint"; skillId: string; name: string; preselect: RepointKind }
   | { kind: "detachSkill"; skillId: string }
-  | { kind: "assignProject"; skillId: string }
+  /** Assign to project…: the picker for one skill or a selection. */
+  | { kind: "assignProject"; skillIds: readonly string[] }
   // Tools + sync world
   | { kind: "toolConfig" }
   | { kind: "newTools" }
@@ -219,18 +235,24 @@ function withoutTopmost(value: SurfaceValue, kind: DialogKind): SurfaceValue {
   return value;
 }
 
-/** The dialog kinds that are about one skill / one project. */
-const subjectOf = (layer: DialogLayer): { kind: "skill" | "project"; id: string } | null => {
+/**
+ * The dialog kinds that are about skills / one project. A dialog about
+ * several skills stays while any of them does (a Delete's report describes
+ * the kept ones).
+ */
+const subjectOf = (layer: DialogLayer): { kind: "skill" | "project"; ids: readonly string[] } | null => {
   switch (layer.kind) {
     case "deleteSkill":
+    case "confirmCount":
+    case "assignProject":
+      return { kind: "skill", ids: layer.skillIds };
     case "invocationEdit":
     case "repoint":
     case "detachSkill":
-    case "assignProject":
-      return { kind: "skill", id: layer.skillId };
+      return { kind: "skill", ids: [layer.skillId] };
     case "projectEdit":
     case "projectRemove":
-      return { kind: "project", id: layer.projectId };
+      return { kind: "project", ids: [layer.projectId] };
     default:
       return null;
   }
@@ -369,7 +391,7 @@ export function useSurfaceState() {
       }
       const stack = next.stack.filter((layer) => {
         const subject = subjectOf(layer);
-        return !subject || subject.kind !== kind || known.has(subject.id);
+        return !subject || subject.kind !== kind || subject.ids.some((id) => known.has(id));
       });
       if (stack.length !== next.stack.length) next = withStack(next, stack);
       commit(next, "replace");
@@ -446,6 +468,25 @@ export function useSurfaceState() {
   /** A flow is done with its dialog: remove it wherever it sits. */
   const dismissDialog = useCallback(
     (kind: DialogKind) => commit(withoutTopmost(valueRef.current, kind), "none"),
+    [commit],
+  );
+  /**
+   * Replace the topmost open dialog of the same kind in place (its position
+   * and the layers above it kept): a dialog that changes state — the Delete
+   * confirmation becoming its report — keeps its identity.
+   */
+  const updateDialog = useCallback(
+    (dialog: DialogState) => {
+      const prev = valueRef.current;
+      for (let i = prev.stack.length - 1; i >= 0; i--) {
+        if (prev.stack[i].kind === dialog.kind) {
+          const stack = [...prev.stack];
+          stack[i] = dialog;
+          commit({ ...prev, stack }, "none");
+          return;
+        }
+      }
+    },
     [commit],
   );
   /** Withdraw an offered dialog that is no longer relevant, open or queued. */
@@ -536,6 +577,7 @@ export function useSurfaceState() {
       openDialog,
       pushDialog,
       offerDialog,
+      updateDialog,
       closeDialog,
       dismissDialog,
       withdrawDialog,
@@ -558,6 +600,7 @@ export function useSurfaceState() {
       openDialog,
       pushDialog,
       offerDialog,
+      updateDialog,
       closeDialog,
       dismissDialog,
       withdrawDialog,
@@ -571,7 +614,15 @@ export type SurfaceState = ReturnType<typeof useSurfaceState>;
 /** What a world hook may do to the dialog stack. */
 export type DialogDoor = Pick<
   SurfaceState,
-  "isOpen" | "layer" | "openDialog" | "pushDialog" | "offerDialog" | "closeDialog" | "dismissDialog" | "withdrawDialog"
+  | "isOpen"
+  | "layer"
+  | "openDialog"
+  | "pushDialog"
+  | "offerDialog"
+  | "updateDialog"
+  | "closeDialog"
+  | "dismissDialog"
+  | "withdrawDialog"
 >;
 
 /**

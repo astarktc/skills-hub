@@ -9,6 +9,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { useRef, useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "./popover";
 import {
@@ -52,6 +53,43 @@ describe("Popover", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+});
+
+describe("Popover without a trigger (anchor)", () => {
+  function Inline() {
+    const [open, setOpen] = useState(false);
+    const anchor = useRef<HTMLButtonElement>(null);
+    const confirm = useRef<HTMLButtonElement>(null);
+    return (
+      <>
+        <button ref={anchor} type="button" onClick={() => setOpen(true)}>
+          Enable alpha
+        </button>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverContent anchor={anchor} initialFocus={confirm} finalFocus={anchor}>
+            <PopoverTitle>Sync again?</PopoverTitle>
+            <button ref={confirm} type="button">
+              Enable
+            </button>
+          </PopoverContent>
+        </Popover>
+      </>
+    );
+  }
+
+  it("opens on its own terms with focus on the named control; Escape returns focus to the anchor", async () => {
+    render(<Inline />);
+    const anchor = screen.getByRole("button", { name: "Enable alpha" });
+    anchor.focus();
+    fireEvent.click(anchor);
+    const popup = await screen.findByRole("dialog", { name: "Sync again?" });
+    await waitFor(() => expect(document.activeElement).toBe(within(popup).getByRole("button", { name: "Enable" })));
+
+    pressEscape();
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(anchor));
   });
 });
 

@@ -103,10 +103,15 @@ const AppSidebar = ({
       ? t("notifications.bellUnread", { count: unreadNotifications })
       : t("notifications.bell");
   const themeLabel = t("shell.theme", { theme: t(`themeOptions.${themePreference}`) });
+  // My Skills' keymap (`useSkillListKeymap`), in the order one uses it.
   const shortcuts: [string, string][] = [
     ["/", t("shell.shortcutSearch")],
+    [t("bulk.shortcuts.jk"), t("bulk.shortcuts.move")],
     [t("shell.shortcutEnter"), t("shell.shortcutOpen")],
-    [t("shell.shortcutEscape"), t("shell.shortcutBack")],
+    [t("bulk.shortcuts.x"), t("bulk.shortcuts.select")],
+    [t("bulk.shortcuts.shiftClick"), t("bulk.shortcuts.range")],
+    [t("bulk.shortcuts.modA"), t("bulk.shortcuts.selectAll")],
+    [t("shell.shortcutEscape"), t("bulk.shortcuts.clear")],
   ];
   return (
     <aside className="flex w-50 shrink-0 flex-col border-r border-sidebar-border bg-sidebar max-shell:w-14">

@@ -27,6 +27,12 @@ type ConfirmDialogProps = {
   cancelLabel: React.ReactNode;
   /** `danger` for destructive answers (destructive button, focus on Cancel). */
   tone?: "accent" | "danger";
+  /**
+   * Which answer takes focus as it opens: by default Cancel for `danger`,
+   * Confirm for `accent`. `cancel` for a wide, count-bearing question whose
+   * answer is not destructive but is large (the bulk rail's Disable, D8).
+   */
+  initialFocus?: "confirm" | "cancel";
   onConfirm: () => void;
   onCancel: () => void;
   /** The confirmed work is running: confirm shows busy, cancel is disabled. */
@@ -44,6 +50,7 @@ function ConfirmDialog({
   confirmLabel,
   cancelLabel,
   tone = "accent",
+  initialFocus,
   onConfirm,
   onCancel,
   pending = false,
@@ -66,7 +73,7 @@ function ConfirmDialog({
       <DialogContent
         size={size}
         showCloseButton={false}
-        initialFocus={tone === "danger" ? cancelRef : confirmRef}
+        initialFocus={(initialFocus ?? (tone === "danger" ? "cancel" : "confirm")) === "cancel" ? cancelRef : confirmRef}
         fallbackFocus={fallbackFocus}
       >
         <DialogHeader>

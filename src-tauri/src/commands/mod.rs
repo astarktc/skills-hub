@@ -28,7 +28,7 @@ use crate::core::installer::{
     list_git_skills, list_local_skills, GitSkillListing, InstallResult, InstallerPaths,
     LocalSkillCandidate,
 };
-use crate::core::log_reveal::log_reveal_target;
+use crate::core::log_reveal::{log_reveal_target, path_reveal_target};
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan, OnboardingScanScope};
 use crate::core::onboarding_import::{
     import_onboarding_selection as import_onboarding_selection_core, ImportPhase, ImportPolicy,
@@ -264,6 +264,41 @@ pub async fn open_log_folder(app: tauri::AppHandle) -> Result<(), CommandError> 
     .await
     .map_err(CommandError::internal)?
     .map_err(reveal_log_failed)
+}
+
+/// Reveal a path a report named — a Sync target a Delete could not remove
+/// (D16's "Reveal in Finder") — in the operator's file manager: selected in
+/// its folder while it is there, else its nearest existing ancestor opened
+/// (`core::log_reveal::path_reveal_target`). Showing a folder changes
+/// nothing, so any path is accepted. Every failure reaches the operator as
+/// `RevealPathFailed` with the chain as diagnostics.
+#[tauri::command]
+#[specta::specta]
+pub async fn reveal_path(app: tauri::AppHandle, path: String) -> Result<(), CommandError> {
+    let reported = path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let requested = PathBuf::from(&path);
+        let target = path_reveal_target(&requested, |p| p.symlink_metadata().is_ok())
+            .with_context(|| format!("nothing on the way to {:?} exists", requested))?;
+        match &target.selected {
+            Some(item) => app
+                .opener()
+                .reveal_item_in_dir(item)
+                .with_context(|| format!("failed to reveal {:?}", item)),
+            None => app
+                .opener()
+                .open_path(target.folder.to_string_lossy(), None::<&str>)
+                .with_context(|| format!("failed to open {:?}", target.folder)),
+        }
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(|err| {
+        CommandError::from(SignalError::RevealPathFailed {
+            path: reported,
+            detail: format!("{err:#}"),
+        })
+    })
 }
 
 /// Every failure of "Open log folder" is one typed condition carrying the

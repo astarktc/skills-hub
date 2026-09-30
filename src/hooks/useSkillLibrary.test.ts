@@ -146,10 +146,16 @@ describe("dialog subjects", () => {
   it("resolves each dialog's skill against the catalog", async () => {
     const setup = makeDeps();
     const { result } = await renderLibrary(setup);
-    act(() => result.current.surface.openDialog({ kind: "deleteSkill", skillId: "s1" }));
-    expect(result.current.pendingDeleteSkill).toEqual(setup.skills[0]);
+    act(() => result.current.surface.openDialog({ kind: "deleteSkill", skillIds: ["s1", "gone"] }));
+    expect(result.current.pendingDelete).toEqual({ skills: [setup.skills[0]], report: null });
     act(() => result.current.handleCloseDelete());
-    expect(result.current.pendingDeleteSkill).toBeNull();
+    expect(result.current.pendingDelete).toBeNull();
+    act(() => result.current.surface.openDialog({ kind: "confirmCount", verb: "disable", skillIds: ["s1"] }));
+    expect(result.current.countConfirm).toEqual({ verb: "disable", skills: [setup.skills[0]] });
+    act(() => result.current.handleCloseCountConfirm());
+    expect(result.current.countConfirm).toBeNull();
+    act(() => result.current.surface.openDialog({ kind: "assignProject", skillIds: ["s1"] }));
+    expect(result.current.assignProjectSkills).toEqual([setup.skills[0]]);
     act(() => result.current.surface.openDialog({ kind: "invocationEdit", skillId: "s1" }));
     expect(result.current.invocationEditSkill).toEqual(setup.skills[0]);
     act(() => result.current.closeInvocationEdit());
@@ -159,11 +165,11 @@ describe("dialog subjects", () => {
   it("a dialog stays put while an action runs", async () => {
     const setup = makeDeps();
     const { result, rerender } = await renderLibrary(setup);
-    act(() => result.current.surface.openDialog({ kind: "deleteSkill", skillId: "s1" }));
+    act(() => result.current.surface.openDialog({ kind: "deleteSkill", skillIds: ["s1"] }));
     setup.deps.reporter.loading = true;
     rerender();
     act(() => result.current.handleCloseDelete());
-    expect(result.current.pendingDeleteSkill).toEqual(setup.skills[0]);
+    expect(result.current.pendingDelete?.skills).toEqual([setup.skills[0]]);
   });
 
   it("warns and withdraws Change source when its skill is gone", async () => {

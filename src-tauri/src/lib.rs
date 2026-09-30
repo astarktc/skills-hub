@@ -56,6 +56,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::get_hidden_explore_skills,
             commands::cancel_current_operation,
             commands::open_log_folder,
+            commands::reveal_path,
             commands::projects::register_project,
             commands::projects::remove_project,
             commands::projects::list_projects,

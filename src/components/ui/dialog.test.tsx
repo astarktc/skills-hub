@@ -394,10 +394,12 @@ describe("Dialog answered through a pending value that disappears as it closes",
 describe("ConfirmDialog", () => {
   function Ask({
     tone,
+    initialFocus,
     onCancel,
     onConfirm,
   }: {
     tone: "accent" | "danger";
+    initialFocus?: "confirm" | "cancel";
     onCancel: () => void;
     onConfirm: () => void;
   }) {
@@ -408,6 +410,7 @@ describe("ConfirmDialog", () => {
         confirmLabel="Overwrite"
         cancelLabel="Keep existing"
         tone={tone}
+        initialFocus={initialFocus}
         onCancel={onCancel}
         onConfirm={onConfirm}
       >
@@ -447,6 +450,14 @@ describe("ConfirmDialog", () => {
       ),
     );
     expect(screen.queryByRole("button", { name: "close" })).toBeNull();
+  });
+
+  it("puts focus on Cancel for a large non-destructive question (initialFocus cancel)", async () => {
+    render(<Ask tone="accent" initialFocus="cancel" onCancel={() => {}} onConfirm={() => {}} />);
+    await openedDialog("Overwrite?");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Keep existing" })),
+    );
   });
 });
 

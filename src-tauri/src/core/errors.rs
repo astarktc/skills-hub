@@ -76,6 +76,9 @@ pub enum SignalError {
     /// Revealing the app log folder in the file manager failed. `detail` is
     /// diagnostic text (the opener's error chain), not user copy.
     RevealLogFailed { detail: String },
+    /// Revealing a path a report named (a target a Delete could not remove)
+    /// in the file manager failed. `detail` is the opener's error chain.
+    RevealPathFailed { path: String, detail: String },
     /// An in-repo symlink at `subpath` points at `target`, which is absolute
     /// or resolves to (or above) the repository root, so acquisition refuses
     /// to follow it. Nothing at the target is read. Owned by
@@ -173,6 +176,9 @@ impl fmt::Display for SignalError {
             }
             SignalError::RevealLogFailed { detail } => {
                 write!(f, "revealing the log folder failed: {detail}")
+            }
+            SignalError::RevealPathFailed { path, detail } => {
+                write!(f, "revealing {path} failed: {detail}")
             }
             SignalError::SymlinkEscapesRepo { subpath, target } => {
                 write!(
@@ -333,6 +339,12 @@ pub enum CommandError {
         subpath: String,
     },
     RevealLogFailed {
+        /// Opener error chain, diagnostics only.
+        detail: String,
+    },
+    RevealPathFailed {
+        /// The path the operator asked to see.
+        path: String,
         /// Opener error chain, diagnostics only.
         detail: String,
     },
@@ -529,6 +541,9 @@ impl From<SignalError> for CommandError {
             SignalError::CentralPathMissing { path } => CommandError::CentralPathMissing { path },
             SignalError::SubpathMissing { subpath } => CommandError::SubpathMissing { subpath },
             SignalError::RevealLogFailed { detail } => CommandError::RevealLogFailed { detail },
+            SignalError::RevealPathFailed { path, detail } => {
+                CommandError::RevealPathFailed { path, detail }
+            }
             SignalError::SymlinkEscapesRepo { subpath, target } => {
                 CommandError::SymlinkEscapesRepo { subpath, target }
             }

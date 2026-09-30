@@ -132,6 +132,9 @@ function fixturePlatform(): PlatformAdapter {
     async appVersion() {
       return `${version}-fixture`;
     },
+    async revealPath(path) {
+      await current().invoke("revealPath", path);
+    },
   };
 }
 
@@ -149,6 +152,11 @@ export function installFixtureBackend(): void {
   mockIPC((cmd, args) => unexpectedNativeCall(cmd, args));
   document.title = `Skills Hub · fixture: ${scenario}`;
   document.documentElement.dataset.fixture = FIXTURE_MODE_MARKER;
+  // The fixture's in-memory state, for reviewers driving a flow the UI
+  // cannot reach on its own (unlock a locked path before a Retry; read the
+  // paths "Reveal in Finder" was asked for). Dev-only, like this module.
+  // SAFETY: `__fixture` is a dev-only global this module alone defines; nothing in the app reads it.
+  (window as unknown as { __fixture: { state: FixtureBackend["state"] } }).__fixture = { state: current().state };
   console.info(
     `[fixture] ${FIXTURE_MODE_MARKER}: scenario "${scenario}" — in-memory library, nothing on disk is touched. ` +
       `Switch with ?scenario=${SCENARIOS.join("|")}`,

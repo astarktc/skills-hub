@@ -263,6 +263,7 @@ function baseState(scenario: ScenarioName, now: number): FixtureState {
     unwritableTools: [],
     unwritableProjectTools: [],
     lockedPaths: [],
+    revealed: [],
     projectOccupants: [],
     dialogPicks: [`${HOME}/Projects/team-skills`, `${HOME}/Projects/new-service`],
     gitCacheEntries: 6,

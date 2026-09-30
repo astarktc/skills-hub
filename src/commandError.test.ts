@@ -186,6 +186,15 @@ describe("describeCommandError", () => {
     ).toBe("errors.revealLogFailed");
   });
 
+  it("names the path and keeps the opener diagnostics for REVEAL_PATH_FAILED", () => {
+    expect(
+      describeCommandError(
+        { code: "REVEAL_PATH_FAILED", path: "/x/release-train", detail: "opener: exit 1" },
+        t,
+      ),
+    ).toBe('revealPath.failed {"path":"/x/release-train"}\n\nopener: exit 1');
+  });
+
   it("names the link and its target for SYMLINK_ESCAPES_REPO", () => {
     expect(
       describeCommandError(

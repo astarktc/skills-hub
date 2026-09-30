@@ -300,6 +300,9 @@ and there is no ✕.
 
 - `tone: "danger"` puts the destructive button on the right and initial focus on Cancel.
 - `tone: "accent"` (default) puts focus on Confirm.
+- `initialFocus: "cancel" | "confirm"` overrides the tone's default. `cancel` is for a large answer that is not
+  destructive: the bulk rail's count-bearing confirmations (Disable / Enable / Update / Sync over several skills) open
+  on Cancel with an `accent` Confirm (ticket 13).
 - `pending` shows Confirm as busy and disables Cancel.
 
 The ask hooks (`useSharedDirConfirmation`, `useOverwriteConfirmation`) resolve their `request()` promise through it.
@@ -316,6 +319,10 @@ Escape closes them and returns focus to the trigger.
     ground only.
   - `DropdownMenuLabel` names a group and must sit inside a `DropdownMenuGroup` (Base UI throws otherwise).
 - **Tooltip** is a hint on an inverted surface. It is never the only carrier of a name or a state.
+- **Popover without a trigger** (`PopoverContent anchor`): a control that raises a popover on its own terms — the
+  row switch's inline Enable confirmation — renders a controlled Popover with no Trigger, positioned on `anchor`,
+  with `initialFocus` on its answer and `finalFocus` back on the control. Escape closes it; focus returns to the
+  anchor (ticket 13, `popover.test.tsx`).
 
 ### Toaster (`sonner.tsx`)
 
@@ -343,6 +350,10 @@ above). `useStatusReporter` owns toast lifetime; the binder mounts the one `<Toa
 
 - **What moves**: only the ⌘K palette, the bulk rail and the switch thumb. The motion is opacity and transform only,
   **≤ 120 ms**, on `ease-out` (`cubic-bezier(0.16, 1, 0.3, 1)`).
+- **The bulk rail** rises on entry only: `@starting-style` (`starting:opacity-0 starting:translate-y-2`) with
+  `transition-[opacity,translate] duration-(--motion-fast) ease-out`, so it is interactive from its first frame and
+  leaves instantly; `motion-reduce:transition-none` (measured: 0 → 1 opacity in ≤ 112 ms of rAF samples; under
+  reduce the first frame is already opacity 1, `transition: none`).
 - **What does not move**: dialogs, popovers, menus and tooltips appear and leave instantly.
 - **Hover and press** change colour instantly in the primitives, which use no `transition: all`. Legacy `App.css`
   still carries 14 `transition: all` declarations (22 before My Skills migrated; mostly 200 ms) until its surfaces migrate (ticket 15 and the
@@ -419,7 +430,7 @@ Composed from the primitives and tokens only; no variant was added. Files: `comp
   clears it) · Chips All · Issues · Edited · Disabled with their counts (`faint`) · Segmented Grouped / Flat · one
   "Sort and view" menu (radio groups). Auto-sync moved to Settings; library-wide Disable is the bulk rail's
   (ticket 13) — nothing library-wide is one click away.
-- **Row** (36 px, `h-row`, `border` hairline, `card` on hover, `raised` when selected): checkbox · name
+- **Row** (36 px, `h-row`, `border` hairline, `card` on hover, `raised` + a 3 px iris edge when selected): checkbox · name
   (`sm` medium; the Tab stop that opens the skill) + Edit pencil (`ghost icon-sm`, only when overridden) +
   **exception marks** (soft Badges: `failed` with a ⊗ icon, `stale` with a ⚠ icon, `neutral` for "Not
   deployed"; skill-level rows first, then target-level, in the fold's order; Disabled rows stay silent because the
@@ -488,7 +499,8 @@ Composed from primitives and tokens; the one new variant is Dialog `placement="s
   `sheet`. Header: name (`lg` semibold, the `data-inspector-heading` focus target) · description (`sm`
   `muted-foreground`, 3 lines) · Close (`ghost icon`, 32 px).
 - **The focused row** shows it: `aria-current="true"`, `raised` ground and a 1 px inset `ring` edge (the ≥ 3:1 cue:
-  6.01 dark / 5.04 light on `raised`); a selected (checked) row has the ground only.
+  6.01 dark / 5.04 light on `raised`); a selected (checked) row has the ground and a 3 px `ring` edge on its leading
+  side (ticket 13) — the two coexist.
 - **Sections** (`h3` `sm` semibold, a `border` hairline between): Health · Sync targets · Source · Edits · Projects ·
   Files, then Remove (`outline danger sm`) in a footer. Section controls are `sm` (24 px) Buttons.
 - **Health** reads `skillHealth` alone: per row an icon (⊗ `failed`, ⚠ `stale`, ⊖ `faint`), the label (`sm` medium),
@@ -529,6 +541,43 @@ Composed from primitives and tokens; the one new variant is Dialog `placement="s
   layers: while a dialog (or the progress overlay) is open above the inspector it keeps its placement, and the new
   one lands when the last layer closes. The Projects section and the picker read the project world's held views,
   which every assignment's returned view updates — no read follows a successful assignment.
+
+## Selection, the bulk rail and the Delete dialog (ticket 13)
+
+Files: `components/skills/{BulkRail,useSkillListKeymap}.ts(x)`, `modals/{CountConfirmModal,DeleteModal}.tsx`, the
+selection in `SkillRow` / `SkillsList`, the counts in `lib/bulkCounts.ts`. Composed from primitives and tokens; the
+new primitive options are ConfirmDialog `initialFocus` and PopoverContent `anchor` (above).
+
+- **Selection** is My Skills' surface selection (`useSurfaceState`, D4). A selected row: checked checkbox (`primary`
+  fill) + `raised` ground + a 3 px `ring` edge on its leading side — iris's selection use. Measured on `raised`:
+  edge 6.01 dark / 5.04 light; checked box 3.49 / 5.04. A group header's checkbox selects its source (`mixed` when
+  part of it is selected).
+- **Keys** (one keymap, `useSkillListKeymap`; listed in the sidebar's Keyboard shortcuts): `/` search · `j` / `k`
+  next / previous row · Enter open · `x` select the row holding focus · ⇧-click a range from the last row toggled ·
+  ⌘A every row the lens shows (the visible subset) · Esc clears the selection, then collapses Files, then closes the
+  inspector. None fires while typing or while a dialog, sheet, popover or menu is open. Clearing from inside the rail
+  hands focus to the row last toggled (the rail goes with the selection).
+- **Bulk rail** (`card`, `border-strong` top edge, at the foot of the list; first in the DOM, so `/` then Tab reaches
+  it): "N selected" (`sm` semibold, a `role="status"`) · the `x` / `Esc` hints (kbd, hidden below the shell
+  breakpoint) · `outline sm` Buttons Sync to Tools… · Assign to project… · Disable on all Tools · Enable · Update ·
+  Remove… (`danger`) · Clear (`ghost icon-sm`). A verb that would change nothing is disabled with the reason as its
+  title; every rail Button keeps focus while disabled (`focusableWhenDisabled`), so D21's "same control" holds after
+  it ran. Text on the rail: ≥ 5.22 dark / 4.85 light.
+- **Count-bearing confirmation** (`confirmCount`): ConfirmDialog, focus on Cancel, one sentence of counts from
+  `bulkCounts` ("Disable 25 skills on 8 Tools — 80 Sync targets are removed and kept disabled; 12 project assignments
+  for these skills are disabled too. Refresh will not re-add them."), a `muted-foreground` second line for what
+  changes nothing. Sync to Tools carries its Tool pick (a two-column checkbox FieldSet) and the counts follow the pick.
+- **Row switch**: Disable is never asked; Enable that will sync the skill to Tools again asks in a quiet anchored
+  Popover ("Enable retired-playbook and sync it to 2 Tools again?" · Not now `ghost` · Enable `outline accent`).
+- **Delete dialog** (D16), one Dialog with two states. Confirm: the Tools it is removed from, the projects that carry
+  it, the Edit lost, "Skills Hub's copy is deleted" (`muted-foreground`), and for a skill with no external source
+  "Skills Hub's copy is the only copy — this cannot be undone" (`failed` text with ⚠); several skills read as counts
+  plus their names (six, then "and N more"). Footer: Cancel (initial focus) · Remove (`solid danger`, `pending` while
+  it runs — it keeps focus, so focus never reaches `<body>`). Report: the heading takes focus ("release-train was not
+  deleted" / "1 of 3 skills was not deleted"); per kept skill "Removed from Codex, Pi." then per kept path a `card`
+  block — "Still in Claude Code:", the path (`font-mono xs`), the reason (`failed xs`, `describeCommandError`),
+  **Reveal in Finder** (`outline sm`); footer Close · Retry (`solid danger`, the kept skills only). The heading is
+  `tabIndex=-1` (focusable, never a Tab stop).
 
 ## Migration rule
 

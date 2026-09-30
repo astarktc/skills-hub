@@ -55,3 +55,13 @@ reduced-motion emulation via CSS coverage (no `animation` without a `motion-redu
   judged while its own `inert` was on) — a layer opened with focus nowhere returns nowhere. The Targets section's
   "Removed from {Tool} · Undo" is a 5 s inline affordance (`UNDO_WINDOW_MS`), not a toast; keep it out of the run's
   notification block or record the Undo as its own run.
+
+- 2026-09-30 — from ticket 13: the rail's batch verbs (Disable / Enable / Update / Sync over a selection) run with
+  subject `batch`, so the legacy overlay shows over the closing count confirmation (its popup holds focus at 0 ms;
+  the confirmation closes beneath it and hands its return chain up — focus lands back on the rail button). With
+  header progress, the count line should read as the run's headline ("80 disabled · 3 failed", "5 enabled",
+  "2 removed · 1 failed" are already the folds' toasts) and the rail stays visible and disabled-with-reason while it
+  runs (its buttons are `focusableWhenDisabled`). A bulk Remove uses the new `{ kind: "skills", ids }` subject:
+  rows pend inline and the Delete dialog shows the count ("Removing beta") from `actionMessage` — keep that out of
+  the header or mirror it, but never both as competing surfaces. The overlay's title says "Installing Skills…" for
+  every batch.

@@ -130,6 +130,15 @@ export const commands = {
 	 *  diagnostics.
 	 */
 	openLogFolder: () => __TAURI_INVOKE<null>("open_log_folder"),
+	/**
+	 *  Reveal a path a report named — a Sync target a Delete could not remove
+	 *  (D16's "Reveal in Finder") — in the operator's file manager: selected in
+	 *  its folder while it is there, else its nearest existing ancestor opened
+	 *  (`core::log_reveal::path_reveal_target`). Showing a folder changes
+	 *  nothing, so any path is accepted. Every failure reaches the operator as
+	 *  `RevealPathFailed` with the chain as diagnostics.
+	 */
+	revealPath: (path: string) => __TAURI_INVOKE<null>("reveal_path", { path }),
 	registerProject: (path: string) => __TAURI_INVOKE<ProjectViewDto>("register_project", { path }),
 	/**
 	 *  Remove a project and every artifact it owns. The project it named is
@@ -341,6 +350,10 @@ path: string } | { code: "CENTRAL_PATH_MISSING";
 path: string } | { code: "SUBPATH_MISSING"; 
 /**  The requested repo-relative subpath (never a cache-internal path). */
 subpath: string } | { code: "REVEAL_LOG_FAILED"; 
+/**  Opener error chain, diagnostics only. */
+detail: string } | { code: "REVEAL_PATH_FAILED"; 
+/**  The path the operator asked to see. */
+path: string; 
 /**  Opener error chain, diagnostics only. */
 detail: string } | { code: "SYMLINK_ESCAPES_REPO"; 
 /**  Repo-relative path of the symlink that was refused. */

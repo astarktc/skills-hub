@@ -1,4 +1,6 @@
-//! The rule for revealing the app log folder in the operator's file manager.
+//! The rules for revealing a path in the operator's file manager: the app
+//! log folder ("Open log folder") and any path a report named ("Reveal in
+//! Finder" on a Sync target a Delete could not remove, D16).
 //!
 //! macOS `open` treats any directory whose name ends in `.app` as an
 //! application bundle, and the log dir is named after the bundle identifier
@@ -42,6 +44,28 @@ pub fn log_reveal_target(log_dir: &Path, log_file: Option<&Path>) -> LogRevealTa
         folder: log_dir.to_path_buf(),
         selected: None,
     }
+}
+
+/// Decide how to reveal `path`, a path a report named: the item itself,
+/// selected in its folder, while it is there (`exists` is the caller's
+/// presence probe — `symlink_metadata`, so a dangling link is still
+/// selected); once it is gone, its nearest ancestor that is there, opened
+/// plainly. `None` when no ancestor exists (a path on a vanished volume).
+pub fn path_reveal_target(path: &Path, exists: impl Fn(&Path) -> bool) -> Option<LogRevealTarget> {
+    if exists(path) {
+        let folder = path.parent().unwrap_or(path).to_path_buf();
+        return Some(LogRevealTarget {
+            folder,
+            selected: Some(path.to_path_buf()),
+        });
+    }
+    path.ancestors()
+        .skip(1)
+        .find(|ancestor| !ancestor.as_os_str().is_empty() && exists(ancestor))
+        .map(|ancestor| LogRevealTarget {
+            folder: ancestor.to_path_buf(),
+            selected: None,
+        })
 }
 
 /// A directory name ending in `.app` (any case) is an app bundle to macOS.

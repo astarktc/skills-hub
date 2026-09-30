@@ -12,6 +12,7 @@ import { toCommandError } from "../commandError";
 import {
   combineOutcomes,
   deleteOutcome,
+  type DeleteSettlement,
   enableOutcome,
   invocationEditOutcome,
   projectSyncOutcome,
@@ -39,7 +40,7 @@ import type { SkillLibrary } from "./useSkillLibrary";
 import { ActionExit, type ActionHandle, type StatusReporter, type TranslateFn } from "./useStatusReporter";
 import type { CollisionPart, SyncOrchestration, SyncPolicy } from "./useSyncOrchestration";
 import type { ToolCatalog } from "./useToolCatalog";
-import type { DialogDoor } from "./useSurfaceState";
+import type { CountVerb, DialogDoor } from "./useSurfaceState";
 
 /**
  * Every verb the skills world has, with what each takes beyond the skills it
@@ -48,31 +49,46 @@ import type { DialogDoor } from "./useSurfaceState";
  * confirmation happens.
  */
 export type SkillVerbOptions = {
-  /** Sync to Tools: one pair (`tool`, the pill), a given set (`tools`), else the effective targets. */
-  syncToTargets: { tool?: string; tools?: readonly string[] };
+  /**
+   * Sync to Tools: one pair (`tool`, the pill), or — `confirmed` — the given
+   * set (`tools`), else the effective targets. Without `tool` or `confirmed`
+   * it opens the count-bearing Tool pick (`confirmCount`), for one skill or
+   * several.
+   */
+  syncToTargets: { tool?: string; tools?: readonly string[]; confirmed?: boolean };
   /**
    * A re-sync from the central copy of the failed / missing / stale pairs:
    * one `tool`, or those of `tools` (a health row's Tools), else every such
    * row of each skill.
    */
   retry: { tool?: string; tools?: readonly string[] };
-  /** Disable at pair grain (`tool`) or skill grain. */
-  disable: { tool?: string };
-  /** Enable at pair grain (`tool`) or skill grain. */
-  enable: { tool?: string };
-  update: Record<string, never>;
+  /**
+   * Disable at pair grain (`tool`) or skill grain. Over several skills
+   * without `confirmed` it opens the count-bearing confirmation; one skill is
+   * never asked (reversible, and its switch shows the state — D8).
+   */
+  disable: { tool?: string; confirmed?: boolean };
+  /** Enable at pair grain (`tool`) or skill grain; over several, `confirmed` as Disable. */
+  enable: { tool?: string; confirmed?: boolean };
+  /** Over several skills (or "all") without `confirmed`: the count-bearing confirmation. */
+  update: { confirmed?: boolean };
   restore: Record<string, never>;
   /** Without `target`: open Change source (on `preselect`, else the skill's kind). */
   repoint: { preselect?: RepointKind; target?: RepointTarget };
   /** Without `confirmed`: open the Detach confirmation (it states the consequence). */
   detach: { confirmed?: boolean };
-  /** Without `confirmed`: open the Delete confirmation. */
+  /**
+   * Without `confirmed`: open the Delete confirmation (D16, one skill or
+   * several). Confirmed: one `delete_managed_skill` per skill under one
+   * action, folded as one run; a Delete that left anything behind turns the
+   * dialog into its report.
+   */
   delete: { confirmed?: boolean };
   /** Without `mode`: open the Invocation dialog; `null` clears the override. */
   editInvocation: { mode?: InvocationMode | null };
   /** The operator's Dismiss of a stored health kind (`import_failed` only). */
   dismissHealth: { kind: SkillOutcomeKind };
-  /** Without `projectId`: open the Assign-to-project picker (one skill). */
+  /** Without `projectId`: open the Assign-to-project picker (one skill or several). */
   assignToProject: { projectId?: string };
   unassignFromProject: { projectId: string };
   /** A group's Deploy all: Enable what is disabled, sync what is not deployed. */
@@ -110,7 +126,8 @@ export type RunSkillAction = <V extends SkillVerb>(
  * first batch before its overwrite retry, an Update's settlement before a
  * catalog read). A thrown Edit, Disable, Delete, Detach or project verb does
  * not reload (AGENTS.md: thrown Edit does not; project verbs converge on
- * their own view).
+ * their own view). A Delete never throws as a whole: each skill's thrown
+ * command is a settlement of its run, which reloads through its fold.
  */
 export const RELOAD_ON_THROW: Record<SkillVerb, boolean> = {
   syncToTargets: true,
@@ -152,7 +169,7 @@ export type SkillActionsDeps = {
   /** The Tool catalog: labels for reports and progress. */
   catalog: Pick<ToolCatalog, "toolLabelById">;
   /** The surface module: the dialogs a verb opens for its confirmation. */
-  surface: Pick<DialogDoor, "openDialog" | "dismissDialog">;
+  surface: Pick<DialogDoor, "openDialog" | "dismissDialog" | "updateDialog">;
   /** The skills world's catalog: resolution, replacement and reload. */
   library: Pick<SkillLibrary, "managedSkills" | "loadManagedSkills" | "replaceCatalog">;
   /** The project world's verbs (any project, the view applied) and its view re-read. */
@@ -208,7 +225,7 @@ export function useSkillActions({
     settleCollisionParts,
   } = sync;
   const { toolLabelById } = catalog;
-  const { openDialog, dismissDialog } = surface;
+  const { openDialog, dismissDialog, updateDialog } = surface;
   const { managedSkills, loadManagedSkills, replaceCatalog } = library;
   const { assignToProject, unassignFromProject, refreshView } = projects;
 
@@ -255,6 +272,27 @@ export function useSkillActions({
     const single = skills.length === 1 ? skills[0] : null;
     const subject = single ? ({ kind: "skill", id: single.id } as const) : ({ kind: "batch" } as const);
     const trigger = typeof document !== "undefined" ? document.activeElement : null;
+    const skillIds = skills.map((skill) => skill.id);
+
+    // A wide verb (several skills, or the library) states its counts before
+    // it runs: without `confirmed` it opens the count-bearing confirmation,
+    // whose Confirm re-runs it confirmed. Sync to Tools always asks — its
+    // confirmation is also the Tool pick.
+    const confirmed = opts.confirmed === true;
+    const wide = all || skills.length > 1;
+    const asksCount =
+      !confirmed &&
+      ((verb === "syncToTargets" && opts.tool === undefined) ||
+        (wide && (verb === "disable" || verb === "enable" || verb === "update")));
+    if (asksCount) {
+      openDialog({ kind: "confirmCount", verb: verb as CountVerb, skillIds });
+      return;
+    }
+    // A count confirmation that ran its verb closes once the verb settled,
+    // whatever the report said: its counts describe a state that is gone.
+    const closeCount = () => {
+      if (confirmed) dismissDialog("confirmCount");
+    };
 
     /** Run `body` under the lifecycle, with the verb's reload rule. */
     const settle = async <T,>(
@@ -409,6 +447,7 @@ export function useSkillActions({
           const report = await syncSkillsToTools(skills.map(toSyncItem), [...targets], { overwriteIfSameContent: true });
           await applyOutcome(syncOutcome(report, { ...foldContext, action: "bulk" }), { reload });
         });
+        closeCount();
         return;
       }
       case "retry": {
@@ -466,6 +505,7 @@ export function useSkillActions({
             await applyOutcome(removalOutcome(report, { ...foldContext, action }), { reload });
           },
         );
+        closeCount();
         return;
       }
       case "enable": {
@@ -479,8 +519,9 @@ export function useSkillActions({
               : { kind: "skills", skill_ids: skills.map((skill) => skill.id) };
         await settle({ subject, label: t("lifecycle.verbs.enable") }, async () => {
           const report = await enableSkillTargets(scope);
-          await applyOutcome(enableOutcome(report, foldContext), { reload });
+          await applyOutcome(enableOutcome(report, { ...foldContext, batch: scope.kind === "skills" }), { reload });
         });
+        closeCount();
         return;
       }
       case "update": {
@@ -515,6 +556,7 @@ export function useSkillActions({
             onAction,
           });
         });
+        closeCount();
         return;
       }
       case "restore": {
@@ -578,7 +620,6 @@ export function useSkillActions({
       }
       case "detach": {
         if (!single) return;
-        const { confirmed } = opts as SkillVerbOptions["detach"];
         if (!confirmed) {
           openDialog({ kind: "detachSkill", skillId: single.id });
           return;
@@ -599,25 +640,53 @@ export function useSkillActions({
         return;
       }
       case "delete": {
-        if (!single) return;
-        const { confirmed } = opts as SkillVerbOptions["delete"];
         if (!confirmed) {
-          openDialog({ kind: "deleteSkill", skillId: single.id });
+          openDialog({ kind: "deleteSkill", skillIds });
           return;
         }
         afterDialogRef.current = null;
-        await settle({ subject, label: t("lifecycle.verbs.delete"), message: t("actions.removing", { name: single.name }) }, async () => {
-          const report = await invokeTauri("deleteManagedSkill", single.id);
-          // Decided before the dialog closes: its opener (the row) is gone.
-          afterDialogRef.current = focusAfter(
-            { verb: "delete", removed: report.record_deleted },
-            { skillId: single.id, order, surface: "skills" },
-          );
-          await applyOutcome(deleteOutcome(report, foldContext), {
-            reload,
-            closeModal: () => dismissDialog("deleteSkill"),
-          });
-        });
+        // One skill pends on its row; several pend on theirs, and the Delete
+        // dialog — not the progress surface — shows the count (D16, D19).
+        const deleteSubject = single ? subject : ({ kind: "skills", ids: skillIds } as const);
+        await settle(
+          {
+            subject: deleteSubject,
+            label: t("lifecycle.verbs.delete"),
+            message: single ? t("actions.removing", { name: single.name }) : undefined,
+          },
+          async () => {
+            // The backend removes one skill per command (a multi-skill
+            // delete command is a follow-up): each settles on its own, a
+            // thrown skill is reported, never the end of the run.
+            const settled: DeleteSettlement[] = [];
+            for (const [index, skill] of skills.entries()) {
+              if (!single)
+                reportProgress({
+                  done: index,
+                  total: skills.length,
+                  message: t("actions.removing", { name: skill.name }),
+                });
+              try {
+                settled.push({ skillId: skill.id, name: skill.name, report: await invokeTauri("deleteManagedSkill", skill.id) });
+              } catch (error) {
+                settled.push({ skillId: skill.id, name: skill.name, error: toCommandError(error) });
+              }
+            }
+            // Decided before the dialog closes: its opener (the row) is gone.
+            const removedIds = settled.flatMap((part) =>
+              "report" in part && part.report.record_deleted ? [part.skillId] : [],
+            );
+            afterDialogRef.current =
+              removedIds.length > 0
+                ? focusAfter({ verb: "delete", removed: true }, { skillId: removedIds[0], removedIds, order, surface: "skills" })
+                : null;
+            const outcome = deleteOutcome(settled, foldContext);
+            // Anything left behind: the same dialog becomes the report (before
+            // the reload, so the confirmation never re-renders in between).
+            if (!outcome.completion.closeModal) updateDialog({ kind: "deleteSkill", skillIds, report: settled });
+            await applyOutcome(outcome, { reload, closeModal: () => dismissDialog("deleteSkill") });
+          },
+        );
         return;
       }
       case "editInvocation": {
@@ -654,7 +723,7 @@ export function useSkillActions({
       case "unassignFromProject": {
         const { projectId } = opts as SkillVerbOptions["assignToProject"];
         if (projectId === undefined) {
-          if (verb === "assignToProject" && single) openDialog({ kind: "assignProject", skillId: single.id });
+          if (verb === "assignToProject") openDialog({ kind: "assignProject", skillIds });
           return;
         }
         const ids = skills.map((skill) => skill.id);
@@ -760,7 +829,8 @@ export function useSkillActions({
       case "enable":
         return run("enable", [skill]);
       case "deploy":
-        return run("syncToTargets", [skill]);
+        // The repair names its targets (the effective set): no pick.
+        return run("syncToTargets", [skill], { confirmed: true });
       case "disable":
         // Finish the skill-grain Disable its failed targets interrupted.
         return run("disable", [skill]);

@@ -215,15 +215,15 @@ type Row = {
 };
 
 const VERBS: Row[] = [
-  { name: "sync to the effective targets", verb: "syncToTargets", selection: "one", fold: "syncOutcome", reaches: "syncSkillsToTools", reloadsOnSuccess: true },
+  { name: "sync to the effective targets", verb: "syncToTargets", selection: "one", opts: { confirmed: true }, fold: "syncOutcome", reaches: "syncSkillsToTools", reloadsOnSuccess: true },
   { name: "sync one pair (pill)", verb: "syncToTargets", selection: "one", opts: { tool: "cursor" }, fold: "syncOutcome", reaches: "syncSkillsToTools", reloadsOnSuccess: true },
   { name: "retry a failed first sync", verb: "retry", selection: "one", prepare: (s) => { s[0].targets[0] = { ...s[0].targets[0], status: "error", synced_at: null }; }, fold: "syncOutcome", reaches: "syncSkillsToTools", reloadsOnSuccess: true },
   { name: "disable a skill", verb: "disable", selection: "one", fold: "removalOutcome", reaches: "disableSkillTargets", reloadsOnSuccess: true },
   { name: "disable a pair", verb: "disable", selection: "one", opts: { tool: "claude" }, fold: "removalOutcome", reaches: "disableSkillTargets", reloadsOnSuccess: true },
-  { name: "disable the library", verb: "disable", selection: "all", fold: "removalOutcome", reaches: "disableSkillTargets", reloadsOnSuccess: true },
+  { name: "disable the library", verb: "disable", selection: "all", opts: { confirmed: true }, fold: "removalOutcome", reaches: "disableSkillTargets", reloadsOnSuccess: true },
   { name: "enable a skill", verb: "enable", selection: "one", fold: "enableOutcome", reaches: "enableSkillTargets", reloadsOnSuccess: true },
   { name: "update one", verb: "update", selection: "one", fold: "refreshOutcome", reaches: "updateManagedSkill", reloadsOnSuccess: false },
-  { name: "refresh all", verb: "update", selection: "all", fold: "refreshOutcome", reaches: "refreshManagedSkills", reloadsOnSuccess: true },
+  { name: "refresh all", verb: "update", selection: "all", opts: { confirmed: true }, fold: "refreshOutcome", reaches: "refreshManagedSkills", reloadsOnSuccess: true },
   { name: "restore", verb: "restore", selection: "one", fold: "refreshOutcome", reaches: "updateManagedSkill", reloadsOnSuccess: false },
   { name: "re-point", verb: "repoint", selection: "one", opts: { target: { kind: "git", url: " https://github.com/o/r " } }, fold: "refreshOutcome", reaches: "repointSkillSource", reloadsOnSuccess: false },
   { name: "delete (confirmed)", verb: "delete", selection: "one", opts: { confirmed: true }, fold: "deleteOutcome", reaches: "deleteManagedSkill", reloadsOnSuccess: true },
@@ -275,15 +275,15 @@ describe("the door, verb by verb", () => {
     const s = setup();
     const { result } = await render(s);
     await act(async () => {
-      await result.current.actions.run("disable", s.skills);
+      await result.current.actions.run("disable", s.skills, { confirmed: true });
     });
     expect(mockInvoke).toHaveBeenCalledWith("disableSkillTargets", { kind: "skills", skill_ids: ["s1", "s2"] });
     await act(async () => {
-      await result.current.actions.run("update", s.skills);
+      await result.current.actions.run("update", s.skills, { confirmed: true });
     });
     expect(mockInvoke).toHaveBeenCalledWith("refreshManagedSkills", ["s1", "s2"], { reassert_auto_sync: true }, expect.anything());
     await act(async () => {
-      await result.current.actions.run("update", "all");
+      await result.current.actions.run("update", "all", { confirmed: true });
     });
     expect(mockInvoke).toHaveBeenCalledWith("refreshManagedSkills", null, { reassert_auto_sync: true }, expect.anything());
   });
@@ -409,8 +409,88 @@ describe("where confirmation happens", () => {
     await act(async () => {
       await result.current.actions.run(verb, [s.skills[0]], opts as never);
     });
-    expect(result.current.surface.layer(dialog)).toMatchObject({ skillId: "s1" });
+    expect(result.current.surface.layer(dialog)).toMatchObject(
+      dialog === "deleteSkill" || dialog === "assignProject" ? { skillIds: ["s1"] } : { skillId: "s1" },
+    );
     expect(commands()).toEqual([]);
+  });
+
+  it.each([
+    ["disable", "two"],
+    ["enable", "two"],
+    ["update", "two"],
+    ["disable", "all"],
+    ["update", "all"],
+    ["syncToTargets", "one"],
+    ["syncToTargets", "two"],
+  ] as const)(
+    "a wide %s (%s) without `confirmed` opens the count-bearing confirmation and calls nothing (ticket 13)",
+    async (verb, selection) => {
+      const s = setup();
+      const { result } = await render(s);
+      await act(async () => {
+        await result.current.actions.run(verb, selection === "all" ? "all" : selection === "two" ? s.skills : [s.skills[0]]);
+      });
+      expect(result.current.surface.layer("confirmCount")).toEqual({
+        kind: "confirmCount",
+        verb,
+        skillIds: selection === "one" ? ["s1"] : ["s1", "s2"],
+      });
+      expect(commands()).toEqual([]);
+      expect(s.sync.syncSkillsToTools).not.toHaveBeenCalled();
+      expect(s.sync.enableSkillTargets).not.toHaveBeenCalled();
+    },
+  );
+
+  it("one skill's Disable / Enable / Update never asks (D8: reversible, the switch shows it)", async () => {
+    const s = setup();
+    const { result } = await render(s);
+    for (const verb of ["disable", "enable", "update"] as const) {
+      await act(async () => {
+        await result.current.actions.run(verb, [s.skills[1]]);
+      });
+    }
+    expect(result.current.surface.layer("confirmCount")).toBeNull();
+    expect(commands()).toEqual(expect.arrayContaining(["disableSkillTargets", "enableSkillTargets", "updateManagedSkill"]));
+  });
+
+  it("the confirmed wide verb runs one batch and closes its count confirmation", async () => {
+    const s = setup();
+    const { result } = await render(s);
+    act(() => void result.current.actions.run("disable", s.skills));
+    expect(result.current.surface.isOpen("confirmCount")).toBe(true);
+    await act(async () => {
+      await result.current.actions.run("disable", s.skills, { confirmed: true });
+    });
+    expect(commands().filter((command) => command === "disableSkillTargets")).toHaveLength(1);
+    expect(result.current.surface.isOpen("confirmCount")).toBe(false);
+    act(() => void result.current.actions.run("syncToTargets", s.skills));
+    await act(async () => {
+      await result.current.actions.run("syncToTargets", s.skills, { tools: ["cursor"], confirmed: true });
+    });
+    expect(s.sync.syncSkillsToTools).toHaveBeenCalledTimes(1);
+    expect(s.sync.syncSkillsToTools).toHaveBeenCalledWith(
+      [
+        { skill_id: "s1", name: "alpha", source_path: "/hub/alpha" },
+        { skill_id: "s2", name: "beta", source_path: "/hub/beta" },
+      ],
+      ["cursor"],
+      { overwriteIfSameContent: true },
+    );
+    expect(result.current.surface.isOpen("confirmCount")).toBe(false);
+  });
+
+  it("Assign to project… over a selection opens the picker for every selected skill", async () => {
+    const s = setup();
+    const { result } = await render(s);
+    await act(async () => {
+      await result.current.actions.run("assignToProject", s.skills);
+    });
+    expect(result.current.surface.layer("assignProject")).toEqual({ kind: "assignProject", skillIds: ["s1", "s2"] });
+    await act(async () => {
+      await result.current.actions.run("assignToProject", s.skills, { projectId: "p1" });
+    });
+    expect(s.projects.assignToProject).toHaveBeenCalledWith("p1", ["s1", "s2"]);
   });
 
   it.each(["syncToTargets", "disable", "enable"] as const)(
@@ -453,7 +533,7 @@ describe("where confirmation happens", () => {
     const s = setup({ effective: [] });
     const { result } = await render(s);
     await act(async () => {
-      await result.current.actions.run("syncToTargets", [s.skills[1]]);
+      await result.current.actions.run("syncToTargets", [s.skills[1]], { confirmed: true });
     });
     expect(s.sync.syncSkillsToTools).not.toHaveBeenCalled();
     expect(result.current.reporter.notifications[0]).toMatchObject({ kind: "warning", title: "noSyncTargets" });
@@ -472,6 +552,49 @@ describe("where confirmation happens", () => {
     document.body.append(row);
     expect(result.current.actions.dialogFallbackFocus()).toBe(row);
     row.remove();
+  });
+
+  it("a bulk Remove deletes each skill under one action, folds one run, and a kept skill turns the dialog into the report (D16)", async () => {
+    const s = setup({ skills: [skill("s1", "alpha"), skill("s2", "beta"), skill("s3", "gamma")] });
+    const kept: RemovalReport = {
+      targets: [
+        {
+          path: "/tools/claude/beta",
+          rows: [{ scope: "global_target", id: "t", skill_id: "s2", tool: "claude" }],
+          status: { status: "failed", error: { code: "OTHER", message: "Permission denied" } },
+        },
+      ],
+      central_removed: false,
+      record_deleted: false,
+      cleared_markers: [],
+    };
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) => {
+      if (command === "deleteManagedSkill" && args[0] === "s2") return Promise.resolve(kept);
+      if (command === "deleteManagedSkill" && args[0] === "s3") return Promise.reject({ code: "OTHER", message: "store locked" });
+      return base(command, ...args);
+    });
+    const spy = vi.spyOn(folds, "deleteOutcome");
+    const { result } = await render(s);
+    act(() => void result.current.actions.run("delete", s.skills));
+    expect(result.current.surface.layer("deleteSkill")).toEqual({ kind: "deleteSkill", skillIds: ["s1", "s2", "s3"] });
+    let running!: Promise<unknown>;
+    act(() => {
+      running = result.current.actions.run("delete", s.skills, { confirmed: true });
+    });
+    // Several skills pend on their rows; the dialog, not the progress surface, shows it.
+    await waitFor(() => expect(result.current.reporter.pending?.subject).toEqual({ kind: "skills", ids: ["s1", "s2", "s3"] }));
+    await act(async () => {
+      await running;
+    });
+    expect(commands().filter((command) => command === "deleteManagedSkill")).toHaveLength(3);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0].map((part) => part.skillId)).toEqual(["s1", "s2", "s3"]);
+    const layer = result.current.surface.layer("deleteSkill");
+    expect(layer?.report?.map((part) => ("report" in part ? part.report.record_deleted : "error"))).toEqual([true, false, "error"]);
+    // One run in the history: its headline and each failure.
+    const runs = new Set(result.current.reporter.notifications.map((row) => row.runId));
+    expect(runs.size).toBe(1);
   });
 });
 
@@ -497,14 +620,16 @@ describe("the reload rule on a thrown request", () => {
     await act(async () => {
       answer = await rendered.result.current.actions.run(row.verb, pick(row, s.skills), row.opts as never);
     });
-    expect(reloads() > 0).toBe(RELOAD_ON_THROW[row.verb]);
+    // A thrown skill of a Delete is a settlement, not a thrown action: the
+    // run folds and reloads like any Delete.
+    expect(reloads() > 0).toBe(row.verb === "delete" ? true : RELOAD_ON_THROW[row.verb]);
     if (row.verb === "repoint") {
       // Re-point's final refusal is answered to its dialog (D15, I4): shown
       // by the chosen target, never a toast over it.
       expect(answer).toEqual(failure);
       expect(rendered.result.current.reporter.notifications).toEqual([]);
     } else {
-      expect(rendered.result.current.reporter.notifications[0]).toMatchObject({ kind: "error" });
+      expect(rendered.result.current.reporter.notifications).toContainEqual(expect.objectContaining({ kind: "error" }));
     }
     expect(rendered.result.current.reporter.pending).toBeNull();
   });
@@ -587,7 +712,7 @@ describe("report actions", () => {
     });
     const { result } = await render(s);
     await act(async () => {
-      await result.current.actions.run("update", "all");
+      await result.current.actions.run("update", "all", { confirmed: true });
     });
     const entry = result.current.reporter.notifications.find((n) => n.title === "gone");
     act(() => entry?.action?.onClick());
@@ -603,7 +728,7 @@ describe("report actions", () => {
     const spy = vi.spyOn(folds, "refreshOutcome");
     const { result } = await render(s);
     await act(async () => {
-      await result.current.actions.run("update", "all");
+      await result.current.actions.run("update", "all", { confirmed: true });
     });
     const ctx = spy.mock.calls[0][1];
     expect(ctx.canRepoint?.("s1")).toBe(true);
@@ -802,7 +927,7 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     const rendered = renderReal();
     await ready(rendered, skills);
     const spy = vi.spyOn(folds, "refreshOutcome");
-    const asked = await drive(rendered, () => rendered.result.current.actions.run("update", "all"), "declined");
+    const asked = await drive(rendered, () => rendered.result.current.actions.run("update", "all", { confirmed: true }), "declined");
     expect(asked).toEqual([["global:s1:cursor"]]);
     expect(calls("syncSkillsToTools")[0]![3]).toMatchObject({ overrides: [{ skill_id: "s1", tool: "cursor", decision: "keep" }] });
     // Folded once, over the merged report.

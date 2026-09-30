@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from "react";
+import { memo } from "react";
 import { Search, SlidersHorizontal } from "lucide-react";
 import type { TFunction } from "i18next";
 import { Button } from "@/components/ui/button";
@@ -38,34 +38,15 @@ const VIEW_LABEL_KEY: Record<ViewMode, string> = {
   "dense-grid": "viewDenseGrid",
 };
 
-/** Typing into these must never be stolen by the `/` shortcut. */
-const isEditable = (target: EventTarget | null) =>
-  target instanceof HTMLElement &&
-  (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
-
 /**
  * The My Skills filter bar, all through the list lens: search (`/` focuses
- * it), the chips All · Issues · Edited · Disabled, Grouped / Flat, and one
+ * it — My Skills' keymap, `useSkillListKeymap`, finds it by
+ * `data-skill-search`), the chips All · Issues · Edited · Disabled, Grouped / Flat, and one
  * Sort and view menu. Policy (auto-sync) and library-wide verbs live
  * elsewhere (Settings; the bulk rail).
  */
 const FilterBar = ({ lens, t }: FilterBarProps) => {
-  const searchRef = useRef<HTMLInputElement>(null);
   const { query, setQuery, filter, setFilter, filterCounts } = lens;
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented) return;
-      if (isEditable(event.target)) return;
-      // A layer above the list owns the keyboard.
-      if (document.querySelector("[role='dialog'], [role='alertdialog'], [role='menu']")) return;
-      event.preventDefault();
-      searchRef.current?.focus();
-      searchRef.current?.select();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
   return (
     <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-2">
@@ -75,7 +56,7 @@ const FilterBar = ({ lens, t }: FilterBarProps) => {
           <span className="sr-only">{t("library.searchLabel")}</span>
         </FieldLabel>
         <Input
-          ref={searchRef}
+          data-skill-search=""
           type="search"
           size="sm"
           className="w-52"

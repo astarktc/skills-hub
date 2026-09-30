@@ -132,6 +132,8 @@ export type FixtureState = {
   unwritableProjectTools: string[];
   /** Artifact paths whose removal fails (the row is kept, ADR-0002). */
   lockedPaths: string[];
+  /** Paths "Reveal in Finder" was asked to show (`reveal_path`), in order. */
+  revealed: string[];
   /**
    * Project artifact paths holding bytes the app never wrote: a folder in the
    * way of a project first sync (the project counterpart of `foreign`).

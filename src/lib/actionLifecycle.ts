@@ -25,6 +25,13 @@ export type PendingSubject =
   | { kind: "skill"; id: string }
   /** Project-matrix cells, keyed `${skillId}:${tool}` (one cell, or a row's). */
   | { kind: "cell"; ids: readonly string[] }
+  /**
+   * Several skills acted on from a dialog that shows the action itself (a
+   * bulk Remove: the Delete dialog pends and becomes the report, D16). Each
+   * row pends inline; its streamed count is the dialog's, not the progress
+   * surface's.
+   */
+  | { kind: "skills"; ids: readonly string[] }
   | { kind: "batch"; id?: string };
 
 /** A streamed batch's count (`done` of `total`), for the header progress. */
@@ -70,13 +77,14 @@ export function showsProgressSurface(pending: PendingAction | null): boolean {
   if (!pending) return false;
   return (
     pending.subject.kind === "batch" ||
-    pending.progress !== null ||
+    (pending.progress !== null && pending.subject.kind !== "skills") ||
     pending.cancellable
   );
 }
 
 /** Whether `pending` is about this skill (its card shows inline pending). */
 export function isPendingSkill(pending: PendingAction | null, skillId: string): boolean {
+  if (pending?.subject.kind === "skills") return pending.subject.ids.includes(skillId);
   return pending?.subject.kind === "skill" && pending.subject.id === skillId;
 }
 
@@ -131,6 +139,11 @@ export type FocusOutcome = {
 /** Where the action happened. */
 export type FocusContext = {
   skillId: string | null;
+  /**
+   * Every skill a Delete removed, when it acted on several (a bulk Remove);
+   * the rule steps past all of them. Defaults to `skillId` alone.
+   */
+  removedIds?: readonly string[];
   /** The showing surface's visible row order before the action ran. */
   order: readonly string[];
   surface: "skills" | "projects";
@@ -146,10 +159,19 @@ export type FocusContext = {
  */
 export function focusAfter(outcome: FocusOutcome, context: FocusContext): FocusTarget {
   if (outcome.verb === "delete" && outcome.removed) {
-    const index = context.skillId ? context.order.indexOf(context.skillId) : -1;
-    const rest = context.order.filter((id) => id !== context.skillId);
+    const gone = new Set(context.removedIds ?? (context.skillId ? [context.skillId] : []));
+    const { order } = context;
+    const rest = order.filter((id) => !gone.has(id));
     if (rest.length === 0) return { kind: "heading", surface: context.surface };
-    const next = index >= 0 ? (context.order[index + 1] ?? context.order[index - 1]) : rest[0];
+    const indices = order.flatMap((id, index) => (gone.has(id) ? [index] : []));
+    if (indices.length === 0) return { kind: "row", skillId: rest[0] };
+    // The first row after the last one removed; else the nearest before the first.
+    const next =
+      order.slice(indices[indices.length - 1] + 1).find((id) => !gone.has(id)) ??
+      order
+        .slice(0, indices[0])
+        .reverse()
+        .find((id) => !gone.has(id));
     return { kind: "row", skillId: next ?? rest[0] };
   }
   if (outcome.verb === "restore" && context.skillId) {

@@ -18,6 +18,9 @@ import SkillsList from "./components/skills/SkillsList";
 import NotificationsModal from "./components/shared/NotificationsModal";
 import AddSkillModal from "./components/skills/modals/AddSkillModal";
 import DeleteModal from "./components/skills/modals/DeleteModal";
+import CountConfirmModal from "./components/skills/modals/CountConfirmModal";
+import BulkRail from "./components/skills/BulkRail";
+import { useSkillListKeymap } from "./components/skills/useSkillListKeymap";
 import RepointModal from "./components/skills/modals/RepointModal";
 import DetachModal from "./components/skills/modals/DetachModal";
 import AssignProjectModal from "./components/skills/modals/AssignProjectModal";
@@ -55,6 +58,8 @@ import {
   viewModePreference,
 } from "./lib/preferences";
 import { isTauri } from "./lib/tauri";
+import { revealPath } from "./lib/platform";
+import type { AssignmentsOf } from "./lib/bulkCounts";
 import {
   describeRefusal,
   dialogFallback,
@@ -161,8 +166,6 @@ function App() {
   }, [catalogTools, stripTargetIds, toolLabelById]);
   const labelOfTool = useCallback((id: string) => toolLabelById[id] ?? id, [toolLabelById]);
   const isToolDetected = useCallback((id: string) => installedToolIds.includes(id), [installedToolIds]);
-  const { toggle: toggleSelection } = surface;
-  const toggleSkillSelection = useCallback((id: string) => toggleSelection("skills", id), [toggleSelection]);
 
   // The skill action door: every verb on a skill (card, detail, toolbar,
   // new-tools notice) goes through its one handle. Delete's focus rule reads
@@ -431,23 +434,58 @@ function App() {
     [focusedSkillId],
   );
 
-  // Escape beside the list: collapse expanded Files first, then close the
-  // inspector (the sheet's Escape is the Dialog's own).
+  // My Skills' one keymap (j/k · x · ⌘A · / · Esc). Escape clears the
+  // selection first; then, beside the list, it collapses expanded Files and
+  // then closes the inspector (the sheet's Escape is the Dialog's own).
   const layerOpen = surface.stack.length > 0;
-  useEffect(() => {
-    if (!focusedSkillId || layerOpen || placement !== "side") return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      if (document.querySelector("[role='dialog'], [role='alertdialog'], [role='menu']")) return;
-      if (filesExpanded) {
-        collapseFiles();
-        return;
-      }
-      handleCloseDetail();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [collapseFiles, filesExpanded, focusedSkillId, handleCloseDetail, layerOpen, placement]);
+  const escapeStep = useCallback(() => {
+    if (!focusedSkillId || placement !== "side") return;
+    if (filesExpanded) collapseFiles();
+    else handleCloseDetail();
+  }, [collapseFiles, filesExpanded, focusedSkillId, handleCloseDetail, placement]);
+  const { selectFromRow, selectGroup, clear: clearSkillSelection } = useSkillListKeymap({
+    enabled: area === "skills" && !explorePreview && !layerOpen && !filesCover,
+    order: visibleOrder,
+    surface,
+    focusedSkillId,
+    onEscape: escapeStep,
+  });
+
+  // The selection the bulk rail acts on (it may hold rows a filter hides).
+  const selectedSkills = useMemo(
+    () => library.managedSkills.filter((skill) => surface.selection.skills.has(skill.id)),
+    [library.managedSkills, surface.selection.skills],
+  );
+
+  // Where each skill is assigned, for the counts a wide verb states (the
+  // project world's held views; unknown until a read landed).
+  const { placementOf, placementViews, loadPlacementViews, projects: projectList } = projects;
+  const assignmentsOf = useMemo<AssignmentsOf | null>(
+    () =>
+      placementViews.loaded
+        ? (skillId: string) =>
+            placementOf(skillId).rows?.map((row) => ({
+              projectId: row.project.id,
+              projectName: row.project.name,
+              assignments: row.assignments,
+            })) ?? null
+        : null,
+    [placementOf, placementViews.loaded],
+  );
+  const projectLabelById = useMemo(
+    () => Object.fromEntries(projectList.map((project) => [project.id, project.name])),
+    [projectList],
+  );
+  const assignPlacements = useMemo(
+    () => library.assignProjectSkills.map((skill) => placementOf(skill.id)),
+    [library.assignProjectSkills, placementOf],
+  );
+  const handleReveal = useCallback(
+    (path: string) => {
+      void revealPath(path).catch(notifyError);
+    },
+    [notifyError],
+  );
 
   // Project Tool labels for the inspector's Projects section and the picker.
   const { projectToolStatus, loadProjectToolStatus } = catalog;
@@ -506,7 +544,8 @@ function App() {
     }
     enableTargetsFor(targets);
     // With auto-sync off the new Tools are only selected, never written to.
-    if (autoSyncEnabled) void run("syncToTargets", "all", { tools: targets });
+    // The new-Tools notice was the confirmation.
+    if (autoSyncEnabled) void run("syncToTargets", "all", { tools: targets, confirmed: true });
   }, [
     autoSyncEnabled,
     dismissDialog,
@@ -566,7 +605,7 @@ function App() {
                 exceptions={exceptions}
                 onViewIssues={handleViewIssues}
                 blockedReason={blockedReason}
-                onRefreshAll={() => void run("update", "all")}
+                onRefreshAll={() => void run("update", "all", { confirmed: true })}
                 onConfigureTools={sync.handleOpenToolConfig}
                 onAddSkill={handleOpenAdd}
                 addIsPrimary={!discoveryLeads}
@@ -576,6 +615,18 @@ function App() {
             </div>
             <div className="flex min-h-0 flex-1">
               <div className="flex min-h-0 min-w-0 flex-1 flex-col" inert={filesCover}>
+                {/* The rail sits at the foot (`order-last`) but first in the
+                    DOM: the selection's verbs are one Tab from the filter bar
+                    and a short Shift+Tab from the rows, before the list. */}
+                {selectedSkills.length > 0 ? (
+                  <BulkRail
+                    selected={selectedSkills}
+                    actions={actions}
+                    blockedReason={blockedReason}
+                    onClear={clearSkillSelection}
+                    t={t}
+                  />
+                ) : null}
                 <SkillsList
                   lens={lens}
                   librarySize={librarySize}
@@ -585,7 +636,8 @@ function App() {
                   isDetected={isToolDetected}
                   selection={surface.selection.skills}
                   focusedId={focusedSkillId}
-                  onToggleSelect={toggleSkillSelection}
+                  onToggleSelect={selectFromRow}
+                  onSelectGroup={selectGroup}
                   pending={pending}
                   blockedReason={blockedReason}
                   actions={actions}
@@ -813,32 +865,55 @@ function App() {
       />
 
       <AssignProjectModal
-        skill={library.assignProjectSkill}
+        skills={library.assignProjectSkills}
         loading={loading}
-        placement={projects.placementOf(library.assignProjectSkill?.id ?? "")}
-        loadPlacementViews={projects.loadPlacementViews}
+        placements={assignPlacements}
+        loadPlacementViews={loadPlacementViews}
         labelOf={labelOfTool}
         onRequestClose={library.handleCloseAssignProject}
         onConfirm={(projectId) => {
-          const skill = library.assignProjectSkill;
-          if (!skill) return;
+          const skills = library.assignProjectSkills;
+          if (skills.length === 0) return;
           void (async () => {
-            await run("assignToProject", [skill], { projectId });
+            await run("assignToProject", skills, { projectId });
             dismissDialog("assignProject");
           })();
         }}
         t={t}
       />
 
-      <DeleteModal
-        open={surface.isOpen("deleteSkill")}
-        loading={loading}
-        skillName={library.pendingDeleteSkill?.name ?? null}
-        onRequestClose={library.handleCloseDelete}
-        onConfirm={() => {
-          if (library.pendingDeleteSkill)
-            void run("delete", [library.pendingDeleteSkill], { confirmed: true });
+      <CountConfirmModal
+        request={library.countConfirm}
+        pending={loading}
+        blockedReason={blockedReason}
+        assignmentsOf={assignmentsOf}
+        loadPlacementViews={loadPlacementViews}
+        toolChoices={catalog.installedTools}
+        defaultTools={effectiveSyncTargetIds}
+        onRequestClose={library.handleCloseCountConfirm}
+        onConfirm={(tools) => {
+          const request = library.countConfirm;
+          if (!request) return;
+          if (request.verb === "syncToTargets")
+            void run("syncToTargets", request.skills, { tools: tools ?? [], confirmed: true });
+          else void run(request.verb, request.skills, { confirmed: true });
         }}
+        t={t}
+      />
+
+      <DeleteModal
+        request={library.pendingDelete}
+        pending={loading}
+        progress={actionMessage}
+        assignmentsOf={assignmentsOf}
+        loadPlacementViews={loadPlacementViews}
+        labelOf={labelOfTool}
+        toolLabelById={toolLabelById}
+        projectLabelById={projectLabelById}
+        onRequestClose={library.handleCloseDelete}
+        onConfirm={(skillIds) => void run("delete", skillIds, { confirmed: true })}
+        onRetry={(skillIds) => void run("delete", skillIds, { confirmed: true })}
+        onReveal={handleReveal}
         fallbackFocus={actions.dialogFallbackFocus}
         t={t}
       />

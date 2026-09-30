@@ -1,7 +1,8 @@
 // The one seam between the frontend and the native platform — everything
 // that crosses into Tauri that is not an app command (those go through
 // `invokeTauri`, `src/lib/tauri.ts`): the folder picker, progress channels
-// for streamed commands, the app updater, webview zoom and the app version.
+// for streamed commands, the app updater, webview zoom, the app version and
+// revealing a path in the file manager (backed by the `reveal_path` command).
 //
 // Hooks and components call these functions and never import a Tauri plugin
 // or `@tauri-apps/api/*` themselves; tests mock this module. The `isTauri`
@@ -15,7 +16,7 @@
 // `installPlatformAdapter` before the first render.
 
 import type { Channel } from "@tauri-apps/api/core";
-import { isTauri } from "./tauri";
+import { invokeTauri, isTauri } from "./tauri";
 
 /** A release newer than the running app, as the updater found it. */
 export type AppUpdateHandle = {
@@ -37,6 +38,8 @@ export type PlatformAdapter = {
   checkForUpdate: () => Promise<AppUpdateHandle | null>;
   setZoom: (factor: number) => Promise<void>;
   appVersion: () => Promise<string>;
+  /** Show `path` in the file manager (selected in its folder, else its nearest folder). */
+  revealPath: (path: string) => Promise<void>;
 };
 
 /** A platform call made outside a Tauri webview (plain browser dev server). */
@@ -89,6 +92,9 @@ const tauriAdapter: PlatformAdapter = {
   async appVersion() {
     const { getVersion } = await import("@tauri-apps/api/app");
     return getVersion();
+  },
+  async revealPath(path) {
+    await invokeTauri("revealPath", path);
   },
 };
 
@@ -147,4 +153,15 @@ export function setZoom(factor: number): Promise<void> {
 export function appVersion(): Promise<string> {
   if (!isTauri) return unavailable();
   return adapter.appVersion();
+}
+
+/**
+ * Show a path a report named ("Reveal in Finder" on a Sync target a Delete
+ * could not remove, D16) in the operator's file manager: selected in its
+ * folder while it is there, else its nearest existing folder opened. A
+ * failure rejects with the typed `REVEAL_PATH_FAILED`; the caller reports it.
+ */
+export function revealPath(path: string): Promise<void> {
+  if (!isTauri) return unavailable();
+  return adapter.revealPath(path);
 }

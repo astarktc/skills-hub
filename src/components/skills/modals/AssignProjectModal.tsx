@@ -17,11 +17,11 @@ import type { SkillPlacement, SkillPlacementValue } from "../../projects/useProj
 import type { ManagedSkill } from "../types";
 
 type AssignProjectModalProps = {
-  /** The skill to assign; null = closed (one dialog identity for its life). */
-  skill: ManagedSkill | null;
+  /** The skills to assign (one, or a selection); empty = closed (one dialog identity for its life). */
+  skills: readonly ManagedSkill[];
   loading: boolean;
-  /** Where the skill is assigned: the project world's held views. */
-  placement: SkillPlacementValue;
+  /** Where each skill is assigned (aligned with `skills`): the project world's held views. */
+  placements: readonly SkillPlacementValue[];
   /** The explicit read of every project's view (stable), made as the picker opens. */
   loadPlacementViews: () => Promise<void>;
   labelOf: (tool: string) => string;
@@ -32,16 +32,18 @@ type AssignProjectModalProps = {
 };
 
 /**
- * Assign to project…: one project, and the skill lands on every Tool that
- * project is configured with — each project shows its Tools, so the choice
- * is made knowing where it goes. A project with no Tools cannot take it; a
- * project that already has the skill says so. Per-Tool choices stay in the
+ * Assign to project…: one project, and the skill — or every selected skill
+ * (the bulk rail) — lands on every Tool that project is configured with; each
+ * project shows its Tools and what assigning adds, so the choice is made
+ * knowing where it goes (the picker is the selection's count-bearing
+ * confirmation). A project with no Tools cannot take it; a project that
+ * already has every skill on every Tool says so. Per-Tool choices stay in the
  * project's matrix (D26).
  */
 export default function AssignProjectModal({
-  skill,
+  skills,
   loading,
-  placement,
+  placements,
   loadPlacementViews,
   labelOf,
   onConfirm,
@@ -50,7 +52,21 @@ export default function AssignProjectModal({
 }: AssignProjectModalProps) {
   const [choice, setChoice] = useState<{ skillId: string; projectId: string } | null>(null);
   const formId = useId();
-  const skillId = skill?.id ?? null;
+  // One key per request: a choice made for another selection never carries over.
+  const skillId = skills.length > 0 ? skills.map((skill) => skill.id).join(",") : null;
+  const single = skills.length === 1 ? skills[0] : null;
+  // The project list and each project's Tools are the same from every skill's
+  // view; a read failure of any is a read failure of the picker.
+  const placement: SkillPlacementValue = {
+    rows: placements.length > 0 && placements.every((value) => value.rows !== null) ? placements[0].rows : null,
+    failed: placements.some((value) => value.failed),
+  };
+  /** The Tools of `project` each selected skill is not on yet. */
+  const missingFor = (row: SkillPlacement) =>
+    placements.map((value) => {
+      const own = value.rows?.find((candidate) => candidate.project.id === row.project.id);
+      return row.tools.filter((tool) => !own?.assignments.some((assignment) => assignment.tool === tool.tool));
+    });
 
   useEffect(() => {
     if (skillId) void loadPlacementViews();
@@ -74,10 +90,9 @@ export default function AssignProjectModal({
     }, 0);
     return () => window.clearTimeout(timer);
   }, [listReady, skillId]);
-  const open = skill !== null;
-  // A choice counts only for this skill, and only while that project can take it.
-  const canTake = (row: SkillPlacement) =>
-    row.tools.some((tool) => !row.assignments.some((assignment) => assignment.tool === tool.tool));
+  const open = skills.length > 0;
+  // A choice counts only for this request, and only while that project can take it.
+  const canTake = (row: SkillPlacement) => missingFor(row).some((missing) => missing.length > 0);
   const chosen =
     choice && choice.skillId === skillId && rows?.some((row) => row.project.id === choice.projectId && canTake(row))
       ? choice.projectId
@@ -100,7 +115,11 @@ export default function AssignProjectModal({
         initialFocus={() => document.querySelector<HTMLElement>("[data-assign-list] input:not([disabled])") ?? true}
       >
         <DialogHeader>
-          <DialogTitle>{t("assignProject.title", { name: skill?.name ?? "" })}</DialogTitle>
+          <DialogTitle>
+            {single
+              ? t("assignProject.title", { name: single.name })
+              : t("bulk.assign.title", { count: skills.length })}
+          </DialogTitle>
           <DialogDescription>{t("assignProject.body")}</DialogDescription>
         </DialogHeader>
         <DialogBody>
@@ -124,12 +143,17 @@ export default function AssignProjectModal({
               <FieldSet>
                 <FieldLegend>{t("assignProject.legend")}</FieldLegend>
                 <ul data-assign-list="" className="m-0 flex max-h-80 list-none flex-col overflow-y-auto rounded-md border border-border p-0">
-                  {rows.map(({ project, tools, assignments }) => {
+                  {rows.map((row) => {
+                    const { project, tools } = row;
                     const noTools = tools.length === 0;
-                    // Assigning adds the skill to the Tools it is not on yet.
-                    const missing = tools.filter((tool) => !assignments.some((row) => row.tool === tool.tool));
+                    // Assigning adds each skill to the Tools it is not on yet.
+                    const missingBySkill = missingFor(row);
+                    const missing = tools.filter((tool) => missingBySkill.some((list) => list.includes(tool)));
+                    const adding = missingBySkill.filter((list) => list.length > 0).length;
                     const assigned = !noTools && missing.length === 0;
-                    const partly = assignments.length > 0 && missing.length > 0;
+                    const partly = single
+                      ? missing.length > 0 && missing.length < tools.length
+                      : missing.length > 0;
                     const unavailable = noTools || assigned;
                     return (
                       <li key={project.id} className="border-b border-border last:border-b-0">
@@ -157,7 +181,12 @@ export default function AssignProjectModal({
                             {assigned ? <span className="text-xs text-muted-foreground">{t("assignProject.assigned")}</span> : null}
                             {partly ? (
                               <span className="text-xs text-muted-foreground">
-                                {t("assignProject.adds", { tools: missing.map((tool) => labelOf(tool.tool)).join(", ") })}
+                                {single
+                                  ? t("assignProject.adds", { tools: missing.map((tool) => labelOf(tool.tool)).join(", ") })
+                                  : t("bulk.assign.adds", {
+                                      skills: t("bulk.count.skills", { count: adding }),
+                                      tools: missing.map((tool) => labelOf(tool.tool)).join(", "),
+                                    })}
                               </span>
                             ) : null}
                           </span>

@@ -9,6 +9,7 @@ vi.mock("./tauri", () => ({
   get isTauri() {
     return env.isTauri;
   },
+  invokeTauri: vi.fn(),
 }));
 
 import {
@@ -18,6 +19,7 @@ import {
   installPlatformAdapter,
   pickFolder,
   PlatformUnavailableError,
+  revealPath,
   setZoom,
   type PlatformAdapter,
 } from "./platform";
@@ -29,6 +31,7 @@ function fakeAdapter(picked: string[]) {
     checkForUpdate: vi.fn(async () => null),
     setZoom: vi.fn(async () => {}),
     appVersion: vi.fn(async () => "1.2.3"),
+    revealPath: vi.fn(async () => {}),
   };
   // SAFETY: the fake's channel is a plain sink; these tests only read `onmessage`.
   installPlatformAdapter(adapter as unknown as PlatformAdapter);
@@ -64,6 +67,7 @@ describe("the isTauri guard", () => {
     await expect(createProgressChannel(() => {})).rejects.toBeInstanceOf(PlatformUnavailableError);
     await expect(checkForUpdate()).rejects.toBeInstanceOf(PlatformUnavailableError);
     await expect(appVersion()).rejects.toBeInstanceOf(PlatformUnavailableError);
+    await expect(revealPath("/x")).rejects.toBeInstanceOf(PlatformUnavailableError);
     await expect(setZoom(1.25)).resolves.toBeUndefined();
     expect(adapter.pickFolder).not.toHaveBeenCalled();
     expect(adapter.setZoom).not.toHaveBeenCalled();
@@ -78,6 +82,8 @@ describe("the isTauri guard", () => {
     await setZoom(1.25);
     expect(adapter.setZoom).toHaveBeenCalledWith(1.25);
     await expect(appVersion()).resolves.toBe("1.2.3");
+    await revealPath("/tools/claude/release-train");
+    expect(adapter.revealPath).toHaveBeenCalledWith("/tools/claude/release-train");
     await expect(checkForUpdate()).resolves.toBeNull();
   });
 });

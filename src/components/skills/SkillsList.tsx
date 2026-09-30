@@ -3,6 +3,7 @@ import { Folder, GitBranch, Inbox, Layers } from "lucide-react";
 import type { TFunction } from "i18next";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { ManagedSkill, OnboardingPlan } from "./types";
 import type { SkillActions } from "../../hooks/useSkillActions";
 import type { ListLens } from "../../hooks/useListLens";
@@ -29,11 +30,14 @@ type SkillsListProps = {
   /** The Tool catalog's label for any key (a row outside the set). */
   labelOf: (tool: string) => string;
   isDetected: (tool: string) => boolean;
-  /** The surface's selection (surface state, D4); the rail lands in ticket 13. */
+  /** The surface's selection (surface state, D4); the bulk rail acts on it. */
   selection: ReadonlySet<string>;
   /** The skill the inspector shows (surface state's `focused`), marked on its row. */
   focusedId: string | null;
-  onToggleSelect: (skillId: string) => void;
+  /** A row's checkbox: toggle it, or (shift-click) select the range to it. */
+  onToggleSelect: (skillId: string, range: boolean) => void;
+  /** A group header's checkbox: every skill of the source in or out. */
+  onSelectGroup: (skillIds: readonly string[], on: boolean) => void;
   pending: PendingAction | null;
   blockedReason: string | null;
   actions: Pick<SkillActions, "run" | "repair">;
@@ -68,6 +72,7 @@ const SkillsList = ({
   selection,
   focusedId,
   onToggleSelect,
+  onSelectGroup,
   pending,
   blockedReason,
   actions,
@@ -219,6 +224,8 @@ const SkillsList = ({
         groups.map((group) => {
           const state = groupState(group.skills);
           const headingId = `${listId}-${group.key}`;
+          const selectedHere = group.skills.filter((skill) => selection.has(skill.id)).length;
+          const allSelected = selectedHere === group.skills.length;
           const parts = (
             [
               ["failed", state.failed, "text-failed"],
@@ -230,7 +237,15 @@ const SkillsList = ({
           return (
             <section key={group.key} aria-labelledby={headingId}>
               <div className="sticky top-0 z-10 flex h-row items-center gap-3 border-b border-border bg-card px-3">
-                <span className="flex w-8 shrink-0 justify-center">{groupIcon(group)}</span>
+                <span className="flex w-8 shrink-0 justify-center">
+                  <Checkbox
+                    checked={allSelected}
+                    indeterminate={selectedHere > 0 && !allSelected}
+                    onCheckedChange={() => onSelectGroup(group.skills.map((skill) => skill.id), !allSelected)}
+                    aria-label={t("bulk.selectGroup", { count: group.skills.length, source: group.label })}
+                  />
+                </span>
+                {groupIcon(group)}
                 {/* Truncation lives on the inner text, never on an ancestor of
                     the link: an overflow-clipping heading would cut its focus
                     ring (2 px, offset 2 px) down to corner fragments. */}

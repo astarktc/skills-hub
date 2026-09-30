@@ -48,3 +48,8 @@ Escape closes only the ask; 960×640; contrast; `npm run check`.
   the one picker lands, give it a single-choice mode and use it there. A pick crosses the wire as
   `RepointTarget::Git { url, selection: { subpath, resolution } }` (new; the preview's `ref` is null for a
   default-branch repository, so no URL can name the folder) — the same shape Add's batch sends.
+
+- 2026-09-30 — from ticket 13: `ConfirmDialog` gained `initialFocus: "cancel" | "confirm"` and `PopoverContent`
+  gained `anchor` (a triggerless, controlled popover with `initialFocus` / `finalFocus`) — both documented in
+  DESIGN.md. The Sync-to-Tools pick in `CountConfirmModal` (a two-column checkbox FieldSet over the installed Tools,
+  counts from `lib/bulkCounts.syncCounts` following the pick) is a candidate for Add's Tool-scope step.

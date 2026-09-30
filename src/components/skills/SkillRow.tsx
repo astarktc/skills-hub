@@ -1,4 +1,4 @@
-import { memo, type MouseEvent } from "react";
+import { memo, useRef, useState, type MouseEvent } from "react";
 import { AlertTriangle, CircleMinus, CircleX, Ellipsis, Globe, Pencil } from "lucide-react";
 import type { TFunction } from "i18next";
 import { cn } from "@/lib/utils";
@@ -14,7 +14,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverDescription } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
+import { enableCounts } from "../../lib/bulkCounts";
 import type { SkillActions } from "../../hooks/useSkillActions";
 import { describeCommandError } from "../../commandError";
 import { isPendingSkill, type PendingAction } from "../../lib/actionLifecycle";
@@ -70,6 +72,15 @@ const MENU_REPAIRS = new Set<HealthRepair>([
 
 export type SkillRowLayout = "list" | "card";
 
+/**
+ * A selected row's mark (ticket 13): a 3 px iris (`ring`) edge on its leading
+ * side over the `raised` ground — selection is one of the accent's three
+ * uses; the checked checkbox says it too. It coexists with the focused row's
+ * 1 px inset ring. Contrast: `ring` on `raised` 6.01 dark / 5.04 light.
+ */
+const SELECTED_EDGE =
+  "data-selected:before:pointer-events-none data-selected:before:absolute data-selected:before:inset-y-0 data-selected:before:left-0 data-selected:before:w-[3px] data-selected:before:bg-ring";
+
 type SkillRowProps = {
   skill: ManagedSkill;
   /** The skill's Synced strip, folded by the list. */
@@ -77,10 +88,12 @@ type SkillRowProps = {
   layout: SkillRowLayout;
   /** A muted inline source label (Flat, and the "Individual sources" group). */
   sourceLabel: string | null;
+  /** Checked in the surface's selection: the row carries an iris edge (selection is one of the accent's uses). */
   selected: boolean;
   /** The inspector shows this skill: the row carries `aria-current` and an iris edge. */
   focused: boolean;
-  onToggleSelect: (skillId: string) => void;
+  /** Toggle this row; `range` (a shift-click) selects from the last row toggled to it. */
+  onToggleSelect: (skillId: string, range: boolean) => void;
   /** The action running now; this row's own shows inline (`aria-busy`). */
   pending: PendingAction | null;
   /** Why every verb is disabled while something runs, in words. */
@@ -121,6 +134,19 @@ const SkillRow = ({
   const marks = health.rows.filter((row) => !SILENT_ROWS.has(row.kind));
   const live = deployAction(skill).kind === "deployed";
   const enabled = skill.disabled_at === null;
+  // The switch is Disable / Enable at skill grain (D8). Disable is never
+  // asked (reversible; the switch shows it). Enable asks quietly, inline,
+  // when it will sync the skill to Tools again — with the count.
+  const switchRef = useRef<HTMLElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const [askingEnable, setAskingEnable] = useState(false);
+  const resyncTools = enableCounts([skill], null).tools;
+  const onSwitch = (on: boolean) => {
+    if (on && resyncTools > 0) setAskingEnable(true);
+    else void run(on ? "enable" : "disable", [skill]);
+  };
+  // A shift-click on the checkbox selects a range (the keymap's anchor).
+  const rangeClick = useRef(false);
 
   const handleRowClick = (event: MouseEvent<HTMLElement>) => {
     if ((event.target as HTMLElement).closest(INTERACTIVE)) return;
@@ -226,14 +252,48 @@ const SkillRow = ({
   );
 
   const toggle = (
-    <Switch
-      size="sm"
-      checked={enabled}
-      onCheckedChange={(on) => void run(on ? "enable" : "disable", [skill])}
-      disabled={busy}
-      aria-label={t("library.row.enabled", { name: skill.name })}
-      title={blockedTitle}
-    />
+    <>
+      <Switch
+        ref={switchRef}
+        size="sm"
+        checked={enabled}
+        onCheckedChange={onSwitch}
+        disabled={busy}
+        aria-label={t("library.row.enabled", { name: skill.name })}
+        title={blockedTitle}
+      />
+      <Popover open={askingEnable} onOpenChange={setAskingEnable}>
+        <PopoverContent
+          anchor={switchRef}
+          side="bottom"
+          align="end"
+          initialFocus={confirmRef}
+          finalFocus={switchRef}
+          aria-label={t("bulk.enableInline.confirm")}
+        >
+          <PopoverDescription>
+            {t("bulk.enableInline.body", { name: skill.name, count: resyncTools })}
+          </PopoverDescription>
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setAskingEnable(false)}>
+              {t("bulk.enableInline.cancel")}
+            </Button>
+            <Button
+              ref={confirmRef}
+              size="sm"
+              tone="accent"
+              disabled={busy}
+              onClick={() => {
+                setAskingEnable(false);
+                void run("enable", [skill]);
+              }}
+            >
+              {t("bulk.enableInline.confirm")}
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+    </>
   );
 
   const menu = (
@@ -302,7 +362,13 @@ const SkillRow = ({
   const checkbox = (
     <Checkbox
       checked={selected}
-      onCheckedChange={() => onToggleSelect(skill.id)}
+      onClickCapture={(event: MouseEvent) => {
+        rangeClick.current = event.shiftKey;
+      }}
+      onCheckedChange={() => {
+        onToggleSelect(skill.id, rangeClick.current);
+        rangeClick.current = false;
+      }}
       aria-label={t("library.row.select", { name: skill.name })}
     />
   );
@@ -310,13 +376,15 @@ const SkillRow = ({
   if (layout === "card") {
     return (
       <li
+        data-skill-item={skill.id}
         data-selected={selected || undefined}
         data-focused={focused || undefined}
         aria-current={focused ? "true" : undefined}
         aria-busy={busyHere || undefined}
         onClick={handleRowClick}
         className={cn(
-          "flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-card p-3 hover:border-border-strong data-selected:bg-raised data-focused:border-ring",
+          "relative flex min-w-0 flex-col gap-2 overflow-hidden rounded-lg border border-border bg-card p-3 hover:border-border-strong data-selected:bg-raised data-focused:border-ring",
+          SELECTED_EDGE,
           busyHere && "opacity-70",
         )}
       >
@@ -344,13 +412,15 @@ const SkillRow = ({
 
   return (
     <li
+      data-skill-item={skill.id}
       data-selected={selected || undefined}
       data-focused={focused || undefined}
       aria-current={focused ? "true" : undefined}
       aria-busy={busyHere || undefined}
       onClick={handleRowClick}
       className={cn(
-        "grid h-row items-center gap-x-3 border-b border-border px-3 hover:bg-card data-selected:bg-raised data-focused:bg-raised data-focused:ring-1 data-focused:ring-ring data-focused:ring-inset",
+        "relative grid h-row items-center gap-x-3 border-b border-border px-3 hover:bg-card data-selected:bg-raised data-focused:bg-raised data-focused:ring-1 data-focused:ring-ring data-focused:ring-inset",
+        SELECTED_EDGE,
         LIST_COLUMNS,
         busyHere && "opacity-70",
       )}

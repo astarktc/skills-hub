@@ -184,7 +184,7 @@ describe("catalog reconciliation", () => {
     const { result } = render();
     act(() => result.current.focus({ kind: "skill", id: "gone" }));
     act(() => result.current.select("skills", ["gone", "kept"]));
-    act(() => result.current.openDialog({ kind: "deleteSkill", skillId: "gone" }));
+    act(() => result.current.openDialog({ kind: "deleteSkill", skillIds: ["gone"] }));
     const before = window.history.length;
 
     act(() => result.current.reconcile("skill", ["kept"]));
@@ -276,11 +276,35 @@ describe("dialog stack", () => {
   it("shows one dialog at a time: opening replaces", () => {
     const { result } = render();
     act(() => result.current.openDialog({ kind: "addSkill" }));
-    act(() => result.current.openDialog({ kind: "deleteSkill", skillId: "s1" }));
+    act(() => result.current.openDialog({ kind: "deleteSkill", skillIds: ["s1"] }));
 
-    expect(result.current.stack).toEqual([{ kind: "deleteSkill", skillId: "s1" }]);
+    expect(result.current.stack).toEqual([{ kind: "deleteSkill", skillIds: ["s1"] }]);
     expect(result.current.isOpen("addSkill")).toBe(false);
-    expect(result.current.layer("deleteSkill")).toEqual({ kind: "deleteSkill", skillId: "s1" });
+    expect(result.current.layer("deleteSkill")).toEqual({ kind: "deleteSkill", skillIds: ["s1"] });
+  });
+
+  it("updates a dialog in place: the Delete confirmation becomes its report, layers above kept (ticket 13)", () => {
+    const { result } = render();
+    act(() => result.current.openDialog({ kind: "deleteSkill", skillIds: ["s1", "s2"] }));
+    act(() => result.current.pushDialog({ kind: "notifications" }));
+    const report = [{ skillId: "s1", name: "alpha", error: { code: "OTHER", message: "x" } }];
+    act(() => result.current.updateDialog({ kind: "deleteSkill", skillIds: ["s1", "s2"], report }));
+    expect(result.current.stack).toEqual([
+      { kind: "deleteSkill", skillIds: ["s1", "s2"], report },
+      { kind: "notifications" },
+    ]);
+    // Nothing of the kind open: nothing changes.
+    act(() => result.current.updateDialog({ kind: "confirmCount", verb: "disable", skillIds: ["s1"] }));
+    expect(result.current.stack.map((layer) => layer.kind)).toEqual(["deleteSkill", "notifications"]);
+  });
+
+  it("a dialog about several skills stays while any of them does", () => {
+    const { result } = render();
+    act(() => result.current.openDialog({ kind: "confirmCount", verb: "disable", skillIds: ["a", "b"] }));
+    act(() => result.current.reconcile("skill", ["b"]));
+    expect(result.current.isOpen("confirmCount")).toBe(true);
+    act(() => result.current.reconcile("skill", []));
+    expect(result.current.isOpen("confirmCount")).toBe(false);
   });
 
   it("layers a nested step and closes only the top layer", () => {

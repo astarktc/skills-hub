@@ -38,7 +38,134 @@ them → Enable re-syncs; select-all → Disable on all Tools confirmation shows
 
 ## Result
 
-(child fills in)
+Implemented 2026-09-30 (child, Opus 5.5). Nothing committed. Evidence: `.scratch/round19/evidence/13/` (gitignored;
+drivers `driver.ts`, `gate.ts`, `delete.ts`, `extras.ts`, `a11y.ts` beside their JSON/PNG; headless
+`agent-browser` 0.31.1, trusted keys in every primary transcript; fixture reads/writes marked `supplemental`).
+
+### Files
+
+- **New** — `components/skills/BulkRail.tsx` (the rail), `components/skills/useSkillListKeymap.ts` (+ test: My
+  Skills' one keymap and the pointer-selection anchor), `modals/CountConfirmModal.tsx` (the `confirmCount` dialog),
+  `lib/bulkCounts.ts` (+ test: the pure count folds — `disableCounts`, `enableCounts`, `syncCounts`, `updateCounts`,
+  `deleteScope`, `deleteTotals`).
+- **Rewritten** — `modals/DeleteModal.tsx` (D16: one Dialog, confirm → report; migrated, off the legacy classes).
+- **Changed** — `hooks/useSkillActions.ts` (the confirm rules, bulk Delete, `DisableScope::Skills` Enable batch fold),
+  `hooks/useSurfaceState.ts` (`confirmCount` kind, `deleteSkill`/`assignProject` over `skillIds`, `report` on the
+  Delete layer, `updateDialog`, multi-id reconciliation), `hooks/useSkillLibrary.ts` (`pendingDelete`,
+  `countConfirm`, `assignProjectSkills`), `lib/reportOutcome.ts` (`deleteOutcome` over settlements,
+  `deleteReportRows`, count lines for bulk Disable / Enable / Delete), `lib/actionLifecycle.ts` (`skills` pending
+  subject; `focusAfter` steps past every removed row), `lib/platform.ts` (`revealPath`), `commandError.ts`
+  (`REVEAL_PATH_FAILED`), `App.tsx` (keymap, rail, the three dialogs, placements → `assignmentsOf`),
+  `SkillRow.tsx` (iris selection edge, shift-click, `data-skill-item`, the switch's inline Enable popover),
+  `SkillsList.tsx` (group-header checkbox), `FilterBar.tsx` (its `/` handler moved into the keymap; `data-skill-search`),
+  `AssignProjectModal.tsx` (one skill or a selection), `AppSidebar.tsx` (shortcuts list), `ui/confirm-dialog.tsx`
+  (`initialFocus`), `ui/popover.tsx` (`anchor`), fixture (`revealPath` handler, `state.revealed`, dev-only
+  `window.__fixture`), `i18n/resources.ts` (`revealPath`, `bulk`, `deleteDialog`, `deleteReport` appended at the end
+  of `en`), `DESIGN.md` (§ Selection, the bulk rail and the Delete dialog; ConfirmDialog `initialFocus`; Popover
+  without a trigger; rail motion; selected-row edge), `scripts/styles-baseline.json` (3 files appended; ceiling
+  unchanged at 2076 — the legacy `delete-*` rules are still used by `RemoveProjectModal`, ticket 17).
+- **Rust** — `commands::reveal_path` (`#[tauri::command] #[specta::specta]`, in `collect_commands!`),
+  `core::log_reveal::path_reveal_target` (select the item in its folder while it exists — `symlink_metadata`, so a
+  dangling link too — else open its nearest existing ancestor; `None` on a vanished volume), `SignalError` /
+  `CommandError::RevealPathFailed { path, detail }`; 4 tests in `core/tests/log_reveal.rs`; bindings regenerated.
+
+### Decisions
+
+- **The confirm-count ask** is a dialog kind, not an ask promise: `{ kind: "confirmCount", verb, skillIds }`
+  (camelCase like every other kind). The door opens it for **Disable / Enable / Update over several skills (or
+  "all") without `confirmed`**, and for **Sync to Tools without `tool` or `confirmed`, even for one skill** (its
+  confirmation is the Tool pick). Its Confirm re-runs the verb with `confirmed: true` (+ `tools`); the door closes it
+  once the verb settled. One skill's Disable / Enable / Update never asks (D8). Callers that already confirmed pass
+  `confirmed`: the header's Refresh all, the new-Tools notice, the health repair "Deploy". Counts are derived at
+  render from the selected skills + the project world's held placements (read explicitly as a Disable / Enable /
+  Delete confirmation opens; "Reading project assignments…" until they land).
+- **Assign to project…** widened the existing picker (`assignProject` over `skillIds`): it shows per project what
+  assigning adds ("Adds 2 skills to Claude Code, Pi") — the picker is the count-bearing confirmation; its answer is
+  the door's `projectId`.
+- **Delete batch shape**: `delete_managed_skill` is per skill, so the door loops **inside one `runAction`** (subject
+  `{ kind: "skills", ids }` — rows pend inline, the Delete dialog shows the count line, no progress overlay), catches
+  each skill's thrown command as a settlement, and folds **one** report (`deleteOutcome(settlements)`: one sentence
+  for one skill, the count line "10 removed · 2 failed" for several). **BACKLOG follow-up: a multi-skill delete
+  command** (one backend batch per operator action) — not invented here.
+- **The Delete dialog is one Dialog, two states**; the report is the `deleteSkill` layer's `report` (settlements),
+  set with `updateDialog` *before* the reload so the confirmation never re-renders in between; rows come from
+  `deleteReportRows` (kept skills first; "Removed from …"; per kept path: Tools · path · `describeCommandError` ·
+  Reveal in Finder). Retry re-runs Delete for the kept skills still in the catalog. Focus: Cancel on open; the
+  pressed Remove / Retry keeps focus while pending (`pending` = focusable-when-disabled); the report's heading
+  (`tabIndex=-1`) takes focus when the dialog turns into the report; a completed Delete closes to D21's next row.
+- **Reveal in Finder** goes through `platform.revealPath` → the new `reveal_path` command (`open_log_folder` reveals
+  only the log folder, with no path argument). The fixture's adapter records the path (`state.revealed`).
+- **The rail** is drawn at the foot (`order-last`) but comes first in the list column's DOM, so `/` then Tab reaches
+  it (~7 stops) and Shift+Tab from the top rows does; it rises on entry only (`@starting-style`, 120 ms opacity +
+  translate, `motion-reduce:transition-none`), leaves instantly, never covers a row. Rail buttons are
+  `focusableWhenDisabled`, so after a verb that made itself inapplicable (Disable → nothing left to disable) focus
+  stays on it (D21 "same control"). Clearing the selection from inside the rail moves focus to the row last toggled.
+- **One keymap** (`useSkillListKeymap`, called by App): `/` · `j`/`k` · `x` · ⌘A/Ctrl+A (the lens's visible subset)
+  · Esc (clear the selection → collapse Files → close the inspector; App's former Escape effect moved in here). Off
+  while typing and while any dialog / sheet / popover / menu is in the DOM; it still owns a key a disabled-but-
+  focusable control "consumed" to block activation (Base UI prevents default there).
+- **Row switch**: Disable never asks; Enable asks in an anchored Popover only when it will sync the skill to Tools
+  again, counting the *disabled rows it re-syncs* (`enableCounts`): `retired-playbook` reads "2 Tools" although its
+  strip shows 8 slashed marks — 6 of those are "off everywhere" marks with no row, which Enable does not create.
+- **Selection mark**: checked checkbox + `raised` + a 3 px `ring` edge (`::before`) — coexists with the focused row's
+  1 px inset ring.
+- **Toasts → count line** (09's handoff): bulk Disable ("80 disabled · 3 failed"), bulk Enable ("5 enabled · …"),
+  bulk Delete ("2 removed · 1 failed"). Left on their sentences: the project folds (`bulkUnassign`, project removal)
+  → ticket 17; the single-skill Delete / Enable sentences stay (a batch of one reads as a sentence, like Refresh).
+
+### Verification (fresh, fixture 5175 `failures` / `rich`)
+
+- **D31 gate transcript** (`gate-{dark,light}-{1280,960}.json`, 83 stops each, **0 BODY, every stop `:focus-visible`**;
+  the only non-`solid 2px` stops are the legacy progress overlay's popup, ticket 14): `j x j x j x` → 3 selected →
+  Shift+Tab ×~17 → rail **Disable on all Tools** → Enter → confirmation, focus **Cancel** ("Disable 3 skills on 3
+  Tools — 5 Sync targets are removed and kept disabled; no project assignment changes. …") → Tab → Enter → samples
+  0/300/2000 ms: overlay popup → the rail's Disable (kept) → strips: every mark disabled, switches off →
+  **Refresh all** (the one overwrite ask from the re-assert answered Keep existing by keyboard) → the 3 rows **still
+  disabled** → rail **Enable** → confirmation → Enter → strips re-synced, switches on.
+- **Select-all counts vs a hand count** (all four conditions): Esc, `j`, ⌘A → "Disable 25 skills on 8 Tools — 80
+  Sync targets are removed and kept disabled; 12 project assignments for these skills are disabled too. … 1 of them
+  is already off everywhere." = fixture state hand count `{skills 25, tools 8, targets 80, assignments 12,
+  alreadyDisabled 1}` (supplemental read).
+- **Delete of the locked `release-train`** (`delete-{dark,light}-{1280,960}.json`, 29 stops, **0 BODY**): row menu
+  → Finish removing → dialog "It is removed from Claude Code, Codex, Pi. Projects that carry it: monorepo. Skills
+  Hub's copy is deleted.", focus **Cancel** → Tab → Remove → **0 ms: Remove (pending, focused) · 300 ms: Retry
+  (pending) · 2000 ms: the report heading** "release-train was not deleted" — "Removed from Codex, Pi. Still in
+  Claude Code: /Users/alex/.claude/skills/release-train — Permission denied …" + the monorepo assignment path, each
+  with Reveal in Finder; Close · Retry. Reveal → `state.revealed = ["/Users/alex/.claude/skills/release-train"]`.
+  Supplemental unlock (`lockedPaths`, `unwritableProjectTools` cleared) → Retry → 0/300 ms Retry (pending) → 2000
+  ms dialog closed, focus on the **next row, `retired-playbook`**.
+- **Extras** (`extras-{dark,light}.json`, 73 stops, 0 BODY): ⌘A under the search "re" selects exactly the 8 visible
+  rows; `j j k` → alias-skill; `x`/Esc; **shift-click range** api-style → design-tokens = the 4 rows (the shift-click
+  is a dispatched `MouseEvent{shiftKey}` — agent-browser 0.31.1 drops a held Shift from click/mouse events, measured
+  `shiftKey:false`; also pinned by the keymap hook test); **group header** "Select the 4 skills from
+  mattpocock/skills" selects the 4, then `mixed` after unchecking one; switch **inline Enable**: Space → popover
+  "Enable retired-playbook and sync it to 2 Tools again?", focus Enable → Escape → switch; Space → Enter → enabled,
+  focus on the switch; **Sync to Tools…** → pick dialog, focus Cancel, "14 Sync targets for 2 skills on 7 Tools. …"
+  → uncheck one → "12 … on 6 Tools. 10 new · 2 already synced (re-synced)" → Escape → rail button; **Assign to
+  project…** over 2 → "Assign 2 skills to a project" → Escape → rail button; **bulk Remove** of pr-review,
+  prisma-review, release-train → "Remove 3 skills? 8 Sync targets are removed from 5 Tools. 2 projects lose their
+  assignments." → report "1 of 3 skills was not deleted" (heading focused) → Close → focus on the rail's Remove….
+- **Rail rise**: rAF samples 0 → 1 opacity, `translate 0 8px → none`, `transition-duration 0.12s`, last partial
+  frame at 109 / 112 ms (dark / light). **Reduced motion** (`reduced-motion-rise.json`): first frame opacity 1,
+  `transition-property: none`, `0s`.
+- **axe** (`axe-*.json`): 8 conditions (failures/rich × dark/light × 1280/960, 3 rows selected, rail showing) **0
+  violations** each, plus the count confirmation in failures dark/light 1280: 0 violations (the usual
+  `color-contrast` incompletes).
+- **Contrast** (rendered, composited, every text node in the rail, the selected rows and open dialogs): **0 pairs
+  < 4.5**; lowest 5.22 dark / 4.85 light in the rail + rows; 4.68 (white on `primary`, dark, the known token floor) in
+  the confirmation. Non-text: selected edge `ring` on `raised` 6.01 / 5.04; checked box 3.49 / 5.04.
+- **Gate** (`gate.txt`): `npm run version:check` → Version OK (1.2.18); `npm run check` → exit 0: lint clean;
+  styles:check "App.css 2076 counted lines (ceiling), 24 migrated file(s)"; vitest 40 files / 853 tests; build ok;
+  rustfmt + clippy clean; cargo test 798 passed.
+
+### Deferrals / follow-ups
+
+- **BACKLOG**: a multi-skill delete command (the door loops `delete_managed_skill` under one action today).
+- **Ticket 14**: the progress overlay still shows for the rail's batch verbs (its popup takes focus at 0 ms — never
+  BODY) and its legacy title reads "Installing Skills…" for a Disable; the rail and the count line interplay (below).
+- **Ticket 23 (⌘K)**: the palette is the fastest keyboard route to the rail's verbs; today it is `/` + Tab.
+- The rail offers no "Select all N" affordance beyond ⌘A (and the group checkboxes); rows a filter hides stay
+  selected and are acted on (the rail's count says how many).
 
 ## Comments
 
@@ -51,3 +178,11 @@ them → Enable re-syncs; select-all → Disable on all Tools confirmation shows
   the hook. `run("assignToProject", ids)` without `projectId` opens the picker for **one** skill only (the dialog
   holds a `skillId`); the rail's multi-skill assign should pass `projectId` from its own picker or widen the dialog
   kind. Detach now confirms (`detach` without `confirmed` opens `detachSkill`).
+
+- 2026-09-30 — implementation child: see § Result. For the D31 audit: (1) the legacy Delete dialog's ~300 ms BODY
+  interval is gone — the pressed Remove/Retry keeps focus (`pending`), the report heading takes it after; sampled at
+  0/300/2000 ms in four conditions; (2) shift-click needs a dispatched `shiftKey` click in agent-browser 0.31.1
+  (held Shift is not carried into clicks) — the T3 preview's click has no modifiers either; (3) the rail sits first in
+  the DOM (drawn last): check that reading order is acceptable to you, or propose a skip route; (4)
+  `window.__fixture.state` (dev-only) lets you unlock `lockedPaths` / `unwritableProjectTools` for Retry and read
+  `revealed`.

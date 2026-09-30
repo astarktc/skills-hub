@@ -1968,6 +1968,11 @@ export function createFixtureBackend(
       state.cancelRequested = true;
       return null;
     },
+    revealPath: async (path) => {
+      state.revealed.push(path);
+      console.info(`[fixture] reveal_path: would show ${path} in the file manager`);
+      return null;
+    },
     openLogFolder: async () => {
       console.info("[fixture] open_log_folder: would reveal ~/Library/Logs/com.skillshub.app/skills-hub.log");
       return null;

@@ -49,3 +49,12 @@ All with a missing folder yields one line; contrast; `npm run check`.
   every project's view (no apply) for the inspector's Projects section — N `get_project_view` calls; a per-skill
   backend read would be cheaper if the Projects surface wants the same "where is this skill" view. Project Tool
   labels come from `catalog.loadProjectToolStatus`, which App now also loads when a skill is focused.
+
+- 2026-09-30 — from ticket 13: (1) the project folds (`bulkUnassign`, project removal, `projects.bulkUnassign*`,
+  `projects.removeKept`) still toast their old sentences — move them to the count line with the matrix
+  (09's handoff). (2) `RemoveProjectModal` is the last user of the legacy `delete-title` / `delete-desc` /
+  `delete-warning` / `btn-danger-solid` classes (the skill Delete dialog migrated): migrating it retires those
+  `App.css` rules and lowers the ceiling. (3) The matrix's own selection is surface state's `selection.matrix`; the
+  keymap pattern (`useSkillListKeymap`: one handler, off while typing or under a layer, clearing from inside a rail
+  rescues focus) is reusable there. (4) Assign to project… over a selection (`assignProject` with `skillIds`) assigns
+  every skill to all the project's configured Tools through the project world's `assignToProject(projectId, ids)`.
