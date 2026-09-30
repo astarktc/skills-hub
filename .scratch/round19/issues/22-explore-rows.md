@@ -26,3 +26,7 @@ managed inspector; contrast both themes; 960×640; `npm run check`.
 ## Result
 
 (child fills in)
+
+## Comments
+
+- 2026-09-30 — from ticket 14 (recorded by the orchestrator; the 14 child noted it only in its Result): the Explore preview leaves focus on the main landmark rather than its own heading when it opens (`ExplorePreviewView.tsx`, which now uses `useSkillDocument`). Move the arrival focus to the preview's heading (`tabindex="-1"`, D21) and return to the row on close, the way the inspector does.
