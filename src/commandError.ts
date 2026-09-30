@@ -168,6 +168,10 @@ export function describeCommandError(
     case "REVEAL_LOG_FAILED":
       return withDetail(t("errors.revealLogFailed"), e.detail);
     case "REVEAL_PATH_FAILED":
+      // A refusal says why (no diagnostics to show); the opener's failure
+      // keeps its chain as the detail line.
+      if (e.reason === "notManaged") return t("revealRefusal.notManaged", { path: e.path });
+      if (e.reason === "gone") return t("revealRefusal.gone", { path: e.path });
       return withDetail(t("revealPath.failed", { path: e.path }), e.detail);
     case "SYMLINK_ESCAPES_REPO":
       return t("errors.symlinkEscapesRepo", {

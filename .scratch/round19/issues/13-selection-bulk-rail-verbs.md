@@ -186,3 +186,51 @@ drivers `driver.ts`, `gate.ts`, `delete.ts`, `extras.ts`, `a11y.ts` beside their
   the DOM (drawn last): check that reading order is acceptable to you, or propose a skip route; (4)
   `window.__fixture.state` (dev-only) lets you unlock `lockedPaths` / `unwritableProjectTools` for Retry and read
   `revealed`.
+
+- 2026-09-30 — independent adversarial D31 audit of `c393037`: **FIX-THEN-PASS**, not accepted yet; see `.scratch/round19/review/ticket-13-audit.md` (evidence `evidence/13-audit/`). Three P1s: **A1** the desktop reader's x/⌘A/j///keys operate on the library; **A2** desktop expanded Files disables its only Escape handler; **A3** unrestricted `reveal_path` can send an existing `.app`/file ancestor to native `open_path` rather than safely reveal it (pure probe only, no native launch). P2 A4: synthetic CANCELLED is folded as failure; current Delete has no operator cancellation path. Four-condition primary flow: 344 stops, Delete: 124 stops, zero sampled BODY; eight axe runs clean; contrast/motion pass; trusted CDP Shift-click independently proved. Rail DOM-before-rows is acceptable; actual role is group + live count. Initial fixture count is 63 targets, post-Refresh 80; both displayed totals agree. The 2-Tool inline Enable count is correct. Fixture tree-shaking and ticket-17 handoff confirmed; ticket-14 overlay debt and BACKLOG #66 remain. Fresh version+check exit 0 (853 frontend / 798 Rust), cargo --all and bindings drift clean. Re-check A1/A2 reader + Escape contexts and A3 resource admission/reveal-only fallback, then affected browser regressions and gate; report has exact scope. No application source edited, no commit.
+
+- 2026-09-30 — fix child for the D31 audit's A1–A4 (nothing committed). Evidence `evidence/13-fix/` (gitignored).
+  **A1** (reader shortcuts): `useSkillListKeymap.ts` gains `inListScope` — the row keys (`/ j k x ⌘A`) fire only on
+  the My Skills surface (`[data-skill-surface]` on App's wrapper: header, filters, rail, rows) or with nothing
+  focused, never inside `[data-inspector]`, `[data-skill-reader]` (new marker on `SkillFiles`' reader region) or a
+  dialog; Escape is unscoped and keeps its hierarchy from the reader. Side effect: `j`/`x` from the sidebar or the
+  inspector's own controls no longer reach the list (they used to). **A2** (desktop Files Escape): App no longer
+  disables the keymap while `filesCover`; it passes `listCovered` and the hook refuses every row key while the list is
+  covered/inert but still runs Escape (clear → collapse → close). One owner per key: still the one window handler,
+  still off under any dialog/sheet (`layerOpen`), so the sheet's `interceptEscape` and a child dialog keep Escape.
+  Hook tests: reader region, reader descendant, inspector heading, sidebar × j/k/x///⌘A (⌘A left un-prevented), Escape
+  from the reader, `inListScope`, and the covered-list combination (row keys refused, Escape runs). **A3** (Reveal):
+  `core/log_reveal.rs` — `admit_reveal_path` (pure: `~` expanded against home, plain absolute only — relative,
+  `~user`, `.`/`..` refused; admitted iff equal to a recorded artifact path or inside the central repo),
+  `path_reveal_item` (the path, else its nearest existing ancestor — always **selected**, never opened; replaces
+  `path_reveal_target`) and `resolve_reveal_item` over `artifact_removal::recorded_target_paths` (every owned global
+  row + project assignment path, resolved exactly as Delete plans them). `commands::reveal_path` resolves home + central
+  repo once, calls core, and only ever `reveal_item_in_dir`s (no `open_path`). `REVEAL_PATH_FAILED` gains
+  `reason: RevealPathFailure` (`notManaged` / `gone` / `opener`) → binding regenerated (+25/−6, the only diff there),
+  `describeCommandError` branch, `revealRefusal.*` EN keys at the end of `en`. 10 new Rust tests (temp dirs + store;
+  no opener runs): recorded global + assignment paths admitted/selected, vanished → ancestor selected, `.app` bundle
+  and an executable `.command` ancestor selected not opened, dangling link, vanished volume `Gone`, unrecorded /
+  `.app` child / bundle / sibling / child-of-target / relative refused `NotManaged`, `~` expansion, `..` refused.
+  **A4**: `deleteOutcome` classifies a `CANCELLED` settlement as the `cancelled` kind (counted in the count line,
+  neutral tone alone, no error entry, closes the dialog; `deleteCancel.single` for one skill); a single skill that
+  threw before planning reads "`name` was not deleted", never "0 targets could not be removed". Fold tests + a door
+  test (Delete answered CANCELLED → neutral toast, no error row, dialog closed). No Cancel control added. DESIGN.md
+  Keys + Reveal lines updated. **Browser** (fixture 5175, headless, one session at a time): `keys-{dark,light}-1280`,
+  `keys-{dark,light}-960` — reader (selected and not): x/j/k/`/` change nothing, ⌘A leaves the library selection as it
+  was and native text selection grows (0 → 2714 chars), Escape clears the selection (focus stays in the reader) then
+  closes → row; 1280 expanded Files: row keys refused, Escape → Expand files → Escape → row; with a selection: clear →
+  collapse → close; Keyboard shortcuts dialog above expanded Files: Escape closes it only; Change source above the
+  inspector: Escape closes it only. 960: sheet collapse → close → (then) clear; Change source above the sheet closes
+  alone. Gate transcripts `gate-dark-1280` / `gate-light-960`: 95 stops each, 0 BODY, 3 rows disabled (8 marks each)
+  → Refresh leaves them → Enable re-syncs; select-all "25 skills on 8 Tools — 80 … 12 …" = hand count. Delete
+  `delete-dark-1280` / `delete-light-960`: 37 stops each, 0 BODY, Remove → Retry (pending) → report heading, Reveal
+  records `/Users/alex/.claude/skills/release-train`, Retry → next row. axe ×4 (failures dark 1280 / light 960, rich
+  light 1280 / dark 960): 0 violations, text ≥ 4.95 light / 5.22 dark, confirmation ≥ 4.68. **Harness finding**:
+  agent-browser 0.31.1's `press` (and any CDP key with `nativeVirtualKeyCode`) against Chrome 154 floods the page with
+  thousands of phantom trusted keydowns (`x|Numpad6`, `Unidentified|Minus`) that toggle selection, steal focus and reset
+  the tab to about:blank — every transcript here uses `keys-cdp.ts` (CDP keyDown/keyUp without a native code;
+  ⌘A carries `selectAll`). Re-check drivers must do the same. **Gate** (`gate.txt`): Version OK (1.2.18);
+  styles:check 2076 (ceiling), 24 migrated; vitest 40 files / 864 tests; build ok; fmt + clippy clean; cargo test 804
+  passed (`--all` too); `GATE_EXIT=0`. **Re-check focus**: A3's admission set (is "recorded artifact path or inside
+  central repo" the right fence, and is selecting an ancestor in its parent acceptable UX); A1's scope change for
+  sidebar/inspector-control focus; the 960 order (sheet Escape closes before the behind-sheet selection clears).

@@ -17,7 +17,7 @@ use crate::core::cancel_token::CancelToken;
 use crate::core::clock::now_ms;
 use crate::core::credentials::KeyringStore;
 use crate::core::environment::{expand_home_path, home_dir};
-use crate::core::errors::SignalError;
+use crate::core::errors::{RevealPathFailure, SignalError};
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::global_sync::{
     BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome, OverrideDecision,
@@ -28,7 +28,7 @@ use crate::core::installer::{
     list_git_skills, list_local_skills, GitSkillListing, InstallResult, InstallerPaths,
     LocalSkillCandidate,
 };
-use crate::core::log_reveal::{log_reveal_target, path_reveal_target};
+use crate::core::log_reveal::{log_reveal_target, resolve_reveal_item};
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan, OnboardingScanScope};
 use crate::core::onboarding_import::{
     import_onboarding_selection as import_onboarding_selection_core, ImportPhase, ImportPolicy,
@@ -267,38 +267,39 @@ pub async fn open_log_folder(app: tauri::AppHandle) -> Result<(), CommandError> 
 }
 
 /// Reveal a path a report named — a Sync target a Delete could not remove
-/// (D16's "Reveal in Finder") — in the operator's file manager: selected in
-/// its folder while it is there, else its nearest existing ancestor opened
-/// (`core::log_reveal::path_reveal_target`). Showing a folder changes
-/// nothing, so any path is accepted. Every failure reaches the operator as
-/// `RevealPathFailed` with the chain as diagnostics.
+/// (D16's "Reveal in Finder") — in the operator's file manager. Core admits
+/// only a path the app manages (a recorded Sync target or a path inside the
+/// central repo) and picks the item to **select**: the path while it is
+/// there, else its nearest existing ancestor (`core::log_reveal`). Nothing is
+/// ever opened with its default handler. A refusal, a vanished path and an
+/// opener failure all reach the operator as `RevealPathFailed { reason }`.
 #[tauri::command]
 #[specta::specta]
-pub async fn reveal_path(app: tauri::AppHandle, path: String) -> Result<(), CommandError> {
+pub async fn reveal_path(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    path: String,
+) -> Result<(), CommandError> {
+    let store = store.inner().clone();
+    let home = home_dir().map_err(CommandError::from_anyhow)?;
+    let central_repo =
+        resolve_central_repo_path_for_app(&app, &store).map_err(CommandError::from_anyhow)?;
     let reported = path.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let requested = PathBuf::from(&path);
-        let target = path_reveal_target(&requested, |p| p.symlink_metadata().is_ok())
-            .with_context(|| format!("nothing on the way to {:?} exists", requested))?;
-        match &target.selected {
-            Some(item) => app
-                .opener()
-                .reveal_item_in_dir(item)
-                .with_context(|| format!("failed to reveal {:?}", item)),
-            None => app
-                .opener()
-                .open_path(target.folder.to_string_lossy(), None::<&str>)
-                .with_context(|| format!("failed to open {:?}", target.folder)),
-        }
+        let item = resolve_reveal_item(&store, &home, &central_repo, &path, |p| {
+            p.symlink_metadata().is_ok()
+        })?;
+        app.opener().reveal_item_in_dir(&item).map_err(|err| {
+            anyhow::Error::from(SignalError::RevealPathFailed {
+                path: reported,
+                reason: RevealPathFailure::Opener,
+                detail: format!("failed to reveal {item:?}: {err:#}"),
+            })
+        })
     })
     .await
     .map_err(CommandError::internal)?
-    .map_err(|err| {
-        CommandError::from(SignalError::RevealPathFailed {
-            path: reported,
-            detail: format!("{err:#}"),
-        })
-    })
+    .map_err(CommandError::from_anyhow)
 }
 
 /// Every failure of "Open log folder" is one typed condition carrying the

@@ -207,11 +207,14 @@ export default function SkillFiles({ doc, label, layout, t }: SkillFilesProps) {
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{doc.activeFile}</span>
               <span className="shrink-0 font-mono text-xs text-faint">{formatSize(activeSize)}</span>
             </div>
-            {/* The reader scrolls; keyboard users reach it as one stop. */}
+            {/* The reader scrolls; keyboard users reach it as one stop. The
+                list's shortcuts never fire in it (`data-skill-reader`):
+                ⌘A selects its text, x / j / k / slash are just keys. */}
             <div
               tabIndex={0}
               role="region"
               aria-label={doc.activeFile}
+              data-skill-reader=""
               className={cn("min-h-0 flex-1 overflow-auto bg-background", focusRing, "focus-visible:-outline-offset-2")}
             >
               {doc.loadingContent ? (

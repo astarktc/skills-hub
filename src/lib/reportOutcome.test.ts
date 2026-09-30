@@ -1998,6 +1998,46 @@ describe("Delete over several skills (ticket 13, D16)", () => {
     expect(clean.completion.closeModal).toBe(true);
   });
 
+  it("folds a CANCELLED skill as the cancelled kind: neutral, counted, no error entry, never a failure (D10, audit A4)", () => {
+    const cancelled = { skillId: "c", name: "gamma", error: { code: "CANCELLED" } };
+    const one = deleteOutcome([cancelled], ctx);
+    expect(one.toast).toEqual({ kind: "info", tone: "neutral", message: t("deleteCancel.single", { name: "gamma" }) });
+    expect(one.errors).toEqual([]);
+    expect(one.completion.closeModal).toBe(true);
+    const mixed = deleteOutcome([settled[0], cancelled], ctx);
+    expect(mixed.toast).toEqual({
+      kind: "info",
+      tone: "neutral",
+      message: [t("outcome.done.removed", { count: 1 }), t("outcome.cancelled", { count: 1 })].join(" · "),
+    });
+    expect(mixed.errors).toEqual([]);
+    expect(mixed.completion.closeModal).toBe(true);
+    // Beside a real failure the failure tone wins, the cancel is still counted, not an entry.
+    const withFailure = deleteOutcome([settled[0], cancelled, settled[2]], ctx);
+    expect(withFailure.toast).toMatchObject({
+      tone: "failure",
+      message: [
+        t("outcome.done.removed", { count: 1 }),
+        t("outcome.failed", { count: 1 }),
+        t("outcome.cancelled", { count: 1 }),
+      ].join(" · "),
+    });
+    expect(withFailure.errors).toEqual([{ title: t("deleteReport.failedTitle", { name: "beta" }), message: "store locked" }]);
+    expect(withFailure.completion.closeModal).toBe(false);
+  });
+
+  it("a single skill that threw before planning reads as not deleted, never as 0 kept targets", () => {
+    const out = deleteOutcome([settled[2]], ctx);
+    expect(out.toast).toEqual({ kind: "warning", tone: "failure", message: t("deleteReport.failedTitle", { name: "beta" }) });
+    expect(out.errors).toEqual([{ title: t("deleteReport.failedTitle", { name: "beta" }), message: "store locked" }]);
+    // A kept target still names its count.
+    expect(deleteOutcome([settled[1]], ctx).toast).toEqual({
+      kind: "warning",
+      tone: "failure",
+      message: t("status.skillDeleteKept", { failed: 1 }),
+    });
+  });
+
   it("turns each settlement into a report row: kept first, removed-from labels, kept paths with their words", () => {
     const rows = deleteReportRows(settled, { ...ctx, projectLabelById: { p1: "monorepo" } });
     expect(rows.map((row) => row.skillId)).toEqual(["rt", "b", "a"]);

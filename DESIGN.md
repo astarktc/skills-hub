@@ -555,8 +555,11 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
 - **Keys** (one keymap, `useSkillListKeymap`; listed in the sidebar's Keyboard shortcuts): `/` search · `j` / `k`
   next / previous row · Enter open · `x` select the row holding focus · ⇧-click a range from the last row toggled ·
   ⌘A every row the lens shows (the visible subset) · Esc clears the selection, then collapses Files, then closes the
-  inspector. None fires while typing or while a dialog, sheet, popover or menu is open. Clearing from inside the rail
-  hands focus to the row last toggled (the rail goes with the selection).
+  inspector. None fires while typing or while a dialog, sheet, popover or menu is open. The row keys (`/ j k x ⌘A`)
+  fire only on the list surface (header, filters, rail, rows — `inListScope`), never from the inspector or its
+  SKILL.md reader, where they stay native keys (⌘A selects text); while expanded Files cover the list only Escape
+  runs. Escape's hierarchy runs from the reader too. Clearing from inside the rail hands focus to the row last
+  toggled (the rail goes with the selection).
 - **Bulk rail** (`card`, `border-strong` top edge, at the foot of the list; first in the DOM, so `/` then Tab reaches
   it): "N selected" (`sm` semibold, a `role="status"`) · the `x` / `Esc` hints (kbd, hidden below the shell
   breakpoint) · `outline sm` Buttons Sync to Tools… · Assign to project… · Disable on all Tools · Enable · Update ·
@@ -576,7 +579,8 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
   it runs — it keeps focus, so focus never reaches `<body>`). Report: the heading takes focus ("release-train was not
   deleted" / "1 of 3 skills was not deleted"); per kept skill "Removed from Codex, Pi." then per kept path a `card`
   block — "Still in Claude Code:", the path (`font-mono xs`), the reason (`failed xs`, `describeCommandError`),
-  **Reveal in Finder** (`outline sm`); footer Close · Retry (`solid danger`, the kept skills only). The heading is
+  **Reveal in Finder** (`outline sm`; selects the recorded path — or its nearest existing ancestor — in the file
+  manager, never opens it; a path the app does not record is refused); footer Close · Retry (`solid danger`, the kept skills only). The heading is
   `tabIndex=-1` (focusable, never a Tab stop).
 
 ## Migration rule

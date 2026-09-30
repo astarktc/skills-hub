@@ -189,10 +189,22 @@ describe("describeCommandError", () => {
   it("names the path and keeps the opener diagnostics for REVEAL_PATH_FAILED", () => {
     expect(
       describeCommandError(
-        { code: "REVEAL_PATH_FAILED", path: "/x/release-train", detail: "opener: exit 1" },
+        { code: "REVEAL_PATH_FAILED", path: "/x/release-train", reason: "opener", detail: "opener: exit 1" },
         t,
       ),
     ).toBe('revealPath.failed {"path":"/x/release-train"}\n\nopener: exit 1');
+  });
+
+  it("says why Reveal refused a path, without the diagnostics, for REVEAL_PATH_FAILED's refusals", () => {
+    expect(
+      describeCommandError(
+        { code: "REVEAL_PATH_FAILED", path: "/Applications/Calculator.app/x", reason: "notManaged", detail: "not a Sync target" },
+        t,
+      ),
+    ).toBe('revealRefusal.notManaged {"path":"/Applications/Calculator.app/x"}');
+    expect(
+      describeCommandError({ code: "REVEAL_PATH_FAILED", path: "/Volumes/gone/x", reason: "gone", detail: "" }, t),
+    ).toBe('revealRefusal.gone {"path":"/Volumes/gone/x"}');
   });
 
   it("names the link and its target for SYMLINK_ESCAPES_REPO", () => {

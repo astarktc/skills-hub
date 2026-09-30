@@ -4,17 +4,26 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useSurfaceState } from "../../hooks/useSurfaceState";
-import { useSkillListKeymap } from "./useSkillListKeymap";
+import { inListScope, useSkillListKeymap } from "./useSkillListKeymap";
 
 const ORDER = ["a", "b", "c", "d"];
 
 function mountRows(ids = ORDER) {
   document.body.innerHTML = `
-    <input data-skill-search="" />
-    <main><div data-skill-list="">
-      ${ids.map((id) => `<li data-skill-item="${id}"><button data-skill-row="${id}">${id}</button><button data-switch="${id}">on</button></li>`).join("")}
-    </div></main>`;
+    <main><div data-skill-surface="">
+      <input data-skill-search="" />
+      <div data-skill-list="">
+        ${ids.map((id) => `<li data-skill-item="${id}"><button data-skill-row="${id}">${id}</button><button data-switch="${id}">on</button></li>`).join("")}
+      </div>
+      <aside data-inspector="c">
+        <h2 tabindex="-1" data-inspector-heading="c">c</h2>
+        <button data-files-toggle="">Collapse files</button>
+        <div tabindex="0" role="region" data-skill-reader=""><p><a href="#x" data-reader-link="">link</a> text</p></div>
+      </aside>
+    </div></main>
+    <nav><button data-sidebar="">Skills</button></nav>`;
 }
+const reader = () => document.querySelector<HTMLElement>("[data-skill-reader]")!;
 const row = (id: string) => document.querySelector<HTMLElement>(`[data-skill-row="${id}"]`)!;
 
 function press(key: string, init: KeyboardEventInit = {}, target: EventTarget = document.activeElement ?? document.body) {
@@ -23,12 +32,13 @@ function press(key: string, init: KeyboardEventInit = {}, target: EventTarget = 
   });
 }
 
-function setup(options: { focusedSkillId?: string | null; order?: string[] } = {}) {
+function setup(options: { focusedSkillId?: string | null; order?: string[]; listCovered?: boolean } = {}) {
   const onEscape = vi.fn();
   const rendered = renderHook(() => {
     const surface = useSurfaceState();
     const keymap = useSkillListKeymap({
       enabled: true,
+      listCovered: options.listCovered ?? false,
       order: options.order ?? ORDER,
       surface,
       focusedSkillId: options.focusedSkillId ?? null,
@@ -123,6 +133,84 @@ describe("never while typing, never under a layer", () => {
     press("j");
     expect(selected()).toEqual([]);
     expect(document.activeElement).toBe(row("a"));
+  });
+});
+
+describe("the inspector and its reader keep their keys (audit A1)", () => {
+  it.each([
+    ["the reader region", () => reader()],
+    ["a reader descendant", () => document.querySelector<HTMLElement>("[data-reader-link]")!],
+    ["the inspector's heading", () => document.querySelector<HTMLElement>("[data-inspector-heading]")!],
+    ["outside My Skills (the sidebar)", () => document.querySelector<HTMLElement>("[data-sidebar]")!],
+  ])("from %s, j / k / x / slash / ⌘A leave the list alone and ⌘A stays native", (_, focusable) => {
+    const { result, selected } = setup({ focusedSkillId: "c" });
+    act(() => result.current.keymap.selectFromRow("c", false));
+    const origin = focusable();
+    origin.focus();
+    for (const key of ["x", "j", "k", "/"]) press(key, {}, origin);
+    expect(document.activeElement).toBe(origin);
+    expect(selected()).toEqual(["c"]);
+    let native = true;
+    act(() => {
+      const event = new KeyboardEvent("keydown", { key: "a", metaKey: true, bubbles: true, cancelable: true });
+      native = origin.dispatchEvent(event);
+    });
+    expect(native).toBe(true);
+    expect(selected()).toEqual(["c"]);
+    expect(document.activeElement).toBe(origin);
+  });
+
+  it("Escape still runs the hierarchy from the reader: the selection first, then the surface's next step", () => {
+    const { result, selected, onEscape } = setup({ focusedSkillId: "c" });
+    act(() => result.current.keymap.selectFromRow("b", false));
+    reader().focus();
+    press("Escape");
+    expect(selected()).toEqual([]);
+    expect(onEscape).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(reader());
+    press("Escape");
+    expect(onEscape).toHaveBeenCalledTimes(1);
+  });
+
+  it("inListScope: rows, the rail and nothing-focused are the list's; the inspector, the reader, a dialog and the sidebar are not", () => {
+    expect(inListScope(row("a"))).toBe(true);
+    expect(inListScope(document.body)).toBe(true);
+    expect(inListScope(document.querySelector("main"))).toBe(true);
+    expect(inListScope(window)).toBe(true);
+    expect(inListScope(reader())).toBe(false);
+    expect(inListScope(document.querySelector("[data-reader-link]"))).toBe(false);
+    expect(inListScope(document.querySelector("[data-inspector-heading]"))).toBe(false);
+    expect(inListScope(document.querySelector("[data-sidebar]"))).toBe(false);
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    const inside = document.createElement("button");
+    dialog.append(inside);
+    document.querySelector("[data-skill-surface]")!.append(dialog);
+    expect(inListScope(inside)).toBe(false);
+  });
+});
+
+describe("expanded Files cover the list (audit A2)", () => {
+  it("row shortcuts are refused against the covered list while Escape keeps running", () => {
+    const { result, selected, onEscape } = setup({ focusedSkillId: "c", listCovered: true });
+    act(() => result.current.keymap.selectFromRow("b", false));
+    const toggle = document.querySelector<HTMLElement>("[data-files-toggle]")!;
+    toggle.focus();
+    for (const key of ["j", "k", "x", "/"]) press(key);
+    press("a", { metaKey: true });
+    expect(document.activeElement).toBe(toggle);
+    expect(selected()).toEqual(["b"]);
+    // Even from nothing-focused, never a row of the inert list.
+    act(() => toggle.blur());
+    press("j", {}, document.body);
+    expect(document.activeElement).toBe(document.body);
+    // Escape: the selection first, then the surface's next step (collapse Files).
+    toggle.focus();
+    press("Escape");
+    expect(selected()).toEqual([]);
+    expect(onEscape).not.toHaveBeenCalled();
+    press("Escape");
+    expect(onEscape).toHaveBeenCalledTimes(1);
   });
 });
 

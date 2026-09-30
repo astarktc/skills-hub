@@ -401,6 +401,24 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
     })
 }
 
+/// Every artifact path the app owns, resolved exactly as Delete plans it
+/// (global target rows by their recorded path, project assignments by
+/// `resolve_assignment_artifact`): the paths a removal report can name.
+/// Read-only; what Reveal admits (`core::log_reveal::resolve_reveal_item`).
+pub(crate) fn recorded_target_paths(store: &SkillStore) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    for skill in store.list_skills()? {
+        let scope = RemovalScope::Skill { skill_id: skill.id };
+        paths.extend(
+            plan(store, &scope)?
+                .targets
+                .into_iter()
+                .map(|target| target.path),
+        );
+    }
+    Ok(paths)
+}
+
 /// The global tool keys one Tool's artifact is shared with: every tool
 /// resolving to the same global skills dir. `None` means the registry can no
 /// longer locate the Tool — no member of the group is installed for this

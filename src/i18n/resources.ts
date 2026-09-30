@@ -1167,6 +1167,15 @@ export const resources = {
       deleteReport: {
         failedTitle: "{{name}} was not deleted.",
       },
+      // Ticket 13 audit A3 — why Reveal in Finder refused a path (REVEAL_PATH_FAILED's reason).
+      revealRefusal: {
+        notManaged: "Skills Hub only shows paths it manages \u2014 {{path}} is not one of them.",
+        gone: "Nothing on the way to {{path}} exists any more.",
+      },
+      // Ticket 13 audit A4 — a Delete that settled as cancelled (D10: neutral, never a failure).
+      deleteCancel: {
+        single: "Delete of {{name}} cancelled \u2014 it is kept.",
+      },
     },
   },
 } as const;

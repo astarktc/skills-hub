@@ -77,8 +77,13 @@ pub enum SignalError {
     /// diagnostic text (the opener's error chain), not user copy.
     RevealLogFailed { detail: String },
     /// Revealing a path a report named (a target a Delete could not remove)
-    /// in the file manager failed. `detail` is the opener's error chain.
-    RevealPathFailed { path: String, detail: String },
+    /// in the file manager failed or was refused (`reason`). `detail` is the
+    /// diagnostic chain, never user copy.
+    RevealPathFailed {
+        path: String,
+        reason: RevealPathFailure,
+        detail: String,
+    },
     /// An in-repo symlink at `subpath` points at `target`, which is absolute
     /// or resolves to (or above) the repository root, so acquisition refuses
     /// to follow it. Nothing at the target is read. Owned by
@@ -177,8 +182,12 @@ impl fmt::Display for SignalError {
             SignalError::RevealLogFailed { detail } => {
                 write!(f, "revealing the log folder failed: {detail}")
             }
-            SignalError::RevealPathFailed { path, detail } => {
-                write!(f, "revealing {path} failed: {detail}")
+            SignalError::RevealPathFailed {
+                path,
+                reason,
+                detail,
+            } => {
+                write!(f, "revealing {path} failed ({reason:?}): {detail}")
             }
             SignalError::SymlinkEscapesRepo { subpath, target } => {
                 write!(
@@ -232,6 +241,21 @@ pub enum GitCloneFailureKind {
     /// Running the system `git` CLI itself failed (fallback disabled).
     ExecFailed,
     Unknown,
+}
+
+/// Why Reveal could not show a path (the backend classifies; the frontend
+/// owns the copy). Owned by `core::log_reveal::resolve_reveal_item`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum RevealPathFailure {
+    /// Neither a Sync target the app recorded nor inside the central repo
+    /// (or not a plain absolute path): refused before the filesystem is
+    /// touched.
+    NotManaged,
+    /// Nothing on the way to the path exists (a vanished volume).
+    Gone,
+    /// The file manager could not show it.
+    Opener,
 }
 
 /// Structured command failure crossing the IPC seam. `Deserialize` because a
@@ -345,7 +369,9 @@ pub enum CommandError {
     RevealPathFailed {
         /// The path the operator asked to see.
         path: String,
-        /// Opener error chain, diagnostics only.
+        /// Refused (not a path the app manages), gone, or the opener failed.
+        reason: RevealPathFailure,
+        /// Diagnostic chain, diagnostics only.
         detail: String,
     },
     SymlinkEscapesRepo {
@@ -541,9 +567,15 @@ impl From<SignalError> for CommandError {
             SignalError::CentralPathMissing { path } => CommandError::CentralPathMissing { path },
             SignalError::SubpathMissing { subpath } => CommandError::SubpathMissing { subpath },
             SignalError::RevealLogFailed { detail } => CommandError::RevealLogFailed { detail },
-            SignalError::RevealPathFailed { path, detail } => {
-                CommandError::RevealPathFailed { path, detail }
-            }
+            SignalError::RevealPathFailed {
+                path,
+                reason,
+                detail,
+            } => CommandError::RevealPathFailed {
+                path,
+                reason,
+                detail,
+            },
             SignalError::SymlinkEscapesRepo { subpath, target } => {
                 CommandError::SymlinkEscapesRepo { subpath, target }
             }

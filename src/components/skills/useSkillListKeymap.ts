@@ -6,6 +6,23 @@ const isEditable = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
   (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 
+/**
+ * Where the list's own shortcuts (`j`/`k` · `x` · ⌘A · `/`) apply: the My
+ * Skills surface (`[data-skill-surface]`: header, filters, rail, rows, group
+ * headers) or nothing in particular (focus on `<body>` or a landmark holding
+ * the whole surface) — never the inspector or its SKILL.md reader (they sit
+ * in the surface: reading and copying there keeps native keys, ⌘A selects
+ * text), never a dialog. Escape is not scoped: its hierarchy (clear the
+ * selection → collapse Files → close the inspector) runs from the reader too.
+ */
+export const inListScope = (target: EventTarget | null) => {
+  if (!(target instanceof Element)) return true;
+  if (target.closest("[data-inspector], [data-skill-reader], [role='dialog'], [role='alertdialog']")) return false;
+  if (target.closest("[data-skill-surface]")) return true;
+  const surface = document.querySelector("[data-skill-surface]");
+  return surface !== null && target.contains(surface);
+};
+
 /** A layer above the list (a dialog, the sheet, a popover, a menu) owns the keyboard. */
 const layerOpen = () =>
   typeof document !== "undefined" &&
@@ -28,6 +45,11 @@ const rowOf = (element: Element | null) =>
 export type SkillListKeymapDeps = {
   /** My Skills is showing (the keymap is off everywhere else). */
   enabled: boolean;
+  /**
+   * The list is covered and inert (Files expanded beside it): its row
+   * shortcuts are refused, Escape still runs (it collapses Files first).
+   */
+  listCovered?: boolean;
   /** The lens's visible rows, in display order: ⌘A and a shift-click range read it. */
   order: readonly string[];
   surface: Pick<SurfaceState, "selection" | "select" | "toggle" | "clearSelection">;
@@ -49,19 +71,28 @@ export type SkillListKeymapDeps = {
  * - Escape clears the selection first, then takes the surface's next step.
  *
  * It never fires while typing, with a modifier it does not own, or while a
- * layer above the list holds the keyboard. Pointer selection shares its
- * anchor: a shift-click selects the range from the last row toggled
- * (`selectFromRow`); a group header selects its source (`selectGroup`).
+ * layer above the list holds the keyboard; the row shortcuts fire only in
+ * the list's scope (`inListScope`) and never while the list is covered.
+ * Pointer selection shares its anchor: a shift-click selects the range from
+ * the last row toggled (`selectFromRow`); a group header selects its source
+ * (`selectGroup`).
  */
-export function useSkillListKeymap({ enabled, order, surface, focusedSkillId, onEscape }: SkillListKeymapDeps) {
+export function useSkillListKeymap({
+  enabled,
+  listCovered = false,
+  order,
+  surface,
+  focusedSkillId,
+  onEscape,
+}: SkillListKeymapDeps) {
   const { selection, select, toggle, clearSelection } = surface;
   const selected = selection.skills;
   const anchor = useRef<string | null>(null);
 
   // The handler reads this render's values; it is registered once.
-  const latest = useRef({ order, selected, focusedSkillId, onEscape });
+  const latest = useRef({ order, selected, focusedSkillId, onEscape, listCovered });
   useLayoutEffect(() => {
-    latest.current = { order, selected, focusedSkillId, onEscape };
+    latest.current = { order, selected, focusedSkillId, onEscape, listCovered };
   });
 
   /** Toggle one row; with `range`, select every visible row from the anchor to it. */
@@ -119,21 +150,26 @@ export function useSkillListKeymap({ enabled, order, surface, focusedSkillId, on
     if (!enabled) return;
     const onKey = (event: KeyboardEvent) => {
       if (consumed(event) || event.altKey || isEditable(event.target) || layerOpen()) return;
-      const { order: rows, selected: current, focusedSkillId: inspected, onEscape: next } = latest.current;
-      const command = event.metaKey || event.ctrlKey;
-      if (command) {
-        if (event.key.toLowerCase() !== "a" || event.shiftKey) return;
-        event.preventDefault();
-        select("skills", new Set(rows));
-        return;
-      }
+      const { order: rows, selected: current, focusedSkillId: inspected, onEscape: next, listCovered: covered } =
+        latest.current;
       if (event.key === "Escape") {
+        if (event.metaKey || event.ctrlKey) return;
         if (current.size > 0) {
           event.preventDefault();
           clear();
           return;
         }
         next();
+        return;
+      }
+      // Every other key acts on the rows: not on a covered (inert) list,
+      // not from the inspector, its reader or a dialog.
+      if (covered || !inListScope(event.target)) return;
+      const command = event.metaKey || event.ctrlKey;
+      if (command) {
+        if (event.key.toLowerCase() !== "a" || event.shiftKey) return;
+        event.preventDefault();
+        select("skills", new Set(rows));
         return;
       }
       if (event.shiftKey) return;

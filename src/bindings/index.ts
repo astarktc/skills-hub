@@ -132,11 +132,12 @@ export const commands = {
 	openLogFolder: () => __TAURI_INVOKE<null>("open_log_folder"),
 	/**
 	 *  Reveal a path a report named — a Sync target a Delete could not remove
-	 *  (D16's "Reveal in Finder") — in the operator's file manager: selected in
-	 *  its folder while it is there, else its nearest existing ancestor opened
-	 *  (`core::log_reveal::path_reveal_target`). Showing a folder changes
-	 *  nothing, so any path is accepted. Every failure reaches the operator as
-	 *  `RevealPathFailed` with the chain as diagnostics.
+	 *  (D16's "Reveal in Finder") — in the operator's file manager. Core admits
+	 *  only a path the app manages (a recorded Sync target or a path inside the
+	 *  central repo) and picks the item to **select**: the path while it is
+	 *  there, else its nearest existing ancestor (`core::log_reveal`). Nothing is
+	 *  ever opened with its default handler. A refusal, a vanished path and an
+	 *  opener failure all reach the operator as `RevealPathFailed { reason }`.
 	 */
 	revealPath: (path: string) => __TAURI_INVOKE<null>("reveal_path", { path }),
 	registerProject: (path: string) => __TAURI_INVOKE<ProjectViewDto>("register_project", { path }),
@@ -354,7 +355,9 @@ subpath: string } | { code: "REVEAL_LOG_FAILED";
 detail: string } | { code: "REVEAL_PATH_FAILED"; 
 /**  The path the operator asked to see. */
 path: string; 
-/**  Opener error chain, diagnostics only. */
+/**  Refused (not a path the app manages), gone, or the opener failed. */
+reason: RevealPathFailure; 
+/**  Diagnostic chain, diagnostics only. */
 detail: string } | { code: "SYMLINK_ESCAPES_REPO"; 
 /**  Repo-relative path of the symlink that was refused. */
 subpath: string; 
@@ -1208,6 +1211,22 @@ export type ResyncProjectResultDto = {
 	view: ProjectViewDto,
 	report: ProjectSyncReport,
 };
+
+/**
+ *  Why Reveal could not show a path (the backend classifies; the frontend
+ *  owns the copy). Owned by `core::log_reveal::resolve_reveal_item`.
+ */
+export type RevealPathFailure = 
+/**
+ *  Neither a Sync target the app recorded nor inside the central repo
+ *  (or not a plain absolute path): refused before the filesystem is
+ *  touched.
+ */
+"notManaged" | 
+/**  Nothing on the way to the path exists (a vanished volume). */
+"gone" | 
+/**  The file manager could not show it. */
+"opener";
 
 /**  Where a row lives — the two tables that record Sync targets. */
 export type RowRef = 

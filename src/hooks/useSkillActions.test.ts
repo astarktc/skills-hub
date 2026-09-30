@@ -598,6 +598,29 @@ describe("where confirmation happens", () => {
   });
 });
 
+describe("a Delete answered CANCELLED (audit A4)", () => {
+  it("settles as the cancelled kind: a neutral toast, no failure in the history, the dialog closed", async () => {
+    const s = setup({ skills: [skill("s1", "alpha")] });
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "deleteManagedSkill" ? Promise.reject({ code: "CANCELLED" }) : base(command, ...args),
+    );
+    const spy = vi.spyOn(folds, "deleteOutcome");
+    const { result } = await render(s);
+    act(() => void result.current.actions.run("delete", s.skills));
+    expect(result.current.surface.layer("deleteSkill")).toBeTruthy();
+    await act(async () => {
+      await result.current.actions.run("delete", s.skills, { confirmed: true });
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+    const outcome = spy.mock.results[0].value as ReturnType<typeof folds.deleteOutcome>;
+    expect(outcome.toast?.tone).toBe("neutral");
+    expect(outcome.errors).toEqual([]);
+    expect(result.current.surface.layer("deleteSkill")).toBeNull();
+    expect(result.current.reporter.notifications.some((row) => row.kind === "error")).toBe(false);
+  });
+});
+
 describe("the reload rule on a thrown request", () => {
   it.each(VERBS)("$name: reloads iff RELOAD_ON_THROW says so, and the failure is reported", async (row) => {
     const s = setup();

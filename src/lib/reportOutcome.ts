@@ -1028,12 +1028,20 @@ export type DeleteSettlement = { skillId: string; name: string } & (
 const deleted = (settlement: DeleteSettlement) =>
   "report" in settlement && settlement.report.record_deleted;
 
+/** A skill whose command answered `CANCELLED`: an outcome kind, never a failure (D10). */
+const cancelledDelete = (settlement: DeleteSettlement) =>
+  "error" in settlement &&
+  typeof settlement.error === "object" &&
+  settlement.error !== null &&
+  (settlement.error as { code?: unknown }).code === "CANCELLED";
+
 /**
  * Delete keeps failed rows and the dialog available for retry (it becomes the
  * report, D16). One skill reads as a sentence; several as the count line over
- * skills ("10 removed · 2 failed", D10). Each kept target is an error entry
- * (named by skill in a batch); a thrown skill is one entry of its own. The
- * dialog closes only when every skill went.
+ * skills ("10 removed · 2 failed · 1 cancelled", D10). Each kept target is an
+ * error entry (named by skill in a batch); a thrown skill is one entry of its
+ * own, unless it was cancelled — counted, neutral, no entry. The dialog closes
+ * once nothing failed.
  */
 export function deleteOutcome(
   settled: readonly DeleteSettlement[],
@@ -1043,6 +1051,7 @@ export function deleteOutcome(
   const batch = settled.length > 1;
   let keptTargets = 0;
   for (const settlement of settled) {
+    if (cancelledDelete(settlement)) continue;
     if (!("report" in settlement)) {
       out.errors.push({
         title: ctx.t("deleteReport.failedTitle", { name: settlement.name }),
@@ -1060,13 +1069,19 @@ export function deleteOutcome(
     );
   }
   const removed = settled.filter(deleted).length;
-  const failed = settled.length - removed;
+  const cancelled = settled.filter(cancelledDelete).length;
+  const failed = settled.length - removed - cancelled;
   out.completion.closeModal = failed === 0;
-  if (batch) out.toast = headlineToast(ctx.t, "removed", { done: removed, failed });
-  else
-    out.toast = failed
-      ? toast("failure", ctx.t("status.skillDeleteKept", { failed: keptTargets }))
-      : toast("success", ctx.t("status.skillRemoved"));
+  if (batch) out.toast = headlineToast(ctx.t, "removed", { done: removed, failed, cancelled });
+  else if (cancelled) out.toast = toast("neutral", ctx.t("deleteCancel.single", { name: settled[0].name }));
+  else if (failed)
+    // A kept target names the count; a skill that threw before anything was
+    // planned kept no target, so it reads as "not deleted", never "0 targets".
+    out.toast =
+      keptTargets > 0
+        ? toast("failure", ctx.t("status.skillDeleteKept", { failed: keptTargets }))
+        : toast("failure", ctx.t("deleteReport.failedTitle", { name: settled[0].name }));
+  else out.toast = toast("success", ctx.t("status.skillRemoved"));
   return out;
 }
 

@@ -436,7 +436,9 @@ function App() {
 
   // My Skills' one keymap (j/k · x · ⌘A · / · Esc). Escape clears the
   // selection first; then, beside the list, it collapses expanded Files and
-  // then closes the inspector (the sheet's Escape is the Dialog's own).
+  // then closes the inspector (the sheet's Escape is the Dialog's own). While
+  // expanded Files cover the list it stays on for Escape alone: the covered
+  // rows are inert, so their shortcuts are refused.
   const layerOpen = surface.stack.length > 0;
   const escapeStep = useCallback(() => {
     if (!focusedSkillId || placement !== "side") return;
@@ -444,7 +446,8 @@ function App() {
     else handleCloseDetail();
   }, [collapseFiles, filesExpanded, focusedSkillId, handleCloseDetail, placement]);
   const { selectFromRow, selectGroup, clear: clearSkillSelection } = useSkillListKeymap({
-    enabled: area === "skills" && !explorePreview && !layerOpen && !filesCover,
+    enabled: area === "skills" && !explorePreview && !layerOpen,
+    listCovered: filesCover,
     order: visibleOrder,
     surface,
     focusedSkillId,
@@ -594,7 +597,7 @@ function App() {
             t={t}
           />
         ) : area === "skills" ? (
-          <div className="relative flex min-h-0 flex-1 flex-col">
+          <div className="relative flex min-h-0 flex-1 flex-col" data-skill-surface="">
             {/* Header and filters span My Skills; the inspector sits beside
                 the list below them (its right third). Expanded Files covers
                 the whole area in place: what it covers stays mounted — the
