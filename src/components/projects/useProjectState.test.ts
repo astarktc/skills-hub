@@ -1408,4 +1408,73 @@ describe("useProjectState holds where one skill is placed", () => {
     });
     expect(result.current.placementOf("s1")).toEqual({ rows: null, failed: true });
   });
+
+  it("a failed re-read keeps the last-good placement under a failed flag, an applied view still lands, and a later read recovers", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    await act(async () => {
+      await result.current.loadPlacementViews();
+    });
+    await act(async () => {
+      await result.current.assignToProject("p1", ["s1"]);
+    });
+    expect(result.current.placementOf("s1").rows?.[0].assignments.map((row) => row.tool)).toEqual(["pi"]);
+
+    // Good load \u2192 failed refresh: the confirmed rows stay, flagged.
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "getProjectView" ? Promise.reject({ code: "OTHER", message: "db" }) : base(command, ...args),
+    );
+    await act(async () => {
+      await result.current.loadPlacementViews();
+    });
+    const afterFailure = result.current.placementOf("s1");
+    expect(afterFailure.failed).toBe(true);
+    expect(afterFailure.rows?.[0].assignments.map((row) => row.tool)).toEqual(["pi"]);
+
+    // A mutation's returned view applies while the read stays failed.
+    await act(async () => {
+      await result.current.unassignFromProject("p1", ["s1"]);
+    });
+    const afterMutation = result.current.placementOf("s1");
+    expect(afterMutation.failed).toBe(true);
+    expect(afterMutation.rows?.[0].assignments).toEqual([]);
+
+    // Recovery: the next successful read clears the flag.
+    mockInvoke.mockImplementation(base);
+    await act(async () => {
+      await result.current.loadPlacementViews();
+    });
+    const recovered = result.current.placementOf("s1");
+    expect(recovered.failed).toBe(false);
+    expect(recovered.rows?.[0].assignments).toEqual([]);
+  });
+
+  it("a view applied while a read is failing is kept when the failure lands", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["pi"]);
+    await act(async () => {
+      await result.current.loadPlacementViews();
+    });
+    const base = mockInvoke.getMockImplementation()!;
+    let fail: () => void = () => {};
+    const held = new Promise<never>((_, reject) => {
+      fail = () => reject({ code: "OTHER", message: "db" });
+    });
+    mockInvoke.mockImplementation((command, ...args) => (command === "getProjectView" ? held : base(command, ...args)));
+    let reading: Promise<void> = Promise.resolve();
+    act(() => {
+      reading = result.current.loadPlacementViews();
+    });
+    await act(async () => {
+      await result.current.assignToProject("p1", ["s1"]);
+    });
+    await act(async () => {
+      fail();
+      await reading;
+    });
+    const placement = result.current.placementOf("s1");
+    expect(placement.failed).toBe(true);
+    expect(placement.rows?.[0].assignments.map((row) => row.tool)).toEqual(["pi"]);
+  });
 });

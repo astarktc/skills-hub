@@ -54,7 +54,12 @@ export default function ProjectsSection({
 
   return (
     <InspectorSection title={t("inspector.sections.projects")}>
-      {placement.failed ? (
+      {/* A failed re-read keeps the last-good rows under a note; only a read
+          that never landed shows the error alone. */}
+      {placement.failed && placement.rows !== null ? (
+        <p role="status" className="m-0 text-sm text-failed">{t("inspector.projects.stale")}</p>
+      ) : null}
+      {placement.failed && placement.rows === null ? (
         <p className="m-0 text-sm text-failed">{t("inspector.projects.loadError")}</p>
       ) : placement.rows === null ? (
         <p className="m-0 text-sm text-muted-foreground">{t("inspector.projects.loading")}</p>

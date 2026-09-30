@@ -956,6 +956,7 @@ export const resources = {
         projects: {
           loading: "Reading project assignments\u2026",
           loadError: "Project assignments could not be read.",
+          stale: "Assignments could not be re-read \u2014 showing the last known state.",
           empty: "Not assigned to any project.",
           noProjects: "No projects yet \u2014 add one under Projects.",
           assign: "Assign to project\u2026",

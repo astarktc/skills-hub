@@ -249,7 +249,9 @@ export function useSkillActions({
           const found = managedSkills.find((skill) => skill.id === id);
           return found ? [found] : [];
         });
-    if (skills.length === 0 && verb !== "update") return;
+    // Every exit answers the verb's `SkillVerbAnswer`: Re-point's is
+    // `CommandError | null`, so its no-op and dialog-opening exits say null.
+    if (skills.length === 0 && verb !== "update") return verb === "repoint" ? null : undefined;
     const single = skills.length === 1 ? skills[0] : null;
     const subject = single ? ({ kind: "skill", id: single.id } as const) : ({ kind: "batch" } as const);
     const trigger = typeof document !== "undefined" ? document.activeElement : null;
@@ -534,11 +536,11 @@ export function useSkillActions({
         return;
       }
       case "repoint": {
-        if (!single) return;
+        if (!single) return null;
         const { preselect, target } = opts as SkillVerbOptions["repoint"];
         if (!target) {
           openDialog({ kind: "repoint", skillId: single.id, name: single.name, preselect: preselect ?? repointKind(single) });
-          return;
+          return null;
         }
         // A folder may be typed with `~`; the backend expands it.
         const trimmed: RepointTarget =

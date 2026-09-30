@@ -328,6 +328,26 @@ describe("the door, verb by verb", () => {
     expect(result.current.reporter.notifications).toEqual([]);
   });
 
+  it("Re-point's dialog-opening and no-op exits answer null, never undefined (R2)", async () => {
+    const s = setup();
+    const { result } = await render(s);
+    let opening: unknown = "unset";
+    await act(async () => {
+      opening = await result.current.actions.run("repoint", [s.skills[0]]);
+    });
+    expect(opening).toBeNull();
+    let empty: unknown = "unset";
+    await act(async () => {
+      empty = await result.current.actions.run("repoint", [], { target: { kind: "git", url: "https://github.com/o/r" } });
+    });
+    expect(empty).toBeNull();
+    let batch: unknown = "unset";
+    await act(async () => {
+      batch = await result.current.actions.run("repoint", s.skills.slice(0, 2), { target: { kind: "git", url: "https://github.com/o/r" } });
+    });
+    expect(batch).toBeNull();
+  });
+
   it("dismisses an incomplete import through clearSkillHealth and reloads", async () => {
     const s = setup();
     const { result } = await render(s);

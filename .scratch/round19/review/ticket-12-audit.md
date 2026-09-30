@@ -278,3 +278,9 @@ RECHECK_GATE_EXIT=0
 ### Acceptance verdict
 
 **FIX-THEN-PASS, narrowly on R1 / residual I5.** Further mandatory work is limited to preserving/exposing last-good placement after failed refresh and the corresponding hook tests. Re-check good→failed→recovered reads in inspector/picker, mutation-during-failed-read preservation, and the zero-success-read Assign/Unassign trace; rerun the affected tests and full version+check gate. No reason to repeat all closed browser matrices unless their seams change. R2 is a small nonblocking type-contract cleanup. Orchestrator should retain ticket 13's pending Delete focus obligation and ticket 14's prior overlay-removal obligation; I9 is already accepted as #65. Native/VoiceOver release verification remains separate.
+
+### Residuals closed (2026-09-30, orchestrator)
+
+- **R1 / I5**: `PlacementViews` gains `loaded` (a full read has landed); `skillPlacement` answers the last-good rows whenever `loaded`, with `failed` beside them when the last read failed — a never-loaded failure still answers `rows: null`. `loadPlacementViews`'s catch keeps the views (and any a mutation applied meanwhile). `ProjectsSection` renders the rows under a `role="status"` note (`inspector.projects.stale`) instead of replacing them; `AssignProjectModal` keeps last-good rows choosable under the same note (the assignment answers with the truth). Hook tests: good load → failed refresh keeps rows + `failed`, an applied view lands while failed, recovery clears the flag; a view applied while a read is failing is kept when the failure lands.
+- **R2**: `run`'s empty-selection guard and Re-point's batch / dialog-opening exits answer `null`; door test pins all three.
+- Gate: `npm run version:check && npm run check` exit 0 — vitest 814, cargo 794, App.css 2076 / 21 migrated. **D31 gate passed** for ticket 12; ticket 13 retains the legacy Delete dialog's ~300 ms BODY focus debt, ticket 14 the overlay-removal note, BACKLOG #65 the I9 metadata.

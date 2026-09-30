@@ -148,16 +148,27 @@ export type SkillPlacement = {
   assignments: ProjectSkillAssignmentDto[];
 };
 
-/** Every project's view the world holds, by project id, and how the last read went. */
+/**
+ * Every project's view the world holds, by project id, and how the last read
+ * went. `loaded` says a full read has landed at least once: a later failed
+ * re-read keeps those last-good views (`status: "failed"` beside them), so a
+ * surface shows what it knows with a read-error note rather than replacing
+ * confirmed assignments with an error.
+ */
 export type PlacementViews = {
   status: "idle" | "loading" | "ready" | "failed";
+  loaded: boolean;
   views: Readonly<Record<string, ProjectViewDto>>;
 };
 
-/** One skill across projects: `rows` null until read (or when the read failed). */
+/**
+ * One skill across projects: `rows` null until a read landed (a never-loaded
+ * failure invents no assignments); `failed` when the last read failed —
+ * with `rows` still present, they are the last-good state.
+ */
 export type SkillPlacementValue = { rows: SkillPlacement[] | null; failed: boolean };
 
-const NO_PLACEMENT_VIEWS: PlacementViews = { status: "idle", views: {} };
+const NO_PLACEMENT_VIEWS: PlacementViews = { status: "idle", loaded: false, views: {} };
 
 /**
  * One skill across the projects listed, from the views held: each project
@@ -169,8 +180,8 @@ export function skillPlacement(
   placement: PlacementViews,
   skillId: string,
 ): SkillPlacementValue {
-  if (placement.status === "failed") return { rows: null, failed: true };
-  if (placement.status !== "ready") return { rows: null, failed: false };
+  const failed = placement.status === "failed";
+  if (!placement.loaded) return { rows: null, failed };
   return {
     rows: projects.map((project) => {
       const view = placement.views[project.id];
@@ -180,7 +191,7 @@ export function skillPlacement(
         assignments: view?.assignments.filter((row) => row.skill_id === skillId) ?? [],
       };
     }),
-    failed: false,
+    failed,
   };
 }
 
@@ -525,7 +536,8 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
   const loadPlacementViews = useCallback(async (): Promise<void> => {
     const read = ++placementReadRef.current;
     const started = viewStampRef.current.next;
-    // A re-read keeps what is shown until it lands.
+    // A re-read keeps what is shown until it lands (a failed one too — the
+    // views stay, the note goes).
     setPlacementViews((current) => (current.status === "ready" ? current : { ...current, status: "loading" }));
     try {
       const views = await Promise.all(
@@ -538,10 +550,11 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
         for (const view of views) {
           if ((stamps.get(view.project.id) ?? 0) <= started) next[view.project.id] = view;
         }
-        return { status: "ready", views: next };
+        return { status: "ready", loaded: true, views: next };
       });
     } catch {
       if (placementReadRef.current !== read) return;
+      // Last-good views (and any a mutation applied meanwhile) stay.
       setPlacementViews((current) => ({ ...current, status: "failed" }));
     }
   }, []);

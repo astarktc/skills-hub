@@ -56,8 +56,11 @@ export default function AssignProjectModal({
     if (skillId) void loadPlacementViews();
   }, [loadPlacementViews, skillId]);
 
-  // undefined while the views are read; null when the read failed.
-  const rows = placement.failed ? null : (placement.rows ?? undefined);
+  // undefined while the views are read; null when no read ever landed and
+  // the last one failed. Last-good rows after a failed re-read stay choosable
+  // under a read-error note: the assignment itself answers with the truth.
+  const rows = placement.rows ?? (placement.failed ? null : undefined);
+  const stale = placement.failed && placement.rows !== null;
   // The list arrives after the dialog opened: its first available project
   // takes focus then, unless the operator already moved it.
   const listReady = rows !== undefined && rows !== null;
@@ -113,6 +116,11 @@ export default function AssignProjectModal({
                 if (chosen && !loading) onConfirm(chosen);
               }}
             >
+              {stale ? (
+                <p role="status" className="m-0 mb-2 text-sm text-failed">
+                  {t("inspector.projects.stale")}
+                </p>
+              ) : null}
               <FieldSet>
                 <FieldLegend>{t("assignProject.legend")}</FieldLegend>
                 <ul data-assign-list="" className="m-0 flex max-h-80 list-none flex-col overflow-y-auto rounded-md border border-border p-0">
