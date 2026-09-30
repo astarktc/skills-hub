@@ -107,9 +107,12 @@ const SyncedStrip = ({ strip, t }: SyncedStripProps) => {
           );
         })}
       </span>
+      {/* `relative` contains the absolute sr-only count: without it the count's
+          containing block is outside the list's scroller and it stretches the
+          document (a second scrollbar). */}
       <span
         className={cn(
-          "shrink-0 text-xs tabular-nums",
+          "relative shrink-0 text-xs tabular-nums",
           strip.complete ? "text-faint" : "text-muted-foreground",
         )}
       >

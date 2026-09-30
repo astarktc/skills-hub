@@ -132,6 +132,72 @@ function RemovesItsOpener({ withFallback = true }: { withFallback?: boolean }) {
   );
 }
 
+/**
+ * An ask answered through a pending value (the overwrite ask's shape): the
+ * answer clears `pending`, so the dialog closes in the same render as its
+ * body loses its data. The popup keeps its identity; only the per-ask body
+ * is keyed, so a displacing ask starts with fresh state.
+ */
+function PendingAsk() {
+  const [pending, setPending] = useState<{ id: string } | null>(null);
+  const [answers, setAnswers] = useState<string[]>([]);
+  const answer = (value: string) => {
+    setAnswers((prev) => [...prev, value]);
+    setPending(null);
+  };
+  return (
+    <>
+      <button type="button" onClick={() => setPending({ id: "first" })}>
+        Enable
+      </button>
+      <output aria-label="answers">{answers.join(",")}</output>
+      <Dialog
+        open={pending !== null}
+        onOpenChange={(next) => {
+          if (!next) answer("dismissed");
+        }}
+      >
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Folder already exists</DialogTitle>
+          </DialogHeader>
+          <AskBody
+            key={pending?.id ?? "none"}
+            pending={pending}
+            onAnswer={answer}
+            onDisplace={() => setPending({ id: "second" })}
+          />
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function AskBody({
+  pending,
+  onAnswer,
+  onDisplace,
+}: {
+  pending: { id: string } | null;
+  onAnswer: (value: string) => void;
+  onDisplace: () => void;
+}) {
+  const [touched, setTouched] = useState(false);
+  return (
+    <DialogFooter>
+      <button type="button" aria-pressed={touched} onClick={() => setTouched(true)}>
+        Choose {pending?.id ?? "none"}
+      </button>
+      <button type="button" onClick={onDisplace} disabled={!pending}>
+        Displace
+      </button>
+      <button type="button" onClick={() => onAnswer("declined")} disabled={!pending}>
+        Keep existing
+      </button>
+    </DialogFooter>
+  );
+}
+
 // vitest runs without globals, so RTL's auto-cleanup is off: unmount
 // explicitly, or a previous test's dialog would stay on the layer stack.
 afterEach(() => {
@@ -269,6 +335,59 @@ describe("Dialog without a fallback, when its lone opener is removed", () => {
     expect(document.activeElement).not.toBe(document.body);
     // Programmatically focusable, never a Tab stop.
     expect(main.getAttribute("tabindex")).toBe("-1");
+  });
+});
+
+describe("Dialog answered through a pending value that disappears as it closes", () => {
+  async function openAsk() {
+    const utils = render(<PendingAsk />);
+    const opener = screen.getByRole("button", { name: "Enable" });
+    opener.focus();
+    fireEvent.click(opener);
+    await openedDialog("Folder already exists");
+    await waitFor(() => expect(utils.container.hasAttribute("inert")).toBe(true));
+    return { ...utils, opener };
+  }
+
+  async function expectReleased(container: HTMLElement, opener: HTMLElement) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    // No closed ghost popup, no layer left behind, focus back on the opener.
+    expect(document.querySelector('[data-slot="dialog-content"]')).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(container.hasAttribute("inert")).toBe(false);
+    expect(document.querySelector("[inert]")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  }
+
+  it("Escape answers `dismissed`, releases every layer and returns focus", async () => {
+    const { container, opener } = await openAsk();
+    pressEscape();
+    await expectReleased(container, opener);
+    expect(screen.getByRole("status", { name: "answers" }).textContent).toBe("dismissed");
+  });
+
+  it("an explicit answer releases every layer and returns focus", async () => {
+    const { container, opener } = await openAsk();
+    fireEvent.click(screen.getByRole("button", { name: "Keep existing" }));
+    await expectReleased(container, opener);
+    expect(screen.getByRole("status", { name: "answers" }).textContent).toBe("declined");
+  });
+
+  it("a displacing ask keeps the popup and starts its body fresh", async () => {
+    await openAsk();
+    const popup = screen.getByRole("dialog", { name: "Folder already exists" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose first" }));
+    expect(
+      screen.getByRole("button", { name: "Choose first" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Displace" }));
+
+    const next = await screen.findByRole("button", { name: "Choose second" });
+    expect(next.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("dialog", { name: "Folder already exists" })).toBe(popup);
   });
 });
 

@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from 'react'
+import { memo, useRef, useState, type RefObject } from 'react'
 import type { TFunction } from 'i18next'
 import { Button } from '@/components/ui/button'
 import {
@@ -39,21 +39,41 @@ type OverwriteModalProps = {
  * its cancel callback, so this ask composes the Dialog primitives itself to
  * keep the two apart.
  */
-const OverwriteModal = ({ pending, t }: OverwriteModalProps) => (
-  <Dialog
-    open={Boolean(pending)}
-    onOpenChange={(next) => {
-      if (!next) pending?.answer('dismissed')
-    }}
-  >
-    {/* Keyed by the ask's rows so the per-row choices start fresh for
-        every ask (a displacing ask remounts the body). */}
-    <OverwriteAsk key={pending ? pending.rows.map(overwriteRowKey).join('\u0000') : 'none'} pending={pending} t={t} />
-  </Dialog>
-)
-
-function OverwriteAsk({ pending, t }: OverwriteModalProps) {
+const OverwriteModal = ({ pending, t }: OverwriteModalProps) => {
   const confirmRef = useRef<HTMLButtonElement>(null)
+  return (
+    <Dialog
+      open={Boolean(pending)}
+      onOpenChange={(next) => {
+        if (!next) pending?.answer('dismissed')
+      }}
+    >
+      {/* The popup keeps one identity for the dialog's whole life — never key
+          it: remounting a popup while it closes (the answer clears `pending`
+          in the same render) strands a closed ghost layer that keeps the app
+          inert. Only the per-ask body is keyed, so every ask's per-row
+          choices start fresh (a displacing ask remounts the body alone). */}
+      <DialogContent size="md" showCloseButton={false} initialFocus={confirmRef}>
+        <DialogHeader>
+          <DialogTitle>{t('overwrite.title')}</DialogTitle>
+        </DialogHeader>
+        <OverwriteAsk
+          key={pending ? pending.rows.map(overwriteRowKey).join('\u0000') : 'none'}
+          pending={pending}
+          confirmRef={confirmRef}
+          t={t}
+        />
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** One ask's rows, its per-row choices and its answers (body + footer). */
+function OverwriteAsk({
+  pending,
+  confirmRef,
+  t,
+}: OverwriteModalProps & { confirmRef: RefObject<HTMLButtonElement | null> }) {
   const rows = pending?.rows ?? []
   // Overwrite is the action the operator asked for; each row can be kept.
   const [choices, setChoices] = useState<OverwriteChoice[]>(() => rows.map(() => 'overwrite'))
@@ -66,10 +86,7 @@ function OverwriteAsk({ pending, t }: OverwriteModalProps) {
   }
 
   return (
-    <DialogContent size="md" showCloseButton={false} initialFocus={confirmRef}>
-      <DialogHeader>
-        <DialogTitle>{t('overwrite.title')}</DialogTitle>
-      </DialogHeader>
+    <>
       {pending ? (
         <DialogBody>
           <p>{t('overwrite.body', { count: rows.length })}</p>
@@ -128,7 +145,7 @@ function OverwriteAsk({ pending, t }: OverwriteModalProps) {
           {mixed ? t('overwriteAsk.apply') : t('overwrite.confirm')}
         </Button>
       </DialogFooter>
-    </DialogContent>
+    </>
   )
 }
 

@@ -364,12 +364,19 @@ above). `useStatusReporter` owns toast lifetime; the binder mounts the one `<Toa
   (ticket 12) and the Projects list a header select (ticket 17).
 - **How 1200 was measured** (ticket 11, fixture `failures`, 2026-09-29): the 36 px row's fixed columns (checkbox
   32 · strip 8 marks × 16 + N/M 40 = 168 · scope 24 · switch 40 · overflow 32 · six 12 px gaps · 24 px padding)
-  take 392 px; name and description share the rest 1.5 : 1. The widest name-plus-exception-marks cell in the
-  fixture is **347 px** (`scratchpad` with two marks). At 1200 with the 200 px sidebar the list pane is 970 px and
-  the name column exactly 347 px; one pixel narrower it would truncate, so the sidebar folds to the rail there,
-  which returns 144 px (1199 → pane 1113, name 433). At the 960 minimum the rail leaves an 874 px pane (name
-  289 px: only a two-mark row truncates, with its full name as the hover title); no horizontal scroll at either
-  size. Below a 768 px *list pane* (a container query, `@max-3xl`) the description column goes.
+  take 392 px; name and description share the rest in one track, the name group holding at least 60 % of it (the
+  former 1.5 : 1 split, so descriptions start on one line down the list). The widest name-plus-exception-marks
+  group in the fixture is **347 px** (`scratchpad` with two marks). At 1200 with the 200 px sidebar the list pane
+  is 970 px and the name share exactly 347 px, so the sidebar folds to the rail there, which returns 144 px
+  (1199 → pane 1113, name share 433).
+- **Names before descriptions** (ticket 11 audit A3, 2026-09-29): a name group wider than its 60 % share takes the
+  description's room — the description truncates, then collapses — so the name keeps its words at the 960 minimum.
+  There, with the rail, the shared track is 524 px with overlay scrollbars and 509 px with a classic 15 px list
+  scrollbar (name share 307 / 298): `scratchpad` + two marks takes 347 px and reads in full while its description
+  yields 40 / 49 px; every other row keeps the one description line. A name truncates (full name as the hover
+  title) only when name + marks exceed the whole track — beside two marks at 960, a name over 220–235 px.
+  No horizontal scroll at either size. Below a 768 px *list pane* (a container query, `@max-3xl`) the description
+  goes.
 
 ## My Skills (the first migrated surface, ticket 11)
 
@@ -395,15 +402,17 @@ Composed from the primitives and tokens only; no variant was added. Files: `comp
   (`sm` medium; the Tab stop that opens the skill) + Edit pencil (`ghost icon-sm`, only when overridden) +
   **exception marks** (soft Badges: `failed` with a ⊗ icon, `stale` with a ⚠ icon, `neutral` for "Not
   deployed"; skill-level rows first, then target-level, in the fold's order; Disabled rows stay silent because the
-  strip and switch say them) · description (`muted-foreground`; in Flat and in "Individual sources" preceded by
-  the source in `font-mono xs faint`) · **Synced strip** + N/M · scope (globe when some target is live) ·
-  Switch `sm` (= skill-grain Disable / Enable through the door) · overflow (`ghost icon-sm` → DropdownMenu:
+  strip and switch say them) · description (`muted-foreground`; it shares the name's track and yields to a long
+  name + marks; in Flat and in "Individual sources" preceded by the source in `font-mono xs faint`) ·
+  **Synced strip** + N/M · scope (globe when some target is live) · Switch `sm` (= skill-grain Disable / Enable
+  through the door) · overflow (`ghost icon-sm` → DropdownMenu:
   a "Fix" group of the fold's repairs, then Update, Change source…, Detach, Edit invocation…, Remove).
   Clicking anywhere but a control opens the skill.
-- **Group header** (36 px, sticky, `card`): source icon · name (`h2`, links to the repo) · count · state
-  summary ("1 failed · 2 stale · 1 not deployed · 1 disabled", state-coloured words) · **Deploy all**
-  (`ghost sm`; disabled with a reason when every skill is deployed). Sources with one skill fold into
-  "Individual sources"; no source pill repeats inside a group.
+- **Group header** (36 px, sticky, `card`): source icon · name (`h2`, links to the repo; the text inside the link
+  truncates, never an ancestor, so the link's ring paints whole) · count · state summary ("1 failed · 2 stale ·
+  1 not deployed · 1 disabled", state-coloured words) · **Deploy all** (`ghost sm`; disabled with a reason when
+  every skill is deployed). Sources with one skill fold into "Individual sources"; no source pill repeats inside a
+  group.
 - **Card view** (Auto / Dense grid) renders the same anatomy on a `card` tile with the same strip — a stop-gap
   until round 19b designs the grid (F07's clipping is gone: marks never clip).
 

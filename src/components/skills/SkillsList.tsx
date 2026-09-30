@@ -226,13 +226,21 @@ const SkillsList = ({
             <section key={group.key} aria-labelledby={headingId}>
               <div className="sticky top-0 z-10 flex h-row items-center gap-3 border-b border-border bg-card px-3">
                 <span className="flex w-8 shrink-0 justify-center">{groupIcon(group)}</span>
-                <h2 id={headingId} className="m-0 min-w-0 truncate text-sm font-semibold text-foreground">
+                {/* Truncation lives on the inner text, never on an ancestor of
+                    the link: an overflow-clipping heading would cut its focus
+                    ring (2 px, offset 2 px) down to corner fragments. */}
+                <h2 id={headingId} className="m-0 flex min-w-0 text-sm font-semibold text-foreground">
                   {group.href ? (
-                    <a href={group.href} target="_blank" rel="noopener noreferrer" className="rounded-sm hover:underline">
-                      {group.label}
+                    <a
+                      href={group.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex min-w-0 rounded-sm hover:underline"
+                    >
+                      <span className="truncate">{group.label}</span>
                     </a>
                   ) : (
-                    group.label
+                    <span className="truncate">{group.label}</span>
                   )}
                 </h2>
                 <span className="shrink-0 text-xs text-faint tabular-nums">

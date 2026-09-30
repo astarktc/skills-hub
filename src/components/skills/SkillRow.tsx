@@ -34,15 +34,23 @@ import type { ManagedSkill } from "./types";
 
 /**
  * The list's column template (36 px rows, DESIGN.md § My Skills row):
- * checkbox · name + exceptions · description · Synced strip + N/M · scope ·
- * switch · overflow. The strip column is sized from `--strip-marks` (set by
- * the list: one 16 px step per Tool). Below a 48rem list the description
- * column goes and the name takes its room.
+ * checkbox · name + exceptions | description · Synced strip + N/M · scope ·
+ * switch · overflow. Name and description share one track (`NAME_GROUP`) so
+ * the name is never squeezed while the description keeps room. The strip
+ * column is sized from `--strip-marks` (set by the list: one 16 px step per
+ * Tool). Below a 48rem list the description goes and the name takes its room.
  */
-const LIST_COLUMNS = cn(
-  "grid-cols-[2rem_minmax(0,1.5fr)_minmax(0,1fr)_calc(var(--strip-marks)_*_1rem_+_2.5rem)_1.5rem_2.5rem_2rem]",
-  "@max-3xl:grid-cols-[2rem_minmax(0,1fr)_calc(var(--strip-marks)_*_1rem_+_2.5rem)_1.5rem_2.5rem_2rem]",
-);
+const LIST_COLUMNS =
+  "grid-cols-[2rem_minmax(0,1fr)_calc(var(--strip-marks)_*_1rem_+_2.5rem)_1.5rem_2.5rem_2rem]";
+
+/**
+ * The name group's floor is the old 1.5 : 1 name column — (cell − the 12 px
+ * gap) × 0.6 — so descriptions start on one line down the list. A name plus
+ * its exception marks wider than that takes the description's room first
+ * (the description truncates, then collapses); the name truncates only when
+ * name + marks exceed the whole cell.
+ */
+const NAME_GROUP = "flex min-w-[calc((100%-0.75rem)*0.6)] items-center gap-2 @max-3xl:min-w-0";
 
 /** Rows the strip and the switch already say — never repeated as a mark. */
 const SILENT_ROWS = new Set<HealthRow["kind"]>(["disabled", "targets_disabled"]);
@@ -330,12 +338,14 @@ const SkillRow = ({
       )}
     >
       <span className="flex items-center justify-center">{checkbox}</span>
-      <span className="flex min-w-0 items-center gap-2">
-        {name}
-        {pencil}
-        {exceptionMarks}
+      <span className="flex min-w-0 items-center gap-x-3">
+        <span className={NAME_GROUP}>
+          {name}
+          {pencil}
+          {exceptionMarks}
+        </span>
+        <span className="flex min-w-0 flex-1 @max-3xl:hidden">{description}</span>
       </span>
-      <span className="flex min-w-0 @max-3xl:hidden">{description}</span>
       <SyncedStrip strip={strip} t={t} />
       <span className="flex items-center justify-center">{scope}</span>
       <span className="flex items-center justify-center">{toggle}</span>

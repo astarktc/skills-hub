@@ -30,7 +30,10 @@ import { mainLandmarkFocus } from "./focus-fallback";
  *     (or pass `aria-labelledby` to `<DialogContent>` for a custom heading);
  *   - no motion: dialogs appear and leave instantly.
  *
- * Controlled only: pass `open` and `onOpenChange`.
+ * Controlled only: pass `open` and `onOpenChange`. Keep one `<DialogContent>`
+ * for the dialog's life — never key it (or a component that renders it) on
+ * state the answer clears: a popup remounted while it closes is stranded as
+ * a closed layer that keeps the app inert. Key the per-ask body instead.
  */
 
 type DialogContextValue = { layerId: string; dismissible: boolean };
