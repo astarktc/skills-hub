@@ -1534,6 +1534,40 @@ describe("ticket 17: Projects — a missing folder, Sync this, the kept row, a s
     });
   });
 
+  it("no project sync enters archived-app: assign, toggle-on, Enable and the collision retry skip it once, rows untouched", async () => {
+    const { handlers, state } = backendFor("failures");
+    const archived = state.projects.find((p) => p.id === "prj-archived-app")!;
+    const skip = [{ project_id: "prj-archived-app", reason: { reason: "folder_missing" } }];
+    const notes = state.skills.find((s) => s.dto.name === "local-notes")!.dto.id;
+    const before = JSON.stringify(archived.assignments);
+
+    expect((await handlers.bulkAssignSkill("prj-archived-app", notes)).report).toEqual({ items: [], skipped_projects: skip });
+    const toggled = await handlers.toggleProjectSkillAssignment("prj-archived-app", notes, "claude_code");
+    expect(toggled).toMatchObject({ kind: "assigned", report: { items: [], skipped_projects: skip } });
+    expect(JSON.stringify(archived.assignments)).toBe(before);
+
+    // Enable: the skill's disabled row there is neither admitted nor synced.
+    const tdd = archived.assignments.find((a) => a.skill_name === "tdd")!;
+    await handlers.disableSkillTargets({ kind: "skill", skill_id: tdd.skill_id });
+    const disabledRows = JSON.stringify(archived.assignments);
+    const enabled = await handlers.enableSkillTargets({ kind: "skills", skill_ids: [tdd.skill_id, tdd.skill_id] }, []);
+    expect(enabled.projects.skipped_projects).toEqual(skip);
+    expect(enabled.projects.items.some((item) => item.project_id === "prj-archived-app")).toBe(false);
+    expect(JSON.stringify(archived.assignments)).toBe(disabledRows);
+
+    // The collision retry: a folder gone between the ask and the answer.
+    const row = archived.assignments.find((a) => a.skill_name === "pr-review")!;
+    Object.assign(row, { status: "error", synced_at: null });
+    const asked = JSON.stringify(archived.assignments);
+    for (const decision of ["overwrite", "keep"] as const) {
+      const resolved = await handlers.resolveProjectCollisions([
+        { project_id: "prj-archived-app", skill_id: row.skill_id, tool: "claude_code", decision },
+      ]);
+      expect(resolved).toEqual({ items: [], skipped_projects: skip });
+      expect(JSON.stringify(archived.assignments)).toBe(asked);
+    }
+  });
+
   it("Sync this re-syncs one cell and answers the view", async () => {
     const { handlers } = backendFor("failures");
     const view = await handlers.getProjectView("prj-monorepo");

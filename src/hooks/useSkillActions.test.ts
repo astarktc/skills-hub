@@ -17,7 +17,7 @@ import type {
   SkillMutationResultDto,
   ToolStatusDto,
 } from "../components/skills/types";
-import type { DisableScope, PropagationOutcome } from "../bindings";
+import type { DisableScope, ProjectDto, ProjectSyncReport, PropagationOutcome } from "../bindings";
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
@@ -153,9 +153,10 @@ function setup(options: { skills?: ManagedSkill[]; sharedDir?: boolean; effectiv
     })) as unknown as SyncOrchestration["settleCollisionParts"],
   };
   const projects = {
-    assignToProject: vi.fn(async () => ({ items: [], skipped_projects: [] })),
+    assignToProject: vi.fn(async (): Promise<ProjectSyncReport> => ({ items: [], skipped_projects: [] })),
     unassignFromProject: vi.fn(async () => EMPTY_REMOVAL),
     refreshView: vi.fn(async () => true),
+    projects: [] as ProjectDto[],
   };
   return { skills, sync, projects };
 }
@@ -530,6 +531,24 @@ describe("where confirmation happens", () => {
     expect(s.projects.assignToProject).toHaveBeenCalledWith("p1", ["s1"]);
   });
 
+  it("an assignment into a project whose folder is missing is the named skip line, never a silent success", async () => {
+    const s = setup();
+    s.projects.projects = [{ id: "p2", name: "archived-app", path_exists: false } as ProjectDto];
+    s.projects.assignToProject.mockResolvedValueOnce({
+      items: [],
+      skipped_projects: [{ project_id: "p2", reason: { reason: "folder_missing" as const } }],
+    });
+    const { result } = await render(s);
+    await act(async () => {
+      await result.current.actions.run("assignToProject", [s.skills[0]], { projectId: "p2" });
+    });
+    const entries = JSON.stringify(result.current.reporter.notifications);
+    expect(result.current.reporter.notifications[0]).toMatchObject({ kind: "warning", role: "headline" });
+    // The run's line names the project by its label, not its id.
+    expect(entries).toContain('projectsSurface.folderMissingSkip {\\"project\\":\\"archived-app\\"}');
+    expect(entries).not.toContain("status.syncEnabled");
+  });
+
   it("a sync with no effective targets is reported, never silent", async () => {
     const s = setup({ effective: [] });
     const { result } = await render(s);
@@ -837,6 +856,7 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
       assignToProject: vi.fn(),
       unassignFromProject: vi.fn(),
       refreshView: vi.fn(async () => true),
+      projects: [] as ProjectDto[],
     };
     const rendered = renderHook(() => {
       const surface = useSurfaceState();

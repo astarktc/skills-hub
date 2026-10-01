@@ -171,16 +171,38 @@ export function mergeInstallRetry(
 const assignmentKey = (item: Pick<ProjectSyncOutcome, "project_id" | "skill_id" | "tool">) =>
   `${item.project_id}\n${item.skill_id}\n${item.tool}`;
 
-/** A project report with each resolved assignment's row replaced. */
+/**
+ * A project report with each resolved assignment's row replaced. A project
+ * the retry skipped whole (its folder went away before the answer arrived —
+ * the backend answers no row for it, `folder_missing`) takes its unanswered
+ * collisions out of the report and joins its `skipped_projects` once: the
+ * skip line replaces the "to review" rows, never a silent success.
+ */
 export function mergeProjectRetry(
   report: ProjectSyncReport,
   retry: ProjectSyncReport,
 ): ProjectSyncReport {
   const resolved = new Map(retry.items.map((item) => [assignmentKey(item), item]));
-  return {
-    ...report,
-    items: report.items.map((item) => resolved.get(assignmentKey(item)) ?? item),
-  };
+  const skippedByRetry = new Set(retry.skipped_projects.map((skip) => skip.project_id));
+  const touched = new Set<string>();
+  const items: ProjectSyncOutcome[] = [];
+  for (const item of report.items) {
+    const answered = resolved.get(assignmentKey(item));
+    if (answered) items.push(answered);
+    else if (
+      skippedByRetry.has(item.project_id) &&
+      item.status.status === "failed" &&
+      targetExists(item.status.error)
+    )
+      touched.add(item.project_id);
+    else items.push(item);
+  }
+  const skipped_projects = [...report.skipped_projects];
+  for (const skip of retry.skipped_projects) {
+    if (touched.has(skip.project_id) && !skipped_projects.some((s) => s.project_id === skip.project_id))
+      skipped_projects.push(skip);
+  }
+  return { ...report, items, skipped_projects };
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +291,7 @@ export function mergePropagationRetry(
   const asked = new Set(retry.rows.map(overwriteRowKey));
   const global = new Map(retry.global.map((row) => [pairKey(row.skill_id, row.tool_key), row.status]));
   const projects = new Map((retry.projects?.items ?? []).map((item) => [assignmentKey(item), item.status]));
+  const projectsSkipped = new Set((retry.projects?.skipped_projects ?? []).map((skip) => skip.project_id));
   const declined: DeclinedPair[] = [];
   const out: PropagationOutcome[] = [];
   for (const target of targets) {
@@ -281,7 +304,14 @@ export function mergePropagationRetry(
         ? projects.get(assignmentKey({ project_id: target.scope.project_id, skill_id: skill.skillId, tool: target.scope.tool }))
         : global.get(pairKey(skill.skillId, target.scope.tool));
     if (!settled) {
-      out.push(target);
+      // The retry did not enter a project whose folder went away: the row
+      // is what Propagation itself answers for it, never a collision again.
+      if (target.scope.scope === "project" && projectsSkipped.has(target.scope.project_id))
+        out.push({
+          scope: target.scope,
+          status: { status: "skipped", reason: { reason: "project_unavailable", project_id: target.scope.project_id } },
+        });
+      else out.push(target);
       continue;
     }
     if (settled.status === "declined") {

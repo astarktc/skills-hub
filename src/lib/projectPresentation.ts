@@ -187,3 +187,57 @@ export function matrixLegend(t: Translate): { state: AssignedCellState; mark: St
     detail: t(`projectsSurface.detail.${state}`),
   }));
 }
+
+/**
+ * Whether the Assign-to-project picker offers a project, and the reason in
+ * words when it does not. Precedence: a missing folder (the backend skips the
+ * project whole — this is the reason shown, not the safety rule), then no
+ * configured Tools, then every selected skill already on every Tool.
+ */
+export type AssignTargetState = "available" | "folderMissing" | "noTools" | "assigned";
+
+export function assignTargetState({
+  pathExists,
+  toolCount,
+  missingToolCount,
+}: {
+  pathExists: boolean;
+  toolCount: number;
+  /** Tools of the project at least one selected skill is not on yet. */
+  missingToolCount: number;
+}): AssignTargetState {
+  if (!pathExists) return "folderMissing";
+  if (toolCount === 0) return "noTools";
+  if (missingToolCount === 0) return "assigned";
+  return "available";
+}
+
+/** Where the matrix puts focus when the row holding it left the shown rows. */
+export type MatrixFocusTarget = { kind: "row"; skillId: string } | { kind: "filter" };
+
+/**
+ * N2 (ticket 17 audit): a repair or an unassign under a chip (Issues,
+ * Assigned) can take the row holding focus out of the shown rows. Focus then
+ * goes to the next surviving row (in display order), the previous one if the
+ * row was last, and the active chip when no row is left. `null` when the row
+ * is still shown — the cell's own rule applies.
+ */
+export function matrixFocusAfterLeave(
+  before: readonly string[],
+  after: readonly string[],
+  left: string,
+): MatrixFocusTarget | null {
+  if (after.includes(left)) return null;
+  const shown = new Set(after);
+  const index = before.indexOf(left);
+  const next =
+    index < 0
+      ? after[0]
+      : (before.slice(index + 1).find((id) => shown.has(id)) ??
+        before
+          .slice(0, index)
+          .reverse()
+          .find((id) => shown.has(id)) ??
+        after[0]);
+  return next === undefined ? { kind: "filter" } : { kind: "row", skillId: next };
+}

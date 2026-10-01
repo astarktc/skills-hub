@@ -990,9 +990,12 @@ export function enableOutcome(
   ctx: ReportContext & {
     /** Several skills (the bulk rail): the headline is the count line over the targets, always. */
     batch?: boolean;
+    /** Project names by id — a project skipped whole (folder missing) is named. */
+    projectLabelById?: Readonly<Record<string, string>>;
   },
 ): Outcome<PlainEntry> {
   const { out: global, tally } = foldSync(report.global, { ...ctx, action: "toggle", collisionRoute: "enable" });
+  // A project skipped whole is one warning line, counted once as skipped.
   const projects = projectSyncOutcome(report.projects, { ...ctx, action: "toggleOn" });
   const projectCounts = projectSyncCounts(report.projects);
   const projectCollisions = report.projects.items.filter(
@@ -1007,7 +1010,7 @@ export function enableOutcome(
     done: [{ verb: "enabled", count: tally.synced + projectCounts.synced + projectCounts.alreadyAssigned }],
     counts: {
       failed: tally.failed + projectCounts.failed - projectCollisions,
-      skipped: tally.skipped + projectCounts.skipped,
+      skipped: tally.skipped + projectCounts.skipped + report.projects.skipped_projects.length,
       declined: tally.declined + projectCounts.declined,
       collisions: tally.collisions + projectCollisions,
     },

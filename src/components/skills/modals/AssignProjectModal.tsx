@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { FieldLegend, FieldSet } from "@/components/ui/field";
 import { focusRing } from "@/components/ui/styles";
+import { assignTargetState } from "@/lib/projectPresentation";
 import { cn } from "@/lib/utils";
 import type { SkillPlacement, SkillPlacementValue } from "../../projects/useProjectState";
 import type { ManagedSkill } from "../types";
@@ -36,9 +37,11 @@ type AssignProjectModalProps = {
  * (the bulk rail) — lands on every Tool that project is configured with; each
  * project shows its Tools and what assigning adds, so the choice is made
  * knowing where it goes (the picker is the selection's count-bearing
- * confirmation). A project with no Tools cannot take it; a project that
- * already has every skill on every Tool says so. Per-Tool choices stay in the
- * project's matrix (D26).
+ * confirmation). A project with no Tools cannot take it, nor can one whose
+ * folder is missing (the backend skips it whole either way — this is the
+ * reason in words, not the safety rule); a project that already has every
+ * skill on every Tool says so. Per-Tool choices stay in the project's matrix
+ * (D26).
  */
 export default function AssignProjectModal({
   skills,
@@ -92,7 +95,15 @@ export default function AssignProjectModal({
   }, [listReady, skillId]);
   const open = skills.length > 0;
   // A choice counts only for this request, and only while that project can take it.
-  const canTake = (row: SkillPlacement) => missingFor(row).some((missing) => missing.length > 0);
+  const stateOf = (row: SkillPlacement) => {
+    const missingBySkill = missingFor(row);
+    return assignTargetState({
+      pathExists: row.project.path_exists,
+      toolCount: row.tools.length,
+      missingToolCount: row.tools.filter((tool) => missingBySkill.some((list) => list.includes(tool))).length,
+    });
+  };
+  const canTake = (row: SkillPlacement) => stateOf(row) === "available";
   const chosen =
     choice && choice.skillId === skillId && rows?.some((row) => row.project.id === choice.projectId && canTake(row))
       ? choice.projectId
@@ -145,16 +156,18 @@ export default function AssignProjectModal({
                 <ul data-assign-list="" className="m-0 flex max-h-80 list-none flex-col overflow-y-auto rounded-md border border-border p-0">
                   {rows.map((row) => {
                     const { project, tools } = row;
+                    const state = stateOf(row);
                     const noTools = tools.length === 0;
                     // Assigning adds each skill to the Tools it is not on yet.
                     const missingBySkill = missingFor(row);
                     const missing = tools.filter((tool) => missingBySkill.some((list) => list.includes(tool)));
                     const adding = missingBySkill.filter((list) => list.length > 0).length;
-                    const assigned = !noTools && missing.length === 0;
-                    const partly = single
-                      ? missing.length > 0 && missing.length < tools.length
-                      : missing.length > 0;
-                    const unavailable = noTools || assigned;
+                    const folderMissing = state === "folderMissing";
+                    const assigned = state === "assigned";
+                    const partly =
+                      state === "available" &&
+                      (single ? missing.length < tools.length : true);
+                    const unavailable = state !== "available";
                     return (
                       <li key={project.id} className="border-b border-border last:border-b-0">
                         <label className={cn("flex items-start gap-3 px-3 py-2", !unavailable && "hover:bg-raised")}>
@@ -178,6 +191,9 @@ export default function AssignProjectModal({
                                 ? t("assignProject.noTools")
                                 : t("assignProject.tools", { tools: tools.map((tool) => labelOf(tool.tool)).join(", ") })}
                             </span>
+                            {folderMissing ? (
+                              <span className="text-xs text-muted-foreground">{t("projectsSurface.assignFolderMissing")}</span>
+                            ) : null}
                             {assigned ? <span className="text-xs text-muted-foreground">{t("assignProject.assigned")}</span> : null}
                             {partly ? (
                               <span className="text-xs text-muted-foreground">

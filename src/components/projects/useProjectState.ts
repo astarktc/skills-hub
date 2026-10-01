@@ -460,14 +460,19 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
   const assignToProject = useCallback(
     async (projectId: string, skillIds: readonly string[]): Promise<ProjectSyncReport> => {
       try {
-        // Every skill's report first, then one ask over all of them.
+        // Every skill's report first, then one ask over all of them. A
+        // project skipped whole (folder missing) answers per skill; the set
+        // reports it once.
         const items: ProjectSyncReport["items"] = [];
+        const skipped_projects: ProjectSyncReport["skipped_projects"] = [];
         for (const skillId of skillIds) {
           const result = await invokeTauri("bulkAssignSkill", projectId, skillId);
           applyView(result.view);
           items.push(...result.report.items);
+          for (const skip of result.report.skipped_projects)
+            if (!skipped_projects.some((s) => s.project_id === skip.project_id)) skipped_projects.push(skip);
         }
-        const settled = await settleCollisions({ items, skipped_projects: [] });
+        const settled = await settleCollisions({ items, skipped_projects });
         if (settled.resolved) await refreshView(projectId);
         return settled.report;
       } catch (err) {

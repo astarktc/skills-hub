@@ -928,7 +928,7 @@ export type ProjectSkillAssignmentDto = {
 	created_at: number,
 };
 
-/**  Why a re-sync left a whole project alone. */
+/**  Why a project sync left a whole project alone. */
 export type ProjectSkipReason = 
 /**
  *  The project's folder is not there (moved, deleted, an unmounted
@@ -938,7 +938,7 @@ export type ProjectSkipReason =
  */
 { reason: "folder_missing" };
 
-/**  A project a re-sync did not enter. */
+/**  A project a sync did not enter. */
 export type ProjectSkipped = {
 	project_id: string,
 	reason: ProjectSkipReason,
@@ -987,9 +987,11 @@ export type ProjectSyncOutcomeStatus =
 export type ProjectSyncReport = {
 	items: ProjectSyncOutcome[],
 	/**
-	 *  Projects a re-sync left alone as a whole, before any assignment was
-	 *  touched — one entry per project, never one failure per assignment.
-	 *  Report data, never a failure. Empty for every other project sync.
+	 *  Projects a sync left alone as a whole, before any assignment of theirs
+	 *  was created or touched — one entry per project, never one failure per
+	 *  assignment. Report data, never a failure. Every project sync answers
+	 *  it (assign, toggle-on, Enable, the collision retry, re-sync): the
+	 *  project-root rule is [`project_ops::project_folder_exists`].
 	 */
 	skipped_projects: ProjectSkipped[],
 };

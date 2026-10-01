@@ -736,9 +736,26 @@ export function createFixtureBackend(
     isDisabledAssignment(a) ? skippedDisabled : syncAssignment(project, a, ownsArtifact(a));
 
   /**
+   * Rust `ProjectSyncReport::folder_missing`: every project sync (assign,
+   * toggle-on, Enable, the collision retry, re-sync) leaves a project whose
+   * folder is missing alone — one `folder_missing` entry, no item, its rows
+   * untouched, nothing recreated (`project_ops::project_folder_exists`).
+   */
+  const folderMissing = (project: FixtureProject): ProjectSyncReport => ({
+    items: [],
+    skipped_projects: [{ project_id: project.id, reason: { reason: "folder_missing" } }],
+  });
+
+  /** Rust `ProjectSyncReport::absorb`: items appended, project skips once each. */
+  const absorb = (into: ProjectSyncReport, other: ProjectSyncReport) => {
+    into.items.push(...other.items);
+    for (const skip of other.skipped_projects)
+      if (!into.skipped_projects.some((s) => s.project_id === skip.project_id)) into.skipped_projects.push(skip);
+  };
+
+  /**
    * Rust `resync_assignments_unlocked`: a project whose folder is missing is
-   * skipped whole (one `folder_missing` entry, its rows untouched); otherwise
-   * each given row re-syncs.
+   * skipped whole; otherwise each given row re-syncs.
    */
   const resyncAssignments = (
     project: FixtureProject,
@@ -746,7 +763,7 @@ export function createFixtureBackend(
   ): ProjectSyncReport =>
     project.path_exists
       ? { items: rows.map((a) => outcomeOf(project, a, resyncOne(project, a))), skipped_projects: [] }
-      : { items: [], skipped_projects: [{ project_id: project.id, reason: { reason: "folder_missing" } }] };
+      : folderMissing(project);
 
   // -------------------------------------------------------------------------
   // Disable / Enable (Rust `skill_disable`)
@@ -838,14 +855,22 @@ export function createFixtureBackend(
     skill.dto.disabled_at = null;
     const tools = skill.dto.targets.filter((t) => t.status === "disabled").map((t) => t.tool);
     skill.dto.targets = skill.dto.targets.filter((t) => t.status !== "disabled");
-    const items: ProjectSyncOutcome[] = [];
+    const projects: ProjectSyncReport = { items: [], skipped_projects: [] };
     for (const project of state.projects) {
-      for (const a of project.assignments.filter((x) => x.skill_id === skill.dto.id && x.status === "disabled")) {
+      const rows = project.assignments.filter((x) => x.skill_id === skill.dto.id && x.status === "disabled");
+      if (rows.length === 0) continue;
+      // Rust `first_sync_assignments_unlocked`: a missing folder's rows are
+      // neither admitted nor synced; the project is one skip.
+      if (!project.path_exists) {
+        absorb(projects, folderMissing(project));
+        continue;
+      }
+      for (const a of rows) {
         a.synced_at = null;
-        items.push(outcomeOf(project, a, syncAssignment(project, a, false)));
+        projects.items.push(outcomeOf(project, a, syncAssignment(project, a, false)));
       }
     }
-    return { global: tools.length ? await firstSync(skill, tools, overrides) : [], projects: { skipped_projects: [], items } };
+    return { global: tools.length ? await firstSync(skill, tools, overrides) : [], projects };
   };
 
   // -------------------------------------------------------------------------
@@ -1607,9 +1632,10 @@ export function createFixtureBackend(
   /**
    * The overwrite ask's project retry (Rust `project_sync::resolve_collisions`):
    * Overwrite re-syncs over the folder; Keep keeps the row `disabled`, owning
-   * nothing, reported `declined`.
+   * nothing, reported `declined`. A collision in a project whose folder has
+   * since gone is not answered: the project is one skip (`null` here).
    */
-  const resolveCollision = (decision: AssignmentDecision): ProjectSyncOutcome => {
+  const resolveCollision = (decision: AssignmentDecision): ProjectSyncOutcome | null => {
     const project = findProject(decision.project_id);
     const a = project.assignments.find((x) => x.skill_id === decision.skill_id && x.tool === decision.tool);
     if (!a) {
@@ -1624,6 +1650,7 @@ export function createFixtureBackend(
     }
     if (isDisabledAssignment(a)) return outcomeOf(project, a, skippedDisabled);
     if (a.synced_at !== null) return outcomeOf(project, a, { status: "already_assigned" });
+    if (!project.path_exists) return null;
     if (decision.decision === "keep") {
       a.status = "disabled";
       a.last_error = null;
@@ -1907,7 +1934,7 @@ export function createFixtureBackend(
       for (const skill of skills) {
         const one = await enableSkill(skill, overrides);
         report.global.push(...one.global);
-        report.projects.items.push(...one.projects.items);
+        absorb(report.projects, one.projects);
       }
       return report;
     },
@@ -2037,6 +2064,7 @@ export function createFixtureBackend(
         const report = removal(removeAssignments(project, (a) => !(a.skill_id === skillId && a.tool === tool)));
         return { kind: "unassigned", view: viewOf(project), report };
       }
+      if (!project.path_exists) return { kind: "assigned", view: viewOf(project), report: folderMissing(project) };
       if (!project.tools.includes(tool)) fail({ code: "UNKNOWN_TOOL", tool });
       const item = assign(project, skill, tool);
       return { kind: "assigned", view: viewOf(project), report: { items: [item], skipped_projects: [] } };
@@ -2057,23 +2085,25 @@ export function createFixtureBackend(
     },
     resolveProjectCollisions: async (decisions) => {
       await pause(200);
-      return { items: decisions.map(resolveCollision), skipped_projects: [] };
+      const report: ProjectSyncReport = { items: [], skipped_projects: [] };
+      for (const decision of decisions) {
+        const item = resolveCollision(decision);
+        absorb(report, item ? { items: [item], skipped_projects: [] } : folderMissing(findProject(decision.project_id)));
+      }
+      return report;
     },
     resyncAllProjects: async () => {
       await pause(700);
-      const reports = state.projects.map((project) => resyncAssignments(project, project.assignments));
-      return {
-        report: {
-          items: reports.flatMap((report) => report.items),
-          skipped_projects: reports.flatMap((report) => report.skipped_projects),
-        },
-        projects: projectsDto(),
-      };
+      const report: ProjectSyncReport = { items: [], skipped_projects: [] };
+      for (const project of state.projects) absorb(report, resyncAssignments(project, project.assignments));
+      return { report, projects: projectsDto() };
     },
     bulkAssignSkill: async (projectId, skillId) => {
       await pause(300);
       const project = findProject(projectId);
       const skill = findSkill(skillId);
+      // Rust `assign_skill_to_tools`: a missing folder is not entered.
+      if (!project.path_exists) return { view: viewOf(project), report: folderMissing(project) };
       const items = project.tools.map((tool) => {
         const existing = project.assignments.find((a) => a.skill_id === skillId && a.tool === tool);
         if (!existing) return assign(project, skill, tool);

@@ -109,6 +109,17 @@ pub(crate) fn sync_assignment_target(
     assignment: &ProjectSkillAssignmentRecord,
     central_hash: impl FnOnce() -> Option<String>,
 ) -> Result<sync_engine::SyncOutcome> {
+    // The last line of defence for the project-root rule: every route above
+    // (assign, toggle, Enable, collision retry, re-sync, Propagation) skips a
+    // missing project as a whole before it reaches this seam, but nothing
+    // may ever materialise a target under a root that is not there —
+    // `sync_engine` creates parents, so it would recreate the project.
+    if !project_ops::project_root_present(ctx.project_path) {
+        anyhow::bail!(SignalError::InvalidPath {
+            path: ctx.project_path.to_string_lossy().into_owned(),
+            reason: "missing".to_string(),
+        });
+    }
     let source = Path::new(&ctx.skill.central_path);
     let target = resolve_assignment_artifact(ctx.project_path, ctx.adapter, assignment, || {
         Ok(Some(ctx.skill.name.clone()))
@@ -334,20 +345,22 @@ pub enum ProjectSyncSkip {
 #[derive(Clone, Debug, Default, serde::Serialize, specta::Type)]
 pub struct ProjectSyncReport {
     pub items: Vec<ProjectSyncOutcome>,
-    /// Projects a re-sync left alone as a whole, before any assignment was
-    /// touched — one entry per project, never one failure per assignment.
-    /// Report data, never a failure. Empty for every other project sync.
+    /// Projects a sync left alone as a whole, before any assignment of theirs
+    /// was created or touched — one entry per project, never one failure per
+    /// assignment. Report data, never a failure. Every project sync answers
+    /// it (assign, toggle-on, Enable, the collision retry, re-sync): the
+    /// project-root rule is [`project_ops::project_folder_exists`].
     pub skipped_projects: Vec<ProjectSkipped>,
 }
 
-/// A project a re-sync did not enter.
+/// A project a sync did not enter.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
 pub struct ProjectSkipped {
     pub project_id: String,
     pub reason: ProjectSkipReason,
 }
 
-/// Why a re-sync left a whole project alone.
+/// Why a project sync left a whole project alone.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum ProjectSkipReason {
@@ -359,6 +372,38 @@ pub enum ProjectSkipReason {
 }
 
 impl ProjectSyncReport {
+    /// A report that entered no project: `project_id`'s folder is missing.
+    fn folder_missing(project_id: &str) -> Self {
+        let mut report = Self::default();
+        report.skip_folder_missing(project_id);
+        report
+    }
+
+    /// Record `project_id` as skipped for a missing folder — once per
+    /// project, however many of its assignments the operation named.
+    fn skip_folder_missing(&mut self, project_id: &str) {
+        if !self
+            .skipped_projects
+            .iter()
+            .any(|skipped| skipped.project_id == project_id)
+        {
+            self.skipped_projects.push(ProjectSkipped {
+                project_id: project_id.to_string(),
+                reason: ProjectSkipReason::FolderMissing,
+            });
+        }
+    }
+
+    /// Fold `other` into this report: items appended, project skips deduped.
+    pub(crate) fn absorb(&mut self, other: ProjectSyncReport) {
+        self.items.extend(other.items);
+        for skipped in other.skipped_projects {
+            if !self.skipped_projects.contains(&skipped) {
+                self.skipped_projects.push(skipped);
+            }
+        }
+    }
+
     /// Outcomes whose status is `Synced` — for `Display`, logs and tests.
     pub fn synced(&self) -> usize {
         self.items
@@ -420,6 +465,9 @@ impl std::fmt::Display for ProjectSyncReport {
 /// tool) is `Failed` with no row. A store failure — the row could not be
 /// read, created, or settled — is the `Err`: nothing settled, so the report
 /// may not claim it did (ADR-0001; review round 16 M1).
+///
+/// A project whose folder is missing is not entered: the report carries its
+/// `folder_missing` skip and no item, and no row is created or touched.
 pub(crate) fn assign_skill_to_tools(
     store: &SkillStore,
     project: &ProjectRecord,
@@ -427,6 +475,9 @@ pub(crate) fn assign_skill_to_tools(
     tool_keys: &[String],
     now: i64,
 ) -> Result<ProjectSyncReport> {
+    if !project_ops::project_folder_exists(project) {
+        return Ok(ProjectSyncReport::folder_missing(&project.id));
+    }
     let skill_disabled = store.skill_disabled_at(&skill.id)?.is_some();
     let mut items = Vec::with_capacity(tool_keys.len());
     for tool_key in tool_keys {
@@ -671,14 +722,10 @@ fn resync_assignments_unlocked(
     assignments: &[ProjectSkillAssignmentRecord],
     now: i64,
 ) -> Result<ProjectSyncReport> {
-    let mut report = ProjectSyncReport::default();
     if !project_ops::project_folder_exists(project) {
-        report.skipped_projects.push(ProjectSkipped {
-            project_id: project.id.clone(),
-            reason: ProjectSkipReason::FolderMissing,
-        });
-        return Ok(report);
+        return Ok(ProjectSyncReport::folder_missing(&project.id));
     }
+    let mut report = ProjectSyncReport::default();
     // The skill-level marker, read once per skill: a failed skill Disable
     // keeps its rows `error` (ADR-0002) while the skill is off everywhere,
     // so the row status alone cannot gate the re-sync.
@@ -757,6 +804,10 @@ fn resync_assignments_unlocked(
 /// (`EnableAdmitted`) and a collision leaves a non-owner the overwrite ask
 /// can settle (Keep → `disabled`, Overwrite → synced and owning again).
 ///
+/// A row of a project whose folder is missing is left exactly as it is (not
+/// admitted, not synced) and its project answers one `folder_missing` skip:
+/// once the path is updated, Enable (or toggling the cell) materialises it.
+///
 /// Unlocked internal seam: the caller holds the mutation guard.
 pub(crate) fn first_sync_assignments_unlocked(
     store: &SkillStore,
@@ -765,10 +816,17 @@ pub(crate) fn first_sync_assignments_unlocked(
 ) -> Result<ProjectSyncReport> {
     let mut report = ProjectSyncReport::default();
     for assignment in assignments {
+        let project = project_ops::require_project(store, &assignment.project_id);
+        if let Ok(project) = &project {
+            if !project_ops::project_folder_exists(project) {
+                report.skip_folder_missing(&project.id);
+                continue;
+            }
+        }
         if assignment.status == SyncStatus::Disabled {
             store.transition_assignment(&assignment.id, AssignmentTransition::EnableAdmitted)?;
         }
-        let result = project_ops::require_project(store, &assignment.project_id)
+        let result = project
             .and_then(|project| sync_single_assignment(store, &project, assignment, false, now));
         let status = match result {
             Ok(()) => ProjectSyncOutcomeStatus::Synced,
@@ -822,6 +880,8 @@ pub struct AssignmentDecision {
 /// `Declined`. A row that is gone, disabled, of a disabled skill, or that
 /// already owns its artifact is not a collision any more and answers as the
 /// assignment listing would (`Failed NotFound`, `Skipped`, `AlreadyAssigned`).
+/// A collision in a project whose folder has since gone is not answered at
+/// all — the row stays as it is and the project is one `folder_missing` skip.
 /// Store failures fail the whole call.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
@@ -879,6 +939,12 @@ fn resolve_collisions_unlocked(
             }
         } else if assignment.owns_artifact() {
             ProjectSyncOutcomeStatus::AlreadyAssigned
+        } else if store
+            .get_project_by_id(&assignment.project_id)?
+            .is_some_and(|project| !project_ops::project_folder_exists(&project))
+        {
+            report.skip_folder_missing(&assignment.project_id);
+            continue;
         } else {
             match decision.decision {
                 OverrideDecision::Keep => {
@@ -945,11 +1011,7 @@ pub fn resync_all_projects(store: &SkillStore, now: i64) -> Result<ProjectSyncRe
     mutation_guard::serialized(|| {
         let mut report = ProjectSyncReport::default();
         for project in store.list_projects()? {
-            let project_report = resync_project_unlocked(store, &project.id, now)?;
-            report.items.extend(project_report.items);
-            report
-                .skipped_projects
-                .extend(project_report.skipped_projects);
+            report.absorb(resync_project_unlocked(store, &project.id, now)?);
         }
         Ok(report)
     })
@@ -1117,7 +1179,8 @@ pub(crate) fn reconcile_listing_unlocked(
 /// existence to choose between assigning and unassigning.
 #[derive(Debug)]
 pub enum ToggleOutcome {
-    /// A batch of one: `Synced`, or `Failed` with the row kept `error`.
+    /// A batch of one: `Synced`, or `Failed` with the row kept `error`,
+    /// or no item and the project's `folder_missing` skip (no row created).
     Assigned { report: ProjectSyncReport },
     Unassigned {
         report: artifact_removal::RemovalReport,

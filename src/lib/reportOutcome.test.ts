@@ -971,6 +971,33 @@ describe("projectSyncOutcome", () => {
     );
   });
 
+  it("Assign to project and toggle-on into a missing folder: the skip line, never a silent success", () => {
+    const report: ProjectSyncReport = { items: [], skipped_projects: [{ project_id: "p2", reason: { reason: "folder_missing" } }] };
+    const ctxNamed = { ...ctx, projectLabelById: { p2: "archived-app" } };
+    const bulk = projectSyncOutcome(report, { ...ctxNamed, action: "bulkAssign" });
+    expect(words(bulk.warnings)).toEqual([
+      { title: t("projectsSurface.folderMissingSkip", { project: "archived-app" }), message: "projectsSurface.folderMissingDetail" },
+    ]);
+    expect(bulk.toast).toMatchObject({ tone: "skipped", message: t("outcome.skipped", { count: 1 }) });
+    const toggle = projectSyncOutcome(report, { ...ctxNamed, action: "toggleOn" });
+    expect(toggle.toast).toMatchObject({ tone: "skipped", message: t("projectsSurface.folderMissingSkip", { project: "archived-app" }) });
+  });
+
+  it("Enable counts a project skipped whole once, and names it", () => {
+    const out = enableOutcome(
+      {
+        global: [],
+        projects: { items: [], skipped_projects: [{ project_id: "p2", reason: { reason: "folder_missing" } }] },
+      },
+      { ...ctx, batch: true, projectLabelById: { p2: "archived-app" } },
+    );
+    expect(out.tally?.counts.skipped).toBe(1);
+    expect(words(out.warnings)).toEqual([
+      { title: t("projectsSurface.folderMissingSkip", { project: "archived-app" }), message: "projectsSurface.folderMissingDetail" },
+    ]);
+    expect(out.toast).toMatchObject({ tone: "skipped" });
+  });
+
   it("a cell's Sync this confirms a batch of one; its failure is the error entry alone", () => {
     const ok = projectSyncOutcome({ skipped_projects: [], items: [projectItem("claude", { status: "synced" })] }, { ...ctx, action: "syncCell" });
     expect(ok.toast).toEqual({ kind: "success", tone: "success", message: "projectsSurface.cellSynced" });

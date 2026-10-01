@@ -1797,3 +1797,257 @@ fn unassign_skill_from_project_raises_typed_not_found() {
         })
     );
 }
+
+// ---------------------------------------------------------------------------
+// A missing project folder (round-19 ticket 17 audit A1): no project sync
+// recreates it. Every route answers one `folder_missing` project skip, writes
+// no target and leaves the assignment rows exactly as they were; removal of
+// that project's rows stays allowed.
+// ---------------------------------------------------------------------------
+
+/// A registered project with `claude_code` configured and the skill `gone`,
+/// whose folder exists until the caller removes it.
+fn missing_folder_fixture(
+    tmpdir: &Path,
+    store: &SkillStore,
+    label: &str,
+) -> (ProjectRecord, SkillRecord, std::path::PathBuf) {
+    let skill_dir = make_skill_dir(tmpdir, &format!("{label}-skill"));
+    let project_dir = tmpdir.join(format!("{label}-project"));
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        store,
+        &project_dir.to_string_lossy(),
+        &format!("{label}-skill"),
+        &skill_dir.to_string_lossy(),
+    );
+    add_tools(store, &project, &["claude_code"]);
+    (project, skill, project_dir)
+}
+
+fn folder_missing_only(report: &project_sync::ProjectSyncReport, project_id: &str) {
+    assert!(
+        report.items.is_empty(),
+        "no item for the skipped project: {report}"
+    );
+    assert_eq!(
+        report.skipped_projects,
+        vec![project_sync::ProjectSkipped {
+            project_id: project_id.to_string(),
+            reason: project_sync::ProjectSkipReason::FolderMissing,
+        }]
+    );
+}
+
+fn row_snapshot(
+    store: &SkillStore,
+    project_id: &str,
+) -> Vec<(String, SyncStatus, Option<String>, Option<i64>)> {
+    store
+        .list_project_skill_assignments(project_id)
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.tool, row.status, row.last_error, row.synced_at))
+        .collect()
+}
+
+#[test]
+fn bulk_assign_into_a_missing_project_folder_skips_the_project() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let (project, skill, project_dir) = missing_folder_fixture(tmpdir.path(), &store, "bulk");
+    fs::remove_dir_all(&project_dir).unwrap();
+
+    let report = project_sync::assign_skill_to_project_tools(&store, &project.id, &skill.id, 2000)
+        .expect("a skip, not an error");
+
+    folder_missing_only(&report, &project.id);
+    assert!(!project_dir.exists(), "the missing folder is not recreated");
+    assert!(
+        row_snapshot(&store, &project.id).is_empty(),
+        "no row admitted"
+    );
+}
+
+#[test]
+fn toggle_on_into_a_missing_project_folder_skips_the_project() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let (project, skill, project_dir) = missing_folder_fixture(tmpdir.path(), &store, "toggle");
+    fs::remove_dir_all(&project_dir).unwrap();
+
+    let outcome =
+        project_sync::toggle_skill_assignment(&store, &project.id, &skill.id, "claude_code", 2000)
+            .expect("a skip, not an error");
+
+    match outcome {
+        project_sync::ToggleOutcome::Assigned { report } => {
+            folder_missing_only(&report, &project.id)
+        }
+        other => panic!("expected the assign arm, got {other:?}"),
+    }
+    assert!(!project_dir.exists(), "the missing folder is not recreated");
+    assert!(
+        row_snapshot(&store, &project.id).is_empty(),
+        "no row admitted"
+    );
+}
+
+/// The non-owning `error` row a first sync leaves when someone else's folder
+/// is in the way — the row the overwrite ask (and Enable's retry) settles.
+fn colliding_row(store: &SkillStore, project: &ProjectRecord, skill: &SkillRecord, dir: &Path) {
+    let occupant = dir.join(".claude/skills").join(&skill.name);
+    fs::create_dir_all(&occupant).unwrap();
+    fs::write(occupant.join("SKILL.md"), "someone else's").unwrap();
+    project_sync::toggle_skill_assignment(store, &project.id, &skill.id, "claude_code", 2000)
+        .unwrap();
+    let row = store
+        .get_project_skill_assignment(&project.id, &skill.id, "claude_code")
+        .unwrap()
+        .expect("the error row");
+    assert_eq!(row.status, SyncStatus::Error);
+    assert!(!row.owns_artifact());
+}
+
+#[test]
+fn collision_answers_into_a_missing_project_folder_skip_the_project() {
+    use crate::core::global_sync::OverrideDecision;
+
+    for decision in [OverrideDecision::Overwrite, OverrideDecision::Keep] {
+        let (_db_dir, store) = make_store();
+        let tmpdir = tempfile::tempdir().unwrap();
+        let (project, skill, project_dir) =
+            missing_folder_fixture(tmpdir.path(), &store, "collision");
+        colliding_row(&store, &project, &skill, &project_dir);
+        let before = row_snapshot(&store, &project.id);
+        fs::remove_dir_all(&project_dir).unwrap();
+
+        let report = project_sync::resolve_collisions(
+            &store,
+            &[project_sync::AssignmentDecision {
+                project_id: project.id.clone(),
+                skill_id: skill.id.clone(),
+                tool: "claude_code".into(),
+                decision,
+            }],
+            3000,
+        )
+        .expect("a skip, not an error");
+
+        folder_missing_only(&report, &project.id);
+        assert!(!project_dir.exists(), "the missing folder is not recreated");
+        assert_eq!(row_snapshot(&store, &project.id), before, "row untouched");
+    }
+}
+
+/// Enable's project half, called through its seam with rows of two projects:
+/// the live one is synced, the gone one is skipped once — its rows neither
+/// admitted (ownership cleared) nor settled `error`.
+#[test]
+fn enable_first_sync_into_a_missing_project_folder_skips_the_project() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let (gone, skill, gone_dir) = missing_folder_fixture(tmpdir.path(), &store, "enable");
+    colliding_row(&store, &gone, &skill, &gone_dir);
+    project_sync::toggle_skill_assignment(&store, &gone.id, &skill.id, "pi", 2000).unwrap();
+    let rows = store.list_project_skill_assignments(&gone.id).unwrap();
+    assert_eq!(rows.len(), 2);
+    let before = row_snapshot(&store, &gone.id);
+    fs::remove_dir_all(&gone_dir).unwrap();
+
+    let report = crate::core::mutation_guard::serialized(|| {
+        project_sync::first_sync_assignments_unlocked(&store, &rows, 3000)
+    })
+    .expect("a skip, not an error");
+
+    folder_missing_only(&report, &gone.id);
+    assert!(!gone_dir.exists(), "the missing folder is not recreated");
+    assert_eq!(row_snapshot(&store, &gone.id), before, "rows untouched");
+}
+
+/// The shared seam refuses on its own — the defence behind every route.
+#[test]
+fn the_target_write_seam_refuses_a_missing_project_root() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let (project, skill, project_dir) = missing_folder_fixture(tmpdir.path(), &store, "seam");
+    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000).unwrap();
+    let row = store
+        .get_project_skill_assignment(&project.id, &skill.id, "claude_code")
+        .unwrap()
+        .unwrap();
+    fs::remove_dir_all(&project_dir).unwrap();
+
+    let err = project_sync::sync_single_assignment(&store, &project, &row, true, 3000)
+        .expect_err("refused");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::InvalidPath {
+            path: project_dir.to_string_lossy().into_owned(),
+            reason: "missing".to_string(),
+        })
+    );
+    assert!(!project_dir.exists(), "the missing folder is not recreated");
+}
+
+/// A project path that exists but is a file is missing too (`is_dir`).
+#[test]
+fn a_project_path_that_is_a_file_is_a_missing_folder() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let (project, skill, project_dir) = missing_folder_fixture(tmpdir.path(), &store, "file");
+    fs::remove_dir_all(&project_dir).unwrap();
+    fs::write(&project_dir, "not a folder").unwrap();
+
+    let report = project_sync::assign_skill_to_project_tools(&store, &project.id, &skill.id, 2000)
+        .expect("a skip");
+
+    folder_missing_only(&report, &project.id);
+    assert_eq!(fs::read_to_string(&project_dir).unwrap(), "not a folder");
+}
+
+/// Cleanup is never blocked by the rule: unassign (bulk and toggle-off) and
+/// remove-project succeed for a project whose folder is gone.
+#[test]
+fn removal_still_works_for_a_missing_project_folder() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let (project, skill, project_dir) = missing_folder_fixture(tmpdir.path(), &store, "cleanup");
+    let other_dir = make_skill_dir(tmpdir.path(), "cleanup-other");
+    let other = SkillRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "cleanup-other".to_string(),
+        central_path: other_dir.to_string_lossy().into_owned(),
+        ..skill.clone()
+    };
+    store.upsert_skill(&other).unwrap();
+    project_sync::assign_skill_to_project_tools(&store, &project.id, &skill.id, 2000).unwrap();
+    project_sync::toggle_skill_assignment(&store, &project.id, &skill.id, "pi", 2000).unwrap();
+    project_sync::assign_skill_to_project_tools(&store, &project.id, &other.id, 2000).unwrap();
+    assert_eq!(row_snapshot(&store, &project.id).len(), 3);
+    fs::remove_dir_all(&project_dir).unwrap();
+
+    // Toggle-off of an existing row is the unassign arm, not a sync.
+    match project_sync::toggle_skill_assignment(&store, &project.id, &skill.id, "pi", 3000)
+        .expect("toggle off")
+    {
+        project_sync::ToggleOutcome::Unassigned { report } => {
+            assert!(report.failures().is_empty(), "{report}")
+        }
+        other => panic!("expected the unassign arm, got {other:?}"),
+    }
+    let report = project_sync::unassign_skill_from_project(&store, &project.id, &skill.id)
+        .expect("unassign");
+    assert!(report.failures().is_empty(), "{report}");
+    assert_eq!(
+        row_snapshot(&store, &project.id).len(),
+        1,
+        "only the other skill's row"
+    );
+
+    let removed = crate::core::project_ops::remove_project_and_artifacts(&store, &project.id)
+        .expect("remove project");
+    assert!(removed.failures().is_empty(), "{removed}");
+    assert!(store.get_project_by_id(&project.id).unwrap().is_none());
+    assert!(!project_dir.exists(), "nothing recreated by the cleanup");
+}

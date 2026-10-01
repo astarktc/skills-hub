@@ -419,8 +419,10 @@ fn propagate_one_assignment(
             reason: unavailable,
         });
     };
+    // The project-root rule shared with every project sync: an existing
+    // directory, never merely an existing path.
     let project_path = PathBuf::from(&project.path);
-    if !project_path.exists() {
+    if !super::project_ops::project_root_present(&project_path) {
         return Ok(PropagationStatus::Skipped {
             reason: unavailable,
         });

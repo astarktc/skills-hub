@@ -110,6 +110,36 @@ describe("overwriteAsk", () => {
     );
     expect(merged.items.map((i) => i.status.status)).toEqual(["synced", "declined"]);
   });
+
+  it("a project the retry skipped whole (folder gone before the answer) replaces its asked rows with one skip", () => {
+    const item = (project: string, tool: string, status: ProjectSyncReport["items"][number]["status"]) => ({
+      assignment_id: `${project}-${tool}`,
+      project_id: project,
+      skill_id: "a",
+      skill_name: "a",
+      tool,
+      status,
+    });
+    const collided = { status: "failed" as const, error: { code: "TARGET_EXISTS" as const, path: "/x", modifiedAt: null, sameContent: false } };
+    const skip = { project_id: "gone", reason: { reason: "folder_missing" as const } };
+    const report: ProjectSyncReport = {
+      skipped_projects: [],
+      items: [item("gone", "claude", { status: "synced" }), item("gone", "pi", collided), item("gone", "codex", collided), item("live", "pi", collided)],
+    };
+    const merged = mergeProjectRetry(report, {
+      skipped_projects: [skip],
+      items: [item("live", "pi", { status: "synced" })],
+    });
+    // Settled rows stand; the unanswered collisions leave for the one skip line.
+    expect(merged.items.map((i) => `${i.project_id}:${i.tool}:${i.status.status}`)).toEqual([
+      "gone:claude:synced",
+      "live:pi:synced",
+    ]);
+    expect(merged.skipped_projects).toEqual([skip]);
+    // A part that asked nothing in that project does not inherit its skip.
+    expect(mergeProjectRetry({ skipped_projects: [], items: [item("live", "pi", collided)] }, { skipped_projects: [skip], items: [] }))
+      .toEqual({ skipped_projects: [], items: [item("live", "pi", collided)] });
+  });
 });
 
 describe("Propagation / re-assert rows (ticket 09 B2)", () => {
@@ -153,6 +183,19 @@ describe("Propagation / re-assert rows (ticket 09 B2)", () => {
       targets[3],
       targets[4],
     ]);
+  });
+
+  it("a project row whose project the retry skipped (folder gone) is project_unavailable, never a collision again", () => {
+    const rows = propagationCollisionRows(skill, targets, {});
+    const merged = mergePropagationRetry(skill, targets, {
+      rows,
+      global: [],
+      projects: { skipped_projects: [{ project_id: "p1", reason: { reason: "folder_missing" } }], items: [] },
+    });
+    expect(merged.targets[2]).toEqual({
+      scope: { scope: "project", project_id: "p1", tool: "claude" },
+      status: { status: "skipped", reason: { reason: "project_unavailable", project_id: "p1" } },
+    });
   });
 
   it("rows the retry did not answer stay as they settled", () => {

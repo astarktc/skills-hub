@@ -94,10 +94,20 @@ fn project_dto_from_parts(record: &ProjectRecord, aggregate: ProjectAggregate) -
 }
 
 /// Whether a project's folder is there — the one rule behind the row's
-/// `path_exists` and a re-sync's "folder not found" skip, so the list and
-/// the report never disagree.
+/// `path_exists`, every project sync's "folder not found" skip (assign,
+/// toggle-on, Enable, the collision retry, re-sync) and Propagation's
+/// `ProjectUnavailable`, so the list and the reports never disagree. Nothing
+/// is ever materialised under a project whose folder is missing: syncing
+/// would recreate it (`sync_engine` creates parents). Removal is not gated
+/// by it: a gone folder's rows can always be unassigned or removed.
 pub(crate) fn project_folder_exists(record: &ProjectRecord) -> bool {
-    std::path::Path::new(&record.path).is_dir()
+    project_root_present(std::path::Path::new(&record.path))
+}
+
+/// [`project_folder_exists`] for a resolved project root: an existing
+/// directory, never merely an existing path.
+pub(crate) fn project_root_present(project_path: &std::path::Path) -> bool {
+    project_path.is_dir()
 }
 
 /// A project's configured Tools as wire rows.

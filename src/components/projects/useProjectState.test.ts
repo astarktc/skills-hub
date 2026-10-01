@@ -204,7 +204,7 @@ function stubBackend(options: { reconciled?: boolean } = {}) {
           }
         }
         assignmentsByProject.set(projectId, rows);
-        return Promise.resolve({ view: view(projectId), report: { items } });
+        return Promise.resolve({ view: view(projectId), report: { items, skipped_projects: [] } });
       }
       case "bulkUnassignSkill": {
         const [projectId, skillId] = args as Parameters<
@@ -1311,6 +1311,32 @@ describe("useProjectState project-assignment verbs (the door's entry points)", (
     expect(settleCollisions.mock.calls[0]![0].items.map((item) => item.skill_id)).toEqual(["s1", "s2"]);
     expect(report?.items).toHaveLength(2);
     expect(callsTo("getProjectView")).toEqual([["p1"]]);
+  });
+
+  it("a project skipped whole (folder missing) answers per skill and is reported once", async () => {
+    const settleCollisions = vi.fn(async (report: ProjectSyncReport) => ({ report, resolved: false }));
+    const { result } = await renderReady({ settleCollisions });
+    await withSelectedProject(result, ["pi"]);
+    const base = mockInvoke.getMockImplementation()!;
+    const skip = { project_id: "p1", reason: { reason: "folder_missing" as const } };
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "bulkAssignSkill"
+        ? base(command, ...args).then((answer) => ({
+            ...(answer as object),
+            report: { items: [], skipped_projects: [skip] },
+          }))
+        : base(command, ...args),
+    );
+    mockInvoke.mockClear();
+    let report: ProjectSyncReport | undefined;
+    await act(async () => {
+      report = await result.current.assignToProject("p1", ["s1", "s2", "s3"]);
+    });
+    expect(callsTo("bulkAssignSkill")).toHaveLength(3);
+    expect(settleCollisions.mock.calls[0]![0]).toEqual({ items: [], skipped_projects: [skip] });
+    expect(report).toEqual({ items: [], skipped_projects: [skip] });
+    // Nothing was retried: the applied views stand, no follow-up read.
+    expect(callsTo("getProjectView")).toEqual([]);
   });
 
   it("a thrown verb converges on the backend's view of that project before rethrowing", async () => {

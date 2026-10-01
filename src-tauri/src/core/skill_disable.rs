@@ -326,7 +326,7 @@ fn enable_unlocked(
                 if let Some(skill) = store.get_skill_by_id(skill_id)? {
                     let one = enable_skill(store, home, &skill, overrides, now)?;
                     report.global.extend(one.global);
-                    report.projects.items.extend(one.projects.items);
+                    report.projects.absorb(one.projects);
                 }
             }
             Ok(report)

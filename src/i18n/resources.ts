@@ -1385,6 +1385,8 @@ export const resources = {
           browse: "Browse\u2026",
           ignoreLegend: "Keep deployed skills out of git",
         },
+        // The Assign-to-project picker's refusal for a project whose folder is gone.
+        assignFolderMissing: "Folder not found \u2014 update its path under Projects first.",
       },
     },
   },

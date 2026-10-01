@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { resources } from "../i18n/resources";
 import {
+  assignTargetState,
+  matrixFocusAfterLeave,
   MATRIX_CELL_MARK,
   MATRIX_STATES,
   matrixCell,
@@ -132,5 +134,39 @@ describe("matrixLegend", () => {
       expect(en.detail[state]).toBeTruthy();
     }
     expect(en.detail.stale).toBe("copy differs from the skill \u2014 Sync to fix");
+  });
+});
+
+describe("assignTargetState (the Assign-to-project picker)", () => {
+  it("refuses a project whose folder is missing before any other reason", () => {
+    expect(assignTargetState({ pathExists: false, toolCount: 2, missingToolCount: 2 })).toBe("folderMissing");
+    expect(assignTargetState({ pathExists: false, toolCount: 0, missingToolCount: 0 })).toBe("folderMissing");
+  });
+  it("refuses a project with no Tools, then one with every skill on every Tool", () => {
+    expect(assignTargetState({ pathExists: true, toolCount: 0, missingToolCount: 0 })).toBe("noTools");
+    expect(assignTargetState({ pathExists: true, toolCount: 2, missingToolCount: 0 })).toBe("assigned");
+  });
+  it("offers a present project with a Tool to add", () => {
+    expect(assignTargetState({ pathExists: true, toolCount: 2, missingToolCount: 1 })).toBe("available");
+  });
+});
+
+describe("matrixFocusAfterLeave (N2: a row filtered away under focus)", () => {
+  it("is null while the row is still shown", () => {
+    expect(matrixFocusAfterLeave(["a", "b"], ["a", "b"], "a")).toBeNull();
+  });
+  it("goes to the next surviving row in display order", () => {
+    expect(matrixFocusAfterLeave(["a", "b", "c", "d"], ["a", "c", "d"], "b")).toEqual({ kind: "row", skillId: "c" });
+    // The next row may have left too: the first survivor after it.
+    expect(matrixFocusAfterLeave(["a", "b", "c", "d"], ["a", "d"], "b")).toEqual({ kind: "row", skillId: "d" });
+  });
+  it("goes to the previous row when the one that left was last", () => {
+    expect(matrixFocusAfterLeave(["a", "b", "c"], ["a", "b"], "c")).toEqual({ kind: "row", skillId: "b" });
+  });
+  it("goes to the active chip when no row is left", () => {
+    expect(matrixFocusAfterLeave(["a"], [], "a")).toEqual({ kind: "filter" });
+  });
+  it("an unknown previous order falls back to the first shown row", () => {
+    expect(matrixFocusAfterLeave([], ["x"], "a")).toEqual({ kind: "row", skillId: "x" });
   });
 });

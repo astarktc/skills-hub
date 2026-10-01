@@ -11,6 +11,7 @@ import type { ManagedSkill } from "../skills/types";
 import StripMarkIcon from "../skills/StripMarkIcon";
 import { projectsGroupByRepoPreference } from "../../lib/preferences";
 import { useListLens } from "../../hooks/useListLens";
+import { useMatrixFocusReconciliation } from "./useMatrixFocusReconciliation";
 import {
   matrixCell,
   matrixColumns,
@@ -58,7 +59,9 @@ const FILTERS: readonly MatrixFilter[] = ["all", "assigned", "issues"];
  * the state is repairable (projectPresentation.matrixCell). A cell whose
  * skill is also deployed globally stays enabled and is marked "also global"
  * (D17). The row's bulk verbs are named: Assign to all configured Tools ·
- * Unassign from all.
+ * Unassign from all. When an action takes the focused row out of the shown
+ * rows (a chip filters it away), the matrix moves focus to the next surviving
+ * row's cell (`useMatrixFocusReconciliation`, N2).
  */
 const AssignmentMatrix = ({
   project,
@@ -99,6 +102,13 @@ const AssignmentMatrix = ({
   const columns = useMemo(() => matrixColumns(tools, labelOf, installedTools), [installedTools, labelOf, tools]);
   const legend = useMemo(() => matrixLegend(t), [t]);
   const pathMissing = !project.path_exists;
+  // The shown rows in display order: the post-filter focus rule reads it.
+  const displayed = useMemo(
+    () => (groups ? groups.flatMap((group) => group.skills) : visible).map((skill) => skill.id),
+    [groups, visible],
+  );
+  const rootRef = useRef<HTMLDivElement>(null);
+  const focusReconciliation = useMatrixFocusReconciliation(rootRef, displayed);
 
   if (skills.length === 0) {
     return <p className="m-0 px-4 py-6 text-sm text-muted-foreground">{t("projects.noSkills")}</p>;
@@ -130,7 +140,12 @@ const AssignmentMatrix = ({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div
+      ref={rootRef}
+      className="flex min-h-0 flex-1 flex-col"
+      onFocus={focusReconciliation.onFocus}
+      onBlur={focusReconciliation.onBlur}
+    >
       <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-2">
         <Field className="flex-row items-center gap-2">
           <FieldLabel>
@@ -154,7 +169,7 @@ const AssignmentMatrix = ({
         </Field>
         <div role="group" aria-label={t("projectsSurface.matrix.filterGroup")} className="flex items-center gap-1.5">
           {FILTERS.map((key) => (
-            <Chip key={key} pressed={filter === key} onPressedChange={() => setFilter(key)}>
+            <Chip key={key} data-matrix-filter={key} pressed={filter === key} onPressedChange={() => setFilter(key)}>
               {t(`projectsSurface.matrix.filters.${key}`)}{" "}
               <span className="text-faint tabular-nums">{filterCounts[key] ?? 0}</span>
             </Chip>
@@ -286,7 +301,7 @@ const MatrixRow = memo(
       bulkReason ?? (assignedCount === columns.length ? t("projectsSurface.matrix.allAssigned") : null);
     const unassignReason = bulkReason ?? (assignedCount === 0 ? t("projectsSurface.matrix.noneAssigned") : null);
     return (
-      <tr aria-busy={rowPending || undefined} className="hover:bg-card">
+      <tr data-matrix-row={skill.id} aria-busy={rowPending || undefined} className="hover:bg-card">
         <th
           scope="row"
           title={skill.description ?? undefined}
@@ -379,7 +394,7 @@ function MatrixCellView({ skill, column, assignment, inFlight, pathMissing, bloc
     checkboxRef.current?.focus();
   }, [repairable]);
   return (
-    <td data-cell-state={cell.state} className="group/cell h-row border-b border-border p-0">
+    <td data-cell-state={cell.state} data-matrix-col={column.key} className="group/cell h-row border-b border-border p-0">
       <span className="flex h-full items-center">
         <label
           title={reason ?? (hint || undefined)}

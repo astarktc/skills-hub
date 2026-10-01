@@ -177,8 +177,11 @@ export type SkillActionsDeps = {
   surface: Pick<DialogDoor, "openDialog" | "dismissDialog" | "updateDialog">;
   /** The skills world's catalog: resolution, replacement and reload. */
   library: Pick<SkillLibrary, "managedSkills" | "loadManagedSkills" | "replaceCatalog">;
-  /** The project world's verbs (any project, the view applied) and its view re-read. */
-  projects: Pick<ProjectState, "assignToProject" | "unassignFromProject" | "refreshView">;
+  /**
+   * The project world's verbs (any project, the view applied), its view
+   * re-read, and its list — a report's project skip names the project.
+   */
+  projects: Pick<ProjectState, "assignToProject" | "unassignFromProject" | "refreshView" | "projects">;
   /** The showing surface's rows in display order (`lens.displayed`) — Delete's focus rule reads it. */
   order: readonly string[];
 };
@@ -240,12 +243,13 @@ export function useSkillActions({
   const { toolLabelById } = catalog;
   const { openDialog, dismissDialog, updateDialog } = surface;
   const { managedSkills, loadManagedSkills, replaceCatalog } = library;
-  const { assignToProject, unassignFromProject, refreshView } = projects;
+  const { assignToProject, unassignFromProject, refreshView, projects: projectList } = projects;
 
   // Where focus goes when the Delete dialog closes over a removed skill.
   const afterDialogRef = useRef<FocusTarget | null>(null);
 
-  const foldContext = { t, toolLabelById };
+  const projectLabelById = Object.fromEntries(projectList.map((project) => [project.id, project.name]));
+  const foldContext = { t, toolLabelById, projectLabelById };
   const reload = () => loadManagedSkills();
   // Each skill's global Tools as the operator acted on them: a Refresh
   // report's synced global target outside this set is a re-assert addition,

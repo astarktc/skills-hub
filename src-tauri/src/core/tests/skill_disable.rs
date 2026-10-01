@@ -591,6 +591,61 @@ fn enabling_a_skill_resyncs_every_disabled_row_and_clears_the_marker() {
     ));
 }
 
+/// A project whose folder went away while the skill was disabled: Disable
+/// still succeeded on it (removal is never gated by the folder), and Enable
+/// skips the project once — no folder recreated, its row left `disabled` —
+/// while the global target is re-synced.
+#[test]
+fn enabling_a_skill_skips_a_project_whose_folder_is_missing() {
+    let f = fixture(&["claude_code"]);
+    f.sync(&["claude_code"]);
+    let project = project(&f, "claude_code");
+    assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
+    let project_dir = PathBuf::from(&project.path);
+    fs::remove_dir_all(&project_dir).unwrap();
+
+    let disabled = disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    assert!(disabled.failures().is_empty(), "{disabled}");
+    let before = f
+        .store
+        .get_project_skill_assignment(&project.id, &f.skill_id, "claude_code")
+        .unwrap()
+        .expect("row");
+    assert_eq!(before.status, SyncStatus::Disabled);
+
+    let report: EnableReport = enable_targets(&f.store, f.home(), &f.skill(), NOW + 1).unwrap();
+
+    assert!(report.projects.items.is_empty(), "{}", report.projects);
+    assert_eq!(
+        report.projects.skipped_projects,
+        vec![project_sync::ProjectSkipped {
+            project_id: project.id.clone(),
+            reason: project_sync::ProjectSkipReason::FolderMissing,
+        }]
+    );
+    assert!(!project_dir.exists(), "the missing folder is not recreated");
+    let after = f
+        .store
+        .get_project_skill_assignment(&project.id, &f.skill_id, "claude_code")
+        .unwrap()
+        .expect("row");
+    assert_eq!(
+        (after.status, after.synced_at, after.last_error),
+        (before.status, before.synced_at, before.last_error),
+        "row untouched (not admitted, not settled error)"
+    );
+    assert_eq!(f.status("claude_code"), Some(SyncStatus::Synced));
+
+    // The Skills scope folds each skill's project skip once.
+    disable_targets(&f.store, f.home(), &f.skill(), NOW + 2).unwrap();
+    let scope = DisableScope::Skills {
+        skill_ids: vec![f.skill_id.clone(), f.skill_id.clone()],
+    };
+    let both = enable_targets(&f.store, f.home(), &scope, NOW + 3).unwrap();
+    assert_eq!(both.projects.skipped_projects.len(), 1);
+    assert!(!project_dir.exists());
+}
+
 /// Only a skill-grain Enable lifts a skill-grain Disable.
 #[test]
 fn enabling_a_pair_of_a_disabled_skill_is_skipped() {

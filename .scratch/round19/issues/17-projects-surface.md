@@ -223,3 +223,46 @@ through `keys-cdp.ts`; JSON transcripts, screenshots, `check.log`, `bindings.dif
   hover/focus), so the triggerless-popover focus-guard fix stays for 19b (noted on ticket 23). The Sync All skip lives
   in core (`ProjectSyncReport.skipped_projects`), not a frontend collapse — the per-assignment path synced into the
   missing folder.
+
+- 2026-10-01 — audit A1 fix (child, P1): **no project sync recreates a missing project folder.** Root cause: only
+  `resync_assignments_unlocked` applied the `is_dir` rule; assign / toggle-on (`assign_skill_to_tools`), Enable's
+  `first_sync_assignments_unlocked` and the collision retry (`resolve_collisions_unlocked`) reached
+  `sync_engine` (which creates parents) under a gone root. Fix, in core under the guard: every `ProjectSyncReport`
+  producer now answers the existing `skipped_projects: [{ project_id, reason: folder_missing }]` (deduped,
+  `ProjectSyncReport::{folder_missing, skip_folder_missing, absorb}`) with **no row created, admitted or settled** for
+  that project — toggle answers it inside its `assigned` arm, Enable inside `EnableReport.projects` (the Skills scope
+  absorbs, not just extends), the retry for both Overwrite and Keep. One rule: `project_ops::project_folder_exists` /
+  `project_root_present` (`is_dir`); `sync_assignment_target` refuses a missing root with the typed
+  `InvalidPath { reason: "missing" }` as the last defence; Propagation uses the same rule (was `exists`). Removal is
+  never gated (toggle-off, bulk unassign, remove project, Disable all pass on a gone folder). No new variant; bindings:
+  doc-comment drift only (shape unchanged). Frontend: `useProjectState.assignToProject` aggregates/dedupes the
+  per-skill skips; `mergeProjectRetry` replaces a retry-skipped project's unanswered collisions with its one skip line
+  (and `mergePropagationRetry` answers them `project_unavailable`); `enableOutcome` counts the skip; the door's folds
+  name the project (`projects` joins its Pick); the picker refuses a missing folder with the reason
+  (`assignTargetState`, UX only). Fixture parity: bulk assign, toggle, Enable, collision retry, Sync All absorb.
+  Files: `core/{project_sync,project_ops,propagation,skill_disable}.rs` (+ tests), `useProjectState.ts`,
+  `useSkillActions.ts`, `overwriteAsk.ts`, `reportOutcome.ts`, `projectPresentation.ts`, `AssignProjectModal.tsx`,
+  `fixtures/backend.ts`, `i18n` (`projectsSurface.assignFolderMissing`). Evidence `.scratch/round19/evidence/17-fix/`:
+  `core-probe.log` (the audit's probe, its bug asserts inverted: bulk / toggle / enable / collision all
+  `absent_before=true exists_after=false target_exists=false`), `cargo-test-all.log` (818 passed; 9 new: 7
+  `project_sync`, 1 `skill_disable`, 1 `propagation`), `fix-{dark-1280,light-960}.json` + `picker-*.png`
+  / `late-folder-*.png` (archived-app disabled with "Folder not found — update its path under Projects first.";
+  a folder removed after the picker loaded → "1 skipped" + the named skip line, rows untouched, focus back on the
+  trigger; picker axe 0 violations ×2). Gate: `gate.log` (version OK, styles OK, vitest 46 files / 996 passed,
+  build, fmt, clippy, cargo 818 passed, GATE_EXIT:0). Re-check focus: the Enable-skip leaves the row `disabled` while
+  the skill is enabled (as a Keep answer does) — after Update path, the cell re-materialises by toggling, not by
+  Sync Project; confirm that recovery is acceptable.
+
+- 2026-10-01 — audit N2 fix (child, P2): **repairing / unassigning the last issue of a filtered row keeps the matrix
+  position.** Root cause: the row unmounted under focus and only the cell owned a focus rule. Fix: matrix-level
+  post-filter reconciliation — `useMatrixFocusReconciliation` (the matrix records row + column on focus; when a
+  render drops that row while focus is lost, the same column's checkbox in the next surviving row in display order,
+  else the previous, else the pressed filter chip; focus placed elsewhere is never taken) over the pure
+  `matrixFocusAfterLeave` (`projectPresentation.ts`); DOM contract `data-matrix-row` / `data-matrix-col` /
+  `data-matrix-filter`. Tests: 5 pure + 8 hook cases (Sync this under Issues, Unassign from all and the last cell under
+  Assigned, empty → chip, successive repairs, foreign focus kept). Browser (`fix.ts`, trusted CDP keys, dark 1280 +
+  light 960): Issues → Sync design-tokens in Claude Code → "docx in Claude Code" checkbox; Assigned → Unassign from
+  all — docx → "frontend-design in Claude Code"; Assigned → last cell of design-tokens (Space) → "frontend-design in
+  Claude Code"; per-frame focus samples show no BODY/MAIN frame; matrix axe 0 violations ×2. N1 (127-Tab walk) stays
+  deferred to 19b per the orchestrator. Re-check focus: the reconciliation and the lifecycle's `returnLostFocus` /
+  door `restoreFocus` (both keep non-lost focus).

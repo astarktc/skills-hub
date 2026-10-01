@@ -612,6 +612,37 @@ fn a_project_whose_directory_is_gone_is_skipped() {
     );
 }
 
+/// The project-root rule is `is_dir`, shared with every project sync: a path
+/// that exists but is not a folder is unavailable too, and left as it is.
+#[test]
+fn a_project_path_that_is_a_file_is_skipped() {
+    let f = fixture();
+    let project_dir = tempfile::tempdir().expect("project tempdir");
+    let project_path = project_dir.path().join("moved");
+    fs::create_dir_all(&project_path).unwrap();
+    seed_project_copy_assignment(&f, &project_path);
+    fs::remove_dir_all(&project_path).unwrap();
+    fs::write(&project_path, "a file now").unwrap();
+
+    let outcomes = propagate(&f);
+
+    let scope = PropagationScope::Project {
+        project_id: "p1".to_string(),
+        tool: copy_only_tool().key().to_string(),
+    };
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &scope),
+            PropagationStatus::Skipped {
+                reason: PropagationSkip::ProjectUnavailable { .. }
+            }
+        ),
+        "got {:?}",
+        outcomes
+    );
+    assert_eq!(fs::read_to_string(&project_path).unwrap(), "a file now");
+}
+
 /// The artifact is located by the name it was materialised under (the stored
 /// `assignment.skill_name`), not by the Managed skill's live name: renaming
 /// the skill after assignment must not strand the old artifact and grow a
