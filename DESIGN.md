@@ -279,9 +279,10 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
 - **Where the opener can disappear** (a removal: Delete skill, Remove project), the dialog passes `fallbackFocus`.
   Today both removal dialogs pass `mainLandmarkFocus`; the row-level target (the next row, then the list heading) is
   ticket 09's surface lifecycle, which will supply it through the same prop.
-- **Background.** Everything behind the top layer is `inert`, not only `aria-hidden`: the app and every lower layer's
-  popup.
-- **Dismissal.** Escape and outside press dismiss **the top layer only**, and only when `dismissible`. A
+- **Background.** Everything behind the top modal layer is `inert`, not only `aria-hidden`: the app and every lower
+  layer's popup — a Popover beneath it included.
+- **Dismissal.** Escape and outside press dismiss **the top layer only** — a dialog or a Popover (below) — and one
+  event dismisses one layer (`layer-stack.claimDismissal`), and only when `dismissible`. A
   non-dismissible layer also disables its ✕. `interceptEscape` (on `Dialog`) is offered the top layer's Escape
   first; answering `true` spends it (the inspector sheet collapses expanded Files) and the layer stays open.
 - **Name.** `<DialogTitle>` names the popup through `aria-labelledby`.
@@ -326,6 +327,15 @@ Escape closes them and returns focus to the trigger.
     ground only.
   - `DropdownMenuLabel` names a group and must sit inside a `DropdownMenuGroup` (Base UI throws otherwise).
 - **Tooltip** is a hint on an inverted surface. It is never the only carrier of a name or a state.
+- **Popover is a floating layer** of the one layer stack (ticket 16 A1): non-modal (it makes nothing inert), live above
+  the top dialog, inert beneath one. A confirmation one of its controls raises — Add's Tool scope → the shared-folder
+  ask, a sibling dialog in its own portal — sits above it: Escape, the press on the ask's answer and the focus the ask
+  takes belong to the ask (the popover ignores them, `claimDismissal`), and the ask returns focus to the checkbox that
+  raised it with the popover still open — its controls back in the tab order (Base UI takes them out while focus is
+  away and restores them only for a focus arriving from a known element; the primitive restores them for a focus
+  returned from a layer that is gone). The next Escape closes the popover alone → its trigger; the next closes the
+  dialog → its opener. DropdownMenu and Tooltip are not stack layers (nothing raises a dialog from inside them while
+  they stay open).
 - **Popover without a trigger** (`PopoverContent anchor`): a control that raises a popover on its own terms — the
   row switch's inline Enable confirmation — renders a controlled Popover with no Trigger, positioned on `anchor`,
   with `initialFocus` on its answer and `finalFocus` back on the control. Escape closes it; focus returns to the
@@ -683,7 +693,9 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
 
 - **One stepped Dialog** (`skills/add/AddSkillDialog.tsx`, `lg`, one `addSkill` kind on the surface stack; the step is
   the flow hook's): **Source** → **Skills** → **Result**, named in the header as an `ol` with `aria-current="step"`.
-  The only layer above it is the one overwrite ask (D12). Dismissible except while Add's own action runs; the shell
+  Two layers can sit above it: the one overwrite ask (D12) and — over the Edit Tools popover — the shared-folder
+  confirmation that toggling a Tool sharing a skills folder (Amp, Kimi) raises through `useSharedDirConfirmation`;
+  that ask returns focus to its checkbox with the popover still open (§ Popover). Dismissible except while Add's own action runs; the shell
   stays mounted so Close returns focus to the control that opened it.
 - **Sticky summary** (`card` ground, `border-b`, under the header): Source (`owner/repo` or the folder) · Skills
   ("3 of 4 checked · 1 hidden by filter", may wrap) · Deploys to (the effective target set, first three named,
@@ -693,7 +705,8 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
   sits at the summary's foot, with its Cancel.
 - **Source**: real Tabs (`segmented`, `aria-selected`) — Git repository / Local folder — each panel one Field with its
   help and its refusal (`FieldError`, never a toast); **Continue** (`solid accent`) lists the source as a read
-  action that Cancel discards.
+  action that Cancel discards. While the listing runs the kind is frozen: the other tab is disabled (focusable,
+  announced unavailable) and the intent refuses, and a listing lands only on the source it was started for.
 - **The candidate picker** (`skills/add/CandidatePicker.tsx`, one component, a `mode` prop): a search Input (once
   there is more than one candidate), "Select all [shown]" over the visible selectable ones, the status line, and
   bordered rows — each control named by the candidate's name and described by its description, path and, when it
@@ -704,10 +717,14 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
   (spinning `LoaderCircle`, `motion-safe`), Waiting for the result (`Clock`), Added (`CircleCheck`, `ok`; `stale`
   when its first sync left something to look at), Failed (`CircleX`, `failed`), Cancelled (`Ban`, muted) — the name,
   the state in words, and one detail line (what the first sync did, the typed reason). Failed rows carry **Retry**,
-  cancelled rows **Add** (`outline accent sm`, named with the skill); "Retry failed (N)" when several. The dialog
-  stays on its Result after a failure, a cancel or a folder left to review, and closes only on full success or Close.
-- **Focus**: each step's first control takes focus in the commit that changes the step (the field, the search, the
-  Result heading); a focused control a render removes (the summary's Cancel, withdrawn for the ask's retry) hands
+  cancelled rows **Add** (`outline accent sm`, named with the skill); "Retry failed (N)" when several. An installed
+  row names only the Tools its first sync missed ("not deployed to Amp"); each distinct reason is said **once** under
+  the rows (`xs`: the Tools in `foreground` medium, the reason, then "Affects 4 skills: …" muted) — never repeated per
+  row, never clipped. A candidate's own failure keeps its reason on its row beside Retry. The dialog stays on its
+  Result after a failure, a cancel or a folder left to review, and closes only when **every** row it holds is complete
+  (a kept folder counts) — a clean Retry of one row does not close over another's folder to review — or on Close.
+- **Focus**: each step's first control takes focus in the commit that changes the step (the field, the search — else
+  the first selectable candidate, else Back when nothing can be picked — the Result heading); a focused control a render removes (the summary's Cancel, withdrawn for the ask's retry) hands
   focus to the same target — never `<body>`, never the dialog's first tabbable by fallback.
 
 ## Migration rule

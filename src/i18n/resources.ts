@@ -1300,7 +1300,6 @@ export const resources = {
           kept: "kept the existing folder in {{tools}}",
           toReview_one: "{{count}} folder to review in {{tools}}",
           toReview_other: "{{count}} folders to review in {{tools}}",
-          notDeployed: "not deployed to {{tool}}: {{reason}}",
           skipped: "skipped {{tools}}",
           notDeployedAutoSyncOff: "Added without deploying (auto-sync is off)",
           noTools: "Added without deploying: no Tools selected",
@@ -1316,6 +1315,14 @@ export const resources = {
       // Ticket 16 — Re-point's multi-skill repository uses the one picker in single-choice mode.
       repointPick: {
         shown: "{{shown}} of {{total}} shown",
+      },
+      // Ticket 16 A4 — Add's Result says a shared first-sync failure once, under its rows.
+      addResult: {
+        notDeployedTo: "not deployed to {{tools}}",
+        noticesLabel: "Why some Tools were not deployed to",
+        noticeTools: "{{tools}}:",
+        affects_one: "Affects {{names}}.",
+        affects_other: "Affects {{count}} skills: {{names}}.",
       },
     },
   },

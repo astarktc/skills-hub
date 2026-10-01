@@ -21,10 +21,12 @@ import {
   invalidReasonText,
   rejectSelection,
   settlementComplete,
+  settlementNotices,
   settlementRows,
   type PickSummary,
   type PickerCandidate,
   type SettlementEntry,
+  type SettlementNotice,
   type SettlementRow,
 } from "../lib/addFlow";
 import { defaultImportVariantPath, repoInfo } from "../lib/skillPresentation";
@@ -102,6 +104,8 @@ export type AddView = {
   /** The optional name applies only to a listing of one candidate. */
   nameApplies: boolean;
   settlement: SettlementRow[];
+  /** Each first-sync failure reason once, with the Tools and skills it affects (A4). */
+  notices: SettlementNotice[];
   /** Every sent candidate installed. */
   settled: boolean;
   summary: {
@@ -205,6 +209,13 @@ export function useAddSkillFlow({
     draftRef.current = draft;
     kindRef.current = kind;
   });
+  /**
+   * Which listing may land: bumped whenever what Add is listing for changes
+   * (a fresh opening, Close, another source kind). A listing admits its
+   * answer only while the generation it started under is current — never
+   * into a picker for another source (ticket 16 A3).
+   */
+  const listingGeneration = useRef(0);
   const commitSettlement = useCallback((update: (current: Settlement | null) => Settlement | null) => {
     settlementRef.current = update(settlementRef.current);
     setSettlement(settlementRef.current);
@@ -366,6 +377,7 @@ export function useAddSkillFlow({
   /** Forget everything Add holds (a fresh opening, a finished Add). */
   const resetAdd = useCallback(
     (next: { kind?: AddSourceKind; draft?: AddDraft } = {}) => {
+      listingGeneration.current += 1;
       setStep("source");
       setKindState(next.kind ?? kindRef.current);
       setDraft(next.draft ?? EMPTY_DRAFT);
@@ -383,6 +395,9 @@ export function useAddSkillFlow({
    * Source → Candidates. Its own read action (the listing changes nothing),
    * cancellable at its end: a Cancel pressed during the listing discards it
    * and stays on the source. A refusal is shown by the field, never toasted.
+   * The source kind is frozen while it runs (`setKind` refuses, the other
+   * tab is disabled), and its answer is admitted only for the source it was
+   * started for: an obsolete answer — success or refusal — is discarded.
    */
   const listSource = useCallback(
     async (sourceKind: AddSourceKind, value: string, preselect: string | null) => {
@@ -402,11 +417,13 @@ export function useAddSkillFlow({
           cancel: "installSelection",
         },
         async (action) => {
+          const generation = listingGeneration.current;
+          const obsolete = () => listingGeneration.current !== generation;
           setRunning("listing");
           try {
             if (sourceKind === "git") {
               const { candidates, target_match } = await invokeTauri("listGitSkillsCmd", trimmed, preselect);
-              if (action.cancelRequested()) return action.fail(null);
+              if (action.cancelRequested() || obsolete()) return action.fail(null);
               if (candidates.length === 0) {
                 setSourceError(t("errors.noSkillsFoundWithHint"));
                 return;
@@ -426,7 +443,7 @@ export function useAddSkillFlow({
               openGit(trimmed, candidates, wanted);
             } else {
               const candidates = await invokeTauri("listLocalSkillsCmd", trimmed);
-              if (action.cancelRequested()) return action.fail(null);
+              if (action.cancelRequested() || obsolete()) return action.fail(null);
               if (candidates.length === 0) {
                 setSourceError(t("errors.noSkillsFoundLocal"));
                 return;
@@ -434,7 +451,7 @@ export function useAddSkillFlow({
               openLocal(trimmed, candidates);
             }
           } catch (err) {
-            if (action.cancelRequested()) return action.fail(null);
+            if (action.cancelRequested() || obsolete()) return action.fail(null);
             setSourceError(formatError(err) || null);
             return;
           } finally {
@@ -625,7 +642,11 @@ export function useAddSkillFlow({
     resetAdd();
   }, [closeDialog, resetAdd]);
 
+  /** Switch the source kind — refused while Add's own action (a listing) runs. */
   const setKind = useCallback((next: AddSourceKind) => {
+    if (runningRef.current) return;
+    if (next !== kindRef.current) listingGeneration.current += 1;
+    kindRef.current = next;
     setKindState(next);
     setSourceError(null);
   }, []);
@@ -674,6 +695,10 @@ export function useAddSkillFlow({
     () => (settlementEntries ? settlementRows(settlementEntries, { t, toolLabelById }) : []),
     [settlementEntries, t, toolLabelById],
   );
+  const notices = useMemo(
+    () => (settlementEntries ? settlementNotices(settlementEntries, { t, toolLabelById }) : []),
+    [settlementEntries, t, toolLabelById],
+  );
   const scopeTools = useMemo(
     () =>
       tools
@@ -709,6 +734,7 @@ export function useAddSkillFlow({
     query: pick.query,
     nameApplies: pick.listed.length === 1,
     settlement: rows,
+    notices,
     settled: settlementEntries ? settlementComplete(settlementEntries) : false,
     summary: {
       source: sourceLabel,

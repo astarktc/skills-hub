@@ -10,11 +10,15 @@
  *   order — queued / adding / awaiting its result while the batch runs, then
  *   installed (with what its first sync did), failed (the typed reason) or
  *   cancelled.
+ * - **Settlement notices**: a first-sync failure shared by several rows (an
+ *   unwritable Tool folder) is said once, under the rows, with the skills it
+ *   affects; each installed row keeps only which Tools it missed (A4). A
+ *   candidate's own failure keeps its reason on its row, beside Retry.
  */
 
 import { describeCommandError } from "../commandError";
 import type { BatchTargetOutcome, CommandError } from "../components/skills/types";
-import type { InstallSettlement } from "./reportOutcome";
+import { installComplete, type InstallSettlement } from "./reportOutcome";
 
 type Translate = (key: string, opts?: Record<string, unknown>) => string;
 
@@ -164,43 +168,45 @@ export type SettlementRow = {
 const labelList = (tools: readonly string[], toolLabelById: Readonly<Record<string, string>>, t: Translate) =>
   tools.map((tool) => toolLabelById[tool] ?? tool).join(t("common.listSeparator"));
 
+/** An explicit install's unwritable Tool is a failure, every other skip a
+ * skip (the same rule as `reportOutcome`'s install fold). */
+const unwritable = (row: BatchTargetOutcome) =>
+  row.status.status === "skipped" && row.status.error.code === "TOOL_NOT_WRITABLE";
+
+/** A first sync's failed targets (not its collisions: those are folders to review). */
+function targetFailures(report: readonly BatchTargetOutcome[]): { tool: string; error: CommandError }[] {
+  const failed: { tool: string; error: CommandError }[] = [];
+  for (const row of report) {
+    if (row.status.status === "skipped" && unwritable(row)) failed.push({ tool: row.tool_key, error: row.status.error });
+    if (row.status.status === "failed" && row.status.error.code !== "TARGET_EXISTS")
+      failed.push({ tool: row.tool_key, error: row.status.error });
+  }
+  return failed;
+}
+
 /** An installed candidate's first sync, in one line. */
 function deploymentDetail(
   report: readonly BatchTargetOutcome[],
   ctx: { t: Translate; toolLabelById: Readonly<Record<string, string>> },
 ): { detail: string; attention: boolean } {
   const { t, toolLabelById } = ctx;
-  // An explicit install's unwritable Tool is a failure, every other skip a
-  // skip (the same rule as `reportOutcome`'s install fold).
-  const unwritable = (row: BatchTargetOutcome) =>
-    row.status.status === "skipped" && row.status.error.code === "TOOL_NOT_WRITABLE";
   const synced = report.filter((row) => row.status.status === "synced");
   const declined = report.filter((row) => row.status.status === "declined").map((row) => row.tool_key);
   const skipped = report
     .filter((row) => row.status.status === "skipped" && !unwritable(row))
     .map((row) => row.tool_key);
-  const collisions: string[] = [];
-  const failed: { tool: string; error: CommandError }[] = [];
-  for (const row of report) {
-    if (row.status.status === "skipped" && unwritable(row)) failed.push({ tool: row.tool_key, error: row.status.error });
-    if (row.status.status !== "failed") continue;
-    if (row.status.error.code === "TARGET_EXISTS") collisions.push(row.tool_key);
-    else failed.push({ tool: row.tool_key, error: row.status.error });
-  }
+  const collisions = report
+    .filter((row) => row.status.status === "failed" && row.status.error.code === "TARGET_EXISTS")
+    .map((row) => row.tool_key);
+  const failed = targetFailures(report);
   const parts: string[] = [];
   if (synced.length > 0) parts.push(t("add.settlement.deployed", { count: synced.length }));
   if (declined.length > 0) parts.push(t("add.settlement.kept", { tools: labelList(declined, toolLabelById, t) }));
   if (collisions.length > 0)
     parts.push(t("add.settlement.toReview", { count: collisions.length, tools: labelList(collisions, toolLabelById, t) }));
-  if (failed.length > 0) {
-    const first = failed[0];
-    parts.push(
-      t("add.settlement.notDeployed", {
-        tool: toolLabelById[first.tool] ?? first.tool,
-        reason: describeCommandError(first.error, t),
-      }) + (failed.length > 1 ? t("errors.moreCount", { count: failed.length - 1 }) : ""),
-    );
-  }
+  // Which Tools it missed; why is said once, by `settlementNotices`.
+  if (failed.length > 0)
+    parts.push(t("addResult.notDeployedTo", { tools: labelList(failed.map((item) => item.tool), toolLabelById, t) }));
   if (skipped.length > 0) parts.push(t("add.settlement.skipped", { tools: labelList(skipped, toolLabelById, t) }));
   if (parts.length === 0) parts.push(t("add.settlement.deployedNowhere"));
   return { detail: parts.join(" · "), attention: collisions.length > 0 || failed.length > 0 };
@@ -233,10 +239,55 @@ export function settlementRows(
   });
 }
 
-/** Every sent candidate installed: the dialog's work is done (it may close). */
+/** One first-sync failure reason, said once for every row it affects. */
+export type SettlementNotice = {
+  /** The reason in words (the typed error described). */
+  reason: string;
+  /** The Tools it kept the skills from, labelled, in first-seen order. */
+  tools: string[];
+  /** The added skills it affects, in row order. */
+  skills: string[];
+};
+
+/**
+ * The first-sync failures of the installed rows, grouped by reason: one
+ * notice per distinct reason with the Tools and skills it affects (four rows
+ * missing an unwritable Amp read one reason, not four copies of it).
+ */
+export function settlementNotices(
+  entries: readonly SettlementEntry[],
+  ctx: { t: Translate; toolLabelById: Readonly<Record<string, string>> },
+): SettlementNotice[] {
+  const { t, toolLabelById } = ctx;
+  const byReason = new Map<string, SettlementNotice>();
+  for (const entry of entries) {
+    if (entry.phase !== "settled" || entry.result.status !== "installed") continue;
+    const deployment = entry.result.deployment;
+    if (deployment.status !== "reported") continue;
+    for (const failure of targetFailures(deployment.report)) {
+      // Only a cancellation describes as null, and a target is never cancelled.
+      const reason = describeCommandError(failure.error, t) ?? t("add.settlement.status.cancelled");
+      const notice: SettlementNotice = byReason.get(reason) ?? { reason, tools: [], skills: [] };
+      const tool = toolLabelById[failure.tool] ?? failure.tool;
+      if (!notice.tools.includes(tool)) notice.tools.push(tool);
+      if (!notice.skills.includes(entry.result.name)) notice.skills.push(entry.result.name);
+      byReason.set(reason, notice);
+    }
+  }
+  return Array.from(byReason.values());
+}
+
+/**
+ * The Result's work is done (the dialog may close): every entry it holds —
+ * this run's and every earlier run's — settled completely, by
+ * `installComplete`, the close rule `installOutcome` applies to one run. A
+ * clean Retry of one candidate does not resolve another's folder to review.
+ */
 export function settlementComplete(entries: readonly SettlementEntry[]): boolean {
-  return (
-    entries.length > 0 &&
-    entries.every((entry) => entry.phase === "settled" && entry.result.status === "installed")
-  );
+  const results: InstallSettlement[] = [];
+  for (const entry of entries) {
+    if (entry.phase !== "settled") return false;
+    results.push(entry.result);
+  }
+  return installComplete(results);
 }

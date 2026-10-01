@@ -190,3 +190,54 @@ transcripts, screenshots, `check.log`).
   (ToolConfigModal migrated), 21 (picker + vocabulary), 22 (Explore's install is the Add intent).
 
 - 2026-09-30 — independent D31 audit of `f5615fd`: **FIX-THEN-PASS**, three P1s: A1 shared-folder confirmation also dismisses Edit Tools and loses checkbox focus; A2 a clean candidate Retry auto-closes Result despite earlier unresolved collisions/target failures; A3 changing Source tabs during listing opens an empty Skills step with focus on BODY. Reproduced in dark 1280×800 and light 960×640; exact fixes/re-check scope in `.scratch/round19/review/ticket-16-audit.md`, fresh evidence in `.scratch/round19/evidence/16-audit/`. Ordinary keyboard Add/one ask/filtered actual submit/failed-id Retry/Cancel/local/Explore/Re-point wire pass; 12 axe runs have zero violations, measured contrast and landing/reduce pass. Full version + check gate passes (924 Vitest / 807 Rust; 1676 CSS lines / 29 migrated), export bindings and `cargo test --all` pass with no source/bindings drift. Repeated Result permission prose is P2 only; minimum-size scrolling remains usable. ToolConfigModal migration, syncAfterCreate copy and AGENTS sentence are accepted. A1–A3 require fixes and bounded re-audit before acceptance; A4 may be deferred. No application source edited or commit made.
+
+- 2026-10-01 — fix child (Opus 5.5), D31 audit **A1** (shared-folder ask consumed the Tool-scope popover): root cause —
+  the layer stack knew only modal layers, so the portalled Popover dismissed itself on the ask's Escape / answer press /
+  focus-out and `staysInertAfterClose` judged the checkbox (another portal) inert, sending focus to the fallback; Base UI
+  also left the popover's controls `tabindex=-1` after the programmatic return (it re-enables only for a focusin with a
+  `relatedTarget`). Fix in the primitives: `layer-stack.ts` gains a `floating` layer kind (Popover; makes nothing inert,
+  live above the top modal layer, inert beneath one), `claimDismissal(id, event)` (top layer only, one event dismisses
+  one layer — used by Dialog and Popover), `hasLayerAbove` counts modal layers only; `popover.tsx` wraps Root (cancels
+  escape / outside-press / focus-out unless it may claim them), registers the popup while mounted, and restores the
+  portal's tab order on a focus returned from nowhere. `useSharedDirConfirmation` untouched (sole owner). Files:
+  `ui/layer-stack.ts`, `ui/dialog.tsx`, `ui/popover.tsx`, tests `ui/dialog.test.tsx` (nested-portal: Escape / Cancel /
+  Continue → checkbox with popover open and inert under the ask → Escape → Edit Tools → Escape → opener),
+  `ui/popover.test.tsx` (tab order after a returned focus), `ui/layer-stack.test.ts` (floating kind, claim); DESIGN.md
+  § Dialog (background/dismissal), § Popover (floating layer), § Add (both layers above it). Evidence
+  `.scratch/round19/evidence/16-fix/shared-{dark-1280,light-960}.json` (`fix.ts shared`): Amp on Source, Kimi Code CLI on
+  Skills, each × Escape / Cancel / Continue → focus on the originating checkbox, popover open and live (inert while the
+  ask is up), Tab moves to the next checkbox, Continue flips both group members, Escape/Cancel neither; Escape → Edit
+  Tools; final Escape → Add skill; 105 stops, 0 BODY, all `:focus-visible`. Re-check: other Popover users
+  (AppSidebar shortcuts, SkillRow Enable `anchor`) now register as floating layers.
+- 2026-10-01 — fix child, **A2** (clean Retry auto-closed a Result with earlier unresolved rows): root cause —
+  `settlementComplete` checked only `status === "installed"`. Fix: one predicate beside the fold,
+  `reportOutcome.installSettlementComplete` / `installComplete` (installed and deployed as asked; kept, Disabled,
+  not-detected and other skips complete; unanswered `TARGET_EXISTS`, failed / unwritable targets, no-targets, deploy
+  failure, failed / cancelled candidates not). `installOutcome.completion.closeModal = installComplete(run)`;
+  `addFlow.settlementComplete(entries)` applies it to **every accumulated entry**; the retry still folds only its own
+  run (one `applyOutcome`, one toast). Files: `lib/reportOutcome.ts`, `lib/addFlow.ts`; tests `lib/addFlow.test.ts`,
+  `hooks/useAddSkillFlow.test.ts` (prior TARGET_EXISTS, prior target failure with permission repaired, prior no-targets,
+  cancelled remainder then its clean Add closes, earlier Keep + final clean Retry closes, Keep-only first run closes;
+  three fail on the old predicate). Evidence `retry-{dark-1280,light-960}.json` (auditor's scenario: retry call carries
+  only `skills/release-notes`, Result stays "Added 4 of 4" with the old rows, focus on its heading) and
+  `clean-*.json` (writable dirs, Keep, clean Retry → dialog closes, focus Add skill).
+- 2026-10-01 — fix child, **A3** (Source tab changed mid-listing → empty Skills step, BODY): fix — the kind is frozen
+  while the listing runs (the other TabsTrigger `disabled`: Base UI keeps it focusable with `aria-disabled`; `setKind`
+  refuses while Add's action runs) and a listing is admitted only under the generation it started with (bumped by
+  `resetAdd` / a kind change; an obsolete answer or refusal is discarded via `action.fail(null)`); the Skills step's
+  focus chain is search → first selectable candidate → Back (never BODY). Files: `hooks/useAddSkillFlow.ts`,
+  `skills/add/AddSkillDialog.tsx`; tests: Git→Local / Local→Git refused while a deferred listing resolves and while it
+  rejects, a listing superseded by a fresh `open()` discarded then a fresh listing lands (Cancel-then-list is the
+  existing D20 pair). Evidence `race-{git,local}-{dark-1280,light-960}.json` (`latency=4`): the other tab
+  `aria-disabled=true`, focus may rest on it, Enter/Space inert; the listing lands on its own source (collide-kit "4 of 4
+  checked" / team-skills "3 of 5 checked"), focus Filter skills, 0 BODY; after Back the tab switches.
+- 2026-10-01 — fix child, **A4** (P2, repeated permission prose): an installed row now says only which Tools it missed
+  ("not deployed to Amp"); `addFlow.settlementNotices` groups first-sync failures by reason and the Result lists each
+  reason **once** under the rows ("Amp: {reason}" + "Affects 3 skills: …"), never clipped; a candidate's own failure
+  keeps its reason + Retry. i18n `addResult.*` appended at the end of `en`; the dead `add.settlement.notDeployed`
+  removed. Evidence `retry-light-960-after-retry.png`.
+- 2026-10-01 — fix child, verification: ticket-16 gate transcript `gate-dark-1280.json` (67 keyboard stops, 0 BODY, all
+  focus-visible; one two-row ask, Overwrite + Keep, 4 rows, Retry sends only release-notes, "Added 4 of 4", Close → Add
+  skill). axe 4.10.3 × 6 (`a11y-{dark-1280,light-960}.json`: Source with the frozen tab, shared ask over the popover,
+  Result with its notice): **0 violations**; incompletes Base UI `aria-hidden-focus` guards and one overlapped contrast
+  node; min enabled text 4.68 dark / 5.32 light. Gate in `check.log` (see the final summary). Nothing committed.

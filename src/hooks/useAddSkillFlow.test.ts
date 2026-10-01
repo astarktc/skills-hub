@@ -95,6 +95,10 @@ function stubBackend(overrides?: {
   localCandidates?: LocalSkillCandidate[];
   /** Tools whose target the install batch reports occupied (TARGET_EXISTS). */
   occupied?: string[];
+  /** Tools the batch skips as unwritable (TOOL_NOT_WRITABLE); the set is live, so a test can repair it. */
+  unwritable?: Set<string>;
+  /** Subpaths the batch answers `cancelled` the first time (a Cancel between candidates). */
+  cancelledOnce?: string[];
   /** Subpaths whose install fails (every attempt, or `once`). */
   failing?: string[];
   failOnce?: boolean;
@@ -104,6 +108,7 @@ function stubBackend(overrides?: {
   listingError?: unknown;
 }) {
   const failing = new Set(overrides?.failing ?? []);
+  const cancelling = new Set(overrides?.cancelledOnce ?? []);
   mockInvoke.mockImplementation((command, ...args) => {
     switch (command) {
       case "getOnboardingPlan":
@@ -130,6 +135,9 @@ function stubBackend(overrides?: {
         const report: InstallBatchReport = {
           candidates: request.candidates.map((candidate) => {
             const name = candidate.name_override ?? candidate.subpath.split("/").pop()!;
+            if (cancelling.delete(candidate.subpath)) {
+              return { subpath: candidate.subpath, name, status: { status: "cancelled" as const } };
+            }
             if (failing.has(candidate.subpath)) {
               if (overrides?.failOnce) failing.delete(candidate.subpath);
               return { subpath: candidate.subpath, name, status: { status: "failed", error: (overrides?.failError ?? RATE_LIMITED) as never } };
@@ -148,7 +156,9 @@ function stubBackend(overrides?: {
                       tool_key: tool,
                       status: overrides?.occupied?.includes(tool)
                         ? { status: "failed" as const, error: { code: "TARGET_EXISTS" as const, path: `/${tool}/${name}`, modifiedAt: 1, sameContent: false } }
-                        : { status: "synced" as const, outcome: { mode_used: "symlink" as const, target_path: `/${tool}/${name}`, replaced: false } },
+                        : overrides?.unwritable?.has(tool)
+                          ? { status: "skipped" as const, error: { code: "TOOL_NOT_WRITABLE" as const, tool, path: `/${tool}` } }
+                          : { status: "synced" as const, outcome: { mode_used: "symlink" as const, target_path: `/${tool}/${name}`, replaced: false } },
                     }))
                   : [],
               },
@@ -532,6 +542,98 @@ describe("Add: the candidates step (the visible-and-checked rule, #47)", () => {
   });
 });
 
+describe("Add: the source kind while a listing runs (ticket 16 A3)", () => {
+  function deferred() {
+    let resolve!: () => void;
+    let reject!: (err: unknown) => void;
+    const promise = new Promise<void>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  const local = [{ name: "alpha", description: null, subpath: "alpha", valid: true, reason: null }];
+
+  /** Start a listing of `kind` that waits on the returned gate. */
+  async function startListing(kind: "git" | "local") {
+    stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha")], localCandidates: local });
+    const base = mockInvoke.getMockImplementation()!;
+    const gate = deferred();
+    const listCommand = kind === "git" ? "listGitSkillsCmd" : "listLocalSkillsCmd";
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === listCommand ? gate.promise.then(() => base(command, ...args)) : base(command, ...args),
+    );
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    act(() => result.current.open({ kind }));
+    act(() => result.current.add.editDraft(kind === "git" ? { url: "https://github.com/x/y" } : { path: "/some/dir" }));
+    let task!: Promise<void>;
+    await act(async () => {
+      task = result.current.add.list();
+    });
+    expect(result.current.add.running).toBe("listing");
+    return { result, gate, task, base };
+  }
+
+  it.each([
+    ["git", "local"],
+    ["local", "git"],
+  ] as const)("%s → %s is refused while the listing runs; the listing lands on its own source", async (from, to) => {
+    const { result, gate, task } = await startListing(from);
+    act(() => result.current.add.setKind(to));
+    expect(result.current.add.kind).toBe(from);
+    await act(async () => {
+      gate.resolve();
+      await task;
+    });
+    expect(result.current.add.step).toBe("candidates");
+    expect(result.current.add.kind).toBe(from);
+    expect(result.current.add.candidates.map((candidate) => candidate.name)).toEqual(["alpha"]);
+    expect(result.current.add.summary.candidates).toMatchObject({ total: 1, checked: 1 });
+    // After it, the kind switches again.
+    act(() => result.current.add.back());
+    act(() => result.current.add.setKind(to));
+    expect(result.current.add.kind).toBe(to);
+  });
+
+  it.each([
+    ["git", "local"],
+    ["local", "git"],
+  ] as const)("%s → %s refused while the listing runs; a rejection is said by the same source's field", async (from, to) => {
+    const { result, gate, task } = await startListing(from);
+    act(() => result.current.add.setKind(to));
+    await act(async () => {
+      gate.reject(new Error("unreachable"));
+      await task;
+    });
+    expect(result.current.add.step).toBe("source");
+    expect(result.current.add.kind).toBe(from);
+    expect(result.current.add.sourceError).toBe("unreachable");
+  });
+
+  it("a listing superseded by a fresh opening is discarded: it never moves the step", async () => {
+    const { result, gate, task, base } = await startListing("git");
+    // Explore's install re-opens Add on another source while the first listing is out.
+    mockInvoke.mockImplementation(base);
+    act(() => result.current.open({ kind: "local" }));
+    await act(async () => {
+      gate.resolve();
+      await task;
+    });
+    expect(result.current.add.step).toBe("source");
+    expect(result.current.add.kind).toBe("local");
+    expect(result.current.add.summary.candidates).toBeNull();
+    // A fresh listing of the current source lands.
+    act(() => result.current.add.editDraft({ path: "/some/dir" }));
+    await act(async () => {
+      await result.current.add.list();
+    });
+    expect(result.current.add.step).toBe("candidates");
+    expect(result.current.add.candidates.map((candidate) => candidate.name)).toEqual(["alpha"]);
+  });
+});
+
 describe("Add: Explore's intent — open({ source, preselect })", () => {
   it("lists the repository at once with the named skill checked, and installs nothing by itself", async () => {
     // skills.sh name vs SKILL.md name ("json-render-react" vs "react"): the
@@ -714,6 +816,104 @@ describe("Add: install() and the settlement", () => {
     await listGit(result);
     await act(async () => { await result.current.install(); });
     expect(installCalls()[0][1]).toMatchObject({ tools: [], deploy: false });
+    expect(result.current.add.open).toBe(false);
+  });
+});
+
+describe("Add: the Result closes only when every accumulated entry is complete (ticket 16 A2)", () => {
+  const two = [gitCandidate("alpha", "skills/alpha"), gitCandidate("beta", "skills/beta")];
+
+  /** List, install (beta fails once), then retry beta alone. */
+  async function installThenRetryBeta(setup: ReturnType<typeof makeDeps>, between?: () => void) {
+    const rendered = renderHook(() => useAddSkillFlow(setup.deps));
+    const { result } = rendered;
+    await listGit(result);
+    await act(async () => { await result.current.install(); });
+    expect(result.current.add.open).toBe(true);
+    between?.();
+    rendered.rerender();
+    vi.mocked(setup.reporter.notify).mockClear();
+    vi.mocked(setup.reporter.applyOutcome).mockClear();
+    await act(async () => { await result.current.retry(["skills/beta"]); });
+    // The retry sends beta alone and folds its own run once — no replayed toast for alpha.
+    expect(installCalls()).toHaveLength(2);
+    expect(installCalls()[1][1]).toMatchObject({ candidates: [{ subpath: "skills/beta", name_override: null }] });
+    expect(setup.reporter.applyOutcome).toHaveBeenCalledTimes(1);
+    expect(setup.reporter.notify).toHaveBeenCalledTimes(1);
+    return result;
+  }
+
+  it("an earlier folder left to review (the ask dismissed) keeps the Result after a clean Retry", async () => {
+    stubBackend({ gitCandidates: two, failing: ["skills/beta"], failOnce: true, occupied: ["claude"] });
+    const setup = makeDeps();
+    const result = await installThenRetryBeta(setup, () => {
+      // The ask is dismissed on the first run; the retry's target is clear.
+      stubBackend({ gitCandidates: two });
+    });
+    expect(result.current.add.open).toBe(true);
+    expect(result.current.add.settled).toBe(false);
+    expect(result.current.add.settlement.map((row) => [row.name, row.status, row.attention])).toEqual([
+      ["alpha", "installed", true],
+      ["beta", "installed", false],
+    ]);
+    expect(setup.reporter.notify).toHaveBeenCalledWith("success", t("add.added", { name: "beta" }), undefined);
+  });
+
+  it("an earlier target failure keeps the Result after a clean Retry (the permission repaired meanwhile)", async () => {
+    const unwritable = new Set(["goose"]);
+    stubBackend({ gitCandidates: two, failing: ["skills/beta"], failOnce: true, unwritable });
+    const setup = makeDeps();
+    const result = await installThenRetryBeta(setup, () => unwritable.clear());
+    expect(result.current.add.open).toBe(true);
+    expect(result.current.add.settlement.map((row) => [row.status, row.attention])).toEqual([
+      ["installed", true],
+      ["installed", false],
+    ]);
+  });
+
+  it("an earlier no-Tools install keeps the Result after a clean Retry", async () => {
+    stubBackend({ gitCandidates: two, failing: ["skills/beta"], failOnce: true });
+    const setup = makeDeps();
+    setup.sync.syncTargets = { claude: false, cursor: false, goose: false };
+    const result = await installThenRetryBeta(setup, () => {
+      setup.sync.syncTargets = { claude: true, cursor: false, goose: true };
+    });
+    expect(installCalls()[1][1]).toMatchObject({ tools: ["claude", "goose"] });
+    expect(result.current.add.open).toBe(true);
+    expect(result.current.add.settlement[0]).toMatchObject({ detail: "add.settlement.noTools", attention: true });
+  });
+
+  it("a cancelled remainder keeps the Result; adding it cleanly too closes it", async () => {
+    const three = [...two, gitCandidate("gamma", "skills/gamma")];
+    stubBackend({ gitCandidates: three, failing: ["skills/beta"], failOnce: true, cancelledOnce: ["skills/gamma"] });
+    const setup = makeDeps();
+    const result = await installThenRetryBeta(setup);
+    expect(result.current.add.open).toBe(true);
+    expect(result.current.add.settlement.map((row) => row.status)).toEqual(["installed", "installed", "cancelled"]);
+    await act(async () => { await result.current.retry(["skills/gamma"]); });
+    expect(installCalls()[2][1]).toMatchObject({ candidates: [{ subpath: "skills/gamma", name_override: null }] });
+    expect(result.current.add.open).toBe(false);
+  });
+
+  it("an earlier Keep is the operator's answer: the final clean Retry closes the Result", async () => {
+    stubBackend({ gitCandidates: two, failing: ["skills/beta"], failOnce: true, occupied: ["claude"] });
+    const setup = makeDeps();
+    setup.sync.resolveGlobalCollisions.mockImplementation(async (report) =>
+      report.map((row) => (row.status.status === "failed" ? { ...row, status: { status: "declined" } } : row)),
+    );
+    const result = await installThenRetryBeta(setup, () => stubBackend({ gitCandidates: two }));
+    expect(result.current.add.open).toBe(false);
+  });
+
+  it("a Keep-only first run closes at once", async () => {
+    stubBackend({ gitCandidates: two, occupied: ["claude"] });
+    const setup = makeDeps();
+    setup.sync.resolveGlobalCollisions.mockImplementation(async (report) =>
+      report.map((row) => (row.status.status === "failed" ? { ...row, status: { status: "declined" } } : row)),
+    );
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await listGit(result);
+    await act(async () => { await result.current.install(); });
     expect(result.current.add.open).toBe(false);
   });
 });

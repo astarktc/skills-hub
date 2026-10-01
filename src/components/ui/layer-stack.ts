@@ -1,15 +1,21 @@
 /**
- * The stack of open modal layers (Dialog, ConfirmDialog, the overwrite and
- * shared-dir asks), most recently opened on top. It gives the Dialog primitive the
- * two guarantees Base UI cannot give sibling dialogs on its own:
+ * The stack of open layers, most recently opened on top: **modal** layers
+ * (Dialog, ConfirmDialog, the overwrite and shared-dir asks) and **floating**
+ * ones (Popover). It gives the primitives the guarantees Base UI cannot give
+ * layers that live in sibling portals on its own:
  *
- *   - **Top layer only.** Escape and outside presses dismiss only the top
- *     layer; every lower layer ignores them (Base UI listens per dialog on
- *     the document, so two sibling dialogs would both close).
- *   - **Inert background.** While any layer is open, the app content (every
- *     body child that is not a Base UI portal) and every lower layer's popup
- *     carry `inert` — not only `aria-hidden` — so nothing behind the top
- *     layer can be focused, clicked or found.
+ *   - **Top layer only.** Escape, outside presses — and, for a floating
+ *     layer, focus leaving it — dismiss only the top layer; every lower layer
+ *     ignores them, and one event dismisses one layer (`claimDismissal`).
+ *     Base UI listens per layer on the document, so two sibling dialogs —
+ *     or a popover and the confirmation one of its checkboxes raised (Add's
+ *     Tool scope → the shared-folder ask) — would both close.
+ *   - **Inert background.** While any modal layer is open, the app content
+ *     (every body child that is not a Base UI portal) and every layer's popup
+ *     beneath the top modal layer carry `inert` — not only `aria-hidden` — so
+ *     nothing behind it can be focused, clicked or found. A floating layer
+ *     makes nothing inert: it is non-modal; above the top modal layer it is
+ *     live, beneath one it is inert like a lower dialog.
  *
  * It also carries each layer's **return chain** — the element that opened it
  * and its caller's fallback — so a layer closing *beneath* another (a count
@@ -31,8 +37,12 @@ export type FocusFallback = (usable: (element: Element) => boolean) => HTMLEleme
 /** Where a layer returns focus: its opener, then its caller's fallback. */
 export type ReturnChain = { opener: HTMLElement | null; fallback: FocusFallback | null };
 
+/** `modal` (a Dialog) or `floating` (a Popover: non-modal, inert only beneath a modal layer). */
+export type LayerKind = "modal" | "floating";
+
 type Layer = {
   id: string;
+  kind: LayerKind;
   popup: HTMLElement | null;
   own: ReturnChain;
   /** Chains handed over by layers that closed beneath this one (nearest first). */
@@ -42,15 +52,46 @@ type Layer = {
 const stack: Layer[] = [];
 /** Elements this module made inert, so it never clears someone else's. */
 const inertedByUs = new Set<HTMLElement>();
+/** Events a layer has already been dismissed by: a lower layer never acts on the same one. */
+const claimed = new WeakSet<Event>();
 
-export function openLayer(id: string, own: ReturnChain = { opener: null, fallback: null }): void {
-  if (!stack.some((layer) => layer.id === id)) stack.push({ id, popup: null, own, inherited: [] });
+export function openLayer(
+  id: string,
+  own: ReturnChain = { opener: null, fallback: null },
+  kind: LayerKind = "modal",
+): void {
+  if (!stack.some((layer) => layer.id === id)) stack.push({ id, kind, popup: null, own, inherited: [] });
 }
 
-/** Whether `id` is open with another layer above it. */
+/** Whether `id` is open (registered) at all. */
+export function isOpenLayer(id: string): boolean {
+  return stack.some((layer) => layer.id === id);
+}
+
+/**
+ * Whether `id` is open with a **modal** layer above it — one that takes over
+ * its focus return. A floating layer above it (its own popover) does not:
+ * it goes with it.
+ */
 export function hasLayerAbove(id: string): boolean {
   const index = stack.findIndex((layer) => layer.id === id);
-  return index >= 0 && index < stack.length - 1;
+  return index >= 0 && stack.slice(index + 1).some((layer) => layer.kind === "modal");
+}
+
+/**
+ * May `id` be dismissed by `event` (an Escape, an outside press, focus
+ * leaving a floating layer)? Only the top layer may, and only once per
+ * event: the answer `true` claims the event, so a layer beneath whose
+ * listener runs later — after the top one has already left the stack —
+ * still ignores it. A missing event (an imperative close) claims nothing.
+ */
+export function claimDismissal(id: string, event: Event | undefined): boolean {
+  if (!isTopLayer(id)) return false;
+  if (event) {
+    if (claimed.has(event)) return false;
+    claimed.add(event);
+  }
+  return true;
 }
 
 /**
@@ -103,17 +144,26 @@ export function popupBelow(id: string): HTMLElement | null {
  * question a closing dialog asks of its focus target. The dialog decides
  * where focus returns *while it is still open*, when everything behind it
  * carries this module's `inert`; that inert goes with the layer. What stays
- * inert: someone else's `inert` ancestor, and — while other layers remain —
- * anything outside the layer that will then be on top.
+ * inert: someone else's `inert` ancestor, and — while a modal layer remains
+ * — anything outside the popups of the top remaining modal layer and of the
+ * floating layers above it (a checkbox in the popover that raised the
+ * closing ask is live again).
  */
 export function staysInertAfterClose(id: string, element: Element): boolean {
   for (let node: Element | null = element; node; node = node.parentElement) {
     if (node.hasAttribute("inert") && !inertedByUs.has(node as HTMLElement)) return true;
   }
   const remaining = stack.filter((layer) => layer.id !== id);
-  if (remaining.length === 0) return false;
-  const top = remaining[remaining.length - 1].popup;
-  return !(top && top.contains(element));
+  const topModal = lastModalIndex(remaining);
+  if (topModal < 0) return false;
+  return !remaining.slice(topModal).some((layer) => layer.popup?.contains(element) ?? false);
+}
+
+function lastModalIndex(layers: Layer[]): number {
+  for (let index = layers.length - 1; index >= 0; index -= 1) {
+    if (layers[index].kind === "modal") return index;
+  }
+  return -1;
 }
 
 export function openLayerCount(): number {
@@ -125,7 +175,8 @@ export function applyInert(): void {
   if (typeof document === "undefined") return;
   for (const element of inertedByUs) element.removeAttribute("inert");
   inertedByUs.clear();
-  if (stack.length === 0) return;
+  const topModal = lastModalIndex(stack);
+  if (topModal < 0) return;
 
   const mark = (element: HTMLElement | null) => {
     if (!element || element.hasAttribute("inert")) return;
@@ -139,7 +190,8 @@ export function applyInert(): void {
     if (child.tagName === "SCRIPT" || child.tagName === "STYLE") continue;
     mark(child);
   }
-  // Lower layers: their popups only (a nested dialog's portal can live
-  // inside its parent's portal node, so never inert a whole portal).
-  for (const layer of stack.slice(0, -1)) mark(layer.popup);
+  // Layers beneath the top modal one: their popups only (a nested dialog's
+  // portal can live inside its parent's portal node, so never inert a whole
+  // portal). Floating layers above it stay live.
+  for (const layer of stack.slice(0, topModal)) mark(layer.popup);
 }

@@ -2,6 +2,7 @@
 // names, and Escape closes the layer and returns focus to its trigger.
 
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -9,9 +10,10 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "./popover";
+import { closeLayer, openLayer } from "./layer-stack";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,6 +55,81 @@ describe("Popover", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+});
+
+describe("Popover focus returned from a layer that is gone (ticket 16 A1)", () => {
+  /**
+   * A layer above the popover (the shared-folder ask) took focus — Base UI
+   * then takes the popover's controls out of the tab order — and, as it
+   * unmounted, returned focus to the popover's checkbox from nowhere (no
+   * related target). Tab must move on inside the popover again.
+   */
+  /** A modal layer of the stack, in its own portal-less node: the ask's shape, minus Base UI. */
+  function OutsideLayer({ onDone }: { onDone: () => void }) {
+    useLayoutEffect(() => {
+      openLayer("outside-ask");
+      return () => closeLayer("outside-ask");
+    }, []);
+    return (
+      <button type="button" onClick={onDone}>
+        Continue
+      </button>
+    );
+  }
+
+  function WithOutsideLayer() {
+    const [layer, setLayer] = useState(false);
+    return (
+      <>
+        <Popover>
+          <PopoverTrigger>Edit Tools</PopoverTrigger>
+          <PopoverContent>
+            <PopoverTitle>Tool scope</PopoverTitle>
+            <button type="button" onClick={() => setLayer(true)}>
+              Amp
+            </button>
+            <button type="button">Cursor</button>
+          </PopoverContent>
+        </Popover>
+        {layer ? <OutsideLayer onDone={() => setLayer(false)} /> : null}
+      </>
+    );
+  }
+
+  it("puts the popover's controls back in the tab order when focus returns from nowhere", async () => {
+    render(<WithOutsideLayer />);
+    const trigger = screen.getByRole("button", { name: "Edit Tools" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const popup = await screen.findByRole("dialog", { name: "Tool scope" });
+    const amp = within(popup).getByRole("button", { name: "Amp" });
+    const cursor = within(popup).getByRole("button", { name: "Cursor" });
+    amp.focus();
+    fireEvent.click(amp);
+    // The layer takes focus (Base UI disables focus inside the portal it left).
+    const layer = screen.getByRole("button", { name: "Continue" });
+    layer.focus();
+    // Base UI's deferred focus-out check runs while the layer is up: the popover stays.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(screen.getByRole("dialog", { name: "Tool scope" })).toBe(popup);
+    // In a browser Base UI now takes the portal's controls out of the tab order
+    // (its `disableFocusInside`: `data-tabindex` keeps the old value); jsdom
+    // dispatches no focus-out it acts on, so do exactly what it does.
+    for (const control of [amp, cursor]) {
+      control.dataset.tabindex = control.getAttribute("tabindex") ?? "";
+      control.setAttribute("tabindex", "-1");
+    }
+    // The layer unmounts with focus on it; focus comes back from <body>.
+    fireEvent.click(layer);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Continue" })).toBeNull());
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    amp.focus();
+    expect(document.activeElement).toBe(amp);
+    expect(cursor.getAttribute("tabindex")).not.toBe("-1");
+    expect(amp.getAttribute("tabindex")).not.toBe("-1");
   });
 });
 

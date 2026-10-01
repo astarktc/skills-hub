@@ -11,6 +11,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -22,6 +23,7 @@ import {
   DialogTitle,
 } from "./dialog";
 import { ConfirmDialog } from "./confirm-dialog";
+import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "./popover";
 
 function pressEscape() {
   fireEvent.keyDown(document.activeElement ?? document.body, {
@@ -725,5 +727,132 @@ describe("Dialog interceptEscape (ticket 12 I6)", () => {
     expect(screen.getByRole("dialog", { name: "Files" })).toBeTruthy();
     pressEscape();
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+});
+
+describe("A confirmation raised from inside a popover in a dialog (ticket 16 A1)", () => {
+  /**
+   * Add's shape: a dialog holds a popover of checkboxes; toggling a
+   * shared-folder Tool raises a confirmation that is a sibling of the dialog
+   * (the surface stack's ask), in its own portal. One key dismisses one
+   * layer, and each layer returns focus to the control that raised it.
+   */
+  function PopoverAsk() {
+    const [add, setAdd] = useState(false);
+    const [ask, setAsk] = useState(false);
+    const [amp, setAmp] = useState(false);
+    return (
+      <>
+        <button type="button" onClick={() => setAdd(true)}>
+          Add skill
+        </button>
+        <Dialog open={add} onOpenChange={setAdd}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add</DialogTitle>
+            </DialogHeader>
+            <DialogBody>
+              <Popover>
+                <PopoverTrigger>Edit Tools</PopoverTrigger>
+                <PopoverContent>
+                  <PopoverTitle>Tool scope</PopoverTitle>
+                  <button type="button" aria-pressed={amp} onClick={() => setAsk(true)}>
+                    Amp
+                  </button>
+                  <button type="button">Cursor</button>
+                </PopoverContent>
+              </Popover>
+            </DialogBody>
+          </DialogContent>
+        </Dialog>
+        <ConfirmDialog
+          open={ask}
+          title="Shared skills directory"
+          confirmLabel="Continue"
+          cancelLabel="Cancel"
+          onConfirm={() => {
+            setAmp((value) => !value);
+            setAsk(false);
+          }}
+          onCancel={() => setAsk(false)}
+        />
+      </>
+    );
+  }
+
+  /** A pointer press as the browser sends it: pointerdown, mousedown, click. */
+  function press(element: HTMLElement) {
+    fireEvent.pointerDown(element);
+    fireEvent.mouseDown(element);
+    fireEvent.pointerUp(element);
+    fireEvent.mouseUp(element);
+    fireEvent.click(element);
+  }
+
+  async function openAsk() {
+    render(<PopoverAsk />);
+    const opener = screen.getByRole("button", { name: "Add skill" });
+    opener.focus();
+    fireEvent.click(opener);
+    await openedDialog("Add");
+    const trigger = screen.getByRole("button", { name: "Edit Tools" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const popover = await screen.findByRole("dialog", { name: "Tool scope" });
+    const amp = within(popover).getByRole("button", { name: "Amp" });
+    amp.focus();
+    fireEvent.click(amp);
+    const ask = await openedDialog("Shared skills directory");
+    return { opener, trigger, popover, amp, ask };
+  }
+
+  async function unwind(opener: HTMLElement, trigger: HTMLElement, amp: HTMLElement) {
+    // The popover outlived the ask, and focus is back on the control that raised it.
+    expect(screen.getByRole("dialog", { name: "Tool scope" })).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(amp));
+    expect(amp.closest("[inert]")).toBeNull();
+    // Tab moves on inside it: nothing the ask's focus-out took out of the tab order stays out.
+    const popover = screen.getByRole("dialog", { name: "Tool scope" });
+    for (const control of within(popover).getAllByRole("button")) {
+      expect(control.getAttribute("tabindex")).not.toBe("-1");
+    }
+    // Next Escape: the popover alone → its trigger.
+    pressEscape();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Tool scope" })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(screen.getByRole("dialog", { name: "Add" })).toBeTruthy();
+    // Next Escape: Add → its opener.
+    pressEscape();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+  }
+
+  it("makes the popover inert beneath the confirmation", async () => {
+    const { popover } = await openAsk();
+    await waitFor(() => expect(popover.closest("[inert]")).not.toBeNull());
+  });
+
+  it("Escape closes only the confirmation; then the popover; then the dialog", async () => {
+    const { opener, trigger, amp } = await openAsk();
+    pressEscape();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Shared skills directory" })).toBeNull());
+    expect(amp.getAttribute("aria-pressed")).toBe("false");
+    await unwind(opener, trigger, amp);
+  });
+
+  it("an explicit Cancel keeps the popover and returns focus to the checkbox", async () => {
+    const { opener, trigger, amp, ask } = await openAsk();
+    press(within(ask).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Shared skills directory" })).toBeNull());
+    expect(amp.getAttribute("aria-pressed")).toBe("false");
+    await unwind(opener, trigger, amp);
+  });
+
+  it("Continue applies the answer, keeps the popover and returns focus to the checkbox", async () => {
+    const { opener, trigger, amp, ask } = await openAsk();
+    press(within(ask).getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Shared skills directory" })).toBeNull());
+    expect(amp.getAttribute("aria-pressed")).toBe("true");
+    await unwind(opener, trigger, amp);
   });
 });

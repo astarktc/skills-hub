@@ -1194,6 +1194,40 @@ export function installBatchSettlements(
   });
 }
 /**
+ * Whether one Add candidate settled **completely** — installed, and deployed
+ * as asked: every target synced, kept by the operator's own answer
+ * (`declined`) or skipped by design (Disabled, not detected, any skip but an
+ * unwritable selected Tool); auto-sync off deploys nothing and is complete.
+ * A failure, a cancellation, a target that failed, a folder left to review
+ * (an unanswered `TARGET_EXISTS`) or no Tools to deploy to is not. The same
+ * classification `installOutcome` folds with `foldSync`'s install rules.
+ */
+export function installSettlementComplete(item: InstallSettlement): boolean {
+  if (item.status !== "installed") return false;
+  const deployment = item.deployment;
+  if (deployment.status === "disabled") return true;
+  if (deployment.status !== "reported") return false;
+  return deployment.report.every((row) => {
+    const status = row.status;
+    if (status.status === "synced" || status.status === "declined") return true;
+    if (unansweredCollision(status.error)) return false;
+    if (status.status === "failed") return false;
+    return status.error.code !== "TOOL_NOT_WRITABLE";
+  });
+}
+
+/**
+ * The Add dialog's one close rule (ticket 16, D10): it closes only when
+ * **every** candidate it holds settled completely. `installOutcome` applies
+ * it to the run it folds; the flow applies it to every entry its Result has
+ * accumulated (an earlier run's folder to review is still unresolved after a
+ * clean Retry of another candidate).
+ */
+export function installComplete(report: readonly InstallSettlement[]): boolean {
+  return report.length > 0 && report.every(installSettlementComplete);
+}
+
+/**
  * The headline counts candidates: installed · failed · targets failed (a
  * deployment problem under an installed skill) · kept existing · cancelled.
  * A clean single git/local install keeps its sentence; nothing installed and
@@ -1247,12 +1281,7 @@ export function installOutcome(
   // installed and deployed as asked — a kept folder is the operator's own
   // answer and counts. A failure, a cancellation, a target that failed or a
   // folder left to review keeps it open on its settlement.
-  out.completion.closeModal =
-    counts.done > 0 &&
-    counts.failed === 0 &&
-    counts.cancelled === 0 &&
-    counts.targetsFailed === 0 &&
-    counts.collisions === 0;
+  out.completion.closeModal = installComplete(report);
   const clean = headlineTone(counts) === "success";
   const lone = report.length === 1 && report[0].status === "installed" ? report[0].result.name : null;
   if (clean && lone !== null && ctx.source !== "selection")

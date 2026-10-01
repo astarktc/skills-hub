@@ -37,8 +37,11 @@ const STEPS: readonly AddStep[] = ["source", "candidates", "settlement"];
 /**
  * Add as one stepped surface (ticket 16, D27): Source → Candidates →
  * Settlement in one Dialog, under a sticky summary (source · candidates ·
- * Tool scope, and the running action's progress with its Cancel). The only
- * layer above it is the one overwrite ask (D12), pushed by the sync seam.
+ * Tool scope, and the running action's progress with its Cancel). Above it:
+ * the one overwrite ask (D12), pushed by the sync seam, and — over the Edit
+ * Tools popover — the shared-folder ask (`useSharedDirConfirmation`), which
+ * returns focus to its checkbox with the popover still open (a floating
+ * layer of the one layer stack).
  * The shell stays mounted for the app's life so closing returns focus to
  * the control that opened it; each step moves focus to its own first
  * control (the field, the search, the settlement heading).
@@ -48,7 +51,19 @@ export default function AddSkillDialog({ add, busy, blockedReason, progress, t }
   const fieldRef = useRef<HTMLInputElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const candidatesRef = useRef<HTMLDivElement | null>(null);
+  const backRef = useRef<HTMLButtonElement | null>(null);
   const settlementRef = useRef<HTMLHeadingElement | null>(null);
+  // The Skills step's first control: the search, else the first selectable
+  // candidate, else Back — a listing with nothing to pick (every local
+  // candidate invalid) still gives focus a place, never <body>.
+  const focusCandidates = () =>
+    (
+      searchRef.current ??
+      candidatesRef.current?.querySelector<HTMLElement>(
+        "[role='checkbox']:not([data-disabled]), input[type='radio']:not(:disabled)",
+      ) ??
+      backRef.current
+    )?.focus();
   // Step changes move focus (not the dialog's opening: its `initialFocus`
   // does), in the same commit that removed the control that moved the step —
   // so no frame has focus on <body> (D21).
@@ -64,8 +79,7 @@ export default function AddSkillDialog({ add, busy, blockedReason, progress, t }
     }
     shownStep.current = step;
     if (step === "source") fieldRef.current?.focus();
-    else if (step === "candidates")
-      (searchRef.current ?? candidatesRef.current?.querySelector<HTMLElement>("[role='checkbox']:not([data-disabled])"))?.focus();
+    else if (step === "candidates") focusCandidates();
     else settlementRef.current?.focus();
   }, [add.open, step]);
 
@@ -80,7 +94,7 @@ export default function AddSkillDialog({ add, busy, blockedReason, progress, t }
     if (!add.open || !last || last.isConnected) return;
     lastFocus.current = null;
     if (step === "source") fieldRef.current?.focus();
-    else if (step === "candidates") searchRef.current?.focus();
+    else if (step === "candidates") focusCandidates();
     else settlementRef.current?.focus();
   });
 
@@ -138,6 +152,7 @@ export default function AddSkillDialog({ add, busy, blockedReason, progress, t }
               blocked={blocked}
               searchRef={searchRef}
               listRef={candidatesRef}
+              backRef={backRef}
               t={t}
             />
           ) : (
@@ -291,10 +306,17 @@ function SourceStep({ add, running, blocked, fieldRef, t }: StepProps & { fieldR
             if (!running && blocked === null) void add.list();
           }}
         >
+          {/* The kind is frozen while the listing runs (ticket 16 A3): the
+              other tab is disabled (still focusable, announced unavailable)
+              and the intent refuses, so the listing lands on its own source. */}
           <Tabs value={add.kind} onValueChange={(next) => add.setKind(next === "local" ? "local" : "git")}>
             <TabsList variant="segmented" aria-label={t("add.source.kindLabel")}>
-              <TabsTrigger value="git">{t("add.source.git")}</TabsTrigger>
-              <TabsTrigger value="local">{t("add.source.local")}</TabsTrigger>
+              <TabsTrigger value="git" disabled={running && add.kind !== "git"}>
+                {t("add.source.git")}
+              </TabsTrigger>
+              <TabsTrigger value="local" disabled={running && add.kind !== "local"}>
+                {t("add.source.local")}
+              </TabsTrigger>
             </TabsList>
             <TabsContent value="git" tabIndex={-1}>
               {add.kind === "git" ? (
@@ -373,10 +395,12 @@ function CandidatesStep({
   blocked,
   searchRef,
   listRef,
+  backRef,
   t,
 }: StepProps & {
   searchRef: React.RefObject<HTMLInputElement | null>;
   listRef: React.RefObject<HTMLDivElement | null>;
+  backRef: React.RefObject<HTMLButtonElement | null>;
 }) {
   const lone = add.nameApplies ? add.candidates[0] : null;
   const errorId = useId();
@@ -426,7 +450,7 @@ function CandidatesStep({
         ) : null}
       </DialogBody>
       <DialogFooter>
-        <Button onClick={add.back} disabled={running}>
+        <Button ref={backRef} onClick={add.back} disabled={running}>
           {t("add.back")}
         </Button>
         <Button
@@ -494,6 +518,26 @@ function SettlementStep({
             />
           ))}
         </ul>
+        {add.notices.length > 0 ? (
+          <ul aria-label={t("addResult.noticesLabel")} className="m-0 flex list-none flex-col gap-1.5 p-0 text-xs">
+            {add.notices.map((notice) => (
+              <li key={notice.reason} className="flex flex-col gap-0.5">
+                <p className="m-0 text-foreground">
+                  <span className="font-medium">
+                    {t("addResult.noticeTools", { tools: notice.tools.join(t("common.listSeparator")) })}
+                  </span>{" "}
+                  {notice.reason}
+                </p>
+                <p className="m-0 text-muted-foreground">
+                  {t("addResult.affects", {
+                    count: notice.skills.length,
+                    names: notice.skills.join(t("common.listSeparator")),
+                  })}
+                </p>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </DialogBody>
       <DialogFooter>
         {failedIds.length > 1 ? (

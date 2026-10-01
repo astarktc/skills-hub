@@ -5,10 +5,10 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import {
   applyInert,
+  claimDismissal,
   closeLayer,
   handOverReturn,
   hasLayerAbove,
-  isTopLayer,
   openLayer,
   popupBelow,
   returnChains,
@@ -91,11 +91,12 @@ function Dialog({
           details.reason === "escape-key" ||
           details.reason === "outside-press" ||
           details.reason === "close-press";
-        // Lower layers ignore dismissals meant for the layer above them.
+        // Lower layers ignore dismissals meant for the layer above them —
+        // a dialog or a popover — and one event dismisses one layer.
         if (
           (details.reason === "escape-key" ||
             details.reason === "outside-press") &&
-          !isTopLayer(layerId)
+          !claimDismissal(layerId, details.event)
         ) {
           details.cancel();
           return;
