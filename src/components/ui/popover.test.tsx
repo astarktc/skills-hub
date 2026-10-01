@@ -131,6 +131,91 @@ describe("Popover focus returned from a layer that is gone (ticket 16 A1)", () =
     expect(cursor.getAttribute("tabindex")).not.toBe("-1");
     expect(amp.getAttribute("tabindex")).not.toBe("-1");
   });
+
+  /**
+   * The restore undoes only the temporary removal: a control that became
+   * disabled while the layer was up keeps its current contract (ticket 16
+   * re-check R2), one that was always disabled stays out, an explicit `-1`
+   * stays `-1`, a focusable-disabled control (the primitives' mark) is put
+   * back, and a non-interactive element gets no tabindex at all.
+   */
+  function WithChangingControls() {
+    const [layer, setLayer] = useState(false);
+    const [becameDisabled, setBecameDisabled] = useState(false);
+    return (
+      <>
+        <Popover>
+          <PopoverTrigger>Edit Tools</PopoverTrigger>
+          <PopoverContent>
+            <PopoverTitle>Tool scope</PopoverTitle>
+            <button type="button" onClick={() => setLayer(true)}>
+              Amp
+            </button>
+            <button type="button" role="checkbox" aria-checked="false" aria-disabled={becameDisabled || undefined} tabIndex={becameDisabled ? -1 : 0}>
+              Becomes disabled
+            </button>
+            <button type="button" role="checkbox" aria-checked="false" aria-disabled="true" tabIndex={-1}>
+              Always disabled
+            </button>
+            <button type="button" aria-disabled="true" data-focusable-when-disabled="" tabIndex={0}>
+              Held
+            </button>
+            <button type="button" tabIndex={-1}>
+              Roving
+            </button>
+            <span id="plain">Plain text</span>
+          </PopoverContent>
+        </Popover>
+        {layer ? (
+          <OutsideLayer
+            onDone={() => {
+              setBecameDisabled(true);
+              setLayer(false);
+            }}
+          />
+        ) : null}
+      </>
+    );
+  }
+
+  it("restores only the temporary removal, never a control's current disabled contract (R2)", async () => {
+    render(<WithChangingControls />);
+    const trigger = screen.getByRole("button", { name: "Edit Tools" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const popup = await screen.findByRole("dialog", { name: "Tool scope" });
+    const amp = within(popup).getByRole("button", { name: "Amp" });
+    const becomes = within(popup).getByRole("checkbox", { name: "Becomes disabled" });
+    const always = within(popup).getByRole("checkbox", { name: "Always disabled" });
+    const held = within(popup).getByRole("button", { name: "Held" });
+    const roving = within(popup).getByRole("button", { name: "Roving" });
+    const plain = popup.querySelector<HTMLElement>("#plain")!;
+    amp.focus();
+    fireEvent.click(amp);
+    const layer = screen.getByRole("button", { name: "Continue" });
+    layer.focus();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    // What Base UI does to the previously tabbable controls while the layer is up.
+    for (const control of [amp, becomes, held]) {
+      control.dataset.tabindex = control.getAttribute("tabindex") ?? "";
+      control.setAttribute("tabindex", "-1");
+    }
+    fireEvent.click(layer);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Continue" })).toBeNull());
+    expect(becomes.getAttribute("aria-disabled")).toBe("true");
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    amp.focus();
+    expect(document.activeElement).toBe(amp);
+    expect(amp.getAttribute("tabindex")).not.toBe("-1");
+    expect(becomes.getAttribute("tabindex")).toBe("-1");
+    expect(becomes.hasAttribute("data-tabindex")).toBe(false);
+    expect(always.getAttribute("tabindex")).toBe("-1");
+    expect(held.getAttribute("tabindex")).toBe("0");
+    expect(roving.getAttribute("tabindex")).toBe("-1");
+    expect(plain.hasAttribute("tabindex")).toBe(false);
+  });
 });
 
 describe("Popover without a trigger (anchor)", () => {

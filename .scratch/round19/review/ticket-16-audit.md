@@ -170,3 +170,78 @@ Indicative Impeccable score: accessibility **2**, performance **4**, responsive 
 3. **A3, deferred hook tests + browser latency:** both source-switch directions while listing, resolution and rejection, Cancel followed by a fresh listing, and empty/all-invalid picker focus. Either prevent the tab change accessibly or discard the obsolete response; never advance to a different unlisted source, never BODY, no silent Add no-op. Keep the Source draft and normal first-control focus rules.
 4. Rerun the uninterrupted Add gate in dark 1280/light 960 (including filtered actual submit, shared scope, mixed Keep/Overwrite, Retry and close). Repeat axe on affected Source/Tools/shared ask/Result states in both themes; recompute contrast only where styles change. Repeat landing/reduce only if motion owners change.
 5. **`npm run version:check && npm run check`**, plus bindings drift if Rust changes. Operator VoiceOver/native-minimum-window/reduced-motion release smoke remains required separately.
+
+## Re-check (2026-10-01)
+
+**`01fd3d9ff29549807944d1770f801f67c5ce6930` — PASS for A1–A4's bounded acceptance. Two nonblocking P2 findings in the wider floating-layer review, below.** No remaining P0/P1 found in this re-check. This is not an unqualified certification of every Popover interaction.
+
+### Method / fresh evidence
+
+**E = `.scratch/round19/evidence/16-recheck/`** (gitignored). Started with HEAD at the requested commit and a clean tree. Existing fixture on 5175 returned 200. One isolated headless agent-browser session, `r19-16-recheck`, closed afterward; trusted CDP keys/text, never CLI `press`. Re-read the diff, layer/dialog/popover implementations and tests, current Base UI portal/tabbable implementation, both other consumers and the settlement/listing seams. No delegated children, source edits, Tauri launch, live-library writes, stash, revert or commit.
+
+Copied and reviewed the implementer's drivers, redirected their evidence/session, and **executed them afresh**. `fix.ts` ran shared, retry, clean, race-git and race-local in dark 1280×800 and light 960×640. `gate.ts` ran once in dark 1280; `a11y.ts` produced six fresh runs. Independent `floating.ts`, `extra-browser.ts`, `probe-driver.ts` and `tabindex-driver.ts` exercised the wider seam. Pointer opening and the isolated primitive harness are explicitly supplemental to the keyboard Add gate. Fixture-only permission repair / foreign-directory injection model filesystem conditions; they do not bypass the command handlers.
+
+Layer counts come from **the exact timestamped module URL imported by the running Popover**, exposed read-only as `__layers`; an initial unversioned import produced a different module instance and was discarded. `verify-evidence.ts` independently asserts the recorded A1–A4 outcomes, gate and six axe results; `evidence-verdict.txt` passes. Screenshots at 960 were inspected. Chromium evidence does not replace VoiceOver or native WebView release smoke.
+
+### Findings re-checked
+
+| Finding | Status | Fresh proof |
+| --- | --- | --- |
+| **A1 · P1** | **Closed** | `shared-{dark-1280,light-960}.json`: Source/Amp and Skills/Kimi × Escape, Cancel, Continue. Ask makes Tools inert; all six returns per theme land on the originating checkbox with Tools open/live. Tab reaches Kimi after Amp, Pi after Kimi. Escape/Cancel change neither member; Continue flips both. Next Escape → Edit Tools only; final Escape → Add skill, no inert residue. **105 recorded stops/theme, zero BODY.** Ordinary overwrite dismissal is also exercised by retry/cancel. |
+| **A2 · P1** | **Closed** | `retry-*`: earlier two unanswered collisions plus Amp failures survive a clean release-notes-only Retry; Result remains “Added 4 of 4”, focus on its heading. `clean-*`: answered Keep plus final clean Retry closes to Add skill. `closing-dark.json`: clean filtered candidate and Keep-only run each close. `cancel-*`, both sizes: cancelled remainder stays visible. Main hook/pure tests cover prior failed target, no-targets, cancelled remainder and completing that remainder. One predicate serves current-run fold and accumulated entries; current action still folds once, without replaying old reports. |
+| **A3 · P1** | **Closed** | `race-{git,local}-*`, `latency=4`: other tab receives focus with `aria-disabled=true`; Enter/Space do not select it. Correct source lands, search receives focus, Back restores switching. `extra-browser.json`: a single invalid local candidate lands on **Back**, not BODY. Deferred hook tests cover both attempted switches and resolve/reject. Supplemental `add-flow-extra.test.ts` adds **obsolete rejection after a fresh opening changes source**, proving the refusal is discarded and a fresh listing succeeds; all **52** copied/extended hook tests pass. A literal tab change during the running listing is now intentionally unrepresentable. |
+| **A4 · P2** | **Closed** | `retry-light-960-{settled,after-retry}.png` and `a11y-result-light-960.png`: short row association (“not deployed to Amp”), one full permission reason and “Affects 3 skills” with names; failed release-notes retains its own RATE_LIMITED reason and Retry. No horizontal clipping; summary/footer remain available. Distinct-reason grouping is additionally covered by pure tests. |
+
+### Floating-layer adversarial review
+
+**Working guarantees:**
+
+- Sidebar shortcuts: Escape returns to trigger; outside pointer press closes and leaves focus on the clicked control; Tab exits to Settings. Resizing 1280 → 960 → 1280 retains one floating record and a correctly placed panel; closing returns count to zero. Clicking Add while shortcuts is open closes shortcuts, opens one modal, then Escape → Add skill. There is no action *inside* the shortcuts help panel that opens a dialog.
+- SkillRow Enable: Escape → original switch; outside press closes; resize keeps one record then closes cleanly. Actual Enable → overwrite ask → Escape returns to **retired-playbook's switch**, releases inert and leaves **zero** records (`floating-{dark,light}.json`). **Scope correction:** `SkillRow.tsx:292–295` deliberately calls `setAskingEnable(false)` before starting Enable. Thus its real overwrite ask does **not** sit above an open popover; expecting a surviving popover/control there would require a product behavior change. The live-popover-under-modal case is proven by Add's shared ask and the isolated current-primitive harness (`primitive-comparison.json`: floating/modal counts **1 → 2 → 1 → 0**, inert while covered, Escape → Ask control, next Escape → anchor).
+- **One event, one owner:** `claimDismissal` checks top identity before claiming the native event in a WeakSet; removal cannot let the lower dialog claim the same event. A rejected lower handler does not consume it. Fresh stack/primitive tests and actual Escape sequences cover both modal-over-floating and floating-over-modal; no double-close or swallowed Escape reproduced.
+- **Outside the whole Add dialog:** trusted pointer press at page/backdrop `(20,350)` closes Tools only, count **2 → 1**, focus Edit Tools; next Escape closes Add, count **0**. No background page click-through.
+- **Unmount cleanup:** while the triggerless popover remains open after Tab-out (R1), a supplemental route change unmounts SkillRow; count **1 → 0**, no inert residue (`extra-browser.json`). Registration cleanup calls `closeLayer` synchronously. No stale floating record after unmount found.
+
+#### R1 — P2, inherited: triggerless Enable has a hidden Tab stop and does not close on Tab-out
+
+**Location:** `src/components/skills/SkillRow.tsx:272–278`; `src/components/ui/popover.tsx:119` (the anchor is supplied to Positioner, without a registered Trigger).
+
+From focused Enable, Tab stops on an unnamed, `aria-hidden` inside focus-guard span. Subsequent Tab leaves the panel and starts at the page's first controls while the popover remains open and registered. One light run also sampled BODY during that exit; the reproducible core is the hidden stop and retained panel, **not** a claim BODY occurs every time. Escape and pointer dismissal still recover. `floating-light.json`, `extra-browser.json` and the minimal browser `primitive-comparison.json` preserve the sequence. The **pre-01fd3d9 Popover**, extracted into evidence without altering application source, reproduces the hidden guard and retained popup too: this is not introduced by floating registration.
+
+**Concrete fix:** give the triggerless/anchor API a real focus-manager reference/return position (rather than positioning alone), preserving the Switch's enable/disable policy. A primitive/browser regression should require forward Tab from the last control to the next page control, reverse Tab out to the prior control, popup dismissal and zero records, with no focusable hidden guard. Carry as an Enable/primitive follow-up; it does not reopen A1.
+
+#### R2 — P2, new shared-seam edge: restoring stale tabindex can re-tab a newly disabled checkbox
+
+**Location:** `src/components/ui/popover.tsx:73–81` (`restoreTabOrder`).
+
+The restore is not an unconditional `tabindex=0`: it selects only `[data-tabindex]` within the nearest portal, restores the saved string (including `-1`), or removes the temporary attribute. Base UI's `disableFocusInside` marks previously tabbable nodes only. Accordingly, an **already-disabled** Checkbox stays `-1`, and plain text stays without tabindex.
+
+However, a previously enabled Checkbox can become disabled **while the modal is above it**. A supplemental harness using the real primitives opens the modal, then its Return button disables that checkbox and closes the modal. Restoration writes the old **0** over the new **−1**: `aria-disabled=true`, `tabindex=0`, and the next trusted Tab focuses it (`tabindex-safety.json`). This is a real shared-primitive boundary defect, not an observed failure of the current Add scope (its Tool controls do not change disabledness during the shared ask). No accidental activation or data mutation was observed.
+
+**Concrete fix:** restore only temporarily removed tab order without overriding the control's **current** disabled/roving-focus contract; don't indiscriminately exclude every `aria-disabled` control, since explicitly focusable-disabled controls are supported. Add a primitive regression for enabled → disabled while covered, alongside already-disabled, intentionally focusable-disabled, explicit `-1`, and noninteractive controls. Retain the browser null-`relatedTarget` proof. Recommend fixing before extending this seam to more dynamic popovers; no current Add blocker demonstrated.
+
+### Implementer's concerns
+
+- **(a) Other consumers:** checked above, including real Enable → overwrite recovery. No new inert/unmount/double-dismissal failure. R1 is inherited debt, now independently evidenced.
+- **(b) Base UI Tab workaround:** necessary for the reproduced A1 browser sequence, and it matches Base UI's attribute protocol. Accept its purpose, **not an unconditional safety claim**: R2 needs a current-state-aware restore. Pin the browser regression when upgrading Base UI; this is an internal attribute dependency.
+- **(c) `innerHTML` diagnostics:** nonblocking test-only false positives for this change. The additions assign a fixed local markup constant; cleanup assigns an empty string. No untrusted value, app execution path or HTML injection sink is introduced. Do not change product code to satisfy this warning.
+- **(d) jsdom synthetic attributes:** acceptable as a focused unit test of restoration, **not** evidence that Base UI creates/removes those attributes correctly in a browser. The fresh Amp/Kimi return-and-Tab transcripts supply that evidence. Extend the test for R2; the current positive case is insufficient for dynamic disabledness.
+
+### Gate / integrity
+
+`gate-dark-1280.json`: **67 keyboard stops, zero BODY, every stop focus-visible**; collide-kit → Tool scope/search → exactly one two-row ask → mixed Keep/Overwrite → four Result rows → failed-id-only Retry → Close → Add skill. Trace records two `installSelection` calls and one exact-pair `syncSkillsToTools` retry batch. `cancel-*` additionally proves overwrite Escape preserves Add and cancelled rows.
+
+**Six fresh axe 4.10.3 runs, zero violations:** Source while frozen, shared ask over Tools, Result × both themes. Incompletes remain explicit: Base UI `aria-hidden-focus` guards and one overlapped contrast node. Sampled minimum enabled-text contrast **4.68 dark / 5.32 light**, no measured pair below 4.5. No motion owner changed, so prior landing/reduce evidence is retained rather than relabelled as fresh.
+
+**Fresh `npm run version:check && npm run check`: exit 0.** Version **1.2.18**; lint, styles (**1676 / 29**), **44 Vitest files / 946 tests**, TS7 type-check/build, rustfmt, clippy and **807 Rust tests** pass (`check.log`, `check-final.log`, latter records `GATE_EXIT=0`). Separate `bunx vitest run src/components/ui/`: **8 files / 72 tests**, including every `ui/*.test.tsx`, pass (`ui-tests.log`). Supplemental obsolete-listing tests: **52 pass** (`extra-tests.log`). Existing build chunk/dynamic-import warnings are nonblocking. Fresh source/bindings diff checks are empty; Rust export left bindings unchanged. Only this report and ticket Comments are tracked writes.
+
+### Acceptance
+
+**PASS — closes A1–A4 for ticket 16's bounded D31 re-check at `01fd3d9`.** Covers both-theme shared confirmation return/Tab/unwind, aggregate Retry and clean/Keep/cancel completion, delayed source admission/focus, minimum-size deduplicated Result, one fresh dark keyboard gate, six axe checks and the full automated gate. The floating seam's top-layer dismissal, inerting, real Enable overwrite recovery and unmount cleanup pass within the exercised scope.
+
+**Nonblocking residue: R1 and R2 (P2).** The orchestrator should decide whether to fix R2 now or explicitly carry it with R1 as a primitive/Enable follow-up; neither is silently waived or represented as passing. No product decision is needed for A1–A4. Ticket status/closure remains the orchestrator's. Operator VoiceOver, native-minimum-window and reduced-motion release smoke remain separate requirements.
+
+### Residuals (2026-10-01, orchestrator)
+
+- **R2 fixed**: `restoreTabOrder` now undoes only the temporary removal — a control that is natively `disabled`, or `aria-disabled` without the primitives' new `data-focusable-when-disabled` mark (Button `pending` / `focusableWhenDisabled`, the held Switch), is never put back in the tab order; a marked focusable-disabled control is restored; an explicit `-1` stays; non-interactive elements get nothing. Primitive regression `restores only the temporary removal, never a control's current disabled contract (R2)` covers enabled→disabled while covered, always-disabled, held, roving `-1`, plain text. DESIGN.md § Focus notes the mark. Gate: vitest 947 / cargo 807 / 1676, exit 0.
+- **R1 carried** to ticket 17's Comments (the triggerless Enable popover's hidden focus-guard Tab stop + staying open on Tab-out — the `anchor` API needs a real focus-manager return position). **D31 gate passed** for ticket 16.

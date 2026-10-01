@@ -50,6 +50,7 @@ function Switch({
       )}
       disabled={heldFocus ? false : disabled}
       readOnly={heldFocus || readOnly}
+      data-focusable-when-disabled={heldFocus ? "" : undefined}
       {...props}
       {...(heldFocus ? { "aria-disabled": true, "aria-readonly": undefined } : null)}
     >

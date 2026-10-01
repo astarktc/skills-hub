@@ -81,6 +81,7 @@ function Button({
       className={cn(buttonVariants({ variant, tone, size }), className)}
       disabled={disabled || pending}
       focusableWhenDisabled={pending || focusableWhenDisabled}
+      data-focusable-when-disabled={pending || focusableWhenDisabled ? "" : undefined}
       aria-busy={pending || undefined}
       {...props}
     >

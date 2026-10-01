@@ -69,6 +69,13 @@ function FloatingLayerRegistration({ layerId }: { layerId: string }) {
  * when focus left for that layer, and puts them back only for a focus that
  * arrives from a known element, so without this Tab would leave the popover
  * from the very checkbox focus returned to.
+ *
+ * Only the *temporary* removal is undone: a control that became disabled
+ * while the layer above was up keeps its current contract — a disabled
+ * control (native `disabled`, or `aria-disabled` without the primitives'
+ * `data-focusable-when-disabled` mark) is never put back in the tab order;
+ * one that is focusable-disabled by design (Button `pending` /
+ * `focusableWhenDisabled`, the held Switch) is restored.
  */
 function restoreTabOrder(event: React.FocusEvent<HTMLElement>) {
   if (event.relatedTarget !== null) return;
@@ -76,6 +83,11 @@ function restoreTabOrder(event: React.FocusEvent<HTMLElement>) {
   for (const element of scope.querySelectorAll<HTMLElement>("[data-tabindex]")) {
     const tabindex = element.dataset.tabindex;
     delete element.dataset.tabindex;
+    if (
+      element.matches(":disabled, [disabled]") ||
+      (element.getAttribute("aria-disabled") === "true" && !element.hasAttribute("data-focusable-when-disabled"))
+    )
+      continue;
     if (tabindex) element.setAttribute("tabindex", tabindex);
     else element.removeAttribute("tabindex");
   }

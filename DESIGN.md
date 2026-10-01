@@ -371,7 +371,10 @@ motion: sonner's `transition: none !important` and the base layer both still win
   runs, or is refused with a reason) is drawn at 50 % opacity, and the ring with it: 2.60 dark / 2.19 light. While it
   holds keyboard focus it steps up to **75 %** (`aria-disabled:focus-visible:opacity-75`, in the shared
   `disabledState`), so the ring measures **4.42 dark / 3.49 light** (≥ 3:1) and the control still reads dimmed
-  (ticket 15, measured on Add skill and a row switch mid-Refresh).
+  (ticket 15, measured on Add skill and a row switch mid-Refresh). Such a control carries the
+  `data-focusable-when-disabled` mark (Button, Switch): when a Popover restores its controls' Tab order after a layer
+  above it closed, that mark is what keeps a focusable-disabled control in the order, while a control that became
+  disabled meanwhile (`aria-disabled` without the mark, or native `disabled`) stays out (ticket 16 re-check R2).
 - Primitives draw it through the ring constants in `ui/styles.ts`. The base layer (`index.css`) gives every other element the
   same ring, legacy surfaces included.
 - A legacy rule that removes the outline must replace it with an `accent-primary` (iris) edge. Every current one

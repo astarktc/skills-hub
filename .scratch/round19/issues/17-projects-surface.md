@@ -80,3 +80,5 @@ All with a missing folder yields one line; contrast; `npm run check`.
   the pattern). Lower `appCssCeiling` by what you delete. The one candidate picker (`skills/add/CandidatePicker.tsx`,
   `mode="multiple" | "single"`, search + visible-and-checked rule) is available if a project flow ever lists skills to
   choose from.
+
+- 2026-10-01 — from ticket 16's re-check (R1, P2, inherited — not 16's): the **triggerless `PopoverContent anchor`** (SkillRow's inline Enable confirmation, `SkillRow.tsx` ~:272) exposes a hidden `aria-hidden` focus-guard Tab stop after its last control and stays open (and registered on the layer stack) when focus Tabs out of it; Escape and pointer dismissal recover. Fix in the primitive: give the anchor API a real focus-manager return position (not positioning alone) so forward Tab from the last control reaches the next page control and reverse Tab the prior one, the popup dismisses, zero layer records remain, no focusable hidden guard; primitive + browser regression. Do it here if the Projects matrix adopts the anchor popover for its cells; otherwise leave it on this list for 19b (ticket 23's palette also anchors).
