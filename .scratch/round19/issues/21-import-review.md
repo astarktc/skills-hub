@@ -40,3 +40,11 @@ Replace; auto-sync-off path shows the checkbox and the button text changes; coun
   on screen from opacity 0 over 120 ms (`@starting-style`, never on mount; reduced motion shows it settled). The rare
   delight (DESIGN.md § Empty and first-run) only has to add the stagger: a per-mark `transition-delay` (20 ms × index)
   for the imported rows, once. It is one of the two permitted rare moments in DESIGN.md § Motion.
+
+- 2026-09-30 — from ticket 16: Add no longer says "Import" anywhere (the `outcome.done.installed` count reads "N added";
+  an Add candidate's failure title is `add.failedTitle`); `errors.importFailedTitle` is Import's alone now. The one
+  candidate picker (`skills/add/CandidatePicker.tsx`) — search, "Select all shown", rows named by the candidate,
+  unavailable rows disabled with "Can't be added: {reason}" in words — fits the review's invalid-manifest rows and
+  group checkboxes (D14) if a `mode` for variants is added. `ImportModal` still uses `.inline-checkbox` (its last user
+  in `App.css`). Import keeps `HeaderProgress placement="dialog"` at its foot; `progressInDialog` in App lists Add,
+  Import, Re-point and Notifications only (the pickers are gone).

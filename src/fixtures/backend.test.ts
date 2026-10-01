@@ -729,12 +729,21 @@ describe("S5: cancellation", () => {
     expect(repointed.skills.find((s) => s.id === pdf.id)).toEqual(pdf);
   });
 
-  it("Git install and Explore clone reject with the typed CANCELLED", async () => {
+  it("the Add batch reports a cancelled candidate, and Explore clone rejects with the typed CANCELLED", async () => {
     const install = cancellingBackend("rich");
     install.armCancel(1);
-    await expect(
-      install.handlers.installGitSelection("https://github.com/acme/changelog-skill", "./changelog-writer", null, null),
-    ).rejects.toEqual({ code: "CANCELLED" });
+    const report = await install.handlers.installSelection(
+      {
+        source: { kind: "git", url: "https://github.com/acme/changelog-skill", resolution: null },
+        candidates: [{ subpath: "./changelog-writer", name_override: null }],
+        tools: [],
+        overwrite_if_same_content: true,
+        overrides: [],
+        deploy: false,
+      },
+      sink().channel,
+    );
+    expect(report.candidates.map((c) => c.status.status)).toEqual(["cancelled"]);
     expect(await install.handlers.getManagedSkills()).toHaveLength(60);
 
     const explore = cancellingBackend("rich");
@@ -747,14 +756,26 @@ describe("S6: Git Add honours the operator's name", () => {
   it("finalizes under the explicit name, and collides on it", async () => {
     const { handlers } = backendFor("rich");
     const url = "https://github.com/acme/changelog-skill";
-    const installed = await handlers.installGitSelection(url, "./changelog-writer", "my-custom-name", null);
-    expect(installed.name).toBe("my-custom-name");
+    const add = (name_override: string | null) =>
+      handlers.installSelection(
+        {
+          source: { kind: "git", url, resolution: null },
+          candidates: [{ subpath: "./changelog-writer", name_override }],
+          tools: [],
+          overwrite_if_same_content: true,
+          overrides: [],
+          deploy: false,
+        },
+        sink().channel,
+      );
+    const installed = (await add("my-custom-name")).candidates[0];
+    expect(installed).toMatchObject({ name: "my-custom-name", status: { status: "installed" } });
     expect((await handlers.getManagedSkills()).some((s) => s.name === "my-custom-name")).toBe(true);
-    await expect(handlers.installGitSelection(url, "./changelog-writer", "My-Custom-Name", null)).rejects.toEqual({
-      code: "SKILL_EXISTS",
-      name: "My-Custom-Name",
+    expect((await add("My-Custom-Name")).candidates[0].status).toEqual({
+      status: "failed",
+      error: { code: "SKILL_EXISTS", name: "My-Custom-Name" },
     });
-    expect((await handlers.installGitSelection(url, "./changelog-writer", null, null)).name).toBe("changelog-writer");
+    expect((await add(null)).candidates[0].name).toBe("changelog-writer");
   });
 });
 
@@ -1233,6 +1254,37 @@ describe("fixture backend: Re-point preview (D15)", () => {
     const scratchpad = await byName(handlers, "scratchpad");
     expect(scratchpad.source_ref).toBe("/Users/alex/Downloads/scratchpad");
     expect(skillSourceLabel(scratchpad)).toBe("/Users/alex/Downloads/scratchpad");
+  });
+});
+
+describe("ticket 16: the Add gate's repo — four candidates, two collisions, one transient failure", () => {
+  it("release-notes fails once (rate limited) and a retry of it alone lands", async () => {
+    const { handlers } = backendFor("failures");
+    const listing = await handlers.listGitSkillsCmd("https://github.com/acme/collide-kit", null);
+    expect(listing.candidates.map((c) => c.name)).toEqual([
+      "lint-staged-rules",
+      "commit-helper",
+      "changelog-writer",
+      "release-notes",
+    ]);
+    const request = (subpaths: string[]) => ({
+      source: { kind: "git" as const, url: "https://github.com/acme/collide-kit", resolution: null },
+      candidates: subpaths.map((subpath) => ({ subpath, name_override: null })),
+      tools: ["claude_code"],
+      overwrite_if_same_content: true,
+      overrides: [],
+      deploy: true,
+    });
+    const first = await handlers.installSelection(request(listing.candidates.map((c) => c.subpath)), sink().channel);
+    expect(first.candidates.map((c) => [c.name, c.status.status])).toEqual([
+      ["lint-staged-rules", "installed"],
+      ["commit-helper", "installed"],
+      ["changelog-writer", "installed"],
+      ["release-notes", "failed"],
+    ]);
+    expect(first.candidates[3].status).toEqual({ status: "failed", error: { code: "RATE_LIMITED", resetMinutes: 12 } });
+    const retry = await handlers.installSelection(request(["skills/release-notes"]), sink().channel);
+    expect(retry.candidates.map((c) => [c.name, c.status.status])).toEqual([["release-notes", "installed"]]);
   });
 });
 

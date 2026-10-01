@@ -24,8 +24,7 @@ use crate::core::global_sync::{
 };
 use crate::core::install_batch::{InstallBatchReport, InstallRequest};
 use crate::core::installer::{
-    clone_for_explore_preview, install_git_skill_from_listing, install_local_skill_from_selection,
-    list_git_skills, list_local_skills, GitSkillListing, InstallResult, InstallerPaths,
+    clone_for_explore_preview, list_git_skills, list_local_skills, GitSkillListing, InstallerPaths,
     LocalSkillCandidate,
 };
 use crate::core::log_reveal::{log_reveal_target, resolve_reveal_item};
@@ -315,14 +314,6 @@ fn reveal_log_failed(err: anyhow::Error) -> CommandError {
     })
 }
 
-#[derive(Debug, Serialize, Type)]
-pub struct InstallResultDto {
-    pub skill_id: String,
-    pub name: String,
-    pub central_path: String,
-    pub content_hash: Option<String>,
-}
-
 #[tauri::command]
 #[specta::specta]
 pub async fn get_settings(
@@ -387,29 +378,6 @@ pub async fn list_local_skills_cmd(
 #[tauri::command]
 #[specta::specta]
 #[allow(non_snake_case)]
-pub async fn install_local_selection(
-    app: tauri::AppHandle,
-    store: State<'_, SkillStore>,
-    basePath: String,
-    subpath: String,
-    name: Option<String>,
-) -> Result<InstallResultDto, CommandError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let base = std::path::PathBuf::from(basePath);
-        let paths = installer_paths(&app, &store)?;
-        let result =
-            install_local_skill_from_selection(&paths, &store, base.as_ref(), &subpath, name)?;
-        Ok::<_, anyhow::Error>(to_install_dto(result))
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-#[specta::specta]
-#[allow(non_snake_case)]
 pub async fn list_git_skills_cmd(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
@@ -426,42 +394,6 @@ pub async fn list_git_skills_cmd(
             &repoUrl,
             targetName.as_deref(),
         )
-    })
-    .await
-    .map_err(CommandError::internal)?
-    .map_err(CommandError::from_anyhow)
-}
-
-#[tauri::command]
-#[specta::specta]
-#[allow(non_snake_case)]
-pub async fn install_git_selection(
-    app: tauri::AppHandle,
-    store: State<'_, SkillStore>,
-    cancel: State<'_, Arc<CancelToken>>,
-    repoUrl: String,
-    subpath: String,
-    name: Option<String>,
-    resolution: Option<crate::core::git_acquisition::GitSourceResolution>,
-) -> Result<InstallResultDto, CommandError> {
-    let store = store.inner().clone();
-    let cancel = cancel.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        cancel.reset();
-        let paths = installer_paths(&app, &store)?;
-        let result = install_git_skill_from_listing(
-            &paths,
-            &store,
-            &credential_store(),
-            &repoUrl,
-            crate::core::git_acquisition::GitSelection {
-                subpath: &subpath,
-                resolution: resolution.as_ref(),
-            },
-            name,
-            Some(&cancel),
-        )?;
-        Ok::<_, anyhow::Error>(to_install_dto(result))
     })
     .await
     .map_err(CommandError::internal)?
@@ -1127,15 +1059,6 @@ pub async fn delete_managed_skill(
     .await
     .map_err(CommandError::internal)?
     .map_err(CommandError::from_anyhow)
-}
-
-fn to_install_dto(result: InstallResult) -> InstallResultDto {
-    InstallResultDto {
-        skill_id: result.skill_id,
-        name: result.name,
-        central_path: result.central_path.to_string_lossy().to_string(),
-        content_hash: result.content_hash,
-    }
 }
 
 impl From<ManagedSkillEntry> for ManagedSkillDto {

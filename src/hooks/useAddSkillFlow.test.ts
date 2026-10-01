@@ -1,11 +1,11 @@
-// Tests at the AddSkillFlow seam: git/local candidate discovery routing
-// (single-candidate fast path vs pick modal), name-collision guards, the
-// Explore-page auto-select (the backend resolves the name; this side only
-// decides install / pick / not-found), and the deploy-target rule (the
-// operator's selection as saved, never intersected with detection — a
-// selected-but-undetected tool is the backend's skip to report). Backend
-// mocked at the invokeTauri module
-// seam; sync and library worlds enter as mocked dependency interfaces.
+// Tests at the AddSkillFlow seam (ticket 16): Add as one stepped surface —
+// open({ source?, preselect? }) → list → candidates (the visible-and-checked
+// rule) → install() as one `installSelection` batch under one action → the
+// settlement (installed / failed / cancelled rows), one overwrite ask over
+// the batch's collisions, retry(ids) for what did not land, and the close
+// rule (only on full success or the operator's Close). The import half of
+// the world is tested below. Backend mocked at the invokeTauri module seam;
+// sync and library worlds enter as mocked dependency interfaces.
 
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,14 +28,14 @@ import type { SyncOrchestration } from "./useSyncOrchestration";
 
 vi.mock("sonner", () => ({
   // warning/info: the real reporter (the cancellation cases) uses every kind.
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn(), dismiss: vi.fn() },
 }));
 vi.mock("../lib/tauri", () => ({
   isTauri: true,
   invokeTauri: vi.fn(),
 }));
-// The import batch streams progress over a channel from the platform seam,
-// stubbed with a plain message sink; the folder picker is its other door.
+// The batches stream progress over a channel from the platform seam, stubbed
+// with a plain message sink; the folder picker is its other door.
 const pickFolder = vi.fn<(options: { title: string; multiple?: boolean }) => Promise<string[]>>();
 vi.mock("../lib/platform", () => ({
   createProgressChannel: async (onMessage: (message: unknown) => void) => ({ onmessage: onMessage }),
@@ -51,7 +51,8 @@ type FlowDeps = Omit<AddSkillFlowDeps, "surface">;
 /** The flow as App composes it: its dialogs are surface layers. */
 function useAddSkillFlow(deps: FlowDeps) {
   const surface = useSurfaceState();
-  return useAddSkillFlowHook({ ...deps, surface });
+  const flow = useAddSkillFlowHook({ ...deps, surface });
+  return { ...flow, surface };
 }
 import {
   ActionExit,
@@ -85,6 +86,8 @@ function gitCandidate(name: string, subpath: string): GitSkillCandidate {
   return { name, description: null, subpath, resolution: null };
 }
 
+const RATE_LIMITED = { code: "RATE_LIMITED" as const, resetMinutes: 12 };
+
 function stubBackend(overrides?: {
   gitCandidates?: GitSkillCandidate[];
   /** What the backend resolved a `targetName` to; `none` by default. */
@@ -92,14 +95,21 @@ function stubBackend(overrides?: {
   localCandidates?: LocalSkillCandidate[];
   /** Tools whose target the install batch reports occupied (TARGET_EXISTS). */
   occupied?: string[];
-  /** The install batch's answer for every candidate, when not installed. */
-  candidateFailure?: unknown;
+  /** Subpaths whose install fails (every attempt, or `once`). */
+  failing?: string[];
+  failOnce?: boolean;
+  /** What a failing subpath answers (rate limited by default). */
+  failError?: unknown;
+  /** The listing throws this. */
+  listingError?: unknown;
 }) {
+  const failing = new Set(overrides?.failing ?? []);
   mockInvoke.mockImplementation((command, ...args) => {
     switch (command) {
       case "getOnboardingPlan":
         return Promise.resolve(EMPTY_PLAN);
       case "listGitSkillsCmd": {
+        if (overrides?.listingError) return Promise.reject(overrides.listingError);
         const [, targetName] = args as Parameters<Commands["listGitSkillsCmd"]>;
         const listing: GitSkillListing = {
           candidates: overrides?.gitCandidates ?? [],
@@ -110,20 +120,21 @@ function stubBackend(overrides?: {
         return Promise.resolve(listing);
       }
       case "listLocalSkillsCmd":
+        if (overrides?.listingError) return Promise.reject(overrides.listingError);
         return Promise.resolve(overrides?.localCandidates ?? []);
       case "installSelection": {
         // One report for the whole batch (ticket 04): every candidate is
-        // installed (a lone one as "installed-skill") and first-synced to
-        // the request's Tools; an occupied Tool is a collected TARGET_EXISTS.
+        // installed and first-synced to the request's Tools; an occupied
+        // Tool is a collected TARGET_EXISTS; a failing subpath is `failed`.
         const [request] = args as [InstallRequest];
         const report: InstallBatchReport = {
-          candidates: request.candidates.map((candidate, i) => {
-            const name =
-              request.candidates.length === 1 ? "installed-skill" : candidate.subpath.split("/").pop()!;
-            if (overrides?.candidateFailure) {
-              return { subpath: candidate.subpath, name, status: { status: "failed", error: overrides.candidateFailure as never } };
+          candidates: request.candidates.map((candidate) => {
+            const name = candidate.name_override ?? candidate.subpath.split("/").pop()!;
+            if (failing.has(candidate.subpath)) {
+              if (overrides?.failOnce) failing.delete(candidate.subpath);
+              return { subpath: candidate.subpath, name, status: { status: "failed", error: (overrides?.failError ?? RATE_LIMITED) as never } };
             }
-            const skill_id = request.candidates.length === 1 ? "new-id" : `new-id-${i}`;
+            const skill_id = `id-${name}`;
             return {
               subpath: candidate.subpath,
               name,
@@ -157,13 +168,13 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
     (overrides?.takenNames ?? []).map((n) => n.toLowerCase()),
   );
   const formatError = vi.fn((err: unknown) =>
-    err instanceof Error ? err.message : `formatted:${String(err)}`,
+    err instanceof Error ? err.message : `formatted:${JSON.stringify(err)}`,
   );
   const setError = vi.fn();
   const setSuccessToastMessage = vi.fn();
   // Stub of the runAction contract: the body's outcome lands on the same
   // one-shot setters the real reporter uses, so assertions read naturally.
-  // The lifecycle itself (loading surface) is the reporter's own test.
+  // The lifecycle itself (pending, Cancel) is the reporter's own test.
   const runAction = vi.fn(
     async <T>(
       opts: RunActionOptions<T>,
@@ -237,12 +248,12 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
   const sync = {
     autoSyncEnabled: true,
     scanScopeRevision: 0,
-    // cursor is deselected; goose is selected but not installed and stays
-    // in the deploy set (round 12 D3: the batch reports it as a skip).
     // The one overwrite ask + retry: answers the report as settled.
     resolveGlobalCollisions: vi.fn<SyncOrchestration["resolveGlobalCollisions"]>(async (report) => report),
-    syncTargets: { claude: true, cursor: false, goose: true },
-    targetAllInstalled: vi.fn(),
+    // cursor is deselected; goose is selected but not installed and stays
+    // in the deploy set (round 12 D3: the batch reports it as a skip).
+    syncTargets: { claude: true, cursor: false, goose: true } as Record<string, boolean>,
+    handleSyncTargetChange: vi.fn<SyncOrchestration["handleSyncTargetChange"]>(async () => undefined),
   };
   const catalog = {
     toolLabelById: { claude: "CLAUDE", cursor: "CURSOR" },
@@ -250,6 +261,10 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
       { id: "claude", label: "CLAUDE" },
       { id: "cursor", label: "CURSOR" },
       { id: "goose", label: "GOOSE" },
+    ],
+    installedTools: [
+      { id: "claude", label: "CLAUDE" },
+      { id: "cursor", label: "CURSOR" },
     ],
   };
   const library = {
@@ -264,380 +279,665 @@ function installCalls() {
   return mockInvoke.mock.calls.filter(([cmd]) => cmd === "installSelection");
 }
 
-/** The install batch request a git install sends for `picks`. */
-const gitRequest = (url: string, subpaths: string[], resolution: GitSourceResolution | null = null, tools = ["claude", "goose"]) => ({
+/** The install batch request a git Add sends for `subpaths`. */
+const gitRequest = (
+  url: string,
+  subpaths: string[],
+  resolution: GitSourceResolution | null = null,
+  names: (string | null)[] = subpaths.map(() => null),
+) => ({
   source: { kind: "git", url, resolution },
-  candidates: subpaths.map((subpath) => ({ subpath, name_override: null })),
-  tools,
+  candidates: subpaths.map((subpath, i) => ({ subpath, name_override: names[i] })),
+  tools: ["claude", "goose"],
   overwrite_if_same_content: true,
   overrides: [],
   deploy: true,
 });
 
+type Flow = ReturnType<typeof useAddSkillFlow>;
+type Rendered = { current: Flow };
+
+/** Open Add on a git URL and list it (Source → Candidates). */
+async function listGit(result: Rendered, url = "https://github.com/x/y") {
+  act(() => result.current.open());
+  act(() => result.current.add.editDraft({ url }));
+  await act(async () => {
+    await result.current.add.list();
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
+afterEach(() => vi.restoreAllMocks());
+// No vitest globals: unmount explicitly so a surface's window listeners never
+// outlive its test.
+afterEach(cleanup);
 
-describe("useAddSkillFlow git flow", () => {
-  it("rejects an empty git URL without touching the backend", async () => {
+describe("Add: open and the source step", () => {
+  it("open() shows the one Add dialog on the source step; the kind can be named", () => {
     stubBackend();
     const setup = makeDeps();
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-
-    await act(async () => {
-      await result.current.handleCreate();
-    });
-
-    expect(setup.reporter.setError).toHaveBeenCalledWith(
-      "errors.requireGitUrl",
-    );
-    expect(
-      mockInvoke.mock.calls.some(([cmd]) => cmd === "listGitSkillsCmd"),
-    ).toBe(false);
+    expect(result.current.add.open).toBe(false);
+    act(() => result.current.open({ kind: "local" }));
+    expect(result.current.add.open).toBe(true);
+    expect(result.current.surface.stack.map((layer) => layer.kind)).toEqual(["addSkill"]);
+    expect(result.current.add.step).toBe("source");
+    expect(result.current.add.kind).toBe("local");
+    expect(result.current.add.summary.source).toBeNull();
+    expect(result.current.add.summary.candidates).toBeNull();
+    // The Tool scope: the effective deploy set, labelled by the catalog.
+    expect(result.current.add.summary.tools).toEqual([
+      { id: "claude", label: "CLAUDE" },
+      { id: "goose", label: "GOOSE" },
+    ]);
+    // The installed Tools, plus a selected one detection no longer sees (so it can be unticked).
+    expect(result.current.add.toolChoices).toEqual([
+      { id: "claude", label: "CLAUDE", detected: true },
+      { id: "cursor", label: "CURSOR", detected: true },
+      { id: "goose", label: "GOOSE", detected: false },
+    ]);
   });
 
-  it("a single candidate whose name is taken blocks the install", async () => {
-    stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha")] });
-    const setup = makeDeps({ takenNames: ["Alpha"] });
+  it("an empty URL is refused by the field without touching the backend", async () => {
+    stubBackend();
+    const setup = makeDeps();
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await listGit(result, "  ");
+    expect(result.current.add.sourceError).toBe("errors.requireGitUrl");
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "listGitSkillsCmd")).toBe(false);
+    expect(result.current.add.step).toBe("source");
+  });
 
-    act(() => result.current.setGitUrl("https://github.com/x/y"));
+  it("a listing refusal and an empty listing stay on the source, said by the field (never a toast)", async () => {
+    stubBackend({ listingError: { code: "INVALID_GITHUB_URL", url: "nope" } });
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await listGit(result, "nope");
+    expect(result.current.add.step).toBe("source");
+    expect(result.current.add.sourceError).toBe('formatted:{"code":"INVALID_GITHUB_URL","url":"nope"}');
+    expect(setup.reporter.setError).not.toHaveBeenCalled();
+
+    stubBackend({ gitCandidates: [] });
     await act(async () => {
-      await result.current.handleCreate();
+      await result.current.add.list();
     });
+    expect(result.current.add.sourceError).toBe("errors.noSkillsFoundWithHint");
+    expect(result.current.add.step).toBe("source");
+  });
 
-    expect(setup.reporter.setError).toHaveBeenCalledWith(
-      'errors.skillAlreadyExists {"name":"alpha"}',
-    );
+  it("the listing is a cancellable read (its Cancel discards it) under Add's label", async () => {
+    stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha")] });
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await listGit(result);
+    const opts = vi.mocked(setup.reporter.runAction).mock.calls.at(-1)![0];
+    expect(opts).toMatchObject({ read: true, cancel: "installSelection", label: "activity.labels.add", activity: "add.finding" });
+  });
+
+  it("Browse fills the local path through the platform seam; a cancel changes nothing; a failure is reported", async () => {
+    stubBackend();
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    act(() => result.current.open({ kind: "local" }));
+    pickFolder.mockResolvedValueOnce(["/home/op/my-skill"]);
+    await act(async () => { await result.current.add.browse(); });
+    expect(pickFolder).toHaveBeenCalledWith({ title: "selectLocalFolder" });
+    expect(result.current.add.draft.path).toBe("/home/op/my-skill");
+
+    pickFolder.mockResolvedValueOnce([]);
+    await act(async () => { await result.current.add.browse(); });
+    expect(result.current.add.draft.path).toBe("/home/op/my-skill");
+
+    pickFolder.mockRejectedValueOnce({ code: "OTHER", message: "dialog failed" });
+    await act(async () => { await result.current.add.browse(); });
+    expect(setup.reporter.setError).toHaveBeenCalled();
+    expect(result.current.add.draft.path).toBe("/home/op/my-skill");
+  });
+});
+
+describe("Add: the candidates step (the visible-and-checked rule, #47)", () => {
+  const FOUR = ["lint", "commit", "changelog", "notes"].map((name) => gitCandidate(name, name));
+
+  it("lists every candidate checked, then only checked AND visible ones install", async () => {
+    stubBackend({ gitCandidates: FOUR });
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await listGit(result);
+    expect(result.current.add.step).toBe("candidates");
+    expect(result.current.add.summary.source).toBe("x/y");
+    expect(result.current.add.summary.candidates).toEqual({ total: 4, checked: 4, hidden: 0, hiddenChecked: 0 });
+
+    // The search hides lint and notes (still checked): they do not install.
+    act(() => result.current.add.setQuery("C"));
+    expect(result.current.add.visible.map((c) => c.name)).toEqual(["commit", "changelog"]);
+    expect(result.current.add.summary.candidates).toEqual({ total: 4, checked: 2, hidden: 2, hiddenChecked: 2 });
+    // Unchecking one shown: 1 of 4.
+    act(() => result.current.add.toggle("commit", false));
+    expect(result.current.add.summary.candidates?.checked).toBe(1);
+    // Select all touches only what is shown.
+    act(() => result.current.add.toggleAll(false));
+    expect(result.current.add.selected).toEqual({ lint: true, commit: false, changelog: false, notes: true });
+    act(() => result.current.add.toggleAll(true));
+
+    await act(async () => { await result.current.install(); });
+    expect(installCalls()).toEqual([
+      ["installSelection", gitRequest("https://github.com/x/y", ["commit", "changelog"]), expect.anything()],
+    ]);
+  });
+
+  it("local invalid candidates are listed unavailable with the reason in words, never checked", async () => {
+    stubBackend({
+      localCandidates: [
+        { name: "good", description: null, subpath: "good", valid: true, reason: null },
+        { name: "draft", description: null, subpath: "draft", valid: false, reason: "missing_name" },
+      ],
+    });
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    act(() => result.current.open({ kind: "local" }));
+    act(() => result.current.add.editDraft({ path: "/team" }));
+    await act(async () => { await result.current.add.list(); });
+    expect(result.current.add.candidates.map((c) => [c.name, c.unavailable])).toEqual([
+      ["good", null],
+      ["draft", "localSkillInvalid.missingName"],
+    ]);
+    expect(result.current.add.selected).toEqual({ good: true, draft: false });
+    act(() => result.current.add.toggle("draft", true));
+    expect(result.current.add.selected.draft).toBe(false);
+    await act(async () => { await result.current.install(); });
+    expect(installCalls()[0][1]).toMatchObject({ source: { kind: "local", root: "/team" }, candidates: [{ subpath: "good", name_override: null }] });
+  });
+
+  it("a folder inside a Tool's skills dir is the candidate's failed row, in the words that steer to Import", async () => {
+    const refusal = { code: "LOCAL_SOURCE_INSIDE_TOOL_DIR", path: "/home/u/.claude/skills/alpha", tool: "claude_code" };
+    stubBackend({
+      localCandidates: [{ name: "alpha", description: null, subpath: ".", valid: true, reason: null }],
+      failing: ["."],
+      failError: refusal,
+    });
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    act(() => result.current.open({ kind: "local" }));
+    act(() => result.current.add.editDraft({ path: "/home/u/.claude/skills/alpha" }));
+    await act(async () => { await result.current.add.list(); });
+    await act(async () => { await result.current.install(); });
+    expect(result.current.add.settlement).toEqual([
+      { id: ".", name: "alpha", status: "failed", detail: describeCommandError(refusal, t), attention: false, retryable: true },
+    ]);
+    // The report records it as an error Notification with the typed copy.
+    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
+      { title: t("add.failedTitle", { name: "alpha" }), message: describeCommandError(refusal, t), error: refusal },
+    ]);
+    expect(setup.sync.resolveGlobalCollisions).not.toHaveBeenCalled();
+    expect(result.current.add.open).toBe(true);
+  });
+
+  it("a lone candidate takes the optional name; a taken name is refused inline, nothing sent", async () => {
+    stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha")] });
+    const setup = makeDeps({ takenNames: ["Taken"] });
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await listGit(result);
+    expect(result.current.add.nameApplies).toBe(true);
+    act(() => result.current.add.editDraft({ name: "taken" }));
+    await act(async () => { await result.current.install(); });
+    expect(result.current.add.pickError).toBe('errors.skillAlreadyExists {"name":"taken"}');
+    expect(installCalls()).toHaveLength(0);
+    expect(result.current.add.step).toBe("candidates");
+
+    act(() => result.current.add.editDraft({ name: "mine" }));
+    expect(result.current.add.pickError).toBeNull();
+    await act(async () => { await result.current.install(); });
+    expect(installCalls()[0][1]).toEqual(gitRequest("https://github.com/x/y", ["skills/alpha"], null, ["mine"]));
+  });
+
+  it("nothing checked is refused inline", async () => {
+    stubBackend({ gitCandidates: FOUR });
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await listGit(result);
+    act(() => result.current.add.toggleAll(false));
+    await act(async () => { await result.current.install(); });
+    expect(result.current.add.pickError).toBe("errors.selectAtLeastOneSkill");
     expect(installCalls()).toHaveLength(0);
   });
 
-  it("a single free candidate installs and syncs to every selected target, detected or not", async () => {
-    stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha")] });
-    const setup = makeDeps();
-    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-
-    act(() => result.current.setGitUrl("https://github.com/x/y"));
-    await act(async () => {
-      await result.current.handleCreate();
-    });
-
-    // One batch: goose is selected but not installed and is still deployed
-    // to (the backend reports the skip); cursor is deselected.
-    expect(mockInvoke).toHaveBeenCalledWith(
-      "installSelection",
-      gitRequest("https://github.com/x/y", ["skills/alpha"]),
-      expect.anything(),
-    );
-    // Nothing collided: no ask.
-    expect(setup.sync.resolveGlobalCollisions).not.toHaveBeenCalled();
-    expect(setup.reporter.notify).toHaveBeenCalledWith(
-      "success", "status.gitSkillCreated", undefined,
-    );
-  });
-
   it.each<GitSourceResolution | null>([
     { branch: "feature/x", subpath: "skills" },
     { branch: null, subpath: null },
     null,
-  ])("passes the listing's source resolution unchanged to direct install: %j", async (resolution) => {
-    stubBackend({ gitCandidates: [{ ...gitCandidate("alpha", "skills/alpha"), resolution }] });
-    const setup = makeDeps();
-    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-    act(() => result.current.setGitUrl("https://github.com/x/y/tree/feature/x/skills"));
-    await act(async () => { await result.current.handleCreate(); });
-    expect(installCalls()).toEqual([["installSelection",
-      gitRequest("https://github.com/x/y/tree/feature/x/skills", ["skills/alpha"], resolution), expect.anything()]]);
-  });
-
-  it.each<GitSourceResolution | null>([
-    { branch: "feature/x", subpath: "skills" },
-    { branch: null, subpath: null },
-    null,
-  ])("passes the listing's source resolution unchanged through the picker: %j", async (resolution) => {
+  ])("passes the listing's source resolution unchanged: %j", async (resolution) => {
     stubBackend({ gitCandidates: [
       { ...gitCandidate("alpha", "skills/alpha"), resolution },
       { ...gitCandidate("beta", "skills/beta"), resolution },
     ] });
     const setup = makeDeps();
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-    act(() => result.current.setGitUrl("https://github.com/x/y/tree/feature/x/skills"));
-    await act(async () => { await result.current.handleCreate(); });
-    await act(async () => { await result.current.git.install(); });
-    // The whole selection is one batch call.
+    await listGit(result, "https://github.com/x/y/tree/feature/x/skills");
+    await act(async () => { await result.current.install(); });
     expect(installCalls()).toEqual([
       ["installSelection", gitRequest("https://github.com/x/y/tree/feature/x/skills", ["skills/alpha", "skills/beta"], resolution), expect.anything()],
     ]);
   });
 
-  it("multiple candidates open the pick modal with everything preselected", async () => {
-    stubBackend({
-      gitCandidates: [
-        gitCandidate("alpha", "skills/alpha"),
-        gitCandidate("beta", "skills/beta"),
-      ],
-    });
+  it("Back returns to the source keeping the draft", async () => {
+    stubBackend({ gitCandidates: FOUR });
     const setup = makeDeps();
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-
-    act(() => result.current.setGitUrl("https://github.com/x/y"));
-    await act(async () => {
-      await result.current.handleCreate();
-    });
-
-    expect(result.current.git.visible).toBe(true);
-    expect(result.current.git.selected).toEqual({
-      "skills/alpha": true,
-      "skills/beta": true,
-    });
-    expect(installCalls()).toHaveLength(0);
-    // A hand-off to the picker is neither a success nor a failure.
-    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
-    expect(setup.reporter.setError).not.toHaveBeenCalled();
+    await listGit(result);
+    act(() => result.current.add.back());
+    expect(result.current.add.step).toBe("source");
+    expect(result.current.add.draft.url).toBe("https://github.com/x/y");
   });
 });
 
-describe("useAddSkillFlow explore auto-select", () => {
-  it("hands the target name to the listing and installs what the backend resolved", async () => {
+describe("Add: Explore's intent — open({ source, preselect })", () => {
+  it("lists the repository at once with the named skill checked, and installs nothing by itself", async () => {
     // skills.sh name vs SKILL.md name ("json-render-react" vs "react"): the
     // matching rule lives in core; the flow only follows the resolution.
     stubBackend({
-      gitCandidates: [
-        gitCandidate("react", "skills/react"),
-        gitCandidate("vue", "skills/vue"),
-      ],
+      gitCandidates: [gitCandidate("react", "skills/react"), gitCandidate("vue", "skills/vue")],
       targetMatch: { kind: "resolved", subpath: "skills/react" },
     });
     const setup = makeDeps();
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-
-    act(() => {
-      result.current.handleExploreInstall(
-        "https://github.com/x/y",
-        "json-render-react",
-      );
-    });
-
-    await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith(
-        "installSelection",
-        expect.objectContaining({
-          source: { kind: "git", url: "https://github.com/x/y", resolution: null },
-          candidates: [{ subpath: "skills/react", name_override: null }],
-        }),
-        expect.anything(),
-      ),
-    );
-    expect(mockInvoke).toHaveBeenCalledWith(
-      "listGitSkillsCmd",
-      "https://github.com/x/y",
-      "json-render-react",
-    );
-    // The explore path resets deploy targets to all installed tools first.
-    expect(setup.sync.targetAllInstalled).toHaveBeenCalled();
-  });
-
-  it("a manual git install lists without a target name", async () => {
-    stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha")] });
-    const setup = makeDeps();
-    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-
-    act(() => result.current.setGitUrl("https://github.com/x/y"));
     await act(async () => {
-      await result.current.handleCreate();
+      result.current.open({ source: { kind: "git", url: "https://github.com/x/y" }, preselect: "json-render-react" });
     });
-
-    expect(mockInvoke).toHaveBeenCalledWith(
-      "listGitSkillsCmd",
-      "https://github.com/x/y",
-      null,
-    );
-  });
-
-  it("falls back to the pick modal when the backend resolves nothing", async () => {
-    stubBackend({
-      gitCandidates: [
-        gitCandidate("alpha", "skills/alpha"),
-        gitCandidate("beta", "skills/beta"),
-      ],
-    });
-    const setup = makeDeps();
-    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-
-    act(() => {
-      result.current.handleExploreInstall("https://github.com/x/y", "gamma");
-    });
-
-    await waitFor(() => expect(result.current.git.visible).toBe(true));
+    await waitFor(() => expect(result.current.add.step).toBe("candidates"));
+    expect(mockInvoke).toHaveBeenCalledWith("listGitSkillsCmd", "https://github.com/x/y", "json-render-react");
+    expect(result.current.add.draft.url).toBe("https://github.com/x/y");
+    expect(result.current.add.selected).toEqual({ "skills/react": true, "skills/vue": false });
+    expect(result.current.add.preselectMissing).toBeNull();
     expect(installCalls()).toHaveLength(0);
   });
 
-  it("falls back to the pick modal when the backend reports ambiguity", async () => {
+  it("a skill the listing does not hold is said, and nothing is checked", async () => {
     stubBackend({
-      gitCandidates: [
-        gitCandidate("react", "skills/react"),
-        gitCandidate("render", "skills/render"),
-      ],
-      targetMatch: {
-        kind: "ambiguous",
-        subpaths: ["skills/react", "skills/render"],
-      },
+      gitCandidates: [gitCandidate("react", "skills/react"), gitCandidate("vue", "skills/vue")],
+      targetMatch: { kind: "none" },
     });
     const setup = makeDeps();
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-
-    act(() => {
-      result.current.handleExploreInstall(
-        "https://github.com/x/y",
-        "json-render-react",
-      );
+    await act(async () => {
+      result.current.open({ source: { kind: "git", url: "https://github.com/x/y" }, preselect: "svelte" });
     });
-
-    await waitFor(() => expect(result.current.git.visible).toBe(true));
-    expect(installCalls()).toHaveLength(0);
+    await waitFor(() => expect(result.current.add.step).toBe("candidates"));
+    expect(result.current.add.preselectMissing).toBe("svelte");
+    expect(result.current.add.selected).toEqual({ "skills/react": false, "skills/vue": false });
   });
 
-  it("errors instead of silently installing a mismatched single candidate", async () => {
+  it("an ambiguous name checks every candidate it matched", async () => {
+    stubBackend({
+      gitCandidates: [gitCandidate("react", "a/react"), gitCandidate("react", "b/react"), gitCandidate("vue", "skills/vue")],
+      targetMatch: { kind: "ambiguous", subpaths: ["a/react", "b/react"] },
+    });
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await act(async () => {
+      result.current.open({ source: { kind: "git", url: "https://github.com/x/y" }, preselect: "react" });
+    });
+    await waitFor(() => expect(result.current.add.step).toBe("candidates"));
+    expect(result.current.add.selected).toEqual({ "a/react": true, "b/react": true, "skills/vue": false });
+  });
+
+  it("a manual listing sends no target name", async () => {
     stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha")] });
     const setup = makeDeps();
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-
-    act(() => {
-      result.current.handleExploreInstall("https://github.com/x/y", "gamma");
-    });
-
-    await waitFor(() =>
-      expect(setup.reporter.setError).toHaveBeenCalledWith(
-        'errors.skillNotFoundInRepo {"name":"gamma"}',
-      ),
-    );
-    expect(installCalls()).toHaveLength(0);
+    await listGit(result);
+    expect(mockInvoke).toHaveBeenCalledWith("listGitSkillsCmd", "https://github.com/x/y", null);
   });
 });
 
-describe("useAddSkillFlow local flow", () => {
-  it("multiple local candidates open the pick modal preselecting only valid ones", async () => {
+describe("Add: install() and the settlement", () => {
+  it("one batch under one cancellable action; full success reloads and closes", async () => {
+    stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha"), gitCandidate("beta", "skills/beta")] });
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await listGit(result);
+    await act(async () => { await result.current.install(); });
+
+    expect(installCalls()).toHaveLength(1);
+    const opts = vi.mocked(setup.reporter.runAction).mock.calls.at(-1)![0];
+    expect(opts).toMatchObject({ cancel: "installSelection", label: "activity.labels.add", activity: "activity.adding" });
+    expect(setup.sync.resolveGlobalCollisions).not.toHaveBeenCalled();
+    expect(setup.library.loadManagedSkills).toHaveBeenCalledTimes(1);
+    expect(setup.reporter.notify).toHaveBeenCalledWith("success", t("outcome.done.installed", { count: 2 }), undefined);
+    // Full success: the dialog closes and Add forgets its draft.
+    expect(result.current.add.open).toBe(false);
+    expect(result.current.add.step).toBe("source");
+    expect(result.current.add.draft.url).toBe("");
+  });
+
+  it("a partial failure stays on the settlement: rows ticked, the failure with its reason and Retry", async () => {
     stubBackend({
-      localCandidates: [
-        {
-          name: "alpha",
-          description: null,
-          subpath: "alpha",
-          valid: true,
-          reason: null,
-        },
-        {
-          name: "broken",
-          description: null,
-          subpath: "broken",
-          valid: false,
-          reason: "missing_skill_md",
-        },
-      ],
+      gitCandidates: [gitCandidate("alpha", "skills/alpha"), gitCandidate("beta", "skills/beta")],
+      failing: ["skills/beta"],
+      failOnce: true,
     });
     const setup = makeDeps();
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await listGit(result);
+    await act(async () => { await result.current.install(); });
 
-    act(() => {
-      result.current.setAddModalTab("local");
-      result.current.setLocalPath("/some/dir");
-    });
-    await act(async () => {
-      await result.current.handleCreate();
-    });
+    expect(result.current.add.open).toBe(true);
+    expect(result.current.add.step).toBe("settlement");
+    expect(result.current.add.settled).toBe(false);
+    expect(result.current.add.settlement.map((row) => [row.name, row.status, row.retryable])).toEqual([
+      ["alpha", "installed", false],
+      ["beta", "failed", true],
+    ]);
+    expect(result.current.add.settlement[1].detail).toBe('errors.rateLimited {"minutes":12}');
+    // What landed is reloaded.
+    expect(setup.library.loadManagedSkills).toHaveBeenCalledTimes(1);
 
-    expect(result.current.local.visible).toBe(true);
-    expect(result.current.local.selected).toEqual({
-      alpha: true,
-      broken: false,
-    });
-    expect(
-      mockInvoke.mock.calls.some(([cmd]) => cmd === "installSelection"),
-    ).toBe(false);
-    // A hand-off to the picker is neither a success nor a failure.
-    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
-    expect(setup.reporter.setError).not.toHaveBeenCalled();
+    // retry(ids) re-sends the failed candidate alone; once it lands the
+    // settlement is complete and the dialog closes.
+    await act(async () => { await result.current.retry(["skills/alpha", "skills/beta"]); });
+    expect(installCalls()).toHaveLength(2);
+    expect(installCalls()[1][1]).toEqual(gitRequest("https://github.com/x/y", ["skills/beta"]));
+    expect(result.current.add.open).toBe(false);
   });
 
-  it("a single valid candidate with a taken name blocks the install", async () => {
-    stubBackend({
-      localCandidates: [
-        {
-          name: "alpha",
-          description: null,
-          subpath: "alpha",
-          valid: true,
-          reason: null,
-        },
-      ],
-    });
-    const setup = makeDeps({ takenNames: ["alpha"] });
-    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-
-    act(() => {
-      result.current.setAddModalTab("local");
-      result.current.setLocalPath("/some/dir");
-    });
-    await act(async () => {
-      await result.current.handleCreate();
-    });
-
-    expect(setup.reporter.setError).toHaveBeenCalledWith(
-      'errors.skillAlreadyExists {"name":"alpha"}',
-    );
-    expect(
-      mockInvoke.mock.calls.some(([cmd]) => cmd === "installSelection"),
-    ).toBe(false);
-  });
-
-  it("surfaces the backend's refusal of a folder inside a Tool's skills dir as an error Notification that steers to Import", async () => {
-    const refusal = {
-      code: "LOCAL_SOURCE_INSIDE_TOOL_DIR",
-      path: "/home/u/.claude/skills/alpha",
-      tool: "claude_code",
-    };
-    stubBackend({
-      localCandidates: [
-        {
-          name: "alpha",
-          description: null,
-          subpath: ".",
-          valid: true,
-          reason: null,
-        },
-      ],
-      // The batch answers the refusal as the candidate's report row.
-      candidateFailure: refusal,
-    });
+  it("a failure that fails again stays retryable and the dialog stays", async () => {
+    stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha")], failing: ["skills/alpha"] });
     const setup = makeDeps();
-    // The real error copy seam, so the assertion reads the key the
-    // Notification carries rather than the double's placeholder.
-    vi.mocked(setup.reporter.formatError).mockImplementation((err) =>
-      describeCommandError(err, t),
-    );
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await listGit(result);
+    await act(async () => { await result.current.install(); });
+    await act(async () => { await result.current.retry(["skills/alpha"]); });
+    expect(installCalls()).toHaveLength(2);
+    expect(result.current.add.open).toBe(true);
+    expect(result.current.add.settlement.map((row) => row.status)).toEqual(["failed"]);
+  });
 
-    act(() => {
-      result.current.setAddModalTab("local");
-      result.current.setLocalPath("/home/u/.claude/skills/alpha");
-    });
-    await act(async () => {
-      await result.current.handleCreate();
-    });
+  it("a whole-command failure settles every candidate failed and retryable", async () => {
+    stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha")] });
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "installSelection" ? Promise.reject({ code: "OTHER", message: "roots" }) : base(command, ...args),
+    );
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await listGit(result);
+    await act(async () => { await result.current.install(); });
+    expect(result.current.add.settlement.map((row) => [row.status, row.retryable])).toEqual([["failed", true]]);
+    expect(result.current.add.open).toBe(true);
+  });
 
-    // The refusal is the candidate's report row, an error entry the
-    // reporter records as an error Notification with the typed copy.
+  it("the Close intent closes the settlement and forgets it", async () => {
+    stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha")], failing: ["skills/alpha"] });
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await listGit(result);
+    await act(async () => { await result.current.install(); });
+    act(() => result.current.add.close());
+    expect(result.current.add.open).toBe(false);
+    expect(result.current.add.settlement).toEqual([]);
+  });
+
+  it("an empty Tool selection deploys nowhere and says so (no-targets); the dialog stays", async () => {
+    stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha")] });
+    const setup = makeDeps();
+    setup.sync.syncTargets = { claude: false, cursor: false, goose: false };
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await listGit(result);
+    await act(async () => { await result.current.install(); });
+    expect(installCalls()[0][1]).toMatchObject({ tools: [], deploy: true });
+    expect(result.current.add.open).toBe(true);
+    expect(result.current.add.settlement[0]).toMatchObject({ status: "installed", detail: "add.settlement.noTools", attention: true });
     expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
       {
-        title: t("errors.importFailedTitle", { name: "alpha" }),
-        message: describeCommandError(refusal, t),
-        error: refusal,
+        title: t("errors.unsyncedTitle", { name: "alpha" }),
+        message: t("errors.noSyncTargets"),
+        subject: { skillId: "id-alpha", skillName: "alpha" },
       },
     ]);
-    // Nothing was installed, so no ask and no success.
-    expect(setup.sync.resolveGlobalCollisions).not.toHaveBeenCalled();
-    expect(setup.reporter.setSuccessToastMessage).not.toHaveBeenCalled();
-    expect(result.current.showAddModal).toBe(false);
+  });
+
+  it("the Tool scope edits the sync world's deploy targets", () => {
+    stubBackend();
+    const setup = makeDeps();
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    act(() => result.current.add.setTool("cursor", true));
+    expect(setup.sync.handleSyncTargetChange).toHaveBeenCalledWith("cursor", true);
+  });
+
+  it("auto-sync off adds without deploying (the scope says so)", async () => {
+    stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha")] });
+    const setup = makeDeps();
+    setup.sync.autoSyncEnabled = false;
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    expect(result.current.add.summary.deploy).toBe(false);
+    await listGit(result);
+    await act(async () => { await result.current.install(); });
+    expect(installCalls()[0][1]).toMatchObject({ tools: [], deploy: false });
+    expect(result.current.add.open).toBe(false);
+  });
+});
+
+describe("Add: one overwrite ask per batch (D12)", () => {
+  it("every candidate's collisions go to the ask at once, and its answer replaces them", async () => {
+    stubBackend({
+      gitCandidates: [gitCandidate("alpha", "skills/alpha"), gitCandidate("beta", "skills/beta"), gitCandidate("gamma", "skills/gamma")],
+      occupied: ["claude"],
+      // gamma fails, so the settlement stays on screen to be read.
+      failing: ["skills/gamma"],
+    });
+    const setup = makeDeps();
+    // The ask's retry answers: Keep on alpha, Overwrite on beta.
+    setup.sync.resolveGlobalCollisions.mockImplementation(async (report) =>
+      report.map((row) =>
+        row.status.status !== "failed"
+          ? row
+          : row.skill_name === "alpha"
+            ? { ...row, status: { status: "declined" } }
+            : { ...row, status: { status: "synced", outcome: { mode_used: "symlink", target_path: "/x", replaced: true } } },
+      ),
+    );
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await listGit(result);
+    await act(async () => { await result.current.install(); });
+
+    expect(installCalls()).toHaveLength(1);
+    expect(setup.sync.resolveGlobalCollisions).toHaveBeenCalledTimes(1);
+    const [asked, skills, policy] = setup.sync.resolveGlobalCollisions.mock.calls[0];
+    expect(asked.filter((row) => row.status.status === "failed").map((row) => [row.skill_name, row.tool_key])).toEqual([
+      ["alpha", "claude"],
+      ["beta", "claude"],
+    ]);
+    expect(skills).toEqual([
+      { skill_id: "id-alpha", name: "alpha", source_path: "/hub/alpha" },
+      { skill_id: "id-beta", name: "beta", source_path: "/hub/beta" },
+    ]);
+    expect(policy).toEqual({ overwriteIfSameContent: true });
+    expect(result.current.add.settlement.map((row) => [row.name, row.status, row.detail])).toEqual([
+      ["alpha", "installed", `${t("add.settlement.deployed", { count: 1 })} · ${t("add.settlement.kept", { tools: "CLAUDE" })}`],
+      ["beta", "installed", t("add.settlement.deployed", { count: 2 })],
+      ["gamma", "failed", 'errors.rateLimited {"minutes":12}'],
+    ]);
+    expect(result.current.add.open).toBe(true);
+  });
+
+  it("an installed skill still settles when the overwrite retry throws (the collision to review)", async () => {
+    stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha")], occupied: ["claude"] });
+    const setup = makeDeps();
+    setup.sync.resolveGlobalCollisions.mockRejectedValue(new Error("retry failed"));
+    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+    await listGit(result);
+    await act(async () => { await result.current.install(); });
+    expect(setup.library.loadManagedSkills).toHaveBeenCalledTimes(1);
+    expect(setup.reporter.setError).toHaveBeenCalledWith("retry failed");
+    expect(setup.reporter.notify).toHaveBeenCalledWith(
+      "warning",
+      `${t("outcome.done.installed", { count: 1 })} · ${t("runReport.collisions", { count: 1 })}`,
+      undefined,
+    );
+    // Something to review: the dialog stays on its settlement.
+    expect(result.current.add.open).toBe(true);
+    expect(result.current.add.settlement[0]).toMatchObject({ status: "installed", attention: true });
+  });
+});
+
+describe("Add: Cancel (D20) over the real reporter", () => {
+  /** The flow over the real reporter: its pending record and Cancel are under test. */
+  function useFlowWithReporter(deps: FlowDeps) {
+    const reporter = useStatusReporter(t);
+    const flow = useAddSkillFlow({ ...deps, reporter });
+    return { flow, reporter };
+  }
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((r) => (resolve = r));
+    return { promise, resolve };
+  }
+
+  const cancelCalls = () => mockInvoke.mock.calls.filter(([cmd]) => cmd === "cancelCurrentOperation");
+
+  it.each(["git", "local"] as const)(
+    "%s: a Cancel pressed while the listing runs discards it and stays on the source; a later listing works",
+    async (kind) => {
+      stubBackend({
+        gitCandidates: [gitCandidate("alpha", "skills/alpha")],
+        localCandidates: [{ name: "alpha", description: null, subpath: "alpha", valid: true, reason: null }],
+      });
+      const listCommand = kind === "git" ? "listGitSkillsCmd" : "listLocalSkillsCmd";
+      const base = mockInvoke.getMockImplementation()!;
+      const listing = deferred<void>();
+      mockInvoke.mockImplementation((command, ...args) =>
+        command === listCommand ? listing.promise.then(() => base(command, ...args)) : base(command, ...args),
+      );
+      const setup = makeDeps();
+      const { result } = renderHook(() => useFlowWithReporter(setup.deps));
+      // Let the mount's plan read settle.
+      await act(async () => {});
+      act(() => result.current.flow.open({ kind }));
+      act(() => result.current.flow.add.editDraft(kind === "git" ? { url: "https://github.com/x/y" } : { path: "/some/dir" }));
+
+      let task!: Promise<void>;
+      await act(async () => {
+        task = result.current.flow.add.list();
+      });
+      expect(result.current.flow.add.running).toBe("listing");
+      expect(result.current.reporter.pending?.cancellable).toBe(true);
+      act(() => result.current.reporter.cancelPending());
+      expect(cancelCalls()).toHaveLength(1);
+      await act(async () => {
+        listing.resolve();
+        await task;
+      });
+      expect(result.current.flow.add.step).toBe("source");
+      expect(result.current.flow.add.running).toBeNull();
+      expect(result.current.reporter.pending).toBeNull();
+
+      mockInvoke.mockImplementation(base);
+      await act(async () => {
+        await result.current.flow.add.list();
+      });
+      expect(result.current.flow.add.step).toBe("candidates");
+    },
+  );
+
+  it("a Cancel during the batch marks the tail cancelled, the dialog stays, and a cancelled row can be added again", async () => {
+    stubBackend({
+      gitCandidates: [gitCandidate("alpha", "skills/alpha"), gitCandidate("beta", "skills/beta")],
+      occupied: ["claude"],
+    });
+    const base = mockInvoke.getMockImplementation()!;
+    const batch = deferred<void>();
+    let calls = 0;
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "installSelection" && calls++ === 0
+        ? batch.promise.then(async () => {
+            // Cancelled between candidates: the second answers cancelled.
+            const report = (await base(command, ...args)) as InstallBatchReport;
+            return {
+              candidates: report.candidates.map((c, i) => (i === 0 ? c : { ...c, status: { status: "cancelled" } })),
+            };
+          })
+        : base(command, ...args),
+    );
+    const setup = makeDeps();
+    const retry = deferred<void>();
+    setup.sync.resolveGlobalCollisions.mockImplementation(async (report) => {
+      await retry.promise;
+      return report;
+    });
+    const { result } = renderHook(() => useFlowWithReporter(setup.deps));
+    await act(async () => {});
+    act(() => result.current.flow.open());
+    act(() => result.current.flow.add.editDraft({ url: "https://github.com/x/y" }));
+    await act(async () => { await result.current.flow.add.list(); });
+
+    let task!: Promise<void>;
+    await act(async () => {
+      task = result.current.flow.install();
+    });
+    expect(result.current.flow.add.step).toBe("settlement");
+    expect(result.current.flow.add.running).toBe("installing");
+    expect(result.current.flow.add.settlement.map((row) => row.status)).toEqual(["queued", "queued"]);
+    expect(result.current.reporter.pending?.cancellable).toBe(true);
+    act(() => result.current.reporter.cancelPending());
+    expect(cancelCalls()).toHaveLength(1);
+
+    await act(async () => {
+      batch.resolve();
+    });
+    // The ask's retry is a plain sync: Cancel is withdrawn while it runs.
+    expect(setup.sync.resolveGlobalCollisions).toHaveBeenCalledTimes(1);
+    expect(result.current.reporter.pending?.cancellable).toBe(false);
+
+    await act(async () => {
+      retry.resolve();
+      await task;
+    });
+    expect(result.current.flow.add.settlement.map((row) => [row.name, row.status, row.retryable])).toEqual([
+      ["alpha", "installed", false],
+      ["beta", "cancelled", true],
+    ]);
+    expect(result.current.flow.add.open).toBe(true);
+    expect(result.current.reporter.pending).toBeNull();
+
+    // retry(ids) for the cancelled row sends it alone.
+    await act(async () => {
+      await result.current.flow.retry(["skills/beta"]);
+    });
+    expect(installCalls()).toHaveLength(2);
+    expect(installCalls()[1][1]).toMatchObject({ candidates: [{ subpath: "skills/beta", name_override: null }] });
+  });
+
+  it("the batch's progress ticks mark the row being added and the ones awaiting their result", async () => {
+    stubBackend({ gitCandidates: [gitCandidate("alpha", "skills/alpha"), gitCandidate("beta", "skills/beta")] });
+    const base = mockInvoke.getMockImplementation()!;
+    const batch = deferred<void>();
+    let channel: { onmessage: (message: unknown) => void } | null = null;
+    mockInvoke.mockImplementation((command, ...args) => {
+      if (command !== "installSelection") return base(command, ...args);
+      channel = args[1] as { onmessage: (message: unknown) => void };
+      return batch.promise.then(() => base(command, ...args));
+    });
+    const setup = makeDeps();
+    const { result } = renderHook(() => useFlowWithReporter(setup.deps));
+    await act(async () => {});
+    act(() => result.current.flow.open());
+    act(() => result.current.flow.add.editDraft({ url: "https://github.com/x/y" }));
+    await act(async () => { await result.current.flow.add.list(); });
+    let task!: Promise<void>;
+    await act(async () => {
+      task = result.current.flow.install();
+    });
+    act(() => channel!.onmessage({ index: 2, total: 2, name: "beta" }));
+    expect(result.current.flow.add.settlement.map((row) => row.status)).toEqual(["awaiting", "adding"]);
+    expect(result.current.reporter.pending?.progress).toEqual({ done: 1, total: 2 });
+    expect(result.current.reporter.actionMessage).toBe('installBatch.step {"index":2,"total":2,"name":"beta"}');
+    await act(async () => {
+      batch.resolve();
+      await task;
+    });
+    expect(result.current.flow.add.open).toBe(false);
   });
 });
 
@@ -893,267 +1193,5 @@ describe("useAddSkillFlow import flow", () => {
     expect(setup.reporter.showActionErrors).toHaveBeenCalledWith(outcome.errors);
     expect(setup.reporter.showActionWarnings).toHaveBeenCalledWith(outcome.warnings);
     expect(setup.reporter.notify).toHaveBeenCalledWith("warning", "fold toast", undefined);
-  });
-});
-afterEach(() => vi.restoreAllMocks());
-// No vitest globals: unmount explicitly so a surface's window listeners never
-// outlive its test.
-afterEach(cleanup);
-
-it.each(["git", "local"] as const)("%s install applies fold completion instead of assuming success", async (source) => {
-  for (const complete of [false, true]) {
-    stubBackend({ gitCandidates: [gitCandidate("alpha", "alpha")], localCandidates: [{ name: "alpha", subpath: "alpha", description: null, valid: true, reason: null }] });
-    const setup = makeDeps();
-    const outcome: folds.Outcome = { toast: { kind: "warning", tone: "failure", message: "install fold" }, errors: [{ title: "error", message: "detail" }], warnings: [], notes: [], completion: { reload: complete, closeModal: complete, conflict: false } };
-    const spy = vi.spyOn(folds, "installOutcome").mockReturnValue(outcome);
-    const { result, unmount } = renderHook(() => useAddSkillFlow(setup.deps));
-    act(() => {
-      result.current.handleOpenAdd();
-      result.current.setAddModalTab(source);
-      result.current.setGitUrl("https://github.com/x/y");
-      result.current.setLocalPath("/source");
-    });
-    await act(async () => { await result.current.handleCreate(); });
-    expect(spy).toHaveBeenCalledTimes(1);
-    expect(setup.library.loadManagedSkills).toHaveBeenCalledTimes(complete ? 1 : 0);
-    expect(result.current.showAddModal).toBe(!complete);
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith(outcome.errors);
-    expect(setup.reporter.notify).toHaveBeenCalledWith("warning", "install fold", undefined);
-    // One awaited applyOutcome carries the completion (S9): the reload runs
-    // before the toast, never after an unawaited publish.
-    expect(setup.reporter.applyOutcome).toHaveBeenCalledTimes(1);
-    if (complete)
-      expect(vi.mocked(setup.library.loadManagedSkills).mock.invocationCallOrder[0]).toBeLessThan(
-        vi.mocked(setup.reporter.notify).mock.invocationCallOrder.at(-1)!,
-      );
-    unmount(); spy.mockRestore();
-  }
-});
-
-it("an installed skill still completes when the overwrite retry throws", async () => {
-  stubBackend({ gitCandidates: [gitCandidate("alpha", "alpha")], occupied: ["claude"] });
-  const setup = makeDeps();
-  setup.sync.resolveGlobalCollisions.mockRejectedValue(new Error("retry failed"));
-  const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-  act(() => { result.current.handleOpenAdd(); result.current.setGitUrl("https://github.com/x/y"); });
-  await act(async () => { await result.current.handleCreate(); });
-  expect(result.current.showAddModal).toBe(false);
-  expect(setup.library.loadManagedSkills).toHaveBeenCalledTimes(1);
-  expect(setup.reporter.setError).toHaveBeenCalledWith("retry failed");
-  // The collided row settles as it first answered: a collision nobody's
-  // answer changed — "to review" (D10), never a failure.
-  expect(setup.reporter.notify).toHaveBeenCalledWith(
-    "warning",
-    `${t("outcome.done.installed", { count: 1 })} · ${t("runReport.collisions", { count: 1 })}`,
-    undefined,
-  );
-});
-
-it("one ask per Add batch: every candidate's collisions go to the ask at once, and its answer replaces them", async () => {
-  stubBackend({
-    gitCandidates: [gitCandidate("alpha", "skills/alpha"), gitCandidate("beta", "skills/beta")],
-    occupied: ["claude"],
-  });
-  const setup = makeDeps();
-  // The ask's retry answers both asked pairs synced.
-  setup.sync.resolveGlobalCollisions.mockImplementation(async (report) =>
-    report.map((row) => ({
-      ...row,
-      status: { status: "synced", outcome: { mode_used: "symlink", target_path: "/x", replaced: true } },
-    })),
-  );
-  const fold = vi.spyOn(folds, "installOutcome");
-  const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-  act(() => result.current.setGitUrl("https://github.com/x/y"));
-  await act(async () => { await result.current.handleCreate(); });
-  await act(async () => { await result.current.git.install(); });
-
-  expect(installCalls()).toHaveLength(1);
-  expect(setup.sync.resolveGlobalCollisions).toHaveBeenCalledTimes(1);
-  const [asked, skills, policy] = setup.sync.resolveGlobalCollisions.mock.calls[0];
-  expect(asked.filter((row) => row.status.status === "failed").map((row) => [row.skill_name, row.tool_key])).toEqual([
-    ["alpha", "claude"],
-    ["beta", "claude"],
-  ]);
-  expect(skills).toEqual([
-    { skill_id: "new-id-0", name: "alpha", source_path: "/hub/alpha" },
-    { skill_id: "new-id-1", name: "beta", source_path: "/hub/beta" },
-  ]);
-  expect(policy).toEqual({ overwriteIfSameContent: true });
-  const settled = fold.mock.calls[0][0];
-  expect(
-    settled.flatMap((item) =>
-      item.status === "installed" && item.deployment.status === "reported"
-        ? item.deployment.report.map((row) => row.status.status)
-        : [],
-    ),
-  ).toEqual(["synced", "synced", "synced", "synced"]);
-});
-
-it("an empty selection deploys nowhere and says so (no-targets), even with tools detected", async () => {
-  stubBackend({ gitCandidates: [gitCandidate("alpha", "alpha")] });
-  const setup = makeDeps();
-  setup.sync.syncTargets = { claude: false, cursor: false, goose: false };
-  const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-  act(() => { result.current.handleOpenAdd(); result.current.setGitUrl("https://github.com/x/y"); });
-  await act(async () => { await result.current.handleCreate(); });
-  expect(installCalls()[0][1]).toMatchObject({ tools: [], deploy: true });
-  expect(result.current.showAddModal).toBe(false);
-  expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
-    {
-      title: t("errors.unsyncedTitle", { name: "installed-skill" }),
-      message: t("errors.noSyncTargets"),
-      subject: { skillId: "new-id", skillName: "installed-skill" },
-    },
-  ]);
-  expect(setup.reporter.notify).toHaveBeenCalledWith(
-    "warning",
-    `${t("outcome.done.installed", { count: 1 })} · ${t("outcome.targetsFailed", { count: 1 })}`,
-    undefined,
-  );
-});
-
-describe("useAddSkillFlow local folder picker (platform seam)", () => {
-  it("fills the local path from the picked folder; a cancel changes nothing; a failure is reported", async () => {
-    stubBackend();
-    const setup = makeDeps();
-    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
-    pickFolder.mockResolvedValueOnce(["/home/op/my-skill"]);
-    await act(async () => { await result.current.handlePickLocalPath(); });
-    expect(pickFolder).toHaveBeenCalledWith({ title: "selectLocalFolder" });
-    expect(result.current.localPath).toBe("/home/op/my-skill");
-
-    pickFolder.mockResolvedValueOnce([]);
-    await act(async () => { await result.current.handlePickLocalPath(); });
-    expect(result.current.localPath).toBe("/home/op/my-skill");
-
-    pickFolder.mockRejectedValueOnce({ code: "OTHER", message: "dialog failed" });
-    await act(async () => { await result.current.handlePickLocalPath(); });
-    expect(setup.reporter.setError).toHaveBeenCalled();
-    expect(result.current.localPath).toBe("/home/op/my-skill");
-  });
-});
-
-describe("useAddSkillFlow cancellation at the action boundary (ticket 04 review F2)", () => {
-  /** The flow over the real reporter: its pending record and Cancel are under test. */
-  function useFlowWithReporter(deps: FlowDeps) {
-    const reporter = useStatusReporter(t);
-    const flow = useAddSkillFlow({ ...deps, reporter });
-    return { flow, reporter };
-  }
-
-  function deferred<T>() {
-    let resolve!: (value: T) => void;
-    const promise = new Promise<T>((r) => (resolve = r));
-    return { promise, resolve };
-  }
-
-  const cancelCalls = () => mockInvoke.mock.calls.filter(([cmd]) => cmd === "cancelCurrentOperation");
-
-  it.each(["git", "local"] as const)(
-    "%s: a Cancel pressed while the listing runs sends no installSelection; a later Add installs",
-    async (kind) => {
-      stubBackend({
-        gitCandidates: [gitCandidate("alpha", "skills/alpha")],
-        localCandidates: [{ name: "alpha", description: null, subpath: "alpha", valid: true, reason: null }],
-      });
-      const listCommand = kind === "git" ? "listGitSkillsCmd" : "listLocalSkillsCmd";
-      const base = mockInvoke.getMockImplementation()!;
-      const listing = deferred<void>();
-      mockInvoke.mockImplementation((command, ...args) =>
-        command === listCommand ? listing.promise.then(() => base(command, ...args)) : base(command, ...args),
-      );
-      const setup = makeDeps();
-      const { result } = renderHook(() => useFlowWithReporter(setup.deps));
-      // Let the mount's plan read settle (a mutation is refused while it runs).
-      await act(async () => {});
-      act(() => {
-        if (kind === "git") {
-          result.current.flow.setGitUrl("https://github.com/x/y");
-        } else {
-          result.current.flow.setAddModalTab("local");
-          result.current.flow.setLocalPath("/some/dir");
-        }
-      });
-
-      let task!: Promise<void>;
-      await act(async () => {
-        task = result.current.flow.handleCreate();
-      });
-      expect(result.current.reporter.pending?.cancellable).toBe(true);
-      act(() => result.current.reporter.cancelPending());
-      expect(cancelCalls()).toHaveLength(1);
-      await act(async () => {
-        listing.resolve();
-        await task;
-      });
-
-      expect(installCalls()).toHaveLength(0);
-      expect(result.current.reporter.pending).toBeNull();
-
-      // A fresh Add is not poisoned by the earlier Cancel.
-      mockInvoke.mockImplementation(base);
-      await act(async () => {
-        await result.current.flow.handleCreate();
-      });
-      expect(installCalls()).toHaveLength(1);
-    },
-  );
-
-  it("a Cancel during the batch reports the cancelled tail; the ask's retry offers no Cancel", async () => {
-    stubBackend({
-      gitCandidates: [gitCandidate("alpha", "skills/alpha"), gitCandidate("beta", "skills/beta")],
-      occupied: ["claude"],
-    });
-    const base = mockInvoke.getMockImplementation()!;
-    const batch = deferred<void>();
-    mockInvoke.mockImplementation((command, ...args) =>
-      command === "installSelection"
-        ? batch.promise.then(async () => {
-            // Cancelled between candidates: the second answers cancelled.
-            const report = (await base(command, ...args)) as InstallBatchReport;
-            return {
-              candidates: report.candidates.map((c, i) => (i === 0 ? c : { ...c, status: { status: "cancelled" } })),
-            };
-          })
-        : base(command, ...args),
-    );
-    const setup = makeDeps();
-    const retry = deferred<void>();
-    setup.sync.resolveGlobalCollisions.mockImplementation(async (report) => {
-      await retry.promise;
-      return report;
-    });
-    const fold = vi.spyOn(folds, "installOutcome");
-    const { result } = renderHook(() => useFlowWithReporter(setup.deps));
-    await act(async () => {});
-    act(() => result.current.flow.setGitUrl("https://github.com/x/y"));
-    await act(async () => {
-      await result.current.flow.handleCreate();
-    });
-
-    let task!: Promise<void>;
-    await act(async () => {
-      task = result.current.flow.git.install();
-    });
-    expect(installCalls()).toHaveLength(1);
-    expect(result.current.reporter.pending?.cancellable).toBe(true);
-    act(() => result.current.reporter.cancelPending());
-    expect(cancelCalls()).toHaveLength(1);
-
-    await act(async () => {
-      batch.resolve();
-    });
-    // The retry is a plain sync: Cancel is withdrawn while it runs.
-    expect(setup.sync.resolveGlobalCollisions).toHaveBeenCalledTimes(1);
-    expect(result.current.reporter.pending?.cancellable).toBe(false);
-
-    await act(async () => {
-      retry.resolve();
-      await task;
-    });
-    expect(fold.mock.calls[0][0].map((item) => item.status)).toEqual(["installed", "cancelled"]);
-    expect(result.current.reporter.pending).toBeNull();
-    expect(installCalls()).toHaveLength(1);
   });
 });

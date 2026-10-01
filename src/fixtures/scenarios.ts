@@ -136,6 +136,18 @@ function repo(
   return { slug, candidates };
 }
 
+/** acme/collide-kit: four candidates, two collisions, one transient failure (tickets 04, 16). */
+function collideKit(): FixtureRepo {
+  const kit = repo("acme/collide-kit", "skills", [
+    ["lint-staged-rules", "Run the right linters on staged files"],
+    ["commit-helper", "Draft conventional commit messages"],
+    ["changelog-writer", "Keep CHANGELOG.md in step with merged work"],
+    ["release-notes", "Write release notes from the merged pull requests"],
+  ]);
+  kit.candidates[3].failOnce = { code: "RATE_LIMITED", resetMinutes: 12 };
+  return kit;
+}
+
 function sharedRepos(): FixtureRepo[] {
   return [
     repo("mattpocock/skills", "skills/engineering", MATTPOCOCK, [
@@ -479,11 +491,9 @@ function failures(now: number): FixtureState {
     // Add of a multi-skill repo with two collisions raises one ask (D12,
     // ticket 04): lint-staged-rules and changelog-writer already have
     // hand-made folders in Claude Code's skills dir (seeded below).
-    repo("acme/collide-kit", "skills", [
-      ["lint-staged-rules", "Run the right linters on staged files"],
-      ["commit-helper", "Draft conventional commit messages"],
-      ["changelog-writer", "Keep CHANGELOG.md in step with merged work"],
-    ]),
+    // release-notes' first acquisition is rate-limited and a retry lands it
+    // (ticket 16: a partial failure is retryable in the Add dialog).
+    collideKit(),
   );
   const git = (repo: string) => ({ kind: "git" as const, repo });
   const specs: SkillSpec[] = [

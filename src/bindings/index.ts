@@ -16,12 +16,7 @@ export const commands = {
 	clearGitCacheNow: () => __TAURI_INVOKE<number>("clear_git_cache_now"),
 	getOnboardingPlan: () => __TAURI_INVOKE<OnboardingPlan>("get_onboarding_plan"),
 	listLocalSkillsCmd: (basePath: string) => __TAURI_INVOKE<LocalSkillCandidate[]>("list_local_skills_cmd", { basePath }),
-	installLocalSelection: (basePath: string, subpath: string, name: string | null) => __TAURI_INVOKE<InstallResultDto>("install_local_selection", { basePath, subpath, name }),
 	listGitSkillsCmd: (repoUrl: string, targetName: string | null) => __TAURI_INVOKE<GitSkillListing>("list_git_skills_cmd", { repoUrl, targetName }),
-	installGitSelection: (repoUrl: string, subpath: string, name: string | null, resolution: {
-	branch: string | null,
-	subpath: string | null,
-} | null) => __TAURI_INVOKE<InstallResultDto>("install_git_selection", { repoUrl, subpath, name, resolution }),
 	/**
 	 *  Add: install a selection of candidates from one source and deploy each
 	 *  to the request's Tools — one batch, one report (`core::install_batch`).
@@ -641,13 +636,6 @@ export type InstallRequest = {
  *  install batch's report (`core::install_batch`).
  */
 export type InstallResult = {
-	skill_id: string,
-	name: string,
-	central_path: string,
-	content_hash: string | null,
-};
-
-export type InstallResultDto = {
 	skill_id: string,
 	name: string,
 	central_path: string,

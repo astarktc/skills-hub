@@ -718,16 +718,6 @@ export function useSyncOrchestration({
     [defaultTargets, sharedToolIdsByToolId],
   );
 
-  /** Reset deploy targets to exactly the currently installed tools. */
-  const targetAllInstalled = useCallback(() => {
-    if (!toolStatus) return;
-    const targets: Record<string, boolean> = {};
-    for (const id of toolStatus.installed) {
-      targets[id] = true;
-    }
-    setChosenSyncTargets(targets);
-  }, [toolStatus]);
-
   return {
     requestSharedDirConfirmation,
     effectiveSyncTargetIds,
@@ -753,7 +743,6 @@ export function useSyncOrchestration({
     handleToolConfigConfirm,
     handleSyncTargetChange,
     enableTargetsFor,
-    targetAllInstalled,
   };
 }
 

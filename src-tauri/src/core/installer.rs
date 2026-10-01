@@ -375,8 +375,9 @@ pub fn list_local_skills(home: &Path, base_path: &Path) -> Result<Vec<LocalSkill
         .collect())
 }
 
-/// Legacy null-resolution fixture adapter. Production uses the named
-/// selection door below; this keeps existing cross-module fixtures compatible.
+/// Test door: a git selection staged and finalized in one call, with no
+/// listing resolution. Production installs only through the Add batch
+/// (`install_batch::install_selection`), which stages and finalizes itself.
 #[cfg(test)]
 pub fn install_git_skill_from_selection(
     paths: &InstallerPaths,
@@ -424,27 +425,7 @@ pub(crate) fn install_git_skill_from_selection_with(
     )
 }
 
-/// Install using the listing's exact source decision, without another refs lookup.
-pub fn install_git_skill_from_listing(
-    paths: &InstallerPaths,
-    store: &SkillStore,
-    credentials: &dyn CredentialStore,
-    repo_url: &str,
-    selection: GitSelection,
-    name: Option<String>,
-    cancel: Option<&CancelToken>,
-) -> Result<InstallResult> {
-    install_git_selection_with(
-        paths,
-        store,
-        repo_url,
-        selection,
-        name,
-        cancel,
-        &HttpGithubApi::new(super::settings::github_token_or_none(credentials)),
-    )
-}
-
+#[cfg(test)]
 fn install_git_selection_with(
     paths: &InstallerPaths,
     store: &SkillStore,
@@ -502,6 +483,9 @@ pub(crate) fn stage_git_selection(
     })
 }
 
+/// Test door: a local selection staged and finalized in one call (the Add
+/// batch stages and finalizes itself).
+#[cfg(test)]
 pub fn install_local_skill_from_selection(
     paths: &InstallerPaths,
     store: &SkillStore,

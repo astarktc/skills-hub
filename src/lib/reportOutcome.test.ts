@@ -6,7 +6,7 @@ import type {
   EnableReport,
   ImportGroupStatus,
   ImportReport,
-  InstallResultDto,
+  InstallResult,
   InvocationEditReport,
   ProjectSyncOutcome,
   ProjectSyncReport,
@@ -351,7 +351,7 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
     expect(
       compositeHeadline(en, "refreshed", { done: 12, failed: 5, targetsFailed: 6, skipped: 4, review: 1 }),
     ).toBe("12 refreshed · 5 failed · 6 targets failed · 4 skipped · 1 Edit to review");
-    expect(compositeHeadline(en, "installed", { done: 2, cancelled: 3 })).toBe("2 installed · 3 cancelled");
+    expect(compositeHeadline(en, "installed", { done: 2, cancelled: 3 })).toBe("2 added · 3 cancelled");
     expect(compositeHeadline(en, "synced", { done: 1, declined: 1, targetsFailed: 1 })).toBe(
       "1 synced · 1 target failed · 1 kept existing",
     );
@@ -1493,7 +1493,7 @@ describe("importOutcome", () => {
   });
 });
 
-const installed: InstallResultDto = {
+const installed: InstallResult = {
   skill_id: "git",
   name: "git",
   central_path: "/hub/git",
@@ -1525,9 +1525,7 @@ describe("installOutcome", () => {
       message:
         source === "selection"
           ? line(["outcome.done.installed", 1])
-          : source === "git"
-            ? "status.gitSkillCreated"
-            : "status.localSkillCreated",
+          : t("add.added", { name: "git" }),
     });
   });
   it.each([
@@ -1535,7 +1533,7 @@ describe("installOutcome", () => {
     { status: "failed", error: new Error("deploy request failed") },
     { status: "reported", report: syncReport },
   ] satisfies InstallDeployment[])(
-    "installed bytes still reload/close after deployment $status",
+    "installed bytes still reload after deployment $status, and the dialog stays on its settlement",
     (deployment) => {
       const out = installOutcome(
         [{ name: "git", status: "installed", result: installed, deployment }],
@@ -1549,7 +1547,7 @@ describe("installOutcome", () => {
       });
       expect(out.completion).toEqual({
         reload: true,
-        closeModal: true,
+        closeModal: false,
         conflict: false,
       });
     },
@@ -1589,7 +1587,7 @@ describe("installOutcome", () => {
     );
     expect(words(out.errors)).toEqual([
       {
-        title: t("errors.importFailedTitle", { name: "first" }),
+        title: t("add.failedTitle", { name: "first" }),
         message: "clone failed",
       },
       {
@@ -1622,7 +1620,8 @@ describe("installOutcome", () => {
       tone: "neutral",
       message: line(["outcome.done.installed", 2], ["outcome.cancelled", 3]),
     });
-    expect(out.completion).toEqual({ reload: true, closeModal: true, conflict: false });
+    // What landed reloads; the dialog stays on its settlement (ticket 16).
+    expect(out.completion).toEqual({ reload: true, closeModal: false, conflict: false });
   });
   it("a batch cancelled before its first candidate installs nothing and keeps the picker open", () => {
     const out = installOutcome(

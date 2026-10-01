@@ -182,8 +182,7 @@ describe("the cancellable set (D20)", () => {
     expect([...CANCELLABLE_COMMANDS].sort()).toEqual(
       [
         "cloneExploreSkill",
-        "installGitSelection",
-        "installSelection",
+              "installSelection",
         "previewRepointSource",
         "refreshManagedSkills",
         "repointSkillSource",

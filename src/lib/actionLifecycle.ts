@@ -77,7 +77,6 @@ export const CANCELLABLE_COMMANDS = [
   "updateManagedSkill",
   "repointSkillSource",
   "previewRepointSource",
-  "installGitSelection",
   "cloneExploreSkill",
   // The Add batch: cancelled between candidates, the tail reported cancelled.
   "installSelection",

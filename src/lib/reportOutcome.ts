@@ -4,7 +4,7 @@ import type {
   EnableReport,
   ImportReport,
   InstallBatchReport,
-  InstallResultDto,
+  InstallResult,
   InvocationEditReport,
   ProjectSyncReport,
   PropagationOutcome,
@@ -1150,10 +1150,10 @@ export function importOutcome(
   return out;
 }
 
-/** Install commands return InstallResultDto (not a backend batch report).
- * The picker collects these settled results, including acquisition exceptions.
- * `cancelled` is a candidate the batch never reached once the operator
- * cancelled — the shape ticket 04's install batch answers (D10). */
+/** One candidate of the Add batch as the fold reads it (`installBatchSettlements`
+ * adapts the batch report; a whole-command failure settles every candidate
+ * `failed`). `cancelled` is a candidate the batch never reached once the
+ * operator cancelled — the shape ticket 04's install batch answers (D10). */
 export type InstallDeployment =
   | { status: "disabled" }
   | { status: "no-targets" }
@@ -1162,7 +1162,7 @@ export type InstallDeployment =
 export type InstallSettlement = { name: string } & (
   | {
       status: "installed";
-      result: InstallResultDto;
+      result: InstallResult;
       deployment: InstallDeployment;
     }
   | { status: "failed"; error: unknown }
@@ -1214,7 +1214,7 @@ export function installOutcome(
       counts.failed++;
       const error = toCommandError(item.error);
       out.errors.push({
-        title: ctx.t("errors.importFailedTitle", { name: item.name }),
+        title: ctx.t("add.failedTitle", { name: item.name }),
         message: errorMessage(ctx, item.error),
         error,
       });
@@ -1243,13 +1243,20 @@ export function installOutcome(
     }
   }
   out.completion.reload = counts.done > 0;
-  out.completion.closeModal = out.completion.reload;
+  // The Add dialog closes only on full success (ticket 16): every candidate
+  // installed and deployed as asked — a kept folder is the operator's own
+  // answer and counts. A failure, a cancellation, a target that failed or a
+  // folder left to review keeps it open on its settlement.
+  out.completion.closeModal =
+    counts.done > 0 &&
+    counts.failed === 0 &&
+    counts.cancelled === 0 &&
+    counts.targetsFailed === 0 &&
+    counts.collisions === 0;
   const clean = headlineTone(counts) === "success";
-  if (clean && counts.done > 0 && ctx.source !== "selection")
-    out.toast = toast(
-      "success",
-      ctx.t(ctx.source === "git" ? "status.gitSkillCreated" : "status.localSkillCreated"),
-    );
+  const lone = report.length === 1 && report[0].status === "installed" ? report[0].result.name : null;
+  if (clean && lone !== null && ctx.source !== "selection")
+    out.toast = toast("success", ctx.t("add.added", { name: lone }));
   else if (counts.done > 0 || counts.cancelled > 0)
     out.toast = headlineToast(ctx.t, "installed", counts, { detail: detailOf(out.notes) });
   return out;

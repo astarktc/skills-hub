@@ -386,14 +386,16 @@ one component that owns the moving element — never by a call site's `className
 | Header progress fill | each tick of a streamed action | `transform: scaleX`, retargeting tick to tick | 120 ms | `ease-out` | jumps | `shell/HeaderProgress.tsx` |
 | Toast | once per settled run (occasional) | `transform` from its own edge + opacity; never height | 120 ms | `ease-out` | none | `ui/sonner.tsx` |
 | Spinners: Button `pending`, header progress, Files loading | while work runs | rotation loop (`animate-spin`) | 1 s period | linear | hidden (header) / not running (`motion-safe:` only) | `ui/button.tsx`, `HeaderProgress`, `SkillFiles` |
+| Install landing (the rare moment, ticket 16) | an Add's settlement rows settle (a few times a week) | opacity 0 → 1 of a row's settled glyph (`@starting-style`; added / failed / cancelled), **staggered 20 ms per row** (capped at 8 rows) — a sequence of 120 ms steps | 120 ms each | `ease-out` | shown at once | `skills/add/AddSkillDialog.tsx` |
 | ⌘K palette (ticket 23) | open / close | opacity + transform | ≤ 120 ms | `ease-out` | none | the palette's primitive |
 
 The loops are the only durations over 120 ms in the built CSS, and they are periods, not transitions: `animate-spin`
 1 s, and the legacy `.spinner` 0.9 s, `.cell-spinner` 0.6 s and `.skeleton-row` shimmer 1.5 s in `App.css` (Add,
 Projects) — all stopped by the base layer's reduced-motion rule. **The two permitted rare moments** (D6's delight
 budget: a large import completing, an install landing) may run as a *sequence* of ≤ 120 ms steps: the import cascade
-(§ Empty and first-run, ticket 21 — the strip light above, staggered 20 ms per mark) and an install landing (ticket
-16 decides whether it moves at all). Neither is built yet.
+(§ Empty and first-run, ticket 21 — the strip light above, staggered 20 ms per mark; not built yet) and an install
+landing (ticket 16, built: the settlement glyphs above — nothing else in the dialog moves, the rows' words are there
+at once, and the strip light lights the new skill's marks only when they become synced on screen).
 
 ### What does not move (decided)
 
@@ -655,7 +657,7 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
   `border-b` strip above any other area, and at a dialog's foot (`border-t`, `card`) while that dialog's action runs
   — the page behind a modal is inert. Never a layer, never focus-taking; its live region announces the activity,
   not each tick. A bulk Remove stays the Delete dialog's (one surface). **One visible progress** (ticket 15, 14
-  audit N5): while a dialog whose foot shows the progress is open (Add, Import, the pickers, Re-point, Notifications),
+  audit N5): while a dialog whose foot shows the progress is open (Add — in its sticky summary, Import, Re-point, Notifications),
   the header's (or the bar's) copy under the scrim yields — it keeps its live region and draws nothing. In My Skills' header it takes the exception
   summary's place while it runs (the summary is stale until the run settles), so the row never wraps at 960 px.
 - **Focus when an action settles** (D21, `actionLifecycle.returnLostFocus`): focus that was lost — `<body>`, the
@@ -676,6 +678,37 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
   `role="status"` (its title), since no toast shows meanwhile; focus stays put (ticket 15, 14 audit N4).
 - **Update affordance** (D8): a sidebar-foot item above the bell, `ArrowUpCircle` in `ring`, "1.3.1 available" —
   opens the update dialog; nothing is raised on startup.
+
+## Add (ticket 16)
+
+- **One stepped Dialog** (`skills/add/AddSkillDialog.tsx`, `lg`, one `addSkill` kind on the surface stack; the step is
+  the flow hook's): **Source** → **Skills** → **Result**, named in the header as an `ol` with `aria-current="step"`.
+  The only layer above it is the one overwrite ask (D12). Dismissible except while Add's own action runs; the shell
+  stays mounted so Close returns focus to the control that opened it.
+- **Sticky summary** (`card` ground, `border-b`, under the header): Source (`owner/repo` or the folder) · Skills
+  ("3 of 4 checked · 1 hidden by filter", may wrap) · Deploys to (the effective target set, first three named,
+  "+N" never clipped) with **Edit Tools** (`ghost accent sm`) — a Popover (a trigger, so not `anchor`) over the
+  catalog's installed Tools plus any selected one detection no longer sees ("not detected"), as visible Checkbox
+  rows in two columns, and a count line ("4 skills to 7 Tools"). Add's progress (`HeaderProgress placement="dialog"`)
+  sits at the summary's foot, with its Cancel.
+- **Source**: real Tabs (`segmented`, `aria-selected`) — Git repository / Local folder — each panel one Field with its
+  help and its refusal (`FieldError`, never a toast); **Continue** (`solid accent`) lists the source as a read
+  action that Cancel discards.
+- **The candidate picker** (`skills/add/CandidatePicker.tsx`, one component, a `mode` prop): a search Input (once
+  there is more than one candidate), "Select all [shown]" over the visible selectable ones, the status line, and
+  bordered rows — each control named by the candidate's name and described by its description, path and, when it
+  cannot be picked, "Can't be added: {reason}" (`stale`; the Checkbox disabled, out of the Tab order). `multiple`
+  (Add): only checked **and** visible candidates install. `single` (Re-point's multi-skill repository): native radios
+  in a `radiogroup` fieldset; only a choice still shown is sent. A lone candidate offers "Name (optional)".
+- **Result** rows (bordered list, one per sent candidate): a 16 px state glyph — Queued (`CircleDashed`), Adding
+  (spinning `LoaderCircle`, `motion-safe`), Waiting for the result (`Clock`), Added (`CircleCheck`, `ok`; `stale`
+  when its first sync left something to look at), Failed (`CircleX`, `failed`), Cancelled (`Ban`, muted) — the name,
+  the state in words, and one detail line (what the first sync did, the typed reason). Failed rows carry **Retry**,
+  cancelled rows **Add** (`outline accent sm`, named with the skill); "Retry failed (N)" when several. The dialog
+  stays on its Result after a failure, a cancel or a folder left to review, and closes only on full success or Close.
+- **Focus**: each step's first control takes focus in the commit that changes the step (the field, the search, the
+  Result heading); a focused control a render removes (the summary's Cancel, withdrawn for the ask's retry) hands
+  focus to the same target — never `<body>`, never the dialog's first tabbable by fallback.
 
 ## Migration rule
 

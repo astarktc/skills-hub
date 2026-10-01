@@ -31,7 +31,7 @@ import type {
   InstallCandidateOutcome,
   InstallProgressDto,
   InstallRequest,
-  InstallResultDto,
+  InstallResult,
   InvocationEditConflict,
   InvocationMode,
   ManagedSkillDto,
@@ -204,7 +204,7 @@ export function createFixtureBackend(
     return skill;
   };
 
-  const installResult = (skill: FixtureSkill): InstallResultDto => ({
+  const installResult = (skill: FixtureSkill): InstallResult => ({
     skill_id: skill.dto.id,
     name: skill.dto.name,
     central_path: skill.dto.central_path,
@@ -1522,6 +1522,13 @@ export function createFixtureBackend(
                 const found =
                   repo.candidates.find((c) => c.subpath === candidate.subpath) ??
                   fail({ code: "SUBPATH_MISSING", subpath: candidate.subpath });
+                // A transient acquisition failure: the first attempt fails,
+                // a retry succeeds (ticket 16's Retry).
+                if (found.failOnce) {
+                  const error = found.failOnce;
+                  delete found.failOnce;
+                  fail(error);
+                }
                 return {
                   name: candidate.name_override ?? found.name,
                   description: found.description,
@@ -1633,23 +1640,6 @@ export function createFixtureBackend(
       await pause(250);
       return clone(findLocal(basePath).candidates);
     },
-    installLocalSelection: async (basePath, subpath, name) => {
-      await pause(400);
-      const local = findLocal(basePath);
-      const candidate =
-        local.candidates.find((c) => c.subpath === subpath) ??
-        fail({ code: "SUBPATH_MISSING", subpath });
-      if (!candidate.valid) fail({ code: "SKILL_INVALID", reason: candidate.reason ?? "missing_skill_md" });
-      const tool = insideToolDir(local.path);
-      if (tool) fail({ code: "LOCAL_SOURCE_INSIDE_TOOL_DIR", path: local.path, tool: tool.key });
-      const skill = finalize({
-        name: name ?? candidate.name,
-        description: candidate.description ?? candidate.name,
-        sourceType: "local",
-        sourceRef: subpath === "." ? local.path : `${local.path}/${subpath}`,
-      });
-      return installResult(skill);
-    },
     listGitSkillsCmd: async (repoUrl, targetName) => {
       await pause(700);
       const { repo, parsed } = findRepo(repoUrl);
@@ -1669,27 +1659,6 @@ export function createFixtureBackend(
               : { kind: "none" };
       }
       return { candidates, target_match };
-    },
-    installGitSelection: async (repoUrl, subpath, name) => {
-      // The command resets the cancel token at entry; a cancel observed by
-      // the acquisition is the typed whole-command refusal.
-      state.cancelRequested = false;
-      await pause(650);
-      if (state.cancelRequested) fail({ code: "CANCELLED" });
-      const { repo } = findRepo(repoUrl);
-      const candidate =
-        repo.candidates.find((c) => c.subpath === subpath) ??
-        fail({ code: "SUBPATH_MISSING", subpath });
-      // The operator's name wins at finalize (and is what the collision
-      // check sees), as in the local install.
-      const skill = finalize({
-        name: name ?? candidate.name,
-        description: candidate.description,
-        sourceType: "git",
-        sourceRef: repoUrl.trim(),
-        invocation: candidate.invocation,
-      });
-      return installResult(skill);
     },
     syncSkillsToTools: async (skills, tools, policy, onProgress) => {
       await pause(120);

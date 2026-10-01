@@ -312,7 +312,7 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
     in one `serialized` section. Answers one `InstallBatchReport`: per candidate `installed { skill, targets }` /
     `failed { error }` / `cancelled` (the `CancelToken`, honoured between candidates, after an acquisition and once the
     guard is held — never mid-finalize). Collisions are **collected** as `TARGET_EXISTS` target rows, never asked in core.
-    `install_git_selection` / `install_local_selection` remain registered only until ticket 16 deletes them.
+    It is the only install command (the per-candidate `install_git_selection` / `install_local_selection` are gone).
   - **The one overwrite ask (D12)**: every `TARGET_EXISTS` producer — the global batch, the install batch, the
     re-assert, import (a divergent sibling in a target's way is reported once, as that row), Enable, project
     assign / resync / Propagation — answers a row carrying pair identity plus `path`, `modifiedAt`, `sameContent`

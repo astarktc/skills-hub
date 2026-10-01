@@ -16,7 +16,7 @@ import HeaderProgress from "./components/shell/HeaderProgress";
 import LibraryHeader from "./components/skills/LibraryHeader";
 import SkillsList from "./components/skills/SkillsList";
 import NotificationsModal from "./components/shared/NotificationsModal";
-import AddSkillModal from "./components/skills/modals/AddSkillModal";
+import AddSkillDialog from "./components/skills/add/AddSkillDialog";
 import DeleteModal from "./components/skills/modals/DeleteModal";
 import CountConfirmModal from "./components/skills/modals/CountConfirmModal";
 import BulkRail from "./components/skills/BulkRail";
@@ -25,8 +25,6 @@ import RepointModal from "./components/skills/modals/RepointModal";
 import DetachModal from "./components/skills/modals/DetachModal";
 import AssignProjectModal from "./components/skills/modals/AssignProjectModal";
 import InvocationModeModal from "./components/skills/modals/InvocationModeModal";
-import GitPickModal from "./components/skills/modals/GitPickModal";
-import LocalPickModal from "./components/skills/modals/LocalPickModal";
 import ImportModal from "./components/skills/modals/ImportModal";
 import NewToolsModal from "./components/skills/modals/NewToolsModal";
 import SharedDirModal from "./components/skills/modals/SharedDirModal";
@@ -492,15 +490,17 @@ function App() {
     void loadProjectToolStatus().catch(() => undefined);
   }, [focusedSkillId, loadProjectToolStatus, projectToolStatus]);
 
-  const { handleOpenAdd, setAddModalTab } = addFlow;
-  const handleAddGit = useCallback(() => {
-    setAddModalTab("git");
-    handleOpenAdd();
-  }, [handleOpenAdd, setAddModalTab]);
-  const handleAddLocal = useCallback(() => {
-    setAddModalTab("local");
-    handleOpenAdd();
-  }, [handleOpenAdd, setAddModalTab]);
+  // Add's intents (ticket 16): every way in opens the one stepped surface.
+  const { open: openAdd } = addFlow;
+  const handleOpenAdd = useCallback(() => openAdd(), [openAdd]);
+  const handleAddGit = useCallback(() => openAdd({ kind: "git" }), [openAdd]);
+  const handleAddLocal = useCallback(() => openAdd({ kind: "local" }), [openAdd]);
+  // Explore's "install this": Add opens on the repository, listed, the named skill checked.
+  const handleExploreInstall = useCallback(
+    (sourceUrl: string, skillName?: string) =>
+      openAdd({ source: { kind: "git", url: sourceUrl }, preselect: skillName }),
+    [openAdd],
+  );
   const handleOpenExplore = useCallback(() => handleViewChange("explore"), [handleViewChange]);
   const { setFilter: setLensFilter } = lens;
   const handleViewIssues = useCallback(() => setLensFilter("issues"), [setLensFilter]);
@@ -509,7 +509,6 @@ function App() {
   // outweighs the library (first run); it then carries the one primary.
   const discoveryLeads = (addFlow.plan?.group_count ?? 0) >= Math.max(1, librarySize);
 
-  const { handleExploreInstall } = addFlow;
   const handleExploreInstallFromPreview = useCallback(() => {
     if (!explorePreview) return;
     handleExploreInstall(explorePreview.sourceUrl);
@@ -567,12 +566,10 @@ function App() {
   // While one of those dialogs is open its foot is the progress; the page
   // copy under the scrim yields, so a run never shows twice (14 audit N5).
   const progressInDialog =
-    addFlow.showAddModal ||
+    addFlow.add.open ||
     (addFlow.showImportModal && addFlow.plan !== null) ||
     surface.isOpen("notifications") ||
-    (library.pendingRepointSkill !== null && library.repointSelection !== null) ||
-    addFlow.local.visible ||
-    addFlow.git.visible;
+    (library.pendingRepointSkill !== null && library.repointSelection !== null);
   // The panel's catalog: a row's skill actions exist only while its skill does.
   const skillNames = useMemo(
     () => Object.fromEntries(library.managedSkills.map((skill) => [skill.id, skill.name])),
@@ -761,35 +758,18 @@ function App() {
             onHideSkill={explore.handleHideSkill}
             onUnhideSkill={explore.handleUnhideSkill}
             onExploreFilterChange={explore.handleExploreFilterChange}
-            onInstallSkill={addFlow.handleExploreInstall}
+            onInstallSkill={handleExploreInstall}
             onViewSkill={explore.handleOpenExploreDetail}
-            onOpenManualAdd={addFlow.handleOpenAdd}
+            onOpenManualAdd={handleOpenAdd}
             t={t}
           />
         )}
       </main>
 
-      <AddSkillModal
-        open={addFlow.showAddModal}
-        loading={loading}
-        canClose={!loading}
-        addModalTab={addFlow.addModalTab}
-        localPath={addFlow.localPath}
-        localName={addFlow.localName}
-        gitUrl={addFlow.gitUrl}
-        gitName={addFlow.gitName}
-        syncTargets={sync.syncTargets}
-        installedTools={catalog.installedTools}
-        toolStatus={catalog.toolStatus}
-        onRequestClose={addFlow.handleCloseAdd}
-        onTabChange={addFlow.setAddModalTab}
-        onLocalPathChange={addFlow.setLocalPath}
-        onPickLocalPath={addFlow.handlePickLocalPath}
-        onLocalNameChange={addFlow.setLocalName}
-        onGitUrlChange={addFlow.setGitUrl}
-        onGitNameChange={addFlow.setGitName}
-        onSyncTargetChange={sync.handleSyncTargetChange}
-        onSubmit={addFlow.handleCreate}
+      <AddSkillDialog
+        add={addFlow.add}
+        busy={loading}
+        blockedReason={blockedReason}
         progress={dialogProgress}
         t={t}
       />
@@ -956,34 +936,6 @@ function App() {
         onRetry={(skillIds) => void run("delete", skillIds, { confirmed: true })}
         onReveal={handleReveal}
         fallbackFocus={actions.dialogFallbackFocus}
-        t={t}
-      />
-
-      <LocalPickModal
-        open={addFlow.local.visible}
-        loading={loading}
-        localCandidates={addFlow.local.candidates}
-        localCandidateSelected={addFlow.local.selected}
-        onRequestClose={addFlow.local.close}
-        onCancel={addFlow.local.cancel}
-        onToggleAll={addFlow.local.toggleAll}
-        onToggleCandidate={addFlow.local.toggle}
-        onInstall={addFlow.local.install}
-        progress={dialogProgress}
-        t={t}
-      />
-
-      <GitPickModal
-        open={addFlow.git.visible}
-        loading={loading}
-        gitCandidates={addFlow.git.candidates}
-        gitCandidateSelected={addFlow.git.selected}
-        onRequestClose={addFlow.git.close}
-        onCancel={addFlow.git.cancel}
-        onToggleAll={addFlow.git.toggleAll}
-        onToggleCandidate={addFlow.git.toggle}
-        onInstall={addFlow.git.install}
-        progress={dialogProgress}
         t={t}
       />
 

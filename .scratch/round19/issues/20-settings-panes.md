@@ -32,3 +32,9 @@ contrast; 960×640; `npm run check`.
 - 2026-09-30 — from ticket 15: the legacy `.settings-toggle-knob` now slides on the tokens (`--motion-fast`, `--ease-out`)
   instead of 200 ms `ease`; the pane migration should replace it with the `Switch` primitive (which also offers
   `focusableWhenDisabled`). `.settings-select` / `.settings-theme-btn` lost their `transition: all` (instant hover).
+
+- 2026-09-30 — from ticket 16: `shared/ToolConfigModal.tsx` (Configure Tools) migrated onto the primitives (Checkbox /
+  Field / Badge / Button; joins `migrated`), because the `pick-*` and `tool-pick-list` / `tool-filter-toggle` rules it
+  used had to leave `App.css` with the Add pickers. Behaviour unchanged (detected-only filter, a selected undetected
+  Tool stays listed "not detected", scan-only toggle). When Configure Tools moves into Settings → Tools, carry it as is.
+  Add's Tool scope ("Edit Tools" in Add's summary) is a session choice over the same catalog, not the saved selection.

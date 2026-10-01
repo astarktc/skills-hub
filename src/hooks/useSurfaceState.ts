@@ -66,10 +66,9 @@ export type CountVerb = "syncToTargets" | "disable" | "enable" | "update";
 /** Every modal the app shows, and what it is about. One union across worlds. */
 export type DialogState =
   // Skills world
+  /** Add: one stepped surface (source → candidates → settlement); its step is the flow's own. */
   | { kind: "addSkill" }
   | { kind: "import" }
-  | { kind: "gitPick" }
-  | { kind: "localPick" }
   /**
    * Delete (D16): the confirmation for one or several skills, and — once a
    * Delete left something behind — the same dialog as its report (`report`,

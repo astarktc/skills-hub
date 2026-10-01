@@ -20,7 +20,6 @@ export type { GitSourceResolution } from "../../bindings";
 export type { GitSkillListing } from "../../bindings";
 export type { CandidateMatch } from "../../bindings";
 export type { LocalSkillCandidate } from "../../bindings";
-export type { InstallResultDto } from "../../bindings";
 export type { RefreshReport } from "../../bindings";
 export type { SkillMutationResultDto, InvocationEditResultDto, InvocationEditReport } from "../../bindings";
 export type { RefreshPolicyDto } from "../../bindings";

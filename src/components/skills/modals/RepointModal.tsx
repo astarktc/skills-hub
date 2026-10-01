@@ -13,11 +13,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { FocusFallback } from "@/components/ui/dialog";
-import { Field, FieldDescription, FieldError, FieldLabel, FieldSet, FieldLegend, Input } from "@/components/ui/field";
+import { Field, FieldDescription, FieldError, FieldLabel, Input } from "@/components/ui/field";
 import { Segmented, SegmentedItem } from "@/components/ui/segmented";
-import { focusRing } from "@/components/ui/styles";
-import { cn } from "@/lib/utils";
 import { describeCommandError } from "../../../commandError";
+import { visibleCandidates, type PickerCandidate } from "../../../lib/addFlow";
+import { CandidatePicker } from "../add/CandidatePicker";
 import type { RepointPreviewAnswer } from "../../../hooks/useSkillLibrary";
 import { repointCurrentSource, type RepointKind } from "../../../lib/skillPresentation";
 import type { CommandError, GitSkillCandidate, ManagedSkill, RepointPreview, RepointTarget } from "../types";
@@ -42,9 +42,18 @@ type RepointBodyProps = {
   t: TFunction;
 };
 
+/** A repository candidate as the one picker renders it (single-choice mode). */
+const toPicker = (candidate: GitSkillCandidate): PickerCandidate => ({
+  id: candidate.subpath,
+  name: candidate.name,
+  description: candidate.description,
+  subpath: candidate.subpath,
+  unavailable: null,
+});
+
 type Step =
   | { kind: "form" }
-  | { kind: "pick"; url: string; candidates: GitSkillCandidate[]; chosen: string | null }
+  | { kind: "pick"; url: string; candidates: GitSkillCandidate[]; chosen: string | null; query: string }
   | {
       kind: "confirm";
       target: RepointTarget;
@@ -94,25 +103,30 @@ function RepointBody({
   const seenForm = useRef(false);
   const summaryRef = useRef<HTMLParagraphElement | null>(null);
   const confirmRef = useRef<HTMLButtonElement | null>(null);
-  const pickRef = useRef<HTMLUListElement | null>(null);
+  const pickRef = useRef<HTMLDivElement | null>(null);
+  // A pick's choice and search edit the step in place: only entering a step
+  // (or a new confirmation) moves focus.
+  const stepKey = step.kind === "confirm" ? step : step.kind;
   useEffect(() => {
     // After the dialog's own focus handling settles (the control that moved
     // the step is gone): a match focuses its confirmation; a mismatch its
     // summary — Continue is a deliberate second step (D15); a pick its list.
     const timer = window.setTimeout(() => {
-      if (step.kind === "form") {
+      if (stepKey === "form") {
         if (seenForm.current) fieldRef.current?.focus();
         seenForm.current = true;
-      } else if (step.kind === "pick") {
-        pickRef.current?.querySelector<HTMLInputElement>("input:checked, input")?.focus();
-      } else if (step.preview.name_matches) {
+      } else if (stepKey === "pick") {
+        pickRef.current
+          ?.querySelector<HTMLInputElement>("[data-candidate-search], input[type='radio']:checked, input[type='radio']")
+          ?.focus();
+      } else if (stepKey.preview.name_matches) {
         confirmRef.current?.focus();
       } else {
         summaryRef.current?.focus();
       }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [step]);
+  }, [stepKey]);
 
   const check = async (target: RepointTarget, candidates: GitSkillCandidate[] | null = null) => {
     setError(null);
@@ -126,7 +140,7 @@ function RepointBody({
     }
     const { preview } = answer;
     if (preview.resolved_name === null && preview.candidates) {
-      setStep({ kind: "pick", url: target.kind === "git" ? target.url : "", candidates: preview.candidates, chosen: null });
+      setStep({ kind: "pick", url: target.kind === "git" ? target.url : "", candidates: preview.candidates, chosen: null, query: "" });
       return;
     }
     setStep({ kind: "confirm", target, preview, candidates: preview.candidates ?? candidates });
@@ -138,8 +152,10 @@ function RepointBody({
   };
 
   const submitPick = (current: Extract<Step, { kind: "pick" }>) => {
+    // Only a choice still on screen is sent (the search may have hidden it).
+    const shown = visibleCandidates(current.candidates.map(toPicker), current.query);
     const candidate = current.candidates.find((c) => c.subpath === current.chosen);
-    if (!candidate || loading) return;
+    if (!candidate || loading || !shown.some((c) => c.id === candidate.subpath)) return;
     void check(
       { kind: "git", url: current.url, selection: { subpath: candidate.subpath, resolution: candidate.resolution } },
       current.candidates,
@@ -272,35 +288,27 @@ function RepointBody({
                   submitPick(step);
                 }}
               >
-                <FieldSet>
-                  <FieldLegend>{t("repoint.pickLegend")}</FieldLegend>
-                  <p className="m-0 text-sm text-muted-foreground">
-                    {t("repoint.pickBody", { count: step.candidates.length, name: skill.name })}
-                  </p>
-                  <ul ref={pickRef} className="m-0 flex max-h-72 list-none flex-col overflow-y-auto rounded-md border border-border p-0">
-                    {step.candidates.map((candidate) => (
-                      <li key={candidate.subpath} className="border-b border-border last:border-b-0">
-                        <label className="flex cursor-default items-start gap-3 px-3 py-2 hover:bg-raised">
-                          <input
-                            type="radio"
-                            name={`${pickId}-candidate`}
-                            value={candidate.subpath}
-                            checked={step.chosen === candidate.subpath}
-                            onChange={() => setStep({ ...step, chosen: candidate.subpath })}
-                            className={cn("mt-1 size-4 shrink-0 accent-primary", focusRing)}
-                          />
-                          <span className="flex min-w-0 flex-col">
-                            <span className="text-sm font-medium text-foreground">{candidate.name}</span>
-                            <span className="truncate font-mono text-xs text-faint">{candidate.subpath}</span>
-                            {candidate.description ? (
-                              <span className="line-clamp-2 text-xs text-muted-foreground">{candidate.description}</span>
-                            ) : null}
-                          </span>
-                        </label>
-                      </li>
-                    ))}
-                  </ul>
-                </FieldSet>
+                <p className="m-0 mb-3 text-sm text-muted-foreground">
+                  {t("repoint.pickBody", { count: step.candidates.length, name: skill.name })}
+                </p>
+                <div ref={pickRef}>
+                  <CandidatePicker
+                    mode="single"
+                    candidates={step.candidates.map(toPicker)}
+                    visible={visibleCandidates(step.candidates.map(toPicker), step.query)}
+                    query={step.query}
+                    onQueryChange={(query) => setStep({ ...step, query })}
+                    chosen={step.chosen}
+                    onChoose={(id) => setStep({ ...step, chosen: id })}
+                    legend={t("repoint.pickLegend")}
+                    status={t("repointPick.shown", {
+                      shown: visibleCandidates(step.candidates.map(toPicker), step.query).length,
+                      total: step.candidates.length,
+                    })}
+                    disabled={loading}
+                    t={t}
+                  />
+                </div>
               </form>
             </DialogBody>
             <DialogFooter>
@@ -341,7 +349,7 @@ function RepointBody({
                   onClick={() => {
                     const target = step.target;
                     if (target.kind !== "git" || !step.candidates) return;
-                    setStep({ kind: "pick", url: target.url, candidates: step.candidates, chosen: target.selection?.subpath ?? null });
+                    setStep({ kind: "pick", url: target.url, candidates: step.candidates, chosen: target.selection?.subpath ?? null, query: "" });
                   }}
                   disabled={loading}
                 >

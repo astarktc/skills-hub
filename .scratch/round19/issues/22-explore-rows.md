@@ -35,3 +35,10 @@ managed inspector; contrast both themes; 960×640; `npm run check`.
   `.explore-btn-view` and `.explore-btn-hide` lost their `transition` declarations (the built CSS carries no
   `transition: all`; hover is instant, as in every primitive). Keep hover instant when the rows migrate; DESIGN.md
   § Motion lists what may move.
+
+- 2026-09-30 — from ticket 16: Explore's install is the Add intent now — `addFlow.open({ source: { kind: "git", url },
+  preselect: name })` (App's `handleExploreInstall`; the render-cycle trigger effect is gone). It opens Add on the
+  repository, listed at once, the named skill checked (an ambiguous name checks every match; a name the listing lacks
+  is said and nothing is checked); the operator presses "Add selected" — it never installs by itself, and it no
+  longer retargets every installed Tool (`targetAllInstalled` is deleted): the Tool scope in Add's sticky summary is
+  D25's "inline Tool-scope summary". The preview's Install takes the same intent.

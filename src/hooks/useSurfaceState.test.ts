@@ -309,29 +309,29 @@ describe("dialog stack", () => {
 
   it("layers a nested step and closes only the top layer", () => {
     const { result } = render();
-    act(() => result.current.openDialog({ kind: "addSkill" }));
-    act(() => result.current.pushDialog({ kind: "gitPick" }));
+    act(() => result.current.openDialog({ kind: "notifications" }));
+    act(() => result.current.pushDialog({ kind: "repoint", skillId: "a", name: "a", preselect: "git" }));
 
     // An operator close aimed at a lower layer (Escape reaching both) is ignored.
-    act(() => result.current.closeDialog("addSkill"));
-    expect(result.current.stack.map((l) => l.kind)).toEqual(["addSkill", "gitPick"]);
+    act(() => result.current.closeDialog("notifications"));
+    expect(result.current.stack.map((l) => l.kind)).toEqual(["notifications", "repoint"]);
 
-    act(() => result.current.closeDialog("gitPick"));
-    expect(result.current.stack.map((l) => l.kind)).toEqual(["addSkill"]);
+    act(() => result.current.closeDialog("repoint"));
+    expect(result.current.stack.map((l) => l.kind)).toEqual(["notifications"]);
 
-    act(() => result.current.closeDialog("addSkill"));
+    act(() => result.current.closeDialog("notifications"));
     expect(result.current.top).toBeNull();
   });
 
   it("a flow dismisses its own dialog wherever it sits", () => {
     const { result } = render();
-    act(() => result.current.openDialog({ kind: "addSkill" }));
-    act(() => result.current.pushDialog({ kind: "gitPick" }));
+    act(() => result.current.openDialog({ kind: "notifications" }));
+    act(() => result.current.pushDialog({ kind: "repoint", skillId: "a", name: "a", preselect: "git" }));
 
-    act(() => result.current.dismissDialog("addSkill"));
-    expect(result.current.stack.map((l) => l.kind)).toEqual(["gitPick"]);
+    act(() => result.current.dismissDialog("notifications"));
+    expect(result.current.stack.map((l) => l.kind)).toEqual(["repoint"]);
     act(() => result.current.dismissDialog("toolConfig"));
-    expect(result.current.stack.map((l) => l.kind)).toEqual(["gitPick"]);
+    expect(result.current.stack.map((l) => l.kind)).toEqual(["repoint"]);
   });
 
   it("an offered dialog waits until no dialog is open", () => {

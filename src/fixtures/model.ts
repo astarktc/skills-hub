@@ -88,6 +88,8 @@ export type FixtureRepoCandidate = {
   subpath: string;
   invocation?: InvocationMode;
   installs: number;
+  /** The first install acquisition fails with this; a retry succeeds (consumed). */
+  failOnce?: CommandError;
 };
 
 export type FixtureRepo = {

@@ -1,13 +1,18 @@
 import { memo, useState } from "react";
 import type { TFunction } from "i18next";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogBody,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import type { ToolStatusDto } from "../skills/types";
 import { visibleToolChoices } from "../../lib/skillPresentation";
 
@@ -124,75 +129,64 @@ const ToolConfigModalInner = ({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{labels.title}</DialogTitle>
+          <DialogDescription>{labels.description}</DialogDescription>
         </DialogHeader>
         <DialogBody>
-          <p className="helper-text">{labels.description}</p>
-          <label className="tool-filter-toggle">
-            <input
-              type="checkbox"
-              checked={detectedOnly}
-              onChange={() => setDetectedOnly((v) => !v)}
-            />
-            {t("toolConfigDetectedOnly")}
-          </label>
-          <div className="tool-pick-list">
-            {tools.map((tool) => (
-              <div key={tool.key} className="pick-item">
-                <label className="pick-item-label">
-                  <input
-                    className="pick-item-checkbox"
-                    type="checkbox"
-                    checked={selectedTools.has(tool.key)}
-                    onChange={() => handleToggle(tool.key)}
-                  />
-                  <span>{tool.label}</span>
-                  {installed.includes(tool.key) ? (
-                    <span className="pick-item-badge">
-                      {" "}
-                      ({t("status.installed")})
-                    </span>
-                  ) : (
-                    <span className="pick-item-badge muted">
-                      {" "}
-                      ({t("toolNotDetected")})
-                    </span>
-                  )}
-                </label>
-                {tool.constituents.length > 0 && (
-                  <span className="pick-item-subtitle">
-                    {tool.constituents.join(", ")}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-          {hasScanToggle && (
-            <label className="tool-filter-toggle">
-              <input
-                type="checkbox"
-                checked={scanSelectedOnly}
-                onChange={() => setScanSelectedOnly((v) => !v)}
-              />
-              {labels.scanToggleLabel}
-            </label>
-              )}
+          <Field className="flex-row items-center gap-2">
+            <Checkbox checked={detectedOnly} onCheckedChange={(checked) => setDetectedOnly(checked)} />
+            <FieldLabel>{t("toolConfigDetectedOnly")}</FieldLabel>
+          </Field>
+          <FieldSet>
+            <FieldLegend className="sr-only">{labels.title}</FieldLegend>
+            <ul className="m-0 flex max-h-80 list-none flex-col gap-1 overflow-y-auto p-0">
+              {tools.map((tool) => (
+                <li key={tool.key}>
+                  <Field className="flex-row items-start gap-2 py-1">
+                    <Checkbox
+                      className="mt-0.5"
+                      checked={selectedTools.has(tool.key)}
+                      onCheckedChange={() => handleToggle(tool.key)}
+                    />
+                    <div className="flex min-w-0 flex-col gap-0.5">
+                      <span className="flex items-center gap-2">
+                        <FieldLabel>{tool.label}</FieldLabel>
+                        {installed.includes(tool.key) ? (
+                          <Badge tone="ok">{t("status.installed")}</Badge>
+                        ) : (
+                          // A selected tool detection no longer sees: visible so it can be unticked.
+                          <Badge>{t("toolNotDetected")}</Badge>
+                        )}
+                      </span>
+                      {tool.constituents.length > 0 ? (
+                        <FieldDescription>{tool.constituents.join(", ")}</FieldDescription>
+                      ) : null}
+                    </div>
+                  </Field>
+                </li>
+              ))}
+            </ul>
+          </FieldSet>
+          {hasScanToggle ? (
+            <Field className="flex-row items-center gap-2">
+              <Checkbox checked={scanSelectedOnly} onCheckedChange={(checked) => setScanSelectedOnly(checked)} />
+              <FieldLabel>{labels.scanToggleLabel}</FieldLabel>
+            </Field>
+          ) : null}
         </DialogBody>
         <DialogFooter>
-          <button
-            className="btn btn-secondary"
-            onClick={onRequestClose}
-            disabled={loading}
-          >
+          <Button onClick={onRequestClose} disabled={loading}>
             {t("cancel")}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleConfirm}
+          </Button>
+          <Button
+            variant="solid"
+            tone="accent"
+            onClick={() => void handleConfirm()}
             disabled={loading || blockedReason !== null}
+            focusableWhenDisabled
             title={blockedReason ?? undefined}
           >
             {labels.confirmLabel}
-          </button>
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

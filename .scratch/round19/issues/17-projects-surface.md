@@ -72,3 +72,11 @@ All with a missing folder yields one line; contrast; `npm run check`.
   reveal, `.matrix-cell` background fade and the matrix tooltip fade lost their `transition` (instant now; motion table
   in DESIGN.md § Motion) — keep them instant when migrating. `.cell-spinner` (0.6 s) and the list skeleton shimmer
   (1.5 s) remain the only legacy loops; the base layer stops them under reduced motion.
+
+- 2026-09-30 — from ticket 16: the `form` family left only partly — `.form-group`, `.label`, `.input`, `.input-row`,
+  `.input-action` (and `.helper-text`, also used by `InvocationModeModal`) are still referenced by
+  `projects/AddProjectModal.tsx` and `projects/EditProjectModal.tsx` only, so they stay in `App.css` until those dialogs
+  migrate here (Field / Input / Button; the Add dialog's local-folder field — Input + "Browse…" Button in one row — is
+  the pattern). Lower `appCssCeiling` by what you delete. The one candidate picker (`skills/add/CandidatePicker.tsx`,
+  `mode="multiple" | "single"`, search + visible-and-checked rule) is available if a project flow ever lists skills to
+  choose from.
