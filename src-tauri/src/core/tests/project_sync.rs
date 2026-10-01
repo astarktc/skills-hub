@@ -2051,3 +2051,66 @@ fn removal_still_works_for_a_missing_project_folder() {
     assert!(store.get_project_by_id(&project.id).unwrap().is_none());
     assert!(!project_dir.exists(), "nothing recreated by the cleanup");
 }
+
+/// Ticket 17 re-check residual (A1): the project root is present at the
+/// seam's last check and disappears (a Finder move) just before the first
+/// directory creation under it. The write is refused with the typed
+/// `InvalidPath missing` naming the root, the old location is not
+/// recreated, nothing lands in the moved folder, and the row is the kept
+/// `error` row — never Synced. Symlink and copy-only Tools alike.
+#[test]
+fn a_project_root_that_vanishes_at_parent_creation_is_not_recreated() {
+    for tool in ["claude_code", copy_only_tool()] {
+        let (_db_dir, store) = make_store();
+        let tmpdir = tempfile::tempdir().unwrap();
+        let skill_dir = make_skill_dir(tmpdir.path(), "race-skill");
+        let project_dir = tmpdir.path().join("race-project");
+        let moved_dir = tmpdir.path().join("race-project-moved");
+        fs::create_dir_all(&project_dir).unwrap();
+        let (project, skill) = register_project_and_skill(
+            &store,
+            &project_dir.to_string_lossy(),
+            "race-skill",
+            &skill_dir.to_string_lossy(),
+        );
+
+        let _hook = crate::core::sync_engine::test_hooks::before_bounded_mkdir_scoped({
+            let (root, moved) = (project_dir.clone(), moved_dir.clone());
+            let mut fired = false;
+            move |_level| {
+                if !fired {
+                    fired = true;
+                    fs::rename(&root, &moved).unwrap();
+                }
+            }
+        });
+        let report = assign_skill_to_tools(&store, &project, &skill, &keys(&[tool]), 3000).unwrap();
+
+        assert!(moved_dir.is_dir(), "{tool}: the hook really moved the root");
+        assert!(
+            !project_dir.exists(),
+            "{tool}: the old root is not recreated"
+        );
+        let adapter = crate::core::tool_adapters::adapter_by_key(tool).unwrap();
+        assert!(
+            !moved_dir
+                .join(adapter.project_relative_skills_dir)
+                .join("race-skill")
+                .exists(),
+            "{tool}: nothing written into the moved folder"
+        );
+        assert_eq!(report.synced(), 0, "{tool}: {report:?}");
+        match &report.items[0].status {
+            ProjectSyncOutcomeStatus::Failed {
+                error: CommandError::InvalidPath { path, .. },
+            } => assert_eq!(path, &*project_dir.to_string_lossy()),
+            other => panic!("{tool}: expected the typed missing root, got {other:?}"),
+        }
+        let row = store
+            .get_project_skill_assignment(&project.id, &skill.id, tool)
+            .unwrap()
+            .expect("the kept row");
+        assert_eq!(row.status, SyncStatus::Error, "{tool}");
+        assert!(row.synced_at.is_none(), "{tool}: the row owns nothing");
+    }
+}

@@ -130,3 +130,82 @@ Additional targeted re-sync run (`resync-tests.log`): **8 passed**, including bo
 3. Recheck My Skills → local-notes → Assign to project → archived-app in both configurations: clear refusal/recovery, no misleading success; verify the ordinary valid-project assignment still applies its returned view with **0 follow-up reads**. Recheck Enable and collision retry with a missing folder at the core/fixture boundary.
 4. Rerun the normal ticket keyboard flow and Sync All line after the fix; affected hook/fold/fixture tests, `npm run version:check && npm run check`, `cargo test --all`, binding-drift check. Repeat axe on a changed picker/refusal surface in both themes; repeat contrast only if style/token pairs change. Broader primitive/motion retest only if those owners change.
 5. Orchestrator disposition: keep N1/N2 as explicit 19b keyboard/focus follow-ups (ticket 23 coordination), and document/accept the narrow menu axe exception rather than injecting an unnecessary landmark. Operator VoiceOver/reduced-motion/native minimum-window closure remains separate.
+
+## Re-check (2026-10-01)
+
+**Commit `77a5d5e4223fea140e963707f26b6dca4d67f449`, initially clean — FIX-THEN-PASS. A1: Not closed (one residual P1 race). N2: Closed.** The original four pre-missing-folder reproductions are fixed; the explicitly requested disappearance-between-check-and-write case is not fully fixed. No new UI blocker. N1 remains deferred to 19b.
+
+### Method and evidence
+
+Evidence directory: **`.scratch/round19/evidence/17-recheck/`**. Read the complete core/frontend commit diff and all nine new Rust tests, the report accumulators/folds and focus tests, D8/D9/D17/D21/D26 and ADR-0002. Re-ran the original four-route core probe against unchanged production modules imported by absolute path. Extended an evidence-only temp-root harness for the edge cases; no live skill/database paths were used. Browser: existing fixture on 5175, one named headless session `r19-17-recheck`, supplied trusted CDP key driver, dark 1280×800 / light 960×640. All accepted browser runs occurred after bindings generation finished. No nested delegation, source edits, stash, revert or commit.
+
+### A1 — Not closed: P1 residual recreation after the last presence check
+
+**Locations:** `src-tauri/src/core/project_sync.rs:118–145`; `src-tauri/src/core/sync_engine.rs:209–213` (`ensure_parent_dir`, `create_dir_all`; also the recursive-copy path).
+
+The new last check is correctly *before* any filesystem parent creation. It catches a folder disappearing between the outer admission check and entry to `sync_assignment_target`. However, it is still a check-then-use: after it returns true, the sync engine recursively creates target parents, including the project root. The mutation guard serializes app mutations, not a Finder/terminal move or a mount disappearing.
+
+**Deterministic reproduction, twice:** the evidence-only macOS interposer `move-before-mkdir.c` performs one real `rename(project_root, project_root + "-moved")` immediately before the first project-descendant `mkdir`, after the production checks. It neither edits application source nor alters the syscall result. Both executions reach:
+
+```text
+AUDIT_BARRIER rename-before-mkdir result=0
+moved_after_guard=true old_root_recreated=true target_exists=true
+report=... status: Synced ... skipped_projects: []
+A1 contract violated: a project moved after the final check was recreated by target parent creation
+CONTRACT_EXIT:101
+```
+
+See **`race-contract.log`**, `core-probe/src/bin/race.rs`, and the interposer. This is a controlled scheduling boundary, not evidence of its natural frequency. It proves the same old-path recreation/false-success impact as A1 without an attacker or permissions trick. The earlier `race.log` is a positive reproduction; the final contract probe deliberately goes red on recreation.
+
+Re-run from the repo root:
+
+```bash
+clang -dynamiclib .scratch/round19/evidence/17-recheck/move-before-mkdir.c \
+  -o .scratch/round19/evidence/17-recheck/move-before-mkdir.dylib
+CARGO_TARGET_DIR="$PWD/src-tauri/target" cargo build \
+  --manifest-path .scratch/round19/evidence/17-recheck/core-probe/Cargo.toml --bin race
+DYLD_INSERT_LIBRARIES="$PWD/.scratch/round19/evidence/17-recheck/move-before-mkdir.dylib" \
+  src-tauri/target/debug/race
+```
+
+**Narrow fix:** make project target directory creation obey an existing-root boundary *during creation*, not only in a preceding `is_dir` check. Pass that boundary through the project write seam; create descendants without recursively recreating the project root (including copy fallback). Preserve global sync's existing parent-creation behavior. Another presence check, a broader app mutex, or deleting the recreated folder afterward is not sufficient. Add a deterministic disappearance-at-parent-creation regression; settle the refusal without claiming Synced. No matrix redesign is needed.
+
+### Core edge results
+
+| Requested case | Result and fresh evidence |
+| --- | --- |
+| Four original routes, absent before call | **Pass.** `core-probe.log`: bulk, toggle-on, Enable first-sync seam, collision Overwrite all `exists_after=false target_exists=false`, one `folder_missing` skip. |
+| Plain file; directory symlink; dangling symlink | **Pass.** `core-edges.log`: file/dangling link skipped without rows or descendants; live directory link synced. Replaced the registered root with the link so registration canonicalization did not hide this check. |
+| Disappears after admission, before shared seam | **Pass.** Outer `project_folder_exists` succeeds, root removed, `sync_single_assignment` returns typed `InvalidPath(missing)`; no recreation. Before the shared check, callers only resolve/read/store rows, not filesystem parents. |
+| Disappears after the shared check, before mkdir | **Fail, A1 residual above.** Root and target recreated; falsely Synced. |
+| Missing root with existing assignments | **Pass.** Sync Project/Sync All leave full row snapshots unchanged; Disable changes them to disabled without recreating the folder; Remove clears the project. New Rust cleanup test also covers toggle-off and bulk unassign. |
+| Enable Skills: two distinct skills, one missing project | **Pass.** `core-edges.log`: exactly one project skip, the same two rows, unchanged snapshots. This supplements the committed test, which repeats one skill id rather than testing two distinct skills. |
+| Collision Keep while missing | **Pass with precise semantics.** An already-disabled row remains disabled, never error, and reports `Skipped Disabled` (the earlier precedence branch). A live unanswered collision's existing error row is likewise untouched, with `folder_missing`; both Overwrite and Keep are covered by the new Rust test. No result falsely records Keep as accepted when the project was skipped. |
+| Register/update to missing path | **Pass.** Both refuse, creating no folder (`core-edges.log`); unchanged canonicalization/`is_dir` guards reviewed. Propagation's new file-root test and existing missing-root tests pass in the full gate; gitignore's refusal remains unchanged. |
+| Enable global half | **Pass.** Fresh `enable-global.log`: the named new regression verifies global target Synced while the missing project's disabled row is unchanged. |
+
+### Question (a): acceptable under the current contract, not a new defect
+
+**Keep the rows disabled; do not teach Sync Project to re-enable them implicitly.** D17 governs coexistence, D26 the matrix's role; neither promises deferred desired-state replay after Update path. D8 explicitly makes disabled durable and reserves re-materialization for Enable. ADR-0002 concerns failed *removal* and preservation of its ownership record; it does not require turning an unattempted Enable into an error.
+
+The missing-folder skip changes neither assignment status nor ownership and is reported as **skipped**, not **declined**. Sharing a stored status with an earlier Disable/Keep is not claiming that this skip was a Keep answer. After a path fix, Sync Project correctly keeps disabled rows off. Recovery is a fresh Enable at core, or **uncheck then recheck** the matrix cell (two toggles, not one); `core-edges.log` proves the latter and the no-implicit-reenable behavior. Automatically retrying only skipped Enables would require separately persisted intent/provenance so deliberate Keep remains respected; that is a new product contract, not required for this bounded fix. No severity assigned to (a).
+
+### Frontend and N2 — Closed
+
+- **Picker/late disappearance:** `fix-{dark-1280,light-960}.json` and PNGs show archived-app disabled with “Folder not found — update its path under Projects first.” A folder removed after picker load gives **1 skipped**, unchanged assignments, closed picker and focus back on **Assign to project…**. `extra-*.json` verifies the named report line. `two-skills.json` drives two actual selected skills through the same door: one skipped project/one named line, unchanged rows.
+- **Folds/fixture:** fresh full gate covers `useProjectState`'s multi-skill dedupe, `useSkillActions`' named warning, `projectSyncOutcome`, Enable's count and `mergeProjectRetry`/`mergePropagationRetry`. Reviewed `syncAssignment`: its last defense is the same typed missing-path failure; command-level early guards now produce the core's project skip before row admission. No fixture-only false failure remains for the four ordinary missing-folder routes.
+- **N2 in both themes:** Issues → Sync design-tokens → **docx / Claude Code**; Assigned → unassign docx → **frontend-design / Claude Code**; last assigned cell of design-tokens → same next cell. Last displayed row tdd unassigned → **release-train / Claude Code**. Search-filtered lone design-tokens repaired → pressed **Issues** chip. Focus explicitly moved into **Filter skills** while a repair is pending stays there after its row disappears. `fix-*.json` + `extra-*.json`: **no sampled BODY/MAIN frame**. Pure/hook tests pass.
+- **Normal keyboard gate:** `gate-*.json`, dark **49** / light **37** steps, never BODY; returned-view toggle/Assign-all/Sync Project read counts **0 / 0 / 0**. Sync All emits one named archived-app line and leaves its assignments unchanged (`extra-*.json`).
+- **Four axe 4.10.3 runs:** picker + matrix × two themes, **zero violations**. Picker incompletes zero; matrix color-contrast incompletes **4 dark / 1 light**, retained rather than misrepresented as passes. No token/style-pair change requires repeating the prior measured contrast audit. Native VoiceOver and broader 19b primitive/motion scope remain outside this re-check.
+
+### Gate and integrity
+
+`gate.log`: **Version OK 1.2.18**; lint and styles pass (**1108 / 36 migrated**); vitest **46 files / 996 tests**; TypeScript project build + Vite, Rust fmt/clippy pass; Rust **818 passed**. `GATE_EXIT:0`. Separate `cargo test --all`: **818 passed**, `ALL_EXIT:0`. `cargo test export_bindings`: **1 passed / 817 filtered**, `BINDINGS_EXIT:0`; subsequent `git diff --stat -- src/bindings/index.ts` empty. The commit's bindings diff is **comments only** (7 added / 5 removed lines). The deliberate race-contract failure is additional evidence not covered by those green gates.
+
+### Acceptance — fix-then-pass, exact remaining scope
+
+**Do not close A1/D31 yet.** Fix only the reproduced project-root recreation window across the shared write/parent-creation/copy paths; preserve the now-passing pre-missing skips, unchanged-row semantics, global sync behavior and all removal paths. Re-run the red contract probe until green, the four-route/edge probes, relevant Rust regressions, normal definition-of-done and binding-drift gates. UI/focus evidence above is accepted; N2 is closed and does not need a redesign/re-audit unless the fix touches it. N1 and the narrow menu axe exception keep their prior disposition. The orchestrator must either commission that bounded core fix or explicitly accept/defer this residual concurrency risk; a green existing suite alone does not close it.
+
+### Residual closed (2026-10-01, orchestrator)
+
+- **A1 residual (the move between the last presence check and directory creation)**: `sync_engine::create_dirs_within(root, dir)` — the root must be a directory when creation starts (a link to a directory counts), `dir` must sit beneath it, each level is one non-recursive `mkdir`, so a root that vanishes at any point fails the next `mkdir` instead of being recreated; the refusal is the seam's existing `InvalidPath { reason: "missing" }`. A private `TargetParents::{CreateMissing, WithinRoot}` option flows through the symlink path and the copy fallback; `sync_dir_for_tool_within_root` is the project seam's entry; global sync keeps creating missing parents. `gitignore.rs`'s `.git/info/exclude` creation is bounded the same way. 9 Rust tests driven by a test-only pre-`mkdir` hook; the audit's own interposer harness re-run: `old_root_recreated=false target_exists=false`, Failed with the missing-root error, `CONTRACT_EXIT:0` on both runs; the four-route probe and every edge case still pass. Gate: cargo 827 / vitest 996 / 1108, bindings unchanged. **D31 gate passed** for ticket 17. N1 (matrix keyboard efficiency) and the open-menu `region` allowlist carried to 19b (ticket 23's Comments); the mid-copy partial-files note is the same as any mid-copy failure today (no new exposure).

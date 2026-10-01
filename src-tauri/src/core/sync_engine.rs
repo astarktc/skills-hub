@@ -79,9 +79,42 @@ pub struct SyncOutcome {
     pub replaced: bool,
 }
 
+/// Where a sync may create the directories a target needs.
+#[derive(Clone, Copy, Debug)]
+enum TargetParents<'a> {
+    /// Create every missing ancestor — a Tool's global skills dir may
+    /// legitimately not exist yet.
+    CreateMissing,
+    /// Create only descendants of a root that must already be a directory
+    /// at creation time ([`create_dirs_within`]) — a Project target, whose
+    /// root is never recreated.
+    WithinRoot(&'a Path),
+}
+
+impl TargetParents<'_> {
+    fn create(self, dir: &Path) -> Result<()> {
+        match self {
+            TargetParents::CreateMissing => {
+                std::fs::create_dir_all(dir).with_context(|| format!("create dir {:?}", dir))
+            }
+            TargetParents::WithinRoot(root) => create_dirs_within(root, dir),
+        }
+    }
+}
+
 /// `identity` names the skill whose bytes sit at `source`; it is read only
 /// when a folder is in the way, for the ask's `same_content` fact.
+#[cfg(test)]
 pub fn sync_dir_hybrid(source: &Path, identity: Source<'_>, target: &Path) -> Result<SyncOutcome> {
+    hybrid(source, identity, target, TargetParents::CreateMissing)
+}
+
+fn hybrid(
+    source: &Path,
+    identity: Source<'_>,
+    target: &Path,
+    parents: TargetParents<'_>,
+) -> Result<SyncOutcome> {
     if target.exists() {
         if is_same_link(target, source) {
             return Ok(SyncOutcome {
@@ -93,7 +126,7 @@ pub fn sync_dir_hybrid(source: &Path, identity: Source<'_>, target: &Path) -> Re
         anyhow::bail!(TargetExistsError::at(identity, target));
     }
 
-    ensure_parent_dir(target)?;
+    ensure_parent_dir(target, parents)?;
 
     if try_link_dir(source, target).is_ok() {
         return Ok(SyncOutcome {
@@ -112,7 +145,7 @@ pub fn sync_dir_hybrid(source: &Path, identity: Source<'_>, target: &Path) -> Re
         });
     }
 
-    copy_dir_recursive(source, target)?;
+    copy_dir_with_parents(source, target, parents)?;
     Ok(SyncOutcome {
         mode_used: SyncMode::Copy,
         target_path: target.to_path_buf(),
@@ -120,11 +153,28 @@ pub fn sync_dir_hybrid(source: &Path, identity: Source<'_>, target: &Path) -> Re
     })
 }
 
+#[cfg(test)]
 pub fn sync_dir_hybrid_with_overwrite(
     source: &Path,
     identity: Source<'_>,
     target: &Path,
     overwrite: bool,
+) -> Result<SyncOutcome> {
+    hybrid_with_overwrite(
+        source,
+        identity,
+        target,
+        overwrite,
+        TargetParents::CreateMissing,
+    )
+}
+
+fn hybrid_with_overwrite(
+    source: &Path,
+    identity: Source<'_>,
+    target: &Path,
+    overwrite: bool,
+    parents: TargetParents<'_>,
 ) -> Result<SyncOutcome> {
     // A missing source must fail like it does in copy mode; without this a
     // dangling symlink would be created and recorded as a successful sync.
@@ -154,17 +204,34 @@ pub fn sync_dir_hybrid_with_overwrite(
     }
 
     // reuse normal flow
-    sync_dir_hybrid(source, identity, target).map(|mut out| {
+    hybrid(source, identity, target, parents).map(|mut out| {
         out.replaced = did_replace;
         out
     })
 }
 
+#[cfg(test)]
 pub fn sync_dir_copy_with_overwrite(
     source: &Path,
     identity: Source<'_>,
     target: &Path,
     overwrite: bool,
+) -> Result<SyncOutcome> {
+    copy_with_overwrite(
+        source,
+        identity,
+        target,
+        overwrite,
+        TargetParents::CreateMissing,
+    )
+}
+
+fn copy_with_overwrite(
+    source: &Path,
+    identity: Source<'_>,
+    target: &Path,
+    overwrite: bool,
+    parents: TargetParents<'_>,
 ) -> Result<SyncOutcome> {
     let mut did_replace = false;
     if std::fs::symlink_metadata(target).is_ok() {
@@ -177,8 +244,8 @@ pub fn sync_dir_copy_with_overwrite(
         }
     }
 
-    ensure_parent_dir(target)?;
-    copy_dir_recursive(source, target)?;
+    ensure_parent_dir(target, parents)?;
+    copy_dir_with_parents(source, target, parents)?;
 
     Ok(SyncOutcome {
         mode_used: SyncMode::Copy,
@@ -200,17 +267,154 @@ pub fn sync_dir_for_tool_with_overwrite(
     target: &Path,
     overwrite: bool,
 ) -> Result<SyncOutcome> {
-    if !adapter.supports_symlink {
-        return sync_dir_copy_with_overwrite(source, identity, target, overwrite);
-    }
-    sync_dir_hybrid_with_overwrite(source, identity, target, overwrite)
+    sync_dir_for_tool(
+        adapter,
+        source,
+        identity,
+        target,
+        overwrite,
+        TargetParents::CreateMissing,
+    )
 }
 
-fn ensure_parent_dir(path: &Path) -> Result<()> {
+/// [`sync_dir_for_tool_with_overwrite`] for a target beneath `root` (a
+/// Project root): every directory the write needs — the target's parents and
+/// the copy fallback's own tree — is created through [`create_dirs_within`],
+/// so a root that disappears at any point before a creation is refused
+/// (`InvalidPath` `missing`) instead of being recreated. Nothing is written
+/// outside `root`.
+pub(crate) fn sync_dir_for_tool_within_root(
+    adapter: &ToolAdapter,
+    source: &Path,
+    identity: Source<'_>,
+    target: &Path,
+    overwrite: bool,
+    root: &Path,
+) -> Result<SyncOutcome> {
+    sync_dir_for_tool(
+        adapter,
+        source,
+        identity,
+        target,
+        overwrite,
+        TargetParents::WithinRoot(root),
+    )
+}
+
+fn sync_dir_for_tool(
+    adapter: &ToolAdapter,
+    source: &Path,
+    identity: Source<'_>,
+    target: &Path,
+    overwrite: bool,
+    parents: TargetParents<'_>,
+) -> Result<SyncOutcome> {
+    if !adapter.supports_symlink {
+        return copy_with_overwrite(source, identity, target, overwrite, parents);
+    }
+    hybrid_with_overwrite(source, identity, target, overwrite, parents)
+}
+
+fn ensure_parent_dir(path: &Path, parents: TargetParents<'_>) -> Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("create dir {:?}", parent))?;
+        parents.create(parent)?;
     }
     Ok(())
+}
+
+/// Create `dir` and its missing ancestors **below** `root`, never `root`
+/// itself or anything above it. `root` must be a directory (a link to one
+/// counts) when the walk starts, and each level is made by one
+/// non-recursive `mkdir`, so a root that disappears at any moment — before
+/// the walk or between two levels — makes the next `mkdir` fail rather than
+/// recreate it. That refusal, like a root already gone, is the typed
+/// `InvalidPath { path: root, reason: "missing" }` (an intermediate level that
+/// vanished under a present root names that level instead). A `dir` that is
+/// not a plain descendant of `root` is a caller bug and refused with prose.
+/// An existing level must be a directory; anything else in the way is an
+/// I/O error, as with `create_dir_all`.
+pub(crate) fn create_dirs_within(root: &Path, dir: &Path) -> Result<()> {
+    create_dirs_within_observed(root, dir, &mut |_level| {
+        #[cfg(test)]
+        test_hooks::before_bounded_mkdir(_level);
+    })
+}
+
+/// [`create_dirs_within`] with `before_mkdir` called just before each
+/// level's `mkdir` — the seam its tests use to make a root vanish exactly
+/// at creation time.
+fn create_dirs_within_observed(
+    root: &Path,
+    dir: &Path,
+    before_mkdir: &mut dyn FnMut(&Path),
+) -> Result<()> {
+    let relative = dir
+        .strip_prefix(root)
+        .map_err(|_| anyhow::anyhow!("refusing to create {:?} outside {:?}", dir, root))?;
+    if relative
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        anyhow::bail!("refusing to create {:?}: it escapes {:?}", dir, root);
+    }
+    let missing = |path: &Path| SignalError::InvalidPath {
+        path: path.to_string_lossy().into_owned(),
+        reason: "missing".to_string(),
+    };
+    if !root.is_dir() {
+        anyhow::bail!(missing(root));
+    }
+    let mut level = root.to_path_buf();
+    for component in relative.components() {
+        let parent = level.clone();
+        level.push(component);
+        before_mkdir(&level);
+        match std::fs::create_dir(&level) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists && level.is_dir() => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                anyhow::bail!(missing(if root.is_dir() { &parent } else { root }));
+            }
+            Err(err) => return Err(err).with_context(|| format!("create dir {:?}", level)),
+        }
+    }
+    Ok(())
+}
+
+/// Test-only hook into [`create_dirs_within`]: lets a test make a Project
+/// root disappear at the exact moment a sync creates a directory under it.
+#[cfg(test)]
+pub(crate) mod test_hooks {
+    use std::cell::RefCell;
+    use std::path::Path;
+
+    type Hook = Box<dyn FnMut(&Path)>;
+
+    thread_local! {
+        static BEFORE_BOUNDED_MKDIR: RefCell<Option<Hook>> = RefCell::new(None);
+    }
+
+    /// Installs `hook` on this thread until the returned guard drops.
+    pub(crate) fn before_bounded_mkdir_scoped(hook: impl FnMut(&Path) + 'static) -> HookGuard {
+        BEFORE_BOUNDED_MKDIR.with(|cell| *cell.borrow_mut() = Some(Box::new(hook)));
+        HookGuard
+    }
+
+    pub(super) fn before_bounded_mkdir(level: &Path) {
+        BEFORE_BOUNDED_MKDIR.with(|cell| {
+            if let Some(hook) = cell.borrow_mut().as_mut() {
+                hook(level);
+            }
+        });
+    }
+
+    pub(crate) struct HookGuard;
+
+    impl Drop for HookGuard {
+        fn drop(&mut self) {
+            BEFORE_BOUNDED_MKDIR.with(|cell| *cell.borrow_mut() = None);
+        }
+    }
 }
 
 pub(crate) fn remove_path_any(path: &Path) -> Result<()> {
@@ -274,6 +478,11 @@ fn should_skip_copy(entry: &walkdir::DirEntry) -> bool {
 /// Copy skill content without `.git` or internal symlinks. Internal links are
 /// neither preserved nor followed: they are not content, matching `hash_dir`.
 pub fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
+    copy_dir_with_parents(source, target, TargetParents::CreateMissing)
+}
+
+/// [`copy_dir_recursive`] creating every directory through `parents`.
+fn copy_dir_with_parents(source: &Path, target: &Path, parents: TargetParents<'_>) -> Result<()> {
     let profile = std::env::var("SKILLS_HUB_PROFILE_IO")
         .ok()
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -299,11 +508,10 @@ pub fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
         let target_path = target.join(relative);
 
         if entry.file_type().is_dir() {
-            std::fs::create_dir_all(&target_path)
-                .with_context(|| format!("create dir {:?}", target_path))?;
+            parents.create(&target_path)?;
         } else if entry.file_type().is_file() {
             if let Some(parent) = target_path.parent() {
-                std::fs::create_dir_all(parent)?;
+                parents.create(parent)?;
             }
             let bytes = std::fs::copy(entry.path(), &target_path)
                 .with_context(|| format!("copy file {:?} -> {:?}", entry.path(), target_path))?;

@@ -1,6 +1,6 @@
 # 17 — Projects: Tool labels, shape + word cell states + legend, keyboard listbox, header collapse, coexistence, Sync All skips missing folders, Assigned/Issues chips, `reconciled:false`
 
-Status: ready-for-agent
+Status: implemented
 Blocked by: 10, 13, 16
 Spec: `.scratch/round19/spec.md` — D17, D23, D26 (grill Q17, Q20, Q25). Sources: `flows.md` Flow 4; `critique-astra`
 F03, F04, F15; `critique-opus` P1-6; `audit.md` Projects rows (P0: pointer-only project selection).
@@ -266,3 +266,37 @@ through `keys-cdp.ts`; JSON transcripts, screenshots, `check.log`, `bindings.dif
   Claude Code"; per-frame focus samples show no BODY/MAIN frame; matrix axe 0 violations ×2. N1 (127-Tab walk) stays
   deferred to 19b per the orchestrator. Re-check focus: the reconciliation and the lifecycle's `returnLostFocus` /
   door `restoreFocus` (both keep non-lost focus).
+
+- 2026-10-01 — independent bounded re-check of `77a5d5e`: **FIX-THEN-PASS; A1 not closed, N2 closed.** Full report: `.scratch/round19/review/ticket-17-audit.md` § Re-check (2026-10-01); fresh evidence `evidence/17-recheck/`. All four original pre-missing-folder routes now skip without recreation; file/live-link/dangling-link, unchanged existing rows, cleanup, two-distinct-skill Enable dedupe, Keep, register/update refusal and global Enable checks pass. **Residual P1 A1:** a deterministic external move after the shared `is_dir` check but immediately before parent `mkdir` still recreates the old project root and target and reports Synced (two failing contract runs, `race-contract.log`). Project writes need root-bounded descendant creation, including copy fallback, not another preflight check; preserve global behavior. Question (a): unchanged disabled rows are acceptable under D8/D17/D26 and ADR-0002; Sync Project must not implicitly undo Disable/Keep, and recovery is a fresh Enable or uncheck/recheck (two cell toggles). Both themes pass picker refusal, late-folder named skip/unchanged rows/trigger focus, two-skill skip dedupe, every requested N2 next/previous/chip/search-focus case with no BODY/MAIN samples, normal keyboard gates (49/37 keys, 0/0/0 follow-up reads), and four axe runs with zero violations (matrix contrast incompletes retained). Version/full check, 996 frontend tests, 818 Rust tests, separate cargo --all and bindings drift all pass; bindings changes comments-only. N1 remains 19b. Orchestrator: commission the narrow race fix or explicitly accept/defer its residual risk; do not infer A1 closure from the green suite. No application source edited, no commit.
+
+- 2026-10-01 — audit A1 re-check residual fix (child, P1): **a project root that disappears between the last
+  presence check and directory creation is refused, never recreated.** Root cause: `sync_assignment_target`'s `is_dir`
+  was check-then-use; `sync_engine`'s `ensure_parent_dir` and the copy fallback (`create_dir_all`) then recreated
+  every missing ancestor, project root included, and the row settled Synced. Fix: an existing-root boundary *during
+  creation*. `sync_engine::create_dirs_within(root, dir)` requires `root` to be a directory (a link to one counts),
+  refuses a `dir` not a plain descendant, and creates each level below `root` with one non-recursive `mkdir`, so a
+  root gone at any moment makes the next `mkdir` fail → typed `InvalidPath { path: root, reason: "missing" }` (the
+  seam's existing answer; no new variant). The engine carries a private `TargetParents::{CreateMissing,
+  WithinRoot(root)}` through link and copy paths (target parents + the copy's own tree); the project seam calls the
+  new `sync_dir_for_tool_within_root(.., ctx.project_path)`; global sync, relocation and global Propagation keep
+  `sync_dir_for_tool_with_overwrite` (CreateMissing). Same helper bounds gitignore's `.git/info/` creation. The
+  refusal settles as today's sync failure: kept `error` row owning nothing, reported Failed, not Synced. The early
+  `is_dir` check stays as the clean pre-write answer. Files: `core/sync_engine.rs`, `core/project_sync.rs`,
+  `core/gitignore.rs`; tests in `core/tests/{sync_engine,project_sync,gitignore}.rs`. Tests (9 new, deterministic via
+  a `#[cfg(test)]` `sync_engine::test_hooks` hook fired before each bounded `mkdir`):
+  `a_project_root_that_vanishes_at_parent_creation_is_not_recreated` (symlink + copy-only Tool; Failed InvalidPath
+  root, row `error`, `synced_at` none), `create_dirs_within_{creates_descendants_under_a_present_root,
+  refuses_a_root_that_is_missing_or_a_file, refuses_a_path_outside_or_escaping_the_root,
+  never_recreates_a_root_that_vanishes_at_creation}`, `sync_within_root_links_under_a_present_root`,
+  `copy_within_root_never_recreates_a_root_that_vanishes_mid_copy`, `global_sync_still_creates_missing_parents`,
+  `exclude_dir_creation_never_recreates_a_vanished_project_root`. Mutation check: with the boundary arm swapped back
+  to `create_dir_all`, the project and copy regressions go red. Evidence `evidence/17-fix2/`: `race-contract.log`
+  (audit interposer, unchanged harness, 2 runs: barrier fires at `race-project/.claude`, `old_root_recreated=false
+  target_exists=false`, Failed InvalidPath missing, `CONTRACT_EXIT:0` ×2), `core-probe.log` (four routes unchanged,
+  folder_missing skips), `core-edges.log` (all PASS incl. symlinked root still Synced), `cargo-test-all.log`
+  (827 passed), `gate.log` (version OK 1.2.18; lint, styles 1108/36, vitest 46/996, build, fmt, clippy, Rust 827;
+  `GATE_EXIT:0`). Bindings unchanged (`git diff --stat src/bindings/index.ts` empty). The three public
+  `sync_dir_hybrid*` / `sync_dir_copy_with_overwrite` wrappers are now `#[cfg(test)]` (production reaches them only
+  through the tool-aware entries). No commit.
+
+- 2026-10-01 — **D31 gate passed** (orchestrator). Astra's re-check closed the four missing-folder routes, every edge case and N2, ruled the Enable-skip recovery acceptable (a skip must not undo a Disable/Keep; recovery is a fresh Enable or uncheck-then-recheck), and found one residual: a root moved between the last check and `create_dir_all` was still recreated. Fixed by a root-bounded, level-by-level directory creation on the project write seam and the copy fallback (`sync_engine::create_dirs_within`; global sync unchanged); the auditor's interposer harness now passes. Gate cargo 827 / vitest 996 / App.css 1108. Carried to 19b (ticket 23 Comments): N1 the matrix keyboard model, the open-menu axe `region` allowlist, R1 the anchor popover.

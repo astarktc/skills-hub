@@ -21,6 +21,7 @@ use specta::Type;
 use crate::core::errors::SignalError;
 use crate::core::mutation_guard;
 use crate::core::skill_store::SkillStore;
+use crate::core::sync_engine::create_dirs_within;
 use crate::core::tool_adapters::{adapter_by_key, ToolAdapter};
 
 /// Marker identifying the managed block. Any line containing this string
@@ -116,20 +117,18 @@ pub fn set_managed_block(content: &str, patterns: &[String]) -> String {
 
 /// Add (`enabled = true`, idempotent rewrite) or remove (`enabled = false`)
 /// the managed block in the ignore file at `path`. Writes only when the
-/// content actually changes. `create_parents` is for `.git/info/exclude`,
-/// whose directory may not exist yet.
+/// content actually changes. `create_parents_within` is for
+/// `.git/info/exclude`, whose directory may not exist yet: it is created
+/// only beneath that existing root (the project), never the root itself.
 fn apply_to_file(
     path: &Path,
     patterns: &[String],
     enabled: bool,
-    create_parents: bool,
+    create_parents_within: Option<&Path>,
 ) -> Result<()> {
     if enabled && !patterns.is_empty() {
-        if create_parents {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("failed to create {}", parent.display()))?;
-            }
+        if let (Some(root), Some(parent)) = (create_parents_within, path.parent()) {
+            create_dirs_within(root, parent)?;
         }
         let existing = if path.exists() {
             fs::read_to_string(path)
@@ -191,10 +190,10 @@ pub fn update_project_ignore_files(
         &project_path.join(".gitignore"),
         patterns,
         add_to_gitignore,
-        false,
+        None,
     )?;
     let exclude_path = project_path.join(".git").join("info").join("exclude");
-    apply_to_file(&exclude_path, patterns, add_to_exclude, true)?;
+    apply_to_file(&exclude_path, patterns, add_to_exclude, Some(project_path))?;
     Ok(())
 }
 

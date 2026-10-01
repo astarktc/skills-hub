@@ -112,8 +112,10 @@ pub(crate) fn sync_assignment_target(
     // The last line of defence for the project-root rule: every route above
     // (assign, toggle, Enable, collision retry, re-sync, Propagation) skips a
     // missing project as a whole before it reaches this seam, but nothing
-    // may ever materialise a target under a root that is not there —
-    // `sync_engine` creates parents, so it would recreate the project.
+    // may ever materialise a target under a root that is not there. This
+    // check answers a root already gone; one that disappears after it is
+    // refused by the write itself, which creates directories only beneath
+    // the existing root (`sync_dir_for_tool_within_root`) — never the root.
     if !project_ops::project_root_present(ctx.project_path) {
         anyhow::bail!(SignalError::InvalidPath {
             path: ctx.project_path.to_string_lossy().into_owned(),
@@ -135,12 +137,13 @@ pub(crate) fn sync_assignment_target(
         store: ctx.store,
         skill_id: &ctx.skill.id,
     };
-    let outcome = sync_engine::sync_dir_for_tool_with_overwrite(
+    let outcome = sync_engine::sync_dir_for_tool_within_root(
         ctx.adapter,
         source,
         identity,
         &target,
         ctx.overwrite,
+        ctx.project_path,
     )?;
 
     let hash = if outcome.mode_used.can_drift() {

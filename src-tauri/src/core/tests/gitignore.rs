@@ -487,3 +487,38 @@ fn project_update_rejects_a_project_whose_directory_is_gone() {
         "nothing is created for a missing project dir"
     );
 }
+
+/// `.git/info/` is created only beneath the existing project root: a root
+/// that disappears just before that creation is refused (typed
+/// `InvalidPath missing`), never recreated with an exclude file inside.
+#[test]
+fn exclude_dir_creation_never_recreates_a_vanished_project_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("project");
+    let moved = tmp.path().join("project-moved");
+    fs::create_dir(&root).unwrap();
+    let patterns = vec![".claude/skills/".to_string()];
+
+    let _hook = crate::core::sync_engine::test_hooks::before_bounded_mkdir_scoped({
+        let (root, moved) = (root.clone(), moved.clone());
+        let mut fired = false;
+        move |_level| {
+            if !fired {
+                fired = true;
+                fs::rename(&root, &moved).unwrap();
+            }
+        }
+    });
+    let err = update_project_ignore_files(&root, &patterns, false, true).unwrap_err();
+
+    assert!(
+        err.chain().any(|cause| matches!(
+            cause.downcast_ref::<crate::core::errors::SignalError>(),
+            Some(crate::core::errors::SignalError::InvalidPath { reason, .. }) if reason == "missing"
+        )),
+        "{err:#}"
+    );
+    assert!(moved.is_dir());
+    assert!(!root.exists(), "the old root is not recreated");
+    assert!(!moved.join(".git").exists());
+}
