@@ -89,8 +89,15 @@ fn project_dto_from_parts(record: &ProjectRecord, aggregate: ProjectAggregate) -
         skill_count: aggregate.skill_count,
         assignment_count: aggregate.assignment_count,
         sync_status: aggregate.sync_status,
-        path_exists: std::path::Path::new(&record.path).is_dir(),
+        path_exists: project_folder_exists(record),
     }
+}
+
+/// Whether a project's folder is there — the one rule behind the row's
+/// `path_exists` and a re-sync's "folder not found" skip, so the list and
+/// the report never disagree.
+pub(crate) fn project_folder_exists(record: &ProjectRecord) -> bool {
+    std::path::Path::new(&record.path).is_dir()
 }
 
 /// A project's configured Tools as wire rows.

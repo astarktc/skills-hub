@@ -63,6 +63,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::projects::get_project_view,
             commands::projects::toggle_project_skill_assignment,
             commands::projects::resync_project,
+            commands::projects::resync_project_assignment,
             commands::projects::resync_all_projects,
             commands::projects::resolve_project_collisions,
             commands::projects::bulk_assign_skill,

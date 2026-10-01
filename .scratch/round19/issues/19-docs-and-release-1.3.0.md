@@ -31,3 +31,14 @@ Spec: `.scratch/round19/spec.md` — D31, D32; § Closure checklist (19a).
 ## Result
 
 (child fills in; the orchestrator adds the smoke outcome)
+
+## Comments
+
+- 2026-10-01 — from ticket 17 (CHANGELOG / README inputs): **Sync All skips a project whose folder is missing** —
+  one line "archived-app: folder not found — Update path or Remove" instead of a failure per assignment, and it no
+  longer recreates the missing folder's Tool dirs (it used to: `sync_engine` creates parents). New per-cell **Sync
+  this** (`resync_project_assignment`) for stale / missing / failed assignments. The Projects surface: keyboard project
+  selection, Tool labels + "not detected" in the matrix, cell states as mark + word (legend), "also global" cells
+  enabled (D17), Assigned · Issues chips, a header select below 1200 px, a "statuses may be out of date — Refresh view"
+  line, Remove project closes with a kept copy shown as a failed cell (ADR-0002). Project batch toasts read as the count
+  line; a disabled skip now tones a project re-sync "skipped" (was success).

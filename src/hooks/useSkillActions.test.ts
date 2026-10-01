@@ -99,7 +99,7 @@ const EMPTY_REMOVAL: RemovalReport = {
   record_deleted: false,
   cleared_markers: [],
 };
-const EMPTY_ENABLE: EnableReport = { global: [], projects: { items: [] } };
+const EMPTY_ENABLE: EnableReport = { global: [], projects: { skipped_projects: [], items: [] } };
 const EMPTY_SYNC: BatchTargetOutcome[] = [];
 
 function setup(options: { skills?: ManagedSkill[]; sharedDir?: boolean; effective?: string[] } = {}) {
@@ -153,7 +153,7 @@ function setup(options: { skills?: ManagedSkill[]; sharedDir?: boolean; effectiv
     })) as unknown as SyncOrchestration["settleCollisionParts"],
   };
   const projects = {
-    assignToProject: vi.fn(async () => ({ items: [] })),
+    assignToProject: vi.fn(async () => ({ items: [], skipped_projects: [] })),
     unassignFromProject: vi.fn(async () => EMPTY_REMOVAL),
     refreshView: vi.fn(async () => true),
   };
@@ -915,7 +915,7 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
       backend(skills, {
         [command]: [{ report: refreshedWith([occupiedTarget("cursor"), occupiedTarget("claude", "p1")]), skills }],
         syncSkillsToTools: [[done("s1", "cursor")]],
-        resolveProjectCollisions: [{ items: [{ assignment_id: "a1", project_id: "p1", skill_id: "s1", skill_name: "alpha", tool: "claude", status: { status: "synced" } }] }],
+        resolveProjectCollisions: [{ skipped_projects: [], items: [{ assignment_id: "a1", project_id: "p1", skill_id: "s1", skill_name: "alpha", tool: "claude", status: { status: "synced" } }] }],
       });
       const rendered = renderReal();
       await ready(rendered, skills);
@@ -1000,8 +1000,8 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     const skills = [a, b];
     backend(skills, {
       enableSkillTargets: [
-        { global: [collided("s1", "claude")], projects: { items: [] } },
-        { global: [done("s1", "claude")], projects: { items: [] } },
+        { global: [collided("s1", "claude")], projects: { skipped_projects: [], items: [] } },
+        { global: [done("s1", "claude")], projects: { skipped_projects: [], items: [] } },
       ],
       syncSkillsToTools: [
         [done("s2", "claude"), collided("s2", "cursor")],
@@ -1072,7 +1072,7 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     /** Enable \u2192 the ask \u2192 dismissed; the report's row, and the panel's action for it. */
     async function dismissedEnable(enables: unknown[]) {
       const catalog = { current: [before()] as ManagedSkill[] };
-      backendNow(catalog, [{ global: [collided("s1", "claude")], projects: { items: [] } }, ...enables]);
+      backendNow(catalog, [{ global: [collided("s1", "claude")], projects: { skipped_projects: [], items: [] } }, ...enables]);
       const rendered = renderReal();
       await ready(rendered, catalog.current);
       // The backend keeps the pair disabled (a marker owning nothing) and turns the skill on.
@@ -1094,8 +1094,8 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
 
     it("Overwrite: one ask, then the pair's Enable with the overwrite answer \u2014 never an ordinary sync", async () => {
       const { rendered } = await dismissedEnable([
-        { global: [collided("s1", "claude")], projects: { items: [] } },
-        { global: [done("s1", "claude")], projects: { items: [] } },
+        { global: [collided("s1", "claude")], projects: { skipped_projects: [], items: [] } },
+        { global: [done("s1", "claude")], projects: { skipped_projects: [], items: [] } },
       ]);
       const asked = await drive(rendered, overwriteFromPanel(rendered), "confirmed");
       expect(asked).toEqual([["global:s1:claude"]]);
@@ -1111,8 +1111,8 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
 
     it("Keep existing: the pair's Enable with a keep answer \u2014 the pair stays disabled, reported declined", async () => {
       const { rendered } = await dismissedEnable([
-        { global: [collided("s1", "claude")], projects: { items: [] } },
-        { global: [pair("s1", "claude", { status: "declined" })], projects: { items: [] } },
+        { global: [collided("s1", "claude")], projects: { skipped_projects: [], items: [] } },
+        { global: [pair("s1", "claude", { status: "declined" })], projects: { skipped_projects: [], items: [] } },
       ]);
       const asked = await drive(rendered, overwriteFromPanel(rendered), "declined");
       expect(asked).toHaveLength(1);
@@ -1123,7 +1123,7 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     });
 
     it("dismissed again: nothing retried, the collision is to review once more", async () => {
-      const { rendered } = await dismissedEnable([{ global: [collided("s1", "claude")], projects: { items: [] } }]);
+      const { rendered } = await dismissedEnable([{ global: [collided("s1", "claude")], projects: { skipped_projects: [], items: [] } }]);
       const asked = await drive(rendered, overwriteFromPanel(rendered), "dismiss");
       expect(asked).toHaveLength(1);
       expect(calls("enableSkillTargets")).toEqual([["enableSkillTargets", PAIR, []]]);

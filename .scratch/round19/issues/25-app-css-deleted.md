@@ -22,3 +22,12 @@ Spec: `.scratch/round19/spec.md` — D32; ADR-0006 §5–§6. Phase 19b closure.
 ## Result
 
 (child fills in)
+
+## Comments
+
+- 2026-10-01 — from ticket 17: App.css is at **1108** counted lines (raw 1297). Projects took `matrix-*`, `project-*`,
+  `projects-*`, the `form` family except `.helper-text` (still `InvocationModeModal`), `delete-*`, `.btn-danger-solid`,
+  `.btn-xs`, `gitignore-*`, `.cell-*`, `.skeleton-row` + the `shimmer` keyframes, `group-by-repo-*`, `.sort-*`. A scan
+  for App.css classes no `src/` file references found many already-dead rules outside this ticket (`explore-*` list
+  rules, `modal-*`, `settings-*` list rules, `alert-*`, `brand-subtitle`, `btn-danger`, `btn-full`, `card-btn`,
+  `icon-btn`, `space-between`, `status-row`, `update-modal-close`) — deletable with no migration.

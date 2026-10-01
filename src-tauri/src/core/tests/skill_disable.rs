@@ -683,7 +683,7 @@ fn scope_and_skip_reasons_cross_the_wire_as_themselves() {
     );
     assert_eq!(
         serde_json::to_value(EnableReport::default()).unwrap(),
-        serde_json::json!({ "global": [], "projects": { "items": [] } })
+        serde_json::json!({ "global": [], "projects": { "items": [], "skipped_projects": [] } })
     );
 }
 

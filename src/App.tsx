@@ -569,7 +569,12 @@ function App() {
     addFlow.add.open ||
     (addFlow.showImportModal && addFlow.plan !== null) ||
     surface.isOpen("notifications") ||
-    (library.pendingRepointSkill !== null && library.repointSelection !== null);
+    (library.pendingRepointSkill !== null && library.repointSelection !== null) ||
+    (area === "projects" &&
+      (surface.isOpen("projectAdd") ||
+        surface.isOpen("projectEdit") ||
+        surface.isOpen("projectToolConfig") ||
+        surface.isOpen("projectRemove")));
   // The panel's catalog: a row's skill actions exist only while its skill does.
   const skillNames = useMemo(
     () => Object.fromEntries(library.managedSkills.map((skill) => [skill.id, skill.name])),
@@ -736,8 +741,10 @@ function App() {
             state={projects}
             skills={library.managedSkills}
             catalog={catalog}
+            actions={actions}
             surface={surface}
             pending={pending}
+            dialogProgress={dialogProgress}
             runAction={runAction}
             applyOutcome={applyOutcome}
             notify={notify}

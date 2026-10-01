@@ -767,7 +767,7 @@ export function useSkillActions({
           const {
             parts: [enablePart, syncPart],
           } = await settleParts(action, [
-            { kind: "enable", report: enabled ?? { global: [], projects: { items: [] } }, scope },
+            { kind: "enable", report: enabled ?? { global: [], projects: { items: [], skipped_projects: [] } }, scope },
             { kind: "sync", report: synced, skills: items, policy: SYNC_POLICY },
           ] as const);
           // One composite count line over both parts ("1 synced · 1 enabled"), toned

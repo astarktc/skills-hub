@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -64,6 +64,8 @@ type ToolConfigModalProps = {
     scanSelectedOnly?: boolean,
   ) => Promise<void>;
   onRequestClose: () => void;
+  /** The header progress at the dialog's foot while its own save runs. */
+  progress?: ReactNode;
   t: TFunction;
 };
 
@@ -76,6 +78,7 @@ const ToolConfigModalInner = ({
   labels,
   onConfirm,
   onRequestClose,
+  progress,
   t,
 }: Omit<ToolConfigModalProps, "open">) => {
   const [selectedTools, setSelectedTools] = useState<Set<string>>(() =>
@@ -188,6 +191,7 @@ const ToolConfigModalInner = ({
             {labels.confirmLabel}
           </Button>
         </DialogFooter>
+        {progress}
       </DialogContent>
     </Dialog>
   );

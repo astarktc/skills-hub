@@ -276,6 +276,31 @@ pub async fn resync_project(
     .map_err(CommandError::from_anyhow)
 }
 
+/// A matrix cell's **Sync this**: re-sync one assignment (a stale copy, a
+/// missing artifact, a failed sync) and answer the project's fresh view.
+#[tauri::command]
+#[specta::specta]
+#[allow(non_snake_case)]
+pub async fn resync_project_assignment(
+    store: State<'_, SkillStore>,
+    projectId: String,
+    skillId: String,
+    tool: String,
+) -> Result<ResyncProjectResultDto, CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let report =
+            project_sync::resync_assignment(&store, &projectId, &skillId, &tool, now_ms())?;
+        Ok::<_, anyhow::Error>(ResyncProjectResultDto {
+            view: view_of(&store, &projectId)?,
+            report,
+        })
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
 /// One report spanning every project plus the refreshed project list. A
 /// single project's assignments are not returned here — the caller re-reads
 /// the view of whichever project it is showing.

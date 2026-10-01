@@ -575,15 +575,22 @@ describe("removalOutcome", () => {
         { title: t(key, { tool: "unknown" }), message: t("errors.pathOutsideToolDirs", { path: "/kept" }) },
         { title: t(key, { tool: "pi" }), message: "busy" },
       ]);
-      expect(out.completion.closeModal).toBe(false);
+      // A project removal closes either way: the kept row shows in the matrix.
+      expect(out.completion.closeModal).toBe(out === project);
     }
     expect(unsync.toast).toEqual({
       kind: "warning",
       tone: "failure",
       message: [t("outcome.done.disabled", { count: 2 }), t("outcome.failed", { count: 3 })].join(" · "),
     });
-    expect(project.toast).toEqual({ kind: "warning", tone: "failure", message: t("projects.removeKept", { count: 2, failed: 3 }) });
-    expect(configure.toast).toEqual({ kind: "warning", tone: "failure", message: t("projects.toolRemovalKept", { count: 2, failed: 3 }) });
+    expect(project.toast).toEqual({
+      kind: "warning", tone: "failure",
+      message: [t("projectsSurface.removeKept"), t("outcome.done.removed", { count: 2 }), t("outcome.failed", { count: 3 })].join(" · "),
+    });
+    expect(configure.toast).toEqual({
+      kind: "warning", tone: "failure",
+      message: [t("outcome.done.removed", { count: 2 }), t("outcome.failed", { count: 3 })].join(" · "),
+    });
     expect(deleted.toast).toEqual({ kind: "warning", tone: "failure", message: t("status.skillDeleteKept", { failed: 3 }) });
     expect(deleted.completion).toEqual({ reload: true, closeModal: false, conflict: false });
     expect(JSON.stringify(report)).toBe(before);
@@ -663,7 +670,7 @@ describe("removalOutcome", () => {
       record_deleted: false, cleared_markers: [],
     };
     expect(removalOutcome(report, { ...ctx, action: "bulkUnassign" })).toEqual({
-      toast: { kind: "success", tone: "success", message: t("projects.bulkUnassignSuccess", { count: 2 }) },
+      toast: { kind: "success", tone: "success", message: t("projectsSurface.done.unassigned", { count: 2 }) },
       errors: [],
       warnings: [],
       notes: [],
@@ -682,7 +689,7 @@ describe("removalOutcome", () => {
     expect(plain(removalOutcome(kept, { ...ctx, action: "bulkUnassign" }))).toEqual({
       toast: {
         kind: "warning", tone: "failure",
-        message: t("projects.bulkUnassignPartial", { count: 1, failed: 1 }),
+        message: [t("projectsSurface.done.unassigned", { count: 1 }), t("outcome.failed", { count: 1 })].join(" · "),
       },
       errors: [{ title: t("errors.unsyncFailedTitle", { tool: "pi" }), message: "busy" }],
       warnings: [],
@@ -690,7 +697,7 @@ describe("removalOutcome", () => {
       completion: { reload: false, closeModal: false, conflict: false },
     });
   });
-  it("a project removal reports each kept target and keeps its modal open", () => {
+  it("a project removal reports each kept target and closes (the kept row shows in the matrix); a tool configuration stays open", () => {
     const report: RemovalReport = {
       targets: [
         {
@@ -711,14 +718,17 @@ describe("removalOutcome", () => {
       { title: t("errors.projectRemovalFailedTitle", { tool: "pi" }), message: "denied" },
     ];
     expect(plain(projectRemovalOutcome(report, { ...ctx, action: "removeProject" }))).toEqual({
-      toast: { kind: "warning", tone: "failure", message: t("projects.removeKept", { count: 1, failed: 1 }) },
+      toast: {
+        kind: "warning", tone: "failure",
+        message: [t("projectsSurface.removeKept"), t("outcome.done.removed", { count: 1 }), t("outcome.failed", { count: 1 })].join(" · "),
+      },
       errors: kept,
       warnings: [],
       notes: [],
-      completion: { reload: false, closeModal: false, conflict: false },
+      completion: { reload: false, closeModal: true, conflict: false },
     });
     expect(plain(projectRemovalOutcome(report, { ...ctx, action: "configureTools" }))).toEqual({
-      toast: { kind: "warning", tone: "failure", message: t("projects.toolRemovalKept", { count: 1, failed: 1 }) },
+      toast: { kind: "warning", tone: "failure", message: [t("outcome.done.removed", { count: 1 }), t("outcome.failed", { count: 1 })].join(" · ") },
       errors: kept,
       warnings: [],
       notes: [],
@@ -816,7 +826,7 @@ describe("projectSyncOutcome", () => {
   const actions = ["toggleOn", "bulkAssign", "resync", "resyncAll"] as const;
 
   it("names every failed row by skill and tool label with the typed error copy, in report order", () => {
-    const report: ProjectSyncReport = {
+    const report: ProjectSyncReport = { skipped_projects: [],
       items: [
         projectItem("claude", { status: "synced" }),
         projectItem("claude", denied, "s2"),
@@ -851,7 +861,7 @@ describe("projectSyncOutcome", () => {
   });
 
   it("resync-all names the project by its label when one is supplied", () => {
-    const report: ProjectSyncReport = { items: [projectItem("claude", denied)] };
+    const report: ProjectSyncReport = { skipped_projects: [], items: [projectItem("claude", denied)] };
     const out = projectSyncOutcome(report, {
       ...ctx,
       action: "resyncAll",
@@ -867,7 +877,7 @@ describe("projectSyncOutcome", () => {
   });
 
   it("derives the counters per action: failure outranks success", () => {
-    const mixed: ProjectSyncReport = {
+    const mixed: ProjectSyncReport = { skipped_projects: [],
       items: [
         projectItem("claude", { status: "synced" }),
         projectItem("pi", { status: "synced" }),
@@ -883,21 +893,21 @@ describe("projectSyncOutcome", () => {
       toggleOn: null,
       bulkAssign: {
         kind: "warning", tone: "failure",
-        message: t("projects.bulkAssignPartial", { assigned: 2, failed: 1 }),
+        message: [t("outcome.done.assigned", { count: 2 }), t("outcome.failed", { count: 1 })].join(" · "),
       },
       resync: {
         kind: "warning", tone: "failure",
-        message: t("projects.resyncPartial", { synced: 2, failed: 1 }),
+        message: [t("outcome.done.synced", { count: 2 }), t("outcome.failed", { count: 1 })].join(" · "),
       },
       resyncAll: {
         kind: "warning", tone: "failure",
-        message: t("projects.resyncAllPartial", { synced: 2, failed: 1 }),
+        message: [t("outcome.done.synced", { count: 2 }), t("outcome.failed", { count: 1 })].join(" · "),
       },
     });
   });
 
   it("a clean report succeeds with per-action copy and closes", () => {
-    const clean: ProjectSyncReport = {
+    const clean: ProjectSyncReport = { skipped_projects: [],
       items: [
         projectItem("claude", { status: "synced" }),
         projectItem("pi", { status: "already_assigned" }),
@@ -909,15 +919,15 @@ describe("projectSyncOutcome", () => {
     expect(outs.toggleOn.toast).toEqual({ kind: "success", tone: "success", message: "status.syncEnabled" });
     expect(outs.bulkAssign.toast).toEqual({
       kind: "success", tone: "success",
-      message: t("projects.bulkAssignSuccess", { count: 1 }),
+      message: t("outcome.done.assigned", { count: 1 }),
     });
     expect(outs.resync.toast).toEqual({
       kind: "success", tone: "success",
-      message: t("projects.resyncSuccess", { synced: 1 }),
+      message: t("outcome.done.synced", { count: 1 }),
     });
     expect(outs.resyncAll.toast).toEqual({
       kind: "success", tone: "success",
-      message: t("projects.resyncAllSuccess", { synced: 1 }),
+      message: t("outcome.done.synced", { count: 1 }),
     });
     for (const out of Object.values(outs)) {
       expect(words(out.errors)).toEqual([]);
@@ -926,27 +936,50 @@ describe("projectSyncOutcome", () => {
   });
 
   it("a saturated bulk assign says so instead of counting zero; an empty resync still reports", () => {
-    const saturated: ProjectSyncReport = {
+    const saturated: ProjectSyncReport = { skipped_projects: [],
       items: [projectItem("claude", { status: "already_assigned" })],
     };
     expect(projectSyncOutcome(saturated, { ...ctx, action: "bulkAssign" }).toast).toEqual({
       kind: "success", tone: "success",
       message: "projects.bulkAssignNothing",
     });
-    expect(projectSyncOutcome({ items: [] }, { ...ctx, action: "resync" }).toast).toEqual({
+    expect(projectSyncOutcome({ skipped_projects: [], items: [] }, { ...ctx, action: "resync" }).toast).toEqual({
       kind: "success", tone: "success",
-      message: t("projects.resyncSuccess", { synced: 0 }),
+      message: t("outcome.done.synced", { count: 0 }),
     });
   });
 
+  it("Sync All skips a project whose folder is missing with one line, never a failure per assignment", () => {
+    const report: ProjectSyncReport = {
+      items: [projectItem("claude", { status: "synced" }), projectItem("pi", { status: "synced" })],
+      skipped_projects: [{ project_id: "p2", reason: { reason: "folder_missing" } }],
+    };
+    const out = projectSyncOutcome(report, { ...ctx, action: "resyncAll", projectLabelById: { p2: "archived-app" } });
+    expect(words(out.errors)).toEqual([]);
+    expect(words(out.warnings)).toEqual([
+      { title: t("projectsSurface.folderMissingSkip", { project: "archived-app" }), message: "projectsSurface.folderMissingDetail" },
+    ]);
+    // The panel does not prefix "in archived-app:" again — the line names it.
+    expect(out.warnings[0].subject).toEqual({ skillName: "", projectId: "p2", projectInTitle: true });
+    expect(out.toast).toEqual({
+      kind: "warning", tone: "skipped",
+      message: [t("outcome.done.synced", { count: 2 }), t("outcome.skipped", { count: 1 })].join(" · "),
+    });
+    expect(out.completion).toEqual({ reload: false, closeModal: true, conflict: false });
+    expect(resources.en.translation.projectsSurface.folderMissingSkip).toBe(
+      "{{project}}: folder not found \u2014 Update path or Remove",
+    );
+  });
+
+  it("a cell's Sync this confirms a batch of one; its failure is the error entry alone", () => {
+    const ok = projectSyncOutcome({ skipped_projects: [], items: [projectItem("claude", { status: "synced" })] }, { ...ctx, action: "syncCell" });
+    expect(ok.toast).toEqual({ kind: "success", tone: "success", message: "projectsSurface.cellSynced" });
+    const failed = projectSyncOutcome({ skipped_projects: [], items: [projectItem("claude", denied)] }, { ...ctx, action: "syncCell" });
+    expect(failed.toast).toBeNull();
+    expect(words(failed.errors)).toEqual([{ title: t("errors.syncFailedTitle", { name: "s1-name", tool: "CLAUDE" }), message: "denied" }]);
+  });
+
   it("carries the new copy", () => {
-    const en = resources.en.translation.projects;
-    expect(en.bulkAssignSuccess_other).toContain("{{count}}");
-    expect(en.bulkUnassignSuccess_other).toContain("{{count}}");
-    expect(en.bulkUnassignPartial).toContain("{{failed}}");
-    expect(en.resyncAllPartial).toContain("{{failed}}");
-    expect(en.resyncAllSuccess).toContain("{{synced}}");
-    expect(en.bulkAssignSuccess_one).toBe("Assigned to {{count}} tool");
     expect(resources.en.translation.localSkillInvalid.insideToolDir).toBe(
       "This folder is a Tool's own skills copy — use Import instead",
     );
@@ -1112,7 +1145,7 @@ describe("syncOutcome", () => {
       expect(out.completion).toEqual({ reload: true, closeModal: true, conflict: false });
     });
     it("an Enable's collision keeps its route: Overwrite… answers it by Enable, not an ordinary sync (ticket 14 audit A3)", () => {
-      const out = enableOutcome({ global: [unanswered("failed")], projects: { items: [] } }, ctx);
+      const out = enableOutcome({ global: [unanswered("failed")], projects: { skipped_projects: [], items: [] } }, ctx);
       expect(out.errors).toEqual([]);
       expect(out.warnings).toMatchObject([{ review: true, repair: { verb: "overwrite", tool: "claude", via: "enable" } }]);
     });
@@ -1146,7 +1179,7 @@ describe("syncOutcome", () => {
       });
     });
     it("a project assignment collision is to review and names the project in its subject", () => {
-      const report: ProjectSyncReport = {
+      const report: ProjectSyncReport = { skipped_projects: [],
         items: [
           { assignment_id: "a1", project_id: "p1", skill_id: "s1", skill_name: "tdd", tool: "claude", status: { status: "failed", error: exists } },
         ],
@@ -1700,9 +1733,9 @@ describe("Disabled is a skip in every fold", () => {
       { skill_id: "s1", skill_name: "alpha", propagation: { targets: disabledPropagation } },
       ctx,
     )],
-    ["enable", () => enableOutcome({ global: [disabledTarget], projects: { items: [] } }, ctx)],
+    ["enable", () => enableOutcome({ global: [disabledTarget], projects: { skipped_projects: [], items: [] } }, ctx)],
     ["project resync", () => projectSyncOutcome(
-      { items: [projectItem("claude", { status: "skipped", reason: { reason: "disabled" } })] },
+      { skipped_projects: [], items: [projectItem("claude", { status: "skipped", reason: { reason: "disabled" } })] },
       { ...ctx, action: "resync" },
     )],
   ];
@@ -1725,40 +1758,44 @@ describe("projectSyncOutcome counts disabled skips", () => {
   const skip = { status: "skipped", reason: { reason: "disabled" } } as const;
   it("an all-skipped bulk assign says assigned-not-synced, never 'already assigned'", () => {
     const out = projectSyncOutcome(
-      { items: [projectItem("claude", skip), projectItem("pi", skip)] },
+      { skipped_projects: [], items: [projectItem("claude", skip), projectItem("pi", skip)] },
       { ...ctx, action: "bulkAssign" },
     );
+    // The count line, with why nothing synced as its detail.
     expect(out.toast).toEqual({
       kind: "warning", tone: "skipped",
-      message: t("disabledSkips.bulkAssignNotSynced", { count: 2 }),
+      message: t("outcome.skipped", { count: 2 }),
+      detail: "projectsSurface.syncedWhileDisabled",
     });
     expect(words(out.errors)).toEqual([]);
     expect(out.completion.closeModal).toBe(true);
   });
   it("mixed synced/skipped and synced/skipped/failed bulk assigns carry every count", () => {
-    const mixed = { items: [projectItem("claude", { status: "synced" }), projectItem("pi", skip)] };
+    const mixed = { skipped_projects: [], items: [projectItem("claude", { status: "synced" }), projectItem("pi", skip)] };
     expect(projectSyncOutcome(mixed, { ...ctx, action: "bulkAssign" }).toast).toEqual({
       kind: "warning", tone: "skipped",
-      message: t("disabledSkips.bulkAssignMixed", { assigned: 1, skipped: 1 }),
+      message: [t("outcome.done.assigned", { count: 1 }), t("outcome.skipped", { count: 1 })].join(" · "),
+      detail: "projectsSurface.syncedWhileDisabled",
     });
-    const partial = { items: [...mixed.items, projectItem("codex", denied)] };
+    const partial = { skipped_projects: [], items: [...mixed.items, projectItem("codex", denied)] };
     const out = projectSyncOutcome(partial, { ...ctx, action: "bulkAssign" });
     expect(out.toast).toEqual({
       kind: "warning", tone: "failure",
-      message: t("disabledSkips.bulkAssignPartial", { assigned: 1, failed: 1, skipped: 1 }),
+      message: [t("outcome.done.assigned", { count: 1 }), t("outcome.failed", { count: 1 }), t("outcome.skipped", { count: 1 })].join(" · "),
+      detail: "projectsSurface.syncedWhileDisabled",
     });
     expect(out.errors).toHaveLength(1);
   });
-  it("resync summaries include the skipped count", () => {
-    const report = { items: [projectItem("claude", { status: "synced" }), projectItem("pi", skip)] };
+  it("resync summaries include the skipped count (D10: a skip tones the count line skipped)", () => {
+    const report = { skipped_projects: [], items: [projectItem("claude", { status: "synced" }), projectItem("pi", skip)] };
     expect(projectSyncOutcome(report, { ...ctx, action: "resync" }).toast).toEqual({
-      kind: "success", tone: "success",
-      message: t("disabledSkips.resyncSuccess", { synced: 1, skipped: 1 }),
+      kind: "warning", tone: "skipped",
+      message: [t("outcome.done.synced", { count: 1 }), t("outcome.skipped", { count: 1 })].join(" · "),
     });
-    const partial = { items: [...report.items, projectItem("codex", denied)] };
+    const partial = { skipped_projects: [], items: [...report.items, projectItem("codex", denied)] };
     expect(projectSyncOutcome(partial, { ...ctx, action: "resyncAll" }).toast).toEqual({
       kind: "warning", tone: "failure",
-      message: t("disabledSkips.resyncAllPartial", { synced: 1, failed: 1, skipped: 1 }),
+      message: [t("outcome.done.synced", { count: 1 }), t("outcome.failed", { count: 1 }), t("outcome.skipped", { count: 1 })].join(" · "),
     });
   });
 });
@@ -1789,7 +1826,7 @@ describe("removalOutcome with cleared markers", () => {
       cleared_markers: [marker("claude"), marker("pi")],
     };
     expect(removalOutcome(report, { ...ctx, action: "bulkUnassign" })).toEqual({
-      toast: { kind: "success", tone: "success", message: t("projects.bulkUnassignSuccess", { count: 2 }) },
+      toast: { kind: "success", tone: "success", message: t("projectsSurface.done.unassigned", { count: 2 }) },
       errors: [],
       warnings: [],
       notes: [],
@@ -1811,7 +1848,7 @@ describe("removalOutcome with cleared markers", () => {
     };
     expect(removalOutcome(report, { ...ctx, action: "bulkUnassign" }).toast).toEqual({
       kind: "success", tone: "success",
-      message: t("projects.bulkUnassignSuccess", { count: 2 }),
+      message: t("projectsSurface.done.unassigned", { count: 2 }),
     });
   });
 });
@@ -1844,7 +1881,7 @@ describe("ticket 04: the install batch report and the project Keep", () => {
 
   it("a declined project assignment is a quiet note, never a failure", () => {
     const out = projectSyncOutcome(
-      {
+      { skipped_projects: [],
         items: [
           { assignment_id: "x", project_id: "p", skill_id: "a", skill_name: "alpha", tool: "claude_code", status: { status: "declined" } },
         ],
@@ -1980,7 +2017,7 @@ describe("combineOutcomes (one action, several reports, one run)", () => {
       const out = combineOutcomes(
         [
           syncOutcome(fresh, { ...ctx, action: "bulk" }),
-          enableOutcome({ global: [target(enabledName, "cursor", status)], projects: { items: [] } }, ctx),
+          enableOutcome({ global: [target(enabledName, "cursor", status)], projects: { skipped_projects: [], items: [] } }, ctx),
         ],
         ctx,
       );
@@ -2000,7 +2037,7 @@ describe("combineOutcomes (one action, several reports, one run)", () => {
         enableOutcome(
           {
             global: [target(enabledName, "claude", synced)],
-            projects: { items: [projectItem("claude", { status: "declined" })] },
+            projects: { skipped_projects: [], items: [projectItem("claude", { status: "declined" })] },
           },
           ctx,
         ),
@@ -2131,7 +2168,7 @@ describe("Enable over several skills (ticket 13)", () => {
       global: [
         { skill_id: "a", skill_name: "alpha", tool_key: "claude", status: { status: "synced", outcome: { mode_used: "symlink", target_path: "/x", replaced: false } } },
       ],
-      projects: { items: [] },
+      projects: { skipped_projects: [], items: [] },
     };
     const single = enableOutcome(report, ctx);
     expect(single.toast?.message).toBe("status.targetsEnabled");

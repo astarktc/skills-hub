@@ -867,12 +867,12 @@ describe("the one overwrite ask across producers (ticket 04)", () => {
   });
 
   it("a project report's collisions are asked and resolved by resolveProjectCollisions", async () => {
-    backend({ resolveProjectCollisions: [{ items: [projectItem({ status: "declined" })] }] });
+    backend({ resolveProjectCollisions: [{ skipped_projects: [], items: [projectItem({ status: "declined" })] }] });
     const { result } = renderSync();
     await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
     let done!: ReturnType<typeof result.current.settleProjectCollisions>;
     act(() => {
-      done = result.current.settleProjectCollisions({ items: [projectCollision] });
+      done = result.current.settleProjectCollisions({ skipped_projects: [], items: [projectCollision] });
     });
     await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
     expect(result.current.overwritePending!.rows).toEqual([
@@ -894,7 +894,7 @@ describe("the one overwrite ask across producers (ticket 04)", () => {
     expect(calls("resolveProjectCollisions")).toEqual([
       ["resolveProjectCollisions", [{ project_id: "p1", skill_id: "s1", tool: "claude", decision: "keep" }]],
     ]);
-    expect(settled).toEqual({ report: { items: [projectItem({ status: "declined" })] }, resolved: true });
+    expect(settled).toEqual({ report: { skipped_projects: [], items: [projectItem({ status: "declined" })] }, resolved: true });
   });
 
   it("a dismissed project ask resolves nothing", async () => {
@@ -903,7 +903,7 @@ describe("the one overwrite ask across producers (ticket 04)", () => {
     await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
     let done!: ReturnType<typeof result.current.settleProjectCollisions>;
     act(() => {
-      done = result.current.settleProjectCollisions({ items: [projectCollision] });
+      done = result.current.settleProjectCollisions({ skipped_projects: [], items: [projectCollision] });
     });
     await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
     let settled!: Awaited<typeof done>;
@@ -919,10 +919,10 @@ describe("the one overwrite ask across producers (ticket 04)", () => {
     const scope = { kind: "skill", skill_id: "s1" } as const;
     backend({
       enableSkillTargets: [
-        { global: [globalRow("s1", "claude", true), globalRow("s1", "pi", false)], projects: { items: [projectCollision] } },
-        { global: [globalRow("s1", "claude", false)], projects: { items: [] } },
+        { global: [globalRow("s1", "claude", true), globalRow("s1", "pi", false)], projects: { skipped_projects: [], items: [projectCollision] } },
+        { global: [globalRow("s1", "claude", false)], projects: { skipped_projects: [], items: [] } },
       ],
-      resolveProjectCollisions: [{ items: [projectItem({ status: "synced" })] }],
+      resolveProjectCollisions: [{ skipped_projects: [], items: [projectItem({ status: "synced" })] }],
     });
     const { result } = renderSync();
     await waitFor(() => expect(result.current.toolStatus).not.toBeNull());

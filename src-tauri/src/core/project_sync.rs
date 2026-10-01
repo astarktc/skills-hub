@@ -334,6 +334,28 @@ pub enum ProjectSyncSkip {
 #[derive(Clone, Debug, Default, serde::Serialize, specta::Type)]
 pub struct ProjectSyncReport {
     pub items: Vec<ProjectSyncOutcome>,
+    /// Projects a re-sync left alone as a whole, before any assignment was
+    /// touched — one entry per project, never one failure per assignment.
+    /// Report data, never a failure. Empty for every other project sync.
+    pub skipped_projects: Vec<ProjectSkipped>,
+}
+
+/// A project a re-sync did not enter.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct ProjectSkipped {
+    pub project_id: String,
+    pub reason: ProjectSkipReason,
+}
+
+/// Why a re-sync left a whole project alone.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum ProjectSkipReason {
+    /// The project's folder is not there (moved, deleted, an unmounted
+    /// volume): syncing into it would recreate a stray tree of Tool dirs, and
+    /// every assignment would fail for the same reason. Its rows are left as
+    /// they are; the operator updates the path or removes the project.
+    FolderMissing,
 }
 
 impl ProjectSyncReport {
@@ -476,7 +498,10 @@ pub(crate) fn assign_skill_to_tools(
             status,
         });
     }
-    Ok(ProjectSyncReport { items })
+    Ok(ProjectSyncReport {
+        items,
+        ..ProjectSyncReport::default()
+    })
 }
 
 /// The one "this project and this skill must both exist" lookup, raising the
@@ -602,13 +627,64 @@ pub(crate) fn resync_project_unlocked(
 ) -> Result<ProjectSyncReport> {
     let project = project_ops::require_project(store, project_id)?;
     let assignments = store.list_project_skill_assignments(project_id)?;
+    resync_assignments_unlocked(store, &project, &assignments, now)
+}
+
+/// Re-sync one assignment of a project — a matrix cell's **Sync this** (a
+/// stale copy, a missing artifact, a failed sync). The project re-sync's rule
+/// for one row: a disabled row is skipped, only a row that owns its path
+/// replaces what is there (otherwise a folder in the way is `TARGET_EXISTS`
+/// report data), and a missing project folder is skipped whole. An absent
+/// assignment is the typed `NotFound`.
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
+pub fn resync_assignment(
+    store: &SkillStore,
+    project_id: &str,
+    skill_id: &str,
+    tool: &str,
+    now: i64,
+) -> Result<ProjectSyncReport> {
+    mutation_guard::serialized(|| {
+        let project = project_ops::require_project(store, project_id)?;
+        let assignment = store
+            .get_project_skill_assignment(project_id, skill_id, tool)?
+            .ok_or_else(|| {
+                anyhow::anyhow!(SignalError::NotFound {
+                    kind: "assignment".to_string(),
+                    id: format!("{project_id}/{skill_id}/{tool}"),
+                })
+            })?;
+        resync_assignments_unlocked(store, &project, &[assignment], now)
+    })
+}
+
+/// The re-sync of some of one project's assignments — every one (Sync
+/// Project, Sync All) or one (Sync this). A project whose folder is missing
+/// is skipped whole (`skipped_projects`), its rows untouched: syncing into it
+/// would recreate a stray tree of Tool dirs.
+///
+/// Unlocked internal seam: the caller holds the mutation guard.
+fn resync_assignments_unlocked(
+    store: &SkillStore,
+    project: &ProjectRecord,
+    assignments: &[ProjectSkillAssignmentRecord],
+    now: i64,
+) -> Result<ProjectSyncReport> {
     let mut report = ProjectSyncReport::default();
+    if !project_ops::project_folder_exists(project) {
+        report.skipped_projects.push(ProjectSkipped {
+            project_id: project.id.clone(),
+            reason: ProjectSkipReason::FolderMissing,
+        });
+        return Ok(report);
+    }
     // The skill-level marker, read once per skill: a failed skill Disable
     // keeps its rows `error` (ADR-0002) while the skill is off everywhere,
     // so the row status alone cannot gate the re-sync.
     let mut skill_disabled: HashMap<String, bool> = HashMap::new();
 
-    for assignment in &assignments {
+    for assignment in assignments {
         let disabled_skill = match skill_disabled.get(&assignment.skill_id) {
             Some(disabled) => *disabled,
             None => {
@@ -637,7 +713,7 @@ pub(crate) fn resync_project_unlocked(
         // folder) is a first sync again, so that folder stays and the
         // collision is `TARGET_EXISTS` report data (`owns_artifact`).
         let overwrite = assignment.owns_artifact();
-        let status = match sync_single_assignment(store, &project, assignment, overwrite, now) {
+        let status = match sync_single_assignment(store, project, assignment, overwrite, now) {
             Ok(()) => ProjectSyncOutcomeStatus::Synced,
             Err(e) => {
                 let err_msg = format!("{:#}", e);
@@ -871,6 +947,9 @@ pub fn resync_all_projects(store: &SkillStore, now: i64) -> Result<ProjectSyncRe
         for project in store.list_projects()? {
             let project_report = resync_project_unlocked(store, &project.id, now)?;
             report.items.extend(project_report.items);
+            report
+                .skipped_projects
+                .extend(project_report.skipped_projects);
         }
         Ok(report)
     })

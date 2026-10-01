@@ -75,9 +75,13 @@ export type ProjectState = {
    * `undefined`: nothing was sent (no project selected, cell already pending).
    */
   toggleAssignment: (skillId: string, tool: string) => Promise<ToggleResult | null>;
-  bulkAssign: (skillId: string) => Promise<ProjectSyncReport | undefined>;
-  /** Inverse of `bulkAssign`: one skill off every Tool of the project. */
-  bulkUnassign: (skillId: string) => Promise<RemovalReport | undefined>;
+  /**
+   * A matrix cell's **Sync this**: re-sync one assignment of the selected
+   * project (a stale copy, a missing artifact, a failed sync). Applies the
+   * returned view; a folder in the way is the one overwrite ask's. Null:
+   * nothing was sent (no project selected).
+   */
+  syncAssignment: (skillId: string, tool: string) => Promise<ProjectSyncReport | null>;
   /**
    * Assign skills to every Tool of any project — the project-assignment
    * verb other surfaces call (the skill action door, the inspector). The
@@ -463,7 +467,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
           applyView(result.view);
           items.push(...result.report.items);
         }
-        const settled = await settleCollisions({ items });
+        const settled = await settleCollisions({ items, skipped_projects: [] });
         if (settled.resolved) await refreshView(projectId);
         return settled.report;
       } catch (err) {
@@ -501,20 +505,21 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
     [applyView, refreshView],
   );
 
-  const bulkAssign = useCallback(
-    async (skillId: string): Promise<ProjectSyncReport | undefined> => {
-      if (!selectedProjectId) return;
-      return assignToProject(selectedProjectId, [skillId]);
+  const syncAssignment = useCallback(
+    async (skillId: string, tool: string): Promise<ProjectSyncReport | null> => {
+      if (!selectedProjectId) return null;
+      try {
+        const result = await invokeTauri("resyncProjectAssignment", selectedProjectId, skillId, tool);
+        applyView(result.view);
+        const settled = await settleCollisions(result.report);
+        if (settled.resolved) await refreshView(selectedProjectId);
+        return settled.report;
+      } catch (err) {
+        await refreshView(selectedProjectId);
+        throw err;
+      }
     },
-    [selectedProjectId, assignToProject],
-  );
-
-  const bulkUnassign = useCallback(
-    async (skillId: string): Promise<RemovalReport | undefined> => {
-      if (!selectedProjectId) return;
-      return unassignFromProject(selectedProjectId, [skillId]);
-    },
-    [selectedProjectId, unassignFromProject],
+    [selectedProjectId, applyView, refreshView, settleCollisions],
   );
 
   const updateProjectPath = useCallback(
@@ -668,8 +673,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       registerProject,
       removeProject,
       toggleAssignment,
-      bulkAssign,
-      bulkUnassign,
+      syncAssignment,
       assignToProject,
       unassignFromProject,
       refreshView,
@@ -698,8 +702,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       registerProject,
       removeProject,
       toggleAssignment,
-      bulkAssign,
-      bulkUnassign,
+      syncAssignment,
       assignToProject,
       unassignFromProject,
       refreshView,

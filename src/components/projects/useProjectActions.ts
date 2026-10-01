@@ -105,7 +105,7 @@ export function useProjectActions({ t, state, catalog, reporter, surface }: Proj
         {
           subject: batch,
           label: t("lifecycle.verbs.editProject"),
-          successToast: t("projects.configureProject"),
+          successToast: t("projectsSurface.edit.saved"),
         },
         async () => {
           await state.updateGitignore(projectId, gitignore);
@@ -147,7 +147,10 @@ export function useProjectActions({ t, state, catalog, reporter, surface }: Proj
   const handleResyncProject = useCallback(async () => {
     await runAction({ subject: batch, label, activity: t("activity.syncingProjects") }, async () => {
       const report = await state.resyncProject();
-      await applyOutcome(projectSyncOutcome(report, { t, toolLabelById, action: "resync" }));
+      const projectLabelById = Object.fromEntries(
+        state.projects.map((project) => [project.id, project.name]),
+      );
+      await applyOutcome(projectSyncOutcome(report, { t, toolLabelById, projectLabelById, action: "resync" }));
     });
   }, [applyOutcome, label, runAction, state, t, toolLabelById]);
 
@@ -179,40 +182,26 @@ export function useProjectActions({ t, state, catalog, reporter, surface }: Proj
     [applyOutcome, cellLabel, runAction, state, t, toolLabelById],
   );
 
-  // A row's cells pend together: every Tool for assign, the assigned ones
-  // for unassign.
-  const rowCells = useCallback(
-    (skillId: string, assignedOnly: boolean) =>
-      (assignedOnly
-        ? state.assignments.filter((a) => a.skill_id === skillId).map((a) => a.tool)
-        : state.tools.map((tool) => tool.tool)
-      ).map((tool) => `${skillId}:${tool}`),
-    [state.assignments, state.tools],
-  );
-
-  const handleBulkAssign = useCallback(
-    async (skillId: string) => {
-      await runAction({ subject: { kind: "cell", ids: rowCells(skillId, false) }, label: cellLabel }, async () => {
-        const report = await state.bulkAssign(skillId);
-        if (report)
-          await applyOutcome(projectSyncOutcome(report, { t, toolLabelById, action: "bulkAssign" }));
+  // A cell's Sync this: one assignment re-synced, its cell pending alone.
+  const handleSyncCell = useCallback(
+    async (skillId: string, tool: string) => {
+      await runAction({ subject: { kind: "cell", ids: [`${skillId}:${tool}`] }, label: t("projectsSurface.verbs.syncCell") }, async () => {
+        const report = await state.syncAssignment(skillId, tool);
+        if (report) await applyOutcome(projectSyncOutcome(report, { t, toolLabelById, action: "syncCell" }));
       });
     },
-    [applyOutcome, cellLabel, rowCells, runAction, state, t, toolLabelById],
+    [applyOutcome, runAction, state, t, toolLabelById],
   );
 
-  // No confirmation, symmetric with bulk assign: a removed link is
-  // re-assignable, not data loss (round 16 D2).
-  const handleBulkUnassign = useCallback(
-    async (skillId: string) => {
-      await runAction({ subject: { kind: "cell", ids: rowCells(skillId, true) }, label: cellLabel }, async () => {
-        const report = await state.bulkUnassign(skillId);
-        if (report)
-          await applyOutcome(removalOutcome(report, { t, toolLabelById, action: "bulkUnassign" }));
-      });
-    },
-    [applyOutcome, cellLabel, rowCells, runAction, state, t, toolLabelById],
-  );
+  /**
+   * "Statuses may be out of date — Refresh view": re-read the shown view (a
+   * read, not a mutation — while one runs its reconcile pass is skipped
+   * again, and the line stays).
+   */
+  const handleRefreshView = useCallback(async () => {
+    if (!state.selectedProjectId) return;
+    if (!(await state.refreshView(state.selectedProjectId))) reporter.notify("warning", t("projects.viewRefreshFailed"));
+  }, [reporter, state, t]);
 
   const handleConfigureToolsFromToolbar = useCallback(async () => {
     try {
@@ -253,8 +242,8 @@ export function useProjectActions({ t, state, catalog, reporter, surface }: Proj
     handleResyncProject,
     handleResyncAll,
     handleToggleAssignment,
-    handleBulkAssign,
-    handleBulkUnassign,
+    handleSyncCell,
+    handleRefreshView,
     handleConfigureToolsFromToolbar,
     handlePickProjectFolder,
   };

@@ -1,79 +1,84 @@
-import React, { memo, useMemo } from "react";
-import {
-  TriangleAlert,
-  GitBranch,
-  Globe,
-  RefreshCw,
-  Settings,
-} from "lucide-react";
+import { Fragment, memo, useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import { GitBranch, Globe, LoaderCircle, RefreshCw, Search, Settings } from "lucide-react";
 import type { TFunction } from "i18next";
-import type {
-  ProjectDto,
-  ProjectSkillAssignmentDto,
-  ProjectToolDto,
-} from "./types";
+import { Button } from "@/components/ui/button";
+import { Chip } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Field, FieldLabel, Input } from "@/components/ui/field";
+import { Segmented, SegmentedItem } from "@/components/ui/segmented";
+import type { ProjectDto, ProjectSkillAssignmentDto, ProjectToolDto } from "./types";
 import type { ManagedSkill } from "../skills/types";
-import { SYNC_STATUS_CLASS } from "../../syncStatus";
-import { formatRelativeTime } from "../../lib/skillPresentation";
+import StripMarkIcon from "../skills/StripMarkIcon";
 import { projectsGroupByRepoPreference } from "../../lib/preferences";
 import { useListLens } from "../../hooks/useListLens";
-import LensSortControl from "../shared/LensSortControl";
+import {
+  matrixCell,
+  matrixColumns,
+  matrixFilters,
+  matrixLegend,
+  type MatrixColumn,
+  type MatrixFilter,
+} from "../../lib/projectPresentation";
 
 export type AssignmentMatrixProps = {
-  project: ProjectDto | null;
+  project: ProjectDto;
   tools: ProjectToolDto[];
   assignments: ProjectSkillAssignmentDto[];
-  /**
-   * False when the backend skipped the reconcile pass because a Sync-target
-   * mutation was in flight: the statuses below are the stored ones, not
-   * re-derived from disk. Surfaced as a notice — never rendered as healthy.
-   */
-  assignmentsReconciled: boolean;
   skills: ManagedSkill[];
+  /** The Tool catalog's label for a Tool key. */
+  labelOf: (tool: string) => string;
+  /** Installed project Tool keys (null while the catalog loads). */
+  installedTools: readonly string[] | null;
   /** The cells the running action is about: their localized pending mark. */
   pendingCells: Set<string>;
+  /** The skills the running action is about (a row's bulk verb runs through the door). */
+  isRowPending: (skillId: string) => boolean;
   /**
    * Why every mutation control is disabled while any action runs (D19),
    * shown as its title; null = they may run.
    */
   blockedReason: string | null;
   matrixLoading: boolean;
-  onToggleAssignment: (skillId: string, tool: string) => Promise<void>;
-  onBulkAssign: (skillId: string) => Promise<void>;
-  onBulkUnassign: (skillId: string) => Promise<void>;
-  /** Resync handlers own their outcome (the page folds the report). */
-  onResyncProject: () => Promise<void>;
-  onResyncAll: () => Promise<void>;
+  onToggleAssignment: (skillId: string, tool: string) => void;
+  onSyncCell: (skillId: string, tool: string) => void;
+  onAssignAll: (skill: ManagedSkill) => void;
+  onUnassignAll: (skill: ManagedSkill) => void;
   onConfigureTools: () => void;
   t: TFunction;
 };
 
+const FILTERS: readonly MatrixFilter[] = ["all", "assigned", "issues"];
+
+/**
+ * The per-project surface (D26): every skill × the project's Tools. One
+ * list lens (search, the Assigned · Issues chips, Grouped / Flat — sorted by
+ * name; the sort menu lives on My Skills only). Each cell is the assignment
+ * checkbox — its hit area the whole cell — plus the Synced strip's mark for
+ * its state, the state's word on focus and hover, and **Sync this** where
+ * the state is repairable (projectPresentation.matrixCell). A cell whose
+ * skill is also deployed globally stays enabled and is marked "also global"
+ * (D17). The row's bulk verbs are named: Assign to all configured Tools ·
+ * Unassign from all.
+ */
 const AssignmentMatrix = ({
   project,
   tools,
   assignments,
-  assignmentsReconciled,
   skills,
+  labelOf,
+  installedTools,
   pendingCells,
+  isRowPending,
   blockedReason,
   matrixLoading,
   onToggleAssignment,
-  onBulkAssign,
-  onBulkUnassign,
-  onResyncProject,
-  onResyncAll,
+  onSyncCell,
+  onAssignAll,
+  onUnassignAll,
   onConfigureTools,
   t,
 }: AssignmentMatrixProps) => {
-  const lastSyncAt = useMemo(() => {
-    let max = 0;
-    for (const a of assignments) {
-      if (a.synced_at && a.synced_at > max) max = a.synced_at;
-    }
-    return max > 0 ? max : null;
-  }, [assignments]);
-
-  // The matrix's own list lens (its Grouped/Flat persists under its own key).
+  const filters = useMemo(() => matrixFilters(assignments), [assignments]);
   const lens = useListLens({
     items: skills,
     labels: {
@@ -82,180 +87,158 @@ const AssignmentMatrix = ({
       individual: t("individualSources"),
     },
     groupByRepoPreference: projectsGroupByRepoPreference,
+    filters,
   });
-  const { groupByRepo, groups: skillGroups, visible: sortedSkills } = lens;
+  const { query, setQuery, filter, setFilter, filterCounts, groups, visible } = lens;
 
   const assignmentMap = useMemo(() => {
     const map = new Map<string, ProjectSkillAssignmentDto>();
-    for (const a of assignments) {
-      map.set(`${a.skill_id}:${a.tool}`, a);
-    }
+    for (const a of assignments) map.set(`${a.skill_id}:${a.tool}`, a);
     return map;
   }, [assignments]);
+  const columns = useMemo(() => matrixColumns(tools, labelOf, installedTools), [installedTools, labelOf, tools]);
+  const legend = useMemo(() => matrixLegend(t), [t]);
+  const pathMissing = !project.path_exists;
 
-  const pathMissing = project ? !project.path_exists : false;
-
-  if (!project) {
+  if (skills.length === 0) {
+    return <p className="m-0 px-4 py-6 text-sm text-muted-foreground">{t("projects.noSkills")}</p>;
+  }
+  if (tools.length === 0 && !matrixLoading) {
     return (
-      <div className="matrix-placeholder">{t("projects.selectProject")}</div>
+      <div className="flex flex-col items-start gap-3 px-4 py-6">
+        <p className="m-0 text-sm text-muted-foreground">{t("projectsSurface.matrix.noTools")}</p>
+        <Button variant="solid" tone="accent" onClick={onConfigureTools}>
+          <Settings />
+          {t("projectsSurface.header.configureTools")}
+        </Button>
+      </div>
     );
   }
 
-  const lastSyncDisplay = lastSyncAt
-    ? t("projects.lastSyncTime", {
-        time: formatRelativeTime(lastSyncAt, t),
-      })
-    : t("projects.lastSyncNever");
+  const rowProps = {
+    columns,
+    assignmentMap,
+    pendingCells,
+    isRowPending,
+    pathMissing,
+    blockedReason,
+    onToggleAssignment,
+    onSyncCell,
+    onAssignAll,
+    onUnassignAll,
+    t,
+  };
 
   return (
-    <div className="matrix-content">
-      <div className="matrix-toolbar">
-        <div className="matrix-toolbar-info">
-          <span className="matrix-toolbar-name">{project.name}</span>
-          <span className="matrix-toolbar-path">{project.path}</span>
-          <span className="matrix-toolbar-sync-time">{lastSyncDisplay}</span>
-        </div>
-        <div className="matrix-toolbar-filters">
-          <LensSortControl sort={lens.sort} onSortChange={lens.setSort} compact t={t} />
-          <label className="group-by-repo-toggle">
-            <input
-              type="checkbox"
-              checked={groupByRepo}
-              onChange={(e) => lens.setGroupByRepo(e.target.checked)}
-            />
-            <span className="group-by-repo-label">{t("groupByRepo")}</span>
-          </label>
-        </div>
-        <div className="matrix-toolbar-actions">
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={onConfigureTools}
-          >
-            <Settings size={14} />
-            {t("projects.addTools")}
-          </button>
-          <button
-            className="btn btn-primary btn-sm"
-            onClick={() => void onResyncProject()}
-            disabled={pathMissing || blockedReason !== null}
-            title={
-              pathMissing
-                ? t("projects.syncDisabledMissing")
-                : (blockedReason ?? t("projects.syncProject"))
-            }
-          >
-            <RefreshCw size={14} />
-            {t("projects.syncProject")}
-          </button>
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={() => void onResyncAll()}
-            disabled={pathMissing || blockedReason !== null}
-            title={
-              pathMissing
-                ? t("projects.syncDisabledMissing")
-                : (blockedReason ?? t("projects.syncAll"))
-            }
-          >
-            <RefreshCw size={14} />
-            {t("projects.syncAll")}
-          </button>
-        </div>
-      </div>
-
-      {pathMissing && (
-        <div className="matrix-path-missing-banner">
-          <TriangleAlert size={14} />
-          <span>{t("projects.syncDisabledMissing")}</span>
-        </div>
-      )}
-
-      {!assignmentsReconciled && (
-        <div className="matrix-path-missing-banner">
-          <TriangleAlert size={14} />
-          <span>{t("projects.reconcileSkipped")}</span>
-        </div>
-      )}
-
-      {skills.length === 0 ? (
-        <div className="matrix-no-skills">{t("projects.noSkills")}</div>
-      ) : tools.length === 0 ? (
-        <div className="matrix-no-skills">
-          {t("projects.addTools")}
-          <button
-            className="btn btn-secondary btn-sm"
-            style={{ marginLeft: 8 }}
-            onClick={onConfigureTools}
-          >
-            <Settings size={14} />
-            {t("projects.addTools")}
-          </button>
-        </div>
-      ) : matrixLoading ? (
-        <div className="matrix-skeleton">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="skeleton-cell" />
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-2">
+        <Field className="flex-row items-center gap-2">
+          <FieldLabel>
+            <Search className="size-4 text-muted-foreground" aria-hidden="true" />
+            <span className="sr-only">{t("projectsSurface.matrix.searchLabel")}</span>
+          </FieldLabel>
+          <Input
+            type="search"
+            size="sm"
+            className="w-44"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && query) {
+                event.preventDefault();
+                setQuery("");
+              }
+            }}
+            placeholder={t("projectsSurface.matrix.searchPlaceholder")}
+          />
+        </Field>
+        <div role="group" aria-label={t("projectsSurface.matrix.filterGroup")} className="flex items-center gap-1.5">
+          {FILTERS.map((key) => (
+            <Chip key={key} pressed={filter === key} onPressedChange={() => setFilter(key)}>
+              {t(`projectsSurface.matrix.filters.${key}`)}{" "}
+              <span className="text-faint tabular-nums">{filterCounts[key] ?? 0}</span>
+            </Chip>
           ))}
         </div>
-      ) : (
-        <div
-          className={`matrix-grid${groupByRepo ? " matrix-grid-grouped" : ""}`}
+        <Segmented
+          className="ml-auto"
+          aria-label={t("projectsSurface.matrix.grouping")}
+          value={lens.groupByRepo ? "grouped" : "flat"}
+          onValueChange={(value) => lens.setGroupByRepo(value === "grouped")}
         >
-          <table>
-            <thead>
-              <tr className="matrix-header-row">
-                <th />
+          <SegmentedItem value="grouped">{t("library.grouped")}</SegmentedItem>
+          <SegmentedItem value="flat">{t("library.flat")}</SegmentedItem>
+        </Segmented>
+      </div>
 
-                {tools.map((tool) => (
-                  <th key={tool.id}>{tool.tool}</th>
+      <ul
+        aria-label={t("projectsSurface.legend.label")}
+        className="m-0 flex shrink-0 list-none flex-wrap items-center gap-x-4 gap-y-1 border-b border-border px-4 py-1.5 text-xs text-muted-foreground"
+      >
+        {legend.map((entry) => (
+          <li key={entry.state} data-legend={entry.state} title={entry.detail} className="flex items-center gap-1.5">
+            <StripMarkIcon state={entry.mark} />
+            {entry.word}
+          </li>
+        ))}
+        <li data-legend="also-global" title={t("projectsSurface.legend.alsoGlobalDetail")} className="flex items-center gap-1.5">
+          <Globe aria-hidden="true" className="size-3 text-muted-foreground" />
+          {t("projectsSurface.legend.alsoGlobal")}
+        </li>
+      </ul>
+
+      {matrixLoading ? (
+        <div aria-hidden="true" className="grid grid-cols-4 gap-2 px-4 py-3">
+          {Array.from({ length: 12 }).map((_, i) => (
+            <div key={i} className="h-6 rounded-sm bg-raised" />
+          ))}
+        </div>
+      ) : visible.length === 0 ? (
+        <p className="m-0 px-4 py-6 text-sm text-muted-foreground">{t("projectsSurface.matrix.noMatch")}</p>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-auto">
+          <table className="w-full border-separate border-spacing-0 text-sm">
+            <caption className="sr-only">{t("projectsSurface.matrix.caption", { project: project.name })}</caption>
+            <thead className="sticky top-0 z-10 bg-background">
+              <tr>
+                <th scope="col" className="h-row border-b border-border px-4 text-left text-xs font-medium text-muted-foreground">
+                  {t("projectsSurface.matrix.skill")}
+                </th>
+                {columns.map((column) => (
+                  <th key={column.key} scope="col" className="h-row min-w-36 border-b border-border px-2 text-left align-middle">
+                    <span className="block text-xs font-medium text-foreground">{column.label}</span>
+                    {column.detected ? null : (
+                      <span className="block text-xs font-normal text-faint">{t("projectsSurface.matrix.notDetected")}</span>
+                    )}
+                  </th>
                 ))}
-                <th />
+                <th scope="col" className="h-row border-b border-border px-2 text-left text-xs font-medium text-muted-foreground">
+                  {t("projectsSurface.matrix.bulk")}
+                </th>
               </tr>
             </thead>
             <tbody>
-              {skillGroups
-                ? skillGroups.map((group) => (
-                    <React.Fragment key={group.key}>
-                      <tr className="matrix-group-header-row">
-                        <td colSpan={tools.length + 2}>
-                          <span className="matrix-group-label">
-                            <GitBranch size={14} className="repo-group-icon" />
+              {groups
+                ? groups.map((group) => (
+                    <Fragment key={group.key}>
+                      <tr>
+                        <th
+                          scope="colgroup"
+                          colSpan={columns.length + 2}
+                          className="h-row border-b border-border bg-card px-4 text-left text-xs font-medium text-muted-foreground"
+                        >
+                          <span className="flex items-center gap-1.5">
+                            <GitBranch aria-hidden="true" className="size-3.5" />
                             {group.label}
                           </span>
-                        </td>
+                        </th>
                       </tr>
                       {group.skills.map((skill) => (
-                        <MatrixRow
-                          key={skill.id}
-                          skill={skill}
-                          tools={tools}
-                          assignmentMap={assignmentMap}
-                          pendingCells={pendingCells}
-                          disabled={pathMissing}
-                          blockedReason={blockedReason}
-                          onToggleAssignment={onToggleAssignment}
-                          onBulkAssign={onBulkAssign}
-                          onBulkUnassign={onBulkUnassign}
-                          t={t}
-                        />
+                        <MatrixRow key={skill.id} skill={skill} {...rowProps} />
                       ))}
-                    </React.Fragment>
+                    </Fragment>
                   ))
-                : sortedSkills.map((skill) => (
-                    <MatrixRow
-                      key={skill.id}
-                      skill={skill}
-                      tools={tools}
-                      assignmentMap={assignmentMap}
-                      pendingCells={pendingCells}
-                      disabled={pathMissing}
-                      blockedReason={blockedReason}
-                      onToggleAssignment={onToggleAssignment}
-                      onBulkAssign={onBulkAssign}
-                      onBulkUnassign={onBulkUnassign}
-                      t={t}
-                    />
-                  ))}
+                : visible.map((skill) => <MatrixRow key={skill.id} skill={skill} {...rowProps} />)}
             </tbody>
           </table>
         </div>
@@ -266,175 +249,195 @@ const AssignmentMatrix = ({
 
 type MatrixRowProps = {
   skill: ManagedSkill;
-  tools: ProjectToolDto[];
+  columns: MatrixColumn[];
   assignmentMap: Map<string, ProjectSkillAssignmentDto>;
   pendingCells: Set<string>;
-  disabled: boolean;
+  isRowPending: (skillId: string) => boolean;
+  pathMissing: boolean;
   blockedReason: string | null;
-  onToggleAssignment: (skillId: string, tool: string) => Promise<void>;
-  onBulkAssign: (skillId: string) => Promise<void>;
-  onBulkUnassign: (skillId: string) => Promise<void>;
+  onToggleAssignment: (skillId: string, tool: string) => void;
+  onSyncCell: (skillId: string, tool: string) => void;
+  onAssignAll: (skill: ManagedSkill) => void;
+  onUnassignAll: (skill: ManagedSkill) => void;
   t: TFunction;
 };
-
-function setsEqual(a: Set<string>, b: Set<string>): boolean {
-  if (a.size !== b.size) return false;
-  for (const v of a) {
-    if (!b.has(v)) return false;
-  }
-  return true;
-}
 
 const MatrixRow = memo(
   ({
     skill,
-    tools,
+    columns,
     assignmentMap,
     pendingCells,
-    disabled,
+    isRowPending,
+    pathMissing,
     blockedReason,
     onToggleAssignment,
-    onBulkAssign,
-    onBulkUnassign,
+    onSyncCell,
+    onAssignAll,
+    onUnassignAll,
     t,
   }: MatrixRowProps) => {
-    // Another action running blocks every mutation here, not only its own cells.
-    const blocked = blockedReason !== null;
-    // Bulk actions only earn a column when there is more than one Tool (a
-    // single checkbox already is "all"). Bulk assign hides once the row is
-    // saturated; its inverse shows once the skill holds any assignment here.
-    const cellKeys = tools.map((tool) => `${skill.id}:${tool.tool}`);
-    const assignedCount = cellKeys.filter((key) => assignmentMap.has(key)).length;
-    const multiTool = tools.length > 1;
-    const showBulkAssign = multiTool && assignedCount < tools.length;
-    const showBulkUnassign = multiTool && assignedCount > 0;
-    const rowPending = cellKeys.some((key) => pendingCells.has(key));
+    const rowPending = isRowPending(skill.id);
+    const assignedCount = columns.filter((column) => assignmentMap.has(`${skill.id}:${column.key}`)).length;
+    // Both bulk verbs stay where they are — a verb that would change nothing
+    // is refused with the reason, so the focus that ran it never drops (D21).
+    const bulkReason = pathMissing ? t("projectsSurface.cell.folderMissing") : blockedReason;
+    const assignReason =
+      bulkReason ?? (assignedCount === columns.length ? t("projectsSurface.matrix.allAssigned") : null);
+    const unassignReason = bulkReason ?? (assignedCount === 0 ? t("projectsSurface.matrix.noneAssigned") : null);
     return (
-      <tr className="matrix-row">
-        <td
-          className="matrix-skill-cell"
+      <tr aria-busy={rowPending || undefined} className="hover:bg-card">
+        <th
+          scope="row"
           title={skill.description ?? undefined}
+          className="h-row border-b border-border px-4 text-left text-sm font-medium break-words text-foreground"
         >
           {skill.name}
-        </td>
-        {tools.map((tool) => {
-          const cellKey = `${skill.id}:${tool.tool}`;
-          const isPending = pendingCells.has(cellKey);
-          const assignment = assignmentMap.get(`${skill.id}:${tool.tool}`);
-          // A disabled global target is the operator's "not on this Tool", not
-          // a global deployment: it neither locks the cell nor marks it.
-          const isGlobal = skill.targets.some(
-            (gt) => gt.tool === tool.tool && gt.status !== "disabled",
-          );
-          const lockedGlobal = isGlobal && !assignment;
-          const statusClass = isPending
-            ? SYNC_STATUS_CLASS.pending
-            : assignment
-              ? SYNC_STATUS_CLASS[assignment.status]
-              : "";
-          const isError = assignment?.status === "error";
-          const errorTitle = isError
-            ? t("projects.syncErrorPrefix") + (assignment?.last_error ?? "")
-            : undefined;
-          const cellTitle =
-            errorTitle ?? (isGlobal ? t("projects.globalSynced") : undefined);
-
-          return (
-            <td
-              key={cellKey}
-              className={`matrix-cell ${statusClass}${isGlobal ? " global" : ""}`}
-              title={cellTitle}
-              onClick={
-                isError && !disabled && !blocked
-                  ? () => onToggleAssignment(skill.id, tool.tool)
-                  : undefined
-              }
+        </th>
+        {columns.map((column) => (
+          <MatrixCellView
+            key={column.key}
+            skill={skill}
+            column={column}
+            assignment={assignmentMap.get(`${skill.id}:${column.key}`)}
+            inFlight={pendingCells.has(`${skill.id}:${column.key}`)}
+            pathMissing={pathMissing}
+            blockedReason={blockedReason}
+            onToggle={onToggleAssignment}
+            onSync={onSyncCell}
+            t={t}
+          />
+        ))}
+        <td className="h-row border-b border-border px-2">
+          <span className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              tone="accent"
+              size="sm"
+              aria-label={t("projectsSurface.matrix.assignAllNamed", { skill: skill.name })}
+              title={assignReason ?? t("projectsSurface.matrix.assignAllNamed", { skill: skill.name })}
+              aria-description={assignReason ?? undefined}
+              disabled={assignReason !== null}
+              focusableWhenDisabled={!pathMissing}
+              pending={rowPending}
+              onClick={() => onAssignAll(skill)}
             >
-              {isPending ? (
-                <span className="cell-spinner" />
-              ) : (
-                <input
-                  type="checkbox"
-                  checked={!!assignment}
-                  disabled={isPending || disabled || lockedGlobal || blocked}
-                  title={blocked && !isPending ? (blockedReason ?? undefined) : undefined}
-                  onChange={() => onToggleAssignment(skill.id, tool.tool)}
-                  aria-label={`${skill.name} - ${tool.tool}`}
-                />
-              )}
-              {isGlobal && !isPending && (
-                <Globe
-                  size={10}
-                  className="cell-global-icon"
-                  aria-hidden="true"
-                />
-              )}
-              {isError && (
-                <span className="sr-only">
-                  {t("projects.syncErrorPrefix")}
-                  {assignment?.last_error ?? ""}
-                </span>
-              )}
-            </td>
-          );
-        })}
-        <td>
-          <div className="matrix-bulk-actions">
-            {showBulkAssign && (
-              <button
-                className="btn btn-xs matrix-all-tools-btn"
-                onClick={() => onBulkAssign(skill.id)}
-                disabled={disabled || rowPending || blocked}
-                title={blockedReason ?? t("projects.allToolsTitle", { name: skill.name })}
-              >
-                {t("projects.allTools")}
-              </button>
-            )}
-            {showBulkUnassign && (
-              <button
-                className="btn btn-xs matrix-unassign-all-btn"
-                onClick={() => onBulkUnassign(skill.id)}
-                disabled={disabled || rowPending || blocked}
-                title={blockedReason ?? t("projects.unassignAllTitle", { name: skill.name })}
-              >
-                {t("projects.unassignAll")}
-              </button>
-            )}
-          </div>
+              {t("projectsSurface.matrix.assignAll")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={t("projectsSurface.matrix.unassignAllNamed", { skill: skill.name })}
+              title={unassignReason ?? t("projectsSurface.matrix.unassignAllNamed", { skill: skill.name })}
+              aria-description={unassignReason ?? undefined}
+              disabled={unassignReason !== null}
+              focusableWhenDisabled={!pathMissing}
+              onClick={() => onUnassignAll(skill)}
+            >
+              {t("projectsSurface.matrix.unassignAll")}
+            </Button>
+          </span>
         </td>
       </tr>
     );
   },
-  (prev, next) => {
-    if (prev.skill !== next.skill) return false;
-    if (prev.tools !== next.tools) return false;
-    if (prev.assignmentMap !== next.assignmentMap) return false;
-    if (prev.disabled !== next.disabled) return false;
-    if (prev.blockedReason !== next.blockedReason) return false;
-    if (prev.onToggleAssignment !== next.onToggleAssignment) return false;
-    if (prev.onBulkAssign !== next.onBulkAssign) return false;
-    if (prev.onBulkUnassign !== next.onBulkUnassign) return false;
-    if (prev.t !== next.t) return false;
-    return setsEqual(prev.pendingCells, next.pendingCells);
-  },
 );
-
 MatrixRow.displayName = "MatrixRow";
 
-export default memo(AssignmentMatrix, (prev, next) => {
-  if (prev.project !== next.project) return false;
-  if (prev.tools !== next.tools) return false;
-  if (prev.assignments !== next.assignments) return false;
-  if (prev.assignmentsReconciled !== next.assignmentsReconciled) return false;
-  if (prev.skills !== next.skills) return false;
-  if (prev.matrixLoading !== next.matrixLoading) return false;
-  if (prev.blockedReason !== next.blockedReason) return false;
-  if (prev.onToggleAssignment !== next.onToggleAssignment) return false;
-  if (prev.onBulkAssign !== next.onBulkAssign) return false;
-  if (prev.onBulkUnassign !== next.onBulkUnassign) return false;
-  if (prev.onResyncProject !== next.onResyncProject) return false;
-  if (prev.onResyncAll !== next.onResyncAll) return false;
-  if (prev.onConfigureTools !== next.onConfigureTools) return false;
-  if (prev.t !== next.t) return false;
-  return setsEqual(prev.pendingCells, next.pendingCells);
-});
+type MatrixCellViewProps = {
+  skill: ManagedSkill;
+  column: MatrixColumn;
+  assignment: ProjectSkillAssignmentDto | undefined;
+  inFlight: boolean;
+  pathMissing: boolean;
+  blockedReason: string | null;
+  onToggle: (skillId: string, tool: string) => void;
+  onSync: (skillId: string, tool: string) => void;
+  t: TFunction;
+};
+
+/**
+ * One cell: a `<label>` spanning the cell is the checkbox's hit area (≥ the
+ * 24 px floor: the cell is the 36 px row), then the mark, "also global" and
+ * the state's word (shown on hover and focus; always in the checkbox's
+ * name), then **Sync this** for a stale, missing or failed assignment.
+ */
+function MatrixCellView({ skill, column, assignment, inFlight, pathMissing, blockedReason, onToggle, onSync, t }: MatrixCellViewProps) {
+  const cell = matrixCell({ skill, tool: { key: column.key, label: column.label }, assignment, inFlight }, t);
+  const blocked = blockedReason !== null;
+  const reason = pathMissing ? t("projectsSurface.cell.folderMissing") : blockedReason;
+  const toggle = useCallback(() => onToggle(skill.id, column.key), [column.key, onToggle, skill.id]);
+  const hint = [cell.word, cell.detail].filter(Boolean).join(" \u2014 ");
+  // Sync this goes once the cell is healthy: if it held focus, the cell's
+  // checkbox takes it (D21 — never <body>).
+  const checkboxRef = useRef<HTMLButtonElement>(null);
+  const repairFocused = useRef(false);
+  const repairable = cell.repairs.includes("sync");
+  useLayoutEffect(() => {
+    if (repairable || !repairFocused.current) return;
+    repairFocused.current = false;
+    checkboxRef.current?.focus();
+  }, [repairable]);
+  return (
+    <td data-cell-state={cell.state} className="group/cell h-row border-b border-border p-0">
+      <span className="flex h-full items-center">
+        <label
+          title={reason ?? (hint || undefined)}
+          className="flex h-full min-h-6 min-w-0 flex-1 cursor-default items-center gap-1.5 px-2 group-hover/cell:bg-raised"
+        >
+          <Checkbox
+            ref={checkboxRef}
+            checked={cell.assigned}
+            onCheckedChange={toggle}
+            disabled={pathMissing || blocked}
+            focusableWhenDisabled={!pathMissing}
+            aria-label={cell.name}
+            aria-description={reason ?? undefined}
+            aria-busy={inFlight || undefined}
+          />
+          {inFlight ? (
+            <LoaderCircle aria-hidden="true" className="size-3 shrink-0 text-muted-foreground motion-safe:animate-spin" />
+          ) : cell.mark ? (
+            <StripMarkIcon state={cell.mark} />
+          ) : null}
+          {cell.alsoGlobal ? (
+            <Globe aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />
+          ) : null}
+          {cell.word ? (
+            <span
+              aria-hidden="true"
+              className="invisible truncate text-xs text-muted-foreground group-hover/cell:visible group-focus-within/cell:visible"
+            >
+              {cell.word}
+            </span>
+          ) : null}
+        </label>
+        {repairable ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="mr-1"
+            aria-label={t("projectsSurface.cell.syncThisNamed", { skill: skill.name, tool: column.label })}
+            title={reason ?? t("projectsSurface.cell.syncThisNamed", { skill: skill.name, tool: column.label })}
+            aria-description={reason ?? undefined}
+            disabled={pathMissing || blocked}
+            focusableWhenDisabled={!pathMissing}
+            pending={inFlight}
+            onFocus={() => {
+              repairFocused.current = true;
+            }}
+            onBlur={(event) => {
+              // A blur from the button's own removal keeps the flag.
+              if (event.currentTarget.isConnected) repairFocused.current = false;
+            }}
+            onClick={() => onSync(skill.id, column.key)}
+          >
+            <RefreshCw />
+          </Button>
+        ) : null}
+      </span>
+    </td>
+  );
+}
+
+export default memo(AssignmentMatrix);

@@ -1518,3 +1518,46 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
     }
   });
 });
+
+describe("ticket 17: Projects — a missing folder, Sync this, the kept row, a stale view", () => {
+  it("Sync All skips archived-app (folder missing) as one project entry, its rows untouched", async () => {
+    const { handlers, state } = backendFor("failures");
+    const archived = state.projects.find((p) => p.id === "prj-archived-app")!;
+    const before = JSON.stringify(archived.assignments);
+    const { report } = await handlers.resyncAllProjects();
+    expect(report.skipped_projects).toEqual([{ project_id: "prj-archived-app", reason: { reason: "folder_missing" } }]);
+    expect(report.items.some((item) => item.project_id === "prj-archived-app")).toBe(false);
+    expect(JSON.stringify(archived.assignments)).toBe(before);
+    expect((await handlers.resyncProject("prj-archived-app")).report).toEqual({
+      items: [],
+      skipped_projects: [{ project_id: "prj-archived-app", reason: { reason: "folder_missing" } }],
+    });
+  });
+
+  it("Sync this re-syncs one cell and answers the view", async () => {
+    const { handlers } = backendFor("failures");
+    const view = await handlers.getProjectView("prj-monorepo");
+    const stale = view.assignments.find((a) => a.status === "stale")!;
+    const { view: after, report } = await handlers.resyncProjectAssignment("prj-monorepo", stale.skill_id, stale.tool);
+    expect(report.items.map((item) => [item.skill_id, item.tool, item.status.status])).toEqual([[stale.skill_id, stale.tool, "synced"]]);
+    expect(after.assignments.find((a) => a.id === stale.id)?.status).toBe("synced");
+    await expect(handlers.resyncProjectAssignment("prj-monorepo", stale.skill_id, "pi")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("removing monorepo keeps the locked .agents/skills copy (ADR-0002): the project stays listed", async () => {
+    const { handlers } = backendFor("failures");
+    const { projects, report } = await handlers.removeProject("prj-monorepo");
+    expect(report.targets.filter((target) => target.status.status === "failed").length).toBeGreaterThan(0);
+    expect(projects.some((p) => p.id === "prj-monorepo")).toBe(true);
+    const view = await handlers.getProjectView("prj-monorepo");
+    // The kept row reads failed with its reason; every row that owned a removable copy is gone.
+    expect(view.assignments.find((a) => a.skill_name === "release-train" && a.tool === "agents_skills")).toMatchObject({ status: "error" });
+    expect(view.assignments.some((a) => a.status === "synced" || a.status === "stale")).toBe(false);
+  });
+
+  it("quartermaster's first view is unreconciled once; the next read is reconciled", async () => {
+    const { handlers } = backendFor("failures");
+    expect((await handlers.getProjectView("prj-quartermaster")).reconciled).toBe(false);
+    expect((await handlers.getProjectView("prj-quartermaster")).reconciled).toBe(true);
+  });
+});

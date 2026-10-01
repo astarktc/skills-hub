@@ -1,5 +1,7 @@
-import { memo, useState } from "react";
+import { memo, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogBody,
@@ -8,6 +10,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+  Input,
+} from "@/components/ui/field";
 import type { IgnoreUpdateOptions, ProjectDto } from "./types";
 
 type AddProjectModalProps = {
@@ -25,9 +36,16 @@ type AddProjectModalProps = {
     gitignore: IgnoreUpdateOptions,
   ) => Promise<void>;
   onRequestClose: () => void;
+  /** The header progress at the dialog's foot while its registration runs. */
+  progress?: ReactNode;
   t: TFunction;
 };
 
+/**
+ * Add project: the folder (Input + Browse…, the Add dialog's local-folder
+ * pattern; a folder already registered is refused under the field) and
+ * the two ignore choices. The shell stays mounted so Close returns focus.
+ */
 const AddProjectModal = ({
   open,
   blockedReason,
@@ -35,6 +53,7 @@ const AddProjectModal = ({
   onPickFolder,
   onRegister,
   onRequestClose,
+  progress,
   t,
 }: AddProjectModalProps) => {
   const [path, setPath] = useState("");
@@ -45,6 +64,7 @@ const AddProjectModal = ({
   const isDuplicate =
     normalizedPath.length > 0 &&
     projects.some((p) => p.path.replace(/[/\\]+$/, "") === normalizedPath);
+  const blocked = blockedReason !== null;
 
   const handleBrowse = async () => {
     const selected = await onPickFolder();
@@ -61,7 +81,7 @@ const AddProjectModal = ({
       setAddToGitignore(false);
       setAddToExclude(false);
     } catch {
-      // Parent handles the error toast; preserve input state
+      // Parent handles the error; preserve input state
     }
   };
 
@@ -77,64 +97,67 @@ const AddProjectModal = ({
           <DialogTitle>{t("projects.addProjectTitle")}</DialogTitle>
         </DialogHeader>
         <DialogBody>
-          <div className="form-group">
-            <label className="label">{t("projects.pathLabel")}</label>
-            <div className="input-row">
-              <input
-                className="input"
-                type="text"
-                value={path}
-                onChange={(e) => setPath(e.target.value)}
-                placeholder={t("projects.pathHelper")}
-              />
-              <button
-                className="btn btn-secondary input-action"
-                type="button"
-                onClick={handleBrowse}
-                disabled={blockedReason !== null}
-                title={blockedReason ?? undefined}
-              >
-                {t("projects.browse")}
-              </button>
-            </div>
-            {isDuplicate && path.length > 0 && (
-              <div className="field-error">{t("projects.duplicateError")}</div>
-            )}
-          </div>
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (path.trim() && !isDuplicate && !blocked) void handleSubmit();
+            }}
+          >
+            <Field invalid={isDuplicate}>
+              <FieldLabel>{t("projects.pathLabel")}</FieldLabel>
+              <div className="flex gap-2">
+                <Input
+                  type="text"
+                  value={path}
+                  onChange={(e) => setPath(e.target.value)}
+                  placeholder={t("add.source.pathPlaceholder")}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <Button
+                  type="button"
+                  onClick={() => void handleBrowse()}
+                  disabled={blocked}
+                  focusableWhenDisabled
+                  title={blockedReason ?? undefined}
+                  aria-description={blockedReason ?? undefined}
+                >
+                  {t("projectsSurface.add.browse")}
+                </Button>
+              </div>
+              <FieldError>{isDuplicate ? t("projects.duplicateError") : null}</FieldError>
+              <FieldDescription>{t("projectsSurface.add.pathHelp")}</FieldDescription>
+            </Field>
 
-          <div className="gitignore-section">
-            <label>{t("projects.gitignoreLabel")}</label>
-            <label className="gitignore-checkbox">
-              <input
-                type="checkbox"
-                checked={addToGitignore}
-                onChange={(e) => setAddToGitignore(e.target.checked)}
-              />
-              {t("projects.gitignoreShared")}
-            </label>
-            <label className="gitignore-checkbox">
-              <input
-                type="checkbox"
-                checked={addToExclude}
-                onChange={(e) => setAddToExclude(e.target.checked)}
-              />
-              {t("projects.gitignorePrivate")}
-            </label>
-          </div>
+            <FieldSet>
+              <FieldLegend>{t("projectsSurface.add.ignoreLegend")}</FieldLegend>
+              <Field className="flex-row items-center gap-2">
+                <Checkbox checked={addToGitignore} onCheckedChange={(checked) => setAddToGitignore(checked)} />
+                <FieldLabel>{t("projects.gitignoreShared")}</FieldLabel>
+              </Field>
+              <Field className="flex-row items-center gap-2">
+                <Checkbox checked={addToExclude} onCheckedChange={(checked) => setAddToExclude(checked)} />
+                <FieldLabel>{t("projects.gitignorePrivate")}</FieldLabel>
+              </Field>
+            </FieldSet>
+          </form>
         </DialogBody>
         <DialogFooter>
-          <button className="btn btn-secondary" onClick={onRequestClose}>
-            {t("cancel")}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleSubmit}
-            disabled={!path.trim() || isDuplicate || blockedReason !== null}
+          <Button onClick={onRequestClose}>{t("cancel")}</Button>
+          <Button
+            variant="solid"
+            tone="accent"
+            onClick={() => void handleSubmit()}
+            disabled={!path.trim() || isDuplicate || blocked}
+            focusableWhenDisabled={blocked}
             title={blockedReason ?? undefined}
+            aria-description={blockedReason ?? undefined}
           >
             {t("projects.register")}
-          </button>
+          </Button>
         </DialogFooter>
+        {progress}
       </DialogContent>
     </Dialog>
   );

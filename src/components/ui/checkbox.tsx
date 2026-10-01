@@ -5,6 +5,15 @@ import { useFieldControlProps } from "./field-context";
 import { disabledState, focusRing } from "./styles";
 
 type CheckboxProps = Omit<CheckboxPrimitive.Root.Props, "className"> & {
+  /**
+   * While `disabled`, keep the checkbox in the tab order and holding focus
+   * (`aria-disabled`, not activatable) — for a checkbox disabled *because*
+   * its own action is running (a matrix cell mid-toggle), so focus never
+   * leaves it (D21). Base UI's Checkbox has no such option, so — like the
+   * Switch — the primitive renders it read-only (Base UI refuses every
+   * change) and says `aria-disabled` instead of `aria-readonly`.
+   */
+  focusableWhenDisabled?: boolean;
   /** Layout only. */
   className?: string;
 };
@@ -18,8 +27,9 @@ type CheckboxProps = Omit<CheckboxPrimitive.Root.Props, "className"> & {
  * FieldLabel points at it, and Base UI names the `role="checkbox"` element
  * from that label (`aria-labelledby`).
  */
-function Checkbox({ className, ...rest }: CheckboxProps) {
+function Checkbox({ className, disabled = false, focusableWhenDisabled = false, readOnly, ...rest }: CheckboxProps) {
   const props = useFieldControlProps(rest);
+  const heldFocus = disabled && focusableWhenDisabled;
   return (
     <CheckboxPrimitive.Root
       data-slot="checkbox"
@@ -33,7 +43,11 @@ function Checkbox({ className, ...rest }: CheckboxProps) {
         "data-disabled:opacity-50",
         className,
       )}
+      disabled={heldFocus ? false : disabled}
+      readOnly={heldFocus || readOnly}
+      data-focusable-when-disabled={heldFocus ? "" : undefined}
       {...props}
+      {...(heldFocus ? { "aria-disabled": true, "aria-readonly": undefined } : null)}
     >
       <CheckboxPrimitive.Indicator
         data-slot="checkbox-indicator"

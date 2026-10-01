@@ -508,24 +508,14 @@ export const resources = {
         selectProject: "Select a project to manage skill assignments",
         syncProject: "Sync Project",
         syncAll: "Sync All",
-        addTools: "Configure Tools",
-        allTools: "All Tools",
-        allToolsTitle: "Assign {{name}} to every configured tool",
-        unassignAll: "Unassign All",
-        unassignAllTitle: "Remove {{name}} from every tool in this project",
         assignmentCount: "{{count}} assigned",
         toolCount: "{{count}} tools",
         skillCount: "{{count}} skills",
-        projectMeta: "{{tools}} tools, {{skills}} skills",
-        configureProject: "Configure Project",
         save: "Save",
         addProjectTitle: "Register Project",
         pathLabel: "Project directory",
-        browse: "Browse Folder",
-        pathHelper: "Select the root directory of your project",
         register: "Register Project",
         duplicateError: "This directory is already registered as a project",
-        gitignoreLabel: "Git ignore settings",
         gitignoreShared:
           "Add to project .gitignore (shared, committed to repo)",
         gitignorePrivate: "Add to .git/info/exclude (private, local-only)",
@@ -533,52 +523,21 @@ export const resources = {
         toolConfigDesc:
           "Select which AI tools to manage for this project. Installed tools are pre-selected.",
         toolConfigConfirm: "Save Tools",
-        removeTitle: "Remove Project",
-        removeBody:
-          'Remove "{{name}}" from Skills Hub? This will delete all synced skill symlinks and copies from this project\'s tool directories.',
-        removeWarning1:
-          "All deployed symlinks/copies will be removed from the project",
-        removeWarning2: "Skill assignments for this project will be deleted",
-        removeConfirm: "Remove Project",
         removeComplete: "Project removed",
-        removeKept:
-          "Project kept: removed {{count}} deployments, {{failed}} could not be removed — fix the paths and retry",
-        toolRemovalKept:
-          "Removed {{count}} deployments, {{failed}} could not be removed — the affected tools stay configured so you can retry",
-        syncErrorPrefix: "Sync failed: ",
         loadError:
           "Could not load projects. Check that the backend is running and try again.",
-        resyncSuccess: "Synced {{synced}} assignments",
-        resyncPartial: "Synced {{synced}}, {{failed}} failed",
         viewRefreshFailed: "Could not re-read this project's assignments — the matrix may be stale",
-        resyncAllSuccess: "Synced {{synced}} assignments across all projects",
-        resyncAllPartial:
-          "Synced {{synced}} across all projects, {{failed}} failed",
         noSkills:
           "No skills installed. Add skills from the My Skills tab first.",
         lastSyncTime: "Last synced {{time}}",
         lastSyncNever: "Never synced",
         assignmentExistsError: "This skill is already assigned to this tool",
         notFoundError: "Item not found",
-        pathMissing: "(not found)",
-        pathMissingWarning:
-          "Project directory not found. Sync operations are disabled.",
         updatePath: "Update Path",
         updatePathSuccess: "Project path updated",
-        bulkAssignPartial: "{{assigned}} assigned, {{failed}} failed",
-        bulkAssignSuccess_one: "Assigned to {{count}} tool",
-        bulkAssignSuccess_other: "Assigned to {{count}} tools",
         bulkAssignNothing: "Already assigned to every configured tool",
-        bulkUnassignSuccess_one: "Removed from {{count}} tool",
-        bulkUnassignSuccess_other: "Removed from {{count}} tools",
-        bulkUnassignPartial:
-          "Removed {{count}} assignments; {{failed}} could not be removed and are marked in error",
         syncDisabledMissing:
           "Sync is disabled because the project directory was not found.",
-        reconcileSkipped:
-          "Another sync operation is running, so these statuses were not re-checked against disk. They may be out of date.",
-        globalSynced:
-          "This skill is already deployed globally for this tool. Assign it here only to manage it per-project.",
         assignedWhileDisabled:
           "Assigned, but not synced: this skill is disabled. Enable it to sync.",
       },
@@ -599,20 +558,6 @@ export const resources = {
         cancel: "Cancel",
       },
       disabledSkips: {
-        bulkAssignNotSynced_one:
-          "Assigned to {{count}} tool, but not synced: this skill is disabled. Enable it to sync.",
-        bulkAssignNotSynced_other:
-          "Assigned to {{count}} tools, but not synced: this skill is disabled. Enable it to sync.",
-        bulkAssignMixed:
-          "{{assigned}} assigned and synced, {{skipped}} not synced (disabled)",
-        bulkAssignPartial:
-          "{{assigned}} assigned, {{failed}} failed, {{skipped}} not synced (disabled)",
-        resyncSuccess: "Synced {{synced}} assignments, {{skipped}} skipped (disabled)",
-        resyncPartial: "Synced {{synced}}, {{failed}} failed, {{skipped}} skipped (disabled)",
-        resyncAllSuccess:
-          "Synced {{synced}} assignments across all projects, {{skipped}} skipped (disabled)",
-        resyncAllPartial:
-          "Synced {{synced}} across all projects, {{failed}} failed, {{skipped}} skipped (disabled)",
         deployDisabledPairs_one:
           "Enable {{count}} disabled tool and sync",
         deployDisabledPairs_other:
@@ -1323,6 +1268,123 @@ export const resources = {
         noticeTools: "{{tools}}:",
         affects_one: "Affects {{names}}.",
         affects_other: "Affects {{count}} skills: {{names}}.",
+      },
+      // Ticket 17 — the Projects surface: the list, the header, the matrix's
+      // cell vocabulary (projectPresentation.ts), the project dialogs.
+      projectsSurface: {
+        heading: "Projects",
+        done: {
+          unassigned_one: "{{count}} unassigned",
+          unassigned_other: "{{count}} unassigned",
+        },
+        verbs: {
+          syncCell: "Sync this",
+        },
+        folderMissingSkip: "{{project}}: folder not found \u2014 Update path or Remove",
+        folderMissingDetail: "Nothing in it was synced; its assignments are unchanged.",
+        removeKept: "Project kept",
+        cellSynced: "Synced",
+        syncedWhileDisabled: "Not synced: this skill is disabled. Enable it to sync.",
+        state: {
+          synced: "synced",
+          stale: "stale",
+          missing: "missing",
+          pending: "pending",
+          failed: "failed",
+          disabled: "disabled",
+        },
+        detail: {
+          synced: "the copy matches the skill",
+          stale: "copy differs from the skill \u2014 Sync to fix",
+          missing: "the deployed copy is gone \u2014 Sync to fix",
+          pending: "assigned, not synced yet",
+          failed: "the last sync did not complete \u2014 Sync to retry",
+          failedWith: "{{error}} \u2014 Sync to retry",
+          disabled: "not synced here (disabled)",
+          skillDisabled: "the skill is off everywhere \u2014 Enable it to sync",
+        },
+        cell: {
+          name: "{{skill}} in {{tool}}: {{state}}",
+          notAssigned: "not assigned",
+          alsoGlobal: "also global",
+          alsoGlobalTitle: "Also deployed globally for this Tool \u2014 the project copy is managed here too",
+          syncing: "syncing\u2026",
+          syncThisNamed: "Sync {{skill}} in {{tool}}",
+          folderMissing: "Folder not found \u2014 update the path to change assignments",
+        },
+        legend: {
+          label: "What the marks mean",
+          alsoGlobal: "also global",
+          alsoGlobalDetail: "the skill is also deployed globally for this Tool",
+        },
+        matrix: {
+          caption: "Skill assignments in {{project}}",
+          skill: "Skill",
+          bulk: "All Tools",
+          searchLabel: "Filter skills",
+          searchPlaceholder: "Filter skills",
+          filterGroup: "Show",
+          filters: {
+            all: "All",
+            assigned: "Assigned",
+            issues: "Issues",
+          },
+          grouping: "Grouping",
+          notDetected: "not detected",
+          noMatch: "No skill matches this filter.",
+          noTools: "This project has no Tools yet.",
+          assignAll: "Assign to all",
+          assignAllNamed: "Assign to all configured Tools \u2014 {{skill}}",
+          unassignAll: "Unassign from all",
+          unassignAllNamed: "Unassign from all \u2014 {{skill}}",
+          allAssigned: "Assigned to every configured Tool already",
+          noneAssigned: "Not assigned to any Tool here",
+        },
+        header: {
+          select: "Project",
+          more: "More actions for {{project}}",
+          configureTools: "Configure Tools\u2026",
+          configureProject: "Project settings\u2026",
+          updatePath: "Update path\u2026",
+          remove: "Remove project\u2026",
+          folderMissing: "Folder not found \u2014 Update path or Remove the project.",
+          reconcileSkipped: "Statuses may be out of date",
+          refreshView: "Refresh view",
+          missingSuffix: "(folder not found)",
+        },
+        list: {
+          meta: "{{tools}} \u00b7 {{skills}}",
+          tools_one: "{{count}} Tool",
+          tools_other: "{{count}} Tools",
+          skills_one: "{{count}} skill",
+          skills_other: "{{count}} skills",
+          folderMissing: "Folder not found",
+          status: {
+            none: "no assignments",
+            synced: "all synced",
+            pending: "not synced yet",
+            stale: "stale",
+            error: "failed",
+          },
+        },
+        remove: {
+          title: "Remove {{name}}?",
+          removes_one: "Skills Hub removes the skill it deployed into this project\u2019s Tool folders and forgets the project and its assignment.",
+          removes_other: "Skills Hub removes the {{count}} skills it deployed into this project\u2019s Tool folders and forgets the project and its assignments.",
+          removesNone: "Skills Hub forgets the project. Nothing was deployed into it.",
+          stays: "The project\u2019s own files stay \u2014 Skills Hub touches nothing else in the folder, and your skills stay in the library.",
+          kept: "If a deployed copy cannot be removed, the project stays listed and that cell shows as failed with the reason \u2014 fix it and remove the project again.",
+          confirm: "Remove project",
+        },
+        edit: {
+          title: "Project settings",
+          saved: "Project settings saved",
+        },
+        add: {
+          pathHelp: "The project\u2019s root folder.",
+          browse: "Browse\u2026",
+          ignoreLegend: "Keep deployed skills out of git",
+        },
       },
     },
   },

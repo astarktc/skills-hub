@@ -1,5 +1,8 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Field, FieldLabel, FieldLegend, FieldSet, Input } from "@/components/ui/field";
 import {
   Dialog,
   DialogBody,
@@ -26,6 +29,8 @@ type EditProjectModalProps = {
   /** Why Save is disabled: another action is running (D19); null = it may run. */
   blockedReason: string | null;
   onRequestClose: () => void;
+  /** The header progress at the dialog's foot while its save runs. */
+  progress?: ReactNode;
   t: TFunction;
 };
 
@@ -36,7 +41,7 @@ const EditProjectModalInner = ({
   blockedReason,
   onRequestClose,
   t,
-}: Omit<EditProjectModalProps, "open"> & { project: ProjectDto }) => {
+}: Omit<EditProjectModalProps, "open" | "progress"> & { project: ProjectDto }) => {
   const [addToGitignore, setAddToGitignore] = useState(false);
   const [addToExclude, setAddToExclude] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -75,81 +80,75 @@ const EditProjectModalInner = ({
   };
 
   return (
-    <Dialog
-      open
-      onOpenChange={(next) => {
-        if (!next) onRequestClose();
-      }}
-    >
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{t("projects.configureProject")}</DialogTitle>
-        </DialogHeader>
-        <DialogBody>
-              <div className="form-group">
-            <label className="label">{t("projects.pathLabel")}</label>
-            <input
-              className="input"
-              type="text"
-              value={project.path}
-              disabled
-            />
-          </div>
+    <>
+      <DialogHeader>
+        <DialogTitle>{t("projectsSurface.edit.title")}</DialogTitle>
+      </DialogHeader>
+      <DialogBody className="flex flex-col gap-4">
+        <Field>
+          <FieldLabel>{t("projects.pathLabel")}</FieldLabel>
+          <Input type="text" value={project.path} readOnly />
+        </Field>
 
-          <div className="gitignore-section">
-            <label>{t("projects.gitignoreLabel")}</label>
-            {loading ? (
-              <div
-                className="skeleton-row"
-                style={{ width: "60%", height: 20 }}
-              />
-            ) : (
-              <>
-                <label className="gitignore-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={addToGitignore}
-                    onChange={(e) => setAddToGitignore(e.target.checked)}
-                  />
-                  {t("projects.gitignoreShared")}
-                </label>
-                <label className="gitignore-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={addToExclude}
-                    onChange={(e) => setAddToExclude(e.target.checked)}
-                  />
-                  {t("projects.gitignorePrivate")}
-                </label>
-              </>
-            )}
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          <button className="btn btn-secondary" onClick={onRequestClose}>
-            {t("cancel")}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleSave}
-            disabled={loading || saving || blockedReason !== null}
-            title={blockedReason ?? undefined}
-          >
-            {t("projects.save")}
-          </button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <FieldSet aria-busy={loading || undefined}>
+          <FieldLegend>{t("projectsSurface.add.ignoreLegend")}</FieldLegend>
+          {loading ? (
+            <div aria-hidden="true" className="h-5 w-3/5 rounded-sm bg-raised" />
+          ) : (
+            <>
+              <Field className="flex-row items-center gap-2">
+                <Checkbox checked={addToGitignore} onCheckedChange={(checked) => setAddToGitignore(checked)} />
+                <FieldLabel>{t("projects.gitignoreShared")}</FieldLabel>
+              </Field>
+              <Field className="flex-row items-center gap-2">
+                <Checkbox checked={addToExclude} onCheckedChange={(checked) => setAddToExclude(checked)} />
+                <FieldLabel>{t("projects.gitignorePrivate")}</FieldLabel>
+              </Field>
+            </>
+          )}
+        </FieldSet>
+      </DialogBody>
+      <DialogFooter>
+        <Button onClick={onRequestClose}>{t("cancel")}</Button>
+        <Button
+          variant="solid"
+          tone="accent"
+          onClick={() => void handleSave()}
+          disabled={loading || blockedReason !== null}
+          pending={saving}
+          focusableWhenDisabled={blockedReason !== null}
+          title={blockedReason ?? undefined}
+          aria-description={blockedReason ?? undefined}
+        >
+          {t("projects.save")}
+        </Button>
+      </DialogFooter>
+    </>
   );
 };
 
+/**
+ * Project settings: the folder (read-only) and the ignore choices. The shell
+ * stays mounted for the app's life — only the body is keyed per project —
+ * so closing returns focus to the control that opened it.
+ */
 const EditProjectModal = ({
   open,
   project,
+  progress,
   ...rest
-}: EditProjectModalProps) => {
-  if (!open || !project) return null;
-  return <EditProjectModalInner project={project} {...rest} />;
-};
+}: EditProjectModalProps) => (
+  <Dialog
+    open={open && project !== null}
+    onOpenChange={(next) => {
+      if (!next) rest.onRequestClose();
+    }}
+  >
+    <DialogContent>
+      {project ? <EditProjectModalInner key={project.id} project={project} {...rest} /> : null}
+      {progress}
+    </DialogContent>
+  </Dialog>
+);
 
 export default memo(EditProjectModal);

@@ -43,6 +43,7 @@ import type {
   ProjectSkillAssignmentDto,
   ProjectSyncOutcome,
   ProjectSyncOutcomeStatus,
+  ProjectSyncReport,
   ProjectSyncStatus,
   ProjectViewDto,
   PropagationOutcome,
@@ -609,12 +610,21 @@ export function createFixtureBackend(
 
   const projectsDto = () => state.projects.map(projectDto);
 
-  const viewOf = (project: FixtureProject): ProjectViewDto => ({
-    project: projectDto(project),
-    tools: project.tools.map((tool) => ({ id: `${project.id}-tool-${tool}`, project_id: project.id, tool })),
-    assignments: clone(project.assignments),
-    reconciled: true,
-  });
+  /**
+   * A project's view. A project listed in `unreconciledViews` answers its
+   * next view with `reconciled: false` once (Rust: the reconcile pass found
+   * the mutation guard busy and returned the stored rows).
+   */
+  const viewOf = (project: FixtureProject): ProjectViewDto => {
+    const unreconciled = state.unreconciledViews.includes(project.id);
+    if (unreconciled) state.unreconciledViews = state.unreconciledViews.filter((id) => id !== project.id);
+    return {
+      project: projectDto(project),
+      tools: project.tools.map((tool) => ({ id: `${project.id}-tool-${tool}`, project_id: project.id, tool })),
+      assignments: clone(project.assignments),
+      reconciled: !unreconciled,
+    };
+  };
 
   /**
    * One assignment through Rust `project_sync::sync_assignment_target`.
@@ -725,6 +735,19 @@ export function createFixtureBackend(
   const resyncOne = (project: FixtureProject, a: ProjectSkillAssignmentDto): ProjectSyncOutcomeStatus =>
     isDisabledAssignment(a) ? skippedDisabled : syncAssignment(project, a, ownsArtifact(a));
 
+  /**
+   * Rust `resync_assignments_unlocked`: a project whose folder is missing is
+   * skipped whole (one `folder_missing` entry, its rows untouched); otherwise
+   * each given row re-syncs.
+   */
+  const resyncAssignments = (
+    project: FixtureProject,
+    rows: readonly ProjectSkillAssignmentDto[],
+  ): ProjectSyncReport =>
+    project.path_exists
+      ? { items: rows.map((a) => outcomeOf(project, a, resyncOne(project, a))), skipped_projects: [] }
+      : { items: [], skipped_projects: [{ project_id: project.id, reason: { reason: "folder_missing" } }] };
+
   // -------------------------------------------------------------------------
   // Disable / Enable (Rust `skill_disable`)
   // -------------------------------------------------------------------------
@@ -796,12 +819,12 @@ export function createFixtureBackend(
     if (skill.dto.disabled_at !== null) {
       return {
         global: [{ skill_id: skill.dto.id, skill_name: skill.dto.name, tool_key: tool, status: { status: "skipped", error: { code: "TARGET_DISABLED", tool } } }],
-        projects: { items: [] },
+        projects: { skipped_projects: [], items: [] },
       };
     }
     const group = toolByKey(tool) ? globalSharers(tool) : [tool];
     skill.dto.targets = skill.dto.targets.filter((t) => !(t.status === "disabled" && group.includes(t.tool)));
-    return { global: await firstSync(skill, [tool], overrides), projects: { items: [] } };
+    return { global: await firstSync(skill, [tool], overrides), projects: { skipped_projects: [], items: [] } };
   };
 
   /**
@@ -822,7 +845,7 @@ export function createFixtureBackend(
         items.push(outcomeOf(project, a, syncAssignment(project, a, false)));
       }
     }
-    return { global: tools.length ? await firstSync(skill, tools, overrides) : [], projects: { items } };
+    return { global: tools.length ? await firstSync(skill, tools, overrides) : [], projects: { skipped_projects: [], items } };
   };
 
   // -------------------------------------------------------------------------
@@ -1880,7 +1903,7 @@ export function createFixtureBackend(
         scope.kind === "skill"
           ? [findSkill(scope.skill_id)]
           : state.skills.filter((s) => scope.skill_ids.includes(s.dto.id));
-      const report: EnableReport = { global: [], projects: { items: [] } };
+      const report: EnableReport = { global: [], projects: { skipped_projects: [], items: [] } };
       for (const skill of skills) {
         const one = await enableSkill(skill, overrides);
         report.global.push(...one.global);
@@ -2016,24 +2039,36 @@ export function createFixtureBackend(
       }
       if (!project.tools.includes(tool)) fail({ code: "UNKNOWN_TOOL", tool });
       const item = assign(project, skill, tool);
-      return { kind: "assigned", view: viewOf(project), report: { items: [item] } };
+      return { kind: "assigned", view: viewOf(project), report: { items: [item], skipped_projects: [] } };
     },
     resyncProject: async (projectId) => {
       await pause(400);
       const project = findProject(projectId);
-      const items = project.assignments.map((a) => outcomeOf(project, a, resyncOne(project, a)));
-      return { view: viewOf(project), report: { items } };
+      const report = resyncAssignments(project, project.assignments);
+      return { view: viewOf(project), report };
+    },
+    resyncProjectAssignment: async (projectId, skillId, tool) => {
+      await pause(220);
+      const project = findProject(projectId);
+      const row = project.assignments.find((a) => a.skill_id === skillId && a.tool === tool);
+      if (!row) return fail({ code: "NOT_FOUND", kind: "assignment", id: `${projectId}/${skillId}/${tool}` });
+      const report = resyncAssignments(project, [row]);
+      return { view: viewOf(project), report };
     },
     resolveProjectCollisions: async (decisions) => {
       await pause(200);
-      return { items: decisions.map(resolveCollision) };
+      return { items: decisions.map(resolveCollision), skipped_projects: [] };
     },
     resyncAllProjects: async () => {
       await pause(700);
-      const items = state.projects.flatMap((project) =>
-        project.assignments.map((a) => outcomeOf(project, a, resyncOne(project, a))),
-      );
-      return { report: { items }, projects: projectsDto() };
+      const reports = state.projects.map((project) => resyncAssignments(project, project.assignments));
+      return {
+        report: {
+          items: reports.flatMap((report) => report.items),
+          skipped_projects: reports.flatMap((report) => report.skipped_projects),
+        },
+        projects: projectsDto(),
+      };
     },
     bulkAssignSkill: async (projectId, skillId) => {
       await pause(300);
@@ -2044,7 +2079,7 @@ export function createFixtureBackend(
         if (!existing) return assign(project, skill, tool);
         return outcomeOf(project, existing, isDisabledAssignment(existing) ? skippedDisabled : { status: "already_assigned" });
       });
-      return { view: viewOf(project), report: { items } };
+      return { view: viewOf(project), report: { items, skipped_projects: [] } };
     },
     bulkUnassignSkill: async (projectId, skillId) => {
       await pause(250);

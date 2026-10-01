@@ -30,3 +30,10 @@ three rows selected; screen-reader semantics of the listbox; `npm run check`.
   (`--motion-fast`, `ease-out`), `motion-reduce:` counterpart, owned by its primitive. Frequency first: ⌘K opens many
   times a day and from the keyboard — the rubric (Emil) says no open/close animation at all is the better default;
   decide there, and record it in the table.
+
+- 2026-10-01 — from ticket 17: 16-recheck **R1 is still open** — the Projects matrix did not adopt the triggerless
+  `PopoverContent anchor`, so its hidden focus-guard Tab stop / stays-open-on-Tab-out fix was not made there. If the
+  palette anchors a popover, fix it in the primitive first (a real focus-manager return position; forward/reverse Tab
+  leave cleanly; zero layer records; primitive + browser regression). Also seen in 17's axe runs: an open
+  `DropdownMenu`'s portal fails `region` (best-practice) — every menu, primitive-level; the palette's own portal will
+  likely hit the same rule.

@@ -241,6 +241,9 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
 
 - **Checkbox**: a 16 px box with a 24 × 24 hit area. It reports `aria-checked` true, false or mixed. Its edge is
   `input`, and when checked it fills with `primary`.
+  - `focusableWhenDisabled` (ticket 17): the Switch's option, for a checkbox disabled *because its own action runs*
+    (a matrix cell mid-toggle) — it keeps its Tab stop and focus, says `aria-disabled="true"` (never
+    `aria-readonly`) and refuses every change; Base UI renders it read-only. `checkbox.test.tsx` pins it.
 - **Switch**: `role="switch"`. `size` is `md` (20 × 36, standalone) or `sm` (16 × 28 with a 24 px hit area, dense
   rows). "On" is **neutral** (`muted-foreground`), not iris: a column of switches must not make the accent mean
   "normal". The thumb slides in 120 ms, and reduced motion removes the slide.
@@ -398,13 +401,14 @@ one component that owns the moving element — never by a call site's `className
 | Synced strip light — the signature interaction | a mark **becomes** synced on screen (a sync, Retry, Enable or Update completing); never on mount, filter or scroll | opacity 0 → 1 of the new glyph (`@starting-style`) | 120 ms | `ease-out` | shown at once | `skills/StripMarkIcon.tsx` + `useSyncLight` |
 | Header progress fill | each tick of a streamed action | `transform: scaleX`, retargeting tick to tick | 120 ms | `ease-out` | jumps | `shell/HeaderProgress.tsx` |
 | Toast | once per settled run (occasional) | `transform` from its own edge + opacity; never height | 120 ms | `ease-out` | none | `ui/sonner.tsx` |
-| Spinners: Button `pending`, header progress, Files loading | while work runs | rotation loop (`animate-spin`) | 1 s period | linear | hidden (header) / not running (`motion-safe:` only) | `ui/button.tsx`, `HeaderProgress`, `SkillFiles` |
+| Spinners: Button `pending`, header progress, Files loading, a matrix cell in flight | while work runs | rotation loop (`animate-spin`) | 1 s period | linear | hidden (header) / not running (`motion-safe:` only) | `ui/button.tsx`, `HeaderProgress`, `SkillFiles`, `projects/AssignmentMatrix` |
 | Install landing (the rare moment, ticket 16) | an Add's settlement rows settle (a few times a week) | opacity 0 → 1 of a row's settled glyph (`@starting-style`; added / failed / cancelled), **staggered 20 ms per row** (capped at 8 rows) — a sequence of 120 ms steps | 120 ms each | `ease-out` | shown at once | `skills/add/AddSkillDialog.tsx` |
 | ⌘K palette (ticket 23) | open / close | opacity + transform | ≤ 120 ms | `ease-out` | none | the palette's primitive |
 
 The loops are the only durations over 120 ms in the built CSS, and they are periods, not transitions: `animate-spin`
-1 s, and the legacy `.spinner` 0.9 s, `.cell-spinner` 0.6 s and `.skeleton-row` shimmer 1.5 s in `App.css` (Add,
-Projects) — all stopped by the base layer's reduced-motion rule. **The two permitted rare moments** (D6's delight
+1 s, and the legacy `.spinner` 0.9 s in `App.css` — all stopped by the base layer's reduced-motion rule. (`.cell-spinner`
+and the `.skeleton-row` shimmer left with Projects' migration, ticket 17: a cell in flight spins `animate-spin`
+`motion-safe`, and the loading placeholders are static `raised` blocks.) **The two permitted rare moments** (D6's delight
 budget: a large import completing, an install landing) may run as a *sequence* of ≤ 120 ms steps: the import cascade
 (§ Empty and first-run, ticket 21 — the strip light above, staggered 20 ms per mark; not built yet) and an install
 landing (ticket 16, built: the settlement glyphs above — nothing else in the dialog moves, the rows' words are there
@@ -729,6 +733,73 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
 - **Focus**: each step's first control takes focus in the commit that changes the step (the field, the search — else
   the first selectable candidate, else Back when nothing can be picked — the Result heading); a focused control a render removes (the summary's Cancel, withdrawn for the ask's retry) hands
   focus to the same target — never `<body>`, never the dialog's first tabbable by fallback.
+
+## Projects (ticket 17)
+
+Files: `components/projects/{ProjectsPage,ProjectList,ProjectHeader,AssignmentMatrix,AddProjectModal,EditProjectModal,RemoveProjectModal}.tsx`,
+the cell fold in `lib/projectPresentation.ts`. Composed from primitives and tokens; the one new primitive option is
+Checkbox `focusableWhenDisabled`.
+
+- **Selection** (≥ 1200 px): the project list (`card`, 256 px) is one **named selection button** per project —
+  name (`sm` medium), path (`font-mono xs faint`, wrapping only after a `/`), then "3 Tools · 5 skills" (`xs muted`; a
+  `failed` / `stale` word when the project has one) or "Folder not found" (`stale` with ⚠). The selected project has
+  `aria-current="true"`, a `raised` ground and a 3 px `ring` edge (6.01 / 5.04 on `raised`); the focused one draws the
+  inset focus ring — the two never share a cue. ↑ / ↓ / Home / End move focus between projects (Enter / Space select;
+  Tab keeps the native order). Each project's overflow (`ghost icon-sm`, "More actions for {project}") holds Update
+  path… (a missing folder), Project settings…, Remove project… (`destructive`) — separate from selection.
+- **Header** (D23): name (`h2`, `base` semibold, the `data-project-heading` focus target) · path (`font-mono xs`) ·
+  "Last synced …" (`xs faint`, `whitespace-nowrap` — one line) · ⚠ "Folder not found — Update path or Remove the
+  project." Name and path wrap, never truncate; the actions take only the room beside them. ≥ 1200: Configure Tools…
+  (`ghost`) · Sync All (`outline`) · **Sync Project** (`solid accent`, the one primary) · overflow (the project's own
+  actions). < 1200: the list becomes the header's `Select` (after the "Projects" `h1`, with Add project), and the
+  toolbar collapses to Sync Project + the overflow (Configure Tools…, Sync All, then the project's actions). Every
+  mutation control stays focusable while refused, with the reason as `title` + `aria-description`.
+- **"Statuses may be out of date — Refresh view"** (`xs muted`, ⓘ, a `role="status"` line under the header) when the
+  view's reconcile pass was skipped (`reconciled: false`); Refresh view is a read, and its focus moves to the
+  project heading once the line goes.
+- **Filter bar** (the matrix's one list lens): search (`Input sm`) · Chips **All · Assigned · Issues** with counts
+  (Assigned: any assignment here; Issues: stale, missing or failed — what Sync this repairs) · Segmented Grouped /
+  Flat. Sorted by name; no sort control (My Skills keeps the menu).
+- **Legend** (`xs muted`, one line, `aria-label` "What the marks mean"): each state's mark + word, its meaning as the
+  title, then ⊕ "also global" — the same vocabulary the cells draw.
+- **Matrix**: column headers are the Tool catalog's **labels** (`xs` medium), "not detected" (`xs faint`) under a
+  configured Tool detection no longer sees. A **cell** is a `<label>` spanning it (the checkbox's hit area: the
+  36 px row × the column) with the Checkbox, the state's mark (`StripMarkIcon`), ⊕ when the skill is **also global**
+  on that Tool (D17: the cell stays enabled; toggle and bulk obey the same rule), and the state's word, shown on hover
+  and focus (`visibility`, so nothing moves). The checkbox's name carries all of it: "docx in Claude Code: missing —
+  the deployed copy is gone — Sync to fix, also global". **Sync this** (`ghost icon-sm`, "Sync {skill} in {Tool}")
+  follows a stale, missing or failed cell; it pends while it runs and, once the cell is healthy, hands its focus to the
+  cell's checkbox. A cell in flight shows a spinner and holds focus (`focusableWhenDisabled`). With the folder
+  missing, cells and row verbs are disabled with "Folder not found — update the path to change assignments".
+- **Row verbs** (the "All Tools" column, `ghost sm`): **Assign to all** (`accent`) — named "Assign to all configured
+  Tools — {skill}" — and **Unassign from all**, both the door's verbs (`assignToProject` / `unassignFromProject`, the
+  inspector's). Both stay mounted: a verb that would change nothing is refused with the reason ("Assigned to every
+  configured Tool already"), so focus never drops.
+
+| Cell state | Mark (shape) | Word | Meaning (in the name and title) | Mark dark / light on background |
+|---|---|---|---|---|
+| synced | filled dot, `muted-foreground` | synced | the copy matches the skill | 8.31 / 8.16 |
+| stale | half-filled ring, `stale` | stale | copy differs from the skill — Sync to fix | 10.41 / 5.62 |
+| missing | ×, `failed` | missing | the deployed copy is gone — Sync to fix | 6.91 / 5.50 |
+| pending | hollow ring, `input` | pending | assigned, not synced yet | 3.90 / 3.78 |
+| failed | ×, `failed` | failed | {the error} — Sync to retry | 6.91 / 5.50 |
+| disabled | slashed ring, `faint` | disabled | not synced here (disabled) / the skill is off everywhere | 6.12 / 6.09 |
+| also global | ⊕ (lucide Globe), `muted-foreground` | also global | the skill is also deployed globally for this Tool | 8.31 / 8.16 |
+
+Missing and failed share the strip's ×; the word (on hover / focus, in the name and the legend) tells them apart.
+Words are `muted-foreground` (8.31 / 8.16). On a hovered cell (`raised`) the marks keep ≥ 3:1 (token table).
+Measured 2026-10-01 on the fixture (`failures`), `.scratch/round19/evidence/17/a11y-*.json`; grayscale capture
+`matrix-grayscale-*.png`.
+
+- **Remove project** (`sm`): "Remove {project}?" · what goes (the skills Skills Hub deployed into the project's Tool
+  folders; the project and its assignments) · the path · what stays (`foreground`: the project's own files, the
+  skills in the library) · how a kept copy shows (`muted`: the project stays listed and that cell reads failed with
+  its reason — ADR-0002). Cancel takes focus; **Remove project** (`solid danger`) pends while it runs. It closes
+  either way; a removed project's focus goes to the area's heading.
+- **Add project / Project settings**: Field + Input + **Browse…** in one row (Add's local-folder pattern; a folder
+  already registered is refused under the field), a FieldSet "Keep deployed skills out of git" with two Checkboxes.
+  All four project dialogs (Add, Project settings, Configure Tools, Remove) show the header progress at their foot
+  while their action runs (`placement="dialog"`; the page copy yields).
 
 ## Migration rule
 

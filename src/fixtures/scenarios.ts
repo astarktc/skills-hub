@@ -275,6 +275,7 @@ function baseState(scenario: ScenarioName, now: number): FixtureState {
     unwritableTools: [],
     unwritableProjectTools: [],
     lockedPaths: [],
+    unreconciledViews: [],
     revealed: [],
     projectOccupants: [],
     dialogPicks: [`${HOME}/Projects/team-skills`, `${HOME}/Projects/new-service`],
@@ -484,6 +485,9 @@ function failures(now: number): FixtureState {
   // Kimi and Amp share ~/.config/agents/skills, which refuses writes.
   state.unwritableTools = ["amp", "kimi_cli"];
   state.unwritableProjectTools = ["prj-monorepo:agents_skills"];
+  // quartermaster's first view is read while a mutation holds the guard:
+  // the matrix says its statuses may be out of date (Refresh view clears it).
+  state.unreconciledViews = ["prj-quartermaster"];
   state.lockedPaths = [`${globalRoot("claude_code")}/release-train`];
   state.repos.push(
     { slug: "corp/private-skills", candidates: [], listingError: { code: "GIT_CLONE_FAILED", kind: "auth", detail: "remote: Repository not found.\nfatal: Authentication failed for 'https://github.com/corp/private-skills/'" } },

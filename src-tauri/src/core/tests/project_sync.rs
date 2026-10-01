@@ -555,6 +555,113 @@ fn resync_all_multiple_projects() {
     assert_eq!(skills, expected);
 }
 
+/// Sync All over a project whose folder is gone: one `folder_missing` skip
+/// for the project, no item per assignment, its rows untouched, and no
+/// folder recreated under the missing path; the other project re-syncs.
+#[test]
+fn resync_all_skips_a_project_whose_folder_is_missing() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+
+    let live_skill_dir = make_skill_dir(tmpdir.path(), "live-skill");
+    let live_dir = tmpdir.path().join("live-project");
+    fs::create_dir_all(&live_dir).unwrap();
+    let (live, live_skill) = register_project_and_skill(
+        &store,
+        &live_dir.to_string_lossy(),
+        "live-skill",
+        &live_skill_dir.to_string_lossy(),
+    );
+    project_sync::assign_and_sync(&store, &live, &live_skill, "claude_code", 2000).unwrap();
+
+    let gone_skill_dir = make_skill_dir(tmpdir.path(), "gone-skill");
+    let gone_dir = tmpdir.path().join("gone-project");
+    fs::create_dir_all(&gone_dir).unwrap();
+    let (gone, gone_skill) = register_project_and_skill(
+        &store,
+        &gone_dir.to_string_lossy(),
+        "gone-skill",
+        &gone_skill_dir.to_string_lossy(),
+    );
+    project_sync::assign_and_sync(&store, &gone, &gone_skill, "claude_code", 2000).unwrap();
+    project_sync::assign_and_sync(&store, &gone, &gone_skill, "pi", 2000).unwrap();
+    let before = store.list_project_skill_assignments(&gone.id).unwrap();
+    fs::remove_dir_all(&gone_dir).unwrap();
+
+    let report = project_sync::resync_all_projects(&store, 3000).expect("resync all");
+
+    assert_eq!(
+        report.skipped_projects,
+        vec![project_sync::ProjectSkipped {
+            project_id: gone.id.clone(),
+            reason: project_sync::ProjectSkipReason::FolderMissing,
+        }]
+    );
+    assert!(
+        report.items.iter().all(|item| item.project_id == live.id),
+        "no item for the skipped project: {report}"
+    );
+    assert_eq!(report.synced(), 1);
+    assert!(!gone_dir.exists(), "the missing folder is not recreated");
+    let after = store.list_project_skill_assignments(&gone.id).unwrap();
+    let statuses = |rows: &[crate::core::skill_store::ProjectSkillAssignmentRecord]| {
+        rows.iter()
+            .map(|row| (row.tool.clone(), row.status, row.last_error.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(statuses(&after), statuses(&before), "rows untouched");
+}
+
+/// Sync this: one assignment re-synced (its stale copy replaced), its
+/// siblings untouched; an absent assignment is the typed `NotFound`; a
+/// missing folder is the project skip.
+#[test]
+fn resync_assignment_resyncs_one_row() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+    let skill_dir = make_skill_dir(tmpdir.path(), "one-skill");
+    let project_dir = tmpdir.path().join("one-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "one-skill",
+        &skill_dir.to_string_lossy(),
+    );
+    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000).unwrap();
+    project_sync::assign_and_sync(&store, &project, &skill, "pi", 2000).unwrap();
+
+    let report = project_sync::resync_assignment(&store, &project.id, &skill.id, "pi", 3000)
+        .expect("resync one");
+    assert_eq!(report.items.len(), 1);
+    assert_eq!(report.items[0].tool, "pi");
+    assert_eq!(report.synced(), 1);
+    assert!(report.skipped_projects.is_empty());
+    let claude = store
+        .get_project_skill_assignment(&project.id, &skill.id, "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        claude.synced_at,
+        Some(2000),
+        "the sibling row is not re-synced"
+    );
+
+    let err = project_sync::resync_assignment(&store, &project.id, &skill.id, "cursor", 3000)
+        .expect_err("no such assignment");
+    assert!(matches!(
+        crate::core::errors::CommandError::from_anyhow(err),
+        crate::core::errors::CommandError::NotFound { .. }
+    ));
+
+    fs::remove_dir_all(&project_dir).unwrap();
+    let skipped = project_sync::resync_assignment(&store, &project.id, &skill.id, "pi", 4000)
+        .expect("skip, not an error");
+    assert!(skipped.items.is_empty());
+    assert_eq!(skipped.skipped_projects.len(), 1);
+    assert!(!project_dir.exists());
+}
+
 #[test]
 fn staleness_detected_for_copy() {
     let (_db_dir, store) = make_store();
@@ -1224,10 +1331,15 @@ fn project_sync_report_wire_shape() {
                 },
             },
         ],
+        skipped_projects: vec![crate::core::project_sync::ProjectSkipped {
+            project_id: "gone".into(),
+            reason: crate::core::project_sync::ProjectSkipReason::FolderMissing,
+        }],
     };
     assert_eq!(
         serde_json::to_value(&report).unwrap(),
-        json!({ "items": [
+        json!({ "skipped_projects": [{ "project_id": "gone", "reason": { "reason": "folder_missing" } }],
+          "items": [
             { "assignment_id": "a1", "project_id": "p", "skill_id": "s", "skill_name": "skill",
               "tool": "claude_code", "status": { "status": "synced" } },
             { "assignment_id": "a2", "project_id": "p", "skill_id": "s", "skill_name": "skill",

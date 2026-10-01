@@ -164,6 +164,11 @@ export const commands = {
 	 */
 	toggleProjectSkillAssignment: (projectId: string, skillId: string, tool: string) => __TAURI_INVOKE<ToggleAssignmentResultDto>("toggle_project_skill_assignment", { projectId, skillId, tool }),
 	resyncProject: (projectId: string) => __TAURI_INVOKE<ResyncProjectResultDto>("resync_project", { projectId }),
+	/**
+	 *  A matrix cell's **Sync this**: re-sync one assignment (a stale copy, a
+	 *  missing artifact, a failed sync) and answer the project's fresh view.
+	 */
+	resyncProjectAssignment: (projectId: string, skillId: string, tool: string) => __TAURI_INVOKE<ResyncProjectResultDto>("resync_project_assignment", { projectId, skillId, tool }),
 	resyncAllProjects: () => __TAURI_INVOKE<ResyncAllResultDto>("resync_all_projects"),
 	/**
 	 *  The overwrite ask's retry for project assignments (D12): settle each
@@ -923,6 +928,22 @@ export type ProjectSkillAssignmentDto = {
 	created_at: number,
 };
 
+/**  Why a re-sync left a whole project alone. */
+export type ProjectSkipReason = 
+/**
+ *  The project's folder is not there (moved, deleted, an unmounted
+ *  volume): syncing into it would recreate a stray tree of Tool dirs, and
+ *  every assignment would fail for the same reason. Its rows are left as
+ *  they are; the operator updates the path or removes the project.
+ */
+{ reason: "folder_missing" };
+
+/**  A project a re-sync did not enter. */
+export type ProjectSkipped = {
+	project_id: string,
+	reason: ProjectSkipReason,
+};
+
 /**  One skill × project Tool pair's result. */
 export type ProjectSyncOutcome = {
 	/**
@@ -965,6 +986,12 @@ export type ProjectSyncOutcomeStatus =
 
 export type ProjectSyncReport = {
 	items: ProjectSyncOutcome[],
+	/**
+	 *  Projects a re-sync left alone as a whole, before any assignment was
+	 *  touched — one entry per project, never one failure per assignment.
+	 *  Report data, never a failure. Empty for every other project sync.
+	 */
+	skipped_projects: ProjectSkipped[],
 };
 
 /**  Why a project sync left an assignment alone. */

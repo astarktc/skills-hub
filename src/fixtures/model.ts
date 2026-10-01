@@ -134,6 +134,11 @@ export type FixtureState = {
   unwritableProjectTools: string[];
   /** Artifact paths whose removal fails (the row is kept, ADR-0002). */
   lockedPaths: string[];
+  /**
+   * Projects whose next view answers `reconciled: false` (once): the
+   * reconcile pass met a busy mutation guard (Rust `try_serialized`).
+   */
+  unreconciledViews: string[];
   /** Paths "Reveal in Finder" was asked to show (`reveal_path`), in order. */
   revealed: string[];
   /**

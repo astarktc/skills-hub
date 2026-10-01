@@ -82,7 +82,9 @@ function backend() {
         return VIEW;
       case "toggleProjectSkillAssignment":
         await held;
-        return { kind: "assigned", view: VIEW, report: { items: [] } };
+        return { kind: "assigned", view: VIEW, report: { skipped_projects: [], items: [] } };
+      case "resyncProjectAssignment":
+        return { view: VIEW, report: { skipped_projects: [], items: [] } };
       default:
         return null;
     }
@@ -111,8 +113,7 @@ const OTHER_MUTATIONS: [string, (result: Rendered) => Promise<unknown>][] = [
   ["sync the project", (r) => r.current.actions.handleResyncProject()],
   ["sync every project", (r) => r.current.actions.handleResyncAll()],
   ["toggle another cell", (r) => r.current.actions.handleToggleAssignment("s2", "cursor")],
-  ["assign a row", (r) => r.current.actions.handleBulkAssign("s2")],
-  ["unassign a row", (r) => r.current.actions.handleBulkUnassign("s2")],
+  ["sync one cell (Sync this)", (r) => r.current.actions.handleSyncCell("s2", "cursor")],
   // Re-review B1 remainder: Add Project's Browse is refused before its picker
   // opens, like a path update (the dialog also disables it with the reason).
   ["browse for a project to add", (r) => r.current.actions.handlePickProjectFolder()],
@@ -182,7 +183,50 @@ describe("useProjectActions: one mutation at a time (D19)", () => {
     expect(mockInvoke).toHaveBeenCalledTimes(2);
     expect(result.current.reporter.notifications.map((n) => n.title)).toEqual([
       "projects.updatePathSuccess",
-      "projects.configureProject",
+      "projectsSurface.edit.saved",
     ]);
+  });
+});
+
+describe("useProjectActions: the matrix applies what a mutation returned", () => {
+  it("a toggle and a cell's Sync this apply the returned view — no getProjectView follows", async () => {
+    backend();
+    const { result } = renderActions();
+    await waitFor(() => expect(result.current.state.projectsLoading).toBe(false));
+    await act(async () => {
+      await result.current.state.selectProject("p1");
+    });
+    mockInvoke.mockClear();
+    let toggled: Promise<void> = Promise.resolve();
+    act(() => {
+      toggled = result.current.actions.handleToggleAssignment("s1", "claude_code");
+    });
+    await act(async () => {
+      release();
+      await toggled;
+    });
+    await act(async () => {
+      await result.current.actions.handleSyncCell("s2", "cursor");
+    });
+    expect(mockInvoke.mock.calls.map(([command]) => command)).toEqual([
+      "toggleProjectSkillAssignment",
+      "resyncProjectAssignment",
+    ]);
+    expect(mockInvoke.mock.calls[1]).toEqual(["resyncProjectAssignment", "p1", "s2", "cursor"]);
+  });
+
+  it("Refresh view re-reads the shown project's view (a read, outside the lifecycle)", async () => {
+    backend();
+    const { result } = renderActions();
+    await waitFor(() => expect(result.current.state.projectsLoading).toBe(false));
+    await act(async () => {
+      await result.current.state.selectProject("p1");
+    });
+    mockInvoke.mockClear();
+    await act(async () => {
+      await result.current.actions.handleRefreshView();
+    });
+    expect(mockInvoke.mock.calls).toEqual([["getProjectView", "p1"]]);
+    expect(result.current.reporter.pending).toBeNull();
   });
 });

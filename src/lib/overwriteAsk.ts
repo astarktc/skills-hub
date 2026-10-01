@@ -178,6 +178,7 @@ export function mergeProjectRetry(
 ): ProjectSyncReport {
   const resolved = new Map(retry.items.map((item) => [assignmentKey(item), item]));
   return {
+    ...report,
     items: report.items.map((item) => resolved.get(assignmentKey(item)) ?? item),
   };
 }

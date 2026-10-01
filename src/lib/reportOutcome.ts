@@ -173,7 +173,8 @@ export type HeadlineVerb =
   | "removed"
   | "assigned"
   | "enabled"
-  | "disabled";
+  | "disabled"
+  | "unassigned";
 export const HEADLINE_DONE_KEY: Record<HeadlineVerb, string> = {
   refreshed: "outcome.done.refreshed",
   installed: "outcome.done.installed",
@@ -183,6 +184,7 @@ export const HEADLINE_DONE_KEY: Record<HeadlineVerb, string> = {
   assigned: "outcome.done.assigned",
   enabled: "outcome.done.enabled",
   disabled: "outcome.done.disabled",
+  unassigned: "projectsSurface.done.unassigned",
 };
 /**
  * One count per outcome kind, in headline order. `failed` counts the batch's
@@ -655,41 +657,36 @@ export function removalOutcome(
     out.toast = headlineToast(ctx.t, "disabled", { done: counts.removed + counts.cleared, failed: counts.failed });
   if (ctx.action === "toggle" && !failed)
     out.toast = toast("success", ctx.t("status.syncDisabled"));
+  // One skill off a project's Tools: the count line over its assignments
+  // ("2 unassigned · 1 failed"); a kept row stays in the matrix, failed.
   if (ctx.action === "bulkUnassign")
-    out.toast = failed
-      ? toast("failure", ctx.t("projects.bulkUnassignPartial", {
-          count: counts.removed + counts.cleared,
-          failed: counts.failed,
-        }))
-      : toast("success", ctx.t("projects.bulkUnassignSuccess", {
-          count: counts.removed + counts.cleared,
-        }));
+    out.toast = headlineToast(ctx.t, "unassigned", { done: counts.removed + counts.cleared, failed: counts.failed });
   return out;
 }
 
 /**
  * Every project-assignment sync (toggle-on, bulk assign, resync of one
- * project or of all of them) answers with one `ProjectSyncReport`. A failed
- * item is a row the backend kept with status `error` (its cell is red); the
- * fold names each one by skill and tool label. There is no conflict or skip
- * outcome here, so the precedence collapses to failure › success; an
- * `already_assigned` or `skipped` (Disabled) item is neither — except that a
- * toggle-on of a disabled skill says the assignment was recorded, not synced.
- * Nothing reloads: the project world
- * applies the view the mutation returned.
+ * project or of all of them, a cell's Sync this) answers with one
+ * `ProjectSyncReport`. A failed item is a row the backend kept with status
+ * `error` (its cell is failed); the fold names each one by skill and tool
+ * label. Nothing reloads: the project world applies the view the mutation
+ * returned.
  *
- * - `toggleOn`: success confirms like the global toggle; a failure is its
- *   error entry alone (no success claim, no summary for a batch of one).
- * - `bulkAssign`: success counts the tools newly assigned; a failure adds
- *   a partial summary; disabled skips are counted as "not synced (disabled)",
- *   never as "already assigned" or as failures.
- * - `resync` / `resyncAll`: synced/failed summary, plus the disabled-skip
- *   count when there is one.
+ * - `toggleOn` / `syncCell`: a batch of one — success confirms in a
+ *   sentence; a failure is its error entry alone.
+ * - `bulkAssign`: the count line over the Tools ("2 assigned · 1 failed ·
+ *   1 skipped" — a disabled skip is recorded, not synced); nothing new to
+ *   assign says so.
+ * - `resync` / `resyncAll`: the count line ("12 synced · 1 failed ·
+ *   1 skipped"). A project skipped whole because its folder is missing is
+ *   **one** warning line ("archived-app: folder not found — Update path or
+ *   Remove"), counted once as skipped — never one failure per assignment.
+ * - An unanswered collision is "to review" (D10), never a failure.
  */
 export function projectSyncOutcome(
   report: ProjectSyncReport,
   ctx: ReportContext & {
-    action: "toggleOn" | "bulkAssign" | "resync" | "resyncAll";
+    action: "toggleOn" | "syncCell" | "bulkAssign" | "resync" | "resyncAll";
     /** Project names by id — a resync of every project names the project in each failure. */
     projectLabelById?: Readonly<Record<string, string>>;
   },
@@ -697,6 +694,8 @@ export function projectSyncOutcome(
   const out = empty();
   out.completion.reload = false;
   const counts = projectSyncCounts(report);
+  const { t } = ctx;
+  const projectLabel = (id: string) => ctx.projectLabelById?.[id] ?? id;
   let collisions = 0;
   for (const item of report.items) {
     // "Keep existing" in the overwrite ask (ticket 04): a quiet note, never
@@ -716,12 +715,12 @@ export function projectSyncOutcome(
     const namesProject = ctx.action === "resyncAll";
     const title =
       namesProject
-        ? ctx.t("errors.syncFailedInProjectTitle", {
+        ? t("errors.syncFailedInProjectTitle", {
             name: item.skill_name,
             tool: label(ctx, item.tool),
-            project: ctx.projectLabelById?.[item.project_id] ?? item.project_id,
+            project: projectLabel(item.project_id),
           })
-        : ctx.t("errors.syncFailedTitle", {
+        : t("errors.syncFailedTitle", {
             name: item.skill_name,
             tool: label(ctx, item.tool),
           });
@@ -732,68 +731,65 @@ export function projectSyncOutcome(
       error: item.status.error,
     });
   }
+  // A project left alone whole: one line, its next step in words.
+  for (const skip of report.skipped_projects) {
+    out.warnings.push({
+      title: t("projectsSurface.folderMissingSkip", { project: projectLabel(skip.project_id) }),
+      message: t("projectsSurface.folderMissingDetail"),
+      subject: { skillName: "", projectId: skip.project_id, projectInTitle: true },
+    });
+  }
   // An unanswered collision is "to review", never counted as failed (D10).
   counts.failed -= collisions;
   const failed = counts.failed > 0;
   out.completion.closeModal = !failed;
-  const { t } = ctx;
+  const skipped = counts.skipped + report.skipped_projects.length;
+  const detail = detailOf(out.notes);
   switch (ctx.action) {
     case "toggleOn":
-      if (!failed && counts.declined > 0)
-        out.toast = toast("declined", out.notes.join("\n"));
-      else if (!failed)
-        out.toast = counts.skipped > 0
-          ? toast("skipped", t("projects.assignedWhileDisabled"))
-          : toast("success", t("status.syncEnabled"));
+    case "syncCell":
+      if (failed) break;
+      if (collisions > 0 && counts.synced === 0) {
+        out.toast = toast("conflict", t("runReport.collisions", { count: collisions }));
+        return out;
+      }
+      if (counts.declined > 0) out.toast = toast("declined", out.notes.join("\n"));
+      else if (report.skipped_projects.length > 0) out.toast = toast("skipped", out.warnings[out.warnings.length - 1].title);
+      else if (counts.skipped > 0)
+        out.toast = toast("skipped", t(ctx.action === "toggleOn" ? "projects.assignedWhileDisabled" : "projectsSurface.syncedWhileDisabled"));
+      else out.toast = toast("success", t(ctx.action === "toggleOn" ? "status.syncEnabled" : "projectsSurface.cellSynced"));
       break;
-    case "bulkAssign": {
-      // A disabled skip is an assignment recorded but not synced — never
-      // "already assigned", never a failure.
-      const { synced: assigned, failed: failures, skipped } = counts;
-      if (failed)
-        out.toast = toast("failure", skipped > 0
-          ? t("disabledSkips.bulkAssignPartial", { assigned, failed: failures, skipped })
-          : t("projects.bulkAssignPartial", { assigned, failed: failures }));
-      else if (skipped > 0)
-        out.toast = toast("skipped", assigned > 0
-          ? t("disabledSkips.bulkAssignMixed", { assigned, skipped })
-          : t("disabledSkips.bulkAssignNotSynced", { count: skipped }));
-      else
-        out.toast = toast("success", assigned > 0
-          ? t("projects.bulkAssignSuccess", { count: assigned })
-          : t("projects.bulkAssignNothing"));
-      break;
-    }
+    case "bulkAssign":
+      out.toast =
+        counts.synced === 0 && !failed && skipped === 0 && collisions === 0 && counts.declined === 0
+          ? toast("success", t("projects.bulkAssignNothing"))
+          : headlineToast(t, "assigned", {
+              done: counts.synced,
+              failed: counts.failed,
+              skipped,
+              declined: counts.declined,
+              collisions,
+            }, {
+              // A disabled skill's assignment is recorded, not synced: say why.
+              detail: detailOf([...(counts.skipped > 0 ? [t("projectsSurface.syncedWhileDisabled")] : []), ...out.notes]),
+            });
+      return out;
     case "resync":
-    case "resyncAll": {
-      const all = ctx.action === "resyncAll";
-      const { synced, failed: failures, skipped } = counts;
-      const key = `${skipped > 0 ? "disabledSkips" : "projects"}.${all ? "resyncAll" : "resync"}${failed ? "Partial" : "Success"}`;
-      // A disabled skip is counted in the copy but is by design: it keeps
-      // the success tone (the pre-D10 contract of this fold).
-      out.toast = toast(failed ? "failure" : "success", t(key, {
-        synced,
-        ...(failed ? { failed: failures } : {}),
-        ...(skipped > 0 ? { skipped } : {}),
-      }));
-      break;
-    }
+    case "resyncAll":
+      out.toast = headlineToast(t, "synced", {
+        done: counts.synced,
+        failed: counts.failed,
+        skipped,
+        declined: counts.declined,
+        collisions,
+      }, { detail });
+      return out;
   }
-  // Declined pairs ride as the detail of a count-bearing project toast.
-  if (out.toast && ctx.action !== "toggleOn" && out.notes.length && !out.toast.detail)
-    out.toast = { ...out.toast, detail: detailOf(out.notes) };
-  // Unanswered collisions join the headline as "to review" (conflict tone
-  // unless something failed).
+  // A batch of one: unanswered collisions join its sentence as "to review".
   if (collisions > 0) {
     const line = t("runReport.collisions", { count: collisions });
-    // A toggle-on that synced nothing says only what is to review.
-    const sentence = ctx.action === "toggleOn" && counts.synced === 0 ? null : out.toast;
-    out.toast = sentence && out.toast
-      ? toast(
-          out.toast.tone === "failure" ? "failure" : "conflict",
-          [out.toast.message, line].join(HEADLINE_SEPARATOR),
-          out.toast.detail,
-        )
+    out.toast = out.toast
+      ? toast(failed ? "failure" : "conflict", [out.toast.message, line].join(HEADLINE_SEPARATOR))
       : toast(failed ? "failure" : "conflict", line);
   }
   return out;
@@ -822,19 +818,20 @@ export function projectRemovalOutcome(
     ctx,
     "errors.projectRemovalFailedTitle",
   );
-  out.completion.closeModal = !failed;
+  // Removing a project closes its dialog either way: a row whose artifact
+  // stayed keeps the project listed with that cell failed (ADR-0002), which
+  // the dialog said before it ran. A tool configuration that kept a row
+  // stays open so it can be retried.
+  out.completion.closeModal = ctx.action === "removeProject" || !failed;
   if (ctx.action === "removeProject")
     out.toast = failed
-      ? toast("failure", ctx.t("projects.removeKept", {
-          count: counts.removed,
-          failed: counts.failed,
-        }))
+      ? toast("failure", [
+          ctx.t("projectsSurface.removeKept"),
+          compositeHeadline(ctx.t, "removed", { done: counts.removed + counts.cleared, failed: counts.failed }),
+        ].join(HEADLINE_SEPARATOR))
       : toast("success", ctx.t("projects.removeComplete"));
   if (ctx.action === "configureTools" && failed)
-    out.toast = toast("failure", ctx.t("projects.toolRemovalKept", {
-      count: counts.removed,
-      failed: counts.failed,
-    }));
+    out.toast = headlineToast(ctx.t, "removed", { done: counts.removed + counts.cleared, failed: counts.failed });
   return out;
 }
 

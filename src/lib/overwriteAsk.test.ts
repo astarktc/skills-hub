@@ -52,7 +52,7 @@ describe("overwriteAsk", () => {
   });
 
   it("global and project rows of one pair have distinct keys; overrides name only global rows", () => {
-    const project: ProjectSyncReport = {
+    const project: ProjectSyncReport = { skipped_projects: [],
       items: [
         {
           assignment_id: "x",
@@ -105,8 +105,8 @@ describe("overwriteAsk", () => {
       status,
     });
     const merged = mergeProjectRetry(
-      { items: [item("claude", { status: "synced" }), item("pi", { status: "failed", error: { code: "OTHER", message: "x" } })] },
-      { items: [item("pi", { status: "declined" })] },
+      { skipped_projects: [], items: [item("claude", { status: "synced" }), item("pi", { status: "failed", error: { code: "OTHER", message: "x" } })] },
+      { skipped_projects: [], items: [item("pi", { status: "declined" })] },
     );
     expect(merged.items.map((i) => i.status.status)).toEqual(["synced", "declined"]);
   });
@@ -145,7 +145,7 @@ describe("Propagation / re-assert rows (ticket 09 B2)", () => {
         { skill_id: "a", skill_name: "alpha", tool_key: "claude", status: { status: "declined" } },
         { skill_id: "a", skill_name: "alpha", tool_key: "cursor", status: { status: "failed", error: { code: "OTHER", message: "busy" } } },
       ],
-      projects: { items: [{ assignment_id: "x", project_id: "p1", skill_id: "a", skill_name: "alpha", tool: "claude", status: { status: "synced" } }] },
+      projects: { skipped_projects: [], items: [{ assignment_id: "x", project_id: "p1", skill_id: "a", skill_name: "alpha", tool: "claude", status: { status: "synced" } }] },
     });
     expect(merged.declined).toEqual([{ skillName: "alpha", tool: "claude" }]);
     expect(merged.targets).toEqual([

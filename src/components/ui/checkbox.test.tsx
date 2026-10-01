@@ -43,6 +43,22 @@ describe("Checkbox", () => {
     ).toBe("mixed");
   });
 
+  it("keeps focus while disabled by its own action (focusableWhenDisabled), refusing every change", () => {
+    const onCheckedChange = vi.fn();
+    render(<Checkbox aria-label="Amp" checked={false} disabled focusableWhenDisabled onCheckedChange={onCheckedChange} />);
+    const box = screen.getByRole("checkbox", { name: "Amp" });
+    box.focus();
+    expect(document.activeElement).toBe(box);
+    expect(box.getAttribute("aria-disabled")).toBe("true");
+    expect(box.hasAttribute("aria-readonly")).toBe(false);
+    expect(box.hasAttribute("data-focusable-when-disabled")).toBe(true);
+    expect(box.getAttribute("tabindex")).not.toBe("-1");
+    fireEvent.click(box);
+    fireEvent.keyDown(box, { key: " " });
+    expect(onCheckedChange).not.toHaveBeenCalled();
+    expect(box.getAttribute("aria-checked")).toBe("false");
+  });
+
   it("reports disabled", () => {
     render(<Checkbox aria-label="Pi" disabled />);
     expect(
