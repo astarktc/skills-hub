@@ -316,7 +316,9 @@ and there is no ✕.
   on Cancel with an `accent` Confirm (ticket 13).
 - `pending` shows Confirm as busy and disables Cancel.
 
-The ask hooks (`useSharedDirConfirmation`, `useOverwriteConfirmation`) resolve their `request()` promise through it.
+The asks are `useSurfaceState` ask layers that settle exactly once: the shared-dir confirmation
+(`useSharedDirConfirmation`) renders through ConfirmDialog; the overwrite ask (`useSyncOrchestration`, per-row
+choices) uses the Dialog parts directly.
 
 ### Popover, DropdownMenu, Tooltip (`popover.tsx`, `dropdown-menu.tsx`, `tooltip.tsx`)
 

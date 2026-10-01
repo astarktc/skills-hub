@@ -127,6 +127,7 @@ cargo test
 ## Contributing & Security
 
 - Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Design system (tokens, primitives, motion, contrast): [`DESIGN.md`](DESIGN.md) — read it before changing UI; the styling rules are [ADR-0006](docs/adr/0006-styling-architecture.md)
 - Code of Conduct: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
 - Security: [`SECURITY.md`](SECURITY.md)
 

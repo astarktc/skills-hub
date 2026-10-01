@@ -4,13 +4,120 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-01
+
+Round 19, phase A of the UI effort: Skills Hub gets one visual language, My Skills becomes a dense list with an inspector beside it, removing a skill from a tool is now a choice that lasts, and every batch says what happened in one line. Settings panes, the Import review, Explore rows, the command palette and the card grid follow in 1.3.x.
+
+### New look
+
+- **One visual language in both themes.** Every colour, size, radius and motion comes from one set of design tokens. Dark is designed first and light is derived from it, with every pair measured: text at least 4.5:1 and control edges at least 3:1. Buttons, fields, checkboxes, switches, tabs, chips, menus, popovers and dialogs are shared components built on Base UI. Each one handles keyboard focus, returns focus to whatever opened it, and keeps focus on a control that cannot act right now while saying why.
+- **The theme is applied before the first paint**, so a light-theme launch no longer flashes dark. **The window cannot be made smaller than 960 × 640.**
+- **A sidebar replaces the top tabs.** Below 1200 px wide it becomes an icon rail. The **Auto-sync** switch moved from the My Skills toolbar to Settings. An available update is a quiet item in the sidebar ("1.3.1 available") instead of a dialog at startup.
+- **Motion is short and quiet.** Five things move, each for 120 ms: the switch thumb, the bulk rail appearing, a Synced-strip mark lighting up when its sync lands, the progress bar, and toasts. None of them moves when the OS's Reduce motion setting is on.
+- Wording pass on every string this release touched: "Add" is the add flow ("2 added"), "Import" is only Onboarding import, and a menu item that asks a question before it acts ends in "…".
+
+### My Skills
+
+- **Rows instead of cards.** Each skill is one 36 px row with:
+  - its name and description;
+  - a read-only **Synced strip**: one mark per tool plus an N/M count. Filled is synced, hollow is not synced, half-filled is stale, × is failed or missing, and a slashed ring is disabled. The shapes tell the states apart without colour;
+  - a switch that turns the skill off or on everywhere;
+  - a menu with its fixes and actions.
+
+  A healthy skill shows no badge.
+- **Problems first.** The header sums up what is wrong ("7 failed targets · View 11 skills with issues"), and the **Issues** chip, beside All, Edited and Disabled, shows only those skills. Skills are grouped by source, and each group has **Deploy all**. Sources with one skill fold into "Individual sources".
+- **The inspector.** Clicking a row opens the skill beside the list, or as a sheet below 1200 px. It has these sections:
+  - **Health**: each problem with its fix inline (Restore, Change source…, Detach, Retry, Review invocation, Finish removing, Enable…).
+  - **Sync targets**: a list with per-tool Retry / Disable / Enable and a 5-second Undo. A click-to-sync grid is one toggle away.
+  - **Source**: a copyable link. A local skill shows its recorded folder; an imported skill says that Refresh skips it.
+  - **Edits**: the invocation mode and any conflict, with Edit / Resolve….
+  - **Projects**: the projects using the skill, and **Assign to project…**.
+  - **Files**: the folder tree and a Markdown reader, which expands over the list and collapses back.
+- **Change source… shows what will land before it replaces anything**: the skill it found and where (subpath @ branch). A different name needs an explicit Continue, and a repository with several skills lets you pick one. Refusals appear next to the field.
+- **Selection and the bulk rail.**
+  - Keys: check rows with Shift-click for a range, a group checkbox, `x`, or ⌘A (which selects what the filter shows). `j` / `k` move, `/` searches, Esc clears.
+  - The rail acts on the selection: Sync to Tools…, Update, Disable on all Tools, Enable, Assign to project…, Remove….
+  - Every action over several skills states its counts and asks first ("Disable 25 skills on 8 Tools — 80 Sync targets are removed and kept disabled; 12 project assignments for these skills are disabled too").
+- **Delete lists what goes and what stays**: the tools, project assignments and Edits. For an imported or detached skill it warns "Skills Hub's copy is the only copy". If some copies cannot be removed, the dialog turns into the report: removed from X · still in Y at *path*, with **Reveal in Finder**, Retry and Close.
+
 ### Changed
 
-- Removing a skill from a tool is now **Disable**, and it lasts: the skill's folder is removed from that tool and the choice is recorded, so the next Refresh, Update or auto-sync no longer puts it back. Disabling a whole skill takes it off every tool and every project until you enable it. Enabling syncs it again. A different folder already in the way is left untouched and reported. Refresh and sync report disabled targets as skipped, not as failures. "Uninstall from tool directories" now disables every skill. (Internal: the `unsync_skill_from_tool` / `unsync_skill` / `unsync_all_skills` commands are replaced by `disable_skill_targets` / `enable_skill_targets`. Schema v10 adds `skills.disabled_at`, and sync status gains `disabled`.)
-- Onboarding import no longer offers folders that are not skills: a folder in a tool's skills directory whose `SKILL.md` is missing or has no valid frontmatter/name is listed apart with the reason and cannot be imported (#46). A discovered skill whose name you already manage is no longer a guaranteed "already exists" failure: it is skipped untouched, or — when you choose Replace — the managed skill is synced over that tool's copy (a different copy is asked about before it is overwritten). With auto-sync off, removing the originals is now a per-import choice, and the report lists what was removed or left per tool. The discovered-skills banner and review count skills (names), not copies. (Internal: `import_onboarding_selection` takes a required `remove_originals`; the plan carries `group_count`, `copy_count`, `invalid`, and per group `name_is_managed` / `managed_skill_id`; import groups can be `replaced` or `skipped`.)
-- A skill now remembers what last went wrong with it: a failed Update, Restore or Change source, an Edit conflict, a Delete that could not remove every copy, or an import that could not remove an original is shown on the skill card ("Update failed · 2 h ago") until the next success of the same kind. A sync to a tool that fails is now recorded on that tool (so it shows as failed and can be retried), and answering "Keep existing" to the overwrite question now disables the skill on that tool, so it is not asked again. A folder in the way of a project sync is now reported as "already exists" like a global one. (Internal: schema v11 adds `skills.last_outcome_kind` / `last_outcome_error` / `last_outcome_at`; `ManagedSkill.health`; `CommandError` gains `EDIT_CONFLICT`; `sync_skills_to_tools` overrides carry `decision: "overwrite" | "keep"`.)
-- Batch results now say what happened in one count line — "12 refreshed · 5 failed · 6 targets failed · 4 skipped · 1 Edit to review" — instead of one headline that could hide failures behind a rarer outcome. Refresh, sync, import and adding several skills use it; the toast's colour follows the most serious outcome (failure, then Edit conflicts, then skipped). A cancelled Refresh now reads "Refresh cancelled — nothing was changed" instead of reporting every skill as failed, and "Keep existing" is reported as a quiet line ("ts-reset: kept your existing Claude Code folder"), never as an error. An invocation Edit that could not reach every tool now says it was saved: "Invocation setting saved · 2 targets failed". (Internal: refresh rows gain the `cancelled` kind and global sync rows the `declined` kind; a Keep-existing pair is reported `declined` instead of a `TARGET_DISABLED` skip.)
-- Adding several skills from a repo or folder is now one operation: every selected skill is installed and deployed in one go, and every folder already in the way — across all of them — is asked about **once**, with a Keep / Overwrite choice per folder, the folder's last-modified time, and whether it differs from the skill. Cancel stops before the next skill (the rest are reported as cancelled, nothing half-installed). The same single question now covers Enable and project assign / re-sync, which previously left a folder in the way as a failure; a folder you keep in a project is recorded as disabled there. Onboarding import no longer reports a different copy in a tool's folder twice. (Internal: new `install_selection` batch command and `resolve_project_collisions`; `enable_skill_targets` takes `overrides`; `TARGET_EXISTS` carries `modifiedAt` / `sameContent`; project sync rows gain the `declined` kind. `install_git_selection` / `install_local_selection` are kept until the Add surface is rebuilt.)
+- **Removing a skill from a tool is now Disable, and it lasts.** The skill's folder is removed from that tool and the choice is recorded, so the next Refresh, Update or auto-sync does not put it back. Disabling a whole skill (the row switch) takes it off every tool and every project until you enable it. Enabling syncs it again. Refresh and sync report disabled targets as skipped, not failed. The toolbar's **"Uninstall from tool directories" is gone**. To take everything off every tool: select all → **Disable on all Tools**, which states the count first.
+- **A skill remembers what last went wrong with it**: a failed Update, Restore or Change source, an Edit conflict, a Delete that could not remove every copy, or an import that could not remove an original. It shows in the row's marks and the inspector's Health ("Update failed · 2 h ago") until the next success of the same kind. A sync to a tool that fails is recorded on that tool, so it shows as failed and can be retried. Answering "Keep existing" to the overwrite question disables the skill on that tool, so it is not asked again.
+- **Batch results are one count line**: "12 refreshed · 5 failed · 6 targets failed · 4 skipped · 1 Edit to review".
+  - The toast's colour follows the most serious outcome.
+  - A cancelled Refresh reads "Refresh cancelled — nothing was changed".
+  - "Keep existing" is a quiet line ("ts-reset: kept your existing Claude Code folder"), never an error.
+  - An overwrite question you closed without answering counts as "1 folder to review", never as a failure.
+  - An invocation Edit that could not reach every tool says it was saved ("Invocation setting saved · 2 targets failed").
+  - Project syncs use the same line ("7 synced · 3 failed · 2 skipped"), and a project re-sync that skipped a disabled skill is now toned "skipped" instead of success.
+- **Notifications are grouped by run.** Each action shows one toast with its headline and **View report**; no toasts appear while the panel is open. In the panel a run's headline expands to its items, and each item carries its fix:
+  - **Show** opens that skill in the inspector;
+  - **Retry**;
+  - **Overwrite…**;
+  - **Remove…**;
+  - **Change source…** when the source is gone;
+  - **Settings → GitHub** for authentication or rate limits.
+- **Progress shows in the header, not over the app.** Refresh, sync, Disable / Enable over a selection, Add and import show "Refreshing 12/80 · Cancel" in the header (or at the foot of the dialog running them), and the rows involved show they are busy. Removing several skills shows its progress in the Delete dialog. The library stays browsable and the inspector readable while an action runs. Cancel appears only where the operation can actually stop: Refresh, Update, Change source, Add and the Explore preview, but not Refresh's apply phase. A second action waits its turn, and its button says why ("Refresh is running — wait for it to finish"). After an action, focus goes somewhere sensible: the next row after a Delete, the Health section after a Restore, otherwise the control you used.
+- **Add is one dialog with steps**: Source → Skills → Result, with a summary that stays visible throughout (source · "3 of 4 checked · 1 hidden by filter" · which tools it deploys to, editable in place).
+  - The skill picker has search, and only skills that are checked *and* shown are added.
+  - Every selected skill is installed and deployed in one operation. Every folder already in the way, across all of them, is asked about **once**, with Keep / Overwrite per folder, the folder's last-modified time, and whether it differs from the skill.
+  - Cancel stops before the next skill.
+  - The Result step lists each skill as added (and where it deployed), failed (with the reason and **Retry**) or cancelled. The dialog closes by itself only when everything landed.
+  - The same single question now covers Enable and project assign / re-sync. A folder you keep in a project is recorded as disabled there.
+- **Projects**:
+  - **Keyboard.** Projects are selected with the keyboard (↑ / ↓ / Home / End, Enter). Each project's own actions (Update path…, Project settings…, Remove project…) are in its menu. Below 1200 px the project list becomes a select in the header.
+  - **The matrix.** Columns are labelled with tool names and "not detected". Each cell shows its state as a mark and a word (synced · stale · missing · pending · failed · disabled), with a legend. A stale, missing or failed cell has **Sync this**. A cell for a tool where the skill is also deployed globally is now enabled and marked "also global". The **Assigned** and **Issues** chips filter the matrix, and per-row **Assign to all** / **Unassign from all** are available.
+  - **Status and removal.** A quiet "Statuses may be out of date — Refresh view" line appears when the statuses could not be checked. Removing a project explains what goes and what stays. The dialog always closes; a copy that could not be removed shows as a failed cell.
+- **Sync All skips a project whose folder is missing**, with one line ("archived-app: folder not found — Update path or Remove") instead of a failure per assignment. Assigning, enabling or re-syncing into a missing project folder is skipped the same way.
+- **Onboarding import offers only real skills (#46).** A folder in a tool's skills directory whose `SKILL.md` is missing or has no valid frontmatter or name is listed apart, with the reason, and cannot be imported. A discovered skill whose name you already manage is skipped untouched with a warning instead of failing as "already exists". The discovered-skills banner counts skills (names), not copies. Onboarding import no longer reports a different copy in a tool's folder twice.
+
+### Fixed
+
+- **Sync All, assign and Enable no longer recreate a project folder that was moved or deleted.** Before, syncing into a missing project created a stray tool tree at the old path. This includes a folder that disappears between the check and the write.
+
+### Removed
+
+- The full-screen progress overlay (replaced by header progress).
+- The "Uninstall from tool directories" toolbar action (see Disable above), and the update dialog at startup (see the sidebar item).
+
+### Known limitations
+
+- The project matrix is reached cell by cell with Tab; grid arrow keys come in 1.3.x.
+- The row switch's inline Enable confirmation leaves one hidden extra Tab stop after its last control.
+- Import does not yet ask about a folder in the way: such a folder reads "to review" in the report. The Import review's Replace / Leave choice and the per-run "remove my originals" checkbox are 1.3.x (the backend supports both already).
+- A few batch actions still make one backend call per skill or per phase under one progress run and one report: removing several skills, assigning several skills to a project, and Deploy all (Enable, then sync). A target row in the inspector shows its state in words but not the exact error yet. Neither changes what happens on disk.
+
+### Migration notes
+
+- Database schema v10 adds `skills.disabled_at`, and Sync status gains `disabled` (global target rows and project assignments). Schema v11 adds `skills.last_outcome_kind` / `last_outcome_error` / `last_outcome_at`. Both migrations are additive and run on first launch.
+- Commands:
+  - `unsync_skill_from_tool` / `unsync_skill` / `unsync_all_skills` → `disable_skill_targets(scope)` / `enable_skill_targets(scope, overrides)` over `DisableScope::{SkillTool, Skill, Skills}`.
+  - `install_git_selection` / `install_local_selection` → one batch, `install_selection(request, onProgress)` (`InstallBatchReport`, per candidate `installed` / `failed` / `cancelled`).
+  - New: `resolve_project_collisions`, `resync_project_assignment` (Sync this, answering `{ view, report }`), `preview_repoint_source`, `clear_skill_health` and `reveal_path` (admits only a recorded target path or a path inside the central repo).
+  - `RepointTarget::Git` gains `selection` (a picked candidate of a multi-skill repo).
+  - `sync_skills_to_tools` overrides carry `decision: "overwrite" | "keep"`.
+  - `import_onboarding_selection` takes a required `remove_originals`, and selections take an optional `replace`.
+  - `ProjectSyncReport` gains `skipped_projects` (`folder_missing`).
+- Wire:
+  - `ManagedSkill` gains `disabled_at` and `health`.
+  - `CommandError` gains `TARGET_DISABLED`, `EDIT_CONFLICT` and `REVEAL_PATH_FAILED`, and `TARGET_EXISTS` carries `modifiedAt` / `sameContent`.
+  - Refresh rows gain `cancelled`, and sync and project rows gain `declined`.
+  - The onboarding plan carries `group_count`, `copy_count`, `invalid`, and per group `name_is_managed` / `managed_skill_id`, replacing `total_skills_found`.
+
+### Internal
+
+- Styling follows `docs/adr/0006-styling-architecture.md`:
+  - tokens in `src/styles/theme.css`, primitives in `src/components/ui/`, reference in `DESIGN.md`;
+  - `npm run styles:check` (in `npm run check` and CI) ratchets the legacy `App.css` down: from 3038 counted lines at the first baseline to 1108 this release, with 36 files migrated;
+  - the primitives get role/ARIA/focus tests (ADR-0006 §7).
+- Frontend state is split into one module per concern:
+  - surface state with hash routes (`#/skills/<id>`, `#/projects/<id>`, …);
+  - the list lens;
+  - one door for every skill verb (`useSkillActions`);
+  - the action lifecycle (`useStatusReporter`);
+  - the Tool catalog, the app-update module and the native platform seam (`src/lib/platform.ts`).
+- The project world lives in the binder.
 
 ## [1.2.18] - 2026-09-27
 

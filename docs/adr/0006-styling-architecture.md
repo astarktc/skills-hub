@@ -191,11 +191,11 @@ The round-19 world ticket builds the guard with the tokens, the primitives and t
 Skills). Surfaces then migrate one ticket at a time, in sequence (D9). Each ticket lowers the ceiling and extends
 `migrated`.
 
-### 7. Tests for primitives: a narrow exception is proposed, and ticket 09 decides
+### 7. Tests for primitives: a narrow exception — accepted (round-19 spec D2)
 
 AGENTS.md rules out component rendering tests. The reason is that components are thin JSX and behaviour lives in
 hooks and pure folds. That reason does not hold for `src/components/ui/`: a primitive's behaviour is the product
-there, and D5 makes accessibility a hard gate. **Proposed:** allow colocated `src/components/ui/*.test.tsx`, using
+there, and D5 makes accessibility a hard gate. **Accepted** (round-19 spec D2, 2026-09-27; shipped in 1.3.0): allow colocated `src/components/ui/*.test.tsx`, using
 `@testing-library/react` (already a devDependency) on jsdom. These tests assert only **our wrapping's contract**:
 
 - role and accessible name wiring;
@@ -204,8 +204,9 @@ there, and D5 makes accessibility a hard gate. **Proposed:** allow colocated `sr
 
 There are no snapshots, no visual assertions, no re-testing of Base UI internals, and no test that renders a
 surface. jsdom cannot judge contrast, `:focus-visible` or motion. Those stay with the D5 audit lane: impeccable
-`audit` or axe over the ticket-04 fixture app in `preview_*`, both themes, keyboard walk. Until ticket 09 accepts
-the exception, the AGENTS.md test rule stands unchanged and this ADR's other decisions do not depend on it.
+`audit` or axe over the ticket-04 fixture app in `preview_*`, both themes, keyboard walk. AGENTS.md's test rule now
+names the exception; beyond it, `focus-ring.test.tsx` resolves the primitives' classes against compiled Tailwind.
+Everything outside `src/components/ui/` keeps the no-rendering-tests rule.
 
 ## Considered options
 

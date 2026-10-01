@@ -114,13 +114,17 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   the footprint the rule rejects.
 - **Sync-target mutation**: every operation that materialises or removes a Sync target (global sync
   batch, Disable / Enable (`skill_disable::disable_targets` / `enable_targets`), delete,
-  assign/unassign/toggle, resync, configure project tools, remove project,
+  assign/unassign/toggle, resync (of one assignment via `resync_project_assignment`, one project, or every project),
+  `resolve_project_collisions`, configure project tools, remove project,
   gitignore update, Refresh's apply phase, Onboarding import's apply phase) wraps its **own** body in
   `core/mutation_guard::serialized` at its entry point — commands carry no lock state and make no
   per-call-site decision. The mutex is private to that module; per-target internals are unlocked
   `pub(crate)` `*_unlocked` seams. The guard is non-reentrant, so **an entry point never calls another
   entry point** — composites call the unlocked seam. Readers that must not queue use `try_serialized`:
-  the project listing's reconcile pass takes that door and reports `reconciled: false`.
+  the project listing's reconcile pass takes that door and reports `reconciled: false`. `reveal_path` (Reveal in
+  Finder) mutates nothing but is fenced like a removal: `core/log_reveal.rs::admit_reveal_path` admits only a recorded
+  target path or a path physically inside the central repo (no NUL, no as-written `.`/`..`), and the command selects
+  the item — or its nearest existing ancestor — in its folder, never opens it.
 - **UI strings**: add keys to `en` in `src/i18n/resources.ts`; EN only (BACKLOG #61). No hardcoded UI text.
   `src/i18n/resources.test.ts` fails on any literal `t("…")` key missing from `en`.
 - **New `core/` module**: declare it in `src-tauri/src/core/mod.rs`.
@@ -157,15 +161,21 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   post-mutation focus; `repair(skill, row, key)` maps a health row's repair onto its verb. `useSkillLibrary` keeps
   only the catalog (`replaceCatalog`, `loadManagedSkills`) and which skill each dialog is about. **The action
   lifecycle is the reporter's, `src/hooks/useStatusReporter.ts`**: `runAction` holds the one `pending` action
-  (subject `skill` / `cell` / `batch`, label, streamed `progress`, `cancellable`) — **one mutation at a time**
+  (subject `skill` / `cell` / `skills` / `batch`, label, `activity` words, streamed `progress`, `cancellable`) —
+  **one mutation at a time**
   (D19): a second is refused with a typed reason (`refusal`, never queued), a `read: true` action waits its turn;
   `cancellable` only when the action declares a token-taking command (`cancel:`, D20), withdrawn for an
   `action.uncancellable(run)` phase, and a body checks `action.cancelRequested()` before sending a token-taking
   command that follows a token-less step (the command resets the token); `cancelPending` hides
   nothing until the command returns; `applyOutcome(outcome, { reload, closeModal, onAction })` executes every
   fold's Outcome (reload first, toasts, one `recordRun` history block, close) — no caller unpacks an Outcome;
-  `notifyError(err)` is the one failure dialect (`setError` remains only in the sync world until it migrates).
-  The project matrix's pending cells are the reporter's `{ kind: "cell" }` subject. **What is on screen is one module,
+  `notifyError(err)` is the one failure dialect (`setError` remains only in the sync and Add worlds until they
+  migrate). The project matrix's pending cells are the reporter's `{ kind: "cell" }` subject. **Progress is
+  `src/components/shell/HeaderProgress.tsx`, read from `pending` alone** (`showsHeaderProgress`): My Skills' header
+  slot, a strip above any other area, or the foot of the dialog whose action runs (App's `progressInDialog`; the
+  header copy yields while it shows) — there is no overlay; a bulk Remove shows in its Delete dialog. A refused
+  control stays focusable while disabled (`focusableWhenDisabled`) and carries the reason; `runAction` ends every
+  action with `actionLifecycle.returnLostFocus`, so focus never settles on `<body>`. **What is on screen is one module,
   `src/hooks/useSurfaceState.ts`** (created first in App, passed to worlds as a narrowed door): the area,
   the focused subject, per-surface selection and the dialog stack (one union across worlds). World hooks
   keep data and actions and *ask* it to open/close (`openDialog`, `pushDialog` for a nested step, `ask`
@@ -188,7 +198,9 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   `update_project_gitignore` returns `()` (it changes no view row), and `resync_all_projects` returns
   `{ report, projects }` — one `ProjectSyncReport` spanning every project — so the hook refetches
   `getProjectView` for the selected project alone. `configure_project_tools` returns `{ view, report }` — the
-  dropped tools' removal reports merged into one. Every project report is folded in the view's action hook
+  dropped tools' removal reports merged into one — and so does `resync_project_assignment` (Sync this).
+  `useMatrixFocusReconciliation` (`src/components/projects/`) moves focus to the next surviving row's cell when a
+  repair takes a row out of the matrix filter. Every project report is folded in the view's action hook
   (`src/components/projects/useProjectActions.ts`), never in the world hook: removal reports by
   `projectRemovalOutcome` / `removalOutcome` (toggle-off, bulk unassign, configure, remove), `ProjectSyncReport`s by
   `projectSyncOutcome` (toggle-on, bulk assign, resync); `toggle_project_skill_assignment` answers a `kind`-tagged
@@ -196,6 +208,11 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   ignore write, a path update included (a folder pick stays outside; the mutation it leads to is gated) — runs under
   `runAction`, and the list, matrix and dialogs disable their mutation controls with its `blockedReason` while
   anything runs; per-cell pending is only the localized mark.
+- **The Add world exposes intents, not state cells**: `useAddSkillFlow` returns `open({ kind?, source?, preselect? })`,
+  `install()`, `retry(ids)` and the `add` view (step, draft, picker values, settlement rows, summary) for the one
+  stepped `AddSkillDialog`; Explore calls `open`, never an effect trigger. The file browser is one module:
+  `src/hooks/useSkillDocument.ts` (fed `{ root, version }`) over `src/lib/skillFiles.ts`, read by the inspector's
+  Files section and Explore's preview.
 - **Frontend tests are hook- and pure-function-level; no component rendering tests** (vitest + `renderHook`,
   jsdom; colocated `src/**/*.test.ts`,
   type-checked by `npm run build`): mock at module seams — `src/lib/tauri.ts` for backend calls,
@@ -209,7 +226,7 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   the generated `commands` table: a wrong name, missing/extra arg, or wrong arg type fails
   `npm run build`); raw `@tauri-apps/api/core` `invoke` appears nowhere outside `src/bindings/index.ts`.
   Test stubs cast the mock to `(command: CommandName, ...args: unknown[]) => Promise<unknown>` and
-  switch on the camelCase command name. Components get no JSX tests by design. **One exception (round-19 D2):**
+  switch on the camelCase command name. Components get no JSX tests by design. **One exception (round-19 spec D2, ADR-0006 §7):**
   the primitives' `src/components/ui/*.test.tsx` render them to pin their role/ARIA/focus contract (names, states,
   focus in/out, layer stack, label association) and `focus-ring.test.tsx` resolves their classes against compiled
   Tailwind — never product surfaces, never pixels or copy.
@@ -247,9 +264,19 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   `App.css` defines. The only other stylesheets are `src/index.css` (entry + base layer) and `src/styles/prose.css`
   (rendered Markdown / code under `.prose`, token-only). No CSS Modules, no new `.css` files. `npm run styles:check`
   (`scripts/check-styles.mjs` + `scripts/styles-baseline.json`) enforces all of it: migrating a surface appends its
-  files to `migrated` and lowers `appCssCeiling` in the same change. Read the resolved theme from the settings world
+  files to `migrated` and lowers `appCssCeiling` in the same change (the baseline file is the live count — 1108 lines
+  and 36 files at 1.3.0). Read the resolved theme from the settings world
   (`resolvedTheme`), never from `data-theme` on the DOM; the pre-paint script in `index.html` is the one sanctioned
   storage read outside `preferences.ts` (key pinned by `src/lib/preferences.test.ts`).
+- **Every layer is on one stack, `src/components/ui/layer-stack.ts`** — modal layers (Dialog, ConfirmDialog, the
+  overwrite and shared-dir asks) and floating ones (Popover). Only the top layer dismisses, and one event dismisses one
+  layer (`claimDismissal`); a modal layer makes everything beneath it `inert`; each layer carries its return chain
+  (opener + caller fallback) and hands it up when it closes beneath another (`handOverReturn` / `returnChains`); a
+  dialog opened from a menu returns focus to the menu's trigger. Dialog props cover the rest — `interceptEscape` (the
+  top layer spends an Escape first, e.g. collapsing Files), `placement="sheet"` (the inspector below the 1200 px
+  shell breakpoint, `useMediaQuery(SHELL_WIDE_QUERY)`), a fallback focus target. Keep a dialog's shell mounted and
+  toggle `open`: a conditionally mounted dialog cannot return focus. Surfaces never wire Escape or focus return
+  themselves; DESIGN.md documents the contract per primitive.
 - Path handling must support `~` expansion (`core/environment.rs::expand_home_path_in(home, input)`).
 - **Core never resolves filesystem roots from the environment.** `core/environment.rs` is the only core caller
   of `dirs::home_dir()`; every other core function takes explicit roots (`home: &Path`, `InstallerPaths { home,
@@ -332,9 +359,15 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   - Onboarding import → `import_onboarding_selection` (`core/onboarding_import.rs`): admit, finalize,
     then sync through the global sync batch (auto-sync on — a first sync, not Propagation) or remove
     byte-identical originals (auto-sync off), per group. An imported skill has no external source (ADR-0003).
-  - project assignment on / bulk assign / resync → `core/project_sync.rs`, answering a `ProjectSyncReport`
-    (per-assignment `synced` / `already_assigned` / `skipped { disabled }` / `failed { error }`, the failed
-    row's id carried when the row exists); the store failure that fails a listing is a whole-command error, not an item.
+  - project assignment on / bulk assign / resync (one assignment, one project, all) → `core/project_sync.rs`,
+    answering a `ProjectSyncReport` (per-assignment `synced` / `already_assigned` / `skipped { disabled }` /
+    `declined` / `failed { error }`, the failed row's id carried when the row exists, plus `skipped_projects` —
+    `folder_missing` — for a project whose root is gone: every project sync, Enable's and the collision retry
+    included, checks `project_ops::project_folder_exists` before touching a row); the store failure that fails a
+    listing is a whole-command error, not an item. A project target write never creates the project root:
+    `sync_engine` creates its parents through `create_dirs_within(root, dir)` (`TargetParents::WithinRoot`, one
+    non-recursive `mkdir` per level, a vanished root → typed `InvalidPath missing`); global sync keeps creating a
+    Tool's missing skills dir.
   - Disable / delete / project removal / bulk unassign → `core/artifact_removal.rs` (below).
   - Disable / Enable: `core/skill_disable.rs` (`disable_skill_targets` / `enable_skill_targets` over one
     `DisableScope::{SkillTool, Skill, Skills}`). This is the durable "not on this Tool" at two grains: a `disabled`
@@ -398,14 +431,18 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   `ManagedSkill.health` kinds, a live Edit conflict, skill-grain Disable) and target-level rows (failed · missing ·
   stale · pair-disabled · not deployed), one precedence (`HEALTH_ROW_ORDER`, which is severity order failed ›
   stale › muted), each row's `repairs`, and the source line (`skillSourceLine`: label, href, copy value, icon).
-  Card, inspector ladder, issues banner/chip and strip read it; nothing composes health or a source line by hand.
+  Row, inspector ladder, exception summary/Issues chip and strip read it; nothing composes health or a source line
+  by hand. The other pure folds, one per surface: `src/lib/bulkCounts.ts` (what a wide verb's count confirmation
+  states — exactly what its settlement touches), `src/lib/notificationRuns.ts` (the panel's runs and row actions;
+  the reporter's `recordRun` is the one writer), `src/lib/projectPresentation.ts` (matrix cell, legend, chips),
+  `src/lib/addFlow.ts` (checked ∧ visible installs, settlement rows), `src/lib/overwriteAsk.ts` (the ask's rows).
   `deployAction` counts only a live target (`isLiveTarget`: not `disabled`, not a never-synced `error` row) as
   deployed. `src/lib/actionLifecycle.ts` owns the lifecycle's pure vocabulary: pending subjects, the cancellable
   set (`CANCELLABLE_COMMANDS`), the refusal copy and `focusAfter` (D21: Delete → next row / previous / heading;
   Restore → health row; otherwise the same control) with its one DOM resolver. Components import pure functions
   (presentation, `describeCommandError`, the lifecycle rules); the props App passes carry state — `notify`,
   `runAction`, `pending`, data, actions — never a function that is only an import with an argument pre-bound.
-  The door's handle (`actions`, stable across renders) is such a value: list, card, detail and toolbar receive it
+  The door's handle (`actions`, stable across renders) is such a value: list, row, inspector, rail and toolbar receive it
   and call `actions.run(verb, …)` themselves — no per-verb callback props. The one binding App does is a
   confirmation dialog's `onConfirm`, which joins the dialog's answer to the verb it confirms.
 
@@ -454,7 +491,7 @@ This cost 18 features in v1.1.4 (`5e1f42e` "restore 18 features lost during para
 ## Workflow
 
 1. State the approach and the files you'll touch before writing code; wait for confirmation.
-2. Implement full-stack changes in one pass — command + registration + DTO + i18n (EN & ZH) + UI.
+2. Implement full-stack changes in one pass — command + registration + DTO + i18n (EN) + UI.
 3. Run the definition-of-done gate and fix failures before presenting results.
 
 ## Delegation (T3 Code `delegate_task`)
