@@ -31,3 +31,11 @@ Spec: `.scratch/round19/spec.md` — D32; ADR-0006 §5–§6. Phase 19b closure.
   for App.css classes no `src/` file references found many already-dead rules outside this ticket (`explore-*` list
   rules, `modal-*`, `settings-*` list rules, `alert-*`, `brand-subtitle`, `btn-danger`, `btn-full`, `card-btn`,
   `icon-btn`, `space-between`, `status-row`, `update-modal-close`) — deletable with no migration.
+
+- 2026-10-02 — (orchestrator, recorded late) from ticket 15's audit **A4 (P2)**: Tailwind generates `.transition`,
+  `.transition-colors` and `.ease-in-out` from source scans (a `styles.ts` comment, dormant `Layout.tsx:15`, docs).
+  Nothing live applies them: the audited DOM has 0 uses. They're harmless (120 ms, no `all`). Ticket 15's gate
+  Comment left them with this ticket, but that entry never landed. When this ticket decides `Layout.tsx`'s
+  disposition, narrow irrelevant source scanning (`@source not`) or let the dormant file's removal drop them, and
+  keep useful utilities. Keep claims precise: dormant source is not the same as no reference. Source:
+  `round19/review/ticket-15-audit.md` § A4.

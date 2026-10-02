@@ -37,3 +37,13 @@ three rows selected; screen-reader semantics of the listbox; `npm run check`.
   leave cleanly; zero layer records; primitive + browser regression). Also seen in 17's axe runs: an open
   `DropdownMenu`'s portal fails `region` (best-practice) — every menu, primitive-level; the palette's own portal will
   likely hit the same rule.
+
+- 2026-10-02 — (orchestrator, recorded late) from ticket 17's audit **N1 (P2)**: the Projects matrix is a plain Tab
+  walk. It takes **127 Tab presses** from the first to the last cell of the 25-skill fixture matrix in both themes: 75
+  cell checkboxes plus row verbs and repair controls (`round19/review/ticket-17-audit.md` § N1;
+  `AssignmentMatrix.tsx` ~:209–256, ~:304–344, ~:388–435). Ticket 17's gate Comment says it was carried here ("N1 the
+  matrix keyboard model"), but that entry never landed. The auditor's scope: design spatial/roving navigation with
+  named cell actions and a clear Tab exit, test it as a complete interaction model, and don't just add `role=grid` to
+  the current table. D23 doesn't require it. If the palette work defines a grid keymap, apply it to the matrix; if
+  not, decide explicitly and record the decision here. CHANGELOG 1.3.0 lists it as a known limitation ("grid arrow
+  keys come in 1.3.x").
