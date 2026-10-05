@@ -1,4 +1,4 @@
-# Handoff — 2026-10-02 · round 19a is done and gated on local `main`, NOT pushed — next: Alex says "push" (or "18 first")
+# Handoff — 2026-10-05 · round 19a is done and gated on local `main`, NOT pushed — next: the ticket 18 think-aloud (script ready), then push the same day
 
 The orchestrator thread (T3 `a55f39f0…`, Pi session `01a0f013…`, 2026-09-29 → 10-01, 33 runs) ran out of context on its
 handoff turn. It had written a draft (`2026-10-01-round19a-1.3.0-ready-to-push.md`, never committed). A recovery pass on
@@ -10,16 +10,17 @@ metadata, #66 multi-skill delete command, #67 Codex `~/.agents/skills`, and, add
 the reporter's legacy `setError` and #69 promote the CDP key driver out of gitignored evidence.
 
 Round 19's record:
+
 - `.scratch/round19/spec.md`: D1–D33, plus § Closure checklist (19a) at ~:238.
 - `round19/issues/01`–`26`: every implemented ticket has a `## Result` and dated `## Comments`.
 - `round19/review/`: `ticket-{01,04,07,09}-review.md` and `ticket-{11..17}-audit.md`. Each audit has a re-check, or for
   15 a residual fix, before its "D31 gate passed" Comment on the ticket.
 
-## State of `main` (verified 2026-10-02)
+## State of `main` (verified 2026-10-05)
 
-- **Ahead/behind.** The tree is clean after the recovery commit. `main` is 45 commits ahead of `origin/main`: round
-  19's 44 commits plus the recovery commit. It is also **1 behind**: the nightly `533c298 chore: update
-  featured-skills.json` (2026-10-02 03:16 UTC) landed after the session's last rebase.
+- **Ahead/behind.** `main` is ahead of `origin/main` by round 19's 44 commits plus the docs-only recovery commits
+  (`43b5a9f`, and the 2026-10-05 ticket-18 commit). It is also **4 behind**: nightly `featured-skills.json` commits
+  `533c298` … `39d2d5a` (2026-10-02 → 10-05) landed after the session's last rebase.
 - **Last gate.** Run on the rebased tree on 2026-10-01: `Version OK (1.3.0)`, vitest 996, cargo 827, App.css 1108
   (ceiling) / 36 migrated, exit 0. The recovery commit is docs-only under `.scratch/` and did not re-run the gate. Over
   the round, App.css went 2316 → 1108 (the CHANGELOG counts from the first baseline, 3038).
@@ -30,7 +31,7 @@ Round 19's record:
   the push.
 - **Ticket status.**
   - 01–17 are `implemented`. 11–17 passed their D31 gates; 01/04/07/09 were Astra-reviewed.
-  - 18 is `ready-for-human`.
+  - 18 is `ready-for-human`. Its script was rewritten for the 1.3.0 build on 2026-10-05 (see its `## Comments`).
   - 19 is `ready-for-agent`. Its docs half is done. Its `## Result` § Release run ids (~:99–102) are TODO, and the
     smoke outcome (~:141) is pending.
   - 20–26 are `ready-for-agent`.
@@ -50,16 +51,17 @@ Round 19's record:
   fixes small residuals itself (a type, a test spy, a doc claim, a one-function Rust rule) and re-runs the auditor's own
   evidence script instead of another child cycle.
 - **The push is the release.** `auto-tag.yml` → `release.yml` builds five targets plus `updater.json`, and every 1.2.x
-  install is offered 1.3.0. Alex has not said "push". Two options are open:
-  - push now; or
-  - run ticket 18 first: Alex's 45-min think-aloud on the fixture (`npm run dev:fixture`, port 5175,
-    `?scenario=failures|first-run`), using `round18/review/flows.md`'s questions. 18 was scoped as non-blocking. Done
-    after the push, its findings land in 1.3.x instead.
+  install is offered 1.3.0.
+- **Decided 2026-10-05: ticket 18 first, then push the same day.** The reason: a first impression can't be repeated,
+  and the release smoke teaches every flow. Ticket 18's § Hold rule says which findings can stop the push. Every other
+  finding goes to a 19b ticket or the BACKLOG (§ Routing).
 
 ## Exact next steps
 
-1. **Ask Alex: "push" or "18 first".**
-2. **On "push":**
+1. **Run ticket 18 with Alex.** Follow its § Setup and § Protocol. The fixture server is `npm run dev:fixture` on 5175;
+   start it if it isn't running. The visible preview tab starts blank, and the first URL loads on "start". Fill in
+   § Findings, route each finding per § Routing, then apply the hold rule.
+2. **Push, unless a hold finding needs a fix first:**
    1. `git fetch && git rebase origin/main` (on a `featured-skills.json` conflict, take origin's).
    2. Change the CHANGELOG 1.3.0 date to today.
    3. `npm run version:check && npm run check`.
