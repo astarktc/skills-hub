@@ -1,0 +1,7 @@
+#!/bin/sh
+# Secret scan of staged changes. Enable per clone: git config core.hooksPath .githooks
+if command -v gitleaks >/dev/null 2>&1; then
+  exec gitleaks git --pre-commit --staged --redact --no-banner .
+fi
+echo "pre-commit: gitleaks not installed, staged changes NOT scanned (brew install gitleaks)" >&2
+exit 0
