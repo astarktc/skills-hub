@@ -203,6 +203,9 @@ Props: `variant` · `tone` · `size`, plus `pending`.
   (`motion-safe` only) and **keeps focus**.
 - `disabled`: not activatable, 50 % opacity (contrast-exempt); 75 % while a `focusableWhenDisabled` / `pending`
   button holds keyboard focus, so its ring stays ≥ 3:1 (§ Focus ring).
+- **Held** (`disabled` + `focusableWhenDisabled`, or `pending`): the held-control refusal (§ Held-control refusal)
+  — activating it changes nothing and dispatches one refusal event with its stated reason. A held button shows no
+  hover ground (`not-aria-disabled:hover:*`): it takes the pointer only to say why it is refused.
 - An icon-only button needs `aria-label`.
 
 ### Badge and Chip (`badge.tsx`)
@@ -243,7 +246,8 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
   `input`, and when checked it fills with `primary`.
   - `focusableWhenDisabled` (ticket 17): the Switch's option, for a checkbox disabled *because its own action runs*
     (a matrix cell mid-toggle) — it keeps its Tab stop and focus, says `aria-disabled="true"` (never
-    `aria-readonly`) and refuses every change; Base UI renders it read-only. `checkbox.test.tsx` pins it.
+    `aria-readonly`) and refuses every change; Base UI renders it read-only. `checkbox.test.tsx` pins it. Held
+    (`disabled` with it), it follows the held-control refusal (§ Held-control refusal).
 - **Switch**: `role="switch"`. `size` is `md` (20 × 36, standalone) or `sm` (16 × 28 with a 24 px hit area, dense
   rows). "On" is **neutral** (`muted-foreground`), not iris: a column of switches must not make the accent mean
   "normal". The thumb slides in 120 ms, and reduced motion removes the slide.
@@ -251,6 +255,24 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
     focus, says `aria-disabled="true"` (never `aria-readonly`) and refuses every change — click, Space, Enter. Base
     UI's Switch has no such option (1.8), so the primitive renders it read-only while it holds focus. The row
     switch uses it with the refusal reason as `title` + `aria-description` (D19, D21); `checkbox.test.tsx` pins it.
+    Held (`disabled` with it), it follows the held-control refusal (§ Held-control refusal).
+- **Held-control refusal** (ticket 27, D19; `ui/held-refusal.ts`, pinned for all three primitives by
+  `held-refusal.test.tsx`). A Button, Switch or Checkbox *held* disabled by a reason (`aria-disabled="true"` with the
+  `data-focusable-when-disabled` mark) never refuses silently:
+  - **Activation** is a pointer click (`click` with `detail ≥ 1`), Enter or Space (`keydown`, never an auto-repeat).
+    The click a key press synthesizes (`detail: 0`) is the same activation and is not counted again. Each activation
+    dispatches one bubbling `skillshub:held-refusal` event whose `detail.reason` is the control's stated reason — its
+    `aria-description`, else its `title`, else `null`.
+  - **Nothing changes**: the control stays as it was, nothing is queued, focus stays on it (never `<body>`).
+  - **Pointer**: a held control takes pointer events (`disabledState` keeps `pointer-events: none` for every other
+    disabled control), so a click lands on it rather than on the row beneath.
+  - **The notice is the binder's, not the primitive's.** App's `useHeldRefusal` hands each event to the reporter's
+    `refuseHeld`, which shows the one refusal toast (`info`, 2 s, id `lifecycle-refusal`, shared with a refused
+    `runAction`): the stated reason — else the running action, named ("Disable is running — wait for it to finish")
+    — over "Nothing was changed." A repeat while it shows refreshes the same toast (its timer restarts) instead of
+    stacking a copy, so the toaster's polite region announces it once. The primitive renders no live region, and a
+    control stating no reason while nothing runs shows nothing. Like every toast, it yields to the open
+    Notifications panel.
 
 ### Tabs and Segmented (`tabs.tsx`, `segmented.tsx`)
 
@@ -684,8 +706,9 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
   the skill door's `focusAfter` (Restore → Health, Delete → next row) then applies its own rule. Verbs keep focus
   while disabled (`focusableWhenDisabled`), so a pending action never drops it.
 - **Refusal** (D19): verbs stay focusable while anything runs (`focusableWhenDisabled`), with the reason as `title`
-  and `aria-description` ("Refresh is running — wait for it to finish"). A row whose skill is in the running action
-  shows its overflow button `pending` (spinner, `aria-busy`, keeps focus); the row `li` is `aria-busy`.
+  and `aria-description` ("Refresh is running — wait for it to finish"). Activating one shows that reason as the
+  refusal toast over "Nothing was changed." (§ Held-control refusal, ticket 27). A row whose skill is in the running
+  action shows its overflow button `pending` (spinner, `aria-busy`, keeps focus); the row `li` is `aria-busy`.
 - **Notifications panel** (`NotificationsModal.tsx`, `lg` dialog, `flush` body): one row per run — kind glyph
   (state token), the headline (`sm semibold`), "{action} · {relative time} · N items" (`xs muted`), a disclosure
   (`aria-expanded`) when it has items. Items (`card` ground, indented) carry a kind glyph (**To review** is

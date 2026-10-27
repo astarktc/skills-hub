@@ -51,3 +51,86 @@ believe a skill is off when it is on.
 - **Gate:** `npm run version:check && npm run check` green.
 
 ## Comments
+
+- **2026-10-27 (implementation child).** Implemented with the bubbling-DOM-event seam + the reporter's refusal toast
+  (see Result). Fixture proof with trusted CDP input under `.scratch/round19/evidence/27/`. Found while proving it: a
+  held control was `pointer-events: none` (`aria-disabled:pointer-events-none` in `disabledState`), so a click on it
+  never reached it — it fell through to the row beneath (which opened the inspector). Held controls now take the
+  pointer; every other disabled control stays pointer-transparent. Open for the orchestrator: CHANGELOG line (not
+  written here, per brief); the app-wide toaster sits top-right over the header's Configure Tools / Refresh all /
+  Add skill, so a refusal toast briefly covers them (a trusted click at Refresh all landed on the toast in
+  `proof-buttons-run1-*`) — a toaster-placement question, out of this ticket's scope.
+
+## Result
+
+**Approach.** A held control (Button, Switch or Checkbox `aria-disabled="true"` with the `data-focusable-when-disabled`
+mark — `disabled` + `focusableWhenDisabled`, or a `pending` Button) dispatches one bubbling
+`skillshub:held-refusal` CustomEvent per activation, `detail.reason` = its stated reason (`aria-description`, else
+`title`, else `null`). App's binder (`useHeldRefusal`) hands it to the reporter's new `refuseHeld(reason)`, which shows
+the one refusal toast: the stated reason — else the running action named via `pending.label`
+(`describeRefusal`) — over "Nothing was changed.".
+
+- **Seam: the bubbling DOM event, not a primitive-level announcer.** The refusal already has one dialect — a refused
+  `runAction` toasts `describeRefusal` as an unrecorded `info` toast — and only the reporter knows what is running
+  (`pending.label`). The event keeps primitives free of the reporter/world hooks (AGENTS.md state rules) and needs no
+  call-site wiring: the rule lives in one module (`ui/held-refusal.ts`), spread by the three primitives.
+- **Form: the toast, not an inline anchored note.** The toaster already owns a polite live region (`aria-live="polite"`),
+  so the reason is announced once without a second announcer; an anchored note would be a new floating layer on the
+  layer stack per primitive, would cover neighbouring cells in the dense matrix/rows, and would need its own
+  dismissal/focus contract. The toast shares the runAction refusal's id (`lifecycle-refusal`): a repeat while it
+  shows refreshes it (sonner restarts its timer — run 1 shows it leaving 2 s after the 3rd click) instead of stacking
+  copies, and identical text is not re-announced. It records nothing (nothing ran, D19) and, like every toast, yields
+  to the open Notifications panel.
+- **Activation = once:** `click` with `detail ≥ 1` (pointer) or `keydown` Enter/Space (not `repeat`); the click a key
+  synthesizes (`detail: 0`, native button or Base UI's dispatch) is not counted again. Handlers are capture-phase on
+  the control because Base UI drops a disabled control's bubble handlers; they only observe — Base UI still refuses.
+- **Pointer fix (needed for the click to be heard):** `disabledState`'s `aria-disabled:pointer-events-none` became
+  `aria-disabled:not-data-focusable-when-disabled:pointer-events-none`; Button's hover grounds became
+  `not-aria-disabled:hover:*` so a held button does not light up under the pointer.
+- **Copy:** one new key, `heldRefusal.unchanged` ("Nothing was changed."); the title reuses the control's own reason /
+  `lifecycle.running` so the notice, the hover title and the `aria-description` never disagree.
+- **Known limit:** while a modal is open the toaster (inside `#root`) is inert, so the toast is visible but not
+  announced — true of every toast today; the held controls in dialogs also show the running action in the dialog's
+  own progress foot.
+
+**Files.** `src/components/ui/held-refusal.ts` (new), `button.tsx`, `switch.tsx`, `checkbox.tsx`, `styles.ts`;
+`src/hooks/useHeldRefusal.ts` (new), `src/hooks/useStatusReporter.ts` (`refuseHeld`, refusal toast id),
+`src/lib/actionLifecycle.ts` (`heldRefusalNotice`), `src/App.tsx` (mounts `useHeldRefusal`),
+`src/i18n/resources.ts` (`heldRefusal.unchanged`, appended); `DESIGN.md` (§ Button "Held", § Checkbox and Switch
+"Held-control refusal" contract, § Refusal). Tests: `src/components/ui/held-refusal.test.tsx` (new),
+`src/hooks/useHeldRefusal.test.ts` (new), `useStatusReporter.test.ts`, `actionLifecycle.test.ts`,
+`useAddSkillFlow.test.ts` (mock gains `refuseHeld`). No `src-tauri/**`, no CHANGELOG.
+
+**Tests.**
+- `held-refusal.test.tsx` — for each of Switch, Checkbox, Button ("$name held by a reason (ticket 27)"): a pointer
+  click dispatches one refusal with the stated reason, changes nothing and keeps focus · Space and Enter each dispatch
+  one refusal; the click a key synthesizes is not counted again · falls back to the title · carries a null reason
+  when the control states none · still runs the caller's own capture handler · renders no live region of its own ·
+  takes the pointer; other disabled controls stay pointer-transparent · an enabled control dispatches nothing. Plus
+  "Button pending … is held" and "a natively disabled button … dispatches nothing".
+- `useHeldRefusal.test.ts` — hands each refusal bubbling from anywhere in the document to refuseHeld, with its reason ·
+  stops listening when the binder unmounts.
+- `useStatusReporter.test.ts` "useStatusReporter refuseHeld (ticket 27)" — shows the reason as the one refusal toast
+  and records nothing · names the running action when the control states no reason; shares the refused runAction's
+  toast id · says nothing for no reason while idle · yields to an open Notifications panel.
+- `actionLifecycle.test.ts` "heldRefusalNotice (ticket 27)" — stated reason first · running action named · null.
+
+**Fixture proof** (`?scenario=failures&latency=3`, 1280×800, headless agent-browser session, trusted CDP
+`Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`; driver `.scratch/round19/evidence/27/proof.ts`,
+`proof-buttons.ts`; page-side recorder observes only):
+- Three row switches (alias-skill, api-style, corp-conventions) clicked 250 ms apart: click 1 starts Disable; clicks
+  2 and 3 (`isTrusted`, `detail: 1`) each dispatch the refusal and the toast "Disable is running — wait for it to
+  finish / Nothing was changed." is on screen after each; api-style and corp-conventions stay `aria-checked="true"`;
+  alias-skill settles off. `proof.json`, `proof-summary.txt`, `clicks-after-2nd.png`, `clicks-after-3rd.png`,
+  `clicks-settled.png`. (`run1-startup-scan/` — the first run clicked during the startup Scan: all three were
+  refused with "Scan is running…", toast left 2 s after the 3rd click.)
+- Space: api-style focused, trusted Space starts its Disable (switch holds focus), a second trusted Space shows the
+  same notice; state unchanged until its own Disable settles; focus stayed on the switch throughout, no
+  `focus-lost-to-body` event. `space-held.png`, `proof.json` › `space`.
+- Held Buttons: trusted clicks on the held "Refresh all" and the row's `pending` overflow each show the notice; no
+  menu opens, no Refresh starts, focus never reaches BODY. `proof-buttons.json`, `proof-buttons-summary.txt`,
+  `buttons-held.png`.
+
+**Gate.** `npm run version:check && npm run check` → exit 0 (`.scratch/round19/evidence/27/gate.log`): version check
+ok · lint clean · styles:check ok (App.css 1108, 36 migrated) · vitest 48 files / 1031 tests passed · build ok ·
+cargo fmt/clippy clean · cargo test 831 passed, 0 failed (with the sibling's in-progress `src-tauri` edits present).

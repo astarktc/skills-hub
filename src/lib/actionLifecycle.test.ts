@@ -8,6 +8,7 @@ import {
   describeRefusal,
   dialogFallback,
   focusAfter,
+  heldRefusalNotice,
   isPendingSkill,
   pendingCellKeys,
   refusalFor,
@@ -135,6 +136,31 @@ describe("one mutation at a time (D19)", () => {
     expect(refusalFor(null)).toBeNull();
     expect(describeRefusal(refusalFor(pending())!, t)).toBe('lifecycle.running {"action":"Refresh"}');
     expect(describeRefusal(refusalFor(pending({ label: null }))!, t)).toBe("lifecycle.busy");
+  });
+});
+
+describe("heldRefusalNotice (ticket 27)", () => {
+  it("says the control's own stated reason, and that nothing changed", () => {
+    expect(heldRefusalNotice("Folder not found", pending(), t)).toEqual({
+      title: "Folder not found",
+      message: "heldRefusal.unchanged",
+    });
+    expect(heldRefusalNotice("Folder not found", null, t)).toEqual({
+      title: "Folder not found",
+      message: "heldRefusal.unchanged",
+    });
+  });
+
+  it("a control that states no reason is refused by the running action, named", () => {
+    expect(heldRefusalNotice(null, pending({ label: "Disable" }), t)).toEqual({
+      title: 'lifecycle.running {"action":"Disable"}',
+      message: "heldRefusal.unchanged",
+    });
+    expect(heldRefusalNotice(null, pending({ label: null }), t)?.title).toBe("lifecycle.busy");
+  });
+
+  it("says nothing when the control states no reason and nothing runs", () => {
+    expect(heldRefusalNotice(null, null, t)).toBeNull();
   });
 });
 

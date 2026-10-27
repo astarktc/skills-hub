@@ -40,6 +40,7 @@ import { useSettingsState } from "./hooks/useSettingsState";
 import { useSkillLibrary } from "./hooks/useSkillLibrary";
 import { useSkillActions } from "./hooks/useSkillActions";
 import { useStatusReporter } from "./hooks/useStatusReporter";
+import { useHeldRefusal } from "./hooks/useHeldRefusal";
 import { useSyncOrchestration } from "./hooks/useSyncOrchestration";
 import { useToolCatalog } from "./hooks/useToolCatalog";
 import { useAppUpdate } from "./hooks/useAppUpdate";
@@ -84,6 +85,9 @@ function App() {
   // The reporter reads the surface for the Notifications panel: a toast
   // never covers it, and "View report" opens it on a run.
   const reporter = useStatusReporter(t, surface);
+  // A held control's activation (click, Space, Enter) says why it is
+  // refused: the primitives' event becomes the reporter's notice (ticket 27).
+  useHeldRefusal(reporter.refuseHeld);
   const update = useAppUpdate({ reporter, surface });
   const catalog = useToolCatalog({ t });
   const sync = useSyncOrchestration({ t, reporter, surface, catalog });

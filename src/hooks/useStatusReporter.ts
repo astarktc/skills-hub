@@ -4,6 +4,7 @@ import { describeCommandError } from "../commandError";
 import { invokeTauri } from "../lib/tauri";
 import {
   describeRefusal,
+  heldRefusalNotice,
   refusalFor,
   returnLostFocus,
   type CancellableCommand,
@@ -52,17 +53,27 @@ const TOAST_DURATION_MS: Record<NotificationKind, number> = {
   info: 2000,
 };
 
+/**
+ * The refusal toast's id: a refused action and a held control's activation
+ * share one toast, so refusals in quick succession refresh it (its timer
+ * restarts) instead of stacking copies — and the toaster's polite region
+ * announces the reason once, not once per click (ticket 27).
+ */
+const REFUSAL_TOAST_ID = "lifecycle-refusal";
+
 /** The one place the toast library is called. */
 function showToast(
   kind: NotificationKind,
   title: string,
   message?: string,
   action?: NotificationAction,
+  id?: string,
 ) {
   const options = {
     description: message,
     duration: TOAST_DURATION_MS[kind],
     ...(action ? { action } : {}),
+    ...(id ? { id } : {}),
   };
   switch (kind) {
     case "error":
@@ -396,6 +407,16 @@ export type StatusReporter = {
    */
   copyToClipboard: CopyToClipboardFn;
   /**
+   * A held control was activated (ticket 27; the binder's `useHeldRefusal`
+   * calls it from the primitives' held-refusal event): show why, once per
+   * activation — the control's stated `reason`, else the running action,
+   * named (`heldRefusalNotice`), over "Nothing was changed". Like a refused
+   * `runAction` it is an info toast that records nothing (nothing ran), shares
+   * the refusal toast's id and, like every toast, yields to an open
+   * Notifications panel.
+   */
+  refuseHeld: (reason: string | null) => void;
+  /**
    * Ask the running action's command to stop (D20). Only a cancellable action
    * can be cancelled; the action keeps `pending` until its command returns
    * (its report says what was cancelled) — nothing is hidden that did not stop.
@@ -442,9 +463,9 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
   });
   /** The one toast call site: nothing is toasted while the panel is open. */
   const toastUnlessPanel = useCallback(
-    (kind: NotificationKind, title: string, message?: string, action?: NotificationAction) => {
+    (kind: NotificationKind, title: string, message?: string, action?: NotificationAction, id?: string) => {
       if (panelOpenRef.current) return;
-      showToast(kind, title, message, action);
+      showToast(kind, title, message, action, id);
     },
     [],
   );
@@ -667,7 +688,7 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
       const refusal = refusalFor(pendingRef.current);
       if (refusal) {
         // Refused, not queued: say why, record nothing (it never ran).
-        toastUnlessPanel("info", describeRefusal(refusal, t));
+        toastUnlessPanel("info", describeRefusal(refusal, t), undefined, undefined, REFUSAL_TOAST_ID);
         return undefined;
       }
       cancelWithdrawnRef.current = false;
@@ -728,6 +749,16 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
 
   const refusal = useMemo(() => refusalFor(pending), [pending]);
 
+  const refuseHeld = useCallback(
+    (reason: string | null) => {
+      // The ref, not render state: a click in the same tick as the action's
+      // start still names it.
+      const notice = heldRefusalNotice(reason, pendingRef.current, t);
+      if (notice) toastUnlessPanel("info", notice.title, notice.message, undefined, REFUSAL_TOAST_ID);
+    },
+    [t, toastUnlessPanel],
+  );
+
   return {
     pending,
     loading: pending !== null,
@@ -750,6 +781,7 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
     showActionErrors,
     showActionWarnings,
     copyToClipboard,
+    refuseHeld,
     cancelPending,
   };
 }

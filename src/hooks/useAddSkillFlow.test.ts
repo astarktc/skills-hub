@@ -253,6 +253,7 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
     showActionErrors,
     showActionWarnings,
     copyToClipboard: vi.fn().mockResolvedValue(true),
+    refuseHeld: vi.fn(),
     cancelPending: vi.fn(),
   };
   const sync = {

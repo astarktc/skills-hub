@@ -1388,6 +1388,10 @@ export const resources = {
         // The Assign-to-project picker's refusal for a project whose folder is gone.
         assignFolderMissing: "Folder not found \u2014 update its path under Projects first.",
       },
+      // A held control activated (ticket 27, D19): the notice under its reason.
+      heldRefusal: {
+        unchanged: "Nothing was changed.",
+      },
     },
   },
 } as const;

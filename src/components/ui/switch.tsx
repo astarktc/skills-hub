@@ -1,5 +1,6 @@
 import { Switch as SwitchPrimitive } from "@base-ui/react/switch";
 import { cn } from "@/lib/utils";
+import { heldRefusalHandlers } from "./held-refusal";
 import { disabledState, focusRing } from "./styles";
 
 type SwitchProps = Omit<SwitchPrimitive.Root.Props, "className"> & {
@@ -11,7 +12,10 @@ type SwitchProps = Omit<SwitchPrimitive.Root.Props, "className"> & {
    * own action is running, so focus never leaves it (D21). Base UI's Switch
    * has no such option (1.8), so the primitive renders a disabled switch it
    * keeps focusable as read-only (Base UI refuses every change) and says
-   * `aria-disabled` instead of `aria-readonly`.
+   * `aria-disabled` instead of `aria-readonly`. Activating it (click, Space,
+   * Enter) changes nothing and dispatches the held-refusal event once, so
+   * the binder shows its reason (`held-refusal.ts`, DESIGN.md § Checkbox and
+   * Switch).
    */
   focusableWhenDisabled?: boolean;
   /** Layout only. */
@@ -31,9 +35,12 @@ function Switch({
   disabled = false,
   focusableWhenDisabled = false,
   readOnly,
+  onClickCapture,
+  onKeyDownCapture,
   ...props
 }: SwitchProps) {
   const heldFocus = disabled && focusableWhenDisabled;
+  const refusal = heldRefusalHandlers(heldFocus, { onClickCapture, onKeyDownCapture });
   return (
     <SwitchPrimitive.Root
       data-slot="switch"
@@ -52,6 +59,7 @@ function Switch({
       readOnly={heldFocus || readOnly}
       data-focusable-when-disabled={heldFocus ? "" : undefined}
       {...props}
+      {...refusal}
       {...(heldFocus ? { "aria-disabled": true, "aria-readonly": undefined } : null)}
     >
       <SwitchPrimitive.Thumb

@@ -1114,6 +1114,59 @@ describe("useStatusReporter and the Notifications panel (D11)", () => {
   });
 });
 
+describe("useStatusReporter refuseHeld (ticket 27)", () => {
+  const REFUSAL = { description: "heldRefusal.unchanged", duration: 2000, id: "lifecycle-refusal" };
+  const gate = () => {
+    let open: () => void = () => {};
+    const promise = new Promise<void>((resolve) => (open = resolve));
+    return { promise, open: () => open() };
+  };
+
+  it("shows the held control's reason as the one refusal toast and records nothing", () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    act(() => result.current.refuseHeld("Disable is running — wait for it to finish"));
+    expect(toast.info).toHaveBeenCalledWith("Disable is running — wait for it to finish", REFUSAL);
+    // A refusal is not an outcome (nothing ran): nothing in the history.
+    expect(result.current.notifications).toEqual([]);
+    expect(result.current.unreadCount).toBe(0);
+  });
+
+  it("names the running action when the control states no reason; shares the refused runAction's toast", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    const body = gate();
+    let run: Promise<unknown> = Promise.resolve();
+    await act(async () => {
+      run = result.current.runAction({ label: "Disable" }, () => body.promise);
+      result.current.refuseHeld(null);
+      await result.current.runAction({ label: "Sync" }, async () => "never");
+    });
+    expect(toast.info).toHaveBeenNthCalledWith(1, 'lifecycle.running {"action":"Disable"}', REFUSAL);
+    // One id for both refusals: sonner refreshes the toast, never stacks a copy.
+    expect(toast.info).toHaveBeenNthCalledWith(
+      2,
+      'lifecycle.running {"action":"Disable"}',
+      expect.objectContaining({ id: "lifecycle-refusal" }),
+    );
+    await act(async () => {
+      body.open();
+      await run;
+    });
+  });
+
+  it("says nothing for a control that states no reason while nothing runs", () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    act(() => result.current.refuseHeld(null));
+    expect(toast.info).not.toHaveBeenCalled();
+  });
+
+  it("yields to an open Notifications panel, like every toast", () => {
+    const surface = { isOpen: (kind: string) => kind === "notifications", pushDialog: vi.fn(), updateDialog: vi.fn() };
+    const { result } = renderHook(() => useStatusReporter(t, surface as never));
+    act(() => result.current.refuseHeld("Refresh is running — wait for it to finish"));
+    expect(toast.info).not.toHaveBeenCalled();
+  });
+});
+
 describe("useStatusReporter reads", () => {
   it("a read is never refused: it waits for the running action, then runs", async () => {
     const { result } = renderHook(() => useStatusReporter(t));

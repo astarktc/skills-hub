@@ -136,6 +136,27 @@ export function describeRefusal(refusal: MutationRefusal, t: Translate): string 
     : t("lifecycle.busy");
 }
 
+/** The notice a held control's activation shows (ticket 27): its reason, and that nothing changed. */
+export type HeldRefusalNotice = { title: string; message: string };
+
+/**
+ * What activating a held control says (D19, ticket 27). The control's own
+ * stated reason comes first — it is the reason its hover title and its
+ * `aria-description` already give, so the notice never contradicts them;
+ * a control that states none (a `pending` button) is refused by the running
+ * action, named. A control that states no reason while nothing runs says
+ * nothing (null): it is dimmed for a reason the surface shows elsewhere.
+ */
+export function heldRefusalNotice(
+  reason: string | null,
+  pending: PendingAction | null,
+  t: Translate,
+): HeldRefusalNotice | null {
+  const refusal = refusalFor(pending);
+  const title = reason ?? (refusal ? describeRefusal(refusal, t) : null);
+  return title ? { title, message: t("heldRefusal.unchanged") } : null;
+}
+
 // ---------------------------------------------------------------------------
 // Focus after a mutation (D21)
 // ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@ import { Checkbox as CheckboxPrimitive } from "@base-ui/react/checkbox";
 import { Check, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFieldControlProps } from "./field-context";
+import { heldRefusalHandlers } from "./held-refusal";
 import { disabledState, focusRing } from "./styles";
 
 type CheckboxProps = Omit<CheckboxPrimitive.Root.Props, "className"> & {
@@ -11,7 +12,9 @@ type CheckboxProps = Omit<CheckboxPrimitive.Root.Props, "className"> & {
    * its own action is running (a matrix cell mid-toggle), so focus never
    * leaves it (D21). Base UI's Checkbox has no such option, so — like the
    * Switch — the primitive renders it read-only (Base UI refuses every
-   * change) and says `aria-disabled` instead of `aria-readonly`.
+   * change) and says `aria-disabled` instead of `aria-readonly`. Activating
+   * it (click, Space, Enter) changes nothing and dispatches the held-refusal
+   * event once, so the binder shows its reason (`held-refusal.ts`).
    */
   focusableWhenDisabled?: boolean;
   /** Layout only. */
@@ -27,9 +30,18 @@ type CheckboxProps = Omit<CheckboxPrimitive.Root.Props, "className"> & {
  * FieldLabel points at it, and Base UI names the `role="checkbox"` element
  * from that label (`aria-labelledby`).
  */
-function Checkbox({ className, disabled = false, focusableWhenDisabled = false, readOnly, ...rest }: CheckboxProps) {
+function Checkbox({
+  className,
+  disabled = false,
+  focusableWhenDisabled = false,
+  readOnly,
+  onClickCapture,
+  onKeyDownCapture,
+  ...rest
+}: CheckboxProps) {
   const props = useFieldControlProps(rest);
   const heldFocus = disabled && focusableWhenDisabled;
+  const refusal = heldRefusalHandlers(heldFocus, { onClickCapture, onKeyDownCapture });
   return (
     <CheckboxPrimitive.Root
       data-slot="checkbox"
@@ -47,6 +59,7 @@ function Checkbox({ className, disabled = false, focusableWhenDisabled = false, 
       readOnly={heldFocus || readOnly}
       data-focusable-when-disabled={heldFocus ? "" : undefined}
       {...props}
+      {...refusal}
       {...(heldFocus ? { "aria-disabled": true, "aria-readonly": undefined } : null)}
     >
       <CheckboxPrimitive.Indicator

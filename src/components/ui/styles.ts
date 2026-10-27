@@ -41,9 +41,14 @@ export const insetFocusRing =
  * ring measured 2.5:1 on the dark ground, so while such a control holds
  * keyboard focus it steps up to 75 %: the ring measures ≥ 3:1 in both themes
  * and the control still reads dimmed (ticket 15; DESIGN.md § Focus ring).
+ *
+ * A *held* control (aria-disabled with the `data-focusable-when-disabled`
+ * mark) keeps pointer events: a click lands on it — not on the row beneath —
+ * so it can say why it is refused (`held-refusal.ts`, ticket 27). Every
+ * other disabled control stays pointer-transparent.
  */
 export const disabledState =
-  "disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 aria-disabled:focus-visible:opacity-75 aria-busy:cursor-progress";
+  "disabled:pointer-events-none disabled:opacity-50 aria-disabled:not-data-focusable-when-disabled:pointer-events-none aria-disabled:opacity-50 aria-disabled:focus-visible:opacity-75 aria-busy:cursor-progress";
 
 /** Icons inside a control size themselves from the control, never per call site. */
 export const iconSlot =
@@ -70,9 +75,13 @@ export const softGround = {
   failed: "bg-[color-mix(in_oklab,var(--failed)_10%,var(--popover))]",
 } as const;
 
+/**
+ * The same grounds on hover — never on a held (aria-disabled) control, which
+ * takes pointer events only to say why it is refused.
+ */
 export const softGroundOnHover = {
-  accent: "hover:bg-[color-mix(in_oklab,var(--primary)_10%,var(--popover))]",
-  ok: "hover:bg-[color-mix(in_oklab,var(--ok)_10%,var(--popover))]",
-  stale: "hover:bg-[color-mix(in_oklab,var(--stale)_10%,var(--popover))]",
-  failed: "hover:bg-[color-mix(in_oklab,var(--failed)_10%,var(--popover))]",
+  accent: "not-aria-disabled:hover:bg-[color-mix(in_oklab,var(--primary)_10%,var(--popover))]",
+  ok: "not-aria-disabled:hover:bg-[color-mix(in_oklab,var(--ok)_10%,var(--popover))]",
+  stale: "not-aria-disabled:hover:bg-[color-mix(in_oklab,var(--stale)_10%,var(--popover))]",
+  failed: "not-aria-disabled:hover:bg-[color-mix(in_oklab,var(--failed)_10%,var(--popover))]",
 } as const;
