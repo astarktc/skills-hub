@@ -13,9 +13,10 @@
 //!    source carries GitHub coordinates and the intent names a real subpath.
 //!    It fetches the branch SHA first, so the recorded revision is the real
 //!    commit even though nothing is cloned. The Contents API carries no file
-//!    modes, so the adapter restores executable bits from one recursive
-//!    `git/trees` request after the download (a shebang heuristic when that
-//!    answer is unavailable or truncated) — a mode problem never fails the
+//!    modes, so on Unix the adapter restores executable bits from one recursive
+//!    `git/trees` request after a nonempty download (a shebang heuristic when
+//!    that answer is unavailable or truncated, or a path is absent from it).
+//!    Windows skips this request — a mode problem never fails the
 //!    acquisition (`super::github_download` owns the rule and its cost). The
 //!    clone keeps modes natively, and every later copy (`fs::copy`) keeps
 //!    them too.

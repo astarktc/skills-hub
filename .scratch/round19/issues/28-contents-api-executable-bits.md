@@ -114,3 +114,18 @@ The exact `0o755` / `0o644` literals assume umask 022 (macOS and the CI Linux ru
   so acquisition policy and every stub-based test are untouched, and the stub only gained an opt-in executable script
   for the Refresh pin. The upstream issue/PR (`qufei1993/skills-hub`) has not been filed. The orchestrator owns the
   CHANGELOG line and ticket 19's smoke-list addition.
+- 2026-10-27 (independent audit): **PASS after fixes**; full checklist and primary-source research in
+  `../review/ticket-28-audit.md`, evidence in `../evidence/28-audit/`. Fixed the Trees ref to URL-encode slash
+  branches (existing dependency; trait unchanged), removed umask-022 assumptions from default-created-file
+  assertions, and guarded Unix-only test helpers. Added three regression tests for the encoded ref, malformed/missing
+  tree data, and cancellation after the last file; extended HTTP fallback coverage to 404. Original commit:
+  833 Rust tests passed. Corrected tree: 836 Rust tests and 1031 frontend tests passed; fmt, clippy, version check and
+  full gate green; affected tests also pass under umask 077; bindings byte-identical. This supersedes Result's slash-ref
+  caveat and exact-mode/umask note. Windows was checked statically, not cross-built. No open blocking defects;
+  the two-Mac post-release smoke remains pending with ticket 19. Audit changes are left for the orchestrator to commit.
+- 2026-10-27 (audit final shared-tree recheck): After the green ticket-28 gate, an unowned concurrent change appeared
+  in `src/components/ui/held-refusal.test.tsx`. The rerun now fails its two new Switch/Checkbox wrapping-label
+  activation tests at line 183 (expected one refusal, received none; 1031 other tests pass). Evidence:
+  `../evidence/28-audit/gate-after-sibling.log`. Ticket 28's code verdict remains PASS after fixes, but checklist item 10
+  is FAIL on the current shared checkout until the UI owner settles that work and the orchestrator reruns the gate.
+  No `src/**` file was edited or reverted by this auditor.

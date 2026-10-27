@@ -648,6 +648,7 @@ fn a_refresh_keeps_an_executable_script_executable_in_the_central_copy_and_a_cop
             0o755,
             "round {round}: copy-mode target"
         );
-        assert_eq!(mode(&target.join("SKILL.md")), 0o644, "round {round}");
+        // The plain file's read/write bits follow the test process's umask.
+        assert_eq!(mode(&target.join("SKILL.md")) & 0o111, 0, "round {round}");
     }
 }

@@ -11,8 +11,9 @@
 //! written file has no tree entry, the fallback gives `+x` to a file whose
 //! first bytes are `#!`. Modes never fail an acquisition (the bytes have
 //! landed); the fallback is logged. Cost: one extra API request per
-//! fast-path acquisition, outside the per-file loop (none on Windows, where
-//! the step is a no-op).
+//! nonempty Unix fast-path acquisition, outside the per-file loop (none on
+//! Windows, where the step is a no-op). The ref is URL-encoded as one path
+//! parameter, including branch names containing '/'.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -148,7 +149,8 @@ fn download_github_directory_from(
         anyhow::bail!(SignalError::Cancelled);
     }
     if cfg!(unix) && !written.is_empty() {
-        let tree_url = format!("{api_base}/repos/{owner}/{repo}/git/trees/{branch}?recursive=1");
+        let tree_ref = urlencoding::encode(branch);
+        let tree_url = format!("{api_base}/repos/{owner}/{repo}/git/trees/{tree_ref}?recursive=1");
         restore_executable_bits(&client, &tree_url, token, &written);
     }
     Ok(())
@@ -843,22 +845,25 @@ mod tests {
     // Executable bits (the trees call and its shebang fallback)
     // -----------------------------------------------------------------------
 
+    /// Only execute bits belong to this rule; read/write bits obey the caller's umask.
     #[cfg(unix)]
-    fn mode_of(path: &Path) -> u32 {
+    fn assert_execute_bits(path: &Path, expected_mode: u32) {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::metadata(path)
+        let mode = std::fs::metadata(path)
             .unwrap_or_else(|err| panic!("stat {path:?}: {err}"))
             .permissions()
-            .mode()
-            & 0o777
+            .mode();
+        assert_eq!(mode & 0o111, expected_mode & 0o111, "{path:?}");
     }
 
     /// A directory listing entry for a subdirectory.
+    #[cfg(unix)]
     fn listing_dir(dir: &str, name: &str) -> String {
         format!(r#"{{"name":"{name}","path":"{dir}/{name}","type":"dir","download_url":null}}"#)
     }
 
     /// One `git/trees` entry.
+    #[cfg(unix)]
     fn tree_entry(path: &str, mode: &str) -> String {
         let kind = if mode == "040000" { "tree" } else { "blob" };
         format!(r#"{{"path":"{path}","mode":"{mode}","type":"{kind}","sha":"0"}}"#)
@@ -870,6 +875,7 @@ mod tests {
     /// - `README.md`: a plain file;
     /// - `nested/tool`: executable upstream but without a shebang, so only
     ///   the trees answer can know it.
+    #[cfg(unix)]
     fn serve_skill(server: &mut mockito::Server, dir: &str) -> Vec<mockito::Mock> {
         let base = server.url();
         let mut mocks = vec![
@@ -919,6 +925,7 @@ mod tests {
     }
 
     /// The `git/trees` answer for a repository holding the skill at `dir`.
+    #[cfg(unix)]
     fn tree_body(dir: &str, truncated: bool) -> String {
         let entries = [
             tree_entry(dir, "040000"),
@@ -934,6 +941,7 @@ mod tests {
         )
     }
 
+    #[cfg(unix)]
     fn download_skill(base: &str, path: &str, dest: &Path, token: Option<&str>) {
         download_github_directory_from(base, "o", "r", "main", path, dest, None, token)
             .expect("the acquisition succeeds");
@@ -963,10 +971,10 @@ mod tests {
         download_skill(&server.url(), "skills/a", dest.path(), Some("test-token"));
 
         trees.assert();
-        assert_eq!(mode_of(&dest.path().join("run.sh")), 0o755);
-        assert_eq!(mode_of(&dest.path().join("README.md")), 0o644);
-        assert_eq!(mode_of(&dest.path().join("notes.sh")), 0o644);
-        assert_eq!(mode_of(&dest.path().join("nested/tool")), 0o755);
+        assert_execute_bits(&dest.path().join("run.sh"), 0o755);
+        assert_execute_bits(&dest.path().join("README.md"), 0o644);
+        assert_execute_bits(&dest.path().join("notes.sh"), 0o644);
+        assert_execute_bits(&dest.path().join("nested/tool"), 0o755);
     }
 
     /// Any failed trees call (a server error, a rate-limit 403) falls back to
@@ -975,7 +983,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_failed_trees_call_falls_back_to_shebang_detection() {
-        for status in [500, 403] {
+        for status in [500, 403, 404] {
             let mut server = mockito::Server::new();
             let _skill = serve_skill(&mut server, "skills/a");
             let trees = server
@@ -988,14 +996,11 @@ mod tests {
             download_skill(&server.url(), "skills/a", dest.path(), None);
 
             trees.assert();
-            assert_eq!(mode_of(&dest.path().join("run.sh")), 0o755, "{status}");
-            assert_eq!(mode_of(&dest.path().join("notes.sh")), 0o755, "{status}");
-            assert_eq!(mode_of(&dest.path().join("README.md")), 0o644, "{status}");
-            assert_eq!(
-                mode_of(&dest.path().join("nested/tool")),
-                0o644,
-                "{status}: no shebang, so the fallback cannot know"
-            );
+            assert_execute_bits(&dest.path().join("run.sh"), 0o755);
+            assert_execute_bits(&dest.path().join("notes.sh"), 0o755);
+            assert_execute_bits(&dest.path().join("README.md"), 0o644);
+            // No shebang, so the fallback cannot know.
+            assert_execute_bits(&dest.path().join("nested/tool"), 0o644);
         }
     }
 
@@ -1015,10 +1020,10 @@ mod tests {
 
         download_skill(&server.url(), "skills/a", dest.path(), None);
 
-        assert_eq!(mode_of(&dest.path().join("run.sh")), 0o755);
-        assert_eq!(mode_of(&dest.path().join("notes.sh")), 0o755);
-        assert_eq!(mode_of(&dest.path().join("README.md")), 0o644);
-        assert_eq!(mode_of(&dest.path().join("nested/tool")), 0o644);
+        assert_execute_bits(&dest.path().join("run.sh"), 0o755);
+        assert_execute_bits(&dest.path().join("notes.sh"), 0o755);
+        assert_execute_bits(&dest.path().join("README.md"), 0o644);
+        assert_execute_bits(&dest.path().join("nested/tool"), 0o644);
     }
 
     /// Through a followed upstream link, modes map by the real repo path the
@@ -1048,13 +1053,131 @@ mod tests {
 
         download_skill(&server.url(), alias, dest.path(), None);
 
+        // Only the tree entry at the real path knows this file is executable.
+        assert_execute_bits(&dest.path().join("nested/tool"), 0o755);
+        assert_execute_bits(&dest.path().join("notes.sh"), 0o644);
+        assert_execute_bits(&dest.path().join("run.sh"), 0o755);
+    }
+
+    /// Malformed JSON and missing entries use the same best-effort fallback.
+    #[cfg(unix)]
+    #[test]
+    fn unusable_tree_data_falls_back_without_failing_the_download() {
+        for body in ["not JSON", r#"{"tree":[],"truncated":false}"#] {
+            let mut server = mockito::Server::new();
+            let _skill = serve_skill(&mut server, "skills/a");
+            let trees = server
+                .mock("GET", "/repos/o/r/git/trees/main?recursive=1")
+                .with_status(200)
+                .with_body(body)
+                .expect(1)
+                .create();
+            let dest = tempfile::tempdir().unwrap();
+
+            download_skill(&server.url(), "skills/a", dest.path(), None);
+
+            trees.assert();
+            assert_execute_bits(&dest.path().join("run.sh"), 0o755);
+            assert_execute_bits(&dest.path().join("notes.sh"), 0o755);
+            assert_execute_bits(&dest.path().join("README.md"), 0o644);
+            assert_execute_bits(&dest.path().join("nested/tool"), 0o644);
+        }
+    }
+
+    #[test]
+    fn cancellation_during_the_last_file_skips_the_tree_request() {
+        let mut server = mockito::Server::new();
+        let base = server.url();
+        let token = std::sync::Arc::new(CancelToken::new());
+        let during_download = token.clone();
+        let contents = server
+            .mock("GET", "/repos/o/r/contents/skills/a?ref=main")
+            .with_status(200)
+            .with_body(format!("[{}]", listing_file(&base, "skills/a", "run.sh")))
+            .expect(1)
+            .create();
+        let raw = server
+            .mock("GET", "/raw/skills/a/run.sh")
+            .with_status(200)
+            .with_body_from_request(move |_| {
+                during_download.cancel();
+                b"#!/bin/sh\necho run\n".to_vec()
+            })
+            .expect(1)
+            .create();
+        let trees = server
+            .mock("GET", "/repos/o/r/git/trees/main?recursive=1")
+            .expect(0)
+            .create();
+        let dest = tempfile::tempdir().unwrap();
+
+        let err = download_github_directory_from(
+            &base,
+            "o",
+            "r",
+            "main",
+            "skills/a",
+            dest.path(),
+            Some(&token),
+            None,
+        )
+        .expect_err("cancellation is not a best-effort mode failure");
+
         assert_eq!(
-            mode_of(&dest.path().join("nested/tool")),
-            0o755,
-            "only the tree entry at the real path knows this file is executable"
+            err.downcast_ref::<SignalError>(),
+            Some(&SignalError::Cancelled)
         );
-        assert_eq!(mode_of(&dest.path().join("notes.sh")), 0o644);
-        assert_eq!(mode_of(&dest.path().join("run.sh")), 0o755);
+        assert!(dest.path().join("run.sh").exists(), "the last file landed");
+        contents.assert();
+        raw.assert();
+        trees.assert();
+    }
+
+    /// A ref is one Trees path parameter, even when the branch contains '/'.
+    #[cfg(unix)]
+    #[test]
+    fn a_slash_branch_uses_an_encoded_tree_ref() {
+        let mut server = mockito::Server::new();
+        let base = server.url();
+        let contents = server
+            .mock("GET", "/repos/o/r/contents/skills/a?ref=release/1.x")
+            .with_status(200)
+            .with_body(format!("[{}]", listing_file(&base, "skills/a", "tool")))
+            .expect(1)
+            .create();
+        let raw = server
+            .mock("GET", "/raw/skills/a/tool")
+            .with_status(200)
+            .with_body("no shebang: only the tree can mark this executable")
+            .expect(1)
+            .create();
+        let trees = server
+            .mock("GET", "/repos/o/r/git/trees/release%2F1.x?recursive=1")
+            .with_status(200)
+            .with_body(format!(
+                r#"{{"tree":[{}],"truncated":false}}"#,
+                tree_entry("skills/a/tool", "100755")
+            ))
+            .expect(1)
+            .create();
+        let dest = tempfile::tempdir().unwrap();
+
+        download_github_directory_from(
+            &base,
+            "o",
+            "r",
+            "release/1.x",
+            "skills/a",
+            dest.path(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_execute_bits(&dest.path().join("tool"), 0o755);
+        contents.assert();
+        raw.assert();
+        trees.assert();
     }
 
     #[test]
