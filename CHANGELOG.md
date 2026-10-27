@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-10-01
+## [1.3.0] - 2026-10-27
 
 Round 19, phase A of the UI effort: Skills Hub gets one visual language, My Skills becomes a dense list with an inspector beside it, removing a skill from a tool is now a choice that lasts, and every batch says what happened in one line. Settings panes, the Import review, Explore rows, the command palette and the card grid follow in 1.3.x.
 
