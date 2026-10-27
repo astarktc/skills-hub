@@ -123,6 +123,13 @@ Install the 1.3.0 build from the release (not `tauri:dev`), then:
    assignments). **Cancel it**; nothing should change.
 7. **Adding a repo with a collision raises one ask.** With two folders in the way, the ask lists both, each with its own
    Keep / Overwrite.
+8. **Executable bits survive Refresh (ticket 28), on both Macs.** Refresh `impeccable`, then `ls -l
+   ~/.skillshub/impeccable/scripts/impeccable` shows `-rwxr-xr-x`; run a second Refresh and it still does. Never fix it
+   by hand — a hand `chmod` would mask the bug.
+9. **A refused click says why (ticket 27).** Start a Disable on one row, then immediately click another row's switch:
+   the toast reads the reason ("Disable is running — wait for it to finish" / "Nothing was changed.") and the second
+   switch does not move. Known limit (BACKLOG #79): the same refusal inside the inspector sheet is seen, not read by
+   VoiceOver.
 
 What the D31 fixture audits could not verify in a browser (only the operator can):
 
@@ -166,3 +173,8 @@ What the D31 fixture audits could not verify in a browser (only the operator can
   - Before pushing, change the block's date to the push day; it still reads 2026-10-01.
   - Smoke list addition, on both Macs: Refresh `impeccable`, then check that its `scripts/impeccable` in the central
     repo shows `-rwxr-xr-x` and still does after a second Refresh.
+- 2026-10-27 — **27 and 28 landed and were audited** (orchestrator): 27 `c8b727d` + audit fix `d7eab03` (a held
+  Checkbox/Switch label click also refuses visibly); 28 `7ad4c17` + audit fix `b00e17c` (encoded trees ref for slash
+  branches, umask-proof assertions). Both CHANGELOG lines are in the 1.3.0 Fixed block. Smoke items 8 and 9 added
+  above. 27's audit left two open findings as BACKLOG #79 (modal toasts inert to screen readers, P1 — operator decides
+  whether it holds the push) and #80 (toast stack covers the header). Local SHAs only; final SHAs after the push.
