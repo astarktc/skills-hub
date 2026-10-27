@@ -5,6 +5,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  LIVE_HOST_ATTRIBUTE,
   applyInert,
   claimDismissal,
   closeLayer,
@@ -102,5 +103,45 @@ describe("floating layers (ticket 16 A1: a popover and the ask one of its contro
     // The popover has left the stack; the dialog beneath still ignores the same Escape.
     expect(claimDismissal("a", escape)).toBe(false);
     expect(claimDismissal("a", new KeyboardEvent("keydown", { key: "Escape" }))).toBe(true);
+  });
+});
+
+describe("the live host (ticket 29: a toast raised under a modal is announced)", () => {
+  const html = `<div ${LIVE_HOST_ATTRIBUTE} id="live"><section aria-live="polite" id="region"><button id="view">View report</button></section></div><div id="app"><button id="opener">Delete</button></div><div data-base-ui-portal><div id="popup-a"></div></div><div data-base-ui-portal><div id="popup-b"></div></div><div id="stray"></div>`;
+
+  it("is never inerted while a modal layer stands; every other body child still is", () => {
+    document.body.innerHTML = html;
+    openLayer("a");
+    setLayerPopup("a", byId("popup-a"));
+    applyInert();
+    expect(byId("live").hasAttribute("inert")).toBe(false);
+    expect(byId("region").closest("[inert]")).toBeNull();
+    expect(byId("view").closest("[inert]")).toBeNull();
+    expect(byId("app").hasAttribute("inert")).toBe(true);
+    expect(byId("stray").hasAttribute("inert")).toBe(true);
+    expect(byId("popup-a").closest("[inert]")).toBeNull();
+  });
+
+  it("stays live under nested modal layers, and the layer beneath still goes inert", () => {
+    document.body.innerHTML = html;
+    openLayer("a");
+    setLayerPopup("a", byId("popup-a"));
+    openLayer("b");
+    setLayerPopup("b", byId("popup-b"));
+    applyInert();
+    expect(byId("live").closest("[inert]")).toBeNull();
+    expect(byId("popup-a").hasAttribute("inert")).toBe(true);
+    expect(byId("app").hasAttribute("inert")).toBe(true);
+    closeLayer("b");
+    closeLayer("a");
+    expect(document.querySelector("[inert]")).toBeNull();
+  });
+
+  it("is not a layer: it claims no event, so Escape still dismisses the top layer", () => {
+    document.body.innerHTML = html;
+    openLayer("a");
+    const escape = new KeyboardEvent("keydown", { key: "Escape" });
+    byId("view").dispatchEvent(escape);
+    expect(claimDismissal("a", escape)).toBe(true);
   });
 });

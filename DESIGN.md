@@ -308,6 +308,8 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
   ticket 09's surface lifecycle, which will supply it through the same prop.
 - **Background.** Everything behind the top modal layer is `inert`, not only `aria-hidden`: the app and every lower
   layer's popup — a Popover beneath it included.
+  The one exception is the toaster's live host (§ Toaster): not a layer, never inert, so a toast raised under a modal
+  is announced and its action takes a pointer.
 - **Dismissal.** Escape and outside press dismiss **the top layer only** — a dialog or a Popover (below) — and one
   event dismisses one layer (`layer-stack.claimDismissal`), and only when `dismissible`. A
   non-dismissible layer also disables its ✕. `interceptEscape` (on `Dialog`) is offered the top layer's Escape
@@ -378,6 +380,17 @@ above). `useStatusReporter` owns toast lifetime; the binder mounts the one `<Toa
 its composite headline (no description) with **View report**, which opens the Notifications panel on that run — and
 no toast is shown while the panel is open (opening it dismisses those on screen): a toast never covers its header
 (ticket 14).
+
+**Live above every layer** (ticket 29). The primitive renders sonner into its own host — the first `body` child,
+outside the app root, marked `data-skillshub-live` (`layer-stack.LIVE_HOST_ATTRIBUTE`) — and the layer stack never makes
+that host inert. So a toast raised while a Dialog, ConfirmDialog or the inspector sheet stands open (a refusal, a run's
+outcome) is announced by sonner's one polite region and its **View report** works by pointer. The toaster is **not a
+layer**: it opens nothing on the stack, dismisses nothing and claims no event. Under a modal, Tab still cycles inside
+the top layer (Base UI's focus guards sit in its popup), a press on a toast is not an outside press (a modal dialog
+closes only on its own backdrop), and Escape still dismisses the top layer (sonner only collapses its expanded stack).
+With no modal open the Tab order is unchanged: first in the body is where it was as the app's first child. Sonner's
+hotkey (⌥T) can still move focus into the toaster under a modal; leaving it, sonner returns focus where it was. The
+props are sonner's own; the host is the primitive's.
 
 Motion (ticket 15): sonner's own 400 ms slide, fade and height glide are replaced, inside the primitive, by the
 world's 120 ms (`--motion-fast`) transform + opacity on `ease-out` — inline styles on the toaster and each toast

@@ -1,7 +1,9 @@
-import type * as React from "react";
+import * as React from "react";
+import { createPortal } from "react-dom";
 // The one importer of the toast *component*: the binder mounts this Toaster
 // once; useStatusReporter makes every toast() call and owns toast lifetime.
 import { Toaster as Sonner, type ToasterProps } from "sonner";
+import { LIVE_HOST_ATTRIBUTE } from "./layer-stack";
 
 /**
  * Toaster — sonner, themed by tokens (not by sonner's own light/dark
@@ -21,6 +23,15 @@ import { Toaster as Sonner, type ToasterProps } from "sonner";
  * fade is on the toast's children, so it takes an important child utility.
  * Under reduced motion sonner's `transition: none !important` and the base
  * layer both still win.
+ *
+ * Where it lives (ticket 29): not inside the app root, which a modal layer
+ * makes inert, but in its own host — the first `body` child, marked
+ * `LIVE_HOST_ATTRIBUTE`, which the layer stack never inerts. So a toast raised
+ * while a Dialog, ConfirmDialog or the inspector sheet stands open is announced
+ * by sonner's one polite region and its action (View report) takes a pointer.
+ * First in the body keeps its place in the Tab order (it was the app's first
+ * child). The host is created with the Toaster and removed with it; the
+ * interface (sonner's props) is unchanged.
  */
 const tint = (token: string) =>
   `color-mix(in oklab, var(${token}) 8%, var(--popover))`;
@@ -63,7 +74,18 @@ const toastMotion = {
 const toastContentMotion = "*:duration-(--motion-fast)! *:ease-out!";
 
 function Toaster({ toastOptions, ...props }: ToasterProps) {
-  return (
+  // Created detached during render (no DOM mutation there); attached by the
+  // layout effect before the first paint and before any toast can show.
+  const [host] = React.useState(() => {
+    const element = document.createElement("div");
+    element.setAttribute(LIVE_HOST_ATTRIBUTE, "");
+    return element;
+  });
+  React.useLayoutEffect(() => {
+    document.body.prepend(host);
+    return () => host.remove();
+  }, [host]);
+  return createPortal(
     <Sonner
       style={{ ...tokenStyle, ...toasterMotion }}
       toastOptions={{
@@ -72,7 +94,8 @@ function Toaster({ toastOptions, ...props }: ToasterProps) {
         className: [toastContentMotion, toastOptions?.className].filter(Boolean).join(" "),
       }}
       {...props}
-    />
+    />,
+    host,
   );
 }
 

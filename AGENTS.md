@@ -272,7 +272,8 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   storage read outside `preferences.ts` (key pinned by `src/lib/preferences.test.ts`).
 - **Every layer is on one stack, `src/components/ui/layer-stack.ts`** — modal layers (Dialog, ConfirmDialog, the
   overwrite and shared-dir asks) and floating ones (Popover). Only the top layer dismisses, and one event dismisses one
-  layer (`claimDismissal`); a modal layer makes everything beneath it `inert`; each layer carries its return chain
+  layer (`claimDismissal`); a modal layer makes everything beneath it `inert` — except the Toaster's `body`-child host
+  (`LIVE_HOST_ATTRIBUTE`; not a layer, so a toast under a modal stays announced); each layer carries its return chain
   (opener + caller fallback) and hands it up when it closes beneath another (`handOverReturn` / `returnChains`); a
   dialog opened from a menu returns focus to the menu's trigger. Dialog props cover the rest — `interceptEscape` (the
   top layer spends an Escape first, e.g. collapsing Files), `placement="sheet"` (the inspector below the 1200 px

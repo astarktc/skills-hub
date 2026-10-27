@@ -11,11 +11,19 @@
  *     or a popover and the confirmation one of its checkboxes raised (Add's
  *     Tool scope → the shared-folder ask) — would both close.
  *   - **Inert background.** While any modal layer is open, the app content
- *     (every body child that is not a Base UI portal) and every layer's popup
+ *     (every body child that is not a Base UI portal or the live host) and every layer's popup
  *     beneath the top modal layer carry `inert` — not only `aria-hidden` — so
  *     nothing behind it can be focused, clicked or found. A floating layer
  *     makes nothing inert: it is non-modal; above the top modal layer it is
  *     live, beneath one it is inert like a lower dialog.
+ *   - **The live host is never inert.** The toaster renders into its own
+ *     `body` child marked `LIVE_HOST_ATTRIBUTE` (first in the body, so its
+ *     place in the Tab order is the one it had as the app's first child).
+ *     It is not a layer: it stays live above every layer — a toast raised
+ *     under a modal is announced by its polite region and its action takes a
+ *     pointer — dismisses nothing and claims no event. The modal's focus trap
+ *     still holds: Tab cycles inside the top layer's popup, and Escape still
+ *     reaches the top layer (sonner only collapses its expanded stack).
  *
  * It also carries each layer's **return chain** — the element that opened it
  * and its caller's fallback — so a layer closing *beneath* another (a count
@@ -48,6 +56,12 @@ type Layer = {
   /** Chains handed over by layers that closed beneath this one (nearest first). */
   inherited: ReturnChain[];
 };
+
+/**
+ * The mark on the toaster's host (`ui/sonner.tsx`): a `body` child that
+ * `applyInert` never makes inert, the way it skips Base UI's portals.
+ */
+export const LIVE_HOST_ATTRIBUTE = "data-skillshub-live";
 
 const stack: Layer[] = [];
 /** Elements this module made inert, so it never clears someone else's. */
@@ -187,6 +201,7 @@ export function applyInert(): void {
   for (const child of Array.from(document.body.children)) {
     if (!(child instanceof HTMLElement)) continue;
     if (child.hasAttribute("data-base-ui-portal")) continue;
+    if (child.hasAttribute(LIVE_HOST_ATTRIBUTE)) continue;
     if (child.tagName === "SCRIPT" || child.tagName === "STYLE") continue;
     mark(child);
   }
