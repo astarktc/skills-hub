@@ -98,8 +98,15 @@ are the orchestrator's.
 
 ### Release run ids
 
-- `auto-tag.yml`: TODO (orchestrator)
-- `release.yml`: TODO (orchestrator), covering the five targets and `updater.json`.
+- Push: `git push origin main` 2026-10-27 21:11 UTC, `700dc9e..b0e9d4b` (58 commits; rebased onto origin, no conflicts).
+- `auto-tag.yml`: **did not fire** — GitHub's idle-fork sweep had disabled workflows on this fork on 2026-10-14 (the
+  nightly's last run; "Workflows on this fork have been disabled"). Alex re-enabled them from the Actions tab at
+  16:25 CDT. The orchestrator then did the workflow's job by hand: `git tag v1.3.0 b0e9d4b && git push origin v1.3.0`.
+- `release.yml`: run **40586860781** (event `push`, ref `v1.3.0` — the operator-credential tag push triggers it
+  directly, no dispatch needed): macOS ×2, Windows ×2, Linux, then `assemble-updater-json`.
+- `ci.yml` on `main`: has no `workflow_dispatch`, so the disabled-window push `b0e9d4b` got no CI run; the commit that
+  records these ids triggers it (run id below once it exists). The same tree passed the local gate: vitest 1043,
+  cargo 836, App.css 1108/36.
 
 ### Operator smoke list (D31 human half, for Alex)
 
