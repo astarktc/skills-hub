@@ -9,17 +9,8 @@ Numbers are stable: never renumber; retire by deleting the line (history keeps i
 
 ## Now — evidence of unfinished work is strong
 
-- **#79 A toast raised while a modal is open is inert to screen readers.** The one toaster is mounted inside `#root`
-  (`src/App.tsx` ~:594); a modal layer makes `#root` inert (`layer-stack.ts::applyInert`), so a toast raised while a
-  dialog or the inspector sheet stands open shows visibly but its polite live region is absent from the accessibility
-  tree — nothing is announced. Pre-existing for every toast, made sharper by ticket 27: a held control's refusal
-  inside the sheet ("Disable on Codex" while "Disable on Claude Code" runs) is seen, not heard (the reason stays
-  available as the control's focus description, which is not an activation announcement). Fix once in the shared
-  layer, never per control: a centrally owned non-interactive announcement host exempt from background inerting, or
-  deliver the toast within the active modal boundary; keep one announcement, the shared refusal toast id, and the
-  Notifications-panel suppression; test top and nested dialogs; operator VoiceOver smoke. **Operator decision
-  2026-10-27 pending: fix before the 1.3.0 push, or ship with it as a known limitation.** Source:
-  `round19/review/ticket-27-audit.md` § F2 (P1).
+(#79 absorbed by `round19/issues/29-toast-announcement-under-a-modal.md` on 2026-10-27 — operator: fix before the 1.3.0 push.)
+
 - **#71 "Not synced" vs Disabled, and Refresh's re-assert: grill first.** The operator can't tell the two apart. In
   the think-aloud he called them "kind of the same thing … redundant" and asked why both exist. With auto-sync on,
   "not synced" means "the next Refresh puts it here": `core/refresh.rs::reassert_auto_sync_unlocked` syncs every

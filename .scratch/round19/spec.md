@@ -206,9 +206,10 @@ Order is dependency order; `Blocked by` is the edge list. Every surface ticket c
 | 16 | **Add**: one stepped surface, sticky summary, picker search (#47), one ask, retryable partial failure (D12, D27) | 04 09 15 | surface |
 | 17 | **Projects**: Tool labels, shape+word cell states + legend, keyboard listbox, header collapse, coexistence (D17), Sync All skips missing folders, Assigned/Issues chips, `reconciled:false` line (D23, D26) | 10 13 16 | surface |
 | 18 | Operator think-aloud on the fixture (D30) | 11 | ready-for-human |
-| 19 | Docs, CHANGELOG, AGENTS.md invariants, `version:set 1.3.0`, release; operator VoiceOver smoke (D31, D32) | 15 16 17 27 28 | release |
+| 19 | Docs, CHANGELOG, AGENTS.md invariants, `version:set 1.3.0`, release; operator VoiceOver smoke (D31, D32) | 15 16 17 27 28 29 | release |
 | 27 | A refused click says why: held-disabled controls show their reason when activated (from 18; added 2026-10-27) | — | pre-push fix |
 | 28 | Executable bits survive the GitHub Contents fast path (UNI-163; added by the operator 2026-10-27) | — | pre-push fix |
+| 29 | A toast raised while a modal is open is announced: the toaster stays live under the layer stack (BACKLOG #79; operator "fix first" 2026-10-27) | — | pre-push fix |
 
 ### 19b → 1.3.x
 

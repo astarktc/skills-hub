@@ -128,8 +128,7 @@ Install the 1.3.0 build from the release (not `tauri:dev`), then:
    by hand — a hand `chmod` would mask the bug.
 9. **A refused click says why (ticket 27).** Start a Disable on one row, then immediately click another row's switch:
    the toast reads the reason ("Disable is running — wait for it to finish" / "Nothing was changed.") and the second
-   switch does not move. Known limit (BACKLOG #79): the same refusal inside the inspector sheet is seen, not read by
-   VoiceOver.
+   switch does not move. Then the same inside the inspector sheet: VoiceOver reads the refusal (ticket 29).
 
 What the D31 fixture audits could not verify in a browser (only the operator can):
 
