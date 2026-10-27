@@ -445,7 +445,10 @@ jobs:
 
   assemble-updater-json:
     name: Assemble updater.json
-    runs-on: macos-14
+    # Pure bash + gh-release: needs no macOS. It ran on macos-14 until 1.3.0,
+    # when GitHub refused it a hosted macOS runner three times in a row after
+    # the five builds had finished ("not acquired by Runner of type hosted").
+    runs-on: ubuntu-latest
     needs: release
     permissions:
       contents: write
