@@ -76,6 +76,7 @@ Round 19, phase A of the UI effort: Skills Hub gets one visual language, My Skil
 
 - **Sync All, assign and Enable no longer recreate a project folder that was moved or deleted.** Before, syncing into a missing project created a stray tool tree at the old path. This includes a folder that disappears between the check and the write.
 - **Clicking a control that is waiting on a running action now says why.** While an action runs, every other switch, checkbox and button is held: a click, Space or Enter on it shows the reason ("Disable is running — wait for it to finish") and "Nothing was changed", once per activation, instead of doing nothing. Before, a fast series of clicks could leave a skill on while you believed it was off; the first click still goes through, the rest are refused, never queued.
+- **Scripts in skills added from GitHub keep their executable permission, and Refresh restores it.** Skills fetched through the GitHub Contents fast path landed without their execute bits (a `scripts/impeccable` step died with "Permission denied"), and every Refresh stripped them again. The download now reads the repository tree once to restore each file's mode; when that answer is unavailable, files starting with `#!` are made executable instead.
 
 ### Removed
 

@@ -567,3 +567,87 @@ fn git_restore_rebuilds_the_central_copy_and_its_dangling_link() {
         record.central_path
     );
 }
+
+/// An executable script served by the fast path stays executable through a
+/// Refresh: the staged bytes move into the central copy with their modes, and
+/// Propagation re-copies a copy-mode target with `fs::copy`, which keeps them.
+/// Two rounds, because a Refresh replaces the central copy every time.
+#[cfg(unix)]
+#[test]
+fn a_refresh_keeps_an_executable_script_executable_in_the_central_copy_and_a_copy_target() {
+    use crate::core::{
+        propagation::PropagationStatus,
+        skill_store::SkillTargetRecord,
+        sync_status::{SyncMode, SyncStatus},
+        tool_adapters,
+    };
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+
+    let (_dir, store) = make_store();
+    let (_roots, paths) = make_paths();
+    let installed = crate::core::installer::install_git_skill_from_selection_with(
+        &paths,
+        &store,
+        "https://github.com/owner/repo/tree/main/skills/a",
+        "skills/a",
+        None,
+        None,
+        &StubApi::serving("first"),
+    )
+    .unwrap();
+    let mut adapter = tool_adapters::adapter_by_key("cursor").unwrap().clone();
+    adapter.supports_symlink = false;
+    let adapter = tool_adapters::test_overrides::shadow(adapter);
+    tool_adapters::mark_installed_in(&paths.home, adapter);
+    let target = paths.home.join("copy-target");
+    fs::create_dir(&target).unwrap();
+    fs::write(target.join("SKILL.md"), "old").unwrap();
+    store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "copy".into(),
+            skill_id: installed.skill_id.clone(),
+            tool: "cursor".into(),
+            target_path: target.to_string_lossy().into_owned(),
+            mode: SyncMode::Copy,
+            status: SyncStatus::Synced,
+            last_error: None,
+            synced_at: Some(1),
+        })
+        .unwrap();
+    let api = StubApi {
+        executable_script: true,
+        ..StubApi::serving("next")
+    };
+
+    for round in 1..=2 {
+        let request = acquire_update(&paths, &store, &installed.skill_id, None, &api, 0).unwrap();
+        let ApplyOutcome::Updated(outcome) =
+            crate::core::mutation_guard::serialized(|| apply_unlocked(&paths, &store, request))
+                .unwrap()
+        else {
+            panic!("round {round}: refresh skipped")
+        };
+        assert!(
+            matches!(
+                outcome.propagation.targets[0].status,
+                PropagationStatus::Synced {
+                    mode_used: SyncMode::Copy
+                }
+            ),
+            "round {round}: {:?}",
+            outcome.propagation
+        );
+        assert_eq!(
+            mode(&installed.central_path.join("scripts/run.sh")),
+            0o755,
+            "round {round}: central copy"
+        );
+        assert_eq!(
+            mode(&target.join("scripts/run.sh")),
+            0o755,
+            "round {round}: copy-mode target"
+        );
+        assert_eq!(mode(&target.join("SKILL.md")), 0o644, "round {round}");
+    }
+}

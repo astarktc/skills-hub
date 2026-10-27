@@ -12,7 +12,13 @@
 //! 1. **The GitHub Contents API fast path** ([`GithubApi`]) — used when the
 //!    source carries GitHub coordinates and the intent names a real subpath.
 //!    It fetches the branch SHA first, so the recorded revision is the real
-//!    commit even though nothing is cloned.
+//!    commit even though nothing is cloned. The Contents API carries no file
+//!    modes, so the adapter restores executable bits from one recursive
+//!    `git/trees` request after the download (a shebang heuristic when that
+//!    answer is unavailable or truncated) — a mode problem never fails the
+//!    acquisition (`super::github_download` owns the rule and its cost). The
+//!    clone keeps modes natively, and every later copy (`fs::copy`) keeps
+//!    them too.
 //! 2. **The git clone** ([`super::git_cache::fetch_through_cache`]) — sparse
 //!    when a subpath is known, full otherwise; the fallback for everything
 //!    else.
@@ -174,7 +180,8 @@ pub trait GithubApi {
     fn matching_refs(&self, repo: &GithubRepo, prefix: &str) -> Result<Vec<String>>;
     /// HEAD commit SHA of `coords.branch`.
     fn branch_sha(&self, coords: &GithubCoords) -> Result<String>;
-    /// Download `coords.subpath` into `dest`.
+    /// Download `coords.subpath` into `dest`, executable bits included
+    /// (best effort: modes never fail the download).
     fn download_directory(
         &self,
         coords: &GithubCoords,

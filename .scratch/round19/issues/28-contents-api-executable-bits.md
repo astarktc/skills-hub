@@ -61,4 +61,56 @@ Consider filing one after the fix.
   `ls -l` on its `scripts/impeccable` in the central repo shows `-rwxr-xr-x`, then run a second Refresh and check it
   still does. Never fix it by hand.
 
+## Result
+
+**Approach.** The mode step lives inside the HTTP adapter (`core/github_download.rs::download_github_directory_from`),
+so the `GithubApi` trait signature is unchanged: `download_directory` now promises "executable bits included (best
+effort)". `download_dir_recursive` records each written file as `WrittenFile { repo_path: item.path, local_path,
+shebang }` (no extra I/O: the shebang flag comes from the bytes already in memory). After the whole download, **one**
+`GET {api}/repos/{owner}/{repo}/git/trees/{branch}?recursive=1` goes out on the same client with the same headers,
+token and `check_github_response` classification (`executable_tree_paths`). Each written file whose repo path is a
+blob in the tree gets `mode | 0o111` when its mode is `100755` (`add_execute_bits`, Unix only; `cfg!(unix)` skips the
+request entirely on Windows, so the cost there is zero). Fallback to the `#!` rule: the trees call fails for any reason
+(HTTP status, network, parse), the answer is `truncated: true`, or (per file) a written path has no tree entry, for
+example if the branch moved between the calls. Every fallback and every failed `chmod` is a `log::warn!`. Modes never
+fail the acquisition. No request is made when nothing was written, and a cancellation observed after the download
+bails `Cancelled` before the trees call. Module docs updated in both `github_download.rs` (rule + cost) and
+`git_acquisition.rs` (adapter one + the trait method's contract).
+
+Ref note: the trees URL uses the branch name as the Contents `?ref=` does. A slash branch such as `feature/x` may not
+resolve on the trees path, and in that case the shebang fallback covers it.
+
+**Files touched** (all `src-tauri/**`): `core/github_download.rs`, `core/git_acquisition.rs` (docs only),
+`core/tests/git_stub.rs` (the stub gains an opt-in `executable_script` that lands `scripts/run.sh` at `0o755`, as the
+production adapter now does), `core/tests/skill_update.rs`, `core/tests/sync_engine.rs`. No DTO change, no CHANGELOG
+edit (the orchestrator adds the line).
+
+**Tests** (red first for the four adapter tests: modes were `0o644` and no trees request was made):
+- `github_download::tests::the_trees_answer_restores_executable_bits_on_every_written_file`: script `0o755`, plain
+  `0o644`, nested-dir file executable only because the tree says so (no shebang), a shebang file recorded `100644`
+  stays `0o644`; trees mock `expect(1)` with the bearer token, UA and Accept headers.
+- `github_download::tests::a_failed_trees_call_falls_back_to_shebang_detection`: 500 and 403. Shebang files `0o755`,
+  others `0o644`, acquisition `Ok`.
+- `github_download::tests::a_truncated_tree_falls_back_to_shebang_detection`
+- `github_download::tests::modes_map_by_the_real_path_behind_a_followed_upstream_link`: alias `plugins/all/a` links to
+  `skills/a`, and the no-shebang `nested/tool` is executable only via the tree entry at the real path.
+- `sync_engine::tests::copy_dir_recursive_preserves_executable_bits` (pin): `fs::copy` keeps `0o755` / `0o644`.
+- `skill_update::tests::a_refresh_keeps_an_executable_script_executable_in_the_central_copy_and_a_copy_target` (pin,
+  end to end): fast-path install, then two Refresh rounds (`acquire_update` + `apply_unlocked`: finalize + Propagation)
+  with a copy-only Tool's `Copy` target. In both rounds the central `scripts/run.sh` and the target's copy are `0o755`.
+
+The exact `0o755` / `0o644` literals assume umask 022 (macOS and the CI Linux runner).
+
+**Gate** (2026-10-27; logs under `.scratch/round19/evidence/28/`):
+- `cargo fmt --check` clean; `cargo clippy --all-targets -- -D warnings` clean.
+- `cargo test --all`: 833 passed, 0 failed.
+- `npm run version:check && npm run check`: exit 0, including vitest (48 files / 1031 tests) and build, with the
+  sibling's in-progress `src/**` work present in the tree.
+- `git diff --stat src/bindings/` after both runs is empty, so the bindings are byte-identical.
+
 ## Comments
+
+- 2026-10-27 (implementation child): Implemented as above. The trait seam was kept: modes are the HTTP adapter's job,
+  so acquisition policy and every stub-based test are untouched, and the stub only gained an opt-in executable script
+  for the Refresh pin. The upstream issue/PR (`qufei1993/skills-hub`) has not been filed. The orchestrator owns the
+  CHANGELOG line and ticket 19's smoke-list addition.

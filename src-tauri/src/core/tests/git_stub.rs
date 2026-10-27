@@ -3,6 +3,9 @@ pub(super) struct StubApi {
     pub(super) sha: String,
     pub(super) missing_branch: Option<&'static str>,
     pub(super) error: Option<crate::core::github_download::GithubApiError>,
+    /// Also serve `scripts/run.sh`, executable, as the production adapter
+    /// lands a `100755` file (its modes restored from the trees answer).
+    pub(super) executable_script: bool,
 }
 
 impl StubApi {
@@ -11,6 +14,7 @@ impl StubApi {
             sha: sha.to_string(),
             missing_branch: None,
             error: None,
+            executable_script: false,
         }
     }
 
@@ -23,6 +27,7 @@ impl StubApi {
                 reset_minutes: None,
                 url: "stub".to_string(),
             }),
+            executable_script: false,
         }
     }
 }
@@ -65,6 +70,16 @@ impl crate::core::git_acquisition::GithubApi for StubApi {
             dest.join("SKILL.md"),
             "---\nname: fast-path-skill\ndescription: served by the API\n---\n",
         )?;
+        if self.executable_script {
+            let script = dest.join("scripts/run.sh");
+            fs::create_dir_all(dest.join("scripts"))?;
+            fs::write(&script, "#!/bin/sh\necho run\n")?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&script, fs::Permissions::from_mode(0o755))?;
+            }
+        }
         Ok(())
     }
 }

@@ -38,6 +38,41 @@ fn copy_ignores_internal_symlinks_and_preserves_identity() {
     assert!(same_content(Source::Directory(dst.path()), src.path()));
 }
 
+/// `copy_dir_recursive` keeps a file's mode (`fs::copy` copies permissions on
+/// Unix): an executable script stays executable in every copy-mode target.
+#[cfg(unix)]
+#[test]
+fn copy_dir_recursive_preserves_executable_bits() {
+    use std::os::unix::fs::PermissionsExt;
+    let src = tempfile::tempdir().unwrap();
+    let dst = tempfile::tempdir().unwrap();
+    fs::create_dir_all(src.path().join("scripts")).unwrap();
+    fs::write(src.path().join("scripts/run.sh"), "#!/bin/sh\n").unwrap();
+    fs::set_permissions(
+        src.path().join("scripts/run.sh"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    fs::write(src.path().join("SKILL.md"), "plain").unwrap();
+    fs::set_permissions(
+        src.path().join("SKILL.md"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+
+    copy_dir_recursive(src.path(), dst.path()).unwrap();
+
+    let mode = |name: &str| {
+        fs::metadata(dst.path().join(name))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    assert_eq!(mode("scripts/run.sh"), 0o755);
+    assert_eq!(mode("SKILL.md"), 0o644);
+}
+
 #[test]
 fn copy_dir_recursive_skips_git_dir() {
     let src_dir = tempfile::tempdir().unwrap();
