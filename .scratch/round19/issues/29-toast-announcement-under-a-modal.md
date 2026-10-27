@@ -128,3 +128,13 @@ Rust tests all ok. Bindings untouched.
   fixture server was running on :5175, but nothing listened there (connection refused), so this child started one
   (`npm run dev:fixture`, log `evidence/29/fixture-server.log`) and left it running. CHANGELOG line not written (per
   brief).
+
+- **2026-10-27 (independent audit). PASS.** All ten audit checks pass; ticket-27 F2 is closed against its DOM/AX
+  acceptance criteria. Independently repeated the sheet refusal and a centred bulk-Remove failure: one exposed polite
+  toast region, working pointer View report above the dialog, trapped ordinary Tab/Shift+Tab, and one-layer Escape.
+  Deliberate ⌥T access returns focus into the dialog and is acceptable for 1.3.0, not an accidental background escape.
+  StrictMode host lifecycle leaves no duplicate/orphan. Removing the inert-exemption line makes three tests fail;
+  restored byte-for-byte, the two primitive and two reporter suites pass (77 tests). Fresh full gate passes:
+  1043 frontend / 836 Rust tests, version 1.3.0, styles 1108/36. No implementation fixes needed or source changes left.
+  Report: `round19/review/ticket-29-audit.md`; own evidence: `round19/evidence/29-audit/`. Native VoiceOver speech was
+  not measured; F3 / BACKLOG #80 remains separate. Browser closed before tracked writes; no commit.
