@@ -61,6 +61,17 @@ believe a skill is off when it is on.
   Add skill, so a refusal toast briefly covers them (a trusted click at Refresh all landed on the toast in
   `proof-buttons-run1-*`) — a toaster-placement question, out of this ticket's scope.
 
+- **2026-10-27 (independent audit of `c8b727d`).** **FAIL / hold unconditional release sign-off**, details in
+  `../review/ticket-27-audit.md`. Independently repeated trusted three-click and Space/Enter proofs; all pass.
+  Found and fixed a missed activation path: a held Checkbox/Switch's label forwards to Base UI's hidden input,
+  bypassing the root handler and silently refusing. Shared `held-refusal.ts` input-ref adapter, six primitive
+  regressions (red before green), DESIGN contract note; matrix-label proof and original row/key proofs repeated
+  post-fix under `../evidence/27-audit/post-fix/`. Full gate exits 0: 1037 frontend / 836 Rust tests, version 1.3.0.
+  Open P1: the sole polite toast region is inert/absent from the accessibility tree inside an inspector sheet
+  (no dialog-progress mitigation there); needs a shared layer-aware announcement fix or explicit release exception.
+  Open P2: header-covering toast persists beyond 2 s while hovered, verified at 3 s. No Rust/CHANGELOG/BACKLOG edits,
+  no commits; fixes and report left for the orchestrator.
+
 ## Result
 
 **Approach.** A held control (Button, Switch or Checkbox `aria-disabled="true"` with the `data-focusable-when-disabled`

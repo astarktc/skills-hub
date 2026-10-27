@@ -2,7 +2,7 @@ import { Checkbox as CheckboxPrimitive } from "@base-ui/react/checkbox";
 import { Check, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFieldControlProps } from "./field-context";
-import { heldRefusalHandlers } from "./held-refusal";
+import { heldRefusalHandlers, useHeldRefusalInputRef } from "./held-refusal";
 import { disabledState, focusRing } from "./styles";
 
 type CheckboxProps = Omit<CheckboxPrimitive.Root.Props, "className"> & {
@@ -42,6 +42,7 @@ function Checkbox({
   const props = useFieldControlProps(rest);
   const heldFocus = disabled && focusableWhenDisabled;
   const refusal = heldRefusalHandlers(heldFocus, { onClickCapture, onKeyDownCapture });
+  const inputRef = useHeldRefusalInputRef(heldFocus, props);
   return (
     <CheckboxPrimitive.Root
       data-slot="checkbox"
@@ -60,6 +61,7 @@ function Checkbox({
       data-focusable-when-disabled={heldFocus ? "" : undefined}
       {...props}
       {...refusal}
+      inputRef={inputRef}
       {...(heldFocus ? { "aria-disabled": true, "aria-readonly": undefined } : null)}
     >
       <CheckboxPrimitive.Indicator

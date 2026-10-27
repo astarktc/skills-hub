@@ -262,7 +262,9 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
   - **Activation** is a pointer click (`click` with `detail ≥ 1`), Enter or Space (`keydown`, never an auto-repeat).
     The click a key press synthesizes (`detail: 0`) is the same activation and is not counted again. Each activation
     dispatches one bubbling `skillshub:held-refusal` event whose `detail.reason` is the control's stated reason — its
-    `aria-description`, else its `title`, else `null`.
+    `aria-description`, else its `title`, else `null`. A Checkbox or Switch label is part of that hit target:
+    its forwarded click on Base UI's hidden input emits the same refusal, using the visible control's reason.
+    Direct-control and key-forwarded input clicks are not counted again; the public `inputRef` still works.
   - **Nothing changes**: the control stays as it was, nothing is queued, focus stays on it (never `<body>`).
   - **Pointer**: a held control takes pointer events (`disabledState` keeps `pointer-events: none` for every other
     disabled control), so a click lands on it rather than on the row beneath.

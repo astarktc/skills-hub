@@ -1,6 +1,6 @@
 import { Switch as SwitchPrimitive } from "@base-ui/react/switch";
 import { cn } from "@/lib/utils";
-import { heldRefusalHandlers } from "./held-refusal";
+import { heldRefusalHandlers, useHeldRefusalInputRef } from "./held-refusal";
 import { disabledState, focusRing } from "./styles";
 
 type SwitchProps = Omit<SwitchPrimitive.Root.Props, "className"> & {
@@ -41,6 +41,7 @@ function Switch({
 }: SwitchProps) {
   const heldFocus = disabled && focusableWhenDisabled;
   const refusal = heldRefusalHandlers(heldFocus, { onClickCapture, onKeyDownCapture });
+  const inputRef = useHeldRefusalInputRef(heldFocus, props);
   return (
     <SwitchPrimitive.Root
       data-slot="switch"
@@ -60,6 +61,7 @@ function Switch({
       data-focusable-when-disabled={heldFocus ? "" : undefined}
       {...props}
       {...refusal}
+      inputRef={inputRef}
       {...(heldFocus ? { "aria-disabled": true, "aria-readonly": undefined } : null)}
     >
       <SwitchPrimitive.Thumb

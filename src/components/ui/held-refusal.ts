@@ -1,3 +1,4 @@
+import { useCallback, type Ref, type RefCallback } from "react";
 import type * as React from "react";
 
 /**
@@ -32,19 +33,67 @@ type CaptureHandlers = {
   onKeyDownCapture?: React.KeyboardEventHandler<HTMLElement>;
 };
 
-function statedReason(element: HTMLElement): string | null {
-  const reason = element.getAttribute("aria-description") ?? element.getAttribute("title");
+type ReasonProps = { "aria-description"?: string | null; title?: string | null };
+
+function statedReason(props: ReasonProps): string | null {
+  const reason = props["aria-description"] ?? props.title;
   return reason && reason.trim() !== "" ? reason : null;
 }
 
-function dispatchRefusal(element: HTMLElement): void {
+function dispatchRefusal(
+  element: HTMLElement,
+  reason = statedReason({
+    "aria-description": element.getAttribute("aria-description"),
+    title: element.getAttribute("title"),
+  }),
+): void {
   element.dispatchEvent(
     new CustomEvent<HeldRefusalDetail>(HELD_REFUSAL_EVENT, {
       bubbles: true,
       composed: true,
-      detail: { reason: statedReason(element) },
+      detail: { reason },
     }),
   );
+}
+
+/** Attach a public ref, preserving its React 19 cleanup or legacy null call. */
+function attachInputRef(ref: Ref<HTMLInputElement> | undefined, input: HTMLInputElement | null): () => void {
+  if (typeof ref === "function") {
+    const cleanup = ref(input);
+    return () => {
+      if (typeof cleanup === "function") cleanup();
+      else ref(null);
+    };
+  }
+  if (ref) ref.current = input;
+  return () => { if (ref) ref.current = null; };
+}
+
+/**
+ * A label activates Base UI's hidden input, a sibling of the visible control:
+ * the root's capture handlers cannot hear it. Observe that public inputRef
+ * seam too, using the visible control's reason. Root/key-forwarded clicks have
+ * detail 0 and are already handled by the root, so they never count twice.
+ * Preserve both object refs and React 19 callback-ref cleanup for callers.
+ */
+export function useHeldRefusalInputRef(
+  held: boolean,
+  props: ReasonProps & { inputRef?: Ref<HTMLInputElement> },
+): RefCallback<HTMLInputElement> {
+  const { inputRef } = props;
+  const reason = statedReason(props);
+  return useCallback((input) => {
+    const cleanup = attachInputRef(inputRef, input);
+    if (!input) return cleanup;
+    const onClick = (event: MouseEvent) => {
+      if (held && event.detail >= 1) dispatchRefusal(input, reason);
+    };
+    input.addEventListener("click", onClick, true);
+    return () => {
+      input.removeEventListener("click", onClick, true);
+      cleanup();
+    };
+  }, [held, inputRef, reason]);
 }
 
 /**

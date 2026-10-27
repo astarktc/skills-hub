@@ -170,6 +170,63 @@ describe.each(CONTROLS)("$name held by a reason (ticket 27)", ({ role, render: v
   });
 });
 
+describe.each(CONTROLS.filter(({ role }) => role !== "button"))("$name held label activation", ({ role, render: view, state }) => {
+  it("a click on its wrapping label shows one refusal, without changing state", () => {
+    const change = vi.fn();
+    render(<label>{view({ held: true, change })}<span>Target label</span></label>);
+    const control = screen.getByRole(role);
+    const before = state(control);
+    control.focus();
+
+    fireEvent.click(screen.getByText("Target label"), { detail: 1 });
+
+    expect(heard).toEqual([REASON]);
+    expect(change).not.toHaveBeenCalled();
+    expect(state(control)).toBe(before);
+    expect(document.activeElement).toBe(control);
+  });
+
+  it("an associated label uses the current reason and stops refusing when enabled", () => {
+    const change = vi.fn();
+    const inputRef = { current: null as HTMLInputElement | null };
+    const labeled = (held: boolean, reason: string) => <>
+      <label htmlFor="held-target">External label</label>
+      {view({ held, change, extra: { id: "held-target", inputRef, "aria-description": reason } })}
+    </>;
+    const { rerender, unmount } = render(labeled(true, REASON));
+    expect(inputRef.current?.tagName).toBe("INPUT");
+    fireEvent.click(screen.getByText("External label"), { detail: 1 });
+    rerender(labeled(true, "Folder not found"));
+    fireEvent.click(screen.getByText("External label"), { detail: 1 });
+    expect(heard).toEqual([REASON, "Folder not found"]);
+    expect(change).not.toHaveBeenCalled();
+
+    rerender(labeled(false, "Folder not found"));
+    fireEvent.click(screen.getByText("External label"), { detail: 1 });
+    expect(heard).toEqual([REASON, "Folder not found"]);
+    expect(change).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(inputRef.current).toBeNull();
+  });
+
+  it("preserves callback inputRef cleanup and removes the input observer on unmount", () => {
+    const cleanupRef = vi.fn();
+    const inputRef = vi.fn<(element: HTMLInputElement | null) => () => void>(() => cleanupRef);
+    const { unmount } = render(view({ held: true, change: vi.fn(), extra: { inputRef } }));
+    const forwarded = inputRef.mock.calls[0][0]!;
+    expect(forwarded).not.toBeNull();
+    const refusal = vi.fn();
+    forwarded.addEventListener(HELD_REFUSAL_EVENT, refusal);
+    fireEvent.click(forwarded, { detail: 1 });
+    expect(refusal).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(cleanupRef).toHaveBeenCalledTimes(1);
+    expect(inputRef).toHaveBeenCalledTimes(1);
+    fireEvent.click(forwarded, { detail: 1 });
+    expect(refusal).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("Button pending (its own action running)", () => {
   it("is held: a click dispatches one refusal, the binder names the running action", () => {
     const onClick = vi.fn();
