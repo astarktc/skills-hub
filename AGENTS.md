@@ -65,7 +65,9 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   run, drive or screenshot the app without touching the operator's library** — it also migrates nothing and asks the
   keychain for nothing. The t3 `preview_*` tools need a served URL (`http://localhost:5175/?scenario=rich`), never
   `file://`; in a hidden tab the page only runs while a `preview_evaluate` is in flight, so drive each flow inside one
-  evaluate, one call at a time, and force a repaint before a capture.
+  evaluate, one call at a time, and force a repaint before a capture. Saving any tracked file under the repo reloads an
+  open fixture page and resets its in-memory library (Tailwind's Vite plugin scans tracked files). During a stateful
+  fixture session, keep notes under a gitignored `.scratch/**/evidence/` path.
 - After an Xcode update every `cargo` build fails at link with "You have not agreed to the Xcode license
   agreements" — the operator runs `sudo xcodebuild -license accept`; there is no repo-side fix.
 - `.claude/skills/` and `.agents/skills/` are **hardlinked to each other** (same inodes) and gitignored —

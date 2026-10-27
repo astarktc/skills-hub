@@ -5,11 +5,38 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#70**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#79**.
 
 ## Now — evidence of unfinished work is strong
 
-(empty — #39 #46 #47 #49 #52 and the §E borrows were absorbed by `round19/spec.md` on 2026-09-27: #52 → tickets 01 + 13, #49 → 11, #39 → 11, #47 → 16, #46 → 05 + 21. Earlier: #43 #44 → `round18/issues/01`, `02`.)
+- **#71 "Not synced" vs Disabled, and Refresh's re-assert: grill first.** The operator can't tell the two apart. In
+  the think-aloud he called them "kind of the same thing … redundant" and asked why both exist. With auto-sync on,
+  "not synced" means "the next Refresh puts it here": `core/refresh.rs::reassert_auto_sync_unlocked` syncs every
+  managed skill to every Tool in the effective selection. The screen never says so.
+  - Observed in the session:
+    - he read zod-schema-first on 1 of 8 Tools as a choice;
+    - a Refresh deployed it and prisma-review to five more Tools each, raised an overwrite ask, and added 16 failed
+      targets on an unwritable shared dir ("suddenly … a lot more skills have failed");
+    - the re-assert spread a skill whose Delete was incomplete (release-train) to two more Tools;
+    - failures read "Could not update the synced copy" for what was a first deploy.
+  - Decide in a grill: show "Not synced" as "Next Refresh adds it"; or make Refresh ask before adding Tools; or drop
+    "not synced" for selected Tools.
+  - Either way: the run headline counts re-assert deploys as their own kind; re-assert failures get their own wording;
+    the re-assert skips a skill with `delete_incomplete` health; and auto-sync's state is visible from My Skills.
+  - Source: `round19/issues/18-operator-think-aloud.md` § Findings (P1·Q3, P2·Q4, P2·Q6, P2·Q10, debrief 4).
+- **#70 The overwrite ask can't be answered knowingly.** Twice in the think-aloud the operator chose Overwrite without
+  being able to judge: *"it gives me no way to see them whatsoever, and I can't even see the diff."*
+  - The ask should name **who put the folder there**. A re-assert, Add or Enable collision has no target row, so it is
+    never Skills Hub's.
+  - It should offer a **content view or diff** against the skill, plus Reveal in Finder per row.
+  - Each button should state its **consequence** ("Keep theirs — {skill} stays off {Tool}; Enable later to
+    replace it"). He couldn't predict Keep.
+  - The answered rows should be **recorded in the run report**: he had forgotten which folders he overwrote, and
+    answered pairs settle as plain `synced` (same family as #64 (3)).
+  - An ask that arrives after Cancel should say the skill was already being added.
+  - Unchanged since 1.2.17, so it didn't hold 1.3.0. Source: `round19/issues/18-operator-think-aloud.md` § Findings (P2·Q4, P5·Q3, P5·Q4).
+
+(Absorbed earlier: #39 #46 #47 #49 #52 and the §E borrows were absorbed by `round19/spec.md` on 2026-09-27: #52 → tickets 01 + 13, #49 → 11, #39 → 11, #47 → 16, #46 → 05 + 21. Earlier: #43 #44 → `round18/issues/01`, `02`.)
 
 (Earlier dispositions: #43 #44 → `round18/issues/01`, `02`. #37 opened as the round 18 → 19 UI effort (`round18/spec.md`, `round19/spec.md`). every pre-round-16 `Later`/`Parked` line was absorbed by `round16/spec.md` § Dispositions — items #12 #15 #22
 #28 #35 #36 → tickets; #18 → ticket 08; #16 #17 #21 #23 #24 #25 #27 #29 dropped by name there; #30 superseded by #37–#41; #26 moved
@@ -19,6 +46,47 @@ code before scheduling.)
 
 ## Later — real, not urgent
 
+- **#78 A restrained colour pass on the token world.** *"in both light and dark mode, it's very, very monochrome. The only
+  splash of color is the little bit of purple … it looks better in dark mode than in light."* Run an `impeccable`
+  colorize pass within ADR-0006 and DESIGN.md's measured contrast; the light theme is the weaker one. Source: `round19/issues/18-operator-think-aloud.md` § Findings (P7).
+- **#76 The removal report's scope labels, and a permission failure's next step.**
+  - Finish removing printed "Removed from … Claude Code" (a project row) next to "Still in Claude Code" (the global
+    row): the "Removed from" summary doesn't name the project, while the "Still in" lines do ("· monorepo").
+  - "Permission denied (os error 13)" comes with Retry and Reveal but no explanation of what to check (ownership,
+    read-only, a process holding it) or that Retry will fail the same way.
+  - Source: `round19/issues/18-operator-think-aloud.md` § Findings (P2·Q10, verified on the fixture).
+- **#75 Undo on a project matrix cell's toggle-off.** One accidental click on a matrix cell un-assigns the skill (the
+  project's copy is removed), with no confirmation and no Undo. The inspector's targets list has a 5 s Undo (D21);
+  the matrix should match. Check whether ticket 17's larger cell hit area made misclicks likelier. Source: `round19/issues/18-operator-think-aloud.md` § Findings (P6·Q1).
+- **#74 Notifications after a relaunch, and the vanishing run toast.**
+  - Asked "tomorrow morning, how would you find today's failures?", the operator said he'd use the Notifications
+    history. That history is session memory only, so the panel is empty after a relaunch. This reopens #21 (dropped by
+    name in round 16) with operator evidence: persist the last N runs, or have the empty panel point at "View N skills
+    with issues".
+  - Separately, a Refresh run toast vanished before he could click View report, although failure-tone toasts are
+    `Infinity` (`useStatusReporter` `TOAST_DURATION_MS`). Reproduce first (two Refresh alls; does a second run or
+    opening the panel dismiss it?).
+  - Source: `round19/issues/18-operator-think-aloud.md` § Findings (P2·Q4, P2·Q7).
+- **#73 Bulk confirmation copy.**
+  - The Enable sentence ("Enable 3 skills — 10 Sync targets on 7 Tools sync again, a first sync each",
+    `resources.ts` ~:994) was unparseable on first read: *"I have no clue what the hell that thing is saying."*
+  - The Disable sentence's zero case, "no project assignment changes" (~:985), was read as "a skill-grain Disable
+    leaves project assignments live". It actually means none exist. Say "None of these skills is assigned to a
+    project".
+  - Source: `round19/issues/18-operator-think-aloud.md` § Findings (P2·Q8).
+- **#72 My Skills reading fixes.**
+  - The summary "7 failed targets · View 11 skills with issues" was read as 7 skills: two units side by side, and the
+    first number taken.
+  - The list is grouped by source, so 4 of 11 issue rows sat below the fold and were missed.
+  - The strip's marks are positional and unlabelled. He mapped Cursor by matching the inspector's order; add a Tool
+    legend or initials over the strip column.
+  - "Stale" was read as "a newer version upstream". In fact it is a copy that drifted from Skills Hub's copy, and Sync
+    this fixes it. Reword it on the strip and the matrix ("Out of date copy").
+  - The inspector offers "Sync" on a Tool it labels "(not detected)" and fails (`TOOL_NOT_INSTALLED`). Refuse it in
+    place with its reason.
+  - A run headline's "1 Edit to review" item sits last in a run collapsed by default; order skill-level items first,
+    or link the headline to them.
+  - Source: `round19/issues/18-operator-think-aloud.md` § Findings (P1·Q1, P2·Q5, P2·Q6, P6·Q1).
 - **#69 Promote the CDP key driver out of gitignored evidence** — every round-19 child since ticket 13 drives keyboard proofs through `.scratch/round19/evidence/13-fix/keys-cdp.ts` (+ `cdp.ts`, `driver.ts` beside it): trusted keys via CDP `Input.dispatchKeyEvent`, because agent-browser 0.31.1's `press` floods Chrome 154 with thousands of phantom keydowns and ends on `about:blank` (`press Meta+a` leaves Meta held). Those files sit under a gitignored `evidence/` dir, so round 19's closure prune — or losing the machine — deletes the only copy. Move them to a tracked dev-tool path (e.g. `scripts/browser/`), with the hardcoded fixture target (`localhost:5175`) made a parameter. Alternatively, drop them if a re-test shows agent-browser's `press` is fixed upstream. Source: ticket 13 fix Comments (`round19/issues/13-selection-bulk-rail-verbs.md`), the header of `keys-cdp.ts`; session log 2026-09-29 → 10-01.
 - **#68 Retire the reporter's legacy `setError` dialect** — `notifyError` is meant to be the one failure dialect, but `useStatusReporter` still exposes `setError`, with five call sites left: `useSyncOrchestration.ts` (~:649, ~:686) and `useAddSkillFlow.ts` (~:335, ~:371, ~:669). `showActionErrors` / `showActionWarnings` have no production caller; only `useAddSkillFlow.test.ts`'s reporter literal uses them. Round 19 ticket 09 gave this migration to ticket 04's files. Neither 04 nor 16 (the Add rewrite) did it, no 19b ticket owns the sync or Add worlds, and the ticket-19 docs pass left AGENTS.md saying "remains only in the sync and Add worlds until they migrate" with no owner. Migrate those call sites to `notifyError` / `notify("error", …)`, delete the three reporter members, and drop the AGENTS.md clause in the same change. Source: `round19/issues/09-action-door-lifecycle-health-fold.md` ~:250 ("Legacy reporter members"); re-verified against the code 2026-10-02.
 - **#67 Codex global skills dir may have moved to `~/.agents/skills`** — operator report (via another agent, 2026-09-30): modern Codex reads `~/.agents/skills` and treats `~/.codex/skills` as legacy. Today the `codex` adapter row has `relative_skills_dir: ".codex/skills"`, `former_relative_skills_dirs: &[]`, detect `.codex` (`core/tool_adapters/mod.rs` ~:244), and the README says Codex still reads `~/.codex/skills`. **Verify against the Codex CLI docs/changelog first** (which version, whether both are read, precedence). If confirmed: the `agents_skills` virtual-group row already manages `~/.agents/skills` globally, so either Codex joins the group's global membership (global `shared_with` dedupe + the README's group sentence) or its row moves to `.agents/skills` with `.codex/skills` in `former_relative_skills_dirs` so Target relocation migrates existing targets; README row + `project_relative_skills_dir_for_every_tool` table test in the same change. Related: #45 (adapter path changes to verify), #56 (detection).
@@ -40,6 +108,10 @@ code before scheduling.)
 
 ## Parked — needs a product decision before it is work
 
+- **#77 Re-point renames to the upstream name by default.** Change source to a folder with a different skill name keeps
+  the managed name and takes the new bytes. The operator wants *"it rename by default or give me a choice … the
+  renaming should be default for sure"* (an upstream rename). A rename moves every target folder (global and project)
+  and the central dir, and touches Edits and health keys. Decide the default and the override. Source: `round19/issues/18-operator-think-aloud.md` § Findings (P4·Q2).
 - **#51 Tags** — clean backend port (2 tables / 9 store methods / 7 commands) but answers "how do I find it", which the repo grouping
   (1.2.2) and wildcard search (1.1.9) already answer at ~80 skills; #52 answers "what is active". Decide at ~150 skills. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §B5.
 - **#59 Subtree-SHA update anchor** (record the skill subdirectory's tree SHA, not the branch commit, so monorepo commits elsewhere
@@ -66,7 +138,7 @@ code before scheduling.)
 - **#41 Repo scan finds both a Codex and a Claude Code variant of one skill** — keep both, collapse, or
   something else; needs analysis, likely absorbs part of #40. Source: operator, 2026-09-22.
 - **#53 Scheduled `Refresh (all)`** via the OS scheduler — port upstream's `system_scheduler.rs` builders; needs a headless entry and
-  a cross-process lock (Mutation guard is process-wide only). Not upstream's `auto_update.rs`. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §B3, §E6.
+  a cross-process lock (Mutation guard is process-wide only). Not upstream's `auto_update.rs`. Operator evidence (round 19 think-aloud, P7): he assumes his morning starts after an automatic schedule has refreshed; watch #71, because every Refresh also deploys. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §B3, §E6.
 - **#54 `skillshub` CLI (or MCP) on the Rust core, sharing the DB** — sessions, the session-end audit and a Mac over SSH act without
   the GUI. Grill first: changes what the app is. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §C3.
 - **#55 Declarative library manifest — sync the roster, not the bytes** (sources, tool selection, project assignments, Edits;
@@ -101,7 +173,7 @@ code before scheduling.)
 - Old nonempty Explore preview cache validation (#16) — startup wipes `.explore-cache` (`lib.rs:179`); round16 spec.
 - Permissioned Cursor symlink smoke (#17) and Cursor-through-junction on Windows (#18 facet b) — no Cursor on any
   operator host; vendor docs; `supports_symlink` is the revert lever; round16 spec.
-- Notification history persistence (#21) — per-row `last_error` is the durable record; round16 spec.
+- Notification history persistence (#21) — per-row `last_error` is the durable record; round16 spec. **Reopened as #74** (operator evidence, 2026-10-27).
 - Bulk local Re-point (#23) — never hit; its own effort if demand shows; round16 spec.
 - WSL ↔ Windows path translation (#24), GitHub API ancestor-symlink (#25) — explicit exclusions, no new evidence; round16 spec.
 - Collapse the three unsync commands (#27) — uniform since round 15; distinct toasts remain the reason; round16 spec.

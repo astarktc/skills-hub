@@ -1,7 +1,7 @@
 # 19 — Docs, CHANGELOG, AGENTS.md invariants, `version:set 1.3.0`, release; operator VoiceOver smoke
 
 Status: ready-for-agent
-Blocked by: 15, 16, 17
+Blocked by: 15, 16, 17, 27, 28
 Spec: `.scratch/round19/spec.md` — D31, D32; § Closure checklist (19a).
 
 ## Work
@@ -159,3 +159,10 @@ What the D31 fixture audits could not verify in a browser (only the operator can
     show the old UI; `src/i18n/resources.ts` still holds dead `unsyncSkill` / `unsyncAllComplete` keys (source, out of
     scope here); `ui/confirm-dialog.tsx`'s comment still names `useOverwriteConfirmation`.
   - Status stays `ready-for-agent` until the release half runs.
+
+- 2026-10-27 — **Blocked by 27 and 28 as well** (operator decision after ticket 18's think-aloud). 27 makes a refused
+  click show its reason; 28 keeps executable bits on the GitHub Contents path (UNI-163). Each adds a CHANGELOG line to
+  the 1.3.0 block.
+  - Before pushing, change the block's date to the push day; it still reads 2026-10-01.
+  - Smoke list addition, on both Macs: Refresh `impeccable`, then check that its `scripts/impeccable` in the central
+    repo shows `-rwxr-xr-x` and still does after a second Refresh.

@@ -48,3 +48,20 @@ Replace; auto-sync-off path shows the checkbox and the button text changes; coun
   group checkboxes (D14) if a `mode` for variants is added. `ImportModal` still uses `.inline-checkbox` (its last user
   in `App.css`). Import keeps `HeaderProgress placement="dialog"` at its foot; `progressInDialog` in App lists Add,
   Import, Re-point and Notifications only (the pickers are gone).
+
+- 2026-10-27 — **from ticket 18's think-aloud (binding).** The legacy review was used by the operator, and three
+  misreadings are exactly this ticket's scope (`18-operator-think-aloud.md` § Findings, P3·Q2–Q4, debrief 1):
+  - **Managed names are invisible.** zod-schema-first and tdd are names he already manages, but the review shows them
+    as ordinary rows. He expected "import + remove the original"; the run skips them. Say the name is taken before
+    offering Replace / Leave.
+  - **"Match" was read as "identical to my managed copy"**, which would be dangerous under Replace (tdd's Pi copy is a
+    fork). The badge (`consistent`) means the discovered copies agree *with each other*. Name what each badge compares
+    against, and show "differs from your managed copy" where it does.
+  - **A Conflict's unchosen copy:** he assumed it is deleted; it is left in place and reported. State each variant's
+    fate, and offer the keep/remove choice he asked for: *"nor is there a choice being given as to whether you want to
+    migrate the one you choose and then keep versus delete the other."* At the debrief this was the most confusing
+    thing in the session.
+  - **After Import & Sync the dialog stays open with no result.** Six of nine rows remained, with no word on which
+    were skipped, kept or failed. Add a Result step with the D11 count line.
+  - Stated need: unmanaged skills stay visible and revisitable (*"I do want to always be able to know when I have
+    unmanaged skills deployed in my environment"*).

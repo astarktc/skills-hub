@@ -38,3 +38,11 @@ contrast; 960×640; `npm run check`.
   used had to leave `App.css` with the Add pickers. Behaviour unchanged (detected-only filter, a selected undetected
   Tool stays listed "not detected", scan-only toggle). When Configure Tools moves into Settings → Tools, carry it as is.
   Add's Tool scope ("Edit Tools" in Add's summary) is a session choice over the same catalog, not the saved selection.
+
+- 2026-10-27 — from ticket 18's think-aloud (`18-operator-think-aloud.md` § Findings, P3·Q1, P5·Q3):
+  - **Auto-sync's new home.** Asked to turn it off, the operator looked in the header, then Configure Tools, then found
+    it in Settings. He agrees with the move. Consider a one-time "Auto-sync moved to Settings" hint for upgraders, or a
+    link from Configure Tools.
+  - Auto-sync drives the re-assert behind BACKLOG #71, and nothing on the main screen says it is on.
+  - **A selected Tool that is no longer detected** (Windsurf in the fixture) puts a permanent hollow mark in every strip.
+    He understood why, but it's standing noise. Tools could flag "not detected — remove from the selection?".

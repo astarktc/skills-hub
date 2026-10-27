@@ -1,4 +1,4 @@
-# Handoff — 2026-10-05 · round 19a is done and gated on local `main`, NOT pushed — next: the ticket 18 think-aloud (script ready), then push the same day
+# Handoff — 2026-10-27 · round 19a gated on local `main`, NOT pushed; ticket 18 done — next: tickets 27 ∥ 28 (pre-push fixes), audits, then push
 
 The orchestrator thread (T3 `a55f39f0…`, Pi session `01a0f013…`, 2026-09-29 → 10-01, 33 runs) ran out of context on its
 handoff turn. It had written a draft (`2026-10-01-round19a-1.3.0-ready-to-push.md`, never committed). A recovery pass on
@@ -18,9 +18,13 @@ Round 19's record:
 
 ## State of `main` (verified 2026-10-05)
 
-- **Ahead/behind.** `main` is ahead of `origin/main` by round 19's 44 commits plus the docs-only recovery commits
-  (`43b5a9f`, and the 2026-10-05 ticket-18 commit). It is also **4 behind**: nightly `featured-skills.json` commits
-  `533c298` … `39d2d5a` (2026-10-02 → 10-05) landed after the session's last rebase.
+- **Ahead/behind.** `main` is ahead of `origin/main` by round 19's 44 commits, plus docs-only commits since:
+  - `43b5a9f` (recovery);
+  - `b0f6547` (the ticket-18 script);
+  - `9b10af8` (Alex's gitleaks pre-commit hook, `.githooks/`);
+  - the 2026-10-27 ticket-18 outcome commit.
+
+  It is also **13 behind** on nightly `featured-skills.json` commits; the pre-push rebase takes origin's.
 - **Last gate.** Run on the rebased tree on 2026-10-01: `Version OK (1.3.0)`, vitest 996, cargo 827, App.css 1108
   (ceiling) / 36 migrated, exit 0. The recovery commit is docs-only under `.scratch/` and did not re-run the gate. Over
   the round, App.css went 2316 → 1108 (the CHANGELOG counts from the first baseline, 3038).
@@ -52,16 +56,21 @@ Round 19's record:
   evidence script instead of another child cycle.
 - **The push is the release.** `auto-tag.yml` → `release.yml` builds five targets plus `updater.json`, and every 1.2.x
   install is offered 1.3.0.
-- **Decided 2026-10-05: ticket 18 first, then push the same day.** The reason: a first impression can't be repeated,
-  and the release smoke teaches every flow. Ticket 18's § Hold rule says which findings can stop the push. Every other
-  finding goes to a 19b ticket or the BACKLOG (§ Routing).
+- **Ticket 18 ran on 2026-10-27** (`round19/issues/18-operator-think-aloud.md` § Findings and § Outcome and routing).
+  - **Holds**, decided by Alex: ticket **27** (a refused click must say why; new in 1.3.0) and ticket **28**
+    (executable bits on the Contents path, UNI-163, added by Alex from another agent's report). Both block 19.
+  - **Not holds:** the overwrite ask (BACKLOG #70) and "not synced" vs Disabled (#71, grill first).
+  - The rest went to #72–#78 and to tickets 20 and 21.
 
 ## Exact next steps
 
-1. **Run ticket 18 with Alex.** Follow its § Setup and § Protocol. The fixture server is `npm run dev:fixture` on 5175;
-   start it if it isn't running. The visible preview tab starts blank, and the first URL loads on "start". Fill in
-   § Findings, route each finding per § Routing, then apply the hold rule.
-2. **Push, unless a hold finding needs a fix first:**
+1. **On Alex's go, run tickets 27 ∥ 28.** Two Opus 5.5 `high` children; their files are disjoint (27 is frontend, 28 is
+   `core/github_download.rs` and its tests). Then one Astra `high` D31-style audit per ticket, fix-then-pass, and one
+   commit each. Read each ticket's Work and Acceptance first.
+   - 27's fixture proof must use trusted CDP input (`.scratch/round19/evidence/13-fix/keys-cdp.ts` + `cdp.ts`), not
+     `element.click()`.
+   - 28 is network-free: the local test server pattern plus the `GithubApi` stub.
+2. **Then push:**
    1. `git fetch && git rebase origin/main` (on a `featured-skills.json` conflict, take origin's).
    2. Change the CHANGELOG 1.3.0 date to today.
    3. `npm run version:check && npm run check`.
