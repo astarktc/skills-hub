@@ -104,9 +104,19 @@ are the orchestrator's.
   16:25 CDT. The orchestrator then did the workflow's job by hand: `git tag v1.3.0 b0e9d4b && git push origin v1.3.0`.
 - `release.yml`: run **40586860781** (event `push`, ref `v1.3.0` — the operator-credential tag push triggers it
   directly, no dispatch needed): macOS ×2, Windows ×2, Linux, then `assemble-updater-json`.
-- `ci.yml` on `main`: has no `workflow_dispatch`, so the disabled-window push `b0e9d4b` got no CI run; the commit that
-  records these ids triggers it (run id below once it exists). The same tree passed the local gate: vitest 1043,
-  cargo 836, App.css 1108/36.
+- `ci.yml` on `main`: run **40586993850** (`1b4c7aa`), success; **40592082973** (`457085e`), success.
+- Run 40586860781's five builds succeeded, but `Assemble updater.json` (then on `macos-14`) was refused a hosted runner
+  three times ("not acquired by Runner of type hosted"). Cancelled; `457085e` moves that job to `ubuntu-latest` (it
+  is bash + gh-release, no macOS need); the tag was re-pointed to `457085e` (same app code, no release had been
+  published).
+- `release.yml`: run **40592085719** on `v1.3.0` = `457085e`. First attempt: four builds green, macOS x86_64 cancelled
+  after the 15-minute runner-acquisition timeout, assemble skipped. Re-run of the failed job the next morning
+  (2026-10-28) got a runner. **Release published 2026-10-28 12:23 UTC**:
+  https://github.com/astarktc/skills-hub/releases/tag/v1.3.0 — 11 assets (macOS ×2 dmg + tar.gz + sig, Windows ×2
+  exe, Linux AppImage + sig + deb) and `updater.json` (`darwin-aarch64`, `darwin-x86_64`, `linux-x86_64`).
+- Lessons for ticket 19's docs pass / BACKLOG: this repo is a fork, so GitHub's idle-fork sweep can disable workflows
+  again (detach via "Leave fork network" is the durable fix); hosted macOS runners on a Free account can take an hour
+  or a night to acquire — plan a release push for off-peak hours.
 
 ### Operator smoke list (D31 human half, for Alex)
 
