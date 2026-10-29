@@ -5,7 +5,7 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#81**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#82**.
 
 ## Now — evidence of unfinished work is strong
 
@@ -48,6 +48,14 @@ code before scheduling.)
 
 ## Later — real, not urgent
 
+- **#81 1.3.0 live-smoke findings (2026-10-29), small.** (1) `index.html` `<title>` is still "Vite + React + TS" —
+  VoiceOver announces it as the web area's name on every focus change into or out of the content (only the fixture sets
+  a title); set "Skills Hub". (2) macOS autocorrect pops a suggestion bubble in the My Skills search field and swallows
+  the next key; `FilterBar.tsx` (and the other `type="search"` inputs) need `autoCorrect="off" spellCheck={false}
+  autoCapitalize="off"`. (3) From the search field it takes 10 Tabs to reach the first filtered row; add Enter/↓ to jump
+  to the first result (the keymap ignores keys in an editable on purpose, so this is a field-level rule). (4) With a
+  filter leaving one skill of a multi-skill repo, its group header reads "Individual sources" — the ≥ 2 grouping rule
+  runs on the filtered set; decide whether grouping should use the unfiltered catalog. Source: ticket 19 § Smoke outcome.
 - **#80 The toast stack covers the header controls, and hover-pause prolongs it.** The toaster sits `top-right`
   over Configure Tools, Refresh all and Add skill; a refusal toast hides them for its 2 s, a trusted click on Refresh
   all landed on the toast, and a pointer resting where the button was pauses Sonner's timer so the toast stays until
@@ -81,6 +89,8 @@ code before scheduling.)
   - The Disable sentence's zero case, "no project assignment changes" (~:985), was read as "a skill-grain Disable
     leaves project assignments live". It actually means none exist. Say "None of these skills is assigned to a
     project".
+  - 2026-10-29 smoke: the select-all Disable reads "108 Sync targets are removed and kept disabled; 141 project
+    assignments for these skills are disabled too" — accurate, but "removed and kept disabled" reads as a contradiction.
   - Source: `round19/issues/18-operator-think-aloud.md` § Findings (P2·Q8).
 - **#72 My Skills reading fixes.**
   - The summary "7 failed targets · View 11 skills with issues" was read as 7 skills: two units side by side, and the
