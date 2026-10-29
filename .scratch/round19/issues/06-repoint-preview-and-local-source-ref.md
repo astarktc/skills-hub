@@ -1,6 +1,6 @@
 # 06 — Re-point preview command; local skills expose their recorded source on the wire
 
-Status: implemented
+Status: done — 27c936f
 Blocked by: —
 Spec: `.scratch/round19/spec.md` — D15 (grill Q15). Source: `flows.md` Flow 5 gaps 1–3.
 
@@ -79,3 +79,7 @@ file) — formatting only.
 (each carries `subpath` + `resolution`). Open question for 12: `RepointTarget::Git` takes only a URL, so picking a
 candidate on a default-branch repo (`resolution.branch` null) needs a tree URL with a branch name, or a
 `subpath`/`resolution` on the git target.
+
+## Comments
+
+- 2026-10-29 — **done — 27c936f** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

@@ -1,6 +1,6 @@
 # 19 — Docs, CHANGELOG, AGENTS.md invariants, `version:set 1.3.0`, release; operator VoiceOver smoke
 
-Status: ready-for-agent
+Status: done — a3bcc63
 Blocked by: 15, 16, 17, 27, 28
 Spec: `.scratch/round19/spec.md` — D31, D32; § Closure checklist (19a).
 
@@ -216,3 +216,4 @@ ended) were reverted in place with Enable/Undo.
   branches, umask-proof assertions). Both CHANGELOG lines are in the 1.3.0 Fixed block. Smoke items 8 and 9 added
   above. 27's audit left two open findings as BACKLOG #79 (modal toasts inert to screen readers, P1 — operator decides
   whether it holds the push) and #80 (toast stack covers the header). Local SHAs only; final SHAs after the push.
+- 2026-10-29 — **done — a3bcc63 (docs) · v1.3.0 = 457085e · release run 40592085719** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

@@ -5,7 +5,7 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#82**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#83**.
 
 ## Now — evidence of unfinished work is strong
 
@@ -38,9 +38,9 @@ Numbers are stable: never renumber; retire by deleting the line (history keeps i
   - An ask that arrives after Cancel should say the skill was already being added.
   - Unchanged since 1.2.17, so it didn't hold 1.3.0. Source: `round19/issues/18-operator-think-aloud.md` § Findings (P2·Q4, P5·Q3, P5·Q4).
 
-(Absorbed earlier: #39 #46 #47 #49 #52 and the §E borrows were absorbed by `round19/spec.md` on 2026-09-27: #52 → tickets 01 + 13, #49 → 11, #39 → 11, #47 → 16, #46 → 05 + 21. Earlier: #43 #44 → `round18/issues/01`, `02`.)
+(Absorbed earlier: #39 #46 #47 #49 #52 and the §E borrows were absorbed by `round19/spec.md` on 2026-09-27: #52 → tickets 01 + 13, #49 → 11, #39 → 11, #47 → 16, #46 → 05 + 21. Earlier: #43 #44 → `archive/round18/issues/01`, `02`.)
 
-(Earlier dispositions: #43 #44 → `round18/issues/01`, `02`. #37 opened as the round 18 → 19 UI effort (`round18/spec.md`, `round19/spec.md`). every pre-round-16 `Later`/`Parked` line was absorbed by `round16/spec.md` § Dispositions — items #12 #15 #22
+(Earlier dispositions: #43 #44 → `archive/round18/issues/01`, `02`. #37 opened as the round 18 → 19 UI effort (`archive/round18/spec.md`, `round19/spec.md`). every pre-round-16 `Later`/`Parked` line was absorbed by `round16/spec.md` § Dispositions — items #12 #15 #22
 #28 #35 #36 → tickets; #18 → ticket 08; #16 #17 #21 #23 #24 #25 #27 #29 dropped by name there; #30 superseded by #37–#41; #26 moved
 to Future efforts. #42 (overwrite ask on `TARGET_EXISTS`) was absorbed by `round17/spec.md` D3 / `round17/issues/03`. Items #43–#60
 were seeded 2026-09-24 from the upstream/field survey in `docs/design-inputs/` — each carries its § pointer; re-verify against the
@@ -62,6 +62,11 @@ code before scheduling.)
   the pointer leaves. Reserve non-obstructing space for the stack (verify 960 and 1280 widths); don't blanket
   `pointer-events: none` (outcome toasts carry View report) and don't drop hover-pause globally. Compounds #79's
   shared-toaster work. Source: `round19/review/ticket-27-audit.md` § F3 (P2), ticket 27 Result.
+- **#82 Dead i18n keys sweep.** `src/i18n/resources.ts` still defines keys nothing reads (verified 2026-10-29 by grep
+  outside the catalog): `invocationEdit.{overrideTooltip,conflictTooltip}`, `detail.{readError,fileCount}`,
+  `unsyncSkill`, `unsyncAllComplete` (the pre-1.3.0 "Uninstall from tool directories" verb, replaced by Disable).
+  `resources.test.ts` guards only the other direction (a used key must exist). Delete them, and consider a test that
+  fails on an unused leaf. Source: `round19/issues/12-inspector.md` § Deferrals; ticket 19 docs child's leftovers note.
 - **#78 A restrained colour pass on the token world.** *"in both light and dark mode, it's very, very monochrome. The only
   splash of color is the little bit of purple … it looks better in dark mode than in light."* Run an `impeccable`
   colorize pass within ADR-0006 and DESIGN.md's measured contrast; the light theme is the weaker one. Source: `round19/issues/18-operator-think-aloud.md` § Findings (P7).
@@ -111,7 +116,7 @@ code before scheduling.)
 - **#66 One multi-skill delete command (round 19 ticket 13)** — `delete_managed_skill` takes one skill; the bulk rail's Remove loops it inside one `runAction` (failures collected, one `RemovalReport` fold — the rail's report dialog counts "N of M not deleted"). Add `delete_managed_skills(ids)` under one `serialized` section answering one report so a whole-command failure mid-batch still carries the settled rows (same class as #64 (1)). Source: ticket 13 Result "Delete batch shape".
 - **#65 Inspector metadata the wire does not carry (round 19 ticket 12, audit I9)** — three D15/D18/D22 clauses shipped honestly degraded because `ManagedSkillDto` / `SkillTargetDto` lack the fields: (1) a **typed settled error per target row** (`last_error` classified as `CommandError` where it settles, exported through specta, folded once by `skillHealth`) so a target row can read "permission denied" / "Overwrite and retry" instead of state words — today the inspector's Retry raises the ask from its fresh report and the row shows product-state copy only; (2) the **recorded git ref/SHA** on the skill (the store has it; the DTO does not) for the Upstream section's revision line (also #62's input); (3) a **detached-origin path** kept on Detach so the provenance line can read "Detached from ~/…" (today Detach clears source metadata and the line reads "No upstream — Refresh skips it"). Never hand-mirror these in TS; each is derive + `cargo test` + shim re-export. Source: `round19/review/ticket-12-audit.md` § I9; ticket 12 Result "BACKLOG follow-ups".
 - **#64 Four accepted command-API compromises from round 19 ticket 09** — each ships in 1.3.0 under one outer lifecycle action with one ask/fold/run, but falls short of one-command-per-operator-action: (1) project assign/unassign over several skills is one `bulk_assign_skill` / `bulk_unassign_skill` per skill → a multi-skill command that still carries settled partial reports when a later skill fails whole-command; (2) Deploy all is Enable then first sync, two commands over disjoint partitions (no atomic cross-partition promise) → a combined backend surface; (3) a successfully answered project collision row is dropped from the Update/Edit report (`resolve_project_collisions` returns no sync mode; folds count only failures, views are re-read) → a lossless typed settled-target representation before any consumer treats the array as a complete audit; (4) the Enable retry re-runs the whole scope with overrides (it reselects only still-disabled rows) → a pair-exact answered-pair Enable API, keeping the tests that unrelated completed pairs stay untouched. Source: `round19/review/ticket-09-review.md` § Re-review ("Four command-API compromises").
-- **#63 Tighten the secure-deletion zeroing test** — `core/tests/settings.rs` (~:768) asserts live bytes are zeroed but also passes without `secure_delete` (VACUUM alone hides it); use a page-spanning sentinel and a sensitivity check so `secure_delete` is pinned on its own. Source: Astra final check of `4f6e312`, `.scratch/round18/review/ticket-02-review.md` § Final check.
+- **#63 Tighten the secure-deletion zeroing test** — `core/tests/settings.rs` (~:768) asserts live bytes are zeroed but also passes without `secure_delete` (VACUUM alone hides it); use a page-spanning sentinel and a sensitivity check so `secure_delete` is pinned on its own. Source: Astra final check of `4f6e312`, `.scratch/archive/round18/review/ticket-02-review.md` § Final check.
 - **#45 Four adapter rows to copy verbatim** — `deepseek_harness`, `zcode`, `codewhale`, `workbuddy` — plus three path changes to
   *verify first* (Antigravity `.gemini/config/skills`, Kimi `.kimi-code/skills`, Cline `.agents/skills`); keep our Amp detect. Absorbs
   into #40 if that effort opens first. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §A3–A4.
@@ -120,7 +125,7 @@ code before scheduling.)
 - **#62 Passive upstream update check** — a read-only "check upstream" that compares the recorded SHA with the remote (Contents API /
   `ls-remote`) and surfaces `Update available` on the row and in the inspector without acquiring or applying; Refresh (all) stays the
   apply step. Decide the anchor with #59 (branch commit vs subtree SHA) before building. Source: round 18 bake-off, both prototypes
-  rendered a state the backend cannot produce (`.scratch/round18/spec.md` § Bake-off).
+  rendered a state the backend cannot produce (`.scratch/archive/round18/spec.md` § Bake-off).
 - **#50 `PreparedDirReplacement` mechanics** behind `finalize_update`'s backup and Propagation's copy re-materialisation — port the
   staging/backup/rollback, drop its read-time compare-and-swap hash (ADR-0005). Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §B6.
 
@@ -137,7 +142,7 @@ code before scheduling.)
   Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §C9.
 - **#61 Broaden localisation** to the top ~5 languages via machine translation, once the copy pass (round 19 `clarify`) has settled EN.
   ZH was removed in round 18 (unverifiable upstream inheritance; `git show <sha>:src/i18n/resources.ts` recovers it). Source: operator,
-  2026-09-24, `round18/issues/03`.
+  2026-09-24, `archive/round18/issues/03`.
 - **#60 Smaller peer-derived ideas, one line so they stay findable**: provenance backfill for imported skills from `npx skills`
   lockfiles (§C10); `metadata.targets` frontmatter as per-harness routing (§C11); per-tool "hold at previous central copy" pin (§C12);
   web mode from the CLI binary after #54 (§E10). Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md`.

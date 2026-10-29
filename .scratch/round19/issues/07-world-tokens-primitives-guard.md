@@ -1,6 +1,6 @@
 # 07 — World ticket: `theme.css`, `prose.css`, primitives on Base UI, `styles:check`, `DESIGN.md`, pre-paint theme, min window
 
-Status: implemented
+Status: done — 79a31bf
 Blocked by: —
 Spec: `.scratch/round19/spec.md` — D1, D2, D6, D28, § "What the world ticket fixes in values"; ADR-0006 §1–§7 in full;
 direction contract `.impeccable/surfaces/src-components-skills-skillslist-tsx.md`. D9: this ticket owns the styling
@@ -358,3 +358,4 @@ focus-fallback.ts (new), specimen.tsx, field.test.tsx, dialog.test.tsx, popover.
 (new)}`, `src/App.css` (5 values), `scripts/check-styles.mjs`, `scripts/check-styles.test.mjs` (new), `DESIGN.md`,
 `AGENTS.md` (one bullet), `src/components/skills/modals/DeleteModal.tsx` and
 `src/components/projects/RemoveProjectModal.tsx` (one prop + import each). Nothing committed.
+- 2026-10-29 — **done — 79a31bf** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

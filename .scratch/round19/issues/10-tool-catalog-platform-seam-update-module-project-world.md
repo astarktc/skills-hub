@@ -1,6 +1,6 @@
 # 10 — Tool catalog split, `platform.ts`, one update module, project world composed in the binder
 
-Status: implemented
+Status: done — 27c936f
 Blocked by: 08
 Spec: `.scratch/round19/spec.md` — D7 (arch 7, 8, 9, 11).
 
@@ -124,3 +124,7 @@ ticket 03's in-flight copy changes (`reportOutcome*`, composite headline) and cl
   `{ kind: "update" }`; `UpdateDialog` already renders from the module.
 - Ticket 17: the matrix's Tool labels can read `catalog.toolLabelById` (project entries included once loaded).
 - `src/tauri-plugin-dialog.d.ts` (the dialog type shim) is now only consumed by `platform.ts`; left in place.
+
+## Comments
+
+- 2026-10-29 — **done — 27c936f** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

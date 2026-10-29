@@ -1,10 +1,10 @@
 # Round 19 — the new world and the workflow features (UI effort phase B) → 1.3.0 (19a), 1.3.x (19b)
 
 Status: open
-Opened: 2026-09-27 (grill: `round18/issues/09`, operator + orchestrator, pre-accepted for the session)
+Opened: 2026-09-27 (grill: `archive/round18/issues/09`, operator + orchestrator, pre-accepted for the session)
 
 Round 18 judged; round 19 builds. This spec records the decisions of the ticket-09 grill over round 18's findings
-(`round18/review/{architecture,critique-astra,critique-opus,audit,flows}.md`) and turns them into tickets. It absorbs
+(`archive/round18/review/{architecture,critique-astra,critique-opus,audit,flows}.md`) and turns them into tickets. It absorbs
 BACKLOG **#39 #46 #47 #49 #52** and the §E borrows named in round-18 D8.
 
 Baseline: 1.2.18 (`5218b12`, tag `v1.2.18`). Main @ `b77cd74`. Rounds 16 (ticket 08, Windows) and 17 (closure smoke)
@@ -156,7 +156,7 @@ shadcn** (grill Q1); the D8 exclusions (sectioned app sidebar, Updates page, hom
 - **D29 (Q22) Backend enablers are their own tickets** (01–06), scheduled in parallel with the world ticket; each
   keeps the fixture in parity (the fixture is a review input — `round18` handoff).
 - **D30 (Q23) A 45-minute think-aloud** on the fixture (`failures` + `first-run`) with the operator during the
-  world ticket's build, using `round18/review/flows.md`'s per-flow questions; findings feed the surface tickets,
+  world ticket's build, using `archive/round18/review/flows.md`'s per-flow questions; findings feed the surface tickets,
   the spec does not wait.
 - **D31 (Q33) The a11y gate has two halves.** Every ticket that touches a surface ends with a **child-run fixture
   audit** in `preview_*`: an uninterrupted keyboard transcript of the ticket's flows, axe, measured contrast of the
@@ -207,9 +207,9 @@ Order is dependency order; `Blocked by` is the edge list. Every surface ticket c
 | 17 | **Projects**: Tool labels, shape+word cell states + legend, keyboard listbox, header collapse, coexistence (D17), Sync All skips missing folders, Assigned/Issues chips, `reconciled:false` line (D23, D26) | 10 13 16 | surface |
 | 18 | Operator think-aloud on the fixture (D30) | 11 | ready-for-human |
 | 19 | Docs, CHANGELOG, AGENTS.md invariants, `version:set 1.3.0`, release; operator VoiceOver smoke (D31, D32) | 15 16 17 27 28 29 | release |
-| 27 | A refused click says why: held-disabled controls show their reason when activated (from 18; added 2026-10-27) | — | pre-push fix |
-| 28 | Executable bits survive the GitHub Contents fast path (UNI-163; added by the operator 2026-10-27) | — | pre-push fix |
-| 29 | A toast raised while a modal is open is announced: the toaster stays live under the layer stack (BACKLOG #79; operator "fix first" 2026-10-27) | — | pre-push fix |
+| 27 | A refused click says why: held-disabled controls show their reason when activated (from 18; added 2026-10-27) | — | pre-push fix — done 1c7d031 |
+| 28 | Executable bits survive the GitHub Contents fast path (UNI-163; added by the operator 2026-10-27) | — | pre-push fix — done cd33e1e |
+| 29 | A toast raised while a modal is open is announced: the toaster stays live under the layer stack (BACKLOG #79; operator "fix first" 2026-10-27) | — | pre-push fix — done 27c0862 |
 
 ### 19b → 1.3.x
 
@@ -247,3 +247,25 @@ Order is dependency order; `Blocked by` is the edge list. Every surface ticket c
 - `npm run styles:check` in `npm run check` and CI; `DESIGN.md` documents every primitive's variants.
 - Tickets 01–19 terminal; `## Closure — <date>` block here; BACKLOG re-verified; 19b tickets remain live under this
   same effort.
+
+## Closure — 2026-10-29 (19a)
+
+**Shipped:** 1.3.0 — tag `v1.3.0` = `457085e`, GitHub Release published 2026-10-28 12:23 UTC (`release.yml` run
+40592085719: macOS ×2, Windows ×2, Linux, `updater.json`), CI green on `main` (40586993850, 40592082973). The push
+`700dc9e..b0e9d4b` carried round 19's 44 commits plus 27 (`1c7d031` + `bfbc1cb`), 28 (`cd33e1e` + `3905da3`) and 29
+(`27c0862`). Operator smoke on the main Mac 2026-10-29: every item passed (7 by fixture proof; 8 on the work Mac pending —
+ticket 19 § Smoke outcome). Tickets 01–19, 27, 28, 29 are `done — <sha>`.
+
+**Checklist (above):** five targets ✅; both themes, no healthy mark, Disable survives Refresh, select-all count + Cancel,
+960×640 refusal, VoiceOver through the flows ✅ (operator); the collision ask by ticket 16's audit; keyboard project
+selection by ticket 17's audit. `styles:check` in `check` and CI ✅; DESIGN.md documents every primitive ✅.
+
+**Residue, all recorded:** BACKLOG #68–#78 (round-19 and think-aloud carries, 10-02 and 10-27), #80 (toast stack over
+the header, from 27's audit), #81 (live-smoke findings: `<title>`, search autocorrect, 10 Tabs to the first result,
+one-result group label), #82 (dead i18n keys). #79 became ticket 29 and shipped. 19b (tickets 20–26) stays live under this
+effort; 20 and 21 carry binding think-aloud comments; #71 needs a grill before 19b builds near it.
+
+**Dropped by name:** nothing. Release-process lessons live on ticket 19 § Release run ids (idle-fork sweep; macOS runner
+scarcity on Free; `assemble-updater-json` moved to `ubuntu-latest` in `457085e`).
+
+**Archived with this closure:** `archive/round18/` → `archive/round18/` (its closure block dated 2026-09-27 in `753e895`).

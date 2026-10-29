@@ -1,8 +1,8 @@
 # 18 — Operator think-aloud on the fixture (45 minutes)
 
-Status: implemented
+Status: done — 9aeec8b
 Blocked by: 11 (done)
-Spec: `.scratch/round19/spec.md` — D30 (grill Q23). Question source: `round18/review/flows.md` § "Usability questions" per
+Spec: `.scratch/round19/spec.md` — D30 (grill Q23). Question source: `archive/round18/review/flows.md` § "Usability questions" per
 flow. **Revised 2026-10-05 for the 1.3.0 build** (see Comments): every question is marked *verbatim*, *retargeted* (same
 intent, 1.3.0 screen) or *new*.
 
@@ -804,3 +804,4 @@ Not holds, by the operator's decision:
     `evidence/18/findings-live.md`.
   - The recording was lost when the operator took over the tab, so the notes are the record.
   - Status → `implemented` (round 19's interim word; normalised to `done — <sha>` at 19a closure).
+- 2026-10-29 — **done — 9aeec8b (think-aloud run and routing)** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

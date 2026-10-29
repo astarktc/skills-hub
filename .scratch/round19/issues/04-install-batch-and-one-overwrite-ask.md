@@ -1,6 +1,6 @@
 # 04 — One install batch command for Add; `TARGET_EXISTS` consolidated across Add, re-assert and import
 
-Status: implemented
+Status: done — 302bbb1
 Blocked by: 01
 Spec: `.scratch/round19/spec.md` — D12, D20 (grill Q10, Q14). Source: `flows.md` Flow 1 gaps 2, 6; `critique-astra` F06.
 
@@ -187,7 +187,7 @@ deleted `useOverwriteConfirmation` (ui/ and docs out of bounds here).
 
 ## Comments
 
-- 2026-09-27 — round-18 extract: the fixture does not produce `TARGET_EXISTS` on re-assert for some seeded occupied targets (`prisma-review` → Cursor/Codex; `round18/review/flows.md` § Fixture gaps) — fix under "Fixture" here.
+- 2026-09-27 — round-18 extract: the fixture does not produce `TARGET_EXISTS` on re-assert for some seeded occupied targets (`prisma-review` → Cursor/Codex; `archive/round18/review/flows.md` § Fixture gaps) — fix under "Fixture" here.
 - 2026-09-29 — from ticket 02: Enable's `TARGET_EXISTS` still bypasses the overwrite ask, and project sync (assign/resync/Enable) has no Keep/Overwrite choice — route both into the consolidated ask here. Overrides now carry `decision: "overwrite" | "keep"` (02); a dismissed ask must send nothing (08 adds the third answer).
 
 ### 2026-09-29 — adversarial review: fix-then-ship
@@ -292,3 +292,4 @@ The four recorded command-API compromises are acceptable for 1.3.0 with a parent
 command, combined Enable+sync command, lossless typed answered-target representation, narrowed Enable retry. Do not
 reintroduce unasked cross-pair writes to regain one IPC. The current B3-R1 reporting defect must be fixed now, not
 rolled into that API debt; detailed judgments are in both appended reviews.
+- 2026-10-29 — **done — 302bbb1** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

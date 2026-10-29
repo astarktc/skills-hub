@@ -1,8 +1,8 @@
 # 03 — Outcome kinds `declined` and `cancelled`; composite count headline in the fold
 
-Status: implemented
+Status: done — 27c936f
 Blocked by: 01
-Spec: `.scratch/round19/spec.md` — D10 (grill Q8). Source: `round18/review/flows.md` § "The fold's precedence contract".
+Spec: `.scratch/round19/spec.md` — D10 (grill Q8). Source: `archive/round18/review/flows.md` § "The fold's precedence contract".
 
 ## Why
 
@@ -147,3 +147,7 @@ ticket 09/14 wires the reporter to it (`useStatusReporter` untouched).
 `npm run version:check` → Version OK (1.2.18). `npm run check` → exit 0: lint, styles:check, vitest 629 passed, build
 (tsc + vite) ok, rustfmt/clippy ok, cargo test 775 passed. (Mid-run, `tsc -b` briefly showed ticket 10's in-flight
 `App.tsx` / `useSyncOrchestration.test.ts` catalog errors; they were gone by the final gate.)
+
+## Comments
+
+- 2026-10-29 — **done — 27c936f** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

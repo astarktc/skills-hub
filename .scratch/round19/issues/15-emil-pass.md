@@ -1,6 +1,6 @@
 # 15 — Emil pass on primitives + My Skills (motion, details), with fixes
 
-Status: implemented
+Status: done — be367c8
 Blocked by: 11, 12, 13, 14
 Spec: `.scratch/round19/spec.md` — D32 order; round-18 D6. Skills: `emil-design-eng`, `review-animations` (via
 `animate`'s references), `impeccable` `polish`.
@@ -139,3 +139,4 @@ tooltips, summary ↔ progress swap, chevrons, Files expand, list ↔ grid.
 
 
 - 2026-09-30 — **D31 gate passed** (orchestrator). Astra's audit: five motions measured at 120 ms, interruption works, no false strip lighting, 0 BODY frames, one accessible progress surface, contrast floors held, 6 axe runs clean; one P1 (consecutive equal-text arrivals not announced — the live region's text node never changed) fixed directly: the arrival fold carries the group key and the panel republishes by identity (empty → refill on the next task); the auditor's `repeat-note.ts` now records mutations 3→5 for runs 3→4 in both themes. P2s: Button test spy bound; DESIGN.md reduced-motion claim corrected to "first visible frame"; the generated unused `.transition*` utilities stay with ticket 25. Gate 918 / 807 / 1862.
+- 2026-10-29 — **done — be367c8 (+ ab98c40)** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

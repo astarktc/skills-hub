@@ -1,6 +1,6 @@
 # 17 — Projects: Tool labels, shape + word cell states + legend, keyboard listbox, header collapse, coexistence, Sync All skips missing folders, Assigned/Issues chips, `reconciled:false`
 
-Status: implemented
+Status: done — f648961
 Blocked by: 10, 13, 16
 Spec: `.scratch/round19/spec.md` — D17, D23, D26 (grill Q17, Q20, Q25). Sources: `flows.md` Flow 4; `critique-astra`
 F03, F04, F15; `critique-opus` P1-6; `audit.md` Projects rows (P0: pointer-only project selection).
@@ -177,7 +177,7 @@ through `keys-cdp.ts`; JSON transcripts, screenshots, `check.log`, `bindings.dif
 
 - 2026-10-01 — independent D31 audit of `c6a47c0`: **FIX-THEN-PASS**, report `.scratch/round19/review/ticket-17-audit.md`, fresh evidence `evidence/17-audit/`. **A1 P1:** first assignment (bulk/toggle), Enable and collision retry can recreate a missing project root; an isolated harness importing unchanged Rust core proves all four, and the inspector's Assign picker still offers archived-app. The fixture currently masks production behavior by failing instead. Enforce the root-presence rule in core before admission/materialization, align the picker/fixture, and recheck the exact scope in Acceptance. Normal keyboard gates pass in dark 1280/light 960 (49/37 steps, no BODY), all four mutation-returned-view paths have zero follow-up reads, states/contrast/reconcile/kept removal/dialog progress pass, 14 full axe runs have only the inherited menu `region` exception, and version + full check + cargo --all pass (973 frontend / 809 Rust). **P2:** 127 Tabs first-to-last matrix cell (no grid required for this gate); an Issues-filter repair falls back to MAIN when its row disappears. Coordinate those with 19b/ticket 23. The named menu portal's landmark warning is a narrow best-practice false positive, not grounds to add a bogus landmark; accept/document the exception. No application source edited or commits made.
 
-- 2026-09-27 — round-18 extract: the fixture's unwritable dirs affect writes only, so ADR-0002's kept row on project removal is not reproducible (`round18/review/flows.md` § Fixture gaps) — seed one locked project artifact so the Remove Project kept-row path is walkable.
+- 2026-09-27 — round-18 extract: the fixture's unwritable dirs affect writes only, so ADR-0002's kept row on project removal is not reproducible (`archive/round18/review/flows.md` § Fixture gaps) — seed one locked project artifact so the Remove Project kept-row path is walkable.
 
 - 2026-09-30 — from ticket 12: the inspector's **Assign to project…** assigns to *every* configured Tool of the
   chosen project (`useProjectState.assignToProject` → `bulk_assign_skill`); its picker shows each project's Tools and
@@ -300,3 +300,4 @@ through `keys-cdp.ts`; JSON transcripts, screenshots, `check.log`, `bindings.dif
   through the tool-aware entries). No commit.
 
 - 2026-10-01 — **D31 gate passed** (orchestrator). Astra's re-check closed the four missing-folder routes, every edge case and N2, ruled the Enable-skip recovery acceptable (a skip must not undo a Disable/Keep; recovery is a fresh Enable or uncheck-then-recheck), and found one residual: a root moved between the last check and `create_dir_all` was still recreated. Fixed by a root-bounded, level-by-level directory creation on the project write seam and the copy fallback (`sync_engine::create_dirs_within`; global sync unchanged); the auditor's interposer harness now passes. Gate cargo 827 / vitest 996 / App.css 1108. Carried to 19b (ticket 23 Comments): N1 the matrix keyboard model, the open-menu axe `region` allowlist, R1 the anchor popover.
+- 2026-10-29 — **done — f648961 (+ 2450e61, e66da2c)** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

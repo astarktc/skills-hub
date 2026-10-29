@@ -1,6 +1,6 @@
 # 05 — Onboarding plan carries `name_is_managed`; `remove_originals` is a per-run input; `SKILL.md`-gated scan
 
-Status: implemented
+Status: done — 607ec96
 Blocked by: —
 Spec: `.scratch/round19/spec.md` — D13, D14 (grill Q11, Q12). Absorbs BACKLOG **#46**. Source: `flows.md` Flow 3.
 
@@ -136,3 +136,7 @@ groups unchecked with Replace/Leave (sending `replace: true`), the remove-origin
 sends `remove_originals: true`), per-Tool removed/left report, "N skills · M copies" header, routing `replaced`
 `TARGET_EXISTS` rows into ticket 04's one ask. Managed-name groups are still preselected (Import skips them with a
 warning, never fails).
+
+## Comments
+
+- 2026-10-29 — **done — 607ec96** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

@@ -1,8 +1,8 @@
 # 08 — Surface-state module (area · focused subject · selection · dialog), hash addressing, list lens
 
-Status: implemented
+Status: done — 607ec96
 Blocked by: —
-Spec: `.scratch/round19/spec.md` — D3, D4, D5 (grill Q3–Q5); `round18/review/architecture.md` candidates 1 and 5.
+Spec: `.scratch/round19/spec.md` — D3, D4, D5 (grill Q3–Q5); `archive/round18/review/architecture.md` candidates 1 and 5.
 Disjoint from ticket 07's files; touches `App.tsx`, `src/hooks/`, `src/lib/`, `src/components/**` state wiring only —
 no styling changes.
 
@@ -163,3 +163,7 @@ exit 0 (vitest 567 passed, cargo 769 passed).
 - `#/settings/<pane>` parses and round-trips but `SettingsPage` has no panes yet (ticket 20 reads `focused.pane`).
 - Singleton fold is implemented but off (ticket 11). Explore preview is still the full-page detail (ticket 12's inspector).
 - The project world still mounts with its route (candidate 7 / ticket 10); ProjectsPage reconciles its own focus.
+
+## Comments
+
+- 2026-10-29 — **done — 607ec96** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

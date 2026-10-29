@@ -1,12 +1,12 @@
 # 01 — `disabled` target state at two grains; Propagation and re-assert skip it; unsync becomes Disable
 
-Status: implemented
+Status: done — 79a31bf
 Blocked by: —
 Spec: `.scratch/round19/spec.md` — D8 (grill Q6, Q28). Absorbs BACKLOG #52's enable/disable half.
 
 ## Why
 
-Every unsync today is undone by the next Refresh's `reassert_auto_sync` (`round18/review/flows.md` X6); the toolbar
+Every unsync today is undone by the next Refresh's `reassert_auto_sync` (`archive/round18/review/flows.md` X6); the toolbar
 "Uninstall from tool directories" removes hundreds of targets unconfirmed and impermanently (`critique-*` P0-1/F01).
 The operator's "not on this Tool" must be recorded so it survives Refresh, Propagation and re-assert.
 
@@ -366,3 +366,4 @@ operations or commits. The earlier “all findings settled” claim is supersede
 - Docs: CONTEXT.md *Disabled* / *Artifact removal* ownership sentences, AGENTS.md "Artifact removal is one module"
   ownership line, `skill_store` / `artifact_removal` / `skill_disable` / `propagation` / `target_relocation` doc
   comments, fixture comments.
+- 2026-10-29 — **done — 79a31bf** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

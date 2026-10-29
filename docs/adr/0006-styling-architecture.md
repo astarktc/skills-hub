@@ -9,7 +9,7 @@ site: button (`btn*`, 133 tokens), form field, dialog shell, chip/badge, checkbo
 control. The one existing primitive, `components/shared/Modal.tsx`, is shallow. It has four `className` escape
 hatches, so styling leaks across the seam, and it has no focus trap or focus return. The stylesheet also has
 22 `transition: all`, no `@media` rule and no `prefers-reduced-motion`. Tailwind v4 is wired in but used at about
-ten sites. See ticket 05, `.scratch/round18/review/architecture.md` candidate 4.
+ten sites. See ticket 05, `.scratch/archive/round18/review/architecture.md` candidate 4.
 
 Round 18 (spec D1–D3) replaces the visual world once and then refines every surface into it. **We decided:**
 

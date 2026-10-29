@@ -1,6 +1,6 @@
 # 11 — My Skills in the new world: shell, header + exception summary, filter bar + Issues chip, rows + strip, group headers + Deploy all, singleton fold, empty state
 
-Status: implemented
+Status: done — a7a5107
 Blocked by: 02, 07, 08, 10
 Spec: `.scratch/round19/spec.md` — D22, D23; direction contract § FIRST VIEWPORT / STORY; absorbs BACKLOG **#49**
 (banner + chip) and **#39** (group-level Deploy all). Sources: `critique-astra` F02, F07, F10, F12, F18;
@@ -9,7 +9,7 @@ Spec: `.scratch/round19/spec.md` — D22, D23; direction contract § FIRST VIEWP
 ## Work
 
 Read the direction contract and `DESIGN.md` (ticket 07) first; read the `impeccable` skill's build guidance; judge the
-round-18 prototypes (`round18/prototypes/tracker-list/`, `patch-bay/`) as references, not sources to copy.
+round-18 prototypes (`archive/round18/prototypes/tracker-list/`, `patch-bay/`) as references, not sources to copy.
 
 - **Shell**: left sidebar 200 px (My Skills · Explore · Projects; theme, shortcuts, settings at the foot; every control
   named; `aria-current` on the active area); header row: title + count, **exception summary** from the health fold
@@ -183,3 +183,4 @@ Undetected Tools read "Windsurf (not detected): …". Fixture proof (`failures`)
 - 2026-09-29 — **Independent bounded re-check: D31 fixture gate PASS; A1–A4 closed.** `.scratch/round19/review/ticket-11-audit.md` § Re-check (2026-09-29), evidence `.scratch/round19/evidence/11-recheck/`: default-latency trusted keyboard in `r19-11-recheck`, dark 1280×800 Escape/Keep/Overwrite and light 960×640 Escape, including a second Escape ask in the same page in both themes; all 18 post-answer samples have no inert/closed/dialog node, focus on the originating switch (never BODY), Tab advances. Both repository-link rings paint whole; scratchpad is 70/70px scroll/client width at 960; rich/failures document height stays 640px after bottom-row scrolling. Dialog vitest: 14/14 passed, including all three new tests; caveat: the tests pin their stand-in composition and would not catch restoring the key in production OverwriteModal alone. **Nonblocking recommendation:** dismissed `TARGET_EXISTS` should be a conflict/target-to-review outcome (or quiet dismissal), not a failed sync; retain no-retry/no-implicit-Keep and the disabled pair. Assign semantic classification to **09's door/fold/lifecycle** (D10/D12); **14 consumes the fold's tone** and owns headline/report presentation (D11), not a local error-to-conflict rewrite. No source edits or full-gate rerun here; the operator native/VoiceOver half remains separate.
 
 - 2026-09-29 — **D31 gate passed** (orchestrator). Fix child closed A1–A4; Astra's bounded re-check confirms (18/18 samples clean, rings paint, `scratchpad` 70/70, document height = viewport). Orchestrator re-ran `npm run version:check && npm run check` fresh: exit 0, vitest 771, cargo 792, App.css 2316 (ceiling) / 7 migrated. Committed as one commit with the audit + re-check docs. Astra's caveat that the three `dialog.test.tsx` regressions exercise a stand-in ask (a re-keyed production `OverwriteModal` alone would not fail them) is accepted: the primitive-level test pins the rule and `dialog.tsx`'s doc comment states it; product surfaces get no JSX tests by design. The dismissed-ask "Sync failed" tone is handed to ticket 14 (Comments there).
+- 2026-10-29 — **done — a7a5107 (+ 603ed10 audit fixes)** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

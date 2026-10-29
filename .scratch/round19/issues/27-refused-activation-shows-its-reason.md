@@ -1,6 +1,6 @@
 # 27 — A refused click says why: held-disabled controls show their reason when activated
 
-Status: ready-for-agent
+Status: done — 1c7d031
 Blocked by: —
 Blocks: 19 (1.3.0 push)
 Source: ticket 18, P2·Q8 and its reproduction (`18-operator-think-aloud.md` § Findings; operator hold decision
@@ -145,3 +145,4 @@ the one refusal toast: the stated reason — else the running action named via `
 **Gate.** `npm run version:check && npm run check` → exit 0 (`.scratch/round19/evidence/27/gate.log`): version check
 ok · lint clean · styles:check ok (App.css 1108, 36 migrated) · vitest 48 files / 1031 tests passed · build ok ·
 cargo fmt/clippy clean · cargo test 831 passed, 0 failed (with the sibling's in-progress `src-tauri` edits present).
+- 2026-10-29 — **done — 1c7d031 (+ bfbc1cb audit fix)** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

@@ -1,6 +1,6 @@
 # 09 — Skill action door, action lifecycle (Outcome executor, per-subject pending, focus rules), health/source fold
 
-Status: implemented
+Status: done — 302bbb1
 Blocked by: 02, 03, 08
 Spec: `.scratch/round19/spec.md` — D7 (arch 2, 3, 6), D19, D20, D21. Source: `architecture.md` candidates 2, 3, 6.
 
@@ -413,3 +413,4 @@ appendices edited in main; no commit, archive, move or status advancement.
   § Re-review); next free number bumped to #65.
 - Gate: `npm run version:check && npm run check` → exit 0 — Version OK (1.2.18); eslint clean; styles:check ok;
   vitest 34 files / 768 tests; build ok; fmt; clippy; `cargo test` 792 passed.
+- 2026-10-29 — **done — 302bbb1 (+ 17d3276 residuals)** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

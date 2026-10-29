@@ -143,7 +143,7 @@ Round 18, phase A of the UI effort: the enablers and decisions ship; the new vis
 ### Internal
 
 - Dev: `npm run dev:fixture` runs the app in a plain browser against an in-memory fixture library (`?scenario=rich|empty|first-run|failures`, `?latency=0|3`) — dev-only and tree-shaken from release builds; the only way to drive or screenshot the app without touching the operator's real library.
-- `PRODUCT.md` (what the product is for), `docs/adr/0006-styling-architecture.md` (Tailwind v4 tokens + primitives over shadcn/Base UI, `App.css` ratchets to zero) and the round-18 findings under `.scratch/round18/review/` (frontend architecture, two blind design critiques, task-flow review) — the inputs to the round-19 spec.
+- `PRODUCT.md` (what the product is for), `docs/adr/0006-styling-architecture.md` (Tailwind v4 tokens + primitives over shadcn/Base UI, `App.css` ratchets to zero) and the round-18 findings under `.scratch/archive/round18/review/` (frontend architecture, two blind design critiques, task-flow review) — the inputs to the round-19 spec.
 - `core/credentials.rs` (`CredentialStore`, keyring 4.2), `core/target_relocation.rs` (`ToolAdapter.former_relative_skills_dirs`), `SkillStore::delete_setting_securely`, typed `CREDENTIAL_STORE_UNAVAILABLE`; `AppSettings.github_token` → `github_token_set: boolean | null`.
 
 ## [1.2.17] - 2026-09-23

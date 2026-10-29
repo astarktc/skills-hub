@@ -1,6 +1,6 @@
 # 02 — Skill-level health persists on the skill row; failed first sync records an `error` row; declined records `disabled`
 
-Status: implemented
+Status: done — 607ec96
 Blocked by: 01
 Spec: `.scratch/round19/spec.md` — D9 (grill Q7). Feeds #49 (issues banner + chip) and the inspector ladder.
 
@@ -187,3 +187,7 @@ deprecated-helper, release-train; appended api-style, shell-aliases, json-canvas
   `error` row as deployed (ticket 01's decision), so a skill whose only target is a failed first sync shows no deploy
   button until Retry lands.
 - **05 / 21**: rename `list_all_skill_target_paths` to say "owned".
+
+## Comments
+
+- 2026-10-29 — **done — 607ec96** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

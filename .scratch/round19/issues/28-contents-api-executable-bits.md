@@ -1,6 +1,6 @@
 # 28 — Executable bits survive the GitHub Contents fast path
 
-Status: ready-for-agent
+Status: done — cd33e1e
 Blocked by: —
 Blocks: 19 (1.3.0 push)
 Source: operator, 2026-10-27, via another agent's report (UNI-163; AU handoff 2026-10-24 §5 on the work Mac). Added to
@@ -129,3 +129,4 @@ The exact `0o755` / `0o644` literals assume umask 022 (macOS and the CI Linux ru
   `../evidence/28-audit/gate-after-sibling.log`. Ticket 28's code verdict remains PASS after fixes, but checklist item 10
   is FAIL on the current shared checkout until the UI owner settles that work and the orchestrator reruns the gate.
   No `src/**` file was edited or reverted by this auditor.
+- 2026-10-29 — **done — cd33e1e (+ 3905da3 audit fix)** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.

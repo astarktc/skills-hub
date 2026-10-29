@@ -1,6 +1,6 @@
 # 29 — A toast raised while a modal is open is announced: the toaster stays live under the layer stack
 
-Status: ready-for-agent
+Status: done — 27c0862
 Blocked by: —
 Blocks: 19 (1.3.0 push)
 Source: BACKLOG #79 (absorbed here 2026-10-27 — operator decision "fix first", before the 1.3.0 push). Found by ticket
@@ -138,3 +138,4 @@ Rust tests all ok. Bindings untouched.
   1043 frontend / 836 Rust tests, version 1.3.0, styles 1108/36. No implementation fixes needed or source changes left.
   Report: `round19/review/ticket-29-audit.md`; own evidence: `round19/evidence/29-audit/`. Native VoiceOver speech was
   not measured; F3 / BACKLOG #80 remains separate. Browser closed before tracked writes; no commit.
+- 2026-10-29 — **done — 27c0862** (post-rebase SHAs on `origin/main`; the pre-rebase SHAs cited above exist only in the orchestrator's local history). Shipped in 1.3.0 (`v1.3.0`, published 2026-10-28; operator smoke on the main Mac passed 2026-10-29, ticket 19 § Smoke outcome). 19a closure: `round19/spec.md` § Closure — 2026-10-29.
