@@ -1,6 +1,6 @@
 # 32 — Vocabulary: Harness · Deploy · Update · state words · Library — across the glossary, every UI string, README, DESIGN.md, the fixture and the tickets
 
-Status: claimed
+Status: done — 60dc80e
 Blocked by: 33 (it rewrites strings 33 touches)
 Blocks: 30, 31, 20, 21, 22, 23, 24
 Source: grill 2026-11-02, D45 + D46 (operator: "go through our vocabulary from scratch and make sure we're perfectly
@@ -126,3 +126,5 @@ scanned for the retired words: zero hits. Vite server stopped; ego task space cl
 
 ## Comments
 - 2026-11-02 — claimed and implemented in worktree `t3/1af8d9fa`. Gate after the last edit: `npm run version:check && npm run check` → EXIT 0 (Version OK 1.3.0; eslint clean; styles:check ok; vitest 49 files / 1045 tests; build ok; cargo fmt/clippy clean; cargo test 830 passed; `src/bindings/index.ts` unchanged). Log: `evidence/32/gate.log`.
+
+- 2026-11-02 — **done.** Built in worktree `t3/1af8d9fa`, rebased onto `23938db` (one CONTEXT.md conflict: 32's rewrite vs the ticket-33 fix's sibling-record sentences — resolved by taking the rewrite and re-stating the nuance in the new words in the Auto-deploy, Update and Propagation entries). Orchestrator reviewed `git diff main...HEAD` (vocabulary-only hunks; the `(9 harnesses)` group label in `tool_adapters/mod.rs` kept) and re-ran the gate in the worktree: vitest 1053, cargo 837, clippy clean. Squash-merged.
