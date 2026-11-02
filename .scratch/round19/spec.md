@@ -171,6 +171,64 @@ shadcn** (grill Q1); the D8 exclusions (sectioned app sidebar, Updates page, hom
   adversarial review and audits **Astra @ high** (`openai-codex/gpt-6-astra`); mechanical single-surface class
   migrations **GPT-6 Luna @ high** (`openai-codex/gpt-6-luna`). `runtimeMode: full-access`. Reviewer ≠ implementer.
 
+### 19b decisions (grill, 2026-11-02; Q-numbers are that grill's, two rounds)
+
+- **D34 (Q1) Auto-deploy is arrival-only.** The setting decides where a **new** skill lands (Add, Onboarding import,
+  Enable's first deploy) and nothing else. Update / Update all / Restore / Change source only propagate to deployments
+  that exist; **the re-assert is deleted** (`refresh.rs::reassert_auto_sync_unlocked`, `RefreshPolicy`). "Not
+  deployed" is a durable *never put here*; the difference from Disabled is crisp: Deploy / Deploy all / Deploy this fill
+  a hollow pair and skip a disabled one; nothing fills either on its own. Add's per-skill harness scope is therefore
+  truthful. Fact behind it: the operator's real library runs auto-deploy **off**; the re-assert only ever ran on the
+  fixture. Closes BACKLOG #71 → ticket 33.
+- **D35 (Q2) A `delete_incomplete` skill is never updated**: every update path reports it skipped (typed reason) and the
+  health row's Retry / Reveal is the only way forward. Ticket 33.
+- **D36 (Q3) #78 becomes three tickets**: 30 (tokens and colour, both themes), 31 (My Skills row and group anatomy),
+  and the settings-as-dialog part of 20. Order 32 → 33 ∥ … see D51.
+- **D37 (Q4) Settings is a dialog**, not an area: a large modal on the layer stack with pane tabs on the left, opened from
+  the sidebar item, Escape closes, focus returns there. Configure Tools becomes its Harnesses pane. `#/settings/<pane>`
+  leaves the hash (dialogs never reach it). Keyboard shortcuts adopts the same frame. Ticket 20.
+- **D38 (Q5) Row ground.** Each source group is a bordered rounded card: header on `card`, rows on the base
+  `background`, hover lifts a row to `card`, the **focused** row (inspector) is a raised rounded block, **selected** rows
+  keep the 3 px iris edge; no indent beyond the card inset. Ticket 31.
+- **D39 (Q6) Name column** is `--name-col`, published by the list like `--strip-marks`: the longest visible name in `ch`,
+  clamped to `[12rem, 22rem]` (≈ 45 characters; the operator's longest real name is 40). The 60 % floor goes; the
+  description takes the rest; the list keeps no max width. Ticket 31.
+- **D40 (Q7) The "Not deployed" row mark is dropped**; the kind stays for the inspector ladder, the group state summary and
+  Deploy all's count. Ticket 31.
+- **D41 (Q8) Projects on the wire.** `ManagedSkillDto.projects` (per project: id, name, per-harness deployment status);
+  counts derived by the fold. Row scope cell: globe (a live global deployment) and/or folder + N (projects with ≥ 1 live
+  deployment), tooltip naming them; N/M stays global; failed project deployments join the row's "N failed" mark.
+  Ticket 31.
+- **D42 (Q9) Groups collapse**: chevron, state persisted per source key in the list lens, an active search/filter
+  expands matching groups for its duration, ←/→ on a focused header, Collapse all / Expand all in the view menu.
+  **Grouping is decided on the unfiltered catalog** (the ≥ 2 rule never demotes a filtered singleton to "Individual
+  sources" — BACKLOG #81 (4)). Ticket 31.
+- **D43 (Q10, Q22) Colour.** State colours are semantic (failed red, out-of-date amber — new token — disabled muted;
+  deployed stays a neutral filled mark, never green); the iris accent does not move. **Identity colour is decided by a
+  prototype** (three treatments: 2-letter source chips · a coloured source edge on the group card · none), each with a
+  harness-initials row over the strip column, both themes; the operator picks from screenshots and the pick is ticket
+  30's spec. Light theme gets stronger ground steps. Ticket 30.
+- **D44 (Q11) #80, #81, #82 ride with ticket 31** (same files).
+- **D45 (Q12–Q16) Vocabulary.** **Harness** replaces Tool ("tool" is what the operator's users call a model-callable
+  function; "agent" collides with sub-agents); **Deploy / Deployed / Deployment** replace Sync / Synced / Sync target
+  (global or project; "Deploy to project" replaces Assign, "Re-deploy" replaces Resync, **Auto-deploy** replaces
+  Auto-sync); **Update / Update all** replace Update / Refresh (all) ("App updates" keeps its name); states: Deployed ·
+  Not deployed · Not deployed yet · Out of date copy · Copy missing · Failed · Disabled; **Library** / **Library folder**
+  replace "Skills Storage Path"; Global and Project stay the scope words. Code identifiers, DB columns and error codes
+  keep `Tool` / `sync` / `refresh`; the glossary records the code name per entry. Ticket 32.
+- **D46 (Q17) Vocabulary is ticket 32 and runs before every surface ticket**, with a catalog test that fails on the
+  retired words.
+- **D47 (Q18) Settings expansion.** Ticket 20's Harnesses pane is per-harness expandable rows (detected or not, dir in
+  use, deploy mode in use, remove from selection) so per-harness options have a home; nothing speculative ships. The
+  AGENTS-standard-dir preference (BACKLOG #83) waits for the #67/#45 research (dispatched 2026-11-02).
+- **D48 (Q19) Adding a harness** with auto-deploy on asks once — "Deploy your N skills to Cursor now?" — one batch,
+  one overwrite ask; declined or auto-deploy off → nothing, Deploy all per group fills the hollow marks. Never
+  automatic. Ticket 20.
+- **D49 (Q20) Auto-deploy shows where it acts**: Add's summary, the Import review, the Harnesses pane — not My Skills.
+- **D50 (Q21) Settings dialog shape**: max ≈ 880 × 640, capped at 90 vw / 85 vh, pane list left (General · Harnesses ·
+  Appearance · Updates · Diagnostics), not resizable.
+- **D51 (Q23) 19b order**: **33 ∥ research ∥ prototype → 32 → 30 → 31 → 20 ∥ 22 ∥ 23 → 21 → 24 → 25 → 26.**
+
 ## What the world ticket fixes in values (from the direction contract)
 
 Ground `#0e0f12`, panel `#15171b`, raised `#1d2025`, lines `#262a31`/`#343942`, text `#e6e7ea`/`#a6abb4`/`#858b95`;
@@ -222,9 +280,15 @@ Order is dependency order; `Blocked by` is the edge list. Every surface ticket c
 | 24 | **Card-grid view mode** designed inside the world (same selection, strip, marks; no clipped labels) | 19 | surface |
 | 25 | `App.css` deleted; guard flips to "must not exist"; `Layout.tsx` / `Dashboard.tsx` disposition | 20 21 22 23 24 | closure |
 | 26 | CHANGELOG, `version:set 1.3.x`, release; operator smoke (D31) | 25 | release |
+| 30 | **Colour and identity tokens**: state hues, identity treatment per the prototype's pick, light-theme ground steps, DESIGN.md contrast table (D43; BACKLOG #78) | 32, prototype pick | world |
+| 31 | **My Skills row and group anatomy**: card-per-group ground, `--name-col`, Not-deployed mark dropped, projects on the wire + scope cell, collapsible groups, unfiltered grouping, harness initials over the strip; riders #80 #81 #82 (D38–D42, D44) | 30 | surface + enabler |
+| 32 | **Vocabulary**: Harness · Deploy · Update · state words · Library, across CONTEXT.md, `resources.ts`, README, DESIGN.md, fixture, tickets; retired-word catalog test (D45, D46) | 33 | docs + strings |
+| 33 | **Auto-deploy is arrival-only**: re-assert deleted, `delete_incomplete` skipped as report data, policy DTO gone, first-deploy failure copy (D34, D35; BACKLOG #71) | — | enabler |
 
 ## Execution
 
+- **19b order (D51)**: 33 ∥ research (#67/#45) ∥ colour prototype → 32 → 30 → 31 → 20 ∥ 22 ∥ 23 → 21 → 24 → 25 → 26.
+  Tickets 20–24 are read in the D45 vocabulary even where their text still says Tool / Sync / Refresh.
 - Children per D33. Every brief: "state your approach and continue" (Workflow step 1 pre-approved); `.scratch/` is
   tracked; `docs/agents/issue-tracker.md` § Delegated children applies (edit tickets, write handoffs; never archive,
   `git mv` or commit under `.scratch/`); `runtimeMode: full-access`; prefer targeted edits; re-read after writing;

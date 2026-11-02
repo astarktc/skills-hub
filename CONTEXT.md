@@ -1,8 +1,54 @@
 # Skills Hub
 
-Desktop app that installs AI Agent Skills once and syncs them to many AI coding tools. This glossary is the canonical vocabulary; terms crystallise here as design decisions land (see `docs/adr/`).
+Desktop app that installs AI Agent Skills once and deploys them to many AI coding harnesses. This glossary is the canonical vocabulary; terms crystallise here as design decisions land (see `docs/adr/`).
 
 ## Language
+
+### Vocabulary decisions — 2026-11-02 (round 19 grill, D45; ticket 32 rewrites the entries below in these words)
+
+The human-facing vocabulary changed on 2026-11-02; the entries that follow still use the former words until ticket 32
+rewrites them. Read them with this table. Code identifiers, DB columns and error codes keep the former names — each
+rewritten entry will carry a **Code name** line.
+
+**Harness**:
+An AI coding harness that reads a skills directory (Claude Code, Cursor, Codex, …), identified by a stable key. The
+thing Skills Hub deploys skills into. Code name: `Tool` (`ToolId`, `tool_adapters`, `ToolInfoDto`).
+_Avoid_: tool (what its users call a model-callable function), agent (a sub-agent, or the model), IDE, client
+
+**Deployment** (Deploy, Deployed):
+One Managed skill materialised in one place — a harness's global skills directory or a Project's — and the act of
+putting it there. A deployment is **Deployed**, **Not deployed yet**, an **Out of date copy**, **Copy missing**,
+**Failed** or **Disabled**; a pair with no deployment is **Not deployed**, a durable *never put here* that only an
+explicit Deploy (Deploy this, Deploy all, Deploy to project, Enable) fills. Code name: Sync target / `sync_*` /
+`SyncStatus` (`synced` = Deployed, `pending`, `stale`, `missing`, `error`, `disabled`); a project deployment's row is
+an `assignment`.
+_Avoid_: sync, synced, sync target, assignment (as a human-facing noun), install (that is Add), not synced
+
+**Auto-deploy**:
+The one setting that decides where a **new** skill lands: on, an Add, an Onboarding import or an Enable deploys the
+skill to the selected harnesses; off, it is only added to the Library. It governs nothing after arrival — an Update
+never adds a deployment (decision D34, 2026-11-02; before it, Update also re-asserted "every skill on every selected
+harness"). Code name: `auto_sync_enabled`.
+_Avoid_: auto-sync, re-assert, auto-sync invariant
+
+**Update** (one skill) / **Update all**:
+Re-acquire a skill from its source, finalize it and bring every existing deployment up to date (Propagation). One
+operation at two grains; Restore, Change source and Detach stay their own verbs. A `delete_incomplete` skill is never
+updated — it is reported skipped, and finishing the Delete is the only way forward (D35). "App updates" (the app's own
+releases) keeps its name. Code name: `refresh.rs`, `refresh_managed_skills`, `update_managed_skill`.
+_Avoid_: refresh, refresh all, re-sync, pull
+
+**Library** / **Library folder**:
+The set of Managed skills (the area that lists it stays "My Skills"), and the folder holding their central copies.
+Code name: central repo, `central_repo_path`, `central_path`.
+_Avoid_: Skills Storage Path, central repo (human-facing), store
+
+**Global** / **Project**:
+The two deployment scopes — a harness's own skills directory under the operator's home, or a registered Project's
+folder. Unchanged.
+_Avoid_: user-wide, local (that is a Provenance)
+
+### Entries (pre-2026-11-02 words; ticket 32 rewrites)
 
 **Tool**:
 An AI coding tool that Skills Hub syncs skills into (Claude Code, Cursor, …), identified by a stable key. Every fact about a tool (its dirs, group membership, capabilities) lives in its single registry record (`ToolAdapter` in `core/tool_adapters/`).

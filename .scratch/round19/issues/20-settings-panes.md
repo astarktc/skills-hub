@@ -46,3 +46,20 @@ contrast; 960×640; `npm run check`.
   - Auto-sync drives the re-assert behind BACKLOG #71, and nothing on the main screen says it is on.
   - **A selected Tool that is no longer detected** (Windsurf in the fixture) puts a permanent hollow mark in every strip.
     He understood why, but it's standing noise. Tools could flag "not detected — remove from the selection?".
+
+- 2026-11-02 — **grill decisions that reshape this ticket (spec D37, D47, D48, D49, D50; vocabulary D45 — read
+  "Tool" here as Harness, "Sync" as Deploy, "Auto-sync" as Auto-deploy; ticket 32 renames the strings first):**
+  - **Settings is a dialog, not an area (D37).** A large modal on the layer stack (max ≈ 880 × 640, capped at 90 vw /
+    85 vh, not resizable — D50), pane tabs on the left: General · Harnesses · Appearance · Updates · Diagnostics. Opened
+    from the sidebar's Settings item; Escape closes; focus returns there. `#/settings/<pane>` leaves the hash and the
+    settings area/page is removed (`SettingsPage.tsx` becomes the dialog's body). Keyboard shortcuts adopts the same
+    frame. Configure Tools becomes the **Harnesses** pane.
+  - **Harnesses pane = per-harness expandable rows (D47)**: detected or not, the directory in use, the deploy mode in
+    use, "remove from selection" for an undetected one (the Windsurf noise above). No speculative options — the
+    AGENTS-standard-dir preference is BACKLOG #83, gated on research.
+  - **Adding a harness with auto-deploy on asks once (D48)**: "Deploy your N skills to Cursor now?" → one global batch,
+    one overwrite ask; declined or auto-deploy off → nothing (hollow marks; Deploy all per group). Never automatic.
+  - **Auto-deploy's state shows where it acts (D49)**: Add's summary, the Import review, this pane — not My Skills.
+    The 2026-10-27 "nothing on the main screen says it is on" concern is answered by ticket 33 (auto-deploy no longer
+    changes anything on Update), not by a header indicator. The upgrader hint ("Auto-sync moved to Settings") is
+    dropped: 1.3.0 already moved it.

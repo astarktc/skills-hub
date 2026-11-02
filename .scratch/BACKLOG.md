@@ -5,27 +5,14 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#83**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#85**.
 
 ## Now — evidence of unfinished work is strong
 
-(#79 absorbed by `round19/issues/29-toast-announcement-under-a-modal.md` on 2026-10-27 — operator: fix before the 1.3.0 push.)
+(#79 absorbed by `round19/issues/29-toast-announcement-under-a-modal.md` on 2026-10-27 — operator: fix before the 1.3.0 push.
+#71 grilled 2026-11-02 — decision D34 "auto-deploy is arrival-only", absorbed by `round19/issues/33-auto-deploy-arrival-only.md`.
+#78 → `round19/issues/30-colour-and-identity-tokens.md`; #80 #81 #82 → `round19/issues/31-my-skills-row-and-group-anatomy.md`, same day.)
 
-- **#71 "Not synced" vs Disabled, and Refresh's re-assert: grill first.** The operator can't tell the two apart. In
-  the think-aloud he called them "kind of the same thing … redundant" and asked why both exist. With auto-sync on,
-  "not synced" means "the next Refresh puts it here": `core/refresh.rs::reassert_auto_sync_unlocked` syncs every
-  managed skill to every Tool in the effective selection. The screen never says so.
-  - Observed in the session:
-    - he read zod-schema-first on 1 of 8 Tools as a choice;
-    - a Refresh deployed it and prisma-review to five more Tools each, raised an overwrite ask, and added 16 failed
-      targets on an unwritable shared dir ("suddenly … a lot more skills have failed");
-    - the re-assert spread a skill whose Delete was incomplete (release-train) to two more Tools;
-    - failures read "Could not update the synced copy" for what was a first deploy.
-  - Decide in a grill: show "Not synced" as "Next Refresh adds it"; or make Refresh ask before adding Tools; or drop
-    "not synced" for selected Tools.
-  - Either way: the run headline counts re-assert deploys as their own kind; re-assert failures get their own wording;
-    the re-assert skips a skill with `delete_incomplete` health; and auto-sync's state is visible from My Skills.
-  - Source: `round19/issues/18-operator-think-aloud.md` § Findings (P1·Q3, P2·Q4, P2·Q6, P2·Q10, debrief 4).
 - **#70 The overwrite ask can't be answered knowingly.** Twice in the think-aloud the operator chose Overwrite without
   being able to judge: *"it gives me no way to see them whatsoever, and I can't even see the diff."*
   - The ask should name **who put the folder there**. A re-assert, Add or Enable collision has no target row, so it is
@@ -48,28 +35,18 @@ code before scheduling.)
 
 ## Later — real, not urgent
 
-- **#81 1.3.0 live-smoke findings (2026-10-29), small.** (1) `index.html` `<title>` is still "Vite + React + TS" —
-  VoiceOver announces it as the web area's name on every focus change into or out of the content (only the fixture sets
-  a title); set "Skills Hub". (2) macOS autocorrect pops a suggestion bubble in the My Skills search field and swallows
-  the next key; `FilterBar.tsx` (and the other `type="search"` inputs) need `autoCorrect="off" spellCheck={false}
-  autoCapitalize="off"`. (3) From the search field it takes 10 Tabs to reach the first filtered row; add Enter/↓ to jump
-  to the first result (the keymap ignores keys in an editable on purpose, so this is a field-level rule). (4) With a
-  filter leaving one skill of a multi-skill repo, its group header reads "Individual sources" — the ≥ 2 grouping rule
-  runs on the filtered set; decide whether grouping should use the unfiltered catalog. Source: ticket 19 § Smoke outcome.
-- **#80 The toast stack covers the header controls, and hover-pause prolongs it.** The toaster sits `top-right`
-  over Configure Tools, Refresh all and Add skill; a refusal toast hides them for its 2 s, a trusted click on Refresh
-  all landed on the toast, and a pointer resting where the button was pauses Sonner's timer so the toast stays until
-  the pointer leaves. Reserve non-obstructing space for the stack (verify 960 and 1280 widths); don't blanket
-  `pointer-events: none` (outcome toasts carry View report) and don't drop hover-pause globally. Compounds #79's
-  shared-toaster work. Source: `round19/review/ticket-27-audit.md` § F3 (P2), ticket 27 Result.
-- **#82 Dead i18n keys sweep.** `src/i18n/resources.ts` still defines keys nothing reads (verified 2026-10-29 by grep
-  outside the catalog): `invocationEdit.{overrideTooltip,conflictTooltip}`, `detail.{readError,fileCount}`,
-  `unsyncSkill`, `unsyncAllComplete` (the pre-1.3.0 "Uninstall from tool directories" verb, replaced by Disable).
-  `resources.test.ts` guards only the other direction (a used key must exist). Delete them, and consider a test that
-  fails on an unused leaf. Source: `round19/issues/12-inspector.md` § Deferrals; ticket 19 docs child's leftovers note.
-- **#78 A restrained colour pass on the token world.** *"in both light and dark mode, it's very, very monochrome. The only
-  splash of color is the little bit of purple … it looks better in dark mode than in light."* Run an `impeccable`
-  colorize pass within ADR-0006 and DESIGN.md's measured contrast; the light theme is the weaker one. Source: `round19/issues/18-operator-think-aloud.md` § Findings (P7).
+- **#83 "Prefer the AGENTS standard dir" preference for harnesses that read it.** Operator idea (grill 2026-11-02,
+  D47): a global setting "Always deploy to `~/.agents/skills` for harnesses that read it", with a sub-setting (shown only
+  when on) that hides the harness-specific directory in the Harnesses pane. Needs a per-harness registry fact first —
+  *does this harness read `~/.agents/skills` at global scope, since which version, with what precedence* — which is
+  exactly #67/#45's open question; the research child dispatched 2026-11-02 writes
+  `docs/design-inputs/2026-11-02-harness-global-skills-dirs.md`. Design the setting against that brief; it lands in
+  the Harnesses pane ticket 20 builds. Related: #67, #45, #40, #56.
+- **#84 Per-harness "copy instead of link" override.** Today copy-vs-symlink is the registry's `supports_symlink`
+  alone (every entry `true`; Cursor's history shows a harness can regress). An operator-facing per-harness override in
+  the Harnesses pane (D47's per-harness rows) would let a user work around a regression without a release; sync code
+  stays name-blind (the override is read as a capability, never a name test). Decide whether it is worth a setting
+  before any harness regresses again. Source: grill 2026-11-02 (Q18 discussion).
 - **#76 The removal report's scope labels, and a permission failure's next step.**
   - Finish removing printed "Removed from … Claude Code" (a project row) next to "Still in Claude Code" (the global
     row): the "Removed from" summary doesn't name the project, while the "Still in" lines do ("· monorepo").
@@ -101,10 +78,8 @@ code before scheduling.)
   - The summary "7 failed targets · View 11 skills with issues" was read as 7 skills: two units side by side, and the
     first number taken.
   - The list is grouped by source, so 4 of 11 issue rows sat below the fold and were missed.
-  - The strip's marks are positional and unlabelled. He mapped Cursor by matching the inspector's order; add a Tool
-    legend or initials over the strip column.
-  - "Stale" was read as "a newer version upstream". In fact it is a copy that drifted from Skills Hub's copy, and Sync
-    this fixes it. Reword it on the strip and the matrix ("Out of date copy").
+  - (Absorbed 2026-11-02: the strip's unlabelled marks → harness initials over the strip column, ticket 31 / D42;
+    "Stale" → "Out of date copy", ticket 32 / D45.)
   - The inspector offers "Sync" on a Tool it labels "(not detected)" and fails (`TOOL_NOT_INSTALLED`). Refuse it in
     place with its reason.
   - A run headline's "1 Edit to review" item sits last in a run collapsed by default; order skill-level items first,

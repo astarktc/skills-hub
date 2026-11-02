@@ -65,3 +65,8 @@ Replace; auto-sync-off path shows the checkbox and the button text changes; coun
     were skipped, kept or failed. Add a Result step with the D11 count line.
   - Stated need: unmanaged skills stay visible and revisitable (*"I do want to always be able to know when I have
     unmanaged skills deployed in my environment"*).
+
+- 2026-11-02 — grill: vocabulary D45 applies (Harness / Deploy / Update — ticket 32 renames first; this ticket writes
+  the new words). Auto-deploy's state is shown in the review (D49): the Import & Deploy button's label and the review's
+  summary line say whether the imported skills will be deployed to the selected harnesses or only added to the Library.
+  Under D34 (arrival-only) an import's first deploy is the one time auto-deploy acts on these skills.
