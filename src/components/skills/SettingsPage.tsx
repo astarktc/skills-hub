@@ -164,7 +164,7 @@ const SettingsPage = ({
 
         <div className="settings-field">
           <label className="settings-label" id="settings-auto-sync-label">
-            {t("settingsAutoSync")}
+            {t("settingsAutoDeploy")}
           </label>
           <div className="flex items-center gap-3">
             <Switch
@@ -177,7 +177,7 @@ const SettingsPage = ({
             />
           </div>
           <div className="settings-helper" id="settings-auto-sync-hint">
-            {t("settingsAutoSyncHint")}
+            {t("settingsAutoDeployHint")}
           </div>
         </div>
 
@@ -221,7 +221,7 @@ const SettingsPage = ({
 
         <div className="settings-field">
           <label className="settings-label" htmlFor="settings-storage">
-            {t("skillsStoragePath")}
+            {t("libraryFolder")}
           </label>
           <div className="settings-input-row">
             <input
@@ -238,7 +238,7 @@ const SettingsPage = ({
               {t("browse")}
             </button>
           </div>
-          <div className="settings-helper">{t("skillsStorageHint")}</div>
+          <div className="settings-helper">{t("libraryFolderHint")}</div>
         </div>
 
         <div className="settings-field">

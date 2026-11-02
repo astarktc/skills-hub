@@ -338,16 +338,16 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
     const en = i18n.t.bind(i18n) as unknown as typeof t;
     expect(
       compositeHeadline(en, "refreshed", { done: 12, failed: 5, targetsFailed: 6, skipped: 4, review: 1 }),
-    ).toBe("12 refreshed · 5 failed · 6 targets failed · 4 skipped · 1 Edit to review");
+    ).toBe("12 updated · 5 failed · 6 deployments failed · 4 skipped · 1 Edit to review");
     expect(compositeHeadline(en, "installed", { done: 2, cancelled: 3 })).toBe("2 added · 3 cancelled");
     expect(compositeHeadline(en, "synced", { done: 1, declined: 1, targetsFailed: 1 })).toBe(
-      "1 synced · 1 target failed · 1 kept existing",
+      "1 deployed · 1 deployment failed · 1 kept existing",
     );
     expect(compositeHeadline(en, "imported", { done: 3, review: 2 }, "originals")).toBe(
       "3 imported · 2 originals to review",
     );
     expect(compositeHeadline(en, "removed", {})).toBe("0 removed");
-    expect(en("outcome.refreshCancelled")).toBe("Refresh cancelled — nothing was changed");
+    expect(en("outcome.refreshCancelled")).toBe("Update all cancelled — nothing was changed");
     expect(en("outcome.declinedLine", { name: "ts-reset", tool: "Claude Code" })).toBe(
       "ts-reset: kept your existing Claude Code folder",
     );
@@ -373,7 +373,7 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
     expect(out.toast).toEqual({
       kind: "warning",
       tone: "failure",
-      message: "Invocation setting saved \u00b7 2 targets failed",
+      message: "Invocation setting saved \u00b7 2 deployments failed",
     });
     expect(out.completion.closeModal).toBe(true);
   });
@@ -618,7 +618,7 @@ describe("removalOutcome", () => {
       errors: [], warnings: [], notes: [], completion: { reload: true, closeModal: true, conflict: false },
     });
     expect(resources.en.translation.errors.deleteKeptTargetTitle).toContain("{{tool}}");
-    expect(resources.en.translation.status.skillDeleteKept).toBe("Skill kept: {{failed}} targets could not be removed. You can retry.");
+    expect(resources.en.translation.status.skillDeleteKept).toBe("Skill kept: {{failed}} deployments could not be removed. You can retry.");
   });
 
   it.each(["all", "skill", "toggle"] as const)(
@@ -1024,7 +1024,7 @@ describe("projectSyncOutcome", () => {
 
   it("carries the new copy", () => {
     expect(resources.en.translation.localSkillInvalid.insideToolDir).toBe(
-      "This folder is a Tool's own skills copy — use Import instead",
+      "This folder is a harness's own skills copy — use Import instead",
     );
   });
 });

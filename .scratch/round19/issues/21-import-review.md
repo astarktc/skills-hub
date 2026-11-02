@@ -70,3 +70,4 @@ Replace; auto-sync-off path shows the checkbox and the button text changes; coun
   the new words). Auto-deploy's state is shown in the review (D49): the Import & Deploy button's label and the review's
   summary line say whether the imported skills will be deployed to the selected harnesses or only added to the Library.
   Under D34 (arrival-only) an import's first deploy is the one time auto-deploy acts on these skills.
+- 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.

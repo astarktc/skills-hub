@@ -1,10 +1,10 @@
 // The four fixture scenarios, selected with `?scenario=` (default `rich`).
 //
 // - `rich`       the round-18 prototype roster (`.scratch/round18/prototypes/
-//                BRIEF.md`): 60 skills, 7 detected Tools, 3 projects, mixed
-//                Sync states — so the prototypes and the app show one library.
+//                BRIEF.md`): 60 skills, 7 detected harnesses, 3 projects, mixed
+//                deployment states — so the prototypes and the app show one library.
 // - `empty`      configured app, nothing managed, nothing to import.
-// - `first-run`  never configured: no selection, every Tool newly detected,
+// - `first-run`  never configured: no selection, every harness newly detected,
 //                a sizeable onboarding plan waiting to be imported — two of
 //                its names already managed, one manifest invalid.
 // - `failures`   failure-heavy: per-target errors, TARGET_EXISTS, skipped
@@ -519,17 +519,17 @@ function failures(now: number): FixtureState {
     { name: "pr-review", description: "Review a pull request against the team checklist", source: git("mattpocock/skills"), synced: without("amp", "kimi_cli"), acquisition: { fail: RATE_LIMITED }, health: { kind: "fetch_failed", error: RATE_LIMITED, hoursAgo: 2 } },
     { name: "deprecated-helper", description: "Helper removed upstream last month", source: git("mattpocock/skills"), synced: ["claude_code", "codex"], acquisition: { fail: { code: "GITHUB_SKILL_NOT_FOUND", url: "https://github.com/mattpocock/skills/tree/main/skills/deprecated-helper" } }, health: { kind: "repoint_failed", error: { code: "GIT_CLONE_FAILED", kind: "auth", detail: "remote: Repository not found.\nfatal: Authentication failed for 'https://github.com/corp/private-skills/'" }, hoursAgo: 5 } },
     { name: "corp-conventions", description: "Company coding conventions", source: git("corp/private-skills"), synced: ["claude_code", "cursor"], acquisition: { fail: { code: "GIT_CLONE_FAILED", kind: "auth", detail: "fatal: Authentication failed for 'https://github.com/corp/private-skills/'" } } },
-    { name: "mirror-tools", description: "Tools mirrored from an internal host", source: git("corp/mirror-tools"), synced: ["claude_code"], acquisition: { fail: { code: "GIT_CLONE_FAILED", kind: "tls", detail: "SSL certificate problem: self-signed certificate in certificate chain" } } },
+    { name: "mirror-scripts", description: "Scripts mirrored from an internal host", source: git("corp/mirror-scripts"), synced: ["claude_code"], acquisition: { fail: { code: "GIT_CLONE_FAILED", kind: "tls", detail: "SSL certificate problem: self-signed certificate in certificate chain" } } },
     { name: "alias-skill", description: "Upstream points this skill at a path outside the repo", source: git("some-org/aliases"), synced: ["claude_code"], acquisition: { fail: { code: "SYMLINK_ESCAPES_REPO", subpath: "skills/alias-skill", target: "/etc/passwd" } } },
     // An Edit (user-only) on a base of user-and-model; upstream now declares
     // model-only, so the next Update reports the Edit conflict and records
     // model-only as the base — card and report read the same upstream.
     { name: "design-tokens", description: "Keep design tokens in sync across platforms", source: git("some-org/design-tokens"), synced: without("amp", "kimi_cli"), override: { mode: "user-only" }, acquisition: { upstreamChanged: true, upstreamInvocation: "model-only" } },
-    { name: "flaky-upstream", description: "Upstream force-pushes during every refresh", source: git("some-org/flaky"), synced: ["claude_code", "codex"], acquisition: { skip: "stale_acquisition" } },
+    { name: "flaky-upstream", description: "Upstream force-pushes during every update", source: git("some-org/flaky"), synced: ["claude_code", "codex"], acquisition: { skip: "stale_acquisition" } },
     { name: "release-train", description: "Cut and ship a release train", source: git("acme/release-train"), synced: ["claude_code", "codex", "pi"], mode: "copy", health: { kind: "delete_incomplete", error: { code: "OTHER", message: `Permission denied (os error 13): ${globalRoot("claude_code")}/release-train` }, hoursAgo: 1 } },
     { name: "legacy-lint", description: "Imported from Cursor during onboarding", source: { kind: "imported", fromTool: "cursor" }, synced: ["cursor", "claude_code"] },
-    { name: "mystery-skill", description: "Imported; the Tool it came from was not recorded", source: { kind: "imported", fromTool: null }, synced: ["claude_code"] },
-    { name: "windsurf-rules", description: "Synced to Windsurf before it was uninstalled", source: git("some-org/windsurf-rules"), synced: ["windsurf", "claude_code"] },
+    { name: "mystery-skill", description: "Imported; the harness it came from was not recorded", source: { kind: "imported", fromTool: null }, synced: ["claude_code"] },
+    { name: "windsurf-rules", description: "Deployed to Windsurf before it was uninstalled", source: git("some-org/windsurf-rules"), synced: ["windsurf", "claude_code"] },
     { name: "zod-schema-first", description: "Design API boundaries schema-first with Zod", source: git("mattpocock/skills"), synced: ["claude_code"] },
     { name: "prisma-review", description: "Review Prisma schemas and queries for N+1 and missing indexes", source: git("mattpocock/skills"), synced: [] },
     // Disabled at both grains (round 19 D8). noisy-linter is off on Codex and

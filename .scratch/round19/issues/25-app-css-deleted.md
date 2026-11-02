@@ -39,3 +39,4 @@ Spec: `.scratch/round19/spec.md` — D32; ADR-0006 §5–§6. Phase 19b closure.
   disposition, narrow irrelevant source scanning (`@source not`) or let the dormant file's removal drop them, and
   keep useful utilities. Keep claims precise: dormant source is not the same as no reference. Source:
   `round19/review/ticket-15-audit.md` § A4.
+- 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.

@@ -363,7 +363,7 @@ fn project_relative_skills_dir_for_every_tool() {
         (
             "agents_skills",
             ".agents/skills",
-            Some(".agents/skills (9 tools)"),
+            Some(".agents/skills (9 harnesses)"),
         ),
         ("cursor", ".agents/skills", None),
         ("claude_code", ".claude/skills", None),
@@ -464,7 +464,7 @@ fn agents_standard_group_has_nine_constituents_and_one_entry() {
     assert_eq!(entries[0].display_name, ".agents/skills");
     assert_eq!(
         entries[0].project_display_name(),
-        format!(".agents/skills ({} tools)", members.len())
+        format!(".agents/skills ({} harnesses)", members.len())
     );
     assert_eq!(
         entries[0].group, None,

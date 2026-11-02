@@ -50,7 +50,7 @@ const SyncedStrip = ({ strip, t }: SyncedStripProps) => {
           {strip.synced}/{strip.total}
         </span>
         <span className="sr-only">
-          {t("library.row.syncedCount", { synced: strip.synced, total: strip.total })}
+          {t("library.row.deployedCount", { deployed: strip.synced, total: strip.total })}
         </span>
       </span>
     </span>

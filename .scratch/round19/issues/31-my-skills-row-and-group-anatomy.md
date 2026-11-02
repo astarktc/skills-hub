@@ -77,3 +77,4 @@ D39, D40, D41, D42, D44; D43's pick (ticket 30). BACKLOG #80, #81, #82 absorbed 
 ## Comments
 
 - 2026-11-02 — opened at the grill; absorbs BACKLOG #80, #81, #82 and the project-count gap from ticket 11.
+- 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.

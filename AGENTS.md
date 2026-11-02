@@ -200,7 +200,7 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   `update_project_gitignore` returns `()` (it changes no view row), and `resync_all_projects` returns
   `{ report, projects }` — one `ProjectSyncReport` spanning every project — so the hook refetches
   `getProjectView` for the selected project alone. `configure_project_tools` returns `{ view, report }` — the
-  dropped tools' removal reports merged into one — and so does `resync_project_assignment` (Sync this).
+  dropped tools' removal reports merged into one — and so does `resync_project_assignment` (Deploy this).
   `useMatrixFocusReconciliation` (`src/components/projects/`) moves focus to the next surviving row's cell when a
   repair takes a row out of the matrix filter. Every project report is folded in the view's action hook
   (`src/components/projects/useProjectActions.ts`), never in the world hook: removal reports by

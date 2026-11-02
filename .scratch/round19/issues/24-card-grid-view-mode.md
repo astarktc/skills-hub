@@ -21,3 +21,7 @@ Astra audit on `rich` in both densities: nothing clipped at 960×640; keyboard r
 ## Result
 
 (child fills in)
+
+## Comments
+
+- 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.

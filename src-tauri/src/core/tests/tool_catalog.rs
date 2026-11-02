@@ -49,9 +49,9 @@ fn the_group_label_carries_the_roster_count_at_project_scope_only() {
     let project = entry(&project_tool_entries(home.path()), agents_key).label;
 
     assert_eq!(global, ".agents/skills");
-    assert_eq!(project, ".agents/skills (9 tools)");
+    assert_eq!(project, ".agents/skills (9 harnesses)");
     assert!(
-        !global.contains("tools"),
+        !global.contains("harnesses"),
         "a global roster claim would make a user skip the real Cursor checkbox"
     );
 }

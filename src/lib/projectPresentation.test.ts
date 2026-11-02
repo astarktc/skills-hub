@@ -133,7 +133,7 @@ describe("matrixLegend", () => {
       expect(en.state[state]).toBeTruthy();
       expect(en.detail[state]).toBeTruthy();
     }
-    expect(en.detail.stale).toBe("copy differs from the skill \u2014 Sync to fix");
+    expect(en.detail.stale).toBe("the copy differs from the skill \u2014 Deploy this to fix");
   });
 });
 

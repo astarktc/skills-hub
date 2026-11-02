@@ -140,7 +140,7 @@ pub struct ToolAdapter {
     pub display_name: &'static str,
     /// Project-scope label, when it differs from `display_name`. A virtual
     /// group absorbs its constituents at project scope only, so only there
-    /// may its label advertise them (`.agents/skills (9 tools)`); globally the
+    /// may its label advertise them (`.agents/skills (9 harnesses)`); globally the
     /// same entry is an independent target and reads `.agents/skills`.
     /// `None` for every adapter whose label is scope-independent.
     pub group_label: Option<&'static str>,
@@ -213,7 +213,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         former_relative_skills_dirs: &[],
         relative_detect_dirs: &[".agents"],
         project_relative_skills_dir: ".agents/skills",
-        group_label: Some(".agents/skills (9 tools)"),
+        group_label: Some(".agents/skills (9 harnesses)"),
         group: None,
         supports_symlink: true,
     },

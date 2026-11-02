@@ -1,6 +1,6 @@
 # Skills Hub (Tauri Desktop)
 
-A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place and sync them to multiple AI coding tools’ global skills directories (prefer symlink/junction, fallback to copy) — “Install once, sync everywhere”.
+A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place and deploy them to many AI coding harnesses — Claude Code, Cursor, Codex, … — in their global skills folders or in your projects (prefer symlink/junction, fallback to copy) — “Install once, deploy everywhere”.
 
 ## Documentation
 
@@ -8,13 +8,13 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 
 ## Key Features
 
-- **Explore page**: Browse featured skills (ClawHub, updated daily) and search online (skills.sh) — one-click install & sync to all detected tools
+- **Explore page**: Browse featured skills (ClawHub, updated daily) and search online (skills.sh) — one-click add & deploy to your selected harnesses
 - **Skill detail view**: Click a skill name to browse its files with Markdown rendering and syntax highlighting (40+ languages)
-- **Unified view**: Managed skills and per-tool activation status
-- **Onboarding migration**: Scan existing skills in installed tools, import into the Central Repo, and sync — an original is removed only when it is byte-identical to the imported copy; a same-named but different sibling is kept and reported
+- **Unified view**: Your Library of skills and where each one is deployed, per harness
+- **Onboarding import**: Scan existing skills in installed harnesses, import them into your Library, and deploy — an original is removed only when it is byte-identical to the imported copy; a same-named but different sibling is kept and reported
 - **Import sources**: Local folder / Git URL (including multi-skill repo selection, `.claude/skills/` directory support); GitHub sources download through the GitHub API where possible (recording the real commit) and fall back to cloning
-- **Update / Refresh**: Re-fetch from source and bring every synced copy back into line; refreshing many skills fetches them in parallel and reports the outcome of each skill and each tool it touched
-- **New tool detection**: Detect newly installed tools and prompt to sync managed skills
+- **Update / Update all**: Re-fetch from source and bring every deployed copy back into line; updating many skills fetches them in parallel and reports the outcome of each skill and each harness it touched
+- **New harness detection**: Detect newly installed harnesses and offer to deploy your skills to them
 
 ### My Skills
 ![My Skills](docs/assets/my-skills.png)
@@ -28,9 +28,9 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 ### Skill Detail
 ![Skill Detail](docs/assets/skill-detail.png)
 
-## Supported AI Coding Tools
+## Supported AI Coding Harnesses
 
-| tool key | Display name | skills dir (relative to `~`) | detect dir (relative to `~`) |
+| key | Display name | skills dir (relative to `~`) | detect dir (relative to `~`) |
 | --- | --- | --- | --- |
 | `agents_skills` | .agents/skills | `.agents/skills` | `.agents` |
 | `cursor` | Cursor | `.cursor/skills` | `.cursor` |
@@ -80,8 +80,8 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 
 `agents_skills` is scope-dependent. **Globally** it is a plain, independently selectable target: it
 manages `~/.agents/skills` and nothing else — Cursor still reads `~/.cursor/skills`, Codex still reads
-`~/.codex/skills`, so those tools keep their own rows in the global list. **In a project** it is an
-aggregate shown as `.agents/skills (9 tools)`: one folder, `<project>/.agents/skills`, that nine tools
+`~/.codex/skills`, so those harnesses keep their own rows in the global list. **In a project** it is an
+aggregate shown as `.agents/skills (9 harnesses)`: one folder, `<project>/.agents/skills`, that nine harnesses
 (Cursor, Codex, OpenCode, Antigravity, Amp, Kimi Code CLI, Cline, Gemini CLI, GitHub Copilot) all read,
 so those nine have no separate project row.
 
@@ -133,11 +133,11 @@ cargo test
 
 ## FAQ / Notes
 
-- Where are skills stored? The Central Repo defaults to `~/.skillshub` (configurable in Settings).
-- Does Cursor get symlinks too? Yes, since Skills Hub 1.2.1 — Cursor 2.5+ (IDE) and the current Cursor CLI discover symlinked skill directories. Skills synced to Cursor by an earlier Skills Hub version stay as copies until you re-sync them with overwrite. If you run an older Cursor, keep it updated or re-sync after upgrading.
-- Why does sync sometimes fall back to copy? Skills Hub prefers symlink/junction, but on some systems (especially Windows) symlinks may be restricted; in that case it falls back to directory copy.
-- Why does a skill still show up in a tool after I unsync or delete it? If Skills Hub could not remove the folder (permissions, a locked file), it keeps the entry and marks it `error` instead of forgetting it, so the path stays visible and the same action can be retried. The same holds for unassigning a skill from a project and for removing a project or one of its tools.
-- Why does the project assignment matrix sometimes say statuses were not re-checked? Sync operations run one at a time. If one is running while the matrix loads, the stored statuses are shown without re-checking them against disk; they refresh once the operation finishes.
+- Where are skills stored? In the Library folder, `~/.skillshub` by default (configurable in Settings).
+- Does Cursor get symlinks too? Yes, since Skills Hub 1.2.1 — Cursor 2.5+ (IDE) and the current Cursor CLI discover symlinked skill directories. Skills deployed to Cursor by an earlier Skills Hub version stay as copies until you deploy them again with overwrite. If you run an older Cursor, keep it updated or re-deploy after upgrading.
+- Why does deploying sometimes fall back to copy? Skills Hub prefers symlink/junction, but on some systems (especially Windows) symlinks may be restricted; in that case it falls back to directory copy.
+- Why does a skill still show up in a harness after I disable or remove it? If Skills Hub could not remove the folder (permissions, a locked file), it keeps the deployment and marks it Failed instead of forgetting it, so the path stays visible and the same action can be retried. The same holds for removing a skill from a project and for removing a project or one of its harnesses.
+- Why does the project matrix sometimes say statuses may be out of date? Deploy operations run one at a time. If one is running while the matrix loads, the stored statuses are shown without re-checking them against disk; they are re-checked once the operation finishes.
 - What does `TARGET_EXISTS|...` mean? The target folder already exists and the operation did not overwrite it (default is non-destructive). Remove the existing folder or retry with the appropriate overwrite flow.
 - macOS Gatekeeper note (unsigned/notarized builds, may vary by macOS version): if you see “damaged” or “unverified developer”, run `xattr -cr "/Applications/Skills Hub.app"` (https://v2.tauri.app/distribute/#macos).
 

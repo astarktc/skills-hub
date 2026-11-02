@@ -42,3 +42,4 @@ managed inspector; contrast both themes; 960×640; `npm run check`.
   is said and nothing is checked); the operator presses "Add selected" — it never installs by itself, and it no
   longer retargets every installed Tool (`targetAllInstalled` is deleted): the Tool scope in Add's sticky summary is
   D25's "inline Tool-scope summary". The preview's Install takes the same intent.
+- 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.

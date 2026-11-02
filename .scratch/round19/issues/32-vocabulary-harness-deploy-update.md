@@ -1,6 +1,6 @@
 # 32 — Vocabulary: Harness · Deploy · Update · state words · Library — across the glossary, every UI string, README, DESIGN.md, the fixture and the tickets
 
-Status: ready-for-agent
+Status: claimed
 Blocked by: 33 (it rewrites strings 33 touches)
 Blocks: 30, 31, 20, 21, 22, 23, 24
 Source: grill 2026-11-02, D45 + D46 (operator: "go through our vocabulary from scratch and make sure we're perfectly
@@ -70,6 +70,59 @@ Onboarding), the sentence names examples once: "harnesses — Claude Code, Curso
 
 ## Result
 
-(child writes: renamed keys, allow-list, screenshots, sha)
+Implemented, uncommitted, in worktree `/Users/alexstark/.t3/worktrees/skills-hub/t3-1af8d9fa`, branch `t3/1af8d9fa`
+(base `3862c75`; the orchestrator reviews and commits).
+
+**Renamed keys** (only where the key named the retired label; every other key keeps its name, value changed):
+`library.refreshAll` → `library.updateAll` · `library.row.syncedCount` → `library.row.deployedCount` (its
+interpolation `{{synced}}` → `{{deployed}}`) · `settingsAutoSync` / `settingsAutoSyncHint` → `settingsAutoDeploy` /
+`settingsAutoDeployHint` · `skillsStoragePath` / `skillsStorageHint` → `libraryFolder` / `libraryFolderHint`. Callers:
+`LibraryHeader.tsx`, `SyncedStrip.tsx`, `SettingsPage.tsx`. Keys such as `bulk.sync`, `outcome.done.synced`,
+`strip.stale`, `assignProject.*` stay: they name code verbs / stored status strings (D45 "code keeps").
+
+**Retired-words test** (`src/i18n/resources.test.ts`): no `en` leaf's rendered text (interpolation names like
+`{{tool}}` stripped; keys never checked) contains, case-insensitive at word boundaries, tool · tools · sync · synced ·
+syncing · syncs · resync · resynced · unsync · refresh · refreshed · refreshing · assign · assigned · assigning ·
+assignment · assignments · unassign · unassigned · stale. A second test guards the check itself (catches "Sync to
+Tools", "Refresh all", "Not assigned", "stale"; ignores keys, `{{tool}}`, "Toolbar", "GitHub token", "synchronous").
+**Allow-list: empty** (`RETIRED_WORD_ALLOW_LIST = {}`) — no value needed a retired word: the GitHub token is "token",
+paths in the catalog hold none, and "Configure Tools" became "Configure harnesses". Meaningful: with
+`library.updateAll` set back to "Refresh all" the test fails (`library.updateAll: Refresh all`), restored it passes —
+`evidence/32/retired-words-{red,green}.txt`.
+
+**grep** `grep -nwiE 'tool|tools|sync|synced|resync|refresh|assign' src/i18n/resources.ts` → 88 lines, every one a
+key (`tools: {`, `sync: "Deploy"`, `synced: "Deployed"`, …) or a `{{tool}}` / `{{tools}}` interpolation name; with keys
+and interpolation names stripped (`sed -E 's/\{\{[^}]*\}\}//g; s/^([[:space:]]*)[A-Za-z_"0-9]+:/\1/' … | grep …`)
+→ no match. Raw output: `evidence/32/grep-raw.txt`.
+
+**Files changed**: `src/i18n/resources.ts` (every retired word; state words Deployed · Not deployed · Not deployed yet ·
+Out of date copy · Copy missing · Failed · Disabled; "Sync target(s)" → global / project deployment(s);
+examples "— Claude Code, Cursor, Codex, …" once on the empty library, discovered-skills row, Configure harnesses
+description, Add's harness scope and the import summary) · `src/i18n/resources.test.ts` · the three renamed-key
+callers · `src/lib/{reportOutcome,projectPresentation}.test.ts` (copy pins) · `src/fixtures/{registry,scenarios}.ts`
+(the `.agents/skills (9 harnesses)` label, four fixture descriptions incl. `mirror-tools` → `mirror-scripts`, header
+comment) · `src-tauri/src/core/tool_adapters/mod.rs` + `core/tests/{tool_adapters,tool_catalog}.rs` (the virtual
+group's project label `".agents/skills (9 tools)"` → `"(9 harnesses)"` — a rendered string literal, not an
+identifier; its doc comment and the two tests pinning it) · `CONTEXT.md` (rewritten in the new words, 26 **Code name**
+lines, the "Vocabulary decisions" block folded in and gone, every former word kept in its _Avoid_ line) · `DESIGN.md`
+(prose and quoted copy; token / tone names such as `stale` and stored status strings stay) · `README.md` (title line,
+features, "Supported AI Coding Harnesses" table heading, `.agents/skills` paragraph, FAQ) · `AGENTS.md` (one quote:
+"(Sync this)" → "(Deploy this)") · tickets 20–26, 30, 31 (one dated comment line each) · this ticket.
+
+**Deliberately left**: `index.html` (ticket 31's); CHANGELOG; Rust identifiers, DB columns, error codes,
+`src/bindings/index.ts` (no drift); hook / module / file names (`SyncedStrip.tsx`, `useSyncLight`, `AssignProjectModal`);
+code comments outside the catalog; the primitives' own `*.test.tsx` fixtures ("Edit Tools", "Tool scope", "Refresh
+all" are test-local labels, not product copy); AGENTS.md architecture prose ("not on this Tool", `Sync target`, …)
+which keeps code names; health-row words (unchanged per the table). `projectsSurface.list.status.stale` reads "out of
+date" (a project aggregate, not one copy). "Refresh view" in the Projects header became **Reload view** (a re-read,
+not Update).
+
+**Proof**: `npm run version:check && npm run check` green (see Comments for the run) — vitest 49 files / 1045 tests
+(the two new tests included). Fixture `?scenario=rich` on port 5176, 1280×800, dark and light: My Skills (Grouped),
+the inspector (`using-git-worktrees`: Failed / Deployed / Not deployed), Add's summary and its harness-scope popover,
+the Projects matrix + legend (`skills-hub`), Settings (Auto-deploy, Library folder) —
+`evidence/32/{dark,light}-0{1..6}-*.png`, with each surface's rendered text in `evidence/32/{dark,light}-texts.json`
+scanned for the retired words: zero hits. Vite server stopped; ego task space closed.
 
 ## Comments
+- 2026-11-02 — claimed and implemented in worktree `t3/1af8d9fa`. Gate after the last edit: `npm run version:check && npm run check` → EXIT 0 (Version OK 1.3.0; eslint clean; styles:check ok; vitest 49 files / 1045 tests; build ok; cargo fmt/clippy clean; cargo test 830 passed; `src/bindings/index.ts` unchanged). Log: `evidence/32/gate.log`.

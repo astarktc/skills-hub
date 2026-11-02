@@ -16,3 +16,7 @@ Spec: `.scratch/round19/spec.md` — D31, D32. Phase 19b release.
 ## Result
 
 (child fills in; orchestrator adds the smoke outcome and closure)
+
+## Comments
+
+- 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.

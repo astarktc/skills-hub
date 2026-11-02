@@ -47,3 +47,4 @@ three rows selected; screen-reader semantics of the listbox; `npm run check`.
   the current table. D23 doesn't require it. If the palette work defines a grid keymap, apply it to the matrix; if
   not, decide explicitly and record the decision here. CHANGELOG 1.3.0 lists it as a known limitation ("grid arrow
   keys come in 1.3.x").
+- 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.

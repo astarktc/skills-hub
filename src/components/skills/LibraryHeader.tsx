@@ -113,7 +113,7 @@ const LibraryHeader = ({
           <>
             <Button onClick={onRefreshAll} {...blockedProps}>
               <RefreshCw />
-              {t("library.refreshAll")}
+              {t("library.updateAll")}
             </Button>
             <Button
               variant={addIsPrimary ? "solid" : "outline"}

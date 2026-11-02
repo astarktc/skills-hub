@@ -63,3 +63,4 @@ contrast; 960×640; `npm run check`.
     The 2026-10-27 "nothing on the main screen says it is on" concern is answered by ticket 33 (auto-deploy no longer
     changes anything on Update), not by a header indicator. The upgrader hint ("Auto-sync moved to Settings") is
     dropped: 1.3.0 already moved it.
+- 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.

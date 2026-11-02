@@ -56,3 +56,4 @@ operator identified Cursor's mark by counting positions, #72).
 ## Comments
 
 - 2026-11-02 — opened from BACKLOG #78 at the grill (D36, D43). Prototype dispatched the same evening.
+- 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.

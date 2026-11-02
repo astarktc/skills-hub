@@ -45,7 +45,61 @@ function usedKeys(): Map<string, string> {
   return keys;
 }
 
+/**
+ * Retired vocabulary (round 19 D45/D46, ticket 32): the operator-facing words
+ * are Harness, Deploy / Deployed / Deployment, Deploy to project, Re-deploy,
+ * Update / Update all and the state words (Deployed \u00b7 Not deployed \u00b7
+ * Not deployed yet \u00b7 Out of date copy \u00b7 Copy missing \u00b7 Failed \u00b7
+ * Disabled). Code keeps `tool` / `sync` / `refresh` / `assignment` — so keys and
+ * `{{tool}}`-style interpolation names are exempt; only rendered text is checked.
+ */
+const RETIRED_WORDS = [
+  "tool", "tools",
+  "sync", "synced", "syncing", "syncs", "resync", "resynced", "unsync",
+  "refresh", "refreshed", "refreshing",
+  "assign", "assigned", "assigning", "assignment", "assignments", "unassign", "unassigned",
+  "stale",
+] as const;
+
+const RETIRED = new RegExp(`\\b(${RETIRED_WORDS.join("|")})\\b`, "i");
+
+/**
+ * Leaves allowed to keep a retired word, each with its reason. Keep it short:
+ * a new entry needs a reason a reviewer would accept.
+ */
+const RETIRED_WORD_ALLOW_LIST: Readonly<Record<string, string>> = {};
+
+/** Every `en` leaf as `[dotted.key, value]`. */
+function leaves(node: unknown, prefix = ""): Array<[string, string]> {
+  if (typeof node === "string") return [[prefix, node]];
+  if (node === null || typeof node !== "object") return [];
+  return Object.entries(node as Record<string, unknown>).flatMap(([key, value]) =>
+    leaves(value, prefix ? `${prefix}.${key}` : key),
+  );
+}
+
+/** The rendered text of a value: interpolation names (`{{tool}}`) are code, not copy. */
+const rendered = (value: string) => value.replace(/\{\{[^}]*\}\}/g, "");
+
+function retiredWordHits(catalog: unknown): string[] {
+  return leaves(catalog)
+    .filter(([key, value]) => !(key in RETIRED_WORD_ALLOW_LIST) && RETIRED.test(rendered(value)))
+    .map(([key, value]) => `${key}: ${value}`);
+}
+
 describe("i18n catalog", () => {
+  it("uses no retired vocabulary word in any en value (D45)", () => {
+    expect(retiredWordHits(resources.en.translation)).toEqual([]);
+  });
+
+  it("the retired-words check catches a reinserted word and ignores keys and interpolation names", () => {
+    // Guards the check itself: a broken regex would make the test above vacuous.
+    expect(retiredWordHits({ a: { b: "Sync to Tools" } })).toEqual(["a.b: Sync to Tools"]);
+    expect(retiredWordHits({ c: "Refresh all", d: "Not assigned", e: "stale" })).toHaveLength(3);
+    expect(retiredWordHits({ tools: { sync: "Deploy to {{tool}} ({{tools}})" } })).toEqual([]);
+    expect(retiredWordHits({ f: "Toolbar", g: "GitHub token", h: "synchronous" })).toEqual([]);
+  });
+
   it("scans the source tree", () => {
     // Guards the glob itself: an empty scan would make the next test vacuous.
     expect(usedKeys().size).toBeGreaterThan(100);
