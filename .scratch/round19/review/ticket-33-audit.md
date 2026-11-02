@@ -190,3 +190,47 @@ Observed: **before `[amp]`; after Update `[amp]`, with `TARGET_EXISTS` / `first_
 - Did not test simultaneous direct IPC mutations while acquisition is in flight, or the separate Re-point preview command's network behavior. The D35 evidence above concerns skills already marked at selection and the actual mutation commands.
 - F1's executable reproduction is the fixture command sequence plus a traced production Rust/hook path, not a newly compiled Rust regression or a browser-driven custom scenario. The existing direct-path Rust absence test was sufficient to satisfy the conditional test request for ordinary Refresh, but does not cover this retry edge.
 - No source code changed, no fixes applied, no commits made. This audit is the only authored repository document; screenshots are confined to the requested gitignored evidence directory.
+
+## Re-check — 2026-11-02 (fix 23938db)
+
+**Verdict: PASS-WITH-FINDINGS — F1–F3 closed under the recorded D34 amendment; one documentation-only P2 remains (F4).**
+
+Reviewed `git show --stat 23938db` and `git diff 0946250..23938db`, the last two ticket Comments, D34/amendment and the glossary entries. Tested HEAD `7b05e94` (includes vocabulary-only `60dc80e`). The rejected existing-row-only retry proposal is not the criterion for this re-check.
+
+### 1. F1 under the decision — PASS
+
+- `src-tauri/src/core/propagation.rs:289–328`: `overwrite` means an **installed** member owns the artifact; only its false branch discovers installed sharers lacking a row. Owned-artifact updates add none. Skill Disable returns at `:140–159`; group Disable skips at `:247–258`, before sibling discovery. Existing members and new siblings enter `handled` (`:240–244, :313–317`); Rust also iterates a pre-write snapshot. The fixture's growing array is protected by its equivalent set.
+- Success records siblings with `Recorded` and reports each `Synced` (`:361–380`). Failure matches the batch's **new-row rule** literally: `TARGET_EXISTS` creates no sibling; other failures use `FailedRecorded`, null ownership and `first_deploy: true` (`:383–455`). Compare `global_sync.rs:451–469` (collision bypasses `record_failed`), `:496–523` (`FailedRecorded` for each installed `record_tools` member), and `:313–316` (installed-only enumeration). Existing Propagation rows still settle `SyncFailed`; “records nothing” on collision concerns new rows, not erasing/updating existing ones.
+- Individually ran `cargo test --all <name>` for all six additions in `core/tests/propagation.rs`; each returned **1 passed / 0 failed**:
+  - `a_first_sync_records_every_installed_sharer_of_the_shared_dir` (`:768`)
+  - `a_first_sync_records_no_sharer_that_is_not_installed` (`:810`)
+  - `an_update_of_an_owned_artifact_records_no_new_sharer` (`:828`)
+  - `a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_propagation` (`:853`)
+  - `a_failed_first_sync_records_installed_sharers_error_as_the_batch_does` (`:927`)
+  - `a_disabled_member_mints_no_sharer_and_skips_the_group` (`:959`)
+- The collision test compares `row_set(&f)` with `row_set(&control)`, including harness, status, mode, relative path and ownership—not merely report length.
+- Fresh `bun .scratch/round19/evidence/33-fix/repro.ts`: **PASS**. Foreign folder present → Update reports Amp `TARGET_EXISTS / first_deploy: true`, rows remain `[amp]`, confirmed retry yields `[amp, kimi_cli]`. Absent → Update itself reports both Synced and already yields `[amp, kimi_cli]` before retry.
+
+### 2. Additional two-writer consistency sequence — PASS
+
+Ran an independent `bun --eval` fixture comparison, not merely a seeded final-state assertion: remove all target rows and uninstall Kimi; make Amp unwritable; call the global batch and assert its actual failed first sync leaves exactly `[amp: error, owns=false]`. Install Kimi, restore writability, then fork equivalent fixtures between plain Update and the global batch, with no foreign occupant. **Both yield `[amp: synced, kimi_cli: synced]`, the same mode/path/ownership.** Repeated with an unowned Disabled Kimi pair marker inserted after that failure: **both preserve `[amp: error, kimi_cli: disabled]` unchanged**, reporting Disabled skips. Deep equality assertions passed for both comparisons. No differing row set found in these additional sequences.
+
+### 3. F2 / D35 boundary coverage — PASS
+
+`core/tests/refresh.rs:425–564` contains `refresh_all_reports_delete_incomplete_before_unlocatable_and_never_for_a_non_member`; individual run: **1 passed / 0 failed**. Source-missing and central-missing premises first prove Unlocatable, then assert typed DeleteIncomplete; imported non-member is absent. Every case asserts zero acquisitions and unchanged health, targets and central `SKILL.md` state. Fixture mirrors at `src/fixtures/backend.test.ts:600–632` cover both missing states and the imported case; all passed in the fresh suite.
+
+### 4. F3 / shim — PASS
+
+`src/components/skills/types.ts:30` re-exports `SkillRefreshStatus, RefreshSkipReason` directly from `../../bindings`; no hand-mirrored type.
+
+### 5. Documentation — FAIL (F4, P2; documentation only)
+
+AGENTS.md `:327–328`, and CONTEXT.md's Update opening (`:77`) and Propagation (`:150`), carry the first-deploy sibling nuance correctly. However, CONTEXT.md `:81` still independently says Update “never creates one” without that qualification. Auto-deploy (`:145`) says “writing it records a Deployment for every installed harness,” which is broader than the first-sync-only implementation: the passing owned-artifact regression above writes an existing copy without recording the newly installed sharer. The `:81` formulation is in the subsequent vocabulary rewrite, not a logic regression in `23938db`.
+
+**Exact fix:** qualify `:81` with “except installed-sharer records on a first deploy into an already-recorded shared directory; see Auto-deploy.” In Auto-deploy, replace the broad writing rule with: “A first deploy into a shared skills directory records every installed sharer, including when Propagation retries a never-materialised row. An update of an owned artifact adds no sibling records.” Keep the artifact/record distinction and the approved retry behavior; no code change requested.
+
+### 6. Fresh gate — PASS
+
+- `npm run test`: **49 files / 1053 tests passed**, 0 failed.
+- `cd src-tauri && cargo test --all`: **837 passed**, 0 failed; main/doc-test targets also passed (0 tests).
+- Working tree remained clean after those runs, including binding regeneration. Only this appended section was authored; no code edits, commits, native app runs or live-library operations.

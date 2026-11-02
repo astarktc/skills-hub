@@ -1,6 +1,6 @@
 # 33 — Auto-deploy is arrival-only: the Refresh re-assert is deleted, `delete_incomplete` is skipped as report data
 
-Status: claimed (audit F1–F3 fixed; Astra re-check pending)
+Status: done — 23938db (fix) over 948f12b
 Blocked by: —
 Blocks: 32 (vocabulary rewrites the strings this ticket touches last)
 Source: BACKLOG #71 (absorbed here 2026-11-02 — grill D34, D35; `round19/issues/18-operator-think-aloud.md` § Findings
@@ -236,3 +236,5 @@ deploy …".
   mirror: "D35 boundary of Refresh all" describe, 3 tests — pass.
   **F3** — `src/components/skills/types.ts` re-exports `RefreshSkipReason` beside `SkillRefreshStatus`.
   Docs: AGENTS.md's Update/Refresh clause and CONTEXT.md's Propagation and Refresh entries now note the sibling record.
+
+- 2026-11-02 — **done.** Astra re-check (`round19/review/ticket-33-audit.md` § Re-check): PASS-WITH-FINDINGS — F1–F3 closed under the D34 amendment; two extra sequences (late-installed sharer, Disabled sibling) gave identical row sets for both writers; fresh gate 1053 / 837. F4 (P2, docs only: CONTEXT.md's Update bullet and Auto-deploy entry needed the first-deploy qualification) fixed by the orchestrator in the closing commit.
