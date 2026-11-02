@@ -1,6 +1,6 @@
 # 33 — Auto-deploy is arrival-only: the Refresh re-assert is deleted, `delete_incomplete` is skipped as report data
 
-Status: done — (sha in the closing comment)
+Status: done — 948f12b
 Blocked by: —
 Blocks: 32 (vocabulary rewrites the strings this ticket touches last)
 Source: BACKLOG #71 (absorbed here 2026-11-02 — grill D34, D35; `round19/issues/18-operator-think-aloud.md` § Findings
