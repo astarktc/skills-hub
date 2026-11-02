@@ -137,8 +137,6 @@ pub(crate) enum ApplyOutcome {
 
 /// Successful Update keeps its report shape; skips are separate report data.
 pub(crate) struct UpdateOutcome {
-    pub skill_id: String,
-    pub name: String,
     pub content_hash: Option<String>,
     pub source_revision: Option<String>,
     pub propagation: PropagationReport,
@@ -194,8 +192,6 @@ pub(crate) fn apply_unlocked(
     let propagation = propagate_unlocked(store, paths, &updated.id, now)?;
     settle_health(store, &updated.id, direct_edit, edit_conflict.as_ref());
     Ok(ApplyOutcome::Updated(UpdateOutcome {
-        skill_id: updated.id,
-        name: updated.name,
         content_hash: updated.content_hash,
         source_revision: updated.source_revision,
         propagation,

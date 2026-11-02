@@ -73,7 +73,7 @@ export type SyncPolicy = {
 
 /**
  * How an asked global row is retried: through a sync batch for its skill
- * (a first sync, a re-assert, Propagation over a never-synced row), or
+ * (a first sync, Propagation over a never-synced row), or
  * through the Enable scope that produced it. Project rows need no route.
  */
 export type GlobalRetryRoute =
@@ -87,9 +87,8 @@ export type CollisionClaim = { row: OverwriteRow; route?: GlobalRetryRoute };
  * A report one operator action produced, as the one ask settles it. `sync`:
  * a global sync batch (`skills` are its items, for the retry); `enable`: an
  * Enable over `scope`; `project`: a project sync report; `refresh`: a
- * Refresh / Update / Restore / Re-point report (Propagation and the
- * re-assert, retried through a sync batch for the skill — `skills` are the
- * catalog's items); `propagation`: one skill's Edit Propagation.
+ * Refresh / Update / Restore / Re-point report (Propagation, retried
+ * through a sync batch for the skill — `skills` are the catalog's items); `propagation`: one skill's Edit Propagation.
  */
 export type CollisionPart =
   | { kind: "sync"; report: BatchTargetOutcome[]; skills: readonly BatchSyncSkillDto[]; policy?: SyncPolicy }
@@ -132,7 +131,7 @@ function claimsOf(part: CollisionPart, labels: Readonly<Record<string, string>>)
       ];
     case "project":
       return projectCollisionRows(part.report, labels).map(project);
-    // Propagation and the re-assert write with the same-content rule on.
+    // Propagation writes with the same-content rule on.
     case "refresh":
       return refreshCollisionRows(part.report, labels).flatMap(viaSync(part.skills, true));
     case "propagation":
@@ -543,7 +542,7 @@ export function useSyncOrchestration({
    * One operator action's reports, settled through one ask: each part's
    * `TARGET_EXISTS` rows are claimed (a sync batch's pairs retried through
    * the batch, Enable's through its scope, project assignments and
-   * Propagation / re-assert rows by where they live), asked once, and each
+   * Propagation rows by where they live), asked once, and each
    * part comes back with its answered rows replaced — Refresh / Propagation
    * parts with the kept pairs as `declined` (their report shape has no
    * declined row). `retried` says an answer ran retries (a catalog or view

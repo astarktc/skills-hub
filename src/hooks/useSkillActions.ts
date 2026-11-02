@@ -162,7 +162,6 @@ export type SkillActionsDeps = {
    */
   sync: Pick<
     SyncOrchestration,
-    | "autoSyncEnabled"
     | "effectiveSyncTargetIds"
     | "requestSharedDirConfirmation"
     | "syncSkillsToTools"
@@ -231,7 +230,6 @@ export function useSkillActions({
 }: SkillActionsDeps) {
   const { runAction, applyOutcome, notify, notifyError, reportProgress } = reporter;
   const {
-    autoSyncEnabled,
     effectiveSyncTargetIds,
     requestSharedDirConfirmation,
     syncSkillsToTools,
@@ -251,14 +249,6 @@ export function useSkillActions({
   const projectLabelById = Object.fromEntries(projectList.map((project) => [project.id, project.name]));
   const foldContext = { t, toolLabelById, projectLabelById };
   const reload = () => loadManagedSkills();
-  // Each skill's global Tools as the operator acted on them: a Refresh
-  // report's synced global target outside this set is a re-assert addition,
-  // announced in the run's report ("also deployed to Cursor, Pi").
-  const priorGlobalTools = (skills: readonly ManagedSkill[]) =>
-    Object.fromEntries(
-      skills.map((skill) => [skill.id, skill.targets.filter((target) => target.status !== "disabled").map((target) => target.tool)]),
-    );
-
   const newRefreshProgressChannel = () =>
     createProgressChannel<RefreshProgressDto>((progress) => {
       reportProgress({
@@ -406,7 +396,7 @@ export function useSkillActions({
       return settled;
     };
 
-    /** A Refresh / Update report's collisions (Propagation, the re-assert), asked once. */
+    /** A Refresh / Update report's collisions (Propagation's first sync of a row that owns nothing), asked once. */
     const settleRefresh = async (action: ActionHandle, report: RefreshReport, catalogNow: readonly ManagedSkill[]) => {
       const { parts: [part], retried } = await settleParts(action, [
         { kind: "refresh", report, skills: catalogNow.map(toSyncItem) },
@@ -425,7 +415,6 @@ export function useSkillActions({
             ...foldContext,
             single: { name: skill.name, success: copy.success },
             declined,
-            priorGlobalTools: priorGlobalTools([skill]),
           }),
         );
       });
@@ -540,7 +529,7 @@ export function useSkillActions({
               label: t("lifecycle.verbs.update"),
             },
             async () =>
-              invokeTauri("updateManagedSkill", single.id, { reassert_auto_sync: autoSyncEnabled }, await newRefreshProgressChannel()),
+              invokeTauri("updateManagedSkill", single.id, await newRefreshProgressChannel()),
             "updateManagedSkill",
           );
           return;
@@ -557,12 +546,11 @@ export function useSkillActions({
           const settled = await invokeTauri(
             "refreshManagedSkills",
             all ? null : skills.map((skill) => skill.id),
-            { reassert_auto_sync: autoSyncEnabled },
             await newRefreshProgressChannel(),
           );
           const { report, declined, retried } = await settleRefresh(action, settled, managedSkills);
           // A retry already re-read the catalog.
-          await applyOutcome(refreshOutcome(report, { ...foldContext, declined, priorGlobalTools: priorGlobalTools(refreshed) }), {
+          await applyOutcome(refreshOutcome(report, { ...foldContext, declined }), {
             reload: retried ? undefined : reload,
           });
         });
@@ -580,7 +568,7 @@ export function useSkillActions({
               label: t("lifecycle.verbs.restore"),
             },
             async () =>
-              invokeTauri("updateManagedSkill", skill.id, { reassert_auto_sync: autoSyncEnabled }, await newRefreshProgressChannel()),
+              invokeTauri("updateManagedSkill", skill.id, await newRefreshProgressChannel()),
             "updateManagedSkill",
           );
         }
@@ -612,7 +600,7 @@ export function useSkillActions({
           },
           async (action) => {
             try {
-              return await invokeTauri("repointSkillSource", single.id, trimmed, { reassert_auto_sync: autoSyncEnabled });
+              return await invokeTauri("repointSkillSource", single.id, trimmed);
             } catch (err) {
               const error = toCommandError(err);
               if (error.code === "CANCELLED") throw err;

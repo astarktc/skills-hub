@@ -32,8 +32,8 @@ pub enum SyncStatus {
     Error,
     /// The operator's durable "not on this Tool" (see **Disabled** in
     /// `CONTEXT.md`): the artifact was removed and the row kept as the
-    /// record. Terminal for every automatic pass — reconcile, Propagation,
-    /// the auto-sync re-assert and every sync fan-out leave it alone; only
+    /// record. Terminal for every automatic pass — reconcile, Propagation
+    /// and every sync fan-out leave it alone; only
     /// `skill_disable::enable_targets` lifts it.
     Disabled,
 }

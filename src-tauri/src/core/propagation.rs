@@ -81,9 +81,20 @@ pub enum PropagationSkip {
 #[derive(Debug, serde::Serialize, specta::Type)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum PropagationStatus {
-    Synced { mode_used: SyncMode },
-    Skipped { reason: PropagationSkip },
-    Failed { error: CommandError },
+    Synced {
+        mode_used: SyncMode,
+    },
+    Skipped {
+        reason: PropagationSkip,
+    },
+    /// `first_deploy` is true when the row had never materialised an
+    /// artifact before this pass (`owns_artifact` false: a failed first
+    /// sync's `error` row) — the failed write was a first deploy, not an
+    /// update of a copy the app already owned.
+    Failed {
+        error: CommandError,
+        first_deploy: bool,
+    },
 }
 
 #[derive(Debug, serde::Serialize, specta::Type)]
@@ -349,6 +360,7 @@ fn propagate_global_rows(
                         },
                         status: PropagationStatus::Failed {
                             error: CommandError::from_anyhow(error),
+                            first_deploy: !member.owns_artifact(),
                         },
                     });
                 }
@@ -466,6 +478,7 @@ fn propagate_one_assignment(
             )?;
             Ok(PropagationStatus::Failed {
                 error: CommandError::from_anyhow(error),
+                first_deploy: !assignment.owns_artifact(),
             })
         }
     }

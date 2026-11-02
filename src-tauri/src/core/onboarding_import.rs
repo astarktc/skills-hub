@@ -483,9 +483,8 @@ fn sync_imported_unlocked(
     now: i64,
 ) -> (Vec<BatchTargetOutcome>, Vec<String>, Vec<OriginalOutcome>) {
     // No per-import selection means the operator's recorded global selection,
-    // not raw detection — the same rule the Refresh re-assert and the sync
-    // fan-out follow (`settings::effective_global_tool_targets`). Detection is
-    // only the fallback for a never-configured install.
+    // not raw detection (`settings::effective_global_tool_targets`). Detection
+    // is only the fallback for a never-configured install.
     // A settings read that fails must fail **closed**: falling back to raw
     // detection here would write to every detected Tool — the exact defect
     // this rule exists to prevent — on an error path the operator never sees.

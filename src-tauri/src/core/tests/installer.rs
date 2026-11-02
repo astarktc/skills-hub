@@ -255,9 +255,7 @@ fn installs_local_skill_and_updates_from_source() {
         &store,
         &crate::core::credentials::MemoryStore::new(),
         crate::core::refresh::RefreshSelection::Ids(vec![res.skill_id.clone()]),
-        crate::core::refresh::RefreshPolicy::default(),
         None,
-        2000,
         |_| {},
     )
     .unwrap();

@@ -48,7 +48,7 @@ export type EntryRepair =
       /**
        * The route that met the collision, kept as data so answering it later
        * takes the same one (ticket 14 audit A3): `sync` — a sync, Refresh's
-       * Propagation / re-assert, Edit, install or import (the ordinary re-sync
+       * Propagation, Edit, install or import (the ordinary re-sync
        * asks again); `enable` — an Enable, whose pair stays a disabled marker
        * until answered, so only the Enable path (its disabled-marker
        * admission) can reach it — an ordinary sync skips a disabled pair.
@@ -330,7 +330,6 @@ function refreshCounts(report: RefreshReport) {
         if (unansweredCollision(target.status.error)) counts.collisions++;
         else counts.target_failures++;
       }
-      counts.target_failures += Number(status.reassert_error !== null);
       counts.conflicts += Number(status.edit_conflict !== null);
     } else if (status.status === "failed") counts.failed++;
     else if (status.status === "cancelled") counts.cancelled++;
@@ -387,10 +386,10 @@ function importCounts(report: ImportReport) {
  * the one entry, so a second toast would repeat it; a conflict keeps its
  * sentence (toned failure when a target failed too), a cancel its own.
  *
- * Re-assert additions are announced ("alpha also deployed to Cursor, Pi"):
- * a global target the report synced that the skill did not have before the
- * run (`priorGlobalTools`, the catalog the operator acted on) was created
- * by the auto-sync re-assert. A collision nobody answered is "to review".
+ * An Update only reaches deployments that already exist (D34), so the report
+ * announces no new deployment. A skill whose Delete was incomplete is a
+ * skipped item offering its health row's repair, Retry the Delete (D35). A
+ * collision nobody answered is "to review".
  */
 export function refreshOutcome(
   report: RefreshReport,
@@ -398,8 +397,6 @@ export function refreshOutcome(
     single?: { name: string; success: string };
     /** Pairs the operator kept in the overwrite ask the report's collisions raised. */
     declined?: readonly DeclinedPair[];
-    /** Each skill's global Tools before the run (skill id → tools); absent = unknown, nothing announced. */
-    priorGlobalTools?: Readonly<Record<string, readonly string[]>>;
   },
 ): Outcome {
   const out: Outcome = empty();
@@ -407,7 +404,6 @@ export function refreshOutcome(
   const { t } = ctx;
   const summary = refreshCounts(report);
   const targetErrors: OutcomeEntry[] = [];
-  const additions: string[] = [];
   for (const skill of report.skills) {
     const status = skill.status;
     const subject: EntrySubject = { skillId: skill.skill_id, skillName: skill.skill_name };
@@ -420,11 +416,22 @@ export function refreshOutcome(
         repair: { verb: "update" },
       });
     } else if (status.status === "skipped") {
-      out.warnings.push({
-        title: t("errors.refreshSkippedTitle", { name: skill.skill_name }),
-        message: t(SKIPPED_REASON_KEY[status.state]),
-        subject,
-      });
+      const { reason } = status;
+      out.warnings.push(
+        reason.kind === "delete_incomplete"
+          ? {
+              title: t("updateSkip.deleteIncompleteTitle", { name: skill.skill_name }),
+              message: t("updateSkip.deleteIncompleteMessage"),
+              subject,
+              // The health row's repair: finish the Delete (its dialog reveals what stayed).
+              repair: { verb: "delete" },
+            }
+          : {
+              title: t("errors.refreshSkippedTitle", { name: skill.skill_name }),
+              message: t(SKIPPED_REASON_KEY[reason.state]),
+              subject,
+            },
+      );
     } else if (status.status === "skipped_acquisition") {
       out.warnings.push({
         title: t("errors.refreshSkippedTitle", { name: skill.skill_name }),
@@ -435,32 +442,10 @@ export function refreshOutcome(
       const { errors, reviews } = propagationEntries(status.targets, subject, ctx);
       targetErrors.push(...errors);
       out.warnings.push(...reviews);
-      if (status.reassert_error)
-        targetErrors.push({
-          title: t("errors.reassertFailedTitle", { name: skill.skill_name }),
-          message: errorMessage(ctx, status.reassert_error),
-          subject,
-          error: status.reassert_error,
-        });
-      const prior = ctx.priorGlobalTools?.[skill.skill_id];
-      if (prior) {
-        const added = status.targets.flatMap((target) =>
-          target.scope.scope === "global" &&
-          target.status.status === "synced" &&
-          !prior.includes(target.scope.tool)
-            ? [label(ctx, target.scope.tool)]
-            : [],
-        );
-        if (added.length > 0)
-          additions.push(
-            t("runReport.alsoDeployed", { name: skill.skill_name, tools: added.join(t("common.listSeparator")) }),
-          );
-      }
     }
     // A cancelled row is counted in the headline and raises no entry.
   }
   out.errors.push(...targetErrors);
-  out.notes.push(...additions);
   for (const pair of ctx.declined ?? []) out.notes.push(declinedNote(ctx, pair.skillName, pair.tool));
   for (const skill of report.skills) {
     if (skill.status.status !== "refreshed" || !skill.status.edit_conflict)
@@ -547,7 +532,12 @@ function propagationEntries(
       continue;
     }
     errors.push({
-      title: ctx.t("errors.propagationFailedTitle", { name: skill.skillName, tool: label(ctx, tool) }),
+      // A row that never held a copy failed its first deploy; otherwise the
+      // app's own copy could not be updated.
+      title: ctx.t(target.status.first_deploy ? "propagationFirstDeploy.failedTitle" : "errors.propagationFailedTitle", {
+        name: skill.skillName,
+        tool: label(ctx, tool),
+      }),
       message: errorMessage(ctx, target.status.error),
       subject,
       error: target.status.error,

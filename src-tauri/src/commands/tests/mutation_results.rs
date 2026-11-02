@@ -43,20 +43,39 @@ impl Fixture {
             central: installed.central_path,
         }
     }
-    fn update(&self, reassert: bool) -> RefreshReport {
+    fn update(&self) -> RefreshReport {
         refresh_managed_skills_core(
             &self.paths,
             &self.store,
             &crate::core::credentials::MemoryStore::new(),
             RefreshSelection::Ids(vec![self.id.clone()]),
-            RefreshPolicy {
-                reassert_auto_sync: reassert,
-            },
             None,
-            5000,
             |_| {},
         )
         .unwrap()
+    }
+    /// Deploy the skill to `tool` (a first sync), so an Update has a
+    /// deployment to propagate to.
+    fn deploy_to(&self, tool: &str) {
+        use crate::core::global_sync::{sync_skills_to_tools, BatchPolicy, BatchSkill};
+        let outcomes = sync_skills_to_tools(
+            &self.paths.home,
+            &self.store,
+            &[BatchSkill {
+                skill_id: self.id.clone(),
+                skill_name: "alpha".into(),
+                source_path: self.central.clone(),
+            }],
+            &[tool.to_string()],
+            &BatchPolicy {
+                overwrite: false,
+                overwrite_if_same_content: true,
+                overrides: Vec::new(),
+            },
+            4000,
+            |_| {},
+        );
+        assert_eq!(outcomes.len(), 1);
     }
     fn result(&self, report: RefreshReport) -> SkillMutationResultDto {
         SkillMutationResultDto::from_report(&self.store, report).unwrap()
@@ -82,12 +101,13 @@ impl Fixture {
 }
 
 #[test]
-fn update_and_restore_catalog_include_replayed_override_and_reasserted_targets() {
+fn update_and_restore_catalog_include_replayed_override_and_propagated_targets() {
     for restore in [false, true] {
         let f = Fixture::new();
         set_invocation_override(&f.paths, &f.store, &f.id, Some(InvocationMode::UserOnly)).unwrap();
         let tool = crate::core::tool_adapters::adapter_by_key("claude_code").unwrap();
         crate::core::tool_adapters::mark_installed_in(&f.paths.home, tool);
+        f.deploy_to("claude_code");
         fs::write(
             f.source.join("SKILL.md"),
             "---\nname: alpha\ndescription: new description\n---\nnew\n",
@@ -96,7 +116,7 @@ fn update_and_restore_catalog_include_replayed_override_and_reasserted_targets()
         if restore {
             fs::remove_dir_all(&f.central).unwrap();
         }
-        let result = f.result(f.update(true));
+        let result = f.result(f.update());
         assert!(
             matches!(result.report.skills.as_slice(), [outcome] if matches!(outcome.status, SkillRefreshStatus::Refreshed { .. }))
         );
@@ -122,7 +142,7 @@ fn update_failure_returns_full_catalog_not_just_report_members() {
     let f = Fixture::new();
     let other = install_local_skill(&f.paths, &f.store, &f.source, Some("beta".into())).unwrap();
     fs::remove_dir_all(&f.source).unwrap();
-    let result = f.result(f.update(false));
+    let result = f.result(f.update());
     assert!(
         matches!(result.report.skills.as_slice(), [outcome] if matches!(outcome.status, SkillRefreshStatus::Failed { .. }))
     );
@@ -147,9 +167,7 @@ fn local_repoint_catalog_has_new_source_and_settled_target_failure() {
         RepointTarget::Local {
             path: new_source.to_string_lossy().into_owned(),
         },
-        RefreshPolicy::default(),
         None,
-        5000,
         |_| {},
         &RepointApi,
     )
@@ -157,7 +175,7 @@ fn local_repoint_catalog_has_new_source_and_settled_target_failure() {
     let result = f.result(report);
     assert!(
         matches!(result.report.skills.as_slice(), [outcome] if matches!(&outcome.status,
-            SkillRefreshStatus::Refreshed { targets, reassert_error: None, .. }
+            SkillRefreshStatus::Refreshed { targets, .. }
             if matches!(targets.as_slice(), [target] if matches!(target.status, PropagationStatus::Failed { .. }))
         ))
     );
@@ -211,9 +229,7 @@ fn git_repoint_catalog_has_replaced_source_and_repaired_central() {
             url: url.into(),
             selection: None,
         },
-        RefreshPolicy::default(),
         None,
-        5000,
         |_| {},
         &RepointApi,
     )
@@ -273,9 +289,7 @@ fn acquisition_skips_return_current_catalog_and_wire_reason() {
             &f.paths,
             &f.store,
             RefreshSelection::Ids(vec![f.id.clone()]),
-            RefreshPolicy::default(),
             None,
-            5000,
             |_| {},
             &|id, _| {
                 let mut row = f.store.get_skill_by_id(id)?.unwrap();
@@ -328,7 +342,7 @@ fn catalog_failure_after_settlement_is_an_error_never_an_empty_success() {
         let outcome =
             set_invocation_override(&f.paths, &f.store, &f.id, Some(InvocationMode::UserOnly))
                 .unwrap();
-        let report = f.update(false);
+        let report = f.update();
         rusqlite::Connection::open(f.store.db_path())
             .unwrap()
             .execute_batch("PRAGMA foreign_keys = OFF; DROP TABLE skill_targets;")

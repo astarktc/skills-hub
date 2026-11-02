@@ -365,8 +365,8 @@ pub enum TargetTransition<'a> {
     /// The insert-shaped sibling of [`Disabled`](Self::Disabled): a pair
     /// with no row yet is recorded `Disabled` under the caller's
     /// `target_id` (an existing row keeps its id and only flips status), so
-    /// a Tool the skill was never on can be switched off before any sync or
-    /// re-assert reaches it. `mode` and `target_path` are where the target
+    /// a Tool the skill was never on can be switched off before any Deploy
+    /// reaches it. `mode` and `target_path` are where the target
     /// *would* be.
     DisabledRecorded {
         skill_id: &'a str,

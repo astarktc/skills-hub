@@ -8,9 +8,11 @@
 //! in the acquired Update request: the single-skill Update (the Refresh
 //! batch of one, which takes the Mutation guard itself) settles the new
 //! source and bytes together through finalize, replaying Edits inside its
-//! window (ADR-0004), propagates, and honours the caller's auto-sync
-//! reassert policy. A refused target changes nothing and runs no Update; a
+//! window (ADR-0004) and propagates to the deployments that exist (never a
+//! new one — D34). A refused target changes nothing and runs no Update; a
 //! failed acquisition or finalize is report data and changes nothing either.
+//! A skill whose Delete was incomplete is not re-pointed: the batch reports
+//! it skipped (`RefreshSkipReason::DeleteIncomplete`, D35).
 //!
 //! Provenance on settle (`skill_update::apply_unlocked`): `→ Local` records
 //! `local`, the folder, no subpath and no revision; `→ Git` records `git`,
@@ -42,8 +44,7 @@ use super::installer::{
 };
 use super::manifest::{find_skill_md, parse_skill_md};
 use super::refresh::{
-    refresh_with_intent, RefreshPolicy, RefreshProgress, RefreshReport, RefreshSelection,
-    UpdateIntent,
+    refresh_with_intent, RefreshProgress, RefreshReport, RefreshSelection, UpdateIntent,
 };
 use super::skill_discovery::require_skill_md;
 use super::skill_matching::dir_name_of;
@@ -101,9 +102,7 @@ pub fn repoint_skill_source(
     credentials: &dyn CredentialStore,
     skill_id: &str,
     target: RepointTarget,
-    policy: RefreshPolicy,
     cancel: Option<&CancelToken>,
-    now: i64,
     on_progress: impl FnMut(RefreshProgress),
 ) -> Result<RefreshReport> {
     let token = super::settings::github_token_or_none(credentials);
@@ -112,9 +111,7 @@ pub fn repoint_skill_source(
         store,
         skill_id,
         target,
-        policy,
         cancel,
-        now,
         on_progress,
         &HttpGithubApi::new(token),
     )
@@ -128,9 +125,7 @@ pub(crate) fn repoint_skill_source_with(
     store: &SkillStore,
     skill_id: &str,
     target: RepointTarget,
-    policy: RefreshPolicy,
     cancel: Option<&CancelToken>,
-    now: i64,
     on_progress: impl FnMut(RefreshProgress),
     api: &(dyn GithubApi + Sync),
 ) -> Result<RefreshReport> {
@@ -145,9 +140,7 @@ pub(crate) fn repoint_skill_source_with(
                 paths,
                 store,
                 selection,
-                policy,
                 cancel,
-                now,
                 on_progress,
                 &|_, _| UpdateRequest::local(record.clone(), &folder, true),
                 UpdateIntent::Repoint,
@@ -165,9 +158,7 @@ pub(crate) fn repoint_skill_source_with(
                 paths,
                 store,
                 selection,
-                policy,
                 cancel,
-                now,
                 on_progress,
                 &|id, cancel| {
                     acquire_git_repoint(paths, store, id, cancel, api, ttl_ms, url, &source, pick)

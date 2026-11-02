@@ -17,7 +17,7 @@ use crate::core::manifest::{read_invocation_lines, InvocationMode};
 use crate::core::propagation::{PropagationScope, PropagationStatus};
 use crate::core::provenance::{is_refreshable, refresh_eligibility, RefreshEligibility};
 use crate::core::refresh::{
-    refresh_managed_skills, RefreshPolicy, RefreshReport, RefreshSelection, SkillRefreshStatus,
+    refresh_managed_skills, RefreshReport, RefreshSelection, RefreshSkipReason, SkillRefreshStatus,
 };
 use crate::core::repoint::{repoint_skill_source_with, RepointTarget};
 use crate::core::skill_store::{SkillRecord, SkillStore};
@@ -31,9 +31,7 @@ fn repoint_git(
     store: &SkillStore,
     skill_id: &str,
     url: &str,
-    policy: RefreshPolicy,
     cancel: Option<&CancelToken>,
-    now: i64,
     api: &(dyn GithubApi + Sync),
 ) -> anyhow::Result<RefreshReport> {
     repoint_skill_source_with(
@@ -44,9 +42,7 @@ fn repoint_git(
             url: url.into(),
             selection: None,
         },
-        policy,
         cancel,
-        now,
         |_| {},
         api,
     )
@@ -58,7 +54,6 @@ fn repoint_local(
     store: &SkillStore,
     skill_id: &str,
     folder: &Path,
-    policy: RefreshPolicy,
 ) -> anyhow::Result<RefreshReport> {
     repoint_skill_source_with(
         paths,
@@ -67,26 +62,33 @@ fn repoint_local(
         RepointTarget::Local {
             path: folder.to_string_lossy().into_owned(),
         },
-        policy,
         None,
-        3000,
         |_| {},
         &RepointApi,
     )
 }
 
-fn refresh(f: &Fixture, policy: RefreshPolicy) -> RefreshReport {
-    refresh_managed_skills(
-        &f.paths,
+/// Deploy the fixture skill to `tool` the way Sync does (a first sync).
+fn sync_to(f: &Fixture, tool: &str) {
+    use crate::core::global_sync::{sync_skills_to_tools, BatchPolicy, BatchSkill};
+    let skill = record(f);
+    sync_skills_to_tools(
+        &f.paths.home,
         &f.store,
-        &crate::core::credentials::MemoryStore::new(),
-        RefreshSelection::All,
-        policy,
-        None,
-        3000,
+        &[BatchSkill {
+            skill_id: skill.id,
+            skill_name: skill.name,
+            source_path: PathBuf::from(skill.central_path),
+        }],
+        &[tool.to_string()],
+        &BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: true,
+            overrides: Vec::new(),
+        },
+        2000,
         |_| {},
-    )
-    .expect("refresh reads its own skill list")
+    );
 }
 
 fn record(f: &Fixture) -> SkillRecord {
@@ -175,9 +177,7 @@ fn git_repoint_does_not_use_old_subpath_suffix_for_new_url() {
         &f.store,
         &f.skill_id,
         "https://github.com/owner/repo/tree/main/skills/old",
-        RefreshPolicy::default(),
         None,
-        3000,
         &api,
     )
     .unwrap();
@@ -200,17 +200,7 @@ fn git_repoint_does_not_use_old_subpath_suffix_for_new_url() {
 fn git_repoint_slash_branch_persists_resolved_path_and_original_url() {
     let f = git_repoint_fixture();
     let url = "https://github.com/owner/repo/tree/feature/x/skills/alpha";
-    let report = repoint_git(
-        &f.paths,
-        &f.store,
-        &f.skill_id,
-        url,
-        RefreshPolicy::default(),
-        None,
-        3000,
-        &RepointApi,
-    )
-    .unwrap();
+    let report = repoint_git(&f.paths, &f.store, &f.skill_id, url, None, &RepointApi).unwrap();
     assert!(matches!(
         report.skills[0].status,
         SkillRefreshStatus::Refreshed { .. }
@@ -230,12 +220,7 @@ fn git_repoint_acquires_before_rewriting_and_rebuilds_central() {
     let f = fixture();
     let tool = adapter_by_key("claude_code").unwrap();
     mark_installed_in(&f.paths.home, tool);
-    refresh(
-        &f,
-        RefreshPolicy {
-            reassert_auto_sync: true,
-        },
-    );
+    sync_to(&f, "claude_code");
     let mut original = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
     original.source_type = "git".into();
     original.source_ref = Some("https://github.com/owner/repo/tree/main/old".into());
@@ -243,17 +228,7 @@ fn git_repoint_acquires_before_rewriting_and_rebuilds_central() {
     f.store.upsert_skill(&original).unwrap();
     fs::remove_dir_all(&original.central_path).unwrap();
     let url = "https://github.com/owner/repo/tree/main/new";
-    let report = repoint_git(
-        &f.paths,
-        &f.store,
-        &f.skill_id,
-        url,
-        RefreshPolicy::default(),
-        None,
-        3000,
-        &RepointApi,
-    )
-    .unwrap();
+    let report = repoint_git(&f.paths, &f.store, &f.skill_id, url, None, &RepointApi).unwrap();
     assert!(matches!(
         report.skills[0].status,
         SkillRefreshStatus::Refreshed { .. }
@@ -292,17 +267,8 @@ fn git_repoint_accepts_add_flow_github_skill_links() {
         "https://github.com/owner/repo.git/tree/main/skills/foo/",
     ] {
         let f = git_repoint_fixture();
-        let report = repoint_git(
-            &f.paths,
-            &f.store,
-            &f.skill_id,
-            url,
-            RefreshPolicy::default(),
-            None,
-            3000,
-            &RepointApi,
-        )
-        .unwrap_or_else(|err| panic!("{url}: {err:#}"));
+        let report = repoint_git(&f.paths, &f.store, &f.skill_id, url, None, &RepointApi)
+            .unwrap_or_else(|err| panic!("{url}: {err:#}"));
         assert!(matches!(
             report.skills[0].status,
             SkillRefreshStatus::Refreshed { .. }
@@ -338,16 +304,7 @@ fn git_repoint_rejects_malformed_url_before_acquisition() {
         "https://github.com/owner/repo/tree/main/a b",
         "https://github.com/owner/.git",
     ] {
-        let result = repoint_git(
-            &f.paths,
-            &f.store,
-            &f.skill_id,
-            url,
-            RefreshPolicy::default(),
-            None,
-            3000,
-            &RepointApi,
-        );
+        let result = repoint_git(&f.paths, &f.store, &f.skill_id, url, None, &RepointApi);
         assert!(
             matches!(
                 result.unwrap_err().downcast_ref::<SignalError>(),
@@ -366,44 +323,6 @@ fn git_repoint_fixture() -> Fixture {
     record.source_subpath = Some("old".into());
     f.store.upsert_skill(&record).unwrap();
     f
-}
-
-#[test]
-fn git_repoint_honours_auto_sync_reassert_policy() {
-    for reassert_auto_sync in [false, true] {
-        let f = git_repoint_fixture();
-        let tool = adapter_by_key("claude_code").unwrap();
-        mark_installed_in(&f.paths.home, tool);
-        assert!(f.store.list_skill_targets(&f.skill_id).unwrap().is_empty());
-        let report = repoint_git(
-            &f.paths,
-            &f.store,
-            &f.skill_id,
-            "https://github.com/owner/repo/tree/main/new",
-            RefreshPolicy { reassert_auto_sync },
-            None,
-            3000,
-            &RepointApi,
-        )
-        .unwrap();
-        assert!(matches!(
-            report.skills[0].status,
-            SkillRefreshStatus::Refreshed {
-                reassert_error: None,
-                ..
-            }
-        ));
-        let targets = f.store.list_skill_targets(&f.skill_id).unwrap();
-        assert_eq!(targets.len(), usize::from(reassert_auto_sync));
-        assert_eq!(
-            f.paths
-                .home
-                .join(tool.relative_skills_dir)
-                .join("alpha/SKILL.md")
-                .is_file(),
-            reassert_auto_sync
-        );
-    }
 }
 
 struct EmptyRepointApi;
@@ -440,9 +359,7 @@ fn git_repoint_non_skill_directory_never_replaces_a_working_skill() {
         &f.store,
         &f.skill_id,
         "https://github.com/owner/repo/tree/main/docs",
-        RefreshPolicy::default(),
         None,
-        3000,
         &EmptyRepointApi,
     )
     .unwrap();
@@ -501,9 +418,7 @@ fn git_repoint_404_preserves_every_record_field_and_central_bytes() {
         &f.store,
         &f.skill_id,
         "https://github.com/other/repo/tree/main/missing",
-        RefreshPolicy::default(),
         None,
-        3000,
         &MissingRepointApi,
     )
     .unwrap();
@@ -570,17 +485,7 @@ fn git_repoint_to_another_repo_propagates_every_existing_scope() {
         })
         .unwrap();
     let url = "https://github.com/new-owner/new-repo/tree/develop/new-skill";
-    let report = repoint_git(
-        &f.paths,
-        &f.store,
-        &f.skill_id,
-        url,
-        RefreshPolicy::default(),
-        None,
-        3000,
-        &RepointApi,
-    )
-    .unwrap();
+    let report = repoint_git(&f.paths, &f.store, &f.skill_id, url, None, &RepointApi).unwrap();
     let SkillRefreshStatus::Refreshed { targets, .. } = &report.skills[0].status else {
         panic!("{report:?}")
     };
@@ -684,9 +589,7 @@ fn git_repoint_root_manifest_stores_no_subpath() {
         &f.store,
         &f.skill_id,
         "https://github.com/new/repo/blob/main/SKILL.md",
-        RefreshPolicy::default(),
         None,
-        3000,
         &RepointApi,
     )
     .unwrap();
@@ -716,17 +619,7 @@ fn git_repoint_repo_url_resolves_by_the_existing_skill_name() {
         "github.com/new/repo",
         "https://github.com/new/repo.git",
     ] {
-        let report = repoint_git(
-            &f.paths,
-            &f.store,
-            &f.skill_id,
-            url,
-            RefreshPolicy::default(),
-            None,
-            3000,
-            &RepointApi,
-        )
-        .unwrap();
+        let report = repoint_git(&f.paths, &f.store, &f.skill_id, url, None, &RepointApi).unwrap();
         assert!(
             matches!(
                 report.skills[0].status,
@@ -755,9 +648,7 @@ fn git_repoint_ambiguous_repo_preserves_the_record_byte_for_byte() {
         &f.store,
         &f.skill_id,
         "https://github.com/new/repo",
-        RefreshPolicy::default(),
         None,
-        3000,
         &RepointApi,
     )
     .unwrap();
@@ -859,39 +750,67 @@ fn central(f: &Fixture) -> PathBuf {
     PathBuf::from(record(f).central_path)
 }
 
+/// D35: a skill whose Delete was incomplete is not re-pointed — a Re-point
+/// is a batch of one, so the batch sets it aside with the typed skip, for
+/// either target: no acquisition, record, central copy, targets and health
+/// untouched.
 #[test]
-fn local_repoint_honours_auto_sync_reassert_policy() {
-    for reassert_auto_sync in [false, true] {
-        let (f, new) = moved_source(fixture());
-        let tool = adapter_by_key("claude_code").unwrap();
-        mark_installed_in(&f.paths.home, tool);
-        assert!(f.store.list_skill_targets(&f.skill_id).unwrap().is_empty());
-        let report = repoint_local(
+fn repoint_of_a_delete_incomplete_skill_is_skipped() {
+    let (f, new) = moved_source(fixture());
+    let tool = adapter_by_key("claude_code").unwrap();
+    mark_installed_in(&f.paths.home, tool);
+    sync_to(&f, "claude_code");
+    crate::core::skill_health::record_outcome(
+        &f.store,
+        &f.skill_id,
+        crate::core::skill_health::SkillOutcomeKind::DeleteIncomplete,
+        &CommandError::Other {
+            message: "permission denied".into(),
+        },
+    )
+    .unwrap();
+    // The records carry no `PartialEq`; their debug form is the snapshot.
+    let snapshot = |f: &Fixture| {
+        format!(
+            "{:?} {:?} {:?}",
+            record(f),
+            f.store.list_skill_targets(&f.skill_id).unwrap(),
+            f.store.skill_outcome(&f.skill_id).unwrap()
+        )
+    };
+    let before = snapshot(&f);
+    let central_before = fs::read(central(&f).join("a.txt")).unwrap();
+
+    let reports = [
+        repoint_local(&f.paths, &f.store, &f.skill_id, &new).unwrap(),
+        repoint_git(
             &f.paths,
             &f.store,
             &f.skill_id,
-            &new,
-            RefreshPolicy { reassert_auto_sync },
+            "https://github.com/owner/repo/tree/main/new",
+            None,
+            &RepointApi,
         )
-        .unwrap();
-        assert!(matches!(
-            report.skills[0].status,
-            SkillRefreshStatus::Refreshed {
-                reassert_error: None,
-                ..
-            }
-        ));
-        let targets = f.store.list_skill_targets(&f.skill_id).unwrap();
-        assert_eq!(targets.len(), usize::from(reassert_auto_sync));
-        assert_eq!(
-            f.paths
-                .home
-                .join(tool.relative_skills_dir)
-                .join("alpha/SKILL.md")
-                .is_file(),
-            reassert_auto_sync
+        .unwrap(),
+    ];
+
+    for report in &reports {
+        let [outcome] = report.skills.as_slice() else {
+            panic!("one outcome for the one skill: {report:?}");
+        };
+        assert!(
+            matches!(
+                outcome.status,
+                SkillRefreshStatus::Skipped {
+                    reason: RefreshSkipReason::DeleteIncomplete
+                }
+            ),
+            "got {:?}",
+            outcome.status
         );
     }
+    assert_eq!(snapshot(&f), before, "record, targets and health untouched");
+    assert_eq!(fs::read(central(&f).join("a.txt")).unwrap(), central_before);
 }
 
 /// Re-point is one operation: the record names the new folder and the
@@ -905,14 +824,7 @@ fn local_repoint_rewrites_the_source_and_lands_the_new_folders_bytes() {
         Some(UnlocatableState::SourceMissing)
     );
 
-    let report = repoint_local(
-        &f.paths,
-        &f.store,
-        &f.skill_id,
-        &new,
-        RefreshPolicy::default(),
-    )
-    .expect("re-point");
+    let report = repoint_local(&f.paths, &f.store, &f.skill_id, &new).expect("re-point");
 
     assert_refreshed(&report);
     assert_eq!(report.skills[0].skill_id, f.skill_id);
@@ -938,9 +850,7 @@ fn local_repoint_expands_a_home_relative_folder() {
         RepointTarget::Local {
             path: "~/Documents/new-place".into(),
         },
-        RefreshPolicy::default(),
         None,
-        3000,
         |_| {},
         &RepointApi,
     )
@@ -956,15 +866,7 @@ fn local_repoint_expands_a_home_relative_folder() {
 fn local_repoint_validates_the_new_folder_the_way_add_does() {
     let (f, _new) = moved_source(fixture());
     let before = format!("{:?}", record(&f));
-    let repoint = |folder: &Path| {
-        repoint_local(
-            &f.paths,
-            &f.store,
-            &f.skill_id,
-            folder,
-            RefreshPolicy::default(),
-        )
-    };
+    let repoint = |folder: &Path| repoint_local(&f.paths, &f.store, &f.skill_id, folder);
 
     // Not there.
     let err = repoint(&f.paths.home.join("nowhere")).expect_err("a missing folder is refused");
@@ -1025,9 +927,7 @@ fn an_unknown_skill_is_refused_typed_for_either_target() {
             &f.store,
             "no-such-id",
             target,
-            RefreshPolicy::default(),
             None,
-            3000,
             |_| {},
             &RepointApi,
         )
@@ -1117,14 +1017,7 @@ fn git_to_local_records_the_folder_and_drops_every_git_fact() {
     as_git(&f);
     let folder = new_folder(&f, "folder bytes");
 
-    let report = repoint_local(
-        &f.paths,
-        &f.store,
-        &f.skill_id,
-        &folder,
-        RefreshPolicy::default(),
-    )
-    .unwrap();
+    let report = repoint_local(&f.paths, &f.store, &f.skill_id, &folder).unwrap();
 
     assert_refreshed(&report);
     assert_local_source(&record(&f), &folder);
@@ -1136,17 +1029,7 @@ fn git_to_local_records_the_folder_and_drops_every_git_fact() {
 #[test]
 fn local_to_git_records_the_acquisition_as_add_does() {
     let f = fixture();
-    let report = repoint_git(
-        &f.paths,
-        &f.store,
-        &f.skill_id,
-        NEW_URL,
-        RefreshPolicy::default(),
-        None,
-        3000,
-        &RepointApi,
-    )
-    .unwrap();
+    let report = repoint_git(&f.paths, &f.store, &f.skill_id, NEW_URL, None, &RepointApi).unwrap();
 
     assert_refreshed(&report);
     assert_git_source(&record(&f), NEW_URL);
@@ -1161,14 +1044,7 @@ fn imported_to_local_stops_being_imported_and_becomes_refreshable() {
     let imported = as_imported(&f);
     let folder = new_folder(&f, "folder bytes");
 
-    let report = repoint_local(
-        &f.paths,
-        &f.store,
-        &imported.id,
-        &folder,
-        RefreshPolicy::default(),
-    )
-    .unwrap();
+    let report = repoint_local(&f.paths, &f.store, &imported.id, &folder).unwrap();
 
     assert_refreshed(&report);
     let after = f.store.get_skill_by_id(&imported.id).unwrap().unwrap();
@@ -1189,9 +1065,7 @@ fn imported_to_local_stops_being_imported_and_becomes_refreshable() {
         &f.store,
         &crate::core::credentials::MemoryStore::new(),
         RefreshSelection::All,
-        RefreshPolicy::default(),
         None,
-        4000,
         |_| {},
     )
     .unwrap();
@@ -1212,17 +1086,7 @@ fn imported_to_git_stops_being_imported_and_becomes_refreshable() {
     let f = fixture();
     let imported = as_imported(&f);
 
-    let report = repoint_git(
-        &f.paths,
-        &f.store,
-        &imported.id,
-        NEW_URL,
-        RefreshPolicy::default(),
-        None,
-        3000,
-        &RepointApi,
-    )
-    .unwrap();
+    let report = repoint_git(&f.paths, &f.store, &imported.id, NEW_URL, None, &RepointApi).unwrap();
 
     assert_refreshed(&report);
     let after = f.store.get_skill_by_id(&imported.id).unwrap().unwrap();
@@ -1251,14 +1115,7 @@ fn a_failed_local_repoint_of_a_git_skill_changes_nothing() {
         )
         .unwrap();
 
-    let report = repoint_local(
-        &f.paths,
-        &f.store,
-        &f.skill_id,
-        &folder,
-        RefreshPolicy::default(),
-    )
-    .unwrap();
+    let report = repoint_local(&f.paths, &f.store, &f.skill_id, &folder).unwrap();
 
     assert!(
         matches!(report.skills[0].status, SkillRefreshStatus::Failed { .. }),
@@ -1289,14 +1146,7 @@ fn a_git_to_local_repoint_replays_the_invocation_edit_onto_the_new_bytes() {
     .unwrap();
     let folder = new_folder(&f, "folder bytes");
 
-    let report = repoint_local(
-        &f.paths,
-        &f.store,
-        &f.skill_id,
-        &folder,
-        RefreshPolicy::default(),
-    )
-    .unwrap();
+    let report = repoint_local(&f.paths, &f.store, &f.skill_id, &folder).unwrap();
 
     assert!(
         matches!(
@@ -1615,9 +1465,7 @@ fn repoint_to_a_picked_candidate_lands_that_folder_and_records_it() {
             url: url.into(),
             selection: Some(picked(&listing, "beta")),
         },
-        RefreshPolicy::default(),
         None,
-        3000,
         |_| {},
         &SeededFolderApi,
     )

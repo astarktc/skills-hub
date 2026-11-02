@@ -31,13 +31,14 @@ fn shared_edit_update_report_preserves_classified_failure_on_the_wire() {
             error: CommandError::from_anyhow(anyhow::anyhow!(SignalError::CentralPathMissing {
                 path: "central".into(),
             })),
+            first_deploy: false,
         },
     };
     assert_eq!(
         serde_json::to_value(target).unwrap(),
         serde_json::json!({
             "scope": { "scope": "global", "tool": "cursor" },
-            "status": { "status": "failed", "error": { "code": "CENTRAL_PATH_MISSING", "path": "central" } }
+            "status": { "status": "failed", "error": { "code": "CENTRAL_PATH_MISSING", "path": "central" }, "first_deploy": false }
         })
     );
     let skipped = PropagationOutcome {
@@ -401,7 +402,11 @@ fn a_missing_central_source_fails_every_row_as_report_data() {
 
     for tool in ["amp", "kimi_cli"] {
         match outcome_for(&outcomes, &global(tool)) {
-            PropagationStatus::Failed { error } => {
+            PropagationStatus::Failed {
+                error,
+                first_deploy,
+            } => {
+                assert!(!first_deploy, "an owned copy failed to update");
                 assert!(
                     matches!(error,
                         crate::core::errors::CommandError::InvalidPath { path, reason }
@@ -535,9 +540,7 @@ fn update_supplies_a_real_hash_to_copy_assignments_and_reconcile_keeps_synced() 
         &f.store,
         &crate::core::credentials::MemoryStore::new(),
         refresh::RefreshSelection::Ids(vec![f.skill_id.clone()]),
-        refresh::RefreshPolicy::default(),
         None,
-        5000,
         |_| {},
     )
     .unwrap();

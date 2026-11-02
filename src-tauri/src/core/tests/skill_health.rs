@@ -18,7 +18,7 @@ use crate::core::global_sync::{
 use crate::core::installer::{install_local_skill, InstallerPaths};
 use crate::core::manifest::InvocationMode;
 use crate::core::refresh::{
-    refresh_managed_skills, refresh_with_intent, RefreshPolicy, RefreshReport, RefreshSelection,
+    refresh_managed_skills, refresh_with_intent, RefreshReport, RefreshSelection,
     SkillRefreshStatus, UpdateIntent,
 };
 use crate::core::skill_catalog::managed_skill_catalog;
@@ -66,9 +66,7 @@ impl Fixture {
             &self.store,
             &crate::core::credentials::MemoryStore::new(),
             RefreshSelection::Ids(vec![self.id.clone()]),
-            RefreshPolicy::default(),
             None,
-            5000,
             |_| {},
         )
         .unwrap()
@@ -340,9 +338,7 @@ fn a_failed_repoint_acquisition_records_repoint_failed() {
         &f.paths,
         &f.store,
         RefreshSelection::Ids(vec![f.id.clone()]),
-        RefreshPolicy::default(),
         None,
-        5000,
         |_| {},
         &|_, _| {
             Err(anyhow::anyhow!(SignalError::GithubSkillNotFound {
@@ -373,9 +369,7 @@ fn a_refused_repoint_target_fails_the_command_and_records_nothing() {
         crate::core::repoint::RepointTarget::Local {
             path: f.dir.path().join("nowhere").to_string_lossy().into_owned(),
         },
-        RefreshPolicy::default(),
         None,
-        5000,
         |_| {},
     );
     assert!(result.is_err(), "a refused target is a whole-command error");
@@ -392,9 +386,7 @@ fn a_cancelled_acquisition_records_nothing() {
         &f.paths,
         &f.store,
         RefreshSelection::Ids(vec![f.id.clone()]),
-        RefreshPolicy::default(),
         None,
-        5000,
         |_| {},
         &|_, _| Err(anyhow::anyhow!(SignalError::Cancelled)),
         UpdateIntent::Update,
@@ -552,7 +544,9 @@ fn a_failed_first_sync_records_an_error_row_that_owns_nothing() {
         matches!(
             propagation.targets[0].status,
             crate::core::propagation::PropagationStatus::Failed {
-                error: CommandError::TargetExists { .. }
+                error: CommandError::TargetExists { .. },
+                // It never materialised: this was a first deploy.
+                first_deploy: true,
             }
         ),
         "{propagation:?}"

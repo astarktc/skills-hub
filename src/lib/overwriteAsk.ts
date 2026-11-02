@@ -206,7 +206,7 @@ export function mergeProjectRetry(
 }
 
 // ---------------------------------------------------------------------------
-// Refresh / Update / Restore / Re-point / Edit: Propagation and the re-assert
+// Refresh / Update / Restore / Re-point / Edit: Propagation
 // ---------------------------------------------------------------------------
 
 /**
@@ -224,8 +224,8 @@ export type CollisionRetry = {
 export type DeclinedPair = { skillName: string; tool: string };
 
 /**
- * The askable rows of one skill's Sync targets as Propagation (and the
- * auto-sync re-assert, which reports in the same shape) settled them: a
+ * The askable rows of one skill's Sync targets as Propagation settled them
+ * (a `TARGET_EXISTS` from the first sync of a row that owns nothing): a
  * global row is a (skill, Tool) pair, a project row an assignment.
  */
 export function propagationCollisionRows(
@@ -317,7 +317,9 @@ export function mergePropagationRetry(
     if (settled.status === "declined") {
       declined.push({ skillName: skill.skillName, tool: target.scope.tool });
     } else if (settled.status === "failed") {
-      out.push({ scope: target.scope, status: { status: "failed", error: settled.error } });
+      // The retry wrote the same row: still a first deploy if the asked one was.
+      const firstDeploy = target.status.status === "failed" && target.status.first_deploy;
+      out.push({ scope: target.scope, status: { status: "failed", error: settled.error, first_deploy: firstDeploy } });
     }
   }
   return { targets: out, declined };

@@ -34,8 +34,8 @@ use crate::core::onboarding_import::{
     ImportReport, ImportSelection,
 };
 use crate::core::refresh::{
-    refresh_managed_skills as refresh_managed_skills_core, RefreshPhase, RefreshPolicy,
-    RefreshReport, RefreshSelection,
+    refresh_managed_skills as refresh_managed_skills_core, RefreshPhase, RefreshReport,
+    RefreshSelection,
 };
 use crate::core::repoint::RepointTarget;
 use crate::core::settings::{
@@ -556,8 +556,8 @@ pub async fn sync_skills_to_tools(
 
 /// Disable a scope — one (skill, Tool) pair, one skill, or several skills
 /// (see **Disabled** in `CONTEXT.md`): its artifacts are removed and their
-/// rows kept `disabled`, so no Refresh, Propagation or re-assert brings them
-/// back. Per-target failures are report data (rows kept `error`, ADR-0002).
+/// rows kept `disabled`, so no Refresh, Propagation or sync fan-out brings
+/// them back. Per-target failures are report data (rows kept `error`, ADR-0002).
 #[tauri::command]
 #[specta::specta]
 pub async fn disable_skill_targets(
@@ -597,15 +597,6 @@ pub async fn enable_skill_targets(
     .map_err(CommandError::from_anyhow)
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Type)]
-pub struct RefreshPolicyDto {
-    /// Also sync each refreshed skill to installed Tools it is not on yet
-    /// (the auto-sync invariant, re-asserted). The caller decides — the
-    /// backend never reads the auto-sync setting behind its back.
-    #[serde(default)]
-    pub reassert_auto_sync: bool,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum RefreshPhaseDto {
@@ -635,7 +626,6 @@ pub async fn refresh_managed_skills(
     store: State<'_, SkillStore>,
     cancel: State<'_, Arc<CancelToken>>,
     skillIds: Option<Vec<String>>,
-    policy: RefreshPolicyDto,
     on_progress: Channel<RefreshProgressDto>,
 ) -> Result<RefreshReport, CommandError> {
     let store = store.inner().clone();
@@ -652,11 +642,7 @@ pub async fn refresh_managed_skills(
             &store,
             &credential_store(),
             selection,
-            RefreshPolicy {
-                reassert_auto_sync: policy.reassert_auto_sync,
-            },
             Some(&cancel),
-            now_ms(),
             |p| {
                 let _ = on_progress.send(RefreshProgressDto {
                     index: p.index as u32,
@@ -677,7 +663,7 @@ pub async fn refresh_managed_skills(
 }
 
 /// Update / Restore use the existing batch-of-one operation, then read the
-/// complete catalog after settlement (including auto-sync reassert). This is
+/// complete catalog after settlement. This is
 /// a fresh read, not a transaction across acquisition, the database and disk.
 #[tauri::command]
 #[specta::specta]
@@ -686,7 +672,6 @@ pub async fn update_managed_skill(
     store: State<'_, SkillStore>,
     cancel: State<'_, Arc<CancelToken>>,
     skill_id: String,
-    policy: RefreshPolicyDto,
     on_progress: Channel<RefreshProgressDto>,
 ) -> Result<SkillMutationResultDto, CommandError> {
     let report = refresh_managed_skills(
@@ -694,7 +679,6 @@ pub async fn update_managed_skill(
         store.clone(),
         cancel,
         Some(vec![skill_id]),
-        policy,
         on_progress,
     )
     .await?;
@@ -724,8 +708,9 @@ impl SkillMutationResultDto {
 
 /// Re-point any Managed skill (`git`, `local` or `imported`) at a GitHub URL
 /// or a local folder and update from it (see **Re-point** in `CONTEXT.md`).
-/// Honours the Update auto-sync reassert policy; the Update's outcome is
-/// report data, answered with the catalog read after settlement.
+/// Like every Update it only brings existing deployments into line; the
+/// Update's outcome is report data, answered with the catalog read after
+/// settlement.
 #[tauri::command]
 #[specta::specta]
 #[allow(non_snake_case)]
@@ -735,7 +720,6 @@ pub async fn repoint_skill_source(
     cancel: State<'_, Arc<CancelToken>>,
     skillId: String,
     target: RepointTarget,
-    policy: RefreshPolicyDto,
 ) -> Result<SkillMutationResultDto, CommandError> {
     let store = store.inner().clone();
     let cancel = cancel.inner().clone();
@@ -748,11 +732,7 @@ pub async fn repoint_skill_source(
             &credential_store(),
             &skillId,
             target,
-            crate::core::refresh::RefreshPolicy {
-                reassert_auto_sync: policy.reassert_auto_sync,
-            },
             Some(&cancel),
-            now_ms(),
             |_| {},
         )?;
         SkillMutationResultDto::from_report(&store, report)

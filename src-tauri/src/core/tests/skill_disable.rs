@@ -1,6 +1,6 @@
 //! Tests for `core::skill_disable` — the durable "not on this Tool" at two
 //! grains, and the skip every automatic pass owes it (Propagation, the
-//! Refresh re-assert, the global sync batch, project sync).
+//! global sync batch, project sync).
 //!
 //! Every case runs against a temp home / central dir / DB; installedness is
 //! faked through `mark_installed_in`. Nothing touches the operator's home.
@@ -25,9 +25,7 @@ use crate::core::project_sync::{
 use crate::core::propagation::{
     propagate_unlocked, PropagationScope, PropagationSkip, PropagationStatus,
 };
-use crate::core::refresh::{
-    refresh_managed_skills, RefreshPolicy, RefreshSelection, SkillRefreshStatus,
-};
+use crate::core::refresh::{refresh_managed_skills, RefreshSelection, SkillRefreshStatus};
 use crate::core::skill_disable::{disable_targets, enable_targets, DisableScope, EnableReport};
 use crate::core::skill_store::{ProjectRecord, ProjectToolRecord, SkillStore};
 use crate::core::sync_status::SyncStatus;
@@ -87,17 +85,13 @@ impl Fixture {
             |_| {},
         )
     }
-    fn refresh_with_reassert(&self) -> Vec<(PropagationScope, PropagationStatus)> {
+    fn refresh_all(&self) -> Vec<(PropagationScope, PropagationStatus)> {
         let report = refresh_managed_skills(
             &self.paths,
             &self.store,
             &crate::core::credentials::MemoryStore::new(),
             RefreshSelection::All,
-            RefreshPolicy {
-                reassert_auto_sync: true,
-            },
             None,
-            NOW + 1,
             |_| {},
         )
         .expect("refresh");
@@ -246,12 +240,12 @@ fn disabling_a_pair_removes_the_artifact_and_keeps_the_row_disabled() {
 }
 
 #[test]
-fn a_disabled_pair_survives_refresh_reassert_and_propagation() {
+fn a_disabled_pair_survives_refresh_and_propagation() {
     let f = fixture(&["claude_code", "codex"]);
     f.sync(&["claude_code", "codex"]);
     disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
 
-    let targets = f.refresh_with_reassert();
+    let targets = f.refresh_all();
 
     assert!(
         targets.iter().any(|(scope, status)| {
@@ -289,7 +283,7 @@ fn a_disabled_pair_survives_refresh_reassert_and_propagation() {
 }
 
 #[test]
-fn disabling_a_pair_with_no_row_records_a_marker_the_reassert_honours() {
+fn disabling_a_pair_with_no_row_records_a_marker_a_refresh_honours() {
     let f = fixture(&["claude_code"]);
     assert_eq!(f.status("claude_code"), None);
 
@@ -297,7 +291,7 @@ fn disabling_a_pair_with_no_row_records_a_marker_the_reassert_honours() {
     assert!(report.targets.is_empty(), "nothing to remove");
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Disabled));
 
-    f.refresh_with_reassert();
+    f.refresh_all();
     assert!(!exists_any(&f.global_path(".claude/skills")));
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Disabled));
 }
@@ -443,8 +437,8 @@ fn a_disabled_skill_is_never_rematerialised_by_any_automatic_pass() {
     assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
     disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
 
-    // Refresh + re-assert: codex was never a target; it must not become one.
-    let targets = f.refresh_with_reassert();
+    // Refresh: codex was never a target; it must not become one.
+    let targets = f.refresh_all();
     assert!(
         targets.iter().all(|(_, status)| matches!(
             status,
@@ -1515,54 +1509,4 @@ fn enable_admission_keeps_the_ownership_of_a_failed_removal() {
         .unwrap();
     assert_eq!(row(&f).status, SyncStatus::Disabled);
     assert!(!row(&f).owns_artifact(), "admission clears a disabled row");
-}
-
-/// The Refresh re-assert's collision is askable: the row names the pair
-/// (the skill of its outcome, the Tool of its global scope) and carries the
-/// facts; the retry is an ordinary sync with the per-pair override.
-#[test]
-fn a_reassert_collision_row_is_askable_and_retried_through_the_sync_batch() {
-    use crate::core::global_sync::OverrideDecision;
-    let f = fixture(&["claude_code"]);
-    let path = f.global_path(".claude/skills");
-    foreign_folder(&path);
-
-    let targets = f.refresh_with_reassert();
-    let error = targets
-        .iter()
-        .find_map(|(scope, status)| match (scope, status) {
-            (PropagationScope::Global { tool }, PropagationStatus::Failed { error })
-                if tool == "claude_code" =>
-            {
-                Some(error)
-            }
-            _ => None,
-        })
-        .unwrap_or_else(|| panic!("{targets:?}"));
-    ask_facts(error, &path);
-    assert_eq!(f.status("claude_code"), None, "asked first: no row");
-
-    let skill = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
-    let retried = sync_skills_to_tools(
-        f.home(),
-        &f.store,
-        &[BatchSkill {
-            skill_id: skill.id,
-            skill_name: skill.name,
-            source_path: PathBuf::from(skill.central_path),
-        }],
-        &["claude_code".to_string()],
-        &BatchPolicy {
-            overwrite: false,
-            overwrite_if_same_content: true,
-            overrides: overwrite_or_keep(&f, "claude_code", OverrideDecision::Overwrite),
-        },
-        NOW,
-        |_| {},
-    );
-    assert!(matches!(
-        retried[0].status,
-        BatchTargetStatus::Synced { .. }
-    ));
-    assert!(!foreign_bytes_survive(&path));
 }

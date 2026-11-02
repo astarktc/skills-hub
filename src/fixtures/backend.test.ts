@@ -5,6 +5,7 @@ import {
   type ManagedSkillDto,
   type ProjectDto,
   type RefreshProgressDto,
+  type SkillRefreshStatus,
   type SyncProgressDto,
   type ProjectViewDto,
   type SyncMode,
@@ -188,7 +189,7 @@ describe("rich", () => {
   it("streams both Refresh phases and reports every refreshable skill", async () => {
     const { handlers, state } = backendFor("rich");
     const progress = sink<{ phase: string }>();
-    const report = await handlers.refreshManagedSkills(null, { reassert_auto_sync: true }, progress.channel );
+    const report = await handlers.refreshManagedSkills(null, progress.channel );
     expect(report.skills).toHaveLength(60);
     expect(new Set(progress.ticks.map((t) => t.phase))).toEqual(new Set(["acquiring", "applying"]));
     // Propagation leaves every project row content-identity consistent.
@@ -199,7 +200,7 @@ describe("rich", () => {
   it("re-materialises errored copies on Update; links follow the source", async () => {
     const { handlers } = backendFor("rich");
     const worktrees = await byName(handlers, "using-git-worktrees");
-    const { report } = await handlers.updateManagedSkill(worktrees.id, { reassert_auto_sync: false }, sink().channel);
+    const { report } = await handlers.updateManagedSkill(worktrees.id, sink().channel);
     const status = report.skills[0].status;
     if (status.status !== "refreshed") throw new Error(`expected refreshed, got ${status.status}`);
     const global = Object.fromEntries(
@@ -245,14 +246,13 @@ describe("failures", () => {
 
   it("answers Refresh (all) with every per-skill outcome kind", async () => {
     const { handlers } = backendFor("failures");
-    const report = await handlers.refreshManagedSkills(null, { reassert_auto_sync: true }, sink().channel );
+    const report = await handlers.refreshManagedSkills(null, sink().channel );
     const kinds = new Set(report.skills.map((s) => s.status.status));
     expect(kinds).toEqual(new Set(["refreshed", "failed", "skipped", "skipped_acquisition"]));
     const codes = report.skills.flatMap((s) => (s.status.status === "failed" ? [s.status.error.code] : []));
     expect(codes).toEqual(expect.arrayContaining(["RATE_LIMITED", "GITHUB_SKILL_NOT_FOUND", "GIT_CLONE_FAILED", "SYMLINK_ESCAPES_REPO"]));
     const refreshed = report.skills.flatMap((s) => (s.status.status === "refreshed" ? [s.status] : []));
     expect(refreshed.some((s) => s.edit_conflict !== null)).toBe(true);
-    expect(refreshed.some((s) => s.reassert_error !== null)).toBe(true);
     expect(refreshed.some((s) => s.targets.some((t) => t.status.status === "failed"))).toBe(true);
   });
 
@@ -263,7 +263,7 @@ describe("failures", () => {
     const worktrees = await byName(handlers, "using-git-worktrees");
     const tdd = await byName(handlers, "tdd");
     const statusOf = async (id: string) => {
-      const { report } = await handlers.updateManagedSkill(id, { reassert_auto_sync: false }, sink().channel);
+      const { report } = await handlers.updateManagedSkill(id, sink().channel);
       const status = report.skills[0].status;
       if (status.status !== "refreshed") throw new Error(`expected refreshed, got ${status.status}`);
       return Object.fromEntries(
@@ -318,19 +318,17 @@ describe("Disabled: two grains, skipped by every automatic pass (round 19 D8)", 
     expect(view.project.sync_status).toBe("synced");
   });
 
-  it("Refresh with re-assert reports disabled targets skipped and never brings them back", async () => {
+  it("Refresh reports disabled targets skipped and never brings them back", async () => {
     const { handlers } = backendFor("failures");
     const noisy = await byName(handlers, "noisy-linter");
     const retired = await byName(handlers, "retired-playbook");
     const report = await handlers.refreshManagedSkills(
       [noisy.id, retired.id],
-      { reassert_auto_sync: true },
       sink<RefreshProgressDto>().channel,
     );
     // Which global Tools each skill has disabled (pair grain) — every one of
-    // them must come back `skipped: disabled`, never `failed`. Other targets
-    // keep their own outcomes: noisy-linter's re-assert onto Amp still fails
-    // on the scenario's unwritable shared dir, as the Rust re-assert reports it.
+    // them must come back `skipped: disabled`, never `failed`. An Update
+    // only reaches existing deployments (D34), so nothing else fails either.
     const disabledTools: Record<string, string[]> = {
       [noisy.id]: ["codex", "cursor"],
       [retired.id]: retired.targets.map((row) => row.tool),
@@ -353,7 +351,7 @@ describe("Disabled: two grains, skipped by every automatic pass (round 19 D8)", 
         noisyTargets.targets
           .filter((t) => t.status.status === "failed")
           .map((t) => (t.status.status === "failed" ? [t.scope.tool, t.status.error.code] : null)),
-      ).toEqual([["amp", "TOOL_NOT_WRITABLE"]]);
+      ).toEqual([]);
     const retiredTargets = report.skills.find((s) => s.skill_id === retired.id)!.status;
     if (retiredTargets.status === "refreshed")
       expect(retiredTargets.targets.every((t) => t.status.status === "skipped")).toBe(true);
@@ -524,53 +522,78 @@ describe("first-run and empty", () => {
 // Review regressions (ticket-04 review S1–S7, N1)
 // ---------------------------------------------------------------------------
 
-describe("S1: the auto-sync re-assert is report data", () => {
-  it("reports an occupied target as TARGET_EXISTS and folds to non-success", async () => {
-    const { handlers } = backendFor("rich");
-    const zod = await byName(handlers, "zod-schema-first");
-    const { report } = await handlers.updateManagedSkill(zod.id, { reassert_auto_sync: true }, sink().channel);
-    const status = report.skills[0].status;
+describe("D34: an Update only reaches deployments that exist (auto-sync on)", () => {
+  const globalTools = (status: SkillRefreshStatus) => {
     if (status.status !== "refreshed") throw new Error(`expected refreshed, got ${status.status}`);
-    expect(status.targets).toContainEqual({
-      scope: { scope: "global", tool: "cursor" },
-      status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/Users/alex/.cursor/skills/zod-schema-first", modifiedAt: expect.any(Number), sameContent: false } },
+    return status.targets.flatMap((o) => (o.scope.scope === "global" ? [o.scope.tool] : []));
+  };
+
+  it("Update, Refresh and Re-point create no deployment and raise no collision", async () => {
+    const { handlers, state } = backendFor("rich");
+    expect(state.settings.auto_sync_enabled).toBe(true);
+    const zod = await byName(handlers, "zod-schema-first");
+    const before = zod.targets.map((row) => row.tool);
+    // Cursor holds a foreign zod-schema-first folder in this scenario: an
+    // Update never goes there, so nothing collides.
+    const updated = await handlers.updateManagedSkill(zod.id, sink().channel);
+    expect(globalTools(updated.report.skills[0].status)).toEqual(before);
+    const refreshed = await handlers.refreshManagedSkills([zod.id], sink().channel);
+    expect(globalTools(refreshed.skills[0].status)).toEqual(before);
+    const repointed = await handlers.repointSkillSource(zod.id, {
+      kind: "git",
+      url: "https://github.com/mattpocock/skills/tree/main/skills/engineering/zod-schema-first",
     });
-    const fold = refreshOutcome(report, { t, single: { name: zod.name, success: "UPDATED" } });
-    expect(fold.toast?.kind).not.toBe("success");
-    // Folded without an answer (the ask is the door's): "to review", never an error (D10).
-    expect(fold.toast?.tone).toBe("conflict");
-    expect(fold.warnings.some((entry) => entry.review)).toBe(true);
-    expect((await byName(handlers, "zod-schema-first")).targets.some((row) => row.tool === "cursor")).toBe(false);
+    expect(globalTools(repointed.report.skills[0].status)).toEqual(before);
+    expect((await byName(handlers, "zod-schema-first")).targets.map((row) => row.tool)).toEqual(before);
+    const fold = refreshOutcome(updated.report, { t, single: { name: zod.name, success: "UPDATED" } });
+    expect(fold.toast?.tone).toBe("success");
+    expect(fold.warnings).toEqual([]);
   });
 
-  it("skips a selected-but-uninstalled Tool and fails an unwritable shared dir once", async () => {
+  it("Refresh all leaves every skill's deployments as they were", async () => {
+    const { handlers } = backendFor("rich");
+    const before = (await handlers.getManagedSkills()).map((skill) => [skill.id, skill.targets.map((row) => row.tool)]);
+    const report = await handlers.refreshManagedSkills(null, sink().channel);
+    for (const outcome of report.skills) {
+      const status = outcome.status;
+      if (status.status !== "refreshed") continue;
+      expect(status.targets.every((o) => o.status.status !== "failed" || o.status.error.code !== "TARGET_EXISTS")).toBe(true);
+    }
+    const after = (await handlers.getManagedSkills()).map((skill) => [skill.id, skill.targets.map((row) => row.tool)]);
+    expect(after).toEqual(before);
+  });
+
+  it("a skill deployed nowhere stays deployed nowhere", async () => {
     const { handlers } = backendFor("failures");
     const prisma = await byName(handlers, "prisma-review");
-    const report = await handlers.refreshManagedSkills([prisma.id], { reassert_auto_sync: true }, sink().channel);
-    const status = report.skills[0].status;
-    if (status.status !== "refreshed") throw new Error(`expected refreshed, got ${status.status}`);
-    const byTool = Object.fromEntries(status.targets.map((o) => [o.scope.tool, o.status]));
-    expect(byTool.windsurf).toEqual({ status: "skipped", reason: { reason: "tool_not_installed", tool: "windsurf" } });
-    // Unwritable is a *skip* in the sync batch, a *failure* in the re-assert.
-    expect(byTool.amp).toMatchObject({ status: "failed", error: { code: "TOOL_NOT_WRITABLE" } });
-    expect(status.targets.some((o) => o.scope.tool === "kimi_cli")).toBe(false);
-    expect(byTool.cursor).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS" } });
-    expect(byTool.claude_code).toEqual({ status: "synced", mode_used: "symlink" });
+    const report = await handlers.refreshManagedSkills([prisma.id], sink().channel);
+    expect(globalTools(report.skills[0].status)).toEqual([]);
+    expect((await byName(handlers, "prisma-review")).targets).toEqual([]);
   });
+});
 
-  it("merges re-assert outcomes into Re-point's report too", async () => {
-    const { handlers } = backendFor("rich");
-    const zod = await byName(handlers, "zod-schema-first");
-    const { report } = await handlers.repointSkillSource(
-      zod.id,
-      { kind: "git", url: "https://github.com/mattpocock/skills/tree/main/skills/engineering/zod-schema-first" },
-      { reassert_auto_sync: true },
-    );
-    const status = report.skills[0].status;
-    if (status.status !== "refreshed") throw new Error(`expected refreshed, got ${status.status}`);
-    expect(status.targets).toContainEqual(
-      expect.objectContaining({ scope: { scope: "global", tool: "cursor" }, status: expect.objectContaining({ status: "failed" }) }),
-    );
+describe("D35: a delete_incomplete skill is never updated", () => {
+  const skippedDeleteIncomplete = { status: "skipped", reason: { kind: "delete_incomplete" } };
+
+  it("Refresh all, a named Update and a Re-point skip release-train and leave it as it was", async () => {
+    const { handlers } = backendFor("failures");
+    const train = await byName(handlers, "release-train");
+    expect(train.health?.kind).toBe("delete_incomplete");
+    const all = await handlers.refreshManagedSkills(null, sink().channel);
+    expect(all.skills.find((s) => s.skill_id === train.id)?.status).toEqual(skippedDeleteIncomplete);
+    const named = await handlers.updateManagedSkill(train.id, sink().channel);
+    expect(named.report.skills.map((s) => s.status)).toEqual([skippedDeleteIncomplete]);
+    const repointed = await handlers.repointSkillSource(train.id, { kind: "local", path: "~/Projects/pi-lens/skill" });
+    expect(repointed.report.skills.map((s) => s.status)).toEqual([skippedDeleteIncomplete]);
+    expect(await byName(handlers, "release-train")).toEqual(train);
+    // The fold: a skipped item with the health row's repair, finish the Delete.
+    const fold = refreshOutcome(all, { t });
+    expect(fold.warnings).toContainEqual({
+      title: t("updateSkip.deleteIncompleteTitle", { name: "release-train" }),
+      message: t("updateSkip.deleteIncompleteMessage"),
+      subject: { skillId: train.id, skillName: "release-train" },
+      repair: { verb: "delete" },
+    });
   });
 });
 
@@ -676,7 +699,7 @@ describe("S5: cancellation", () => {
   it("resets at operation entry, so an earlier cancel does not leak", async () => {
     const { handlers } = backendFor("rich");
     await handlers.cancelCurrentOperation();
-    const report = await handlers.refreshManagedSkills(null, { reassert_auto_sync: false }, sink().channel);
+    const report = await handlers.refreshManagedSkills(null, sink().channel);
     expect(report.skills.every((s) => s.status.status === "refreshed")).toBe(true);
   });
 
@@ -685,7 +708,7 @@ describe("S5: cancellation", () => {
     const before = await handlers.getManagedSkills();
     armCancel(1);
     const progress = sink<{ phase: string }>();
-    const report = await handlers.refreshManagedSkills(null, { reassert_auto_sync: true }, progress.channel);
+    const report = await handlers.refreshManagedSkills(null, progress.channel);
     const kinds = report.skills.map((s) => s.status.status);
     const firstSkip = kinds.indexOf("skipped");
     expect(firstSkip).toBeGreaterThan(0);
@@ -706,7 +729,7 @@ describe("S5: cancellation", () => {
     const before = await handlers.getManagedSkills();
     armCancel(3);
     const progress = sink<{ phase: string }>();
-    const report = await handlers.refreshManagedSkills(null, { reassert_auto_sync: true }, progress.channel);
+    const report = await handlers.refreshManagedSkills(null, progress.channel);
     expect(progress.ticks.map((tick) => tick.phase)).toEqual(["acquiring", "acquiring"]);
     expect(report.skills).toHaveLength(60);
     expect(report.skills.every((s) => s.status.status === "cancelled")).toBe(true);
@@ -717,14 +740,14 @@ describe("S5: cancellation", () => {
     const update = cancellingBackend("rich");
     const tdd = await byName(update.handlers, "tdd");
     update.armCancel(2);
-    const updated = await update.handlers.updateManagedSkill(tdd.id, { reassert_auto_sync: true }, sink().channel);
+    const updated = await update.handlers.updateManagedSkill(tdd.id, sink().channel);
     expect(updated.report.skills[0].status).toEqual({ status: "cancelled" });
     expect(updated.skills.find((s) => s.id === tdd.id)).toEqual(tdd);
 
     const repoint = cancellingBackend("rich");
     const pdf = await byName(repoint.handlers, "pdf");
     repoint.armCancel(1);
-    const repointed = await repoint.handlers.repointSkillSource(pdf.id, { kind: "local", path: "~/Projects/pi-lens/skill" }, { reassert_auto_sync: false });
+    const repointed = await repoint.handlers.repointSkillSource(pdf.id, { kind: "local", path: "~/Projects/pi-lens/skill" });
     expect(repointed.report.skills[0].status).toEqual({ status: "cancelled" });
     expect(repointed.skills.find((s) => s.id === pdf.id)).toEqual(pdf);
   });
@@ -783,7 +806,7 @@ describe("N1: progress ticks only the work that reached each phase", () => {
   it("Refresh: no applying tick for a failed acquisition", async () => {
     const { handlers } = backendFor("failures");
     const progress = sink<{ phase: string; skill_name: string }>();
-    const report = await handlers.refreshManagedSkills(null, { reassert_auto_sync: true }, progress.channel);
+    const report = await handlers.refreshManagedSkills(null, progress.channel);
     const applying = progress.ticks.filter((tick) => tick.phase === "applying").map((tick) => tick.skill_name);
     const reachedApply = report.skills
       .filter((s) => s.status.status === "refreshed" || s.status.status === "skipped_acquisition")
@@ -1034,7 +1057,7 @@ describe("F4: one source of truth for invocation-Edit conflicts", () => {
     const tokens = await byName(handlers, "design-tokens");
     expect(tokens.invocation_override).toEqual({ mode: "user-only", base_mode: "user-and-model", conflict: false });
 
-    const first = await handlers.updateManagedSkill(tokens.id, { reassert_auto_sync: false }, sink().channel);
+    const first = await handlers.updateManagedSkill(tokens.id, sink().channel);
     const status = first.report.skills[0].status;
     if (status.status !== "refreshed") throw new Error(`expected refreshed, got ${status.status}`);
     expect(status.edit_conflict).toEqual({ base_mode: "user-and-model", upstream_mode: "model-only", override_mode: "user-only" });
@@ -1043,7 +1066,7 @@ describe("F4: one source of truth for invocation-Edit conflicts", () => {
     expect(card.invocation_mode).toBe("user-only");
 
     // An unchanged Update reports nothing new; the conflict stays flagged.
-    const second = await handlers.updateManagedSkill(tokens.id, { reassert_auto_sync: false }, sink().channel);
+    const second = await handlers.updateManagedSkill(tokens.id, sink().channel);
     const again = second.report.skills[0].status;
     if (again.status !== "refreshed") throw new Error(`expected refreshed, got ${again.status}`);
     expect(again.edit_conflict).toBeNull();
@@ -1076,14 +1099,14 @@ describe("D9: Skill health and the failed / declined first sync (ticket 02)", ()
     const { handlers, state } = backendFor("failures");
     const pr = state.skills.find((s) => s.dto.name === "pr-review")!;
     pr.dto.health = null;
-    const failed = await handlers.updateManagedSkill(pr.dto.id, { reassert_auto_sync: false }, sink().channel);
+    const failed = await handlers.updateManagedSkill(pr.dto.id, sink().channel);
     const row = failed.report.skills[0].status;
     if (row.status !== "failed") throw new Error(row.status);
     const card = failed.skills.find((s) => s.id === pr.dto.id)!;
     expect(card.health).toEqual({ kind: "fetch_failed", error: row.error, at: NOW });
 
     pr.acquisition.fail = undefined;
-    const ok = await handlers.updateManagedSkill(pr.dto.id, { reassert_auto_sync: false }, sink().channel);
+    const ok = await handlers.updateManagedSkill(pr.dto.id, sink().channel);
     expect(ok.skills.find((s) => s.id === pr.dto.id)!.health).toBeNull();
   });
 
@@ -1091,7 +1114,7 @@ describe("D9: Skill health and the failed / declined first sync (ticket 02)", ()
     const { handlers, state } = backendFor("failures");
     const scratch = state.skills.find((s) => s.dto.name === "scratchpad")!;
     scratch.dto.health = null;
-    const { skills } = await handlers.updateManagedSkill(scratch.dto.id, { reassert_auto_sync: false }, sink().channel);
+    const { skills } = await handlers.updateManagedSkill(scratch.dto.id, sink().channel);
     expect(skills.find((s) => s.id === scratch.dto.id)!.health).toMatchObject({
       kind: "restore_failed",
       error: { code: "SOURCE_PATH_MISSING" },
@@ -1101,7 +1124,7 @@ describe("D9: Skill health and the failed / declined first sync (ticket 02)", ()
     const pr = cancelling.state.skills.find((s) => s.dto.name === "pr-review")!;
     pr.dto.health = null;
     cancelling.armCancel(1);
-    const report = await cancelling.handlers.refreshManagedSkills([pr.dto.id], { reassert_auto_sync: false }, sink().channel);
+    const report = await cancelling.handlers.refreshManagedSkills([pr.dto.id], sink().channel);
     expect(report.skills[0].status).toEqual({ status: "cancelled" });
     expect(pr.dto.health).toBeNull();
   });
@@ -1110,14 +1133,13 @@ describe("D9: Skill health and the failed / declined first sync (ticket 02)", ()
     const { handlers, state } = backendFor("failures");
     const zod = state.skills.find((s) => s.dto.name === "zod-schema-first")!;
     await expect(
-      handlers.repointSkillSource(zod.dto.id, { kind: "git", url: "not a url" }, { reassert_auto_sync: false }),
+      handlers.repointSkillSource(zod.dto.id, { kind: "git", url: "not a url" }),
     ).rejects.toMatchObject({ code: "INVALID_GITHUB_URL" });
     expect(zod.dto.health).toBeNull();
 
     const { report } = await handlers.repointSkillSource(
       zod.dto.id,
       { kind: "git", url: "https://github.com/corp/private-skills" },
-      { reassert_auto_sync: false },
     );
     const row = report.skills[0].status;
     if (row.status !== "failed") throw new Error(row.status);
@@ -1127,14 +1149,14 @@ describe("D9: Skill health and the failed / declined first sync (ticket 02)", ()
   it("an Update's Edit conflict records edit_conflict; saving the Edit clears it", async () => {
     const { handlers, state } = backendFor("failures");
     const tokens = state.skills.find((s) => s.dto.name === "design-tokens")!;
-    const first = await handlers.updateManagedSkill(tokens.dto.id, { reassert_auto_sync: false }, sink().channel);
+    const first = await handlers.updateManagedSkill(tokens.dto.id, sink().channel);
     expect(first.skills.find((s) => s.id === tokens.dto.id)!.health).toEqual({
       kind: "edit_conflict",
       error: { code: "EDIT_CONFLICT", baseMode: "user-and-model", upstreamMode: "model-only", overrideMode: "user-only" },
       at: NOW,
     });
     // An unchanged Update keeps the unresolved conflict.
-    await handlers.updateManagedSkill(tokens.dto.id, { reassert_auto_sync: false }, sink().channel);
+    await handlers.updateManagedSkill(tokens.dto.id, sink().channel);
     expect(tokens.dto.health?.kind).toBe("edit_conflict");
     const saved = await handlers.setSkillInvocationOverride(tokens.dto.id, "user-only");
     expect(saved.skills.find((s) => s.id === tokens.dto.id)!.health).toBeNull();
@@ -1410,28 +1432,6 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
       name: "nope",
       status: { status: "failed", error: { code: "SUBPATH_MISSING" } },
     });
-  });
-
-  it("the re-assert's collisions carry the ask's facts (round-18 fixture gap: prisma-review → Cursor/Codex)", async () => {
-    const { handlers } = backendFor("failures");
-    const prisma = await byName(handlers, "prisma-review");
-    const report = await handlers.refreshManagedSkills([prisma.id], { reassert_auto_sync: true }, sink().channel);
-    const status = report.skills[0].status;
-    if (status.status !== "refreshed") throw new Error(status.status);
-    for (const tool of ["cursor", "codex"]) {
-      expect(status.targets).toContainEqual({
-        scope: { scope: "global", tool },
-        status: {
-          status: "failed",
-          error: {
-            code: "TARGET_EXISTS",
-            path: `${globalRoot(tool)}/prisma-review`,
-            modifiedAt: expect.any(Number),
-            sameContent: false,
-          },
-        },
-      });
-    }
   });
 
   it("Enable's collision is answered by the same scope with the decision", async () => {

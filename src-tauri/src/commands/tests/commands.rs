@@ -325,9 +325,7 @@ fn update_outcome_at_the_seam(
         store,
         &crate::core::credentials::MemoryStore::new(),
         crate::core::refresh::RefreshSelection::Ids(vec![skill_id.to_string()]),
-        crate::core::refresh::RefreshPolicy::default(),
         None,
-        0,
         |_| {},
     )
     .expect("a per-skill failure is report data, not a batch error");

@@ -11,7 +11,7 @@ use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
 use crate::core::cancel_token::CancelToken;
-use crate::core::errors::{CommandError, SignalError};
+use crate::core::errors::CommandError;
 
 #[test]
 fn acquisition_skips_cross_the_wire_without_counters() {
@@ -71,10 +71,10 @@ fn cancelled_and_declined_rows_cross_the_wire_as_their_own_kinds() {
 }
 
 use crate::core::installer::{install_imported_skill, install_local_skill, InstallerPaths};
-use crate::core::propagation::{PropagationOutcome, PropagationScope, PropagationStatus};
+use crate::core::propagation::{PropagationScope, PropagationStatus};
 use crate::core::refresh::{
-    merge_reassert, refresh_managed_skills, refresh_managed_skills_with, RefreshPhase,
-    RefreshPolicy, RefreshSelection, SkillRefreshStatus,
+    refresh_managed_skills, refresh_managed_skills_with, RefreshPhase, RefreshSelection,
+    SkillRefreshStatus,
 };
 use crate::core::skill_store::SkillStore;
 use crate::core::tool_adapters::{adapter_by_key, mark_installed_in};
@@ -115,15 +115,13 @@ fn fixture() -> Fixture {
     }
 }
 
-fn refresh(f: &Fixture, policy: RefreshPolicy) -> crate::core::refresh::RefreshReport {
+fn refresh(f: &Fixture) -> crate::core::refresh::RefreshReport {
     refresh_managed_skills(
         &f.paths,
         &f.store,
         &crate::core::credentials::MemoryStore::new(),
         RefreshSelection::All,
-        policy,
         None,
-        3000,
         |_| {},
     )
     .expect("refresh reads its own skill list")
@@ -142,9 +140,7 @@ fn a_refreshed_skill_gets_its_new_bytes_and_reports_its_targets() {
         &f.store,
         &crate::core::credentials::MemoryStore::new(),
         RefreshSelection::Ids(vec![f.skill_id.clone()]),
-        RefreshPolicy::default(),
         None,
-        3000,
         |p| phases.push((p.phase, p.skill_name.to_string())),
     )
     .expect("refresh");
@@ -192,9 +188,7 @@ fn a_skill_that_fails_acquisition_is_reported_and_never_finalized() {
         &f.store,
         &crate::core::credentials::MemoryStore::new(),
         RefreshSelection::Ids(vec![f.skill_id.clone()]),
-        RefreshPolicy::default(),
         None,
-        3000,
         |_| {},
     )
     .expect("refresh");
@@ -223,209 +217,233 @@ fn a_skill_that_fails_acquisition_is_reported_and_never_finalized() {
     );
 }
 
+/// D34: auto-sync decides where a new skill lands, never what an Update
+/// does. A skill deployed to 1 of 3 selected, installed Tools stays on that
+/// one Tool through Refresh all with auto-sync on: the report carries no
+/// global target for the other two and no row or artifact is created.
 #[test]
-fn reassert_auto_sync_creates_a_target_the_skill_was_never_on() {
+fn refresh_all_with_auto_sync_on_creates_no_deployment() {
+    use crate::core::global_sync::{sync_skills_to_tools, BatchPolicy, BatchSkill};
     let f = fixture();
-    let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    mark_installed_in(&f.paths.home, claude);
-    assert!(
-        f.store
-            .list_skill_targets(&f.skill_id)
-            .expect("query")
-            .is_empty(),
-        "the skill starts on no Tool"
-    );
-
-    refresh(
-        &f,
-        RefreshPolicy {
-            reassert_auto_sync: true,
-        },
-    );
-
-    let row = f
-        .store
-        .get_skill_target(&f.skill_id, "claude_code")
-        .expect("query")
-        .expect("the re-assert creates the missing target");
-    assert!(PathBuf::from(&row.target_path).exists());
-}
-
-/// Intent beats detection: with a recorded selection narrower than detection,
-/// the re-assert writes the selection only — an installed-but-unselected Tool
-/// never receives the skill.
-#[test]
-fn reassert_auto_sync_writes_the_recorded_selection_not_every_installed_tool() {
-    let f = fixture();
-    for key in ["claude_code", "codex"] {
-        let adapter = adapter_by_key(key).expect("adapter");
-        mark_installed_in(&f.paths.home, adapter);
+    for key in ["claude_code", "codex", "cursor"] {
+        mark_installed_in(&f.paths.home, adapter_by_key(key).expect("adapter"));
     }
     f.store
-        .set_setting("global_selected_tools_v1", r#"["claude_code"]"#)
+        .set_setting(
+            "global_selected_tools_v1",
+            r#"["claude_code","codex","cursor"]"#,
+        )
         .expect("record the selection");
-
-    refresh(
-        &f,
-        RefreshPolicy {
-            reassert_auto_sync: true,
-        },
-    );
-
-    assert!(
-        f.store
-            .get_skill_target(&f.skill_id, "claude_code")
-            .expect("query")
-            .is_some(),
-        "the selected Tool gets the skill"
-    );
-    assert!(
-        f.store
-            .get_skill_target(&f.skill_id, "codex")
-            .expect("query")
-            .is_none(),
-        "an installed but unselected Tool is not a sync target"
-    );
-    assert!(!f.paths.home.join(".codex/skills/alpha").exists());
-}
-
-/// A stale selection stays visible: a selected Tool that is not installed is
-/// reported as a skip rather than filtered out of the set silently.
-#[test]
-fn reassert_auto_sync_reports_a_selected_but_uninstalled_tool_as_a_skip() {
-    let f = fixture();
-    let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    mark_installed_in(&f.paths.home, claude);
     f.store
-        .set_setting("global_selected_tools_v1", r#"["claude_code","cursor"]"#)
-        .expect("record the selection");
-
-    let report = refresh(
-        &f,
-        RefreshPolicy {
-            reassert_auto_sync: true,
+        .set_setting("auto_sync_enabled", "true")
+        .expect("auto-sync on");
+    let skill = f
+        .store
+        .get_skill_by_id(&f.skill_id)
+        .expect("query")
+        .expect("skill");
+    sync_skills_to_tools(
+        &f.paths.home,
+        &f.store,
+        &[BatchSkill {
+            skill_id: skill.id.clone(),
+            skill_name: skill.name.clone(),
+            source_path: PathBuf::from(&skill.central_path),
+        }],
+        &["claude_code".to_string()],
+        &BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: true,
+            overrides: Vec::new(),
         },
+        2000,
+        |_| {},
     );
+    fs::write(f.source.path().join("a.txt"), "v2").expect("write a.txt");
 
-    let targets = match &report.skills[0].status {
-        SkillRefreshStatus::Refreshed { targets, .. } => targets,
-        other => panic!("expected Refreshed, got {other:?}"),
+    let report = refresh(&f);
+
+    let SkillRefreshStatus::Refreshed { targets, .. } = &report.skills[0].status else {
+        panic!("expected Refreshed, got {report:?}");
     };
-    let cursor = targets
-        .iter()
-        .find(|o| matches!(&o.scope, PropagationScope::Global { tool } if tool == "cursor"))
-        .expect("the uninstalled selection entry is reported, not dropped");
-    assert!(
-        matches!(
-            &cursor.status,
-            PropagationStatus::Skipped {
-                reason: crate::core::propagation::PropagationSkip::ToolNotInstalled { tool }
-            } if tool == "cursor"
-        ),
-        "got {:?}",
-        cursor.status
-    );
-    assert!(
-        f.store
-            .get_skill_target(&f.skill_id, "cursor")
-            .expect("query")
-            .is_none(),
-        "a skipped target creates no row"
-    );
-}
-
-#[test]
-fn without_the_reassert_policy_a_missing_target_stays_missing() {
-    let f = fixture();
-    let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    mark_installed_in(&f.paths.home, claude);
-
-    refresh(&f, RefreshPolicy::default());
-
-    assert!(
-        f.store
-            .get_skill_target(&f.skill_id, "claude_code")
-            .expect("query")
-            .is_none(),
-        "refresh alone never creates a Sync target"
-    );
-    assert!(!f.paths.home.join(".claude/skills/alpha").exists());
-}
-
-/// A store failure inside the re-assert is report data, not a log line: the
-/// skill stays `Refreshed` (finalize and Propagation did succeed) and carries
-/// the error so the batch report can count it.
-#[test]
-fn a_failed_reassert_is_reported_alongside_the_refreshed_status() {
-    let targets = vec![outcome_for("claude_code")];
-
-    let (kept, error) = merge_reassert(targets, Err(anyhow::anyhow!("store is gone")));
-
-    assert_eq!(kept.len(), 1, "Propagation's own outcomes survive");
-    assert!(matches!(error, Some(CommandError::Other { message }) if message == "store is gone"));
-    let (_, typed) = merge_reassert(
-        Vec::new(),
-        Err(anyhow::anyhow!(SignalError::SettingCorrupt {
-            key: "global_tools".into(),
-            detail: "invalid JSON".into(),
-        })
-        .context("read reassert policy")),
-    );
-    assert!(
-        matches!(typed, Some(CommandError::SettingCorrupt { key, .. }) if key == "global_tools")
-    );
-}
-
-#[test]
-fn a_successful_reassert_extends_the_targets_and_reports_no_error() {
-    let (kept, error) = merge_reassert(
-        vec![outcome_for("claude_code")],
-        Ok(vec![outcome_for("codex")]),
-    );
-
-    let tools: Vec<String> = kept
+    let tools: Vec<&str> = targets
         .iter()
         .map(|o| match &o.scope {
-            PropagationScope::Global { tool } => tool.clone(),
+            PropagationScope::Global { tool } => tool.as_str(),
             other => panic!("expected a global scope, got {other:?}"),
         })
         .collect();
-    assert_eq!(tools, vec!["claude_code".to_string(), "codex".to_string()]);
-    assert!(error.is_none());
+    assert_eq!(
+        tools,
+        vec!["claude_code"],
+        "only the existing deployment is reported"
+    );
+    // A symlink already follows the central copy (`LinkFollowsSource`).
+    assert!(
+        !matches!(targets[0].status, PropagationStatus::Failed { .. }),
+        "got {:?}",
+        targets[0].status
+    );
+    let rows: Vec<String> = f
+        .store
+        .list_skill_targets(&f.skill_id)
+        .expect("query")
+        .into_iter()
+        .map(|row| row.tool)
+        .collect();
+    assert_eq!(rows, vec!["claude_code".to_string()], "no row is created");
+    assert!(!f.paths.home.join(".codex/skills/alpha").exists());
+    assert!(!f.paths.home.join(".cursor/skills/alpha").exists());
 }
 
-fn outcome_for(tool: &str) -> PropagationOutcome {
-    PropagationOutcome {
-        scope: PropagationScope::Global {
-            tool: tool.to_string(),
+/// Record the stored health a kept Delete leaves behind (`artifact_removal`).
+fn mark_delete_incomplete(store: &SkillStore, skill_id: &str) {
+    crate::core::skill_health::record_outcome(
+        store,
+        skill_id,
+        crate::core::skill_health::SkillOutcomeKind::DeleteIncomplete,
+        &CommandError::Other {
+            message: "permission denied".into(),
         },
-        status: PropagationStatus::Synced {
-            mode_used: crate::core::sync_status::SyncMode::Symlink,
-        },
-    }
+    )
+    .expect("record health");
 }
 
+/// D35: a skill whose Delete was incomplete is never updated — in Refresh all
+/// *and* in a named Update it is reported skipped with the typed reason,
+/// never acquired, its targets and its stored health untouched.
 #[test]
-fn a_skill_that_fails_acquisition_is_excluded_from_the_reassert() {
+fn a_delete_incomplete_skill_is_skipped_by_refresh_all_and_by_a_named_update() {
+    use crate::core::refresh::RefreshSkipReason;
     let f = fixture();
     let claude = adapter_by_key("claude_code").expect("claude_code adapter");
     mark_installed_in(&f.paths.home, claude);
-    fs::remove_dir_all(f.source.path()).expect("remove source");
-
-    refresh(
-        &f,
-        RefreshPolicy {
-            reassert_auto_sync: true,
+    let skill = f
+        .store
+        .get_skill_by_id(&f.skill_id)
+        .expect("query")
+        .expect("skill");
+    crate::core::global_sync::sync_skills_to_tools(
+        &f.paths.home,
+        &f.store,
+        &[crate::core::global_sync::BatchSkill {
+            skill_id: skill.id.clone(),
+            skill_name: skill.name.clone(),
+            source_path: PathBuf::from(&skill.central_path),
+        }],
+        &["claude_code".to_string()],
+        &crate::core::global_sync::BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: true,
+            overrides: Vec::new(),
         },
+        2000,
+        |_| {},
     );
+    mark_delete_incomplete(&f.store, &f.skill_id);
+    // The records carry no `PartialEq`; their debug form is the snapshot.
+    let health_of = || format!("{:?}", f.store.skill_outcome(&f.skill_id).expect("health"));
+    let targets_of = || {
+        format!(
+            "{:?}",
+            f.store.list_skill_targets(&f.skill_id).expect("targets")
+        )
+    };
+    let health_before = health_of();
+    let targets_before = targets_of();
+    fs::write(f.source.path().join("a.txt"), "v2").expect("write a.txt");
 
-    assert!(
-        f.store
-            .get_skill_target(&f.skill_id, "claude_code")
-            .expect("query")
-            .is_none(),
-        "a skill whose bytes could not be acquired must not be synced anywhere"
-    );
+    for selection in [
+        RefreshSelection::All,
+        RefreshSelection::Ids(vec![f.skill_id.clone()]),
+    ] {
+        let acquired = AtomicUsize::new(0);
+        let report = refresh_managed_skills_with(
+            &f.paths,
+            &f.store,
+            selection.clone(),
+            None,
+            |_| {},
+            &|skill_id, cancel| {
+                acquired.fetch_add(1, Ordering::SeqCst);
+                crate::core::skill_update::acquire_update(
+                    &f.paths,
+                    &f.store,
+                    skill_id,
+                    cancel,
+                    &crate::core::git_acquisition::HttpGithubApi::new(None),
+                    0,
+                )
+            },
+        )
+        .expect("refresh");
+
+        let [outcome] = report.skills.as_slice() else {
+            panic!("one outcome for {selection:?}: {report:?}");
+        };
+        assert_eq!(outcome.skill_id, f.skill_id);
+        assert!(
+            matches!(
+                outcome.status,
+                SkillRefreshStatus::Skipped {
+                    reason: RefreshSkipReason::DeleteIncomplete
+                }
+            ),
+            "{selection:?}: got {:?}",
+            outcome.status
+        );
+        assert_eq!(
+            acquired.load(Ordering::SeqCst),
+            0,
+            "{selection:?}: no acquisition"
+        );
+        assert_eq!(
+            targets_of(),
+            targets_before,
+            "{selection:?}: no target is touched"
+        );
+        assert_eq!(
+            health_of(),
+            health_before,
+            "{selection:?}: the health is unchanged"
+        );
+        let central = PathBuf::from(&skill.central_path);
+        assert_eq!(
+            fs::read_to_string(central.join("a.txt")).expect("read central"),
+            "v1",
+            "{selection:?}: the central copy is untouched"
+        );
+    }
+}
+
+/// The skip crosses the wire as a tagged reason.
+#[test]
+fn refresh_skip_reasons_cross_the_wire_tagged() {
+    use crate::core::refresh::{RefreshSkipReason, SkillRefreshOutcome};
+    for (reason, wire) in [
+        (
+            RefreshSkipReason::DeleteIncomplete,
+            serde_json::json!({ "kind": "delete_incomplete" }),
+        ),
+        (
+            RefreshSkipReason::Unlocatable {
+                state: UnlocatableState::SourceMissing,
+            },
+            serde_json::json!({ "kind": "unlocatable", "state": "source_missing" }),
+        ),
+    ] {
+        let outcome = SkillRefreshOutcome {
+            skill_id: "s1".into(),
+            skill_name: "alpha".into(),
+            status: SkillRefreshStatus::Skipped { reason },
+        };
+        assert_eq!(
+            serde_json::to_value(outcome).unwrap(),
+            serde_json::json!({ "skill_id": "s1", "skill_name": "alpha", "status": {
+                "status": "skipped", "reason": wire
+            } })
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -573,9 +591,7 @@ fn acquisitions_overlap_instead_of_running_one_at_a_time() {
         &f.paths,
         &f.store,
         RefreshSelection::All,
-        RefreshPolicy::default(),
         None,
-        3000,
         |_| {},
         &acquire,
     )
@@ -612,9 +628,7 @@ fn acquire_progress_counts_completions_in_completion_order() {
         &f.paths,
         &f.store,
         RefreshSelection::All,
-        RefreshPolicy::default(),
         None,
-        3000,
         |p| {
             if p.phase == RefreshPhase::Acquiring {
                 ticks.push((p.index, p.skill_name.to_string()));
@@ -667,9 +681,7 @@ fn cancelling_mid_batch_finalizes_nothing() {
         &f.paths,
         &f.store,
         RefreshSelection::All,
-        RefreshPolicy::default(),
         Some(&token),
-        3000,
         |p| phases.push(p.phase),
         &acquire,
     )
@@ -758,9 +770,7 @@ fn two_skills_from_one_repository_share_the_cache_without_corrupting_it() {
         &f.store,
         &crate::core::credentials::MemoryStore::new(),
         RefreshSelection::All,
-        RefreshPolicy::default(),
         None,
-        3000,
         |_| {},
     )
     .expect("refresh");
@@ -849,11 +859,7 @@ fn refresh_all_never_puts_an_imported_skill_in_the_batch() {
         &f.paths,
         &f.store,
         RefreshSelection::All,
-        RefreshPolicy {
-            reassert_auto_sync: true,
-        },
         None,
-        3000,
         |p| progress.push((p.phase, p.skill_name.to_string())),
         &|skill_id, cancel| {
             acquired.lock().unwrap().push(skill_id.to_string());
@@ -887,17 +893,7 @@ fn refresh_all_never_puts_an_imported_skill_in_the_batch() {
         "progress ticks name the batch's one member only: {:?}",
         progress
     );
-    // The auto-sync re-assert ran for the git skill only: the imported skill
-    // got no target and its record was not touched.
-    let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    mark_installed_in(&f.paths.home, claude);
-    assert!(
-        f.store
-            .list_skill_targets(&imported_id)
-            .expect("query")
-            .is_empty(),
-        "reassert_auto_sync never runs for a non-member"
-    );
+    // The imported skill's record was not touched.
     let imported_after = f
         .store
         .get_skill_by_id(&imported_id)
@@ -918,9 +914,7 @@ fn a_single_update_of_an_imported_skill_is_refused_with_a_typed_condition() {
         &f.store,
         &crate::core::credentials::MemoryStore::new(),
         RefreshSelection::Ids(vec![imported_id.clone()]),
-        RefreshPolicy::default(),
         None,
-        3000,
         |_| {},
     )
     .expect("refresh");
@@ -952,10 +946,11 @@ fn a_single_update_of_an_imported_skill_is_refused_with_a_typed_condition() {
 /// Refresh (all) over one healthy `local` skill, one whose source folder is
 /// gone and one whose central copy is gone: only the healthy one reaches the
 /// acquire pool; the two unlocatable ones are reported *skipped* by name
-/// with their state, and — auto-sync on — get no Sync target minted (a
-/// central-missing skill's target would be a dangling link).
+/// with their state, and get no Sync target (a central-missing skill's
+/// target would be a dangling link).
 #[test]
 fn refresh_all_skips_unlocatable_skills_and_mints_no_targets_for_them() {
+    use crate::core::refresh::RefreshSkipReason;
     let f = pool_fixture(3);
     let claude = adapter_by_key("claude_code").expect("claude_code adapter");
     mark_installed_in(&f.paths.home, claude);
@@ -994,11 +989,7 @@ fn refresh_all_skips_unlocatable_skills_and_mints_no_targets_for_them() {
         &f.paths,
         &f.store,
         RefreshSelection::All,
-        RefreshPolicy {
-            reassert_auto_sync: true,
-        },
         None,
-        3000,
         |p| progress.push((p.phase, p.skill_name.to_string())),
         &|skill_id, cancel| {
             acquired.lock().unwrap().push(skill_id.to_string());
@@ -1045,21 +1036,19 @@ fn refresh_all_skips_unlocatable_skills_and_mints_no_targets_for_them() {
     assert!(matches!(
         status_of("s1"),
         SkillRefreshStatus::Skipped {
-            state: UnlocatableState::SourceMissing
+            reason: RefreshSkipReason::Unlocatable {
+                state: UnlocatableState::SourceMissing
+            }
         }
     ));
     assert!(matches!(
         status_of("s2"),
         SkillRefreshStatus::Skipped {
-            state: UnlocatableState::CentralMissing
+            reason: RefreshSkipReason::Unlocatable {
+                state: UnlocatableState::CentralMissing
+            }
         }
     ));
-    // The auto-sync re-assert ran for the healthy skill only.
-    assert!(f
-        .store
-        .get_skill_target(&healthy.id, "claude_code")
-        .expect("query")
-        .is_some());
     for name in ["s1", "s2"] {
         assert!(
             f.store

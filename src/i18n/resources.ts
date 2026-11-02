@@ -368,8 +368,6 @@ export const resources = {
           "Review it and remove it yourself if you no longer need it.",
         importCleanupFailedTitle:
           "Could not remove the original: {{name}} -> {{tool}}",
-        reassertFailedTitle:
-          "Could not check which tools still need {{name}}",
         refreshSkippedTitle: "Skipped: {{name}}",
         refreshSkippedSkillGone: "This skill was removed while its update was being acquired.",
         refreshSkippedStaleAcquisition: "Its source changed during acquisition. Run Update again to use the current source.",
@@ -792,7 +790,7 @@ export const resources = {
         notDetected: "{{name}} (not detected)",
       },
       settingsAutoSync: "Auto-sync",
-      settingsAutoSyncHint: "Deploy added, imported and updated skills to your selected Tools automatically.",
+      settingsAutoSyncHint: "Deploy added and imported skills to your selected Tools automatically.",
       // The inspector (ticket 12): the focused skill beside the list, or a sheet below 1200 px.
       inspector: {
         close: "Close details",
@@ -1130,7 +1128,6 @@ export const resources = {
         collisions_other: "{{count}} folders to review",
         collisionTitle: "{{name}} \u2192 {{tool}}: a different folder is in the way",
         collisionMessage: "Nothing was changed. {{path}}",
-        alsoDeployed: "{{name}} also deployed to {{tools}}",
         actions: {
           show: "Show",
           retry: "Retry",
@@ -1391,6 +1388,15 @@ export const resources = {
       // A held control activated (ticket 27, D19): the notice under its reason.
       heldRefusal: {
         unchanged: "Nothing was changed.",
+      },
+      // An Update / Refresh run's item for a skill it set aside (D35, ticket 33).
+      updateSkip: {
+        deleteIncompleteTitle: "Delete incomplete \u2014 finish removing {{name}} first",
+        deleteIncompleteMessage: "Its last Delete left copies behind, so it is not updated. Retry the Delete to finish removing it.",
+      },
+      // A Propagation failure on a target that never held a copy (ticket 33).
+      propagationFirstDeploy: {
+        failedTitle: "Could not deploy {{name}} to {{tool}}",
       },
     },
   },

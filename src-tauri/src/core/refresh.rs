@@ -18,18 +18,19 @@
 //!    Propagation. The guard is taken *per skill*, not once for the batch, so
 //!    listings and other mutations are not blocked for the whole run.
 //!
-//! With [`RefreshPolicy::reassert_auto_sync`] the apply phase also re-asserts
-//! the auto-sync invariant — every Managed skill is synced to every Tool in
-//! the effective global target set ([`super::settings::effective_global_tool_targets`]:
-//! the operator's recorded selection, or every detected Tool when they never
-//! configured one) — so a Tool the skill was never on gets it now.
+//! Auto-sync plays no part here: it decides only where a **new** skill lands
+//! (Add, Onboarding import, Enable's first deploy — decision D34). An Update
+//! only brings the deployments that already exist into line; it never
+//! creates one. (Before D34 the apply phase also "re-asserted" every skill
+//! onto every selected Tool; that pass is deleted.)
 //!
 //! Everything is report data: a skill that fails acquisition is reported and
-//! excluded from phase two (and from the re-assert); a Sync target that fails
-//! is reported by Propagation. An Unlocatable skill (source folder or central
-//! copy gone) is never dispatched — it is reported *skipped* with its state,
-//! so the re-assert can never mint a dangling link for it. Only reading the
-//! skill list can fail the operation.
+//! excluded from phase two; a Sync target that fails is reported by
+//! Propagation. Two kinds of skill are never dispatched and are reported
+//! *skipped* with a typed [`RefreshSkipReason`]: an Unlocatable one (source
+//! folder or central copy gone), and one whose Delete was incomplete (D35 —
+//! finishing the Delete is the only way forward). Only reading the skill list
+//! can fail the operation.
 
 use std::sync::mpsc;
 use std::sync::Mutex;
@@ -40,14 +41,9 @@ use super::cancel_token::CancelToken;
 use super::credentials::CredentialStore;
 use super::errors::{CommandError, SignalError};
 use super::git_acquisition::HttpGithubApi;
-use super::global_sync::{
-    sync_skills_to_tools_unlocked, BatchPolicy, BatchSkill, BatchTargetStatus,
-};
 use super::installer::InstallerPaths;
 use super::mutation_guard;
-use super::propagation::{
-    PropagationOutcome, PropagationScope, PropagationSkip, PropagationStatus,
-};
+use super::propagation::PropagationOutcome;
 use super::provenance::{refresh_eligibility, RefreshEligibility};
 use super::skill_health::{self, SkillOutcomeKind};
 use super::skill_store::SkillStore;
@@ -61,14 +57,6 @@ use super::unlocatable::UnlocatableState;
 pub enum RefreshSelection {
     All,
     Ids(Vec<String>),
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct RefreshPolicy {
-    /// Also sync each refreshed skill to the effective global target Tools it
-    /// is not on yet — the auto-sync invariant, re-asserted. Off leaves the
-    /// target set alone.
-    pub reassert_auto_sync: bool,
 }
 
 /// Which half of the batch a progress tick is about.
@@ -103,26 +91,19 @@ pub struct RefreshProgress<'a> {
 #[derive(Debug, serde::Serialize, specta::Type)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum SkillRefreshStatus {
-    /// Acquired, finalized and propagated. `targets` is Propagation's report.
-    /// `reassert_error` carries a store failure inside the auto-sync re-assert:
-    /// the skill is still `Refreshed` (finalize and Propagation did succeed),
-    /// but the targets the re-assert would have created are unknown, and that
-    /// is report data rather than a log line.
+    /// Acquired, finalized and propagated. `targets` is Propagation's report:
+    /// the deployments that already existed, and nothing else.
     Refreshed {
         content_hash: Option<String>,
         source_revision: Option<String>,
         targets: Vec<PropagationOutcome>,
-        reassert_error: Option<CommandError>,
         edit_conflict: Option<super::skill_edits::InvocationEditConflict>,
     },
     /// Acquisition or finalize failed; this skill's targets were left alone.
     Failed { error: CommandError },
-    /// Refresh (all) did not dispatch this skill because the app cannot
-    /// locate it (`provenance::refresh_eligibility`); nothing was touched.
-    /// Only `All` skips — an explicitly named id proceeds to the acquire
-    /// step, which answers with the typed condition (or, for a missing
-    /// central copy, rebuilds it: that is Restore).
-    Skipped { state: UnlocatableState },
+    /// The batch did not dispatch this skill; nothing was acquired and no
+    /// target was touched. `reason` says why (see [`RefreshSkipReason`]).
+    Skipped { reason: RefreshSkipReason },
     /// Acquired bytes were discarded at admission; no target was touched.
     SkippedAcquisition { reason: UpdateSkip },
     /// The operator cancelled the run before this skill was applied: nothing
@@ -132,6 +113,23 @@ pub enum SkillRefreshStatus {
     /// reports the members it never reached with this kind, on the wire as
     /// `{ "status": "cancelled" }`.
     Cancelled,
+}
+
+/// Why a selected skill was set aside before acquisition. Crosses the wire
+/// as `{ kind: "unlocatable", state }` or `{ kind: "delete_incomplete" }`.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RefreshSkipReason {
+    /// The app cannot locate the skill (`provenance::refresh_eligibility`).
+    /// Only `All` skips for it — an explicitly named id proceeds to the
+    /// acquire step, which answers with the typed condition (or, for a
+    /// missing central copy, rebuilds it: that is Restore).
+    Unlocatable { state: UnlocatableState },
+    /// The skill's stored health is `delete_incomplete` (D35): a Delete that
+    /// could not remove every artifact kept it, and an Update must not bring
+    /// it back. Skipped for `All` **and** a named id (Update, Re-point): there
+    /// is no Restore-like repair here — retrying the Delete is.
+    DeleteIncomplete,
 }
 
 #[derive(Debug, serde::Serialize, specta::Type)]
@@ -157,9 +155,7 @@ pub fn refresh_managed_skills(
     store: &SkillStore,
     credentials: &dyn CredentialStore,
     selection: RefreshSelection,
-    policy: RefreshPolicy,
     cancel: Option<&CancelToken>,
-    now: i64,
     on_progress: impl FnMut(RefreshProgress),
 ) -> Result<RefreshReport> {
     // Both acquisition inputs are read once for the batch rather than per
@@ -172,9 +168,7 @@ pub fn refresh_managed_skills(
         paths,
         store,
         selection,
-        policy,
         cancel,
-        now,
         on_progress,
         &|skill_id, cancel| {
             // One adapter per acquisition: `GithubApi` carries no `Send`
@@ -212,9 +206,7 @@ pub(crate) fn refresh_managed_skills_with(
     paths: &InstallerPaths,
     store: &SkillStore,
     selection: RefreshSelection,
-    policy: RefreshPolicy,
     cancel: Option<&CancelToken>,
-    now: i64,
     on_progress: impl FnMut(RefreshProgress),
     acquire: &AcquireFn,
 ) -> Result<RefreshReport> {
@@ -222,9 +214,7 @@ pub(crate) fn refresh_managed_skills_with(
         paths,
         store,
         selection,
-        policy,
         cancel,
-        now,
         on_progress,
         acquire,
         UpdateIntent::Update,
@@ -237,9 +227,7 @@ pub(crate) fn refresh_with_intent(
     paths: &InstallerPaths,
     store: &SkillStore,
     selection: RefreshSelection,
-    policy: RefreshPolicy,
     cancel: Option<&CancelToken>,
-    now: i64,
     mut on_progress: impl FnMut(RefreshProgress),
     acquire: &AcquireFn,
     intent: UpdateIntent,
@@ -296,8 +284,8 @@ pub(crate) fn refresh_with_intent(
         let update = match result {
             Ok(update) => update,
             Err(error) => {
-                // Reported and excluded from propagation and the re-assert;
-                // the acquisition failure settles here, as the skill's health.
+                // Reported and excluded from propagation; the acquisition
+                // failure settles here, as the skill's health.
                 // An acquisition that answered the cancellation signal is a
                 // cancelled row, not a failure, and records nothing.
                 let error = CommandError::from_anyhow(error);
@@ -326,9 +314,8 @@ pub(crate) fn refresh_with_intent(
             skill_name: &skill_name,
             phase: RefreshPhase::Applying,
         });
-        let status = mutation_guard::serialized(|| {
-            apply_one_unlocked(paths, store, update, policy, now, intent)
-        });
+        let status =
+            mutation_guard::serialized(|| apply_one_unlocked(paths, store, update, intent));
         report.skills.push(SkillRefreshOutcome {
             skill_id,
             skill_name,
@@ -418,27 +405,63 @@ struct Selection {
 /// the typed condition (`NotRefreshable`, `SourcePathMissing`) or rebuilds a
 /// missing central copy (Restore), so a single Update reports what happened
 /// instead of an empty batch.
+///
+/// One gate applies to both selections: a skill whose stored health is
+/// `delete_incomplete` is set aside as [`RefreshSkipReason::DeleteIncomplete`]
+/// (D35) — for `All` it is checked before eligibility, so an incomplete
+/// Delete is what the operator reads even when the skill is also Unlocatable.
 fn select_skills(store: &SkillStore, selection: &RefreshSelection) -> Result<Selection> {
+    let health = skill_health::all_skill_health(store)?;
+    let delete_incomplete = |skill_id: &str| {
+        health
+            .get(skill_id)
+            .is_some_and(|health| health.kind == SkillOutcomeKind::DeleteIncomplete)
+    };
+    let skip =
+        |skill_id: String, skill_name: String, reason: RefreshSkipReason| SkillRefreshOutcome {
+            skill_id,
+            skill_name,
+            status: SkillRefreshStatus::Skipped { reason },
+        };
     let mut members = Vec::new();
     let mut skipped = Vec::new();
     match selection {
         RefreshSelection::All => {
             for skill in store.list_skills()? {
-                match refresh_eligibility(&skill) {
+                let eligibility = refresh_eligibility(&skill);
+                if delete_incomplete(&skill.id)
+                    && !matches!(eligibility, RefreshEligibility::NotAMember)
+                {
+                    skipped.push(skip(
+                        skill.id,
+                        skill.name,
+                        RefreshSkipReason::DeleteIncomplete,
+                    ));
+                    continue;
+                }
+                match eligibility {
                     RefreshEligibility::Refreshable => members.push((skill.id, skill.name)),
                     RefreshEligibility::NotAMember => {}
-                    RefreshEligibility::Unlocatable(state) => skipped.push(SkillRefreshOutcome {
-                        skill_id: skill.id,
-                        skill_name: skill.name,
-                        status: SkillRefreshStatus::Skipped { state },
-                    }),
+                    RefreshEligibility::Unlocatable(state) => skipped.push(skip(
+                        skill.id,
+                        skill.name,
+                        RefreshSkipReason::Unlocatable { state },
+                    )),
                 }
             }
         }
         RefreshSelection::Ids(ids) => {
             for id in ids {
                 if let Some(skill) = store.get_skill_by_id(id)? {
-                    members.push((skill.id, skill.name));
+                    if delete_incomplete(&skill.id) {
+                        skipped.push(skip(
+                            skill.id,
+                            skill.name,
+                            RefreshSkipReason::DeleteIncomplete,
+                        ));
+                    } else {
+                        members.push((skill.id, skill.name));
+                    }
                 }
             }
         }
@@ -452,8 +475,6 @@ fn apply_one_unlocked(
     paths: &InstallerPaths,
     store: &SkillStore,
     update: UpdateRequest,
-    policy: RefreshPolicy,
-    now: i64,
     intent: UpdateIntent,
 ) -> SkillRefreshStatus {
     let skill_id = update.skill_id().to_string();
@@ -468,25 +489,10 @@ fn apply_one_unlocked(
             return SkillRefreshStatus::Failed { error };
         }
     };
-    let targets = outcome.propagation.targets;
-    let (targets, reassert_error) = if policy.reassert_auto_sync {
-        let extra = reassert_auto_sync_unlocked(
-            paths,
-            store,
-            &outcome.skill_id,
-            &outcome.name,
-            now,
-            &targets,
-        );
-        merge_reassert(targets, extra)
-    } else {
-        (targets, None)
-    };
     SkillRefreshStatus::Refreshed {
         content_hash: outcome.content_hash,
         source_revision: outcome.source_revision,
-        targets,
-        reassert_error,
+        targets: outcome.propagation.targets,
         edit_conflict: outcome.edit_conflict,
     }
 }
@@ -521,107 +527,6 @@ fn settle_failure_health(
         },
     };
     skill_health::note_outcome(store, skill_id, kind, error);
-}
-
-/// Fold the re-assert's result into the skill's target list. The skill stays
-/// `Refreshed` either way; an `Err` is carried out as report data instead of
-/// being logged away.
-pub(crate) fn merge_reassert(
-    mut targets: Vec<PropagationOutcome>,
-    result: Result<Vec<PropagationOutcome>>,
-) -> (Vec<PropagationOutcome>, Option<CommandError>) {
-    match result {
-        Ok(extra) => {
-            targets.extend(extra);
-            (targets, None)
-        }
-        Err(error) => (targets, Some(CommandError::from_anyhow(error))),
-    }
-}
-
-/// The auto-sync invariant, re-asserted for one skill: sync it to every Tool
-/// in the effective global target set it has no target row for. That set is
-/// the operator's recorded selection when they configured one — detection is
-/// only the fallback — and it is not intersected with detection, so a
-/// selected-but-uninstalled Tool is reported as a skip rather than dropped.
-/// Existing targets were already brought into line by Propagation, so they are
-/// not touched again here — a `Disabled` row is one of them (Propagation
-/// reported it skipped), and the batch skips a disabled skill or a Tool sharing
-/// a disabled row's dir, so the re-assert never re-materialises what the
-/// operator disabled; a directory that is in the way without a row is
-/// reported, not clobbered (`overwrite_if_same_content`).
-fn reassert_auto_sync_unlocked(
-    paths: &InstallerPaths,
-    store: &SkillStore,
-    skill_id: &str,
-    skill_name: &str,
-    now: i64,
-    already: &[PropagationOutcome],
-) -> Result<Vec<PropagationOutcome>> {
-    let skill = match store.get_skill_by_id(skill_id)? {
-        Some(skill) => skill,
-        None => return Ok(Vec::new()),
-    };
-    let existing: Vec<&str> = already
-        .iter()
-        .filter_map(|outcome| match &outcome.scope {
-            PropagationScope::Global { tool } => Some(tool.as_str()),
-            PropagationScope::Project { .. } => None,
-        })
-        .collect();
-    let missing: Vec<String> = super::settings::effective_global_tool_targets(store, &paths.home)?
-        .into_iter()
-        .filter(|key| !existing.contains(&key.as_str()))
-        .collect();
-    if missing.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let skills = [BatchSkill {
-        skill_id: skill.id.clone(),
-        skill_name: skill_name.to_string(),
-        source_path: std::path::PathBuf::from(&skill.central_path),
-    }];
-    let policy = BatchPolicy {
-        overwrite: false,
-        overwrite_if_same_content: true,
-        overrides: Vec::new(),
-    };
-    let outcomes =
-        sync_skills_to_tools_unlocked(&paths.home, store, &skills, &missing, &policy, now, |_| {});
-
-    Ok(outcomes
-        .into_iter()
-        .map(|outcome| PropagationOutcome {
-            scope: PropagationScope::Global {
-                tool: outcome.tool_key.clone(),
-            },
-            status: match outcome.status {
-                BatchTargetStatus::Synced { outcome } => PropagationStatus::Synced {
-                    mode_used: outcome.mode_used,
-                },
-                BatchTargetStatus::Skipped { error } => match error {
-                    CommandError::ToolNotInstalled { tool } => PropagationStatus::Skipped {
-                        reason: PropagationSkip::ToolNotInstalled { tool },
-                    },
-                    // The batch's Disabled rule: a disabled skill, or a Tool
-                    // whose shared-dir sibling is disabled, is never re-asserted.
-                    CommandError::TargetDisabled { .. } => PropagationStatus::Skipped {
-                        reason: PropagationSkip::Disabled,
-                    },
-                    // A skips-because-unwritable is still a failure to report:
-                    // the operator asked for this Tool to carry the skill.
-                    other => PropagationStatus::Failed { error: other },
-                },
-                BatchTargetStatus::Failed { error } => PropagationStatus::Failed { error },
-                // The re-assert carries no overrides, so it never declines; a
-                // declined pair is recorded `disabled`, which is what it reads as.
-                BatchTargetStatus::Declined => PropagationStatus::Skipped {
-                    reason: PropagationSkip::Disabled,
-                },
-            },
-        })
-        .collect())
 }
 
 #[cfg(test)]

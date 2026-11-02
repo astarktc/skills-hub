@@ -526,7 +526,6 @@ function failures(now: number): FixtureState {
     // model-only as the base — card and report read the same upstream.
     { name: "design-tokens", description: "Keep design tokens in sync across platforms", source: git("some-org/design-tokens"), synced: without("amp", "kimi_cli"), override: { mode: "user-only" }, acquisition: { upstreamChanged: true, upstreamInvocation: "model-only" } },
     { name: "flaky-upstream", description: "Upstream force-pushes during every refresh", source: git("some-org/flaky"), synced: ["claude_code", "codex"], acquisition: { skip: "stale_acquisition" } },
-    { name: "store-hiccup", description: "Refreshes fine, then the re-assert hits a locked database", source: git("some-org/hiccup"), synced: ["claude_code"], acquisition: { upstreamChanged: true, reassertError: { code: "OTHER", message: "database is locked" } } },
     { name: "release-train", description: "Cut and ship a release train", source: git("acme/release-train"), synced: ["claude_code", "codex", "pi"], mode: "copy", health: { kind: "delete_incomplete", error: { code: "OTHER", message: `Permission denied (os error 13): ${globalRoot("claude_code")}/release-train` }, hoursAgo: 1 } },
     { name: "legacy-lint", description: "Imported from Cursor during onboarding", source: { kind: "imported", fromTool: "cursor" }, synced: ["cursor", "claude_code"] },
     { name: "mystery-skill", description: "Imported; the Tool it came from was not recorded", source: { kind: "imported", fromTool: null }, synced: ["claude_code"] },
@@ -534,8 +533,8 @@ function failures(now: number): FixtureState {
     { name: "zod-schema-first", description: "Design API boundaries schema-first with Zod", source: git("mattpocock/skills"), synced: ["claude_code"] },
     { name: "prisma-review", description: "Review Prisma schemas and queries for N+1 and missing indexes", source: git("mattpocock/skills"), synced: [] },
     // Disabled at both grains (round 19 D8). noisy-linter is off on Codex and
-    // Cursor only: Refresh / re-assert report both `skipped: disabled` and
-    // never bring them back. retired-playbook is off everywhere — its global
+    // Cursor only: Refresh reports both `skipped: disabled` and never brings
+    // them back. retired-playbook is off everywhere — its global
     // rows and its quartermaster assignment are all `disabled`.
     { name: "noisy-linter", description: "Lint on every keystroke; switched off where it gets in the way", source: git("some-org/noisy-linter"), synced: ["claude_code", "pi"], disabled: ["codex", "cursor"] },
     { name: "retired-playbook", description: "An incident playbook kept for reference, off everywhere", source: git("some-org/playbooks"), synced: ["claude_code", "codex"], skillDisabled: true },

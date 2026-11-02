@@ -1,9 +1,7 @@
 use super::*;
 use crate::core::{
     installer::install_local_skill,
-    refresh::{
-        refresh_managed_skills, RefreshPolicy, RefreshReport, RefreshSelection, SkillRefreshStatus,
-    },
+    refresh::{refresh_managed_skills, RefreshReport, RefreshSelection, SkillRefreshStatus},
     skill_store::SkillTargetRecord,
     sync_status::{SyncMode, SyncStatus},
 };
@@ -52,9 +50,7 @@ impl Fixture {
             &self.store,
             &crate::core::credentials::MemoryStore::new(),
             RefreshSelection::Ids(vec![self.id.clone()]),
-            RefreshPolicy::default(),
             None,
-            5000,
             |_| {},
         )
         .unwrap()
@@ -287,9 +283,7 @@ fn restore_and_repoint_replay_the_edit() {
         crate::core::repoint::RepointTarget::Local {
             path: new.to_string_lossy().into_owned(),
         },
-        RefreshPolicy::default(),
         None,
-        6000,
         |_| {},
     )
     .unwrap();

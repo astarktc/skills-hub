@@ -308,8 +308,6 @@ fn every_byte_adapter_settles_and_reports_propagation() {
         let ApplyOutcome::Updated(outcome) = outcome else {
             panic!("unexpected skip")
         };
-        assert_eq!(outcome.skill_id, record.id);
-        assert_eq!(outcome.name, record.name);
         assert!(outcome.content_hash.is_some());
         assert_eq!(
             outcome.content_hash,
@@ -395,7 +393,7 @@ fn admission_discards_staging_for_deleted_or_changed_sources() {
 
 #[test]
 fn failed_local_repoint_preserves_source_and_old_bytes() {
-    use crate::core::refresh::{RefreshPhase, RefreshPolicy, SkillRefreshStatus};
+    use crate::core::refresh::{RefreshPhase, SkillRefreshStatus};
     for fault in ["staging", "settle"] {
         let (dir, paths, store, record) = fixture();
         let source = dir.path().join("replacement");
@@ -423,9 +421,7 @@ fn failed_local_repoint_preserves_source_and_old_bytes() {
             crate::core::repoint::RepointTarget::Local {
                 path: source.to_string_lossy().into_owned(),
             },
-            RefreshPolicy::default(),
             None,
-            1234,
             |progress| {
                 if fault == "staging" && progress.phase == RefreshPhase::Applying {
                     for entry in fs::read_dir(&paths.central_dir).unwrap() {
@@ -485,13 +481,12 @@ fn local_restore_rebuilds_the_central_copy_at_the_recorded_path() {
     fs::write(source.join("SKILL.md"), "---\nname: alpha\n---\nrestored\n").unwrap();
     fs::remove_dir_all(&record.central_path).unwrap();
     let request = UpdateRequest::local(record.clone(), &source, false).unwrap();
-    let ApplyOutcome::Updated(outcome) =
+    let ApplyOutcome::Updated(_) =
         crate::core::mutation_guard::serialized(|| apply_unlocked(&paths, &store, request))
             .unwrap()
     else {
         panic!("restore skipped")
     };
-    assert_eq!(outcome.skill_id, record.id);
     assert_eq!(
         fs::read(Path::new(&record.central_path).join("SKILL.md")).unwrap(),
         fs::read(source.join("SKILL.md")).unwrap()

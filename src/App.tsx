@@ -350,7 +350,7 @@ function App() {
     lastFocusedSkill.current = shownSkillId;
     // One placement, once this commit is painted: a layer that closed in the
     // same commit (the Notifications panel's Show, which returns focus
-    // nowhere) has released the page by then. Nothing is re-asserted: no
+    // nowhere) has released the page by then. Nothing places it again: no
     // layer competes for focus (the progress is the header's, D19). Focus
     // the operator placed since — a key or a pointer — is never overridden,
     // and a later subject, placement or area disposes it.

@@ -45,8 +45,6 @@ export type FixtureSkill = {
     skip?: UpdateSkip;
     /** Upstream moved since the last finalize (a new revision lands). */
     upstreamChanged?: boolean;
-    /** The auto-sync re-assert hits a store failure. */
-    reassertError?: CommandError;
     /**
      * The invocation mode the source's manifest declares (default: the
      * skill's current base). The one source of truth for Edit replay: the

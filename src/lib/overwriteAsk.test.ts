@@ -142,13 +142,14 @@ describe("overwriteAsk", () => {
   });
 });
 
-describe("Propagation / re-assert rows (ticket 09 B2)", () => {
+// A TARGET_EXISTS here is Propagation's first sync of a row that owns nothing.
+describe("Propagation rows (ticket 09 B2)", () => {
   const exists = (path: string) => ({ code: "TARGET_EXISTS" as const, path, modifiedAt: 1, sameContent: false });
   const targets: PropagationOutcome[] = [
-    { scope: { scope: "global", tool: "claude" }, status: { status: "failed", error: exists("/g/claude/a") } },
-    { scope: { scope: "global", tool: "cursor" }, status: { status: "failed", error: exists("/g/cursor/a") } },
-    { scope: { scope: "project", project_id: "p1", tool: "claude" }, status: { status: "failed", error: exists("/p1/claude/a") } },
-    { scope: { scope: "global", tool: "codex" }, status: { status: "failed", error: { code: "OTHER", message: "io" } } },
+    { scope: { scope: "global", tool: "claude" }, status: { status: "failed", error: exists("/g/claude/a"), first_deploy: true } },
+    { scope: { scope: "global", tool: "cursor" }, status: { status: "failed", error: exists("/g/cursor/a"), first_deploy: true } },
+    { scope: { scope: "project", project_id: "p1", tool: "claude" }, status: { status: "failed", error: exists("/p1/claude/a"), first_deploy: true } },
+    { scope: { scope: "global", tool: "codex" }, status: { status: "failed", error: { code: "OTHER", message: "io" }, first_deploy: false } },
     { scope: { scope: "global", tool: "pi" }, status: { status: "synced", mode_used: "symlink" } },
   ];
   const skill = { skillId: "a", skillName: "alpha" };
@@ -162,7 +163,7 @@ describe("Propagation / re-assert rows (ticket 09 B2)", () => {
     ]);
     expect(rows[0]).toMatchObject({ toolLabel: "CLAUDE", path: "/g/claude/a", scope: { kind: "global" } });
     const report: RefreshReport = {
-      skills: [{ skill_id: "a", skill_name: "alpha", status: { status: "refreshed", content_hash: null, source_revision: null, targets, reassert_error: null, edit_conflict: null } }],
+      skills: [{ skill_id: "a", skill_name: "alpha", status: { status: "refreshed", content_hash: null, source_revision: null, targets, edit_conflict: null } }],
     };
     expect(refreshCollisionRows(report, {})).toHaveLength(3);
   });
@@ -179,7 +180,8 @@ describe("Propagation / re-assert rows (ticket 09 B2)", () => {
     });
     expect(merged.declined).toEqual([{ skillName: "alpha", tool: "claude" }]);
     expect(merged.targets).toEqual([
-      { scope: { scope: "global", tool: "cursor" }, status: { status: "failed", error: { code: "OTHER", message: "busy" } } },
+      // The retry of a first deploy that failed is still a first deploy.
+      { scope: { scope: "global", tool: "cursor" }, status: { status: "failed", error: { code: "OTHER", message: "busy" }, first_deploy: true } },
       targets[3],
       targets[4],
     ]);
@@ -201,7 +203,7 @@ describe("Propagation / re-assert rows (ticket 09 B2)", () => {
   it("rows the retry did not answer stay as they settled", () => {
     const rows = propagationCollisionRows(skill, targets, {});
     const report: RefreshReport = {
-      skills: [{ skill_id: "a", skill_name: "alpha", status: { status: "refreshed", content_hash: null, source_revision: null, targets, reassert_error: null, edit_conflict: null } }],
+      skills: [{ skill_id: "a", skill_name: "alpha", status: { status: "refreshed", content_hash: null, source_revision: null, targets, edit_conflict: null } }],
     };
     const { report: merged, declined } = mergeRefreshRetry(report, { rows, global: [], projects: null });
     expect(declined).toEqual([]);

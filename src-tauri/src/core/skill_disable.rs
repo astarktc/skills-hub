@@ -5,7 +5,7 @@
 //! * **per (skill, Tool)**, global scope only: the pair's global artifact is
 //!   removed and its row kept with Sync status `disabled` — a pair with no
 //!   row yet gets a `disabled` marker row, so a Tool the skill was never on
-//!   can be switched off before a sync or re-assert reaches it. A marker
+//!   can be switched off before a Deploy reaches it. A marker
 //!   owns nothing at its path (`SkillTargetRecord::owns_artifact`: only a
 //!   successful sync of ours, recorded as `synced_at`, makes a row an owner,
 //!   whatever its status), so no removal (Delete included) touches that path
@@ -17,7 +17,7 @@
 //!   "off everywhere until enabled" — a new assignment made meanwhile is
 //!   recorded `disabled` too (`project_sync`).
 //!
-//! Every automatic pass — Propagation, the Refresh re-assert, the global sync
+//! Every automatic pass — Propagation, the global sync
 //! batch (hence Onboarding import's first sync), project sync, reconcile and
 //! target relocation — skips a disabled target and reports it `Skipped`, never
 //! `Failed`. Nothing but [`enable_targets`] re-materialises it.

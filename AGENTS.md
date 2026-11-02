@@ -191,7 +191,7 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   world applies what the mutation returned — a `ProjectViewDto` fed to `useProjectState::applyView`, no
   success-path refetch tail, only a failure-path `refreshView`. The **skills** world replaces its entire
   catalog from `{ report, skills }` after Update, Restore, Re-point and Edit — even when the returned
-  report contains failures/skips. Commands read that catalog after settlement/reassert, outside the guard;
+  report contains failures/skips. Commands read that catalog after settlement, outside the guard;
   a catalog-read failure is a command error, never an empty success. Refresh-all, import and delete retain
   `getManagedSkills` (`loadManagedSkills`); thrown Update/Restore/Re-point requests also reload, thrown Edit
   does not. Three project mutations cannot
@@ -324,7 +324,7 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
     never for a `?`-propagated error or a cancellation; a success clears only its own family.
   - Update / Refresh (all) → `refresh_managed_skills` (`core/refresh.rs`): acquire every skill (bounded
     pool of 4, std threads), then `skill_update::apply_unlocked` admits and settles each under the
-    guard (finalize + Edit replay + Propagation; ADR-0004), plus the `reassert_auto_sync` policy. A single
+    guard (finalize + Edit replay + Propagation; ADR-0004) — existing targets only, never a new one (D34). A single
     Update is a batch of one, reached through `update_managed_skill` for Update/Restore's catalog-bearing
     response. `core/skill_update.rs` owns the git/local/Edit/Restore byte adapters; stale acquisitions are
     discarded as skipped report data, never retried in-batch. Direct Edit settles through the same Update
@@ -343,8 +343,8 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
     `failed { error }` / `cancelled` (the `CancelToken`, honoured between candidates, after an acquisition and once the
     guard is held — never mid-finalize). Collisions are **collected** as `TARGET_EXISTS` target rows, never asked in core.
     It is the only install command (the per-candidate `install_git_selection` / `install_local_selection` are gone).
-  - **The one overwrite ask (D12)**: every `TARGET_EXISTS` producer — the global batch, the install batch, the
-    re-assert, import (a divergent sibling in a target's way is reported once, as that row), Enable, project
+  - **The one overwrite ask (D12)**: every `TARGET_EXISTS` producer — the global batch, the install batch,
+    import (a divergent sibling in a target's way is reported once, as that row), Enable, project
     assign / resync / Propagation — answers a row carrying pair identity plus `path`, `modifiedAt`, `sameContent`
     (observed where `sync_engine` raises the collision). The frontend raises **one** ask per operator action
     (`src/lib/overwriteAsk.ts` shapes the rows; `useSyncOrchestration` owns the ask) answered per row, and retries:
@@ -353,7 +353,7 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
     `resolve_project_collisions` (`Keep` → the row `disabled`, owning nothing, reported `declined`). A dismissed
     ask sends nothing. An operator action that settles several reports (a group's Deploy all, Retry over several
     Tools, a multi-skill project assignment) or a report of another shape (Refresh / Update / Restore / Re-point —
-    Propagation and the re-assert — and Edit's Propagation) **collects every report first** (`collectSync`,
+    Propagation — and Edit's Propagation) **collects every report first** (`collectSync`,
     `collectEnable`, the project world's `assignToProject(projectId, skillIds)`) and asks once through
     `useSyncOrchestration.settleCollisionParts`, which retries with exact pair identity (one sync batch per skill
     Tool-set, never a skills × Tools product), hands each part back with its answered rows settled (a kept
@@ -375,7 +375,7 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   - Disable / Enable: `core/skill_disable.rs` (`disable_skill_targets` / `enable_skill_targets` over one
     `DisableScope::{SkillTool, Skill, Skills}`). This is the durable "not on this Tool" at two grains: a `disabled`
     target row (pair), or `skills.disabled_at` plus every row `disabled` (skill). There is no unrecorded unsync.
-    **Every fan-out skips a disabled target as report data, never `Failed`**: Propagation and the re-assert
+    **Every fan-out skips a disabled target as report data, never `Failed`**: Propagation
     (`PropagationSkip::Disabled`); the global batch, hence Onboarding import's first sync (`Skipped` with
     `TARGET_DISABLED`, also for a shared-dir sibling of a disabled row); project sync (`ProjectSyncSkip::Disabled`).
     A fan-out gates on `skills.disabled_at` as well as row status: a failed skill Disable keeps rows `error`

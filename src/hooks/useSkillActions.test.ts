@@ -88,7 +88,6 @@ const refreshed = (skills: ManagedSkill[]): RefreshReport => ({
       content_hash: null,
       source_revision: null,
       targets: [],
-      reassert_error: null,
       edit_conflict: null,
     },
   })),
@@ -128,7 +127,6 @@ function setup(options: { skills?: ManagedSkill[]; sharedDir?: boolean; effectiv
   };
   mockInvoke.mockImplementation((command) => Promise.resolve(answer(command)));
   const sync = {
-    autoSyncEnabled: true,
     effectiveSyncTargetIds: options.effective ?? ["claude", "cursor"],
     requestSharedDirConfirmation: vi.fn(async () => options.sharedDir ?? true),
     syncSkillsToTools: vi.fn(async () => EMPTY_SYNC),
@@ -283,11 +281,11 @@ describe("the door, verb by verb", () => {
     await act(async () => {
       await result.current.actions.run("update", s.skills, { confirmed: true });
     });
-    expect(mockInvoke).toHaveBeenCalledWith("refreshManagedSkills", ["s1", "s2"], { reassert_auto_sync: true }, expect.anything());
+    expect(mockInvoke).toHaveBeenCalledWith("refreshManagedSkills", ["s1", "s2"], expect.anything());
     await act(async () => {
       await result.current.actions.run("update", "all", { confirmed: true });
     });
-    expect(mockInvoke).toHaveBeenCalledWith("refreshManagedSkills", null, { reassert_auto_sync: true }, expect.anything());
+    expect(mockInvoke).toHaveBeenCalledWith("refreshManagedSkills", null, expect.anything());
   });
 
   it("trims a Re-point target and closes Change source when the fold says so", async () => {
@@ -298,7 +296,7 @@ describe("the door, verb by verb", () => {
     await act(async () => {
       await result.current.actions.run("repoint", [s.skills[0]], { target: { kind: "git", url: " https://github.com/o/r " } });
     });
-    expect(mockInvoke).toHaveBeenCalledWith("repointSkillSource", "s1", { kind: "git", url: "https://github.com/o/r" }, { reassert_auto_sync: true });
+    expect(mockInvoke).toHaveBeenCalledWith("repointSkillSource", "s1", { kind: "git", url: "https://github.com/o/r" });
     expect(result.current.surface.layer("repoint")).toBeNull();
   });
 
@@ -744,21 +742,6 @@ describe("Change source opens on the skill's kind", () => {
 });
 
 describe("report data (D11)", () => {
-  it("a Refresh tells the fold each skill's Tools before the run (its re-assert additions are announced)", async () => {
-    const s = setup();
-    const spy = vi.spyOn(folds, "refreshOutcome");
-    const { result } = await render(s);
-    await act(async () => {
-      await result.current.actions.run("update", "all", { confirmed: true });
-    });
-    const ctx = spy.mock.calls[0][1];
-    expect(ctx.priorGlobalTools).toEqual(
-      Object.fromEntries(
-        s.skills.map((skill) => [skill.id, skill.targets.filter((target) => target.status !== "disabled").map((target) => target.tool)]),
-      ),
-    );
-  });
-
   it("an entry lands in the run's history block as data — its subject and typed error, no callback", async () => {
     const s = setup();
     vi.spyOn(folds, "refreshOutcome").mockReturnValue({
@@ -821,7 +804,8 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
   const exists = (path: string) => ({ code: "TARGET_EXISTS" as const, path, modifiedAt: 7, sameContent: false });
   const occupiedTarget = (tool: string, project?: string): PropagationOutcome => ({
     scope: project ? { scope: "project", project_id: project, tool } : { scope: "global", tool },
-    status: { status: "failed", error: exists(`/${project ?? "tools"}/${tool}/alpha`) },
+    // Propagation's first sync of a row that owns nothing met a foreign folder.
+    status: { status: "failed", error: exists(`/${project ?? "tools"}/${tool}/alpha`), first_deploy: true },
   });
   const pair = (skill_id: string, tool_key: string, status: BatchTargetOutcome["status"]): BatchTargetOutcome => ({
     skill_id,
@@ -836,7 +820,7 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     skills: [{
       skill_id: "s1",
       skill_name: "alpha",
-      status: { status: "refreshed", content_hash: null, source_revision: null, targets, reassert_error: null, edit_conflict: null },
+      status: { status: "refreshed", content_hash: null, source_revision: null, targets, edit_conflict: null },
     }],
   });
 
@@ -929,7 +913,7 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     ["restore", "updateManagedSkill", {}],
     ["repoint", "repointSkillSource", { target: { kind: "local", path: "/elsewhere" } }],
   ] as const)(
-    "%s: the re-assert's and Propagation's collisions are one ask; the answered pairs are retried and replace the failures",
+    "%s: Propagation's collisions (global and project) are one ask; the answered pairs are retried and replace the failures",
     async (verb, command, opts) => {
       const skills = [skill("s1", "alpha", ["claude"])];
       backend(skills, {

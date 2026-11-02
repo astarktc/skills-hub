@@ -57,7 +57,6 @@ const refreshed = (id = "git"): SkillRefreshOutcome => ({
     content_hash: null,
     source_revision: null,
     targets: [],
-    reassert_error: null,
     edit_conflict: null,
   },
 });
@@ -75,7 +74,7 @@ const failed: SkillRefreshOutcome = {
 const skipped: SkillRefreshOutcome = {
   skill_id: "local",
   skill_name: "local",
-  status: { status: "skipped", state: "source_missing" },
+  status: { status: "skipped", reason: { kind: "unlocatable", state: "source_missing" } },
 };
 const skippedGone: SkillRefreshOutcome = {
   skill_id: "gone",
@@ -88,7 +87,7 @@ const skippedStale: SkillRefreshOutcome = {
   status: { status: "skipped_acquisition", reason: "stale_acquisition" },
 };
 function changed(
-  kind: "conflict" | "target" | "reassert",
+  kind: "conflict" | "target",
 ): SkillRefreshOutcome {
   const row = refreshed();
   if (row.status.status !== "refreshed") throw new Error("fixture");
@@ -104,10 +103,9 @@ function changed(
       status: {
         status: "failed",
         error: { code: "OTHER", message: "target failed" },
+        first_deploy: false,
       },
     });
-  if (kind === "reassert")
-    row.status.reassert_error = { code: "OTHER", message: "reassert failed" };
   return row;
 }
 function refreshReport(skills: SkillRefreshOutcome[]): RefreshReport {
@@ -196,15 +194,6 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
       close: true,
     },
     {
-      name: "reassert failure",
-      rows: [changed("reassert")],
-      tone: "failure",
-      message: line(refreshedN(1), ["outcome.targetsFailed", 1]),
-      errors: 1,
-      warnings: 0,
-      close: true,
-    },
-    {
       name: "conflict",
       rows: [changed("conflict")],
       tone: "conflict",
@@ -241,17 +230,16 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
         failed,
         skipped,
         changed("target"),
-        changed("reassert"),
       ],
       tone: "failure",
       message: line(
-        refreshedN(3),
+        refreshedN(2),
         ["outcome.failed", 1],
-        ["outcome.targetsFailed", 2],
+        ["outcome.targetsFailed", 1],
         ["outcome.skipped", 1],
         ["outcome.review.edits", 1],
       ),
-      errors: 3,
+      errors: 2,
       warnings: 2,
       close: false,
     },
@@ -376,7 +364,7 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
     const en = i18n.t.bind(i18n) as unknown as typeof t;
     const failure = (tool: string): InvocationEditReport["propagation"]["targets"][number] => ({
       scope: { scope: "global", tool },
-      status: { status: "failed", error: { code: "OTHER", message: "blocked" } },
+      status: { status: "failed", error: { code: "OTHER", message: "blocked" }, first_deploy: false },
     });
     const out = invocationEditOutcome(
       { skill_id: "s1", skill_name: "alpha", propagation: { targets: [failure("claude"), failure("cursor")] } },
@@ -410,23 +398,53 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
     expect(Object.values(entry).some((value) => typeof value === "function")).toBe(false);
   });
 
-  it("announces the re-assert's additions: global Tools the skill did not have before the run", () => {
+  it("announces no deployment: a synced global target is Propagation's, never a new arrival (D34)", () => {
     const success = refreshed("alpha");
     if (success.status.status !== "refreshed") throw new Error("fixture");
     success.status.targets.push(
       { scope: { scope: "global", tool: "claude" }, status: { status: "synced", mode_used: "symlink" } },
-      { scope: { scope: "global", tool: "cursor" }, status: { status: "synced", mode_used: "symlink" } },
-      { scope: { scope: "global", tool: "pi" }, status: { status: "synced", mode_used: "symlink" } },
+      { scope: { scope: "global", tool: "cursor" }, status: { status: "synced", mode_used: "copy" } },
     );
-    const out = refreshOutcome(refreshReport([success]), { ...ctx, priorGlobalTools: { alpha: ["claude"] } });
-    const line = t("runReport.alsoDeployed", { name: "alpha", tools: `cursor${t("common.listSeparator")}pi` });
-    expect(out.notes).toEqual([line]);
-    expect(out.toast?.detail).toBe(line);
-    // Unknown prior state announces nothing.
-    expect(refreshOutcome(refreshReport([success]), ctx).notes).toEqual([]);
+    const out = refreshOutcome(refreshReport([success]), ctx);
+    expect(out.notes).toEqual([]);
+    expect(out.toast).toEqual({ kind: "success", tone: "success", message: line(refreshedN(1)) });
   });
 
-  it("orders skill errors before target/reassert errors, skips before conflicts; silent propagation skips", () => {
+  it("a delete_incomplete skip is a skipped item offering Retry the Delete (D35)", () => {
+    const train: SkillRefreshOutcome = {
+      skill_id: "train",
+      skill_name: "release-train",
+      status: { status: "skipped", reason: { kind: "delete_incomplete" } },
+    };
+    const out = refreshOutcome(refreshReport([refreshed(), train]), ctx);
+    expect(out.errors).toEqual([]);
+    expect(out.warnings).toEqual([
+      {
+        title: t("updateSkip.deleteIncompleteTitle", { name: "release-train" }),
+        message: "updateSkip.deleteIncompleteMessage",
+        subject: { skillId: "train", skillName: "release-train" },
+        repair: { verb: "delete" },
+      },
+    ]);
+    expect(out.toast).toMatchObject({ tone: "skipped", message: line(refreshedN(1), ["outcome.skipped", 1]) });
+    expect(out.completion.closeModal).toBe(false);
+  });
+
+  it("a failed first deploy reads 'Could not deploy'; an owned copy keeps 'update the synced copy'", () => {
+    const success = refreshed("alpha");
+    if (success.status.status !== "refreshed") throw new Error("fixture");
+    success.status.targets.push(
+      { scope: { scope: "global", tool: "claude" }, status: { status: "failed", error: { code: "OTHER", message: "io" }, first_deploy: true } },
+      { scope: { scope: "global", tool: "cursor" }, status: { status: "failed", error: { code: "OTHER", message: "io" }, first_deploy: false } },
+    );
+    const out = refreshOutcome(refreshReport([success]), ctx);
+    expect(out.errors.map((entry) => entry.title)).toEqual([
+      t("propagationFirstDeploy.failedTitle", { name: "alpha", tool: "CLAUDE" }),
+      t("errors.propagationFailedTitle", { name: "alpha", tool: "cursor" }),
+    ]);
+  });
+
+  it("orders skill errors before target errors, skips before conflicts; silent propagation skips", () => {
     const success = refreshed();
     if (success.status.status !== "refreshed") throw new Error("fixture");
     success.status.targets.push({
@@ -438,7 +456,6 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
         changed("target"),
         changed("conflict"),
         failed,
-        changed("reassert"),
         skipped,
         success,
       ]),
@@ -447,7 +464,6 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
     expect(out.errors.map((e) => e.title)).toEqual([
       t("errors.updateFailedTitle", { name: "git" }),
       t("errors.propagationFailedTitle", { name: "git", tool: "CLAUDE" }),
-      t("errors.reassertFailedTitle", { name: "git" }),
     ]);
     expect(words(out.warnings)).toEqual([
       {
@@ -470,7 +486,7 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
         refreshReport([
           {
             ...skipped,
-            status: { status: "skipped", state: "central_missing" },
+            status: { status: "skipped", reason: { kind: "unlocatable", state: "central_missing" } },
           },
         ]),
         ctx,
@@ -482,11 +498,11 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
 describe("invocationEditOutcome", () => {
   const globalFailure: InvocationEditReport["propagation"]["targets"][number] = {
     scope: { scope: "global", tool: "claude" },
-    status: { status: "failed", error: { code: "OTHER", message: "global blocked" } },
+    status: { status: "failed", error: { code: "OTHER", message: "global blocked" }, first_deploy: false },
   };
   const projectFailure: InvocationEditReport["propagation"]["targets"][number] = {
     scope: { scope: "project", project_id: "p1", tool: "unknown" },
-    status: { status: "failed", error: { code: "OTHER", message: "project blocked" } },
+    status: { status: "failed", error: { code: "OTHER", message: "project blocked" }, first_deploy: false },
   };
   it.each([
     { name: "no targets / no-op", propagation: [], errors: [] },
@@ -1197,7 +1213,7 @@ describe("syncOutcome", () => {
     it("a Refresh's Propagation collision is to review, not a target failure", () => {
       const success = refreshed("alpha");
       if (success.status.status !== "refreshed") throw new Error("fixture");
-      success.status.targets.push({ scope: { scope: "global", tool: "cursor" }, status: { status: "failed", error: exists } });
+      success.status.targets.push({ scope: { scope: "global", tool: "cursor" }, status: { status: "failed", error: exists, first_deploy: true } });
       const out = refreshOutcome(refreshReport([success]), ctx);
       expect(out.errors).toEqual([]);
       expect(out.toast).toMatchObject({

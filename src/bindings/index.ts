@@ -39,20 +39,21 @@ export const commands = {
 	 *  a batch of one. Per-skill and per-target failures are report data, not
 	 *  command errors.
 	 */
-	refreshManagedSkills: (skillIds: string[] | null, policy: RefreshPolicyDto, onProgress: Channel<RefreshProgressDto>) => __TAURI_INVOKE<RefreshReport>("refresh_managed_skills", { skillIds, policy, onProgress }),
+	refreshManagedSkills: (skillIds: string[] | null, onProgress: Channel<RefreshProgressDto>) => __TAURI_INVOKE<RefreshReport>("refresh_managed_skills", { skillIds, onProgress }),
 	/**
 	 *  Update / Restore use the existing batch-of-one operation, then read the
-	 *  complete catalog after settlement (including auto-sync reassert). This is
+	 *  complete catalog after settlement. This is
 	 *  a fresh read, not a transaction across acquisition, the database and disk.
 	 */
-	updateManagedSkill: (skillId: string, policy: RefreshPolicyDto, onProgress: Channel<RefreshProgressDto>) => __TAURI_INVOKE<SkillMutationResultDto>("update_managed_skill", { skillId, policy, onProgress }),
+	updateManagedSkill: (skillId: string, onProgress: Channel<RefreshProgressDto>) => __TAURI_INVOKE<SkillMutationResultDto>("update_managed_skill", { skillId, onProgress }),
 	/**
 	 *  Re-point any Managed skill (`git`, `local` or `imported`) at a GitHub URL
 	 *  or a local folder and update from it (see **Re-point** in `CONTEXT.md`).
-	 *  Honours the Update auto-sync reassert policy; the Update's outcome is
-	 *  report data, answered with the catalog read after settlement.
+	 *  Like every Update it only brings existing deployments into line; the
+	 *  Update's outcome is report data, answered with the catalog read after
+	 *  settlement.
 	 */
-	repointSkillSource: (skillId: string, target: RepointTarget, policy: RefreshPolicyDto) => __TAURI_INVOKE<SkillMutationResultDto>("repoint_skill_source", { skillId, target, policy }),
+	repointSkillSource: (skillId: string, target: RepointTarget) => __TAURI_INVOKE<SkillMutationResultDto>("repoint_skill_source", { skillId, target }),
 	/**
 	 *  Resolve a Re-point target for one skill without writing anything: what
 	 *  would land (name, ref, subpath), whether its name matches, and a
@@ -93,8 +94,8 @@ export const commands = {
 	/**
 	 *  Disable a scope — one (skill, Tool) pair, one skill, or several skills
 	 *  (see **Disabled** in `CONTEXT.md`): its artifacts are removed and their
-	 *  rows kept `disabled`, so no Refresh, Propagation or re-assert brings them
-	 *  back. Per-target failures are report data (rows kept `error`, ADR-0002).
+	 *  rows kept `disabled`, so no Refresh, Propagation or sync fan-out brings
+	 *  them back. Per-target failures are report data (rows kept `error`, ADR-0002).
 	 */
 	disableSkillTargets: (scope: DisableScope) => __TAURI_INVOKE<RemovalReport>("disable_skill_targets", { scope }),
 	/**
@@ -1077,18 +1078,16 @@ export type PropagationSkip =
  */
 { reason: "disabled" };
 
-export type PropagationStatus = { status: "synced"; mode_used: SyncMode } | { status: "skipped"; reason: PropagationSkip } | { status: "failed"; error: CommandError };
+export type PropagationStatus = { status: "synced"; mode_used: SyncMode } | { status: "skipped"; reason: PropagationSkip } | 
+/**
+ *  `first_deploy` is true when the row had never materialised an
+ *  artifact before this pass (`owns_artifact` false: a failed first
+ *  sync's `error` row) — the failed write was a first deploy, not an
+ *  update of a copy the app already owned.
+ */
+{ status: "failed"; error: CommandError; first_deploy: boolean };
 
 export type RefreshPhaseDto = "acquiring" | "applying";
-
-export type RefreshPolicyDto = {
-	/**
-	 *  Also sync each refreshed skill to installed Tools it is not on yet
-	 *  (the auto-sync invariant, re-asserted). The caller decides — the
-	 *  backend never reads the auto-sync setting behind its back.
-	 */
-	reassert_auto_sync?: boolean,
-};
 
 /**  Progress tick streamed before each per-skill step of each Refresh phase. */
 export type RefreshProgressDto = {
@@ -1101,6 +1100,26 @@ export type RefreshProgressDto = {
 export type RefreshReport = {
 	skills: SkillRefreshOutcome[],
 };
+
+/**
+ *  Why a selected skill was set aside before acquisition. Crosses the wire
+ *  as `{ kind: "unlocatable", state }` or `{ kind: "delete_incomplete" }`.
+ */
+export type RefreshSkipReason = 
+/**
+ *  The app cannot locate the skill (`provenance::refresh_eligibility`).
+ *  Only `All` skips for it — an explicitly named id proceeds to the
+ *  acquire step, which answers with the typed condition (or, for a
+ *  missing central copy, rebuilds it: that is Restore).
+ */
+{ kind: "unlocatable"; state: UnlocatableState } | 
+/**
+ *  The skill's stored health is `delete_incomplete` (D35): a Delete that
+ *  could not remove every artifact kept it, and an Update must not bring
+ *  it back. Skipped for `All` **and** a named id (Update, Re-point): there
+ *  is no Restore-like repair here — retrying the Delete is.
+ */
+{ kind: "delete_incomplete" };
 
 export type RemovalReport = {
 	targets: RemovalTargetOutcome[],
@@ -1330,23 +1349,17 @@ export type SkillRefreshOutcome = {
 
 export type SkillRefreshStatus = 
 /**
- *  Acquired, finalized and propagated. `targets` is Propagation's report.
- *  `reassert_error` carries a store failure inside the auto-sync re-assert:
- *  the skill is still `Refreshed` (finalize and Propagation did succeed),
- *  but the targets the re-assert would have created are unknown, and that
- *  is report data rather than a log line.
+ *  Acquired, finalized and propagated. `targets` is Propagation's report:
+ *  the deployments that already existed, and nothing else.
  */
-{ status: "refreshed"; content_hash: string | null; source_revision: string | null; targets: PropagationOutcome[]; reassert_error: CommandError | null; edit_conflict: InvocationEditConflict | null } | 
+{ status: "refreshed"; content_hash: string | null; source_revision: string | null; targets: PropagationOutcome[]; edit_conflict: InvocationEditConflict | null } | 
 /**  Acquisition or finalize failed; this skill's targets were left alone. */
 { status: "failed"; error: CommandError } | 
 /**
- *  Refresh (all) did not dispatch this skill because the app cannot
- *  locate it (`provenance::refresh_eligibility`); nothing was touched.
- *  Only `All` skips — an explicitly named id proceeds to the acquire
- *  step, which answers with the typed condition (or, for a missing
- *  central copy, rebuilds it: that is Restore).
+ *  The batch did not dispatch this skill; nothing was acquired and no
+ *  target was touched. `reason` says why (see [`RefreshSkipReason`]).
  */
-{ status: "skipped"; state: UnlocatableState } | 
+{ status: "skipped"; reason: RefreshSkipReason } | 
 /**  Acquired bytes were discarded at admission; no target was touched. */
 { status: "skipped_acquisition"; reason: UpdateSkip } | 
 /**
@@ -1407,8 +1420,8 @@ export type SyncStatus =
 /**
  *  The operator's durable "not on this Tool" (see **Disabled** in
  *  `CONTEXT.md`): the artifact was removed and the row kept as the
- *  record. Terminal for every automatic pass — reconcile, Propagation,
- *  the auto-sync re-assert and every sync fan-out leave it alone; only
+ *  record. Terminal for every automatic pass — reconcile, Propagation
+ *  and every sync fan-out leave it alone; only
  *  `skill_disable::enable_targets` lifts it.
  */
 "disabled";

@@ -22,7 +22,6 @@ export type { CandidateMatch } from "../../bindings";
 export type { LocalSkillCandidate } from "../../bindings";
 export type { RefreshReport } from "../../bindings";
 export type { SkillMutationResultDto, InvocationEditResultDto, InvocationEditReport } from "../../bindings";
-export type { RefreshPolicyDto } from "../../bindings";
 export type { RepointTarget, RepointPreview, RepointSelection } from "../../bindings";
 // A command's typed refusal, for a dialog that shows it by its field (Re-point).
 export type { CommandError } from "../../bindings";

@@ -48,7 +48,6 @@ import type {
   ProjectViewDto,
   PropagationOutcome,
   PropagationSkip,
-  RefreshPolicyDto,
   RefreshProgressDto,
   RefreshReport,
   RemovalReport,
@@ -1006,8 +1005,9 @@ export function createFixtureBackend(
       for (const member of installed) {
         const scope = { scope: "global" as const, tool: member.tool };
         if (error) {
+          const firstDeploy = !ownsArtifact(member);
           member.status = "error";
-          out.push({ scope, status: { status: "failed", error } });
+          out.push({ scope, status: { status: "failed", error, first_deploy: firstDeploy } });
         } else {
           member.status = "synced";
           member.mode = "symlink";
@@ -1032,12 +1032,16 @@ export function createFixtureBackend(
         } else if (centralMissing) {
           a.status = "error";
           a.last_error = `path not found: ${skill.dto.central_path}`;
-          out.push({ scope, status: { status: "failed", error: missingSource(skill) } });
+          out.push({ scope, status: { status: "failed", error: missingSource(skill), first_deploy: !ownsArtifact(a) } });
         } else {
-          const result = syncAssignment(project, a, ownsArtifact(a));
+          const owned = ownsArtifact(a);
+          const result = syncAssignment(project, a, owned);
           out.push({
             scope,
-            status: result.status === "failed" ? { status: "failed", error: result.error } : { status: "synced", mode_used: a.mode },
+            status:
+              result.status === "failed"
+                ? { status: "failed", error: result.error, first_deploy: !owned }
+                : { status: "synced", mode_used: a.mode },
           });
         }
       }
@@ -1055,53 +1059,9 @@ export function createFixtureBackend(
   };
 
   /**
-   * The auto-sync invariant, re-asserted (Rust `refresh::reassert_auto_sync_unlocked`):
-   * the global sync batch over every effective target Tool the skill has no
-   * Propagation outcome for — not intersected with detection — with the
-   * same-content policy, its outcomes converted to Propagation outcomes: an
-   * uninstalled Tool is a skip, every other skip (unwritable) a failure.
-   */
-  const reassert = async (skill: FixtureSkill, already: PropagationOutcome[]): Promise<PropagationOutcome[]> => {
-    const existing = new Set(already.flatMap((o) => (o.scope.scope === "global" ? [o.scope.tool] : [])));
-    const missing = effectiveTargets().filter((key) => !existing.has(key));
-    if (missing.length === 0) return [];
-    const outcomes = await syncBatch(
-      [{ skill_id: skill.dto.id, name: skill.dto.name, source_path: skill.dto.central_path }],
-      missing,
-      { overwrite: false, overwrite_if_same_content: true },
-      null,
-    );
-    return outcomes.map((o): PropagationOutcome => {
-      const scope = { scope: "global" as const, tool: o.tool_key };
-      const s = o.status;
-      if (s.status === "synced") return { scope, status: { status: "synced", mode_used: s.outcome.mode_used } };
-      if (s.status === "skipped" && s.error.code === "TOOL_NOT_INSTALLED") {
-        return { scope, status: { status: "skipped", reason: { reason: "tool_not_installed", tool: s.error.tool } } };
-      }
-      // The re-assert carries no overrides, so it never declines; a declined
-      // pair is recorded disabled, which is what it reads as.
-      if (s.status === "declined" || (s.status === "skipped" && s.error.code === "TARGET_DISABLED")) {
-        return { scope, status: { status: "skipped", reason: { reason: "disabled" } } };
-      }
-      return { scope, status: { status: "failed", error: s.error } };
-    });
-  };
-
-  /** Propagation, then (by policy) the re-assert merged into it (Rust `merge_reassert`). */
-  const settleTargets = async (skill: FixtureSkill, policy: RefreshPolicyDto) => {
-    const targets = propagate(skill);
-    if (!policy.reassert_auto_sync) return { targets, reassert_error: null };
-    // A store failure inside the re-assert: its targets are unknown, the
-    // skill stays refreshed, the error is report data.
-    const injected = skill.acquisition.reassertError;
-    if (injected) return { targets, reassert_error: injected };
-    return { targets: [...targets, ...(await reassert(skill, targets))], reassert_error: null };
-  };
-
-  /**
    * The acquisition half of an Update (Rust `skill_update::acquire_update`):
    * typed refusals and fetch failures. A failure here is reported and never
-   * reaches the apply phase (no `applying` tick, no Propagation, no re-assert).
+   * reaches the apply phase (no `applying` tick, no Propagation).
    */
   const acquireRefresh = (skill: FixtureSkill): CommandError | null => {
     if (!skill.dto.refreshable) return { code: "NOT_REFRESHABLE", name: skill.dto.name };
@@ -1111,7 +1071,7 @@ export function createFixtureBackend(
   };
 
   /** The apply half (Rust `refresh::apply_one_unlocked`): admission, finalize, settlement. */
-  const applyRefresh = async (skill: FixtureSkill, policy: RefreshPolicyDto): Promise<SkillRefreshStatus> => {
+  const applyRefresh = (skill: FixtureSkill): SkillRefreshStatus => {
     const { acquisition } = skill;
     if (acquisition.skip) return { status: "skipped_acquisition", reason: acquisition.skip };
     const editConflict = replayInvocationEdit(skill);
@@ -1120,14 +1080,14 @@ export function createFixtureBackend(
       landBytes(skill, acquisition.upstreamChanged ? 2 : 1);
       acquisition.upstreamChanged = false;
     }
-    const { targets, reassert_error } = await settleTargets(skill, policy);
+    // Propagation only: an Update never creates a deployment (D34).
+    const targets = propagate(skill);
     settleUpdateHealth(skill, editConflict);
     return {
       status: "refreshed",
       content_hash: skill.contentHash,
       source_revision: skill.dto.source_type === "git" ? fingerprint(`${skill.dto.name}:${skill.dto.updated_at}`) : null,
       targets,
-      reassert_error,
       edit_conflict: editConflict,
     };
   };
@@ -1169,24 +1129,31 @@ export function createFixtureBackend(
    */
   const refreshBatch = async (
     ids: string[] | null,
-    policy: RefreshPolicyDto,
     onProgress: ProgressSink<RefreshProgressDto>,
   ): Promise<RefreshReport> => {
     state.cancelRequested = false;
     await pause(120);
     const selected: FixtureSkill[] = [];
     const skipped: SkillRefreshOutcome[] = [];
+    // A skill whose Delete was incomplete is never updated, in either
+    // selection (Rust `refresh::select_skills`, D35).
+    const deleteIncomplete = (skill: FixtureSkill) => skill.dto.health?.kind === "delete_incomplete";
+    const skipDeleteIncomplete = (skill: FixtureSkill) =>
+      skipped.push(refreshRow(skill, { status: "skipped", reason: { kind: "delete_incomplete" } }));
     if (ids === null) {
       // `All` = every refreshable skill; an Unlocatable one is reported skipped.
       for (const skill of state.skills.filter((s) => s.dto.refreshable)) {
-        if (skill.dto.unlocatable) skipped.push(refreshRow(skill, { status: "skipped", state: skill.dto.unlocatable }));
+        if (deleteIncomplete(skill)) skipDeleteIncomplete(skill);
+        else if (skill.dto.unlocatable)
+          skipped.push(refreshRow(skill, { status: "skipped", reason: { kind: "unlocatable", state: skill.dto.unlocatable } }));
         else selected.push(skill);
       }
     } else {
       // An id with no row is dropped, not a batch failure.
       for (const id of ids) {
         const skill = state.skills.find((s) => s.dto.id === id);
-        if (skill) selected.push(skill);
+        if (skill && deleteIncomplete(skill)) skipDeleteIncomplete(skill);
+        else if (skill) selected.push(skill);
       }
     }
     const total = selected.length;
@@ -1213,7 +1180,7 @@ export function createFixtureBackend(
       }
       emit(onProgress, { index: i + 1, total, skill_name: skill.dto.name, phase: "applying" });
       await step(total * 2);
-      outcomes.push(refreshRow(skill, await applyRefresh(skill, policy)));
+      outcomes.push(refreshRow(skill, applyRefresh(skill)));
     }
     return { skills: [...outcomes, ...skipped] };
   };
@@ -1715,11 +1682,9 @@ export function createFixtureBackend(
       return syncBatch(skills, tools, policy, onProgress);
     },
     installSelection: async (request, onProgress) => installBatch(request, onProgress),
-    refreshManagedSkills: async (skillIds, policy, onProgress) =>
-      refreshBatch(skillIds, policy, onProgress),
-    updateManagedSkill: async (skillId, policy, onProgress) =>
-      skillResult(await refreshBatch([skillId], policy, onProgress)),
-    repointSkillSource: async (skillId, target: RepointTarget, policy) => {
+    refreshManagedSkills: async (skillIds, onProgress) => refreshBatch(skillIds, onProgress),
+    updateManagedSkill: async (skillId, onProgress) => skillResult(await refreshBatch([skillId], onProgress)),
+    repointSkillSource: async (skillId, target: RepointTarget) => {
       // Rust `repoint::repoint_skill_source_with`: validate (thrown), then a
       // batch-of-one Update through `refresh_managed_skills_with` — the same
       // cancellation contract and report shape as Update.
@@ -1739,6 +1704,10 @@ export function createFixtureBackend(
         if (tool) fail({ code: "LOCAL_SOURCE_INSIDE_TOOL_DIR", path, tool: tool.key });
         findLocal(path);
       }
+      // A batch of one: a skill whose Delete was incomplete is set aside
+      // before acquisition (Rust `refresh::select_skills`, D35).
+      if (skill.dto.health?.kind === "delete_incomplete")
+        return skillResult({ skills: [refreshRow(skill, { status: "skipped", reason: { kind: "delete_incomplete" } })] });
       await pause(600);
       // A cancel is the batch's cancelled row, never a failure, no health.
       if (state.cancelRequested) return skillResult({ skills: [refreshRow(skill, { status: "cancelled" })] });
@@ -1766,7 +1735,7 @@ export function createFixtureBackend(
       skill.dto.refreshable = true;
       skill.acquisition = {};
       landBytes(skill, 1);
-      const { targets, reassert_error } = await settleTargets(skill, policy);
+      const targets = propagate(skill);
       settleUpdateHealth(skill, null);
       return skillResult({
         skills: [
@@ -1775,7 +1744,6 @@ export function createFixtureBackend(
             content_hash: skill.contentHash,
             source_revision: target.kind === "git" ? fingerprint(skill.dto.source_ref ?? "") : null,
             targets,
-            reassert_error,
             edit_conflict: null,
           }),
         ],

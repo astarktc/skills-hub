@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use crate::core::errors::SignalError;
 use crate::core::installer::{install_imported_skill, install_local_skill, InstallerPaths};
 use crate::core::refresh::{
-    refresh_managed_skills, RefreshPolicy, RefreshReport, RefreshSelection, SkillRefreshStatus,
+    refresh_managed_skills, RefreshReport, RefreshSelection, SkillRefreshStatus,
 };
 use crate::core::skill_store::SkillStore;
 use crate::core::unlocatable::{
@@ -66,9 +66,7 @@ fn update(f: &Fixture) -> RefreshReport {
         &f.store,
         &crate::core::credentials::MemoryStore::new(),
         RefreshSelection::Ids(vec![f.skill_id.clone()]),
-        RefreshPolicy::default(),
         None,
-        3000,
         |_| {},
     )
     .expect("refresh")

@@ -340,9 +340,7 @@ fn refresh_finalize_and_propagation_is_serialized() {
             &store,
             &crate::core::credentials::MemoryStore::new(),
             refresh::RefreshSelection::Ids(vec![skill_id]),
-            refresh::RefreshPolicy::default(),
             None,
-            5000,
             |_| {},
         )
         .expect("refresh");
