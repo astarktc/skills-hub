@@ -36,6 +36,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use uuid::Uuid;
 
 use super::errors::{CommandError, SignalError};
 use super::installer::InstallerPaths;
@@ -227,10 +228,8 @@ fn propagate_global_rows(
         // answers from its static entries while the row resolved through
         // `adapter_by_key`, and the two may disagree (a test shadow), so the
         // membership is not left to the registry's reflexivity.
-        let sharing: Vec<&str> = adapters_sharing_skills_dir(adapter)
-            .into_iter()
-            .map(ToolAdapter::key)
-            .collect();
+        let sharers = adapters_sharing_skills_dir(adapter);
+        let sharing: Vec<&str> = sharers.iter().map(|a| a.key()).collect();
         let group: Vec<(&SkillTargetRecord, &'static ToolAdapter)> = rows
             .iter()
             .filter(|(r, _)| r.tool == row.tool || sharing.contains(&r.tool.as_str()))
@@ -287,22 +286,48 @@ fn propagate_global_rows(
             continue;
         }
 
-        // The group's most restrictive member decides how the shared
-        // artifact is written: one copy-only Tool makes the whole dir a copy.
+        // The shared artifact is ours to replace only when a member row
+        // materialised it (`owns_artifact`); otherwise this is a first sync
+        // and foreign bytes there are `TARGET_EXISTS`.
+        let overwrite = installed.iter().any(|(member, _)| member.owns_artifact());
+
+        // A shared skills dir is one artifact (D34 amendment): a first sync
+        // into it is recorded for every *installed* sharer, exactly as the
+        // global batch records its `record_tools` — the sharers this skill
+        // has no row for yet are settled here beside the group's rows. An
+        // update of an owned artifact records nothing new. A sibling minted
+        // here is never visited again in this pass (`rows` is a snapshot;
+        // `handled` names it besides).
+        let siblings: Vec<&'static ToolAdapter> = if overwrite {
+            Vec::new()
+        } else {
+            sharers
+                .iter()
+                .copied()
+                .filter(|a| !rows.iter().any(|(r, _)| r.tool == a.key()))
+                .filter(|a| is_installed_in(home, a))
+                .collect()
+        };
+        for sibling in &siblings {
+            if !handled.iter().any(|tool| tool == sibling.key()) {
+                handled.push(sibling.key().to_string());
+            }
+        }
+
+        // The group's most restrictive member — a sibling about to be
+        // recorded included — decides how the shared artifact is written:
+        // one copy-only Tool makes the whole dir a copy.
         let driving_adapter = installed
             .iter()
-            .find(|(_, a)| !a.supports_symlink)
             .map(|(_, a)| *a)
+            .chain(siblings.iter().copied())
+            .find(|a| !a.supports_symlink)
             .unwrap_or(adapter);
 
         let source_missing = !central_path.is_dir();
         let result = if source_missing {
             Err(missing_source(central_path))
         } else {
-            // The shared artifact is ours to replace only when a member
-            // row materialised it (`owns_artifact`); otherwise this is a
-            // first sync and foreign bytes there are `TARGET_EXISTS`.
-            let overwrite = installed.iter().any(|(member, _)| member.owns_artifact());
             sync_engine::sync_dir_for_tool_with_overwrite(
                 driving_adapter,
                 central_path,
@@ -333,9 +358,41 @@ fn propagate_global_rows(
                         },
                     });
                 }
+                for sibling in &siblings {
+                    store.transition_skill_target(
+                        &Uuid::new_v4().to_string(),
+                        TargetTransition::Recorded {
+                            skill_id,
+                            tool: sibling.key(),
+                            mode: outcome.mode_used,
+                            target_path: &target_path,
+                            synced_at: now,
+                        },
+                    )?;
+                    report.targets.push(PropagationOutcome {
+                        scope: PropagationScope::Global {
+                            tool: sibling.key().to_string(),
+                        },
+                        status: PropagationStatus::Synced {
+                            mode_used: outcome.mode_used,
+                        },
+                    });
+                }
             }
             Err(error) => {
                 let detail = format!("{:#}", error);
+                // The sibling rule of a failed first sync is the global
+                // batch's (`global_sync::sync_skills_to_planned_tools`): a
+                // `TARGET_EXISTS` records nothing until the operator answers
+                // the ask (D12) — its confirmed retry goes through that batch,
+                // which records the sharers then; any other failure records
+                // every installed sharer `error`, owning nothing
+                // (`record_failed`, D9).
+                let collision = error
+                    .chain()
+                    .any(|cause| cause.is::<sync_engine::TargetExistsError>());
+                let failed_siblings: &[&'static ToolAdapter] =
+                    if collision { &[] } else { &siblings };
                 // Each member row is its own Sync target, so each one is
                 // settled and reported as failed. A missing central copy is
                 // the same typed condition for every row; a sync failure's
@@ -361,6 +418,39 @@ fn propagate_global_rows(
                         status: PropagationStatus::Failed {
                             error: CommandError::from_anyhow(error),
                             first_deploy: !member.owns_artifact(),
+                        },
+                    });
+                }
+                // A row that never materialised records the mode a sync
+                // would try first, as the batch's `would_be` does.
+                let would_be_mode = if driving_adapter.supports_symlink {
+                    SyncMode::Symlink
+                } else {
+                    SyncMode::Copy
+                };
+                for sibling in failed_siblings {
+                    store.transition_skill_target(
+                        &Uuid::new_v4().to_string(),
+                        TargetTransition::FailedRecorded {
+                            skill_id,
+                            tool: sibling.key(),
+                            mode: would_be_mode,
+                            target_path: &driver.target_path,
+                            error: &detail,
+                        },
+                    )?;
+                    let error = if source_missing {
+                        missing_source(central_path)
+                    } else {
+                        anyhow::anyhow!("{}", detail)
+                    };
+                    report.targets.push(PropagationOutcome {
+                        scope: PropagationScope::Global {
+                            tool: sibling.key().to_string(),
+                        },
+                        status: PropagationStatus::Failed {
+                            error: CommandError::from_anyhow(error),
+                            first_deploy: true,
                         },
                     });
                 }

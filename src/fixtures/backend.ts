@@ -987,11 +987,20 @@ export function createFixtureBackend(
         continue;
       }
       const driverPath = installed[0].target_path;
+      const firstSync = !installed.some(ownsArtifact);
+      // A shared skills dir is one artifact (D34 amendment): a first sync is
+      // recorded for every installed sharer the skill has no row for yet, as
+      // the global batch's `recordTargets` does; an owned artifact's update
+      // records nothing new. `handled` keeps a minted sibling from being
+      // visited again by this loop (the array grows under it).
+      const siblings = firstSync
+        ? sharers.filter((tool) => isInstalled(tool) && !skill.dto.targets.some((t) => t.tool === tool))
+        : [];
+      for (const tool of siblings) handled.add(tool);
       // A first sync (no member owns the path) meets a foreign folder as
       // TARGET_EXISTS; an owner replaces it.
       const occupied =
-        !installed.some(ownsArtifact) &&
-        state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === driverPath);
+        firstSync && state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === driverPath);
       // An unwritable dir surfaces as the sync engine's io error, which the
       // command seam classifies as `OTHER` (not the batch's TOOL_NOT_WRITABLE).
       const error: CommandError | null = centralMissing
@@ -1013,6 +1022,19 @@ export function createFixtureBackend(
           member.mode = "symlink";
           member.synced_at = at;
           member.target_path = driverPath;
+          out.push({ scope, status: { status: "synced", mode_used: "symlink" } });
+        }
+      }
+      // Siblings follow the batch's rule: synced beside the group; on a failed
+      // first sync an `error` row owning nothing (`record_failed`), except for
+      // TARGET_EXISTS, which records nothing until the ask is answered.
+      for (const tool of error?.code === "TARGET_EXISTS" ? [] : siblings) {
+        const scope = { scope: "global" as const, tool };
+        if (error) {
+          skill.dto.targets.push({ tool, mode: "symlink", status: "error", target_path: driverPath, synced_at: null });
+          out.push({ scope, status: { status: "failed", error, first_deploy: true } });
+        } else {
+          skill.dto.targets.push({ tool, mode: "symlink", status: "synced", target_path: driverPath, synced_at: at });
           out.push({ scope, status: { status: "synced", mode_used: "symlink" } });
         }
       }

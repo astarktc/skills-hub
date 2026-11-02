@@ -27,7 +27,7 @@ export type { RepointTarget, RepointPreview, RepointSelection } from "../../bind
 export type { CommandError } from "../../bindings";
 export type { RefreshProgressDto } from "../../bindings";
 export type { SkillRefreshOutcome } from "../../bindings";
-export type { SkillRefreshStatus } from "../../bindings";
+export type { SkillRefreshStatus, RefreshSkipReason } from "../../bindings";
 export type { UnlocatableState, UpdateSkip } from "../../bindings";
 export type { SkillHealth, SkillOutcomeKind } from "../../bindings";
 export type { OverrideDecision } from "../../bindings";

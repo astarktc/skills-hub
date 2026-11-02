@@ -416,6 +416,155 @@ fn a_delete_incomplete_skill_is_skipped_by_refresh_all_and_by_a_named_update() {
     }
 }
 
+/// D35 boundary of `RefreshSelection::All` (ticket 33 audit F2): the
+/// delete-incomplete gate takes precedence over Unlocatable for a member
+/// (source missing, central missing), and never reaches a non-member — an
+/// imported skill carrying the same health stays out of the report. No case
+/// acquires anything or touches health, targets or the central copy.
+#[test]
+fn refresh_all_reports_delete_incomplete_before_unlocatable_and_never_for_a_non_member() {
+    use crate::core::refresh::{RefreshReport, RefreshSkipReason};
+
+    /// Refresh all with a counting acquirer; answers (report, acquisitions).
+    fn refresh_all_counting(paths: &InstallerPaths, store: &SkillStore) -> (RefreshReport, usize) {
+        let acquired = AtomicUsize::new(0);
+        let report = refresh_managed_skills_with(
+            paths,
+            store,
+            RefreshSelection::All,
+            None,
+            |_| {},
+            &|skill_id, cancel| {
+                acquired.fetch_add(1, Ordering::SeqCst);
+                crate::core::skill_update::acquire_update(
+                    paths,
+                    store,
+                    skill_id,
+                    cancel,
+                    &crate::core::git_acquisition::HttpGithubApi::new(None),
+                    0,
+                )
+            },
+        )
+        .expect("refresh");
+        (report, acquired.load(Ordering::SeqCst))
+    }
+    /// Health, targets and central bytes; the records carry no `PartialEq`,
+    /// so their debug form is the snapshot.
+    fn snapshot(store: &SkillStore, skill_id: &str) -> (String, String, Option<String>) {
+        let central = store
+            .get_skill_by_id(skill_id)
+            .expect("query")
+            .expect("skill")
+            .central_path;
+        (
+            format!("{:?}", store.skill_outcome(skill_id).expect("health")),
+            format!("{:?}", store.list_skill_targets(skill_id).expect("targets")),
+            fs::read_to_string(PathBuf::from(central).join("SKILL.md")).ok(),
+        )
+    }
+
+    // (a) source missing, (b) central missing: a refreshable member that is
+    // also Unlocatable reads DeleteIncomplete.
+    for (label, state) in [
+        ("source missing", UnlocatableState::SourceMissing),
+        ("central missing", UnlocatableState::CentralMissing),
+    ] {
+        let f = fixture();
+        mark_installed_in(
+            &f.paths.home,
+            adapter_by_key("claude_code").expect("claude_code adapter"),
+        );
+        let skill = f
+            .store
+            .get_skill_by_id(&f.skill_id)
+            .expect("query")
+            .expect("skill");
+        crate::core::global_sync::sync_skills_to_tools(
+            &f.paths.home,
+            &f.store,
+            &[crate::core::global_sync::BatchSkill {
+                skill_id: skill.id.clone(),
+                skill_name: skill.name.clone(),
+                source_path: PathBuf::from(&skill.central_path),
+            }],
+            &["claude_code".to_string()],
+            &crate::core::global_sync::BatchPolicy {
+                overwrite: false,
+                overwrite_if_same_content: true,
+                overrides: Vec::new(),
+            },
+            2000,
+            |_| {},
+        );
+        match state {
+            UnlocatableState::SourceMissing => {
+                fs::remove_dir_all(f.source.path()).expect("remove source")
+            }
+            UnlocatableState::CentralMissing => {
+                fs::remove_dir_all(&skill.central_path).expect("remove central copy")
+            }
+        }
+        // Premise: without the health the skill is reported Unlocatable.
+        let (report, acquired) = refresh_all_counting(&f.paths, &f.store);
+        assert!(
+            matches!(
+                report.skills.as_slice(),
+                [outcome] if matches!(
+                    &outcome.status,
+                    SkillRefreshStatus::Skipped {
+                        reason: RefreshSkipReason::Unlocatable { state: observed }
+                    } if *observed == state
+                )
+            ),
+            "{label}: premise {report:?}"
+        );
+        assert_eq!(acquired, 0, "{label}: premise acquires nothing");
+
+        mark_delete_incomplete(&f.store, &f.skill_id);
+        let before = snapshot(&f.store, &f.skill_id);
+        let (report, acquired) = refresh_all_counting(&f.paths, &f.store);
+
+        let [outcome] = report.skills.as_slice() else {
+            panic!("{label}: one outcome, got {report:?}");
+        };
+        assert_eq!(outcome.skill_id, f.skill_id);
+        assert!(
+            matches!(
+                outcome.status,
+                SkillRefreshStatus::Skipped {
+                    reason: RefreshSkipReason::DeleteIncomplete
+                }
+            ),
+            "{label}: DeleteIncomplete takes precedence over Unlocatable, got {:?}",
+            outcome.status
+        );
+        assert_eq!(acquired, 0, "{label}: no acquisition");
+        assert_eq!(
+            snapshot(&f.store, &f.skill_id),
+            before,
+            "{label}: health, targets and central copy unchanged"
+        );
+    }
+
+    // (c) an imported skill is not a member: the same health never puts it
+    // in the report.
+    let f = pool_fixture(0);
+    let imported_id = install_imported(&f.paths, &f.store, "taken-over");
+    mark_delete_incomplete(&f.store, &imported_id);
+    let before = snapshot(&f.store, &imported_id);
+
+    let (report, acquired) = refresh_all_counting(&f.paths, &f.store);
+
+    assert!(report.skills.is_empty(), "imported: absent, got {report:?}");
+    assert_eq!(acquired, 0, "imported: no acquisition");
+    assert_eq!(
+        snapshot(&f.store, &imported_id),
+        before,
+        "imported: unchanged"
+    );
+}
+
 /// The skip crosses the wire as a tagged reason.
 #[test]
 fn refresh_skip_reasons_cross_the_wire_tagged() {

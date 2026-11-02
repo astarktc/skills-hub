@@ -597,6 +597,135 @@ describe("D35: a delete_incomplete skill is never updated", () => {
   });
 });
 
+describe("D35 boundary of Refresh all (ticket 33 audit F2)", () => {
+  const skippedDeleteIncomplete = { status: "skipped", reason: { kind: "delete_incomplete" } };
+
+  for (const state of ["source_missing", "central_missing"] as const) {
+    it(`delete_incomplete takes precedence over Unlocatable (${state}); nothing is acquired or changed`, async () => {
+      const { handlers, state: fixture } = backendFor("failures");
+      const train = fixture.skills.find((s) => s.dto.name === "release-train")!;
+      train.dto.unlocatable = state;
+      if (state === "central_missing") train.files = [];
+      const before = await byName(handlers, "release-train");
+      const filesBefore = train.files;
+      const progress = sink<RefreshProgressDto>();
+      const all = await handlers.refreshManagedSkills(null, progress.channel);
+      expect(all.skills.filter((s) => s.skill_id === train.dto.id).map((s) => s.status)).toEqual([skippedDeleteIncomplete]);
+      expect(progress.ticks.filter((tick) => tick.skill_name === "release-train")).toEqual([]);
+      expect(await byName(handlers, "release-train")).toEqual(before);
+      expect(train.files).toBe(filesBefore);
+    });
+  }
+
+  it("an imported skill carrying delete_incomplete is not a member: absent, never acquired", async () => {
+    const { handlers, state: fixture } = backendFor("failures");
+    const lint = fixture.skills.find((s) => s.dto.name === "legacy-lint")!;
+    expect(lint.dto.source_type).toBe("imported");
+    lint.dto.health = { kind: "delete_incomplete", error: { code: "OTHER", message: "permission denied" }, at: NOW };
+    const before = await byName(handlers, "legacy-lint");
+    const progress = sink<RefreshProgressDto>();
+    const all = await handlers.refreshManagedSkills(null, progress.channel);
+    expect(all.skills.some((s) => s.skill_id === lint.dto.id)).toBe(false);
+    expect(progress.ticks.filter((tick) => tick.skill_name === "legacy-lint")).toEqual([]);
+    expect(await byName(handlers, "legacy-lint")).toEqual(before);
+  });
+});
+
+describe("D34 amendment: a shared skills dir records every installed sharer on every write path (audit F1)", () => {
+  /**
+   * The audit's state: json-canvas with only Amp's never-owned `error` row (a
+   * first sync that failed before Kimi was installed); Kimi shares Amp's dir
+   * and is installed now. `foreign` puts a folder in their shared path.
+   */
+  function canvasOnAmp({ foreign = false, kimiInstalled = true } = {}) {
+    const fixture = buildScenario("failures", NOW);
+    const skill = fixture.skills.find((s) => s.dto.name === "json-canvas")!;
+    fixture.skills = [skill];
+    fixture.projects = [];
+    fixture.unwritableTools = [];
+    skill.dto.targets = skill.dto.targets.filter((row) => row.tool === "amp");
+    expect(skill.dto.targets.map((row) => [row.status, row.synced_at])).toEqual([["error", null]]);
+    if (!kimiInstalled) fixture.installedTools = fixture.installedTools.filter((tool) => tool !== "kimi_cli");
+    else expect(fixture.installedTools).toContain("kimi_cli");
+    if (foreign) fixture.foreign.push({ tool: "amp", name: skill.dto.name, fingerprint: "foreign", linkTarget: null });
+    const backend = createFixtureBackend(fixture, { latencyScale: 0, now: () => NOW });
+    const rows = async () =>
+      (await backend.handlers.getManagedSkills())[0].targets.map(({ tool, status, target_path, synced_at }) => ({
+        tool,
+        status,
+        target_path,
+        owned: synced_at !== null,
+      }));
+    const tools = async () => (await rows()).map((row) => row.tool);
+    return { ...backend, skill, rows, tools };
+  }
+  const globalOutcomes = (status: SkillRefreshStatus) => {
+    if (status.status !== "refreshed") throw new Error(`expected refreshed, got ${status.status}`);
+    return status.targets.flatMap((o) => (o.scope.scope === "global" ? [[o.scope.tool, o.status]] : []));
+  };
+
+  it("the Update's own first sync records Amp and Kimi on the one shared artifact", async () => {
+    const { handlers, skill, rows, tools } = canvasOnAmp();
+    const { report } = await handlers.updateManagedSkill(skill.dto.id, sink().channel);
+    expect(globalOutcomes(report.skills[0].status)).toEqual([
+      ["amp", { status: "synced", mode_used: "symlink" }],
+      ["kimi_cli", { status: "synced", mode_used: "symlink" }],
+    ]);
+    expect(await tools()).toEqual(["amp", "kimi_cli"]);
+    const [amp, kimi] = await rows();
+    expect(kimi.target_path).toBe(amp.target_path);
+    expect([amp.owned, kimi.owned]).toEqual([true, true]);
+  });
+
+  it("the audit's repro: a collision records no sharer; the confirmed retry records [amp, kimi_cli], the same rows", async () => {
+    const { handlers, skill, rows, tools } = canvasOnAmp({ foreign: true });
+    const before = await tools();
+    expect(before).toEqual(["amp"]);
+    const { report } = await handlers.updateManagedSkill(skill.dto.id, sink().channel);
+    const outcomes = globalOutcomes(report.skills[0].status);
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0][0]).toBe("amp");
+    expect(outcomes[0][1]).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS" }, first_deploy: true });
+    expect(await tools()).toEqual(["amp"]);
+    // The same command/policy `settleClaims` uses for this Update collision.
+    await handlers.syncSkillsToTools(
+      [{ skill_id: skill.dto.id, name: skill.dto.name, source_path: skill.dto.central_path }],
+      ["amp"],
+      { overwrite_if_same_content: true, overrides: [{ skill_id: skill.dto.id, tool: "amp", decision: "overwrite" }] },
+      sink<SyncProgressDto>().channel,
+    );
+    expect(await tools()).toEqual(["amp", "kimi_cli"]);
+    // Whichever writer settled the shared dir, the catalog reads the same.
+    const control = canvasOnAmp();
+    await control.handlers.updateManagedSkill(control.skill.dto.id, sink().channel);
+    expect(await rows()).toEqual(await control.rows());
+  });
+
+  it("records no sharer that is not installed", async () => {
+    const { handlers, skill, tools } = canvasOnAmp({ kimiInstalled: false });
+    const { report } = await handlers.updateManagedSkill(skill.dto.id, sink().channel);
+    expect(globalOutcomes(report.skills[0].status).map(([tool]) => tool)).toEqual(["amp"]);
+    expect(await tools()).toEqual(["amp"]);
+  });
+
+  it("an owned artifact's update records no new sharer", async () => {
+    const { handlers, skill, tools } = canvasOnAmp();
+    skill.dto.targets[0].status = "synced";
+    skill.dto.targets[0].synced_at = NOW - 1000;
+    skill.dto.targets[0].mode = "copy";
+    await handlers.updateManagedSkill(skill.dto.id, sink().channel);
+    expect(await tools()).toEqual(["amp"]);
+  });
+
+  it("a disabled member skips the group and mints no sharer", async () => {
+    const { handlers, skill, tools } = canvasOnAmp();
+    skill.dto.targets[0].status = "disabled";
+    const { report } = await handlers.updateManagedSkill(skill.dto.id, sink().channel);
+    expect(globalOutcomes(report.skills[0].status)).toEqual([["amp", { status: "skipped", reason: { reason: "disabled" } }]]);
+    expect(await tools()).toEqual(["amp"]);
+  });
+});
+
 describe("S2/S3: onboarding import goes through the global sync batch", () => {
   it("keeps an original whose takeover failed; replaces the one taken over", async () => {
     const { handlers } = backendFor("failures");

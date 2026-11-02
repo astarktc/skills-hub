@@ -324,7 +324,8 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
     never for a `?`-propagated error or a cancellation; a success clears only its own family.
   - Update / Refresh (all) → `refresh_managed_skills` (`core/refresh.rs`): acquire every skill (bounded
     pool of 4, std threads), then `skill_update::apply_unlocked` admits and settles each under the
-    guard (finalize + Edit replay + Propagation; ADR-0004) — existing targets only, never a new one (D34). A single
+    guard (finalize + Edit replay + Propagation; ADR-0004) — existing targets only, never a new one (D34; a first sync
+    into a shared skills dir records its installed sharers, as the global batch does — D34 amendment). A single
     Update is a batch of one, reached through `update_managed_skill` for Update/Restore's catalog-bearing
     response. `core/skill_update.rs` owns the git/local/Edit/Restore byte adapters; stale acquisitions are
     discarded as skipped report data, never retried in-batch. Direct Edit settles through the same Update

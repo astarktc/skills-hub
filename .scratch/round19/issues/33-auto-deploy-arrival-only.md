@@ -1,6 +1,6 @@
 # 33 — Auto-deploy is arrival-only: the Refresh re-assert is deleted, `delete_incomplete` is skipped as report data
 
-Status: claimed (reopened — audit F1 P0, F2, F3; fix in flight)
+Status: claimed (audit F1–F3 fixed; Astra re-check pending)
 Blocked by: —
 Blocks: 32 (vocabulary rewrites the strings this ticket touches last)
 Source: BACKLOG #71 (absorbed here 2026-11-02 — grill D34, D35; `round19/issues/18-operator-think-aloud.md` § Findings
@@ -210,3 +210,29 @@ deploy …".
   (delete_incomplete + source missing / central missing → typed skip; imported + delete_incomplete → unreported).
   **F3 (P2)** `RefreshSkipReason` not re-exported from `src/components/skills/types.ts`. Fix child dispatched; bounded
   Astra re-check after.
+
+- 2026-11-02 (child) — **fix for audit F1–F3** (not committed; gate green: version 1.3.0, vitest 49 files / 1051,
+  `cargo test --all` 837, lint / styles / clippy / fmt / build clean).
+  **F1** — `core/propagation.rs` global arm: when a group's write is a first sync (no installed member
+  `owns_artifact`), every installed Tool in `adapters_sharing_skills_dir` with no row for the skill is a sibling: on
+  success it is recorded `TargetTransition::Recorded` (same mode / path / `synced_at`, fresh uuid) and reported as its
+  own `Global { tool } → Synced`; a copy-only sibling would drive the write mode like a member. On failure it follows
+  the batch's rule exactly — `global_sync::sync_skills_to_planned_tools` (`Err(TargetExists) =>` arm, "Asked first
+  (D12): no row until the operator decides") records **nothing** for a `TARGET_EXISTS`, and every other failure goes
+  through `record_failed` (`FailedRecorded` `error` row for each installed sharer, owning nothing) — so Propagation
+  records no sibling on a collision and an `error` sibling (`first_deploy: true`) on any other failure. An owned
+  artifact's update mints nothing; a disabled member / `disabled_at` skips the group before any sibling is computed;
+  minted siblings join `handled`. Retry route and batch untouched. Fixture `propagate` mirrors it.
+  Rust tests (`core/tests/propagation.rs`): `a_first_sync_records_every_installed_sharer_of_the_shared_dir`,
+  `a_first_sync_records_no_sharer_that_is_not_installed`, `an_update_of_an_owned_artifact_records_no_new_sharer`,
+  `a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_propagation` (the audit's sequence; the
+  batch retry's row set equals Propagation's), `a_failed_first_sync_records_installed_sharers_error_as_the_batch_does`,
+  `a_disabled_member_mints_no_sharer_and_skips_the_group` (pair and skill grain) — all pass. Fixture
+  (`backend.test.ts`, "D34 amendment …" describe, 5 tests) pass. The audit's repro script, final assertion flipped to
+  `[amp, kimi_cli]` and run with and without the foreign folder: PASS (`evidence/33-fix/repro.ts`, `repro.out`).
+  **F2** — `core/tests/refresh.rs::refresh_all_reports_delete_incomplete_before_unlocatable_and_never_for_a_non_member`
+  (source missing / central missing → `Skipped { DeleteIncomplete }` after a premise run proving each is Unlocatable;
+  imported + `delete_incomplete` → absent; zero acquisitions; health / targets / central unchanged) — pass. Fixture
+  mirror: "D35 boundary of Refresh all" describe, 3 tests — pass.
+  **F3** — `src/components/skills/types.ts` re-exports `RefreshSkipReason` beside `SkillRefreshStatus`.
+  Docs: AGENTS.md's Update/Refresh clause and CONTEXT.md's Propagation and Refresh entries now note the sibling record.

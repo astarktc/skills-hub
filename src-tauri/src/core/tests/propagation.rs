@@ -694,3 +694,316 @@ fn a_project_artifact_is_found_by_its_stored_name_after_the_skill_is_renamed() {
         renamed.display()
     );
 }
+
+// ---------------------------------------------------------------------------
+// A shared skills dir is one artifact (D34 amendment, ticket 33 audit F1):
+// Propagation's first sync of a never-materialised row records every
+// installed sharer, exactly as the global batch does — so the Update's own
+// first sync and its confirmed overwrite retry (which goes through the batch)
+// leave the same row set.
+// ---------------------------------------------------------------------------
+
+/// Amp's global skills dir, shared with Kimi Code CLI.
+fn shared_target(f: &Fixture) -> PathBuf {
+    f.paths.home.join(".config/agents/skills/skill")
+}
+
+/// A failed first sync's row: `error`, never synced, owning nothing.
+fn seed_unowned_target(f: &Fixture, tool: &str, target_path: &Path) {
+    f.store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: format!("t-{tool}"),
+            skill_id: f.skill_id.clone(),
+            tool: tool.to_string(),
+            target_path: target_path.to_string_lossy().to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Error,
+            last_error: Some("an earlier first sync failed".to_string()),
+            synced_at: None,
+        })
+        .expect("seed unowned target");
+}
+
+/// The skill's row set, comparable across fixtures: tool, status, mode,
+/// path relative to the temp home, and whether the row owns its artifact.
+fn row_set(f: &Fixture) -> Vec<(String, SyncStatus, SyncMode, PathBuf, bool)> {
+    let mut rows: Vec<_> = f
+        .store
+        .list_skill_targets(&f.skill_id)
+        .expect("list targets")
+        .into_iter()
+        .map(|row| {
+            let owns = row.owns_artifact();
+            let relative = Path::new(&row.target_path)
+                .strip_prefix(&f.paths.home)
+                .expect("target under the temp home")
+                .to_path_buf();
+            (row.tool, row.status, row.mode, relative, owns)
+        })
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    rows
+}
+
+fn tools_of(f: &Fixture) -> Vec<String> {
+    row_set(f).into_iter().map(|row| row.0).collect()
+}
+
+fn foreign_folder(path: &Path) {
+    fs::create_dir_all(path).expect("create foreign folder");
+    fs::write(path.join("SKILL.md"), "foreign").expect("write foreign SKILL.md");
+}
+
+fn amp_and_kimi() -> (&'static ToolAdapter, &'static ToolAdapter) {
+    let amp = adapter_by_key("amp").expect("amp adapter");
+    let kimi = adapter_by_key("kimi_cli").expect("kimi_cli adapter");
+    assert_eq!(
+        amp.relative_skills_dir, kimi.relative_skills_dir,
+        "test premise: amp and kimi_cli share a skills dir"
+    );
+    (amp, kimi)
+}
+
+#[test]
+fn a_first_sync_records_every_installed_sharer_of_the_shared_dir() {
+    let f = fixture();
+    let (amp, kimi) = amp_and_kimi();
+    install_tool(&f, amp);
+    install_tool(&f, kimi);
+    let target = shared_target(&f);
+    seed_unowned_target(&f, "amp", &target);
+
+    let outcomes = propagate(&f);
+
+    for tool in ["amp", "kimi_cli"] {
+        assert!(
+            matches!(
+                outcome_for(&outcomes, &global(tool)),
+                PropagationStatus::Synced {
+                    mode_used: SyncMode::Symlink
+                }
+            ),
+            "{tool} is reported synced, got {outcomes:?}"
+        );
+    }
+    assert_eq!(outcomes.len(), 2, "each row reported once: {outcomes:?}");
+    let rows = row_set(&f);
+    assert_eq!(tools_of(&f), ["amp", "kimi_cli"]);
+    for (tool, status, mode, path, owns) in &rows {
+        assert_eq!(*status, SyncStatus::Synced, "{tool}");
+        assert_eq!(*mode, SyncMode::Symlink, "{tool}");
+        assert!(*owns, "{tool} owns the artifact it was synced to");
+        assert_eq!(path, &rows[0].3, "{tool} records the one shared path");
+    }
+    // One artifact: the shared dir holds the skill once, as a link.
+    let entries: Vec<_> = fs::read_dir(target.parent().unwrap())
+        .expect("read shared dir")
+        .collect();
+    assert_eq!(entries.len(), 1, "one artifact in the shared dir");
+    assert!(fs::symlink_metadata(&target)
+        .expect("artifact")
+        .file_type()
+        .is_symlink());
+}
+
+#[test]
+fn a_first_sync_records_no_sharer_that_is_not_installed() {
+    let f = fixture();
+    let (amp, _) = amp_and_kimi();
+    install_tool(&f, amp);
+    let target = shared_target(&f);
+    seed_unowned_target(&f, "amp", &target);
+
+    let outcomes = propagate(&f);
+
+    assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+    assert!(matches!(
+        outcome_for(&outcomes, &global("amp")),
+        PropagationStatus::Synced { .. }
+    ));
+    assert_eq!(tools_of(&f), ["amp"]);
+}
+
+#[test]
+fn an_update_of_an_owned_artifact_records_no_new_sharer() {
+    let f = fixture();
+    let (amp, kimi) = amp_and_kimi();
+    install_tool(&f, amp);
+    install_tool(&f, kimi);
+    let target = shared_target(&f);
+    seed_stale_copy(&target);
+    seed_global_target(&f, "t-amp", "amp", &target, SyncMode::Copy);
+
+    let outcomes = propagate(&f);
+
+    assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+    assert!(matches!(
+        outcome_for(&outcomes, &global("amp")),
+        PropagationStatus::Synced { .. }
+    ));
+    assert_eq!(tools_of(&f), ["amp"], "an ordinary update adds no row");
+}
+
+/// The audit's exact sequence: the Update's first sync meets a foreign folder
+/// (`TARGET_EXISTS`, first deploy; the batch's rule records no sharer until
+/// the ask is answered), then the confirmed retry through the global batch
+/// records Amp and Kimi — the same row set Propagation writes when nothing
+/// is in the way.
+#[test]
+fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_propagation() {
+    use crate::core::errors::CommandError;
+    use crate::core::global_sync::{
+        sync_skills_to_tools_unlocked, BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus,
+        OverrideDecision,
+    };
+
+    let f = fixture();
+    let (amp, kimi) = amp_and_kimi();
+    install_tool(&f, amp);
+    install_tool(&f, kimi);
+    let target = shared_target(&f);
+    seed_unowned_target(&f, "amp", &target);
+    foreign_folder(&target);
+
+    let outcomes = propagate(&f);
+
+    assert_eq!(outcomes.len(), 1, "only the asked pair: {outcomes:?}");
+    match outcome_for(&outcomes, &global("amp")) {
+        PropagationStatus::Failed {
+            error: CommandError::TargetExists { .. },
+            first_deploy: true,
+        } => {}
+        other => panic!("expected a first-deploy TARGET_EXISTS, got {other:?}"),
+    }
+    assert_eq!(tools_of(&f), ["amp"], "a collision records no sharer");
+    assert_eq!(
+        fs::read_to_string(target.join("SKILL.md")).expect("foreign bytes"),
+        "foreign"
+    );
+
+    let retry = sync_skills_to_tools_unlocked(
+        &f.paths.home,
+        &f.store,
+        &[BatchSkill {
+            skill_id: f.skill_id.clone(),
+            skill_name: "skill".to_string(),
+            source_path: f.central_path.clone(),
+        }],
+        &["amp".to_string()],
+        &BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: true,
+            overrides: vec![BatchOverride {
+                skill_id: f.skill_id.clone(),
+                tool_key: "amp".to_string(),
+                decision: OverrideDecision::Overwrite,
+            }],
+        },
+        2000,
+        |_| {},
+    );
+    assert!(
+        retry
+            .iter()
+            .all(|o| matches!(o.status, BatchTargetStatus::Synced { .. })),
+        "{retry:?}"
+    );
+
+    let control = fixture();
+    install_tool(&control, amp);
+    install_tool(&control, kimi);
+    seed_unowned_target(&control, "amp", &shared_target(&control));
+    propagate(&control);
+
+    assert_eq!(tools_of(&f), ["amp", "kimi_cli"]);
+    assert_eq!(
+        row_set(&f),
+        row_set(&control),
+        "the batch's retry and Propagation's first sync leave one row set"
+    );
+}
+
+#[test]
+fn a_failed_first_sync_records_installed_sharers_error_as_the_batch_does() {
+    use crate::core::errors::CommandError;
+
+    let f = fixture();
+    let (amp, kimi) = amp_and_kimi();
+    install_tool(&f, amp);
+    install_tool(&f, kimi);
+    let target = shared_target(&f);
+    seed_unowned_target(&f, "amp", &target);
+    fs::remove_dir_all(&f.central_path).expect("remove central copy");
+
+    let outcomes = propagate(&f);
+
+    for tool in ["amp", "kimi_cli"] {
+        match outcome_for(&outcomes, &global(tool)) {
+            PropagationStatus::Failed {
+                error: CommandError::InvalidPath { reason, .. },
+                first_deploy: true,
+            } if reason == "missing" => {}
+            other => panic!("expected a failed first deploy for {tool}, got {other:?}"),
+        }
+    }
+    let rows = row_set(&f);
+    assert_eq!(tools_of(&f), ["amp", "kimi_cli"]);
+    for (tool, status, _, path, owns) in &rows {
+        assert_eq!(*status, SyncStatus::Error, "{tool}");
+        assert!(!owns, "{tool}: a failed first sync owns nothing");
+        assert_eq!(path, &rows[0].3, "{tool}");
+    }
+}
+
+#[test]
+fn a_disabled_member_mints_no_sharer_and_skips_the_group() {
+    let f = fixture();
+    let (amp, kimi) = amp_and_kimi();
+    install_tool(&f, amp);
+    install_tool(&f, kimi);
+    let target = shared_target(&f);
+    f.store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "t-amp".to_string(),
+            skill_id: f.skill_id.clone(),
+            tool: "amp".to_string(),
+            target_path: target.to_string_lossy().to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Disabled,
+            last_error: None,
+            synced_at: None,
+        })
+        .expect("seed disabled marker");
+
+    let outcomes = propagate(&f);
+
+    assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+    assert!(matches!(
+        outcome_for(&outcomes, &global("amp")),
+        PropagationStatus::Skipped {
+            reason: PropagationSkip::Disabled
+        }
+    ));
+    assert_eq!(tools_of(&f), ["amp"]);
+    assert!(fs::symlink_metadata(&target).is_err(), "nothing written");
+
+    // Skill grain: an unowned `error` row of a skill disabled everywhere.
+    let g = fixture();
+    install_tool(&g, amp);
+    install_tool(&g, kimi);
+    seed_unowned_target(&g, "amp", &shared_target(&g));
+    g.store
+        .set_skill_disabled_at(&g.skill_id, Some(1))
+        .expect("disable skill");
+
+    let outcomes = propagate(&g);
+
+    assert!(matches!(
+        outcome_for(&outcomes, &global("amp")),
+        PropagationStatus::Skipped {
+            reason: PropagationSkip::Disabled
+        }
+    ));
+    assert_eq!(tools_of(&g), ["amp"]);
+    assert!(fs::symlink_metadata(shared_target(&g)).is_err());
+}
