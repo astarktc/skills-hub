@@ -1,6 +1,6 @@
 # 33 — Auto-deploy is arrival-only: the Refresh re-assert is deleted, `delete_incomplete` is skipped as report data
 
-Status: done — 948f12b
+Status: claimed (reopened — audit F1 P0, F2, F3; fix in flight)
 Blocked by: —
 Blocks: 32 (vocabulary rewrites the strings this ticket touches last)
 Source: BACKLOG #71 (absorbed here 2026-11-02 — grill D34, D35; `round19/issues/18-operator-think-aloud.md` § Findings
@@ -200,3 +200,13 @@ deploy …".
 - 2026-11-02 (child, ticket 33): claimed and implemented; Result above. Not committed.
 
 - 2026-11-02 — **done.** Orchestrator reviewed the diff (refresh / propagation / repoint / commands hunks, folds, strings, CONTEXT/AGENTS sentences) and re-ran the gate: version OK (1.3.0), vitest 1043, `cargo test --all` 830, clippy `-D warnings` clean, App.css 1108 / 36. Committed with this ticket. Astra audit dispatched on the commit.
+
+- 2026-11-02 — **reopened by the Astra audit** (`round19/review/ticket-33-audit.md`, verdict FAIL): **F1 (P0)** an
+  Update's confirmed overwrite retry goes through the global sync batch, whose shared-dir fan-out records a row for an
+  installed sharer (Kimi beside Amp) that had none — reproduced on the fixture (`[amp]` → `[amp, kimi_cli]`).
+  Propagation's own first sync records only existing rows, so the two writers of one shared dir disagreed; the sharer
+  physically reads the artifact either way. **Decision (D34 amendment, spec):** sibling rows are recorded on every path
+  that writes a shared dir — Propagation made consistent, never the reverse. **F2 (P2)** D35 boundary tests missing
+  (delete_incomplete + source missing / central missing → typed skip; imported + delete_incomplete → unreported).
+  **F3 (P2)** `RefreshSkipReason` not re-exported from `src/components/skills/types.ts`. Fix child dispatched; bounded
+  Astra re-check after.

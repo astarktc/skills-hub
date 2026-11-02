@@ -180,6 +180,11 @@ shadcn** (grill Q1); the D8 exclusions (sectioned app sidebar, Updates page, hom
   a hollow pair and skip a disabled one; nothing fills either on its own. Add's per-skill harness scope is therefore
   truthful. Fact behind it: the operator's real library runs auto-deploy **off**; the re-assert only ever ran on the
   fixture. Closes BACKLOG #71 → ticket 33.
+  **Amendment (ticket 33 audit F1, 2026-11-02):** a shared skills dir is one artifact, so a deployment into it is
+  recorded for every *installed* sharer on every path that writes it — the global batch (already) and Propagation's
+  first sync of a never-materialised row (made consistent by the fix). An Update may therefore add a sibling **row**
+  for a Tool that shares the written folder (Kimi beside Amp); it never adds an **artifact** anywhere the skill was not.
+  The strip then tells the truth for the sharer. The run reports the write once, on the asked pair.
 - **D35 (Q2) A `delete_incomplete` skill is never updated**: every update path reports it skipped (typed reason) and the
   health row's Retry / Reveal is the only way forward. Ticket 33.
 - **D36 (Q3) #78 becomes three tickets**: 30 (tokens and colour, both themes), 31 (My Skills row and group anatomy),

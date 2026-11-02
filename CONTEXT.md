@@ -28,7 +28,9 @@ _Avoid_: sync, synced, sync target, assignment (as a human-facing noun), install
 The one setting that decides where a **new** skill lands: on, an Add, an Onboarding import or an Enable deploys the
 skill to the selected harnesses; off, it is only added to the Library. It governs nothing after arrival — an Update
 never adds a deployment (decision D34, 2026-11-02; before it, Update also re-asserted "every skill on every selected
-harness"). Code name: `auto_sync_enabled`.
+harness"). One nuance: a shared skills directory is one artifact, so writing it records a deployment for every
+installed harness that reads it — an Update may add such a sibling *record*, never an artifact anywhere the skill was
+not. Code name: `auto_sync_enabled`.
 _Avoid_: auto-sync, re-assert, auto-sync invariant
 
 **Update** (one skill) / **Update all**:
