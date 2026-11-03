@@ -1,6 +1,6 @@
 # 22 — Explore as tracker rows: Not-in-library filter, Preview primary, scope summary, installed → inspector, contrast + search label
 
-Status: claimed
+Status: implemented — a2a09bd; D31 audit pending
 Blocked by: 19
 Spec: `.scratch/round19/spec.md` — D25 (grill Q19); round-18 D10. Sources: `critique-astra` F11, Explore reads;
 `critique-opus` P2-1, Q6; `audit.md` Explore row. Phase 19b.
