@@ -22,8 +22,8 @@ import { filterAndSortSkills, queryMatcher, repoInfo, type Translate } from "./s
  *
  * Order: recently used first (session memory, `RECENT_MAX`, most recent
  * first), then the selection's verbs, the places, the actions, the skills.
- * The first entry is highlighted, so ⌘K → Enter must never run a library-wide
- * mutation: with no recents and no selection it lands on a place (My Skills);
+ * Nothing is highlighted on open (the primitive's rule), so ⌘K → Enter with no
+ * query runs nothing — recents may hold Update all. ↓ reaches the first entry;
  * a selection's first verb (Deploy…) only opens its dialog.
  * A query keeps the order and filters every group through the list lens's
  * query rule (`queryMatcher`; skills through `filterAndSortSkills`, the My
@@ -253,3 +253,20 @@ export function openSettingsPane(
   if (pane) surface.focus({ kind: "settings", pane });
   else surface.open("settings");
 }
+
+/** The modifier keys a chord reads; a subset of `KeyboardEvent`. */
+export type ChordKeys = Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">;
+
+/** Whether `platform` (as `navigator.platform` spells it) is an Apple one, where ⌘ is the command modifier. */
+export const isApplePlatform = (platform: string): boolean => /Mac|iPhone|iPad|iPod/.test(platform);
+
+/**
+ * The palette's chord: ⌘K on Apple platforms, Ctrl+K elsewhere — never both,
+ * since Ctrl+K inside a macOS text field is kill-line and the palette must not
+ * take it. A chord, so it works from a text field; nothing else held.
+ */
+export const isPaletteChord = (event: ChordKeys, apple: boolean): boolean =>
+  (apple ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) &&
+  !event.altKey &&
+  !event.shiftKey &&
+  event.key.toLowerCase() === "k";

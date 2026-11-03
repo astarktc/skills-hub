@@ -379,7 +379,7 @@ stays out: the palette is a layer of the one layer stack like every dialog, with
 - **Focus, inert, dismissal** are the Dialog's: focus to the input on open, trapped; the app behind inert; Escape and
   an outside press close it (top layer only — over the inspector sheet it closes alone); focus returns to the
   opener, else to `fallbackFocus` (the palette passes D21's chain), never `<body>`. `onOpenChangeComplete(false)`
-  tells the caller the palette is gone.
+  tells the caller the palette is gone (the shell waits a few frames before acting, since focus return follows it).
 - **Motion: none** (§ Motion). Pinned by `command-palette.test.tsx`.
 
 ### Popover, DropdownMenu, Tooltip (`popover.tsx`, `dropdown-menu.tsx`, `tooltip.tsx`)
@@ -892,8 +892,8 @@ Files: `components/shell/CommandPalette.tsx` (mounted once by the binder) over t
 it lists is the pure fold `lib/commandPalette.ts` (`paletteGroups`). It is the surface module's `commandPalette`
 dialog, so it never reaches the hash (D5).
 
-- **Open / close.** ⌘K (Ctrl+K) opens it over an empty dialog stack — from anywhere, a text field included (a chord,
-  not a typed key) — and closes it when it is the top layer; Escape and an outside press close it too. A dialog
+- **Open / close.** ⌘K on Apple platforms, Ctrl+K elsewhere — never both, since Ctrl+K inside a macOS text field is
+  kill-line — opens it over an empty dialog stack, from anywhere, a text field included (a chord, not a typed key), and closes it when it is the top layer; Escape and an outside press close it too. A dialog
   owns the keyboard: ⌘K does nothing while one is open. The inspector sheet is not a surface dialog, so the palette
   opens over it and Escape closes the palette alone.
 - **Reach.** Every skill by name (→ the inspector, focus on its heading; the sheet below 1200 px), every area
@@ -903,8 +903,8 @@ dialog, so it never reaches the hash (D5).
   bulk rail's six verbs), Update all, Add skill…, Configure harnesses…, and the library-wide undeploy "Disable every
   skill on all harnesses…" (D8's select-all → Disable; "remove" finds it — Remove itself is Delete in this app).
 - **Order.** Recently used (this session, at most 5, most recent first) · *N selected* · Go to · Actions ·
-  Skills. The first option is highlighted, so with no recents and no selection ⌘K → Enter lands on My Skills,
-  never on a library-wide mutation. Typing filters every group through the list lens's query rule (`queryMatcher`;
+  Skills. Nothing is highlighted on open — recents come first, so ⌘K → Enter with no query is a no-op and can never
+  repeat the last Update all; ↓ highlights the first option, typing highlights the first match. Typing filters every group through the list lens's query rule (`queryMatcher`;
   skills through `filterAndSortSkills` itself), so `*` wildcards work as in My Skills' search.
 - **A label ends in … exactly when a dialog follows**: Deploy, Deploy to a project and Remove always; Disable,
   Enable and Update over several skills (one skill acts at once, as from its row).

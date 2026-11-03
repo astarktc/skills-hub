@@ -1,6 +1,6 @@
 # 23 — ⌘K palette on the surface module and the action door; `cmdk` vs Base UI Combobox decided here
 
-Status: implemented — 359bb3b; D31 audit pending
+Status: done — 359bb3b (+ audit fixes in the closing commit)
 Blocked by: 19
 Spec: `.scratch/round19/spec.md` — D1 caveat, D4; contract § SIGNATURE INTERACTION; round-18 D8. Phase 19b.
 
@@ -136,3 +136,5 @@ disable, enable, update, delete}_{one,other}`, `.disableAll`, `.nothingToUpdateA
   literal wording would have promised a Delete.
 
 - 2026-11-02 — orchestrator, before merge: (1) the chord is ⌘K on Apple platforms and Ctrl+K elsewhere — never both (Ctrl+K in a macOS text field is kill-line; `isPaletteChord` in `shell/CommandPalette.tsx`); (2) `autoHighlight` instead of `"always"`: nothing is highlighted on open, so ⌘K → Enter with no query is a no-op and cannot repeat the last Update all; the first match highlights once a query is typed; ↓ reaches a recent. Primitive tests updated (a typing helper carrying `inputType`, which `autoHighlight` keys off; 8 passing); DESIGN.md § CommandPalette says so.
+
+- 2026-11-02 — **done.** Astra D31 audit (`round19/review/ticket-23-audit.md`): PASS-WITH-FINDINGS, all ten checks pass (keyboard transcripts both themes/sizes, axe 0, contrast as DESIGN.md, no motion in either mode). Orchestrator fixed the three P2s: F1 docs synced to the final behaviour (DESIGN.md § CommandPalette, the fold's comment and test title, the completion-callback comment); F2 an option's label is its name (`aria-labelledby`) and its hint/refusal its description (`aria-describedby`), test pins it; F3 the chord predicate is the pure `isPaletteChord(event, apple)` + `isApplePlatform` in `lib/commandPalette.ts` with tests (Apple ⌘-only, elsewhere Ctrl-only, extra modifiers rejected). Carried, not done: the auditor's deeper primitive-harness regressions (an enabled mutation as first recent; nested-layer/confirmation focus handoffs) — fixture transcripts cover them today.

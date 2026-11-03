@@ -150,9 +150,11 @@ describe("CommandPalette", () => {
     const onSelect = vi.fn();
     render(<Harness onSelect={onSelect} />);
     const { dialog, input } = await openPalette();
-    const refused = within(dialog).getByRole("option", { name: /Update all/ });
+    const refused = within(dialog).getByRole("option", { name: "Update all" });
     expect(refused.getAttribute("aria-disabled")).toBe("true");
-    expect(refused.textContent).toBe("Update allDeploy is running");
+    // The label is the name; the refusal is the description, never part of the name.
+    expect(refused.getAttribute("aria-label")).toBeNull();
+    expect(document.getElementById(refused.getAttribute("aria-describedby")!)?.textContent).toBe("Deploy is running");
     const heard: (string | null)[] = [];
     const listen = (event: Event) => heard.push((event as CustomEvent<HeldRefusalDetail>).detail.reason);
     document.addEventListener(HELD_REFUSAL_EVENT, listen);

@@ -12,25 +12,16 @@ import {
   type PaletteArea,
   type PaletteEntry,
   type PaletteIntent,
+  isApplePlatform,
+  isPaletteChord,
 } from "../../lib/commandPalette";
 import type { ManagedSkill } from "../skills/types";
 
 /** How long a chosen intent waits for the palette's focus return (it takes one frame). */
 const FOCUS_RETURN_FRAMES = 5;
 
-/**
- * The platform's command modifier: ⌘ on Apple platforms, Ctrl elsewhere. Only
- * one chord is bound — Ctrl+K inside a macOS text field is kill-line, and the
- * palette must not take it.
- */
-const APPLE_PLATFORM = /Mac|iPhone|iPad|iPod/.test(typeof navigator === "undefined" ? "" : navigator.platform);
-
-/** ⌘K (Ctrl+K off Apple): a chord, so it works from a text field too; nothing else held. */
-const isPaletteChord = (event: KeyboardEvent) =>
-  (APPLE_PLATFORM ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) &&
-  !event.altKey &&
-  !event.shiftKey &&
-  event.key.toLowerCase() === "k";
+/** ⌘ on Apple platforms, Ctrl elsewhere (`isPaletteChord` in `lib/commandPalette.ts` holds the rule). */
+const APPLE_PLATFORM = isApplePlatform(typeof navigator === "undefined" ? "" : navigator.platform);
 
 type CommandPaletteProps = {
   surface: Pick<
@@ -87,7 +78,7 @@ const CommandPalette = ({
   });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!isPaletteChord(event) || event.repeat) return;
+      if (!isPaletteChord(event, APPLE_PLATFORM) || event.repeat) return;
       const { open: isShown, layers } = latest.current;
       if (isShown) {
         event.preventDefault();

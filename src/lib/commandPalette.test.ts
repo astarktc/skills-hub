@@ -9,6 +9,9 @@ import {
   rememberRecent,
   type PaletteGroup,
   type PaletteInput,
+  isApplePlatform,
+  isPaletteChord,
+  type ChordKeys,
 } from "./commandPalette";
 import type { Translate } from "./skillPresentation";
 
@@ -120,7 +123,7 @@ describe("paletteGroups — reach", () => {
 });
 
 describe("paletteGroups — order", () => {
-  it("runs recent \u2192 selection \u2192 places \u2192 actions \u2192 skills, so \u2318K \u2192 Enter lands on a place, never a library-wide mutation", () => {
+  it("orders recent \u2192 selection \u2192 places \u2192 actions \u2192 skills (the primitive highlights nothing on open, so the order never makes Enter run a mutation)", () => {
     const groups = fold();
     expect(groups.map((g) => g.id)).toEqual(["recent", "selection", "places", "actions", "skills"]);
     expect(ids(groups)[0]).toBe("place:skills");
@@ -192,5 +195,30 @@ describe("openSettingsPane — the one route of every Settings entry", () => {
     openSettingsPane(surface, "github");
     expect(surface.open).toHaveBeenCalledWith("settings");
     expect(surface.focus).toHaveBeenCalledWith({ kind: "settings", pane: "github" });
+  });
+});
+
+describe("isPaletteChord — one chord per platform", () => {
+  const k = (mods: Partial<ChordKeys>): ChordKeys => ({ key: "k", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...mods });
+  it("is ⌘K on Apple platforms and never Ctrl+K there (kill-line in a text field)", () => {
+    expect(isPaletteChord(k({ metaKey: true }), true)).toBe(true);
+    expect(isPaletteChord(k({ ctrlKey: true }), true)).toBe(false);
+    expect(isPaletteChord(k({ metaKey: true, ctrlKey: true }), true)).toBe(false);
+  });
+  it("is Ctrl+K elsewhere and never ⌘K there", () => {
+    expect(isPaletteChord(k({ ctrlKey: true }), false)).toBe(true);
+    expect(isPaletteChord(k({ metaKey: true }), false)).toBe(false);
+  });
+  it("rejects extra modifiers and other keys; the key is case-insensitive", () => {
+    expect(isPaletteChord(k({ metaKey: true, shiftKey: true }), true)).toBe(false);
+    expect(isPaletteChord(k({ metaKey: true, altKey: true }), true)).toBe(false);
+    expect(isPaletteChord(k({ metaKey: true, key: "K" }), true)).toBe(true);
+    expect(isPaletteChord(k({ metaKey: true, key: "j" }), true)).toBe(false);
+  });
+  it("reads the platform string the way navigator.platform spells it", () => {
+    expect(isApplePlatform("MacIntel")).toBe(true);
+    expect(isApplePlatform("iPhone")).toBe(true);
+    expect(isApplePlatform("Win32")).toBe(false);
+    expect(isApplePlatform("Linux x86_64")).toBe(false);
   });
 });

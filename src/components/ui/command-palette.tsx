@@ -57,7 +57,7 @@ type CommandPaletteProps<T extends CommandPaletteItem> = {
   open: boolean;
   /** Called with `false` when the operator dismisses the palette (Escape, outside press). */
   onOpenChange: (open: boolean) => void;
-  /** After the palette has fully opened or closed — focus already returned on close. */
+  /** After the palette has fully opened or closed; on close, focus return follows (callers that need it settled wait a frame or more). */
   onOpenChangeComplete?: (open: boolean) => void;
   /** The dialog's accessible name. */
   label: string;
@@ -193,24 +193,36 @@ function CommandPalette<T extends CommandPaletteItem>({
                   {group.label}
                 </Autocomplete.GroupLabel>
                 <Autocomplete.Collection>
-                  {(item: T) => (
-                    <Autocomplete.Item
-                      key={item.id}
-                      value={item}
-                      index={indexOf.get(item.id)}
-                      data-command-id={item.id}
-                      aria-disabled={item.refusal ? true : undefined}
-                      onClick={(event) => activate(item, event.currentTarget)}
-                      className={itemClass}
-                    >
-                      <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                      {item.refusal || item.hint ? (
-                        <span className="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground">
-                          {item.refusal ?? item.hint}
+                  {(item: T) => {
+                    // The label alone is the option's name; the hint or the
+                    // refusal is its description, so a screen reader hears
+                    // "Update all, Update all is running" as two things.
+                    const labelId = `${footerId}-${item.id}-label`;
+                    const detail = item.refusal ?? item.hint ?? null;
+                    const detailId = detail ? `${footerId}-${item.id}-detail` : undefined;
+                    return (
+                      <Autocomplete.Item
+                        key={item.id}
+                        value={item}
+                        index={indexOf.get(item.id)}
+                        data-command-id={item.id}
+                        aria-labelledby={labelId}
+                        aria-describedby={detailId}
+                        aria-disabled={item.refusal ? true : undefined}
+                        onClick={(event) => activate(item, event.currentTarget)}
+                        className={itemClass}
+                      >
+                        <span id={labelId} className="min-w-0 flex-1 truncate">
+                          {item.label}
                         </span>
-                      ) : null}
-                    </Autocomplete.Item>
-                  )}
+                        {detail ? (
+                          <span id={detailId} className="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground">
+                            {detail}
+                          </span>
+                        ) : null}
+                      </Autocomplete.Item>
+                    );
+                  }}
                 </Autocomplete.Collection>
               </Autocomplete.Group>
             )}
