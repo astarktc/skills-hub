@@ -243,3 +243,21 @@ describe("formatPopularity", () => {
     expect(formatPopularity(2_400_000)).toEqual({ short: "2.4M", full: "2,400,000" });
   });
 });
+
+describe("exploreHideKey — one identity for a repository however it is spelled", () => {
+  it("ignores case, scheme, www, a trailing slash, a .git suffix and a tree/<branch>/ path", () => {
+    const expected = exploreHideKey("docx", "https://github.com/anthropics/skills");
+    for (const spelling of [
+      "https://github.com/Anthropics/Skills",
+      "https://github.com/anthropics/skills/",
+      "https://github.com/anthropics/skills.git",
+      "https://github.com/anthropics/skills.git/",
+      "http://www.github.com/anthropics/skills",
+      "https://github.com/anthropics/skills/tree/main/docx",
+      " https://github.com/anthropics/skills ",
+    ]) {
+      expect(exploreHideKey("DOCX", spelling)).toBe(expected);
+    }
+    expect(expected).toBe("docx|anthropics/skills");
+  });
+});

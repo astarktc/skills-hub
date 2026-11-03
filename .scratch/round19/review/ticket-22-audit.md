@@ -191,3 +191,51 @@ Fresh **`npm run version:check && npm run check` passed** (`full-gate.log`):
 - A complete project-matrix interactive audit or every My Skills sort option; scoped regression tests plus the requested My Skills search/grouping fixture proof were run.
 - No claim that every upstream document avoids retired words, or that real semantic search results must contain the literal query.
 - No fixes applied. F1/F2 must be corrected and independently rechecked before D31 passes.
+
+## Re-check — 2026-11-02 (fix 37c8999)
+
+**PASS — F1 and F2 closed; no new fix-blocking findings.** Independently reviewed `git diff 25a783d..37c8999` at
+`37c8999c3853fcec16c4584fe1a5f42918493ba4` in `/Users/alexstark/.t3/worktrees/skills-hub/t3-a46922e4` (first command
+verified the worktree). Read the fix child's final Comment, both Explore components, presentation helpers/tests,
+AGENTS.md's mounted-dialog contract and `actionLifecycle.focusAfter`. Evidence below is relative to the gitignored
+`.scratch/round19/evidence/22-recheck/` in this worktree; ego-browser, independent fixture server on **5182**.
+
+1. **F1 — PASS.** Fresh rich → `ts` → changelog-writer preview → Install → Add selected → Open in My Skills →
+   Escape, at **1280×800 aside** and **960×640 sheet**: active element is **ts-migration-planner** at
+   **+50 / +250 / +1000 ms**, never BODY/MAIN. Each placement also passes: last shown **ts-migration-planner**
+   installed and removed → previous **changelog-writer**; only shown **changelog-writer** installed and removed →
+   **Search Explore**; cancel Add then Escape → **changelog-writer**; Close preview → **changelog-writer**.
+   All three timed samples pass for every case. After each sheet closes: **0 inert elements**, actual
+   `openLayerCount()` **0** (not inferred from absence of dialogs). Evidence: `focus-flows.json`, reproducible driver
+   `focus-flows.mjs`. The saved rendered order feeds one DOM resolver; side close guards operator-owned focus,
+   sheet `finalFocus` uses that resolver, and its Dialog shell remains mounted with `open={preview !== null}`.
+2. **F2 — PASS.** Fresh failures → `ts` → jsdoc-to-ts → Install → Add selected (1 added · 1 deployment failed) →
+   close Add → clear → `x` → `ts` → Installed → Hidden → empty. Preview retains **Open in My Skills + Installed**
+   at every step. Mutation-observer evidence explicitly captures `loading: true` with both still true, then settled
+   results. The Installed-chip row also says **Installed**. Open in My Skills lands on **`#/skills/skill-1g0t`**, active
+   **H2 jsdoc-to-ts**. Evidence: `f2.json`, `f2.mjs`. Installedness reads the full managed catalog, not visible results.
+3. **Identity — PASS.** Both rows (`exploreCandidates`) and preview call `exploreInstalledId` over
+   `exploreInstalledIndex`, keyed by the same `exploreHideKey`. Executed proof: managed **DOCX** at
+   `https://github.com/Anthropics/skills.git` and candidate **docx** at
+   `https://github.com/anthropics/skills/tree/main/docx` both resolve **case-proof**; literal/case-sensitive URL matching
+   would disagree. Evidence: `regressions.json`. Limitation, unchanged by this fix: a repository URL ending in `/`
+   is **not** normalized to the slashless form (lookup returns null); rows and preview still agree on that rule.
+4. **Regressions — PASS.** Both sizes: Hide changelog-writer → **ts-migration-planner**; Unhide the sole Hidden row
+   → **Search Explore**, no inert elements/layers (`regressions.json`). `matrixFocusAfterLeave`
+   (`projectPresentation.ts:225`) and skills `focusAfter` (`actionLifecycle.ts:205`) are unchanged; the diff of those
+   modules and `useMatrixFocusReconciliation.ts` is empty (`focus-regression.diff`, **0 bytes**).
+5. **Tests — PASS.** Fresh `npm run test`: **52 files / 1098 tests passed** (`tests.log`);
+   `npm run test -- src/lib/explorePresentation.test.ts`: **1 file / 17 tests passed** (`explore-tests.log`).
+   All pure `exploreFocusReturn` branches are pinned: original, next/skipped follower, previous, first surviving new
+   row, absent-from-before, empty/search. The DOM resolver's **search-absent → Explore-heading** fallback has no unit
+   test; neither does the side effect's **operator moved focus → leave it alone** guard. These are coverage limits,
+   not reproduced defects. The original worktree lacked dependencies; installed them without saving manifests before
+   rerunning successfully. No production code or lockfile changed.
+6. **Scope — PASS.** Exactly six changed paths: `ExplorePage.tsx`, `ExplorePreviewView.tsx`,
+   `explorePresentation.ts`, its test, **DESIGN.md § Explore**, and ticket 22. `scope.txt` records the list;
+   `git diff --check 25a783d..37c8999` passes. No My Skills/matrix or unrelated changes.
+
+Only this audit section was appended; no code changes or commits. Fixture/browser closed, **no listener on 5182**
+(`server-stop.txt`); never ran `tauri:dev`. The earlier audit's native/VoiceOver/live-provider exclusions remain.
+An initial automation attempt reused the same URL without reloading and retained fixture installs; it was discarded.
+The final focus evidence above explicitly reloads the fixture for each case.

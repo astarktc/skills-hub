@@ -1,6 +1,6 @@
 # 22 — Explore as tracker rows: Not-in-library filter, Preview primary, scope summary, installed → inspector, contrast + search label
 
-Status: claimed (implemented a2a09bd; audit FAIL — F1 P0, F2 P1; fix in flight)
+Status: done — a2a09bd + 37c8999 (audit fixes)
 Blocked by: 19
 Spec: `.scratch/round19/spec.md` — D25 (grill Q19); round-18 D10. Sources: `critique-astra` F11, Explore reads;
 `critique-opus` P2-1, Q6; `audit.md` Explore row. Phase 19b.
@@ -151,3 +151,5 @@ changes nothing.
   **Gate**: `npm run version:check && npm run check` green — Version OK 1.3.0, lint clean, `styles:check ok — App.css
   812 (ceiling), 38 migrated`, vitest **52 files / 1098 tests**, build ok, fmt + clippy clean, cargo **837 passed**;
   bindings unchanged. `DESIGN.md` § Explore's preview focus sentence synced.
+
+- 2026-11-02 — **done.** Astra re-check (`round19/review/ticket-22-audit.md` § Re-check): PASS — F1 (focus return, both placements, every edge case) and F2 (installedness through query/loading/chips) closed; 1098 tests. Its one noted limitation — a repository URL with a trailing slash did not match — closed by the orchestrator in the closing commit: `normalizeGithubRepo` now strips scheme/www, a trailing slash and `.git` in the right order (the `name|owner/repo` key shape, a persisted contract, is unchanged; a test pins seven spellings to one key).

@@ -49,9 +49,11 @@ export function exploreSearchMode(query: string): ExploreSearchMode {
 
 function normalizeGithubRepo(source: string): string {
   return source
-    .replace(/^https:\/\/github\.com\//i, "")
-    .replace(/\.git$/i, "")
+    .trim()
+    .replace(/^https?:\/\/(www\.)?github\.com\//i, "")
     .split("/tree/")[0]
+    .replace(/\/+$/, "")
+    .replace(/\.git$/i, "")
     .toLowerCase();
 }
 
