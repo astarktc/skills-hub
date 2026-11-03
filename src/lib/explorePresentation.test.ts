@@ -7,9 +7,13 @@ import {
   EXPLORE_FILTERS,
   EXPLORE_FILTER_ORDER,
   exploreCandidates,
+  exploreFocusReturn,
   exploreHideKey,
+  exploreInstalledId,
+  exploreInstalledIndex,
   exploreQueryFold,
   exploreSearchMode,
+  exploreVisibleOnline,
   formatPopularity,
 } from "./explorePresentation";
 
@@ -130,6 +134,105 @@ describe("exploreSearchMode", () => {
     expect(exploreSearchMode("   ")).toBe("featured");
     expect(exploreSearchMode(" a ")).toBe("short");
     expect(exploreSearchMode("ab")).toBe("online");
+  });
+});
+
+describe("exploreInstalledId (the preview's installed state, audit F2)", () => {
+  const MANAGED = [
+    { id: "s-jsdoc", name: "jsdoc-to-ts", source_ref: "https://github.com/mattpocock/skills.git" },
+    { id: "s-notes", name: "Release-Notes", source_ref: "https://github.com/acme/skills" },
+  ];
+  const ONLINE_ONLY = [online("jsdoc-to-ts", "mattpocock/skills", 12), online("ts-reset", "total/ts-reset", 4)];
+  const preview = { name: "jsdoc-to-ts", sourceUrl: "https://github.com/mattpocock/skills" };
+
+  it("keeps an online-only installed candidate installed whatever the search shows: ts \u2192 '' \u2192 x, and while loading", () => {
+    const index = exploreInstalledIndex(MANAGED);
+    const states: { query: string; loading: boolean; listed: boolean }[] = [
+      { query: "ts", loading: false, listed: true },
+      { query: "", loading: false, listed: false },
+      { query: "x", loading: false, listed: false },
+      { query: "ts", loading: true, listed: false },
+    ];
+    for (const state of states) {
+      const rows = exploreCandidates({
+        featured: FEATURED,
+        online: exploreVisibleOnline(state.query, state.loading, ONLINE_ONLY),
+        managed: MANAGED,
+        hidden: new Set(),
+      });
+      const row = rows.find((candidate) => candidate.name === "jsdoc-to-ts");
+      // The search decides whether the row is listed \u2026
+      expect(row !== undefined, JSON.stringify(state)).toBe(state.listed);
+      // \u2026 never whether the preview is installed.
+      expect(exploreInstalledId(index, preview.name, preview.sourceUrl), JSON.stringify(state)).toBe("s-jsdoc");
+    }
+  });
+
+  it("agrees with the row's mark for featured and online candidates alike", () => {
+    const index = exploreInstalledIndex(MANAGED);
+    const rows = exploreCandidates({
+      featured: FEATURED,
+      online: exploreVisibleOnline("ts", false, ONLINE_ONLY),
+      managed: MANAGED,
+      hidden: new Set(),
+    });
+    expect(rows.map((row) => [row.origin, row.name, row.installedId])).toEqual([
+      ["featured", "Release-Notes", "s-notes"],
+      ["featured", "docx", null],
+      ["featured", "scratch", null],
+      ["online", "jsdoc-to-ts", "s-jsdoc"],
+      ["online", "ts-reset", null],
+    ]);
+    for (const row of rows) expect(exploreInstalledId(index, row.name, row.sourceUrl)).toBe(row.installedId);
+  });
+
+  it("lets the first Managed skill of an identity win, as the rows always did", () => {
+    const index = exploreInstalledIndex([
+      { id: "first", name: "docx", source_ref: "https://github.com/anthropics/skills" },
+      { id: "second", name: "DOCX", source_ref: "https://github.com/Anthropics/skills.git" },
+    ]);
+    expect(exploreInstalledId(index, "docx", "https://github.com/anthropics/skills/tree/main/docx")).toBe("first");
+    expect(exploreInstalledId(index, "pdf", "https://github.com/anthropics/skills")).toBeNull();
+  });
+});
+
+describe("exploreVisibleOnline", () => {
+  const results = [online("pdf", "anthropics/skills")];
+  it("shows online results only for a searched query that is not loading", () => {
+    expect(exploreVisibleOnline("pd", false, results)).toBe(results);
+    expect(exploreVisibleOnline("pd", true, results)).toEqual([]);
+    expect(exploreVisibleOnline("p", false, results)).toEqual([]);
+    expect(exploreVisibleOnline("", false, results)).toEqual([]);
+  });
+});
+
+describe("exploreFocusReturn (a closing preview / a row taken away, audit F1)", () => {
+  it("returns to the row itself while it is still shown", () => {
+    expect(exploreFocusReturn(["a", "b", "c"], ["a", "b", "c"], "b")).toEqual({ kind: "row", key: "b" });
+  });
+  it("moves to the next row still shown in the order it was opened from", () => {
+    // The audit's sequence: changelog-writer left Not in library after its Add.
+    expect(
+      exploreFocusReturn(
+        ["ts-reset", "changelog-writer", "ts-migration-planner"],
+        ["ts-reset", "ts-migration-planner"],
+        "changelog-writer",
+      ),
+    ).toEqual({ kind: "row", key: "ts-migration-planner" });
+    // Skips a following row that left too.
+    expect(exploreFocusReturn(["a", "b", "c", "d"], ["a", "d"], "b")).toEqual({ kind: "row", key: "d" });
+  });
+  it("falls back to the previous row when none follows", () => {
+    expect(exploreFocusReturn(["a", "b", "c"], ["a", "b"], "c")).toEqual({ kind: "row", key: "b" });
+    expect(exploreFocusReturn(["a", "b", "c", "d"], ["a", "x"], "c")).toEqual({ kind: "row", key: "a" });
+  });
+  it("falls to the first row shown when none of the opened-from rows survives, or the row was not in it", () => {
+    expect(exploreFocusReturn(["a", "b"], ["x", "y"], "a")).toEqual({ kind: "row", key: "x" });
+    expect(exploreFocusReturn(["a", "b"], ["a", "b"], "z")).toEqual({ kind: "row", key: "a" });
+  });
+  it("goes to the search when no row is left", () => {
+    expect(exploreFocusReturn(["a"], [], "a")).toEqual({ kind: "search" });
+    expect(exploreFocusReturn([], [], "a")).toEqual({ kind: "search" });
   });
 });
 

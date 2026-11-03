@@ -954,7 +954,11 @@ from primitives and tokens; no variant was added. Tracker rows, not cards (D25, 
   installed candidate shows **Open in My Skills** (`solid accent`) + the Installed badge. Source (`xs`, the repo as an
   underlined `muted` link) · "Fetched for preview {time}" (`faint`, ⏱) — the clone's acquisition time, never freshness.
   Files (`SkillFiles stacked`). Escape (beside the rows, once a menu or the search has spent theirs) and Close return
-  focus to the row; the Add dialog opened from Install returns to Install.
+  focus to the row — when the row has left the list meanwhile (an Add from the preview takes it out of Not in
+  library), to the next row still shown in the order the preview was opened from, else the previous, else the search;
+  one resolver (`exploreFocusReturn`) for the aside and the sheet's `finalFocus`, whose Dialog stays mounted. The Add
+  dialog opened from Install returns to Install. Installed is the whole library's answer (`exploreInstalledId`, the
+  rows' identity rule), never whether the search still lists the candidate.
 - **Contrast** (measured 2026-11-02, fixture `rich`, both themes, `.scratch/round19/evidence/22/*-a11y.json`), dark /
   light: Install text on `primary` 4.68 / 5.86 (hover `primary/90` 5.31 / 4.79, token table); Installed badge text
   7.08 / 7.20; name on `background` 15.50 / 17.32; source and popularity (`faint`) 6.12 / 6.09 on `background`, 5.22 /

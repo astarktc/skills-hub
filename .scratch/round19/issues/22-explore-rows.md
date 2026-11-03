@@ -121,3 +121,33 @@ changes nothing.
   under Add, so Escape walks back Add → Install → row.
 
 - 2026-11-02 — **Astra D31 audit FAIL** (`round19/review/ticket-22-audit.md`; checks 2–10 pass: contrast, axe 0, lens regression, vocabulary, guard). **F1 (P0)** after Install → Add selected → Open in My Skills → Escape, the row has left "Not in library", the focused button unmounts and focus lands on `body` (side and sheet). **F2 (P1)** the preview's installedness is read from the current `candidates` list, so clearing the search flips an installed online preview back to Install. Fix child dispatched (one focus-return resolver per D21 for both placements; installedness from the full catalog through the shared identity helper in `explorePresentation.ts`); bounded re-check after.
+
+- 2026-11-02 — child (ticket 22 audit fix): fix for audit F1–F2, in worktree
+  `/Users/alexstark/.t3/worktrees/skills-hub/t3-6f2df765`, branch `t3/6f2df765` (base `13a677b`), uncommitted.
+  **F1 (focus on body after Add-from-preview)**: one pure resolver, `exploreFocusReturn(before, after, left)` in
+  `src/lib/explorePresentation.ts` (the Explore twin of `matrixFocusAfterLeave`): the row itself while shown, else the
+  next row still shown in the opened-from order, else the previous, else `{ kind: "search" }`. `ExplorePage` saves the
+  rendered row order when a row opens its preview (or when a preview arrives from elsewhere) and resolves it in one DOM
+  reader (`resolveExploreFocus`: row → search → `data-surface-heading="explore"`), used by the side close path (only
+  when focus is lost) **and** the sheet Dialog's `finalFocus`. The sheet's `Dialog` shell now stays mounted in sheet
+  placement and toggles `open={preview !== null}` (the primitive's contract); the preview body is a keyed inner
+  `PreviewPanel`. Hide/Unhide's neighbour focus goes through the same resolver (same rule, no second copy).
+  **F2 (installed preview reverting to Install)**: `exploreInstalledIndex(managed)` + `exploreInstalledId(index, name,
+  source)` — the one identity lookup; `exploreCandidates` marks rows through it and the preview resolves
+  `previewInstalledId` against the full `managedSkills` through it, never against `candidates`. The online-visibility
+  rule moved verbatim into `exploreVisibleOnline(query, loading, results)` so the test exercises it.
+  **Tests** (`src/lib/explorePresentation.test.ts`, +13): `exploreInstalledId` — online-only installed candidate stays
+  installed across "ts" → "" → "x" and while loading; row and preview agree for featured and online; first Managed
+  skill of an identity wins. `exploreVisibleOnline`. `exploreFocusReturn` — row itself, next surviving (the audit's
+  changelog-writer → ts-migration-planner), skipping a gone follower, previous, first-shown fallback, search.
+  **Fixture proof** (ego-browser, own server on 5181, stopped; gitignored `.scratch/round19/evidence/22-fix/`):
+  `f1-side-1280.json` / `f1-sheet-960.json` — rich, keyboard: search "ts" → ↓↓ changelog-writer → Enter → Tab Tab
+  Install → Enter → Add selected → preview shows Open in My Skills → Escape → **ts-migration-planner row**, settled at
+  +50/+250/+1000 ms, never body, aside and sheet. `regression-{side-1280,sheet-960}.json` — cancel-Add → Escape and
+  Close → changelog-writer row; Hide → next row; Unhide last → search; no `inert` left after the sheet closes.
+  `f2-online-installed-query-clear.json` — failures 1280: jsdoc-to-ts installed (1 added · 1 deployment failed), then
+  query "" → "x" → "ts" (sampled while "Searching skills.sh…") → Installed/Hidden chips → "": the preview keeps
+  **Open in My Skills** + Installed throughout; it opens `#/skills/skill-1fhm`, focus on its inspector H2.
+  **Gate**: `npm run version:check && npm run check` green — Version OK 1.3.0, lint clean, `styles:check ok — App.css
+  812 (ceiling), 38 migrated`, vitest **52 files / 1098 tests**, build ok, fmt + clippy clean, cargo **837 passed**;
+  bindings unchanged. `DESIGN.md` § Explore's preview focus sentence synced.

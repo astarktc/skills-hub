@@ -20,9 +20,13 @@ import {
   EXPLORE_FILTER_ORDER,
   EXPLORE_MIN_ONLINE_QUERY,
   exploreCandidates,
+  exploreFocusReturn,
   exploreHideKey,
+  exploreInstalledId,
+  exploreInstalledIndex,
   exploreQueryFold,
   exploreSearchMode,
+  exploreVisibleOnline,
   formatPopularity,
   type ExploreCandidate,
   type ExploreFilter,
@@ -72,6 +76,21 @@ function rowControls(): HTMLElement[] {
   return [...document.querySelectorAll<HTMLElement>("[data-explore-row]")];
 }
 
+/** The candidate keys of the rows on screen, in display order. */
+function renderedKeys(): string[] {
+  return rowControls().map((element) => element.dataset.exploreRow ?? "");
+}
+
+/** The element `exploreFocusReturn` names: a row's name, else the search (the heading if it is absent). */
+function resolveExploreFocus(before: readonly string[], left: string): HTMLElement | null {
+  const target = exploreFocusReturn(before, renderedKeys(), left);
+  return (
+    (target.kind === "row" ? rowControl(target.key) : null) ??
+    document.querySelector<HTMLElement>("[data-explore-search]") ??
+    document.querySelector<HTMLElement>('[data-surface-heading="explore"]')
+  );
+}
+
 /**
  * Explore as tracker rows (D25): search (labelled) and the chips Not in
  * library (default) · Installed · Hidden through one list lens; featured
@@ -106,14 +125,12 @@ const ExplorePage = ({
   const featuredId = useId();
   const onlineId = useId();
   const mode = exploreSearchMode(query);
-  // Online results only for a query long enough to have searched, and not
-  // while a newer search runs (its rows would be the previous query's).
-  const online = mode === "online" && !searchLoading ? searchResults : null;
+  const online = exploreVisibleOnline(query, searchLoading, searchResults);
   const candidates = useMemo(
     () =>
       exploreCandidates({
         featured: featuredSkills,
-        online: online ?? [],
+        online,
         managed: managedSkills,
         hidden: hiddenSkills,
       }),
@@ -134,14 +151,22 @@ const ExplorePage = ({
   const onlineTotal = candidates.filter((candidate) => candidate.origin === "online").length;
 
   const previewKey = preview ? exploreHideKey(preview.name, preview.sourceUrl) : null;
-  const previewInstalledId = previewKey
-    ? (candidates.find((candidate) => candidate.key === previewKey)?.installedId ?? null)
-    : null;
+  // Installed is the whole library's answer, through the rows' own identity
+  // rule \u2014 never whether the search still lists the candidate.
+  const installedIndex = useMemo(() => exploreInstalledIndex(managedSkills), [managedSkills]);
+  const previewInstalledId = preview ? exploreInstalledId(installedIndex, preview.name, preview.sourceUrl) : null;
+
+  // The rows on screen when the preview was opened, for its focus return.
+  const openedFrom = useRef<{ key: string; order: string[] } | null>(null);
 
   const open = useCallback(
     (candidate: ExploreCandidate) => {
-      if (candidate.installedId) onOpenInstalled(candidate.installedId);
-      else onPreview(candidate.sourceUrl, candidate.name, candidate.description ?? undefined);
+      if (candidate.installedId) {
+        onOpenInstalled(candidate.installedId);
+        return;
+      }
+      openedFrom.current = { key: candidate.key, order: renderedKeys() };
+      onPreview(candidate.sourceUrl, candidate.name, candidate.description ?? undefined);
     },
     [onOpenInstalled, onPreview],
   );
@@ -149,43 +174,49 @@ const ExplorePage = ({
   // Hide / Unhide take the row out of the chip it was under: focus goes to
   // the next row on screen, else the previous one, else the search (D21) —
   // in the commit that removes the row, unless the operator moved it.
-  const leaving = useRef<{ key: string; neighbours: string[]; hidden: ReadonlySet<string> } | null>(null);
+  const leaving = useRef<{ key: string; order: string[]; hidden: ReadonlySet<string> } | null>(null);
   useLayoutEffect(() => {
     const aside = leaving.current;
     // Settled once the hidden list changed (a failed change leaves it as is).
     if (!aside || aside.hidden === hiddenSkills) return;
     leaving.current = null;
     if (rowControl(aside.key) || !isFocusLost(document.activeElement)) return;
-    const next = aside.neighbours.map(rowControl).find((element) => element !== null);
-    (next ?? document.querySelector<HTMLElement>("[data-explore-search]"))?.focus();
+    resolveExploreFocus(aside.order, aside.key)?.focus();
   }, [hiddenSkills]);
   const moveAside = useCallback(
     (candidate: ExploreCandidate, change: (key: string) => Promise<void>) => {
-      const order = lens.displayed.map((row) => row.key);
-      const at = order.indexOf(candidate.key);
-      leaving.current = {
-        key: candidate.key,
-        neighbours: [...order.slice(at + 1), ...order.slice(0, Math.max(0, at)).reverse()],
-        hidden: hiddenSkills,
-      };
+      leaving.current = { key: candidate.key, order: renderedKeys(), hidden: hiddenSkills };
       return change(candidate.key);
     },
-    [hiddenSkills, lens.displayed],
+    [hiddenSkills],
   );
 
   // Until a Hide lands the row stays: its closing menu hands focus to the
   // row's name, not the trigger (which goes with the row).
   const hiding = useRef<string | null>(null);
 
-  // Closing the preview returns focus to its row (the inspector's rule),
-  // when nothing else took it meanwhile.
+  // Closing the preview returns focus to its row (the inspector's rule) \u2014
+  // or, when the row has left the list (an Add from the preview took it out
+  // of Not in library), to the next row on screen, else the previous, else
+  // the search (D21). One resolver for both placements: beside the list on
+  // close, when nothing else took focus meanwhile; the sheet's Dialog asks
+  // it as its `finalFocus`.
+  const returnFocus = useCallback((): HTMLElement | null => {
+    const from = openedFrom.current;
+    return from ? resolveExploreFocus(from.order, from.key) : resolveExploreFocus([], "");
+  }, []);
   const lastPreviewKey = useRef(previewKey);
   useEffect(() => {
     const left = lastPreviewKey.current;
     lastPreviewKey.current = previewKey;
-    if (!left || previewKey) return;
-    if (isFocusLost(document.activeElement)) rowControl(left)?.focus();
-  }, [previewKey]);
+    if (previewKey) {
+      // A preview opened from elsewhere (not a row here): the rows as it arrived.
+      if (openedFrom.current?.key !== previewKey) openedFrom.current = { key: previewKey, order: renderedKeys() };
+      return;
+    }
+    if (!left || placement !== "side") return;
+    if (isFocusLost(document.activeElement)) returnFocus()?.focus();
+  }, [placement, previewKey, returnFocus]);
 
   // Escape beside the list closes the preview (the sheet's is the Dialog's);
   // a menu or popover spends its own first.
@@ -446,21 +477,20 @@ const ExplorePage = ({
             : null}
           {mode === "online" ? section(onlineId, t("explore.sections.online"), onlineRows, emptyOnline) : null}
         </div>
-        {preview ? (
-          <ExplorePreviewView
-            key={`${preview.cachePath}:${preview.fetchedAt}:${placement}`}
-            preview={preview}
-            placement={placement}
-            installedId={previewInstalledId}
-            scopeTools={scopeTools}
-            deploys={deploys}
-            onClose={onClosePreview}
-            onInstall={() => onInstall(preview.sourceUrl, preview.name)}
-            onOpenInstalled={onOpenInstalled}
-            rowControl={() => (previewKey ? rowControl(previewKey) : null)}
-            t={t}
-          />
-        ) : null}
+        <ExplorePreviewView
+          preview={preview}
+          placement={placement}
+          installedId={previewInstalledId}
+          scopeTools={scopeTools}
+          deploys={deploys}
+          onClose={onClosePreview}
+          onInstall={() => {
+            if (preview) onInstall(preview.sourceUrl, preview.name);
+          }}
+          onOpenInstalled={onOpenInstalled}
+          returnFocus={returnFocus}
+          t={t}
+        />
       </div>
     </div>
   );

@@ -68,6 +68,31 @@ export function exploreHideKey(skillName: string, source: string): string {
 export type ExploreManagedFields = { id: string; name: string; source_ref: string | null };
 
 /**
+ * The installed match over the whole library: each candidate identity
+ * (`exploreHideKey` of name and repository) to the Managed skill it is, the
+ * first one winning. Read through `exploreInstalledId` — by the rows and by
+ * the preview alike, so the two never disagree; what the search currently
+ * shows is never the authority.
+ */
+export function exploreInstalledIndex(managed: readonly ExploreManagedFields[]): ReadonlyMap<string, string> {
+  const installed = new Map<string, string>();
+  for (const skill of managed) {
+    const key = exploreHideKey(skill.name, skill.source_ref ?? "");
+    if (!installed.has(key)) installed.set(key, skill.id);
+  }
+  return installed;
+}
+
+/** The Managed skill a candidate (or its preview) of this name and source already is, if any. */
+export function exploreInstalledId(
+  index: ReadonlyMap<string, string>,
+  skillName: string,
+  source: string,
+): string | null {
+  return index.get(exploreHideKey(skillName, source)) ?? null;
+}
+
+/**
  * Every row Explore can show, in the order the sources rank them (featured
  * by popularity as curated, then the search's own relevance). An online
  * result that is a featured skill (same key) is dropped, as is a repeat
@@ -79,11 +104,7 @@ export function exploreCandidates(input: {
   managed: readonly ExploreManagedFields[];
   hidden: ReadonlySet<string>;
 }): ExploreCandidate[] {
-  const installed = new Map<string, string>();
-  for (const skill of input.managed) {
-    const key = exploreHideKey(skill.name, skill.source_ref ?? "");
-    if (!installed.has(key)) installed.set(key, skill.id);
-  }
+  const installed = exploreInstalledIndex(input.managed);
   const seen = new Set<string>();
   const out: ExploreCandidate[] = [];
   const push = (
@@ -107,7 +128,7 @@ export function exploreCandidates(input: {
       source_ref: sourceUrl,
       sourceLabel: repoInfo(sourceUrl)?.label ?? fallbackLabel,
       popularity,
-      installedId: installed.get(key) ?? null,
+      installedId: exploreInstalledId(installed, name, sourceUrl),
       hidden: input.hidden.has(key),
     });
   };
@@ -158,6 +179,51 @@ export function exploreQueryFold(items: readonly ExploreCandidate[], query: stri
       (candidate.description?.toLowerCase().includes(needle) ?? false) ||
       candidate.sourceLabel.toLowerCase().includes(needle),
   );
+}
+
+const NO_ONLINE: readonly OnlineSkillDto[] = [];
+
+/**
+ * The online results the rows show: only for a query long enough to have
+ * searched, and not while a newer search runs (its rows would be the
+ * previous query's).
+ */
+export function exploreVisibleOnline(
+  query: string,
+  searchLoading: boolean,
+  results: readonly OnlineSkillDto[],
+): readonly OnlineSkillDto[] {
+  return exploreSearchMode(query) === "online" && !searchLoading ? results : NO_ONLINE;
+}
+
+/** Where focus goes when a row it was on (or returns to) is no longer shown. */
+export type ExploreFocusTarget = { kind: "row"; key: string } | { kind: "search" };
+
+/**
+ * Focus return over Explore's rows (D21), for a closing preview and a row
+ * Hide / Unhide took away: the row itself while it is still shown; else the
+ * next row still shown in the order it was left from (`before`), the
+ * previous one when none follows, the search when no row is left. A row
+ * that was not in `before` falls to the first row shown.
+ */
+export function exploreFocusReturn(
+  before: readonly string[],
+  after: readonly string[],
+  left: string,
+): ExploreFocusTarget {
+  if (after.includes(left)) return { kind: "row", key: left };
+  const shown = new Set(after);
+  const index = before.indexOf(left);
+  const next =
+    index < 0
+      ? after[0]
+      : (before.slice(index + 1).find((key) => shown.has(key)) ??
+        before
+          .slice(0, index)
+          .reverse()
+          .find((key) => shown.has(key)) ??
+        after[0]);
+  return next === undefined ? { kind: "search" } : { kind: "row", key: next };
 }
 
 const COMPACT = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });

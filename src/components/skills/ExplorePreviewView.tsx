@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
 import { Check, Clock, GitBranch, X } from "lucide-react";
 import type { TFunction } from "i18next";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,8 @@ import type { InspectorPlacement } from "./inspector/SkillInspector";
 import SkillFiles from "./SkillFiles";
 
 type ExplorePreviewViewProps = {
-  preview: ExplorePreview;
+  /** The focused candidate's preview; none closes it (the sheet's Dialog stays mounted and closes). */
+  preview: ExplorePreview | null;
   /** Beside the list (≥ 1200 px), or a sheet over it (D23) — the inspector's slot. */
   placement: InspectorPlacement;
   /** The Managed skill this candidate already is: it offers the inspector, never a second Install. */
@@ -23,8 +24,8 @@ type ExplorePreviewViewProps = {
   onClose: () => void;
   onInstall: () => void;
   onOpenInstalled: (skillId: string) => void;
-  /** The candidate's row, where closing returns focus. */
-  rowControl: () => HTMLElement | null;
+  /** Where closing returns focus: its row, else the next one on screen, else the search (ExplorePage's resolver). */
+  returnFocus: () => HTMLElement | null;
   t: TFunction;
 };
 
@@ -39,18 +40,80 @@ type ExplorePreviewViewProps = {
 export default function ExplorePreviewView({
   preview,
   placement,
+  onClose,
+  returnFocus,
+  ...panel
+}: ExplorePreviewViewProps) {
+  const headingId = useId();
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const content = preview ? (
+    <PreviewPanel
+      key={`${preview.cachePath}:${preview.fetchedAt}`}
+      {...panel}
+      preview={preview}
+      placement={placement}
+      onClose={onClose}
+      headingId={headingId}
+      headingRef={headingRef}
+    />
+  ) : null;
+
+  if (placement === "sheet") {
+    // The shell stays mounted and toggles `open` (the primitive's contract):
+    // a Dialog unmounted with its preview never returns focus.
+    return (
+      <Dialog
+        open={preview !== null}
+        onOpenChange={(open) => {
+          if (!open) onClose();
+        }}
+      >
+        <DialogContent
+          placement="sheet"
+          showCloseButton={false}
+          aria-labelledby={headingId}
+          data-explore-preview=""
+          initialFocus={headingRef}
+          finalFocus={() => returnFocus() ?? true}
+        >
+          {content}
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  return content ? (
+    <aside
+      aria-labelledby={headingId}
+      data-explore-preview=""
+      className="flex min-h-0 w-[max(22.5rem,33.333%)] shrink-0 flex-col border-l border-border bg-card"
+    >
+      {content}
+    </aside>
+  ) : null;
+}
+
+type PreviewPanelProps = Omit<ExplorePreviewViewProps, "preview" | "returnFocus"> & {
+  preview: ExplorePreview;
+  headingId: string;
+  headingRef: RefObject<HTMLHeadingElement | null>;
+};
+
+/** One preview's header and body, mounted per acquisition inside the placement's shell. */
+function PreviewPanel({
+  preview,
+  placement,
   installedId,
   scopeTools,
   deploys,
   onClose,
   onInstall,
   onOpenInstalled,
-  rowControl,
+  headingId,
+  headingRef,
   t,
-}: ExplorePreviewViewProps) {
-  const headingId = useId();
+}: PreviewPanelProps) {
   const scopeId = useId();
-  const headingRef = useRef<HTMLHeadingElement>(null);
   const doc = useSkillDocument({ root: preview.cachePath, version: preview.fetchedAt });
   const source = skillSourceLine({ source_type: "git", source_ref: preview.sourceUrl, central_path: preview.cachePath }, t);
 
@@ -61,7 +124,7 @@ export default function ExplorePreviewView({
     if (placement !== "side") return;
     const active = document.activeElement;
     if (isFocusLost(active) || active?.closest("[data-explore-list]")) headingRef.current?.focus();
-  }, [placement]);
+  }, [headingRef, placement]);
 
   const shown = scopeTools.slice(0, 3).map((tool) => tool.label);
   const more = scopeTools.length - shown.length;
@@ -153,37 +216,10 @@ export default function ExplorePreviewView({
     </>
   );
 
-  if (placement === "sheet") {
-    return (
-      <Dialog
-        open
-        onOpenChange={(open) => {
-          if (!open) onClose();
-        }}
-      >
-        <DialogContent
-          placement="sheet"
-          showCloseButton={false}
-          aria-labelledby={headingId}
-          data-explore-preview=""
-          initialFocus={headingRef}
-          finalFocus={() => rowControl() ?? true}
-        >
-          {header}
-          {body}
-        </DialogContent>
-      </Dialog>
-    );
-  }
-
   return (
-    <aside
-      aria-labelledby={headingId}
-      data-explore-preview=""
-      className="flex min-h-0 w-[max(22.5rem,33.333%)] shrink-0 flex-col border-l border-border bg-card"
-    >
+    <>
       {header}
       {body}
-    </aside>
+    </>
   );
 }
