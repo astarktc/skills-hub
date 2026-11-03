@@ -1,6 +1,6 @@
 # 23 — ⌘K palette on the surface module and the action door; `cmdk` vs Base UI Combobox decided here
 
-Status: claimed
+Status: implemented — 359bb3b; D31 audit pending
 Blocked by: 19
 Spec: `.scratch/round19/spec.md` — D1 caveat, D4; contract § SIGNATURE INTERACTION; round-18 D8. Phase 19b.
 
