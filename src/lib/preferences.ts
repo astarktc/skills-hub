@@ -25,8 +25,6 @@ export const projectsGroupByRepoPreference = booleanPreference(
   "skills-projects-groupByRepo",
 );
 
-export const showHiddenPreference = booleanPreference("explore-showHidden");
-
 export const themePreference = unionPreference(
   "skills-theme",
   ["system", "light", "dark"] as const,

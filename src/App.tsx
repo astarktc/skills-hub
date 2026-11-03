@@ -8,7 +8,6 @@ import { Toaster } from "@/components/ui/sonner";
 import { mainLandmarkFocus } from "@/components/ui/focus-fallback";
 import ExplorePage from "./components/skills/ExplorePage";
 import FilterBar from "./components/skills/FilterBar";
-import ExplorePreviewView from "./components/skills/ExplorePreviewView";
 import SkillInspector, { type InspectorPlacement } from "./components/skills/inspector/SkillInspector";
 import { useInspectorTabOrder } from "./components/skills/inspector/useInspectorTabOrder";
 import AppSidebar from "./components/shell/AppSidebar";
@@ -241,7 +240,7 @@ function App() {
   }, [area]);
 
   // What the inspector shows: the focused Managed skill (a selection beside
-  // the list, D3); an Explore preview replaces Explore's list.
+  // the list, D3); an Explore preview takes the same slot beside Explore's rows.
   const focusedSkill =
     focused?.kind === "skill"
       ? (library.managedSkills.find((skill) => skill.id === focused.id) ?? null)
@@ -514,11 +513,11 @@ function App() {
   // outweighs the library (first run); it then carries the one primary.
   const discoveryLeads = (addFlow.plan?.group_count ?? 0) >= Math.max(1, librarySize);
 
-  const handleExploreInstallFromPreview = useCallback(() => {
-    if (!explorePreview) return;
-    handleExploreInstall(explorePreview.sourceUrl);
-    unfocus();
-  }, [explorePreview, handleExploreInstall, unfocus]);
+  // An installed Explore candidate is its Managed skill: the inspector, never a second Install.
+  const handleOpenInstalledFromExplore = useCallback(
+    (skillId: string) => focus({ kind: "skill", id: skillId }),
+    [focus],
+  );
 
   // "Sync all to the new tools" spans two worlds — enable the targets (sync)
   // and push every managed skill (library) — so the binder composes it.
@@ -609,7 +608,7 @@ function App() {
       <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {/* The header progress (D19) of an area without a header slot for
             it (My Skills has one): a strip above the area, never a layer. */}
-        {area !== "skills" || explorePreview ? (
+        {area !== "skills" ? (
           <HeaderProgress
             pending={pending}
             message={actionMessage}
@@ -619,14 +618,7 @@ function App() {
             t={t}
           />
         ) : null}
-        {explorePreview ? (
-          <ExplorePreviewView
-            preview={explorePreview}
-            onBack={unfocus}
-            onInstall={handleExploreInstallFromPreview}
-            t={t}
-          />
-        ) : area === "skills" ? (
+        {area === "skills" ? (
           <div className="relative flex min-h-0 flex-1 flex-col" data-skill-surface="">
             {/* Header and filters span My Skills; the inspector sits beside
                 the list below them (its right third). Expanded Files covers
@@ -759,20 +751,23 @@ function App() {
           <ExplorePage
             featuredSkills={explore.featuredSkills}
             featuredLoading={explore.featuredLoading}
-            exploreFilter={explore.exploreFilter}
+            query={explore.exploreFilter}
+            onQueryChange={explore.handleExploreFilterChange}
             searchResults={explore.searchResults}
             searchLoading={explore.searchLoading}
             managedSkills={library.managedSkills}
-            loading={loading}
             hiddenSkills={explore.hiddenSkills}
-            showHidden={explore.showHidden}
-            onShowHiddenChange={explore.setShowHidden}
             onHideSkill={explore.handleHideSkill}
             onUnhideSkill={explore.handleUnhideSkill}
-            onExploreFilterChange={explore.handleExploreFilterChange}
-            onInstallSkill={handleExploreInstall}
-            onViewSkill={explore.handleOpenExploreDetail}
-            onOpenManualAdd={handleOpenAdd}
+            onPreview={explore.handleOpenExploreDetail}
+            onInstall={handleExploreInstall}
+            onOpenInstalled={handleOpenInstalledFromExplore}
+            onOpenAdd={handleOpenAdd}
+            preview={explorePreview}
+            placement={placement}
+            onClosePreview={unfocus}
+            scopeTools={addFlow.add.summary.tools}
+            deploys={addFlow.add.summary.deploy}
             t={t}
           />
         )}

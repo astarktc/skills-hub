@@ -41,7 +41,7 @@ export type ExplorePreview = {
   summary: string | null;
   /** The clone-cache directory the preview's files are read from. */
   cachePath: string;
-  /** When the clone landed (the detail's "updated" line). */
+  /** When the clone landed: the preview's acquisition time ("Fetched for preview …"), never freshness. */
   fetchedAt: number;
 };
 

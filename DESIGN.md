@@ -124,14 +124,17 @@ fixture app, through the alias block:
 | Deployed harness pill | 3.67 light | 10.06 | 5.30 |
 | Failed harness pill | 4.41 light | 6.39 | 4.94 |
 | "+N more" pill | 2.33 light | 5.22 | 5.37 |
-| Explore Install | 2.14 dark | 7.05 | 5.71 |
-| Explore Installed | 1.82 dark / 3.58 light | 9.72 | 5.09 |
+| Explore Install | 2.14 dark | 4.68 ² | 5.86 ² |
+| Explore Installed | 1.82 dark / 3.58 light | 7.08 ² | 7.20 ² |
 | Success toast ("Harness selection saved.") | 4.26 both | 8.89 | 5.22 |
 | Search placeholder | 3.36 light | 5.73 | 5.67 |
 | Import review "Match" / "Conflict" | 3.07 / 4.41 light | 9.41 / 6.39 | 5.03 / 4.94 |
 
+² Re-measured on tokens when Explore became rows (ticket 22, 2026-11-02; § Explore): Install is the `solid accent`
+Button (`primary-foreground` on `primary`), Installed the `soft neutral` Badge (`muted-foreground` on `muted`).
+
 Legacy identifying input boundaries (`.search-input`, `.input` in Add / Re-point, `.settings-input`,
-`.settings-select`, `.explore-search-input`) draw their edge in `input`, not the decorative `border` (ticket-07
+`.settings-select`, `.explore-search-input` — gone with ticket 22; Explore's search is the `Input` primitive) draw their edge in `input`, not the decorative `border` (ticket-07
 review B2: they measured 1.33 / 1.25). Rendered edge against its outside ground, dark / light, 2026-09-29: Library
 search 3.90 / 3.78, Add `.input` 3.65 / 3.87, Settings select and input 3.90 / 3.78, Explore search 3.90 / 3.78;
 focused (the `accent-primary` iris edge) ≥ 6.61 / ≥ 5.71; disabled keeps the same edge.
@@ -646,7 +649,8 @@ skill. Shape carries the state; colour only reinforces it; the strip was checked
 
 The focused skill — surface state's `focused`, a selection not a route (D3). Files:
 `components/skills/inspector/{SkillInspector,InspectorSection,HealthSection,TargetsSection,SourceSection,EditsSection,ProjectsSection,FilesSection}.tsx`,
-`components/skills/{SkillFiles,StripMarkIcon,ExplorePreviewView}.tsx`, `modals/{RepointModal,DetachModal,AssignProjectModal}.tsx`.
+`components/skills/{SkillFiles,StripMarkIcon}.tsx`, `modals/{RepointModal,DetachModal,AssignProjectModal}.tsx` (the Explore
+preview takes the same slot — § Explore).
 Composed from primitives and tokens; the one new variant is Dialog `placement="sheet"`.
 
 - **Placement.** ≥ 1200 px: an `<aside>` (landmark, `aria-labelledby` its `h2`) on `card`, beside the list below the
@@ -913,6 +917,50 @@ dialog, so it never reaches the hash (D5).
   reason; places and skills never are. A verb that would change nothing says so (the rail's `bulkCounts` reasons).
 - **Not the matrix's keymap.** The palette's keys (↑ / ↓ / Enter / Esc) live inside its own popup; it defines
   no grid model, so the Projects matrix keeps its Tab walk (ticket 17 N1 — its spatial keymap is separate work).
+
+## Explore (ticket 22)
+
+Files: `components/skills/{ExplorePage,ExplorePreviewView}.tsx`, the folds in `lib/explorePresentation.ts`. Composed
+from primitives and tokens; no variant was added. Tracker rows, not cards (D25, D38's ground).
+
+- **Header** (48 px + hairline): "Explore" (`h1`, the `data-surface-heading="explore"` focus target) · **Add skill**
+  (`outline`). Install is the area's action, not the header's.
+- **Filter bar** (the area's one list lens, ranked — no sort control): search (`Input sm`, labelled "Search Explore"
+  through a Field; ↓ enters the rows, Escape clears it) · Chips **Not in library** (the default) · **Installed** ·
+  **Hidden** with counts (`faint`); they partition the candidates — a hidden one is only under Hidden. Under them the
+  **search mode line** (`xs muted`): "Featured skills from curated GitHub repositories" (no query), "Filtering featured
+  skills" (one character), each with the inline hint "· Type 2 or more characters to search skills.sh too" (`faint`);
+  from two characters "Featured skills and skills.sh results for “q”".
+- **Source cards** (D38's ground): "Featured" and — while a query searches online — "From skills.sh", each a bordered
+  `rounded-lg` card, header (36 px, `card`: `h2` `sm` semibold · count `faint`) over rows on the base `background`.
+  A card with nothing under the chip says so in one line (`sm muted`); "Searching skills.sh…" and "Loading featured
+  skills…" are `role="status"`.
+- **Row** (36 px, `border` hairline, `card` on hover, instant): name (`sm` medium, the Tab stop; Enter or a click on the
+  row opens it; ↑ / ↓ walk the rows, ↑ from the first returns to the search) · source (`font-mono xs faint`) ·
+  description (`sm muted`; gone in a pane under 48 rem) · popularity (`xs faint tabular-nums`, ↓ downloads / ☆ stars /
+  installs, compact "12.3K", the full figure as its name and title — secondary, never a sort) · **Installed** (`soft
+  neutral` Badge with ✓) · overflow (`ghost icon-sm`: Preview / Open in My Skills, **Hide from Explore**). A Hidden
+  chip's row carries **Unhide** (`ghost sm`, "Unhide {name}") instead. Hide and Unhide move focus to the next row on
+  screen, else the previous, else the search. The row whose preview is open is `aria-current`, `raised` with the 1 px
+  inset `ring` edge — the inspector's focused-row cue.
+- **An installed candidate is its Managed skill**: its row (and its preview, when it was added from there) opens the
+  managed inspector in My Skills (`focus({ kind: "skill" })`) — never a second Install.
+- **Preview** in the inspector's slot (`ExplorePreviewView`): an `<aside>` on `card` beside the rows at ≥ 1200 px
+  (`max(22.5rem, ⅓)`), a Dialog `sheet` below it. Header: name (`h2` `lg`, `tabIndex=-1`, the arrival focus — from
+  its row, or when focus was nowhere; the sheet opens on it) · summary · Close (`ghost icon`). Then **Install**
+  (`solid accent`, the area's one primary) with its scope **beside it, always visible**: "Deploys to Cursor, Claude
+  Code, Codex +4" — Add's sticky-summary scope, same words ("Not deployed — auto-deploy is off" / "No harnesses — added
+  only"); Install opens Add on the repository with the skill checked (ticket 16) and never installs by itself. An
+  installed candidate shows **Open in My Skills** (`solid accent`) + the Installed badge. Source (`xs`, the repo as an
+  underlined `muted` link) · "Fetched for preview {time}" (`faint`, ⏱) — the clone's acquisition time, never freshness.
+  Files (`SkillFiles stacked`). Escape (beside the rows, once a menu or the search has spent theirs) and Close return
+  focus to the row; the Add dialog opened from Install returns to Install.
+- **Contrast** (measured 2026-11-02, fixture `rich`, both themes, `.scratch/round19/evidence/22/*-a11y.json`), dark /
+  light: Install text on `primary` 4.68 / 5.86 (hover `primary/90` 5.31 / 4.79, token table); Installed badge text
+  7.08 / 7.20; name on `background` 15.50 / 17.32; source and popularity (`faint`) 6.12 / 6.09 on `background`, 5.22 /
+  5.37 on the focused row's `raised`; description and mode line 8.31 / 8.16; the focused row's `ring` edge on `raised`
+  6.01 / 5.04; search edge (`input`) 3.90 / 3.78; scope label / value on the aside's `card` 7.78 / 7.60 and 14.51 /
+  16.14 (in the sheet, on `popover`, light 8.36 / 17.76). axe: no violations at 1280 × 800 and 960 × 640, either theme.
 
 ## Migration rule
 

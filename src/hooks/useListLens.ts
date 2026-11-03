@@ -20,14 +20,31 @@ const LIST_ONLY: PersistedPreference<ViewMode> = {
   write: () => {},
 };
 
+/** A surface with no Grouped/Flat choice renders Flat. */
+const FLAT_ONLY: PersistedPreference<boolean> = {
+  key: "",
+  read: () => false,
+  write: () => {},
+};
+
+/** The least a lens row carries: identity, a name, and the source grouping reads. */
+export type LensSubject = { id: string; name: string; source_ref: string | null };
+
+/** A skill-shaped row: the default query/sort fold (`filterAndSortSkills`) reads these fields. */
 export type LensItem = SkillPresentationFields & { id: string; name: string };
 
-export type ListLensOptions<T extends LensItem> = {
+/**
+ * A surface's own query fold: the rows the query keeps, in the order they
+ * stay (no sort follows it). Explore's ranks by its sources' order.
+ */
+export type LensQueryFold<T> = (items: readonly T[], query: string) => T[];
+
+type ListLensBase<T extends LensSubject> = {
   items: readonly T[];
   /** Group labels, localized by the caller. */
   labels: { local: string; ungrouped: string; individual: string };
-  /** Where this surface persists Grouped/Flat (the literal keys live in preferences.ts). */
-  groupByRepoPreference: PersistedPreference<boolean>;
+  /** Where this surface persists Grouped/Flat (the literal keys live in preferences.ts); omitted = Flat only. */
+  groupByRepoPreference?: PersistedPreference<boolean>;
   /** Where this surface persists its view mode; omitted = list only. */
   viewModePreference?: PersistedPreference<ViewMode>;
   /** Fold every single-skill source into one "Individual sources" group. */
@@ -40,7 +57,19 @@ export type ListLensOptions<T extends LensItem> = {
    * memoised on its identity.
    */
   filters?: Readonly<Record<string, (item: T) => boolean>>;
+  /** The chip pressed on arrival; "all" (none) when omitted. */
+  defaultFilter?: string;
+  /**
+   * A query the surface owns (Explore's drives its online search): the lens
+   * reads and writes it instead of keeping its own.
+   */
+  controlledQuery?: { value: string; set: (query: string) => void };
 };
+
+export type ListLensOptions<T extends LensSubject> = ListLensBase<T> &
+  (T extends LensItem
+    ? { fold?: LensQueryFold<T> }
+    : { /** Required for a row the default skill fold cannot read. */ fold: LensQueryFold<T> });
 
 /**
  * The list lens: "which skills am I looking at, and how". One instance per
@@ -50,26 +79,37 @@ export type ListLensOptions<T extends LensItem> = {
  * and their persistence; the
  * folds themselves are the pure functions in `skillPresentation.ts`.
  */
-export function useListLens<T extends LensItem>({
-  items,
-  labels,
-  groupByRepoPreference,
-  viewModePreference,
-  foldSingletons = false,
-  selection,
-  filters,
-}: ListLensOptions<T>) {
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<string>("all");
+export function useListLens<T extends LensSubject>(options: ListLensOptions<T>) {
+  const {
+    items,
+    labels,
+    groupByRepoPreference = FLAT_ONLY,
+    viewModePreference,
+    foldSingletons = false,
+    selection,
+    filters,
+    defaultFilter = "all",
+    controlledQuery,
+    fold,
+  } = options as ListLensBase<T> & { fold?: LensQueryFold<T> };
+  const [ownQuery, setOwnQuery] = useState("");
+  const query = controlledQuery ? controlledQuery.value : ownQuery;
+  const setQuery = controlledQuery ? controlledQuery.set : setOwnQuery;
+  const [filter, setFilter] = useState<string>(defaultFilter);
   const [sort, setSort] = useState<SortMode>("name");
   const [groupByRepo, setGroupByRepo] = usePersistedPreference(groupByRepoPreference);
   const [viewMode, setViewMode] = usePersistedPreference(viewModePreference ?? LIST_ONLY);
 
   const predicate = filter === "all" ? undefined : filters?.[filter];
   const visible = useMemo(() => {
-    const sorted = filterAndSortSkills([...items], { query, sort });
-    return predicate ? sorted.filter(predicate) : sorted;
-  }, [items, predicate, query, sort]);
+    // SAFETY: without a surface fold the rows are skill-shaped — `ListLensOptions`
+    // makes `fold` required for any `T` that is not a `LensItem` — and the
+    // default fold returns a subset of the very items it was given.
+    const kept = fold
+      ? fold(items, query)
+      : (filterAndSortSkills([...items] as unknown as LensItem[], { query, sort }) as unknown as T[]);
+    return predicate ? kept.filter(predicate) : kept;
+  }, [fold, items, predicate, query, sort]);
 
   /** How many items each filter keeps, over the whole list (not the query). */
   const filterCounts = useMemo(() => {
@@ -127,6 +167,7 @@ export function useListLens<T extends LensItem>({
       groupByRepo,
       groups,
       query,
+      setQuery,
       setGroupByRepo,
       setViewMode,
       sort,
@@ -137,4 +178,4 @@ export function useListLens<T extends LensItem>({
   );
 }
 
-export type ListLens<T extends LensItem = LensItem> = ReturnType<typeof useListLens<T>>;
+export type ListLens<T extends LensSubject = LensItem> = ReturnType<typeof useListLens<T>>;

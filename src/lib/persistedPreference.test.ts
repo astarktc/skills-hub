@@ -8,7 +8,6 @@ import {
   groupByRepoPreference,
   ignoredUpdateVersionPreference,
   projectsGroupByRepoPreference,
-  showHiddenPreference,
   themePreference,
   viewModePreference,
 } from "./preferences";
@@ -120,7 +119,6 @@ describe("app preference keys", () => {
     expect(projectsGroupByRepoPreference.key).toBe(
       "skills-projects-groupByRepo",
     );
-    expect(showHiddenPreference.key).toBe("explore-showHidden");
     expect(themePreference.key).toBe("skills-theme");
     expect(ignoredUpdateVersionPreference.key).toBe(
       "skills-ignored-update-version",

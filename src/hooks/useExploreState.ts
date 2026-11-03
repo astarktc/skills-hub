@@ -6,8 +6,7 @@ import type {
 import type { ExplorePreview } from "./useSurfaceState";
 import { invokeTauri } from "../lib/tauri";
 import type { StatusReporter, TranslateFn } from "./useStatusReporter";
-import { showHiddenPreference } from "../lib/preferences";
-import { usePersistedPreference } from "./usePersistedPreference";
+import { EXPLORE_MIN_ONLINE_QUERY } from "../lib/explorePresentation";
 
 export type ExploreStateDeps = {
   t: TranslateFn;
@@ -45,8 +44,6 @@ export function useExploreState({
   // The latest preview request: an earlier one still waiting is superseded.
   const previewGenerationRef = useRef(0);
   const [hiddenSkills, setHiddenSkills] = useState<Set<string>>(new Set());
-  const [showHidden, setShowHidden] =
-    usePersistedPreference(showHiddenPreference);
 
   const loadFeaturedSkills = useCallback(async () => {
     if (featuredSkills.length > 0) return;
@@ -105,7 +102,7 @@ export function useExploreState({
         clearTimeout(searchTimerRef.current);
         searchTimerRef.current = null;
       }
-      if (value.trim().length < 2) {
+      if (value.trim().length < EXPLORE_MIN_ONLINE_QUERY) {
         setSearchResults([]);
         setSearchLoading(false);
         return;
@@ -167,8 +164,6 @@ export function useExploreState({
     searchResults,
     searchLoading,
     hiddenSkills,
-    showHidden,
-    setShowHidden,
     loadFeaturedSkills,
     loadHiddenSkills,
     handleHideSkill,

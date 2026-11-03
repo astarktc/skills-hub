@@ -146,3 +146,51 @@ describe("useListLens", () => {
     expect(result.current.visible.map((s) => s.name)).toEqual(["gamma"]);
   });
 });
+
+// A surface whose rows are not skill-shaped (Explore, ticket 22) brings its
+// own query fold, may own the query (it drives a fetch), opens on a chip and
+// has no Grouped/Flat choice.
+describe("useListLens with a surface fold", () => {
+  type Row = { id: string; name: string; source_ref: string | null; online: boolean };
+  const ROWS: Row[] = [
+    { id: "a", name: "zeta", source_ref: null, online: false },
+    { id: "b", name: "alpha", source_ref: null, online: true },
+    { id: "c", name: "beta", source_ref: null, online: false },
+  ];
+  const keepOnlineOrMatch = (items: readonly Row[], query: string) =>
+    items.filter((row) => row.online || row.name.includes(query));
+
+  it("runs the surface fold in the rows' own order, never sorting, and renders Flat", () => {
+    const { result } = renderHook(() => useListLens({ items: ROWS, labels, fold: keepOnlineOrMatch }));
+    expect(result.current.displayed.map((row) => row.id)).toEqual(["a", "b", "c"]);
+    expect(result.current.groups).toBeNull();
+    act(() => result.current.setQuery("bet"));
+    expect(result.current.displayed.map((row) => row.id)).toEqual(["b", "c"]);
+  });
+
+  it("reads and writes a controlled query instead of its own", () => {
+    let value = "zet";
+    const set = (next: string) => {
+      value = next;
+    };
+    const { result, rerender } = renderHook(() =>
+      useListLens({ items: ROWS, labels, fold: keepOnlineOrMatch, controlledQuery: { value, set } }),
+    );
+    expect(result.current.query).toBe("zet");
+    expect(result.current.displayed.map((row) => row.id)).toEqual(["a", "b"]);
+    act(() => result.current.setQuery("beta"));
+    expect(value).toBe("beta");
+    rerender();
+    expect(result.current.displayed.map((row) => row.id)).toEqual(["b", "c"]);
+  });
+
+  it("opens on its default chip", () => {
+    const FILTERS = { online: (row: Row) => row.online, featured: (row: Row) => !row.online };
+    const { result } = renderHook(() =>
+      useListLens({ items: ROWS, labels, fold: keepOnlineOrMatch, filters: FILTERS, defaultFilter: "featured" }),
+    );
+    expect(result.current.filter).toBe("featured");
+    expect(result.current.displayed.map((row) => row.id)).toEqual(["a", "c"]);
+    expect(result.current.filterCounts).toEqual({ all: 3, online: 1, featured: 2 });
+  });
+});
