@@ -5,7 +5,7 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#85**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#87**.
 
 ## Now — evidence of unfinished work is strong
 
@@ -35,6 +35,17 @@ code before scheduling.)
 
 ## Later — real, not urgent
 
+- **#85 Projects matrix keyboard model (ticket 17 audit N1, carried by ticket 23).** The matrix is a plain Tab walk:
+  127 Tab presses from the first to the last cell of the 25-skill fixture matrix (`round19/review/ticket-17-audit.md`
+  § N1). Ticket 23 decided the ⌘K palette's keys define no grid model, so this is its own ticket: spatial/roving
+  navigation (arrow keys across cells, one Tab stop per row or per matrix), named cell actions, a clear Tab exit —
+  designed and tested as a complete interaction model, not `role=grid` on the current table. CHANGELOG 1.3.0 lists it
+  as a known limitation ("grid arrow keys come in 1.3.x"). Source: ticket 23 Comments 2026-10-02 and 2026-11-02.
+- **#86 The matrix publishes no selection to the surface module.** `useSurfaceState` has a selection slot per
+  surface (D4), but `AssignmentMatrix`'s checkboxes are mutation controls, not a producer of `selection.matrix` — so
+  the ⌘K palette's selection verbs are My Skills-only, and the bulk rail cannot exist on Projects. Decide whether the
+  matrix should have a selection (checked rows → bulk assign / unassign / resync through the door) and, if so, build
+  it with #85's keymap. Source: ticket 23 Result "Deliberately left", 2026-11-02.
 - **#83 "Prefer the AGENTS standard dir" preference for harnesses that read it.** Operator idea (grill 2026-11-02,
   D47): a global setting "Always deploy to `~/.agents/skills` for harnesses that read it", with a sub-setting (shown only
   when on) that hides the harness-specific directory in the Harnesses pane. Needs a per-harness registry fact first —
