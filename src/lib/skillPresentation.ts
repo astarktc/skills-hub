@@ -269,14 +269,15 @@ export function groupSkillsByRepo<T extends Pick<SkillPresentationFields, "sourc
 }
 
 /**
- * The My Skills search/sort fold. A query containing `*` is a wildcard
+ * The query rule of the list lens: a query containing `*` is a wildcard
  * pattern (every other regex metacharacter is escaped); otherwise it is a
- * case-insensitive substring.
+ * case-insensitive substring. An empty query matches everything. The My
+ * Skills fold below and the ⌘K palette's commands read it, so a query means
+ * the same thing wherever it is typed.
  */
-export function filterAndSortSkills<
-  T extends SkillPresentationFields & { name: string },
->(skills: T[], options: { query: string; sort: SortMode }): T[] {
-  const query = options.query.trim().toLowerCase();
+export function queryMatcher(rawQuery: string): (value: string) => boolean {
+  const query = rawQuery.trim().toLowerCase();
+  if (!query) return () => true;
   const wildcardPattern = query.includes("*")
     ? new RegExp(
         query
@@ -285,8 +286,21 @@ export function filterAndSortSkills<
           .join(".*"),
       )
     : null;
-  const matchesQuery = (value: string) =>
-    wildcardPattern ? wildcardPattern.test(value) : value.includes(query);
+  return (value: string) => {
+    const lower = value.toLowerCase();
+    return wildcardPattern ? wildcardPattern.test(lower) : lower.includes(query);
+  };
+}
+
+/**
+ * The My Skills search/sort fold: `queryMatcher` over a skill's name, source,
+ * central path and source type, then the sort.
+ */
+export function filterAndSortSkills<
+  T extends SkillPresentationFields & { name: string },
+>(skills: T[], options: { query: string; sort: SortMode }): T[] {
+  const query = options.query.trim();
+  const matchesQuery = queryMatcher(query);
   const filtered = skills.filter((skill) => {
     if (!query) return true;
     return (

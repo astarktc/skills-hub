@@ -37,7 +37,8 @@
     "src/components/projects/AssignmentMatrix.tsx",
     "src/components/projects/AddProjectModal.tsx",
     "src/components/projects/EditProjectModal.tsx",
-    "src/components/projects/RemoveProjectModal.tsx"
+    "src/components/projects/RemoveProjectModal.tsx",
+    "src/components/shell/CommandPalette.tsx"
   ],
   "rawColourExempt": [
     {

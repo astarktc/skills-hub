@@ -147,12 +147,15 @@ const sizeClass = {
 /**
  * Where the popup sits: `center` (default) — the modal card; `sheet` — a
  * full-height panel on the right edge that leaves the 56 px icon rail
- * visible (the inspector below the shell breakpoint, D23). Same focus,
+ * visible (the inspector below the shell breakpoint, D23); `top` — the card
+ * pinned 12 vh from the top edge, so a popup whose content grows and shrinks
+ * as one types (the ⌘K palette, ticket 23) never moves its input. Same focus,
  * inert and dismissal rules; no motion either.
  */
 const placementClass = {
   center:
     "top-1/2 left-1/2 max-h-[calc(100vh-48px)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border-strong",
+  top: "top-[12vh] left-1/2 max-h-[76vh] -translate-x-1/2 rounded-lg border border-border-strong",
   sheet: "inset-y-0 right-0 h-full w-[min(560px,calc(100vw-56px))] border-l border-border-strong",
 } as const;
 
@@ -162,9 +165,9 @@ type DialogContentProps = Omit<
   DialogPrimitive.Popup.Props,
   "className" | "render" | "finalFocus"
 > & {
-  /** Popup width: sm 400 · md 520 · lg 600 · xl 720 (capped at viewport − 48). Centre only. */
+  /** Popup width: sm 400 · md 520 · lg 600 · xl 720 (capped at viewport − 48). Centre and top only. */
   size?: keyof typeof sizeClass;
-  /** `center` (default) or `sheet` (full height, right edge; see `placementClass`). */
+  /** `center` (default), `top` (pinned near the top edge) or `sheet` (full height, right edge; see `placementClass`). */
   placement?: keyof typeof placementClass;
   /** Header ✕ (32 × 32); disabled while the dialog is not dismissible. */
   showCloseButton?: boolean;
@@ -272,7 +275,7 @@ function DialogContent({
         className={cn(
           "fixed z-50 flex flex-col overflow-hidden bg-popover text-sm text-popover-foreground shadow-lg outline-none",
           placementClass[placement],
-          placement === "center" && sizeClass[size],
+          placement !== "sheet" && sizeClass[size],
           className,
         )}
         {...props}

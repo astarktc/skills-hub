@@ -1398,6 +1398,56 @@ export const resources = {
       propagationFirstDeploy: {
         failedTitle: "Could not deploy {{name}} to {{tool}}",
       },
+      // The ⌘K command palette (ticket 23): skills, places and the door's verbs.
+      palette: {
+        title: "Command palette",
+        inputLabel: "Find a skill, a place or an action",
+        placeholder: "Type a skill, a place or an action\u2026",
+        empty: "Nothing matches",
+        groups: {
+          recent: "Recently used",
+          selection_one: "{{count}} selected",
+          selection_other: "{{count}} selected",
+          actions: "Actions",
+          places: "Go to",
+          skills: "Skills",
+        },
+        selection: {
+          syncToTargets_one: "Deploy {{count}} selected to harnesses",
+          syncToTargets_other: "Deploy {{count}} selected to harnesses",
+          assignToProject_one: "Deploy {{count}} selected to a project",
+          assignToProject_other: "Deploy {{count}} selected to a project",
+          disable_one: "Disable {{count}} selected on all harnesses",
+          disable_other: "Disable {{count}} selected on all harnesses",
+          enable_one: "Enable {{count}} selected",
+          enable_other: "Enable {{count}} selected",
+          update_one: "Update {{count}} selected",
+          update_other: "Update {{count}} selected",
+          delete_one: "Remove {{count}} selected",
+          delete_other: "Remove {{count}} selected",
+        },
+        disableAll: "Disable every skill on all harnesses\u2026",
+        nothingToUpdateAll: "No skill has a source to update from",
+        nothingToDisableAll: "Every skill is already off everywhere",
+        settingsPane: "Settings \u2192 {{pane}}",
+        panes: {
+          github: "GitHub token",
+        },
+        // Words a query also finds an entry by (never shown).
+        keywords: {
+          delete: "delete",
+          add: "install new",
+          disableAll: "remove all undeploy off",
+          place: "go open",
+        },
+        footer: {
+          move: "move",
+          run: "run",
+          close: "close",
+        },
+        shortcutKey: "\u2318K",
+        shortcutOpen: "Open the command palette",
+      },
     },
   },
 } as const;

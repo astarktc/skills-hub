@@ -317,7 +317,9 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
 - **Name.** `<DialogTitle>` names the popup through `aria-labelledby`.
 - **Close.** The corner ✕ is 32 × 32 and named.
 - **Size.** `sm` 400 · `md` 520 (default) · `lg` 600 · `xl` 720, each capped at viewport − 48.
-- **Placement** (`DialogContent placement`): `center` (default) is the card above; `sheet` is a full-height panel on
+- **Placement** (`DialogContent placement`): `center` (default) is the card above; `top` is the same card pinned
+  12 vh from the top edge (`max-h` 76 vh, the same sizes) — for a popup whose content grows and shrinks as one
+  types, so its input never moves (the ⌘K palette, ticket 23); `sheet` is a full-height panel on
   the right edge, `min(560px, 100vw − 56px)` wide so the 56 px icon rail stays visible, with a `border-strong` left
   edge. Same focus, inert, dismissal and no-motion rules. The inspector below the shell breakpoint is its one user
   (ticket 12); its width grows to `100vw − 56px` (layout `className`) when its Files expand.
@@ -346,6 +348,37 @@ The asks are `useSurfaceState` ask layers that settle exactly once: the shared-d
 (`useSharedDirConfirmation`) renders through ConfirmDialog; the overwrite ask (`useSyncOrchestration`, per-row
 choices) uses the Dialog parts directly.
 
+### CommandPalette (`command-palette.tsx`)
+
+The ⌘K palette's shell (ticket 23): a search input over a grouped list of commands, inside the Dialog. **Base
+(decided 2026-11-02):** Base UI `Autocomplete`, rendered `inline` inside our `Dialog` (`placement="top"`, `size="lg"`,
+no ✕) — Base UI's own command-palette pattern — not shadcn Command / `cmdk`. Every D5 / a11y requirement the
+fixture audit checked is met by the Base UI route, so `cmdk` (and the one Radix dialog it drags in, ADR-0006 §3)
+stays out: the palette is a layer of the one layer stack like every dialog, with no second dialog implementation.
+
+- **No `variant`, `tone` or `size`.** There is one palette; its props are its content (`groups`, `query`,
+  `onSelect`) and its names (`label`, `inputLabel`, `placeholder`, `emptyText`, `footer`).
+- **Semantics.** The popup is a `dialog` named by `label`. The input is a `combobox` (`aria-autocomplete="list"`,
+  `aria-expanded="true"`) that `aria-controls` a `listbox`; each group is a `group` named by its label; each command is
+  an `option`. DOM focus stays in the input; the highlighted option is its `aria-activedescendant` (↑ / ↓ move
+  it, Enter runs it; Home / End stay with the text). Nothing is highlighted on open — recents come first, so a reflexive ⌘K → Enter must not repeat the last Update all; the first match is highlighted once a query is typed, and ↓ reaches a recent without typing. The foot (key hints)
+  describes the input. "Nothing matches" is Base UI's polite `status`.
+- **Filtering is the caller's.** The primitive filters nothing (`filter={null}`): `groups` are what to show for
+  `query`; empty groups are skipped.
+- **Rows.** `h-row` (36 px), `sm` `foreground`; a quiet hint on the right (`xs muted`). The highlighted option has the
+  `accent` ground **and** the inset ring (2 px `ring`, offset −2 px: 6.01 dark / 5.04 light on the ground, 6.61 /
+  5.86 on `popover`) — the ground alone is never the cue. Group labels `xs` medium `faint` (5.73 / 6.24 on
+  `popover`); hints `muted` (7.78 / 8.36 on `popover`, 7.08 / 7.20 on the highlight). The input draws no ring of its
+  own: it is the popup's one control and always focused.
+- **A refused command** (`refusal`: something runs, or it would change nothing) stays listed and reachable —
+  `aria-disabled`, its reason replacing the hint. Activating it (Enter, a click) runs nothing and dispatches the held
+  refusal (`held-refusal.dispatchRefusal`), which the binder shows as a toast — as a held Button does (D19).
+- **Focus, inert, dismissal** are the Dialog's: focus to the input on open, trapped; the app behind inert; Escape and
+  an outside press close it (top layer only — over the inspector sheet it closes alone); focus returns to the
+  opener, else to `fallbackFocus` (the palette passes D21's chain), never `<body>`. `onOpenChangeComplete(false)`
+  tells the caller the palette is gone.
+- **Motion: none** (§ Motion). Pinned by `command-palette.test.tsx`.
+
 ### Popover, DropdownMenu, Tooltip (`popover.tsx`, `dropdown-menu.tsx`, `tooltip.tsx`)
 
 These are floating surfaces on `popover` with a `border` and `shadow-lg`. All three **appear instantly**.
@@ -357,6 +390,10 @@ Escape closes them and returns focus to the trigger.
     highlight ground alone (`accent` on `popover`, 1.10 / 1.16) is never the cue. A pointer highlight shows the
     ground only.
   - `DropdownMenuLabel` names a group and must sit inside a `DropdownMenuGroup` (Base UI throws otherwise).
+  - **axe `region` on an open menu is an accepted exception** (ticket 17 audit, recorded by ticket 23): the open
+    menu is a named, focused `role=menu` portal directly under `body`, a transient composite popup — not a document
+    region. Do not wrap it in a landmark to green axe; any other `region` finding is still a defect. (The ⌘K palette
+    is a `dialog` and passes `region`.)
 - **Tooltip** is a hint on an inverted surface. It is never the only carrier of a name or a state.
 - **Popover is a floating layer** of the one layer stack (ticket 16 A1): non-modal (it makes nothing inert), live above
   the top dialog, inert beneath one. A confirmation one of its controls raises — Add's harness scope → the shared-folder
@@ -442,7 +479,7 @@ one component that owns the moving element — never by a call site's `className
 | Toast | once per settled run (occasional) | `transform` from its own edge + opacity; never height | 120 ms | `ease-out` | none | `ui/sonner.tsx` |
 | Spinners: Button `pending`, header progress, Files loading, a matrix cell in flight | while work runs | rotation loop (`animate-spin`) | 1 s period | linear | hidden (header) / not running (`motion-safe:` only) | `ui/button.tsx`, `HeaderProgress`, `SkillFiles`, `projects/AssignmentMatrix` |
 | Install landing (the rare moment, ticket 16) | an Add's settlement rows settle (a few times a week) | opacity 0 → 1 of a row's settled glyph (`@starting-style`; added / failed / cancelled), **staggered 20 ms per row** (capped at 8 rows) — a sequence of 120 ms steps | 120 ms each | `ease-out` | shown at once | `skills/add/AddSkillDialog.tsx` |
-| ⌘K palette (ticket 23) | open / close | opacity + transform | ≤ 120 ms | `ease-out` | none | the palette's primitive |
+| ⌘K palette (ticket 23) | open / close (many times a day, from the keyboard) | **nothing** — decided 2026-11-02: it appears and leaves instantly, like every dialog | — | — | nothing to remove (0 transitions, 0 animations measured under `reduce`) | `ui/command-palette.tsx` |
 
 The loops are the only durations over 120 ms in the built CSS, and they are periods, not transitions: `animate-spin`
 1 s, and the legacy `.spinner` 0.9 s in `App.css` — all stopped by the base layer's reduced-motion rule. (`.cell-spinner`
@@ -459,7 +496,9 @@ at once, and the strip light lights the new skill's marks only when they become 
   keyboard actions never animate.
 - **The inspector** opening, closing and switching skills beside the list, and **the sheet** below 1200 px: both
   follow every row click, and a panel that slides on each click is exactly the frequent motion Emil forbids.
-- **Dialogs, popovers, menus and tooltips** appear and leave instantly.
+- **Dialogs, popovers, menus and tooltips** appear and leave instantly. **The ⌘K palette** too (ticket 23): it
+  opens tens of times a day from the keyboard, and its reserved 120 ms row would only delay the input the operator is
+  already typing into (Emil: frequency first).
 - **The header's exception summary ↔ progress swap** is instant: a crossfade would show two statements at once, and
   the swap happens at the start and end of every run.
 - **Hover and press** change colour instantly in every primitive (no press scale — "practical, not flashy"). The
@@ -842,6 +881,38 @@ Measured 2026-10-01 on the fixture (`failures`), `.scratch/round19/evidence/17/a
   already registered is refused under the field), a FieldSet "Keep deployed skills out of git" with two Checkboxes.
   All four project dialogs (Add, Project settings, Configure harnesses, Remove) show the header progress at their foot
   while their action runs (`placement="dialog"`; the page copy yields).
+
+## The ⌘K palette (ticket 23)
+
+Files: `components/shell/CommandPalette.tsx` (mounted once by the binder) over the `CommandPalette` primitive; what
+it lists is the pure fold `lib/commandPalette.ts` (`paletteGroups`). It is the surface module's `commandPalette`
+dialog, so it never reaches the hash (D5).
+
+- **Open / close.** ⌘K (Ctrl+K) opens it over an empty dialog stack — from anywhere, a text field included (a chord,
+  not a typed key) — and closes it when it is the top layer; Escape and an outside press close it too. A dialog
+  owns the keyboard: ⌘K does nothing while one is open. The inspector sheet is not a surface dialog, so the palette
+  opens over it and Escape closes the palette alone.
+- **Reach.** Every skill by name (→ the inspector, focus on its heading; the sheet below 1200 px), every area
+  (Projects returns to the project the world holds, as the sidebar does), Settings and each pane it addresses today
+  (GitHub token) through **one** route, `openSettingsPane` (ticket 20 retargets it to the Settings dialog), every
+  door verb on the **showing surface's selection** with its count ("Disable 3 selected on all harnesses…" — the
+  bulk rail's six verbs), Update all, Add skill…, Configure harnesses…, and the library-wide undeploy "Disable every
+  skill on all harnesses…" (D8's select-all → Disable; "remove" finds it — Remove itself is Delete in this app).
+- **Order.** Recently used (this session, at most 5, most recent first) · *N selected* · Go to · Actions ·
+  Skills. The first option is highlighted, so with no recents and no selection ⌘K → Enter lands on My Skills,
+  never on a library-wide mutation. Typing filters every group through the list lens's query rule (`queryMatcher`;
+  skills through `filterAndSortSkills` itself), so `*` wildcards work as in My Skills' search.
+- **A label ends in … exactly when a dialog follows**: Deploy, Deploy to a project and Remove always; Disable,
+  Enable and Update over several skills (one skill acts at once, as from its row).
+- **Choosing closes first, then runs.** The palette hands focus back (to the element that opened it, or D21's chain
+  when that is gone) and only then runs the choice: a verb goes through `actions.run` without a confirming option, so
+  the door opens the same count confirmation, harness pick or Delete dialog as the bulk rail, with the returned element
+  as its opener — cancelling it returns focus there. A place moves focus to its heading (the area's `h1`, or the
+  main landmark) unless the place took focus itself (Settings → GitHub token focuses the token field).
+- **Refused** (D19): while something runs every verb and action stays listed, `aria-disabled` with the lifecycle's
+  reason; places and skills never are. A verb that would change nothing says so (the rail's `bulkCounts` reasons).
+- **Not the matrix's keymap.** The palette's keys (↑ / ↓ / Enter / Esc) live inside its own popup; it defines
+  no grid model, so the Projects matrix keeps its Tab walk (ticket 17 N1 — its spatial keymap is separate work).
 
 ## Migration rule
 

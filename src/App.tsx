@@ -13,6 +13,7 @@ import SkillInspector, { type InspectorPlacement } from "./components/skills/ins
 import { useInspectorTabOrder } from "./components/skills/inspector/useInspectorTabOrder";
 import AppSidebar from "./components/shell/AppSidebar";
 import HeaderProgress from "./components/shell/HeaderProgress";
+import CommandPalette from "./components/shell/CommandPalette";
 import LibraryHeader from "./components/skills/LibraryHeader";
 import SkillsList from "./components/skills/SkillsList";
 import NotificationsModal from "./components/shared/NotificationsModal";
@@ -951,6 +952,18 @@ function App() {
       />
 
       <UpdateDialog open={surface.isOpen("update")} update={update} t={t} />
+
+      {/* ⌘K (ticket 23): skills, places and the door's verbs on the showing surface's selection. */}
+      <CommandPalette
+        surface={surface}
+        skills={library.managedSkills}
+        actions={actions}
+        blockedReason={blockedReason}
+        onOpenArea={handleViewChange}
+        onAddSkill={handleOpenAdd}
+        onConfigureHarnesses={sync.handleOpenToolConfig}
+        t={t}
+      />
     </div>
   );
 }

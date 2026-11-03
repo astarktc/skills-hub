@@ -89,6 +89,8 @@ export type DialogState =
   /** The session's report, grouped by run (D11); `runId` opens it on one run ("View report"). */
   | { kind: "notifications"; runId?: number }
   | { kind: "update" }
+  /** The ⌘K palette (ticket 23): opened only over an empty stack; never in the hash (D5). */
+  | { kind: "commandPalette" }
   // Project world (formerly its own `ProjectDialog` union)
   | { kind: "projectAdd" }
   | { kind: "projectEdit"; projectId: string }

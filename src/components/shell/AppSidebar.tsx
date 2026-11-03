@@ -113,8 +113,9 @@ const AppSidebar = ({
       : update.status === "installing"
         ? t("appUpdate.installing", { version: update.version })
         : t("appUpdate.available", { version: update.version });
-  // My Skills' keymap (`useSkillListKeymap`), in the order one uses it.
+  // The palette's chord, then My Skills' keymap (`useSkillListKeymap`), in the order one uses it.
   const shortcuts: [string, string][] = [
+    [t("palette.shortcutKey"), t("palette.shortcutOpen")],
     ["/", t("shell.shortcutSearch")],
     [t("bulk.shortcuts.jk"), t("bulk.shortcuts.move")],
     [t("shell.shortcutEnter"), t("shell.shortcutOpen")],

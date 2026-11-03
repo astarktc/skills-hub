@@ -40,7 +40,14 @@ function statedReason(props: ReasonProps): string | null {
   return reason && reason.trim() !== "" ? reason : null;
 }
 
-function dispatchRefusal(
+/**
+ * Dispatch one refusal for `element` (its stated reason by default). The
+ * primitives above call it from their capture handlers; a primitive whose
+ * activation never reaches the held element as a key event (a palette
+ * option activated by Enter in its input, `command-palette.tsx`) calls it
+ * once per activation itself.
+ */
+export function dispatchRefusal(
   element: HTMLElement,
   reason = statedReason({
     "aria-description": element.getAttribute("aria-description"),
