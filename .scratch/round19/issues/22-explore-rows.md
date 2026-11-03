@@ -1,6 +1,6 @@
 # 22 — Explore as tracker rows: Not-in-library filter, Preview primary, scope summary, installed → inspector, contrast + search label
 
-Status: implemented — a2a09bd; D31 audit pending
+Status: claimed (implemented a2a09bd; audit FAIL — F1 P0, F2 P1; fix in flight)
 Blocked by: 19
 Spec: `.scratch/round19/spec.md` — D25 (grill Q19); round-18 D10. Sources: `critique-astra` F11, Explore reads;
 `critique-opus` P2-1, Q6; `audit.md` Explore row. Phase 19b.
@@ -119,3 +119,5 @@ changes nothing.
   fixed (heading takes focus, Escape/Close return to the row); the 10-01 instant-hover rule holds (`0s` everywhere on
   the surface); the 16 wiring is kept — the preview's Install now carries the skill name and leaves the preview open
   under Add, so Escape walks back Add → Install → row.
+
+- 2026-11-02 — **Astra D31 audit FAIL** (`round19/review/ticket-22-audit.md`; checks 2–10 pass: contrast, axe 0, lens regression, vocabulary, guard). **F1 (P0)** after Install → Add selected → Open in My Skills → Escape, the row has left "Not in library", the focused button unmounts and focus lands on `body` (side and sheet). **F2 (P1)** the preview's installedness is read from the current `candidates` list, so clearing the search flips an installed online preview back to Install. Fix child dispatched (one focus-return resolver per D21 for both placements; installedness from the full catalog through the shared identity helper in `explorePresentation.ts`); bounded re-check after.
