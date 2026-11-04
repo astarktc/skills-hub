@@ -20,3 +20,4 @@ Spec: `.scratch/round19/spec.md` — D31, D32. Phase 19b release.
 ## Comments
 
 - 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.
+- 2026-11-04 — operator grill (autonomous run through 31 → 20 ∥ 21 → 34 → 24 → 25 → 26; results reviewed at the end): **version 1.3.1; the release push is pre-authorised** (the orchestrator bumps, rebases, pushes; the operator smoke-tests the built release afterwards). #70 stays out of this release (opens 19c). Audits run without the operator's screenshot round; every ticket's captures stay under `evidence/<ticket>/` for one end-of-wave review deck.

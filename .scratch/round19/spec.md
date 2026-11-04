@@ -342,3 +342,4 @@ effort; 20 and 21 carry binding think-aloud comments; #71 needs a grill before 1
 scarcity on Free; `assemble-updater-json` moved to `ubuntu-latest` in `457085e`).
 
 **Archived with this closure:** `archive/round18/` → `archive/round18/` (its closure block dated 2026-09-27 in `753e895`).
+- 2026-11-04 — operator pre-authorised the 1.3.1 release push and an unattended run of the remaining 19b order (31 → 20 ∥ 21 → 34 → 24 → 25 → 26); a P0 that needs a design decision parks its ticket with a dated Comment and the queue continues. Per-ticket decisions recorded on tickets 20, 24, 26, 34.

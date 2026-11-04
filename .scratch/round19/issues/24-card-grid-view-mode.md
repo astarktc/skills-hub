@@ -25,3 +25,4 @@ Astra audit on `rich` in both densities: nothing clipped at 960×640; keyboard r
 ## Comments
 
 - 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.
+- 2026-11-04 — operator grill (autonomous run through 31 → 20 ∥ 21 → 34 → 24 → 25 → 26; results reviewed at the end): grid still wanted in the T3-style dark world (round-18 D2 stands).

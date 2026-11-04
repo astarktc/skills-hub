@@ -93,3 +93,4 @@ twice inside Cursor. The four upstream rows (DeepSeek Harness, ZCode, Codewhale,
 
 - 2026-11-02 — opened at the operator's approval, after the research child's brief landed (`1cb3d36`). Blocked on
   ticket 20 for its UI home; the backend registry half could start earlier in a worktree if 20 is slow.
+- 2026-11-04 — operator grill (autonomous run through 31 → 20 ∥ 21 → 34 → 24 → 25 → 26; results reviewed at the end): Codex (and Goose, OpenHands) join the AGENTS-standard group globally as the brief decided — the operator's own `~/.codex/skills` targets relocate on first launch, accepted. **#83 preference "prefer the AGENTS standard dir" defaults ON.** Clawdbot / MoltBot / OpenClaw: the operator never installed them — retire the rows (no machine check needed).

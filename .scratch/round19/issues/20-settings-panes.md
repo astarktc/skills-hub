@@ -64,3 +64,4 @@ contrast; 960×640; `npm run check`.
     changes anything on Update), not by a header indicator. The upgrader hint ("Auto-sync moved to Settings") is
     dropped: 1.3.0 already moved it.
 - 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.
+- 2026-11-04 — operator grill (autonomous run through 31 → 20 ∥ 21 → 34 → 24 → 25 → 26; results reviewed at the end): the sidebar's Theme menu stays beside the Appearance pane (quick toggle; D37 does not remove it).
