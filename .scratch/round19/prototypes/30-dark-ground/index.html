@@ -1,0 +1,433 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway. Round 19, ticket 30 follow-up: "How dark should dark mode be?"
+  Three dark grounds for My Skills (ticket 31's anatomy, identity pick A), switchable via ?ground=a|b|c
+  and a floating bottom bar (←/→ cycle). Dark only — light is settled (ticket 30).
+    a — rows only: today's dark tokens + the minted --row (#09090b) under the skill rows; sidebar/header/app ground unchanged
+    b — whole theme one step darker: background = row = #09090b, every other dark ground shifted down with it (same blue-grey tint, same steps)
+    c — T3-mimicked, values sampled from a T3 Code window capture (2026-11-04): true black ground (#000000) for app, sidebar and
+        group headers (hairlines #171717 only, no second-tone pane); panels #0e0e0e; hover #0e0e0e; focused / selected rows are a
+        rounded raised card (#1e1e1e), no selection edge bar; neutral greys (#f5f5f5 / #a3a3a3 / #898989) instead of blue-grey.
+        Type and layout are held constant so the comparison is about ground; iris stays (D43).
+    d — (c) with sidebar + group headers at T3's literal sidebar sample #040404
+    e — (c) with sidebar + group headers at T3's panel tone #0e0e0e
+    f — (d) with ticket 13's 3 px iris selection edge kept
+  VERDICT (operator 2026-11-04): (d) — "the look I like most so far"; selection edge kept → (f) is the reference for
+  ticket 35 (round19/issues/35-dark-ground-t3-two-tone.md). (a) rows-only and (b) did not go far enough; (c) lost the pane.
+  Self-contained: inline CSS + SVG, system-ui, no network. Opens from file:// or a server.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Skills Hub — prototype 30 · dark ground</title>
+<style>
+/* ── Tokens: ground (a) = theme.css after ticket 30 ─────────────────────────────── */
+:root {
+  color-scheme: dark;
+  --background: #0e0f12; --foreground: #e6e7ea;
+  --card: #15171b; --popover: #15171b; --raised: #1d2025; --row: #09090b;
+  --primary: #6a61e8; --primary-foreground: #fff; --ring: #9690ff;
+  --muted: #1d2025; --muted-foreground: #a6abb4; --faint: #8c929c;
+  --border: #262a31; --border-strong: #343942; --input: #6b717b;
+  --failed: #ff6b6b;
+  --warning: #fbac16; --warning-foreground: #0e0f12;
+  --sidebar: var(--card); --ghead: var(--card); --hover: var(--card); --focus: var(--raised);
+  --elevation-lg: 0 16px 32px -12px rgb(0 0 0 / 0.6);
+
+  --id-moss-tint:#283215;   --id-moss-fg:#bddb8a;
+  --id-teal-tint:#09362e;   --id-teal-fg:#74e5ce;
+  --id-cyan-tint:#0a3437;   --id-cyan-fg:#76e1ea;
+  --id-sky-tint:#0e3242;    --id-sky-fg:#7cdbff;
+  --id-orchid-tint:#39253f; --id-orchid-fg:#efb5ff;
+  --id-rose-tint:#422232;   --id-rose-fg:#ffadd9;
+  --id-slate-tint:#292e36;  --id-slate-fg:#bfcfe5;
+}
+/* (b) whole theme one step darker: background = row; steps bg→card 1.07, card→raised 1.10 kept */
+:root[data-ground='b'] {
+  --background: #09090b; --row: #09090b;
+  --card: #121318; --popover: #121318; --raised: #1b1d23; --muted: #1b1d23;
+  --border: #242730; --border-strong: #31353e;
+}
+/* (c) T3-mimicked: sampled from the T3 Code capture — ground #000000, sidebar #030303≈ground, panels #0d0d0d–#0e0e0e,
+   panel border #171717, current item / bubble #1e1e1e, code pill #191919, text #f5f5f5, muted #898989, icons #bebebe */
+:root[data-ground='c'], :root[data-ground='d'], :root[data-ground='e'], :root[data-ground='f'] {
+  --background: #000000; --row: #000000; --foreground: #f5f5f5;
+  --card: #000000; --popover: #0e0e0e; --raised: #1e1e1e; --muted: #191919;
+  --muted-foreground: #a3a3a3; --faint: #898989;
+  --border: #171717; --border-strong: #262626; --input: #6b6b6b;
+  --sidebar: #000000; --ghead: #000000; --hover: #0e0e0e; --focus: #1e1e1e;
+  --id-slate-tint:#262626;  --id-slate-fg:#c9c9cf;
+}
+/* (d) = (c) with sidebar + group headers at T3's literal sidebar sample (#040404 — a hair above black) */
+:root[data-ground='d'] { --sidebar: #040404; --ghead: #040404; }
+/* (e) = (c) with sidebar + group headers at T3's PANEL tone (#0e0e0e — right panel, composer, pinned card) */
+:root[data-ground='e'] { --sidebar: #0e0e0e; --ghead: #0e0e0e; --hover: #0e0e0e; }
+/* (f) = (d) but the ticket-13 selection edge (3 px iris on the leading side) is kept */
+:root[data-ground='f'] { --sidebar: #040404; --ghead: #040404; }
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font: 13px/1.25rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--background); color: var(--foreground);
+  -webkit-font-smoothing: antialiased; font-variant-numeric: tabular-nums;
+}
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+svg.i { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+svg.i.s14 { width: 14px; height: 14px; }
+svg.i.s12 { width: 12px; height: 12px; }
+.mono { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace; }
+
+.shell { display: grid; grid-template-columns: 224px minmax(0, 1fr); height: 100vh; }
+.sidebar { background: var(--sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 12px 8px; gap: 2px; }
+.brand { display: flex; align-items: center; gap: 8px; padding: 6px 8px 14px; font-weight: 600; font-size: 14px; }
+.brand-mark { width: 20px; height: 20px; border-radius: 6px; background: var(--primary); display: grid; place-items: center; color: #fff; }
+.nav { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 8px; border-radius: 6px; color: var(--muted-foreground); font-size: 13px; }
+.nav.on { background: var(--raised); color: var(--foreground); font-weight: 500; }
+.nav .ct { margin-left: auto; font-size: 12px; color: var(--faint); }
+.sidebar .spacer { flex: 1; }
+
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.pagehead { display: flex; align-items: center; gap: 12px; padding: 14px 20px 10px; }
+.pagehead h1 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; }
+.meta { font-size: 12px; color: var(--muted-foreground); display: flex; gap: 6px; align-items: center; }
+.meta .f { color: var(--failed); } .meta .w { color: var(--warning); }
+.pagehead .acts { margin-left: auto; display: flex; gap: 8px; }
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 6px; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.btn.outline { border: 1px solid var(--border-strong); color: var(--foreground); }
+.btn.solid { background: var(--primary); color: var(--primary-foreground); }
+.btn.ghost { color: var(--muted-foreground); }
+.btn.ghost:hover { background: var(--raised); color: var(--foreground); }
+
+.filterbar { display: flex; align-items: center; gap: 10px; padding: 0 20px 12px; }
+.search { display: flex; align-items: center; gap: 8px; height: 28px; flex: 0 1 280px; min-width: 160px; padding: 0 10px; border: 1px solid var(--input); border-radius: 6px; color: var(--faint); }
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; height: 28px; }
+.seg { flex-shrink: 0; }
+.seg span { white-space: nowrap; padding: 0 10px; display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted-foreground); }
+.seg span.on { background: var(--raised); color: var(--foreground); box-shadow: inset 0 -2px 0 var(--ring); }
+.legend { margin-left: auto; display: flex; gap: 12px; font-size: 12px; color: var(--muted-foreground); align-items: center; }
+.legend span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.legend svg { width: 12px; height: 12px; }
+.selbar { display: flex; align-items: center; gap: 8px; margin: 0 20px 10px; height: 32px; padding: 0 6px 0 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+.selbar b { font-weight: 600; }
+
+.list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 16px 96px; display: flex; flex-direction: column; gap: 12px; }
+
+/* ── Group card (D38) ─────────────────────────────────────────────────── */
+.group { position: relative; border: 1px solid var(--border); border-radius: 10px; overflow: clip; background: var(--row); }
+.cols { display: grid; grid-template-columns: 2rem var(--name-col) minmax(0, 1fr) calc(8 * var(--pitch) + 2.5rem) 3.5rem 2.5rem 2rem; column-gap: .75rem; align-items: center; }
+.ghead { position: sticky; top: 0; z-index: 2; height: 40px; padding: 0 12px; background: var(--ghead); border-bottom: 1px solid var(--border); }
+.group.collapsed .ghead { border-bottom: 0; }
+.gtitle { grid-column: 2 / 4; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.chev { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 4px; color: var(--muted-foreground); margin-left: -4px; }
+.chev:hover { background: var(--raised); }
+.gname { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gcount { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.gsum { font-size: 12px; display: flex; gap: 4px; white-space: nowrap; overflow: hidden; }
+.gsum .f { color: var(--failed); } .gsum .w { color: var(--warning); } .gsum .x { color: var(--faint); } .gsum .dot { color: var(--faint); }
+/* Finding: at ticket 31's 16 px pitch (12 px mark + 4 px gap) 2-letter initials run together ("GMAM");
+   20 px (8 px gap) is the narrowest pitch where 10 px initials stay separate → strip = marks × 20 + 40. */
+:root { --pitch: 1.25rem; --pitch-gap: calc(var(--pitch) - 12px); }
+.initials { grid-column: 4; display: flex; gap: var(--pitch-gap); align-self: center; }
+.initials span { width: 12px; display: flex; justify-content: center; font-size: 10px; line-height: 12px; font-weight: 600; letter-spacing: 0; color: var(--faint); overflow: visible; white-space: nowrap; }
+.gact { grid-column: 5 / 8; justify-self: end; }
+.gicon { color: var(--faint); display: flex; }
+
+/* Variant A — the 2-letter source chip */
+.chip { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; flex-shrink: 0;
+  background: var(--id-tint); color: var(--id-fg); font-size: 10.5px; font-weight: 700; letter-spacing: 0.01em; }
+.chip.neutral { background: var(--raised); color: var(--muted-foreground); }
+.minichip { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; margin-right: 6px; vertical-align: -3px;
+  background: var(--id-tint); color: var(--id-fg); font-size: 8.5px; font-weight: 700; font-family: system-ui, sans-serif; }
+.minichip.neutral { background: var(--raised); color: var(--muted-foreground); }
+
+
+/* ── Row (D39–D41) ────────────────────────────────────────────────────── */
+.rows { list-style: none; margin: 0; padding: 4px 0; }
+.row { position: relative; height: 36px; padding: 0 12px; cursor: default; }
+.row:hover { background: var(--hover); }
+.row.sel { background: var(--focus); }
+.row.sel::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--ring); }
+.row.focus { background: var(--focus); border-radius: 6px; margin: 0 4px; padding: 0 8px; }
+/* (c): T3 has no edge bar — the selected row is the same rounded raised card as the focused one */
+:root[data-ground='c'] .row.sel, :root[data-ground='d'] .row.sel, :root[data-ground='e'] .row.sel { border-radius: 6px; margin: 0 4px; padding: 0 8px; }
+:root[data-ground='c'] .row.sel::before, :root[data-ground='d'] .row.sel::before, :root[data-ground='e'] .row.sel::before { display: none; }
+:root[data-ground='c'] .nav.on, :root[data-ground='d'] .nav.on, :root[data-ground='e'] .nav.on, :root[data-ground='f'] .nav.on { background: var(--raised); }
+
+.cb { width: 16px; height: 16px; border: 1px solid var(--input); border-radius: 4px; display: grid; place-items: center; justify-self: center; color: var(--primary-foreground); }
+.cb.on { background: var(--primary); border-color: var(--primary); }
+.cb.mixed { background: var(--primary); border-color: var(--primary); }
+.namecell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row.off .name { color: var(--muted-foreground); }
+.badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border-radius: 4px; font-size: 12px; white-space: nowrap; flex-shrink: 0; }
+.badge.failed { color: var(--failed); background: color-mix(in srgb, var(--failed) 10%, var(--popover)); }
+.badge.warning { color: var(--warning); background: color-mix(in srgb, var(--warning) 10%, var(--popover)); }
+.desc { font-size: 13px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.srclabel { font-size: 12px; color: var(--faint); margin-right: 8px; }
+.strip { display: flex; align-items: center; gap: 8px; }
+.marks { display: flex; gap: var(--pitch-gap); }
+.marks svg { width: 12px; height: 12px; display: block; }
+.nm { font-size: 12px; color: var(--muted-foreground); }
+.nm.done { color: var(--faint); }
+.m-dep { color: var(--muted-foreground); } .m-dep.quiet { color: var(--input); }
+.m-not { color: var(--input); } .m-old { color: var(--warning); } .m-off { color: var(--faint); } .m-fail { color: var(--failed); }
+.scope { display: flex; align-items: center; justify-content: flex-start; gap: 6px; color: var(--faint); font-size: 12px; }
+.scope .proj { display: inline-flex; align-items: center; gap: 3px; }
+.sw { width: 28px; height: 16px; border-radius: 999px; position: relative; justify-self: center; background: var(--muted-foreground); }
+.sw::after { content: ""; position: absolute; top: 2px; left: 14px; width: 12px; height: 12px; border-radius: 50%; background: var(--background); }
+.sw.off { background: var(--raised); box-shadow: inset 0 0 0 1px var(--input); }
+.sw.off::after { left: 2px; background: var(--muted-foreground); }
+.more { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 4px; color: var(--muted-foreground); justify-self: center; }
+
+/* ── Prototype bar (not part of the design) ──────────────────────────── */
+.pbar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 6px;
+  background: #050506; color: #f4f4f5; border: 1px solid rgb(255 255 255 / 0.22); border-radius: 999px; padding: 5px 6px;
+  box-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.55), 0 0 0 3px rgb(250 204 21 / 0.35); font-size: 12px; white-space: nowrap; }
+.pbar button { height: 26px; min-width: 26px; padding: 0 9px; border-radius: 999px; color: #f4f4f5; display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+.pbar button:hover { background: rgb(255 255 255 / 0.12); }
+.pbar .lbl { padding: 0 6px; font-weight: 600; }
+.pbar .tag { background: #facc15; color: #111; border-radius: 999px; padding: 2px 7px; font-weight: 700; font-size: 10px; letter-spacing: 0.04em; }
+.pbar .sep { width: 1px; height: 16px; background: rgb(255 255 255 / 0.2); }
+.pbar .on { background: rgb(255 255 255 / 0.18); }
+.pbar .dim { color: #a1a1aa; padding: 0 6px; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark"><svg class="i s12" viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg></span>Skills Hub</div>
+    <div class="nav on"><svg class="i" viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg>My Skills<span class="ct">13</span></div>
+    <div class="nav"><svg class="i" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>Projects<span class="ct">4</span></div>
+    <div class="nav"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16.24 7.76-2.12 6.36-6.36 2.12 2.12-6.36 6.36-2.12z"/></svg>Explore</div>
+    <div class="spacer"></div>
+    <div class="nav"><svg class="i" viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>Notifications</div>
+    <div class="nav"><svg class="i" viewBox="0 0 24 24"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg>Settings</div>
+  </aside>
+
+  <main class="main">
+    <header class="pagehead">
+      <div>
+        <h1>My Skills</h1>
+        <div class="meta"><span>13 skills · 8 harnesses</span><span class="f">· 3 failed</span><span class="w">· 2 out of date copies</span></div>
+      </div>
+      <div class="acts">
+        <button class="btn outline"><svg class="i s14" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>Update all</button>
+        <button class="btn solid"><svg class="i s14" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Add skill</button>
+      </div>
+    </header>
+    <div class="filterbar">
+      <div class="search"><svg class="i s14" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>Search skills</div>
+      <div class="seg"><span class="on">All 13</span><span>Issues 5</span><span>Disabled 1</span></div>
+      <button class="btn ghost">Collapse all</button>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div class="selbar"><b>2 selected</b><span style="color:var(--faint)">·</span><button class="btn ghost">Deploy</button><button class="btn ghost">Update</button><button class="btn ghost">Disable</button><button class="btn ghost">Remove</button><button class="btn ghost" style="margin-left:auto">Clear</button></div>
+    <div class="list" id="list"></div>
+  </main>
+</div>
+
+<div class="pbar" id="pbar"></div>
+
+<script>
+// ── Data ──────────────────────────────────────────────────────────────────────
+const HARNESSES = [["CC","Claude Code"],["CU","Cursor"],["CX","Codex"],["PI","Pi"],["GM","Gemini CLI"],["AM","Amp"],["KI","Kiro"],["WS","Windsurf"]];
+// marks: D deployed · N not deployed · O out of date copy · F failed · M copy missing · X disabled
+const GROUPS = [
+  { source: "anthropics/skills", owner: "anthropics", kind: "repo", skills: [
+    { id: "frontend-design", m: "DDDDDNNN", global: true, projects: ["monorepo","api","docs"],
+      desc: "Create distinctive, production-grade frontend interfaces with high design quality; avoids generic AI aesthetics and commits to a clear visual direction for every component and page." },
+    { id: "mcp-builder", m: "DFDDDNNN", global: true, projects: [], badges: [["failed","1 failed"]],
+      desc: "Guide for creating high-quality MCP servers that let LLMs interact with external services through well-designed tools, in Python (FastMCP) or Node/TypeScript (MCP SDK)." },
+    { id: "skill-creator", m: "DDDDDDDD", global: true, projects: ["monorepo"],
+      desc: "Guide for creating effective skills that extend Claude with specialized knowledge, workflows and tool integrations; use when building or updating a skill." },
+    { id: "pdf", m: "DDODDNNN", global: true, projects: [], badges: [["warning","Out of date copy"]],
+      desc: "Comprehensive PDF toolkit: extract text and tables, create new PDFs, merge and split documents, and fill in forms programmatically." },
+    { id: "docx", m: "XXXXXXXX", off: true, global: false, projects: [],
+      desc: "Create, edit and analyse Word documents with tracked changes, comments and formatting preservation." },
+    { id: "webapp-testing", m: "DDDMDDNN", global: true, projects: ["monorepo","api"], badges: [["failed","1 failed"]],
+      desc: "Toolkit for interacting with and testing local web applications using Playwright: verify frontend behaviour, capture screenshots, read the browser logs." },
+  ], summary: [["f","2 failed"],["w","1 out of date"],["x","1 disabled"]] },
+  { source: "vercel-labs/agent-skills", owner: "vercel-labs", kind: "repo", collapsed: true, skills: [
+    { id: "vercel-react-best-practices", m: "DDDDDDNN", global: true, projects: [] },
+    { id: "web-design-guidelines", m: "DDDDDDNN", global: true, projects: [] },
+    { id: "vercel-composition-patterns", m: "DDODDDNN", global: true, projects: [] },
+    { id: "vercel-deploy", m: "DNNNNNNN", global: true, projects: [] },
+  ], summary: [["w","1 out of date"]] },
+  { source: "individual", label: "Individual sources", kind: "individual", skills: [
+    { id: "brainstorming", source: "obra/superpowers", owner: "obra", m: "DDDDNNNN", global: true, projects: [],
+      desc: "Refines rough ideas into fully-formed designs through collaborative questioning, alternative exploration and incremental validation before any code is written." },
+    { id: "tdd", source: "mattpocock/skills", owner: "mattpocock", m: "NNNNNNNN", global: false, projects: ["monorepo","api"],
+      desc: "Test-driven development: red-green-refactor in small vertical slices, integration tests first, one behaviour per test." },
+    { id: "release-notes", source: "~/dev/skills/release-notes", owner: null, m: "DDFNNNNN", global: true, projects: [], badges: [["failed","1 failed"]],
+      desc: "Drafts release notes from merged pull requests and the changelog, grouped by user-facing impact." },
+  ], summary: [["f","1 failed"]] },
+];
+const FOCUSED = "frontend-design";
+const SELECTED = new Set(["skill-creator", "pdf"]);
+
+// ── Identity hue derivation (variants A and B) ────────────────────────────────
+// hue = PALETTE[ fnv1a32( owner.toLowerCase() ) % PALETTE.length ]
+//   fnv1a32: h = 0x811c9dc5; for each UTF-16 code unit c: h ^= c; h = (h * 0x01000193) >>> 0
+//   The key is the repo OWNER (stable across a user's repos and across renames of a repo), never state.
+//   "anthropics" → 2569612480 % 7 = 1 → teal; "vercel-labs" → 703213605 % 7 = 3 → sky;
+//   "obra" → 3167613737 % 7 = 1 → teal (a collision — expected with 7 hues; the name always carries identity);
+//   "mattpocock" → 3169730402 % 7 = 6 → slate. A local folder has no owner → neutral (no hue).
+const PALETTE = ["moss", "teal", "cyan", "sky", "orchid", "rose", "slate"];
+function fnv1a(s) { let h = 0x811c9dc5; for (const ch of s.toLowerCase()) { h ^= ch.charCodeAt(0); h = Math.imul(h, 0x01000193) >>> 0; } return h; }
+function hueOf(owner) { return owner ? PALETTE[fnv1a(owner) % PALETTE.length] : null; }
+function initialsOf(owner) {
+  const parts = owner.split(/[-_.\s]+/).filter(Boolean);
+  return (parts.length >= 2 ? parts[0][0] + parts[1][0] : owner.slice(0, 2)).toUpperCase();
+}
+function idStyle(hue) { return hue ? `--id-tint:var(--id-${hue}-tint);--id-fg:var(--id-${hue}-fg)` : ""; }
+
+// ── Icons ─────────────────────────────────────────────────────────────────────
+const I = {
+  chevDown: '<svg class="i s14" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>',
+  chevRight: '<svg class="i s14" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>',
+  globe: '<svg class="i s14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>',
+  folder: '<svg class="i s14" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
+  folderSm: '<svg class="i" style="width:10px;height:10px" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
+  branch: '<svg class="i s14" viewBox="0 0 24 24"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>',
+  layers: '<svg class="i s14" viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg>',
+  ellipsis: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>',
+  check: '<svg class="i s12" viewBox="0 0 24 24" style="stroke-width:3"><path d="M20 6 9 17l-5-5"/></svg>',
+  minus: '<svg class="i s12" viewBox="0 0 24 24" style="stroke-width:3"><path d="M5 12h14"/></svg>',
+  circleX: '<svg class="i s12" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>',
+  alert: '<svg class="i s12" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+};
+// The strip glyphs, verbatim from StripMarkIcon.tsx (12 × 12, currentColor).
+const GLYPH = {
+  D: '<circle cx="6" cy="6" r="4.5" fill="currentColor"/>',
+  N: '<circle cx="6" cy="6" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/>',
+  O: '<circle cx="6" cy="6" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 2a4 4 0 0 0 0 8z" fill="currentColor"/>',
+  X: '<circle cx="6" cy="6" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.2 8.8 8.8 3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+  F: '<path d="M2.5 2.5l7 7m0-7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+};
+GLYPH.M = GLYPH.F;
+const STATE_WORD = { D: "Deployed", N: "Not deployed", O: "Out of date copy", F: "Failed", M: "Copy missing", X: "Disabled" };
+const STATE_CLASS = { D: "m-dep", N: "m-not", O: "m-old", F: "m-fail", M: "m-fail", X: "m-off" };
+const mark = (s, quiet) => `<svg viewBox="0 0 12 12" class="${STATE_CLASS[s]}${s === "D" && quiet ? " quiet" : ""}" role="img" aria-label="${STATE_WORD[s]}">${GLYPH[s]}</svg>`;
+
+// ── State ─────────────────────────────────────────────────────────────────────
+const params = new URLSearchParams(location.search);
+const GROUNDS = {
+  a: ["Rows only", "app #0e0f12 · sidebar/header #15171b · rows #09090b · hover #15171b · focused #1d2025"],
+  b: ["Whole theme darker", "app = rows #09090b · sidebar/header #121318 · hover #121318 · focused #1b1d23"],
+  c: ["T3-mimicked", "true black #000000 (app, sidebar, headers) · hairlines #171717 · hover #0e0e0e · current row card #1e1e1e, no edge bar · neutral greys"],
+  d: ["T3 + sidebar sample", "(c) with sidebar + group headers at T3's literal sidebar sample #040404"],
+  e: ["T3 + panel tone", "(c) with sidebar + group headers at T3's panel tone #0e0e0e (right panel / composer)"],
+  f: ["(d) + selection edge", "(d) with ticket 13's 3 px iris selection edge kept (selected ≠ focused)"],
+};
+let ground = (params.get("ground") || "a").toLowerCase(); if (!GROUNDS[ground]) ground = "a";
+GROUPS.forEach(g => { g.key = g.source; });
+const collapsed = new Set(GROUPS.filter(g => g.collapsed).map(g => g.key));
+
+function syncUrl() {
+  const p = new URLSearchParams(); p.set("ground", ground);
+  try { history.replaceState(null, "", "?" + p.toString()); } catch (_) { /* some file:// contexts refuse; state still renders */ }
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function rowHtml(s, group) {
+  const deployed = [...s.m].filter(c => c === "D" || c === "O").length;
+  const complete = deployed === s.m.length;
+  const marks = [...s.m].map((c, i) => `<span title="${HARNESSES[i][1]}: ${STATE_WORD[c]}">${mark(c, complete)}</span>`).join("");
+  const badges = (s.badges || []).map(([tone, text]) =>
+    `<span class="badge ${tone}">${tone === "failed" ? I.circleX : I.alert}${text}</span>`).join("");
+  let label = "";
+  if (group.kind === "individual") {
+    label = `<span class="srclabel mono">${s.source}</span>`;
+  }
+  const projTitle = s.projects.length ? `In ${s.projects.length} project${s.projects.length > 1 ? "s" : ""}: ${s.projects.join(", ")}` : "";
+  const scope = `${s.global ? `<span title="Deployed globally" class="proj">${I.globe}</span>` : ""}${s.projects.length ? `<span class="proj" title="${projTitle}">${I.folder}${s.projects.length}</span>` : ""}`;
+  const cls = ["row", "cols", s.off ? "off" : "", SELECTED.has(s.id) ? "sel" : "", FOCUSED === s.id ? "focus" : ""].join(" ");
+  return `<li class="${cls}" data-id="${s.id}">
+    <span class="cb ${SELECTED.has(s.id) ? "on" : ""}" data-cb="${s.id}">${SELECTED.has(s.id) ? I.check : ""}</span>
+    <span class="namecell"><span class="name" title="${s.id}">${s.id}</span>${badges}</span>
+    <span class="desc" title="${s.desc || ""}">${label}${s.desc || ""}</span>
+    <span class="strip"><span class="marks">${marks}</span><span class="nm ${complete ? "done" : ""}" title="Deployed to ${deployed} of ${s.m.length} harnesses">${deployed}/${s.m.length}</span></span>
+    <span class="scope">${scope}</span>
+    <span class="sw ${s.off ? "off" : ""}" title="${s.off ? "Disabled" : "Enabled"}"></span>
+    <span class="more">${I.ellipsis}</span>
+  </li>`;
+}
+
+function groupHtml(g) {
+  const isCol = collapsed.has(g.key);
+  const label = g.label || g.key;
+  const hue = g.kind === "repo" ? hueOf(g.owner) : null;
+  const ident = hue ? `<span class="chip" style="${idStyle(hue)}" title="${g.owner}">${initialsOf(g.owner)}</span>` : `<span class="chip neutral">${I.layers}</span>`;
+  const selHere = g.skills.filter(s => SELECTED.has(s.id)).length;
+  const cb = selHere === 0 ? "" : selHere === g.skills.length ? "on" : "mixed";
+  const summary = g.summary.map(([k, t], i) => `${i ? '<span class="dot">·</span>' : ""}<span class="${k}">${t}</span>`).join("");
+  const initials = HARNESSES.map(([ab, full]) => `<span title="${full}" aria-label="${full}">${ab}</span>`).join("");
+  const deployable = g.skills.some(s => !s.off && s.m.includes("N"));
+  return `<section class="group ${isCol ? "collapsed" : ""}">
+    <div class="ghead cols">
+      <span class="cb ${cb}">${cb === "on" ? I.check : cb === "mixed" ? I.minus : ""}</span>
+      <span class="gtitle">
+        <button class="chev" data-toggle="${g.key}" aria-label="${isCol ? "Expand" : "Collapse"} ${label}">${isCol ? I.chevRight : I.chevDown}</button>
+        ${ident}
+        <span class="gname">${label}</span>
+        <span class="gcount">${g.skills.length} skills</span>
+        ${summary ? `<span class="gsum">${summary}</span>` : ""}
+      </span>
+      <span class="initials" aria-label="Harnesses">${initials}</span>
+      <span class="gact"><button class="btn ghost" ${deployable ? "" : "disabled"}>Deploy all</button></span>
+    </div>
+    ${isCol ? "" : `<ul class="rows">${g.skills.map(s => rowHtml(s, g)).join("")}</ul>`}
+  </section>`;
+}
+
+function render() {
+  const root = document.documentElement;
+  root.dataset.theme = "dark";
+  root.dataset.ground = ground;
+
+  // --name-col (D39): longest VISIBLE name in ch, clamped to [12rem, 22rem]; +2ch for the badge gap.
+  const visible = GROUPS.filter(g => !collapsed.has(g.key)).flatMap(g => g.skills);
+  const longest = Math.max(...visible.map(s => s.id.length + (s.badges ? s.badges[0][1].length + 4 : 0)));
+  document.getElementById("list").style.setProperty("--name-col", `clamp(12rem, ${longest + 2}ch, 22rem)`);
+
+  document.getElementById("list").innerHTML = GROUPS.map(groupHtml).join("");
+  document.getElementById("legend").innerHTML =
+    ["D", "N", "O", "F", "X"].map(c => `<span>${mark(c, false)}${c === "F" ? "Failed / Copy missing" : STATE_WORD[c]}</span>`).join("");
+  document.getElementById("pbar").innerHTML = `
+    <span class="tag">PROTOTYPE 30 · DARK GROUND</span>
+    <button data-act="prev" aria-label="Previous ground">←</button>
+    ${Object.keys(GROUNDS).map(k => `<button data-act="g:${k}" class="${k === ground ? "on" : ""}">${k} · ${GROUNDS[k][0]}</button>`).join("")}
+    <button data-act="next" aria-label="Next ground">→</button>
+    <span class="sep"></span><span class="dim">${GROUNDS[ground][1]}</span>
+    <span class="sep"></span><span class="dim">${innerWidth}px</span>`;
+  syncUrl();
+}
+
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-act],[data-toggle],[data-cb],.row");
+  if (!t) return;
+  const keys = Object.keys(GROUNDS);
+  if (t.dataset.act === "prev") ground = keys[(keys.indexOf(ground) + keys.length - 1) % keys.length];
+  else if (t.dataset.act === "next") ground = keys[(keys.indexOf(ground) + 1) % keys.length];
+  else if (t.dataset.act && t.dataset.act.startsWith("g:")) ground = t.dataset.act.slice(2);
+  else if (t.dataset.toggle) { collapsed.has(t.dataset.toggle) ? collapsed.delete(t.dataset.toggle) : collapsed.add(t.dataset.toggle); }
+  else if (t.dataset.cb) { SELECTED.has(t.dataset.cb) ? SELECTED.delete(t.dataset.cb) : SELECTED.add(t.dataset.cb); }
+  else return;
+  render();
+});
+document.addEventListener("keydown", e => {
+  if (e.target.closest("input, textarea, [contenteditable]")) return;
+  const keys = Object.keys(GROUNDS);
+  if (e.key === "ArrowRight") ground = keys[(keys.indexOf(ground) + 1) % keys.length];
+  else if (e.key === "ArrowLeft") ground = keys[(keys.indexOf(ground) + keys.length - 1) % keys.length];
+  else return;
+  render();
+});
+addEventListener("resize", render);
+render();
+</script>
+</body>
+</html>

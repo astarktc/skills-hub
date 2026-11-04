@@ -288,14 +288,15 @@ Order is dependency order; `Blocked by` is the edge list. Every surface ticket c
 | 24 | **Card-grid view mode** designed inside the world (same selection, strip, marks; no clipped labels) | 19 | surface |
 | 25 | `App.css` deleted; guard flips to "must not exist"; `Layout.tsx` / `Dashboard.tsx` disposition | 20 21 22 23 24 | closure |
 | 26 | CHANGELOG, `version:set 1.3.x`, release; operator smoke (D31) | 25 | release |
-| 30 | **Colour and identity tokens**: state hues, identity treatment per the prototype's pick, light-theme ground steps, DESIGN.md contrast table (D43; BACKLOG #78) | 32, prototype pick | world |
+| 30 | **Colour and identity tokens**: state hues, identity treatment per the prototype's pick, light-theme ground steps, DESIGN.md contrast table (D43; BACKLOG #78) | 32, prototype pick | world — done 9ca0bc8 |
 | 31 | **My Skills row and group anatomy**: card-per-group ground, `--name-col`, Not-deployed mark dropped, projects on the wire + scope cell, collapsible groups, unfiltered grouping, harness initials over the strip; riders #80 #81 #82 (D38–D42, D44) | 30 | surface + enabler |
+| 35 | **Dark ground = T3's two-tone structure**: true black `background`/`row`, `card` #040404 pane, `popover`/`accent` #0e0e0e panel + hover (split from `raised` #1e1e1e), neutral greys, selection edge kept; every dark surface, DESIGN.md dark columns re-measured (prototype `30-dark-ground` pick d/f, operator 2026-11-04) | 30 | world |
 | 32 | **Vocabulary**: Harness · Deploy · Update · state words · Library, across CONTEXT.md, `resources.ts`, README, DESIGN.md, fixture, tickets; retired-word catalog test (D45, D46) | 33 | docs + strings — done 60dc80e |
 | 34 | **Registry truth pass**: rows corrected to vendor docs (Codex → AGENTS-standard group, Antigravity, Kimi (Amp hazard), Kilo, Xum, 4 new rows), `reads_agents_standard_globally` + `also_reads` facts, cross-read warning, the "prefer the AGENTS standard dir" preference in the Harnesses pane (BACKLOG #67 #45 #83, #40's detection half) | 20 | enabler + surface |
 | 33 | **Auto-deploy is arrival-only**: re-assert deleted, `delete_incomplete` skipped as report data, policy DTO gone, first-deploy failure copy (D34, D35; BACKLOG #71) | — | enabler — done 948f12b + 23938db |
 ## Execution
 
-- **19b order (D51)**: 33 ∥ research (#67/#45) ∥ colour prototype → 32 → 30 → 31 → 20 ∥ 22 ∥ 23 → 21 → 24 → 25 → 26.
+- **19b order (D51)**: 33 ∥ research (#67/#45) ∥ colour prototype → 32 → 30 → **35** → 31 → 20 ∥ 22 ∥ 23 → 21 → 24 → 25 → 26 (35 inserted 2026-11-04: the dark-ground prototype's pick).
   Tickets 20–24 are read in the D45 vocabulary even where their text still says Tool / Sync / Refresh.
 - Children per D33. Every brief: "state your approach and continue" (Workflow step 1 pre-approved); `.scratch/` is
   tracked; `docs/agents/issue-tracker.md` § Delegated children applies (edit tickets, write handoffs; never archive,

@@ -1,7 +1,7 @@
 # 31 — My Skills row and group anatomy: card-per-group ground, `--name-col`, Not-deployed mark dropped, projects on the wire, collapsible groups, harness initials; riders #80 #81 #82
 
 Status: ready-for-agent
-Blocked by: 30
+Blocked by: 30 (done 9ca0bc8), 35 (the dark ground — rows on `row` = `background` #000000, hover `accent`, focused/selected `raised`)
 Blocks: 25
 Source: grill 2026-11-02 (operator, verbatim themes: name column "pretty much 50 % … steals from the skill
 descriptions"; "'Not Deployed' repeated in every line … cluttered and repetitive … outright false at the project
@@ -25,7 +25,7 @@ D39, D40, D41, D42, D44; D43's pick (ticket 30). BACKLOG #80, #81, #82 absorbed 
 
 ### Row (D38, D39, D40, D41)
 
-- **Ground**: rows on `background`; hover `card`; the **focused** row a raised rounded block (`raised`, `rounded-md`,
+- **Ground**: rows on `row` (= `background`); hover **`accent`** (ticket 35 split it from `raised` in dark; 30's brief said `card`); the **focused** row a raised rounded block (`raised`, `rounded-md`,
   inset so the card's border shows); **selected** keeps the 3 px iris edge (ticket 13's rule).
 - **Columns**: `32 · var(--name-col) · 1fr · (marks×16+40) · scope · 40 · 32`. The list publishes `--name-col` =
   `clamp(12rem, <longest visible name>ch, 22rem)` the way it publishes `--strip-marks`; `NAME_GROUP`'s 60 % floor is
