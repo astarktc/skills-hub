@@ -39,12 +39,14 @@ const BADGE_MAX = 99;
  * One sidebar entry: 32 px, icon + label. Below the shell breakpoint the
  * sidebar is an icon rail: the label stays in the accessibility tree
  * (`sr-only`) and becomes the hover title. The current area carries
- * `aria-current="page"`, a raised ground and an iris icon.
+ * `aria-current="page"`, a raised ground and an iris icon. Hover is the
+ * `sidebar-accent` (panel) tone, the current item `raised` — one value in
+ * light, two in dark (ticket 35).
  */
 const itemClass = [
   "relative flex h-8 w-full cursor-default items-center gap-2.5 rounded-md px-2 text-left text-sm text-sidebar-foreground",
   "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-  "aria-[current=page]:bg-sidebar-accent aria-[current=page]:font-medium aria-[current=page]:text-sidebar-accent-foreground",
+  "aria-[current=page]:bg-raised aria-[current=page]:font-medium aria-[current=page]:text-sidebar-accent-foreground",
   "aria-[current=page]:[&>svg]:text-ring aria-expanded:bg-sidebar-accent",
   "max-shell:justify-center max-shell:px-0",
   "[&>svg]:size-4 [&>svg]:shrink-0",

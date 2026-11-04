@@ -301,7 +301,7 @@ const MatrixRow = memo(
       bulkReason ?? (assignedCount === columns.length ? t("projectsSurface.matrix.allAssigned") : null);
     const unassignReason = bulkReason ?? (assignedCount === 0 ? t("projectsSurface.matrix.noneAssigned") : null);
     return (
-      <tr data-matrix-row={skill.id} aria-busy={rowPending || undefined} className="hover:bg-card">
+      <tr data-matrix-row={skill.id} aria-busy={rowPending || undefined} className="hover:bg-accent">
         <th
           scope="row"
           title={skill.description ?? undefined}

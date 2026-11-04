@@ -260,7 +260,7 @@ const ExplorePage = ({
         data-focused={focused || undefined}
         aria-current={focused ? "true" : undefined}
         onClick={handleRowClick}
-        className="grid h-row grid-cols-[minmax(0,1fr)_4.5rem_5.5rem_4.5rem] items-center gap-x-3 border-b border-border px-3 last:rounded-b-lg last:border-b-0 hover:bg-card data-focused:bg-raised data-focused:ring-1 data-focused:ring-ring data-focused:ring-inset"
+        className="grid h-row grid-cols-[minmax(0,1fr)_4.5rem_5.5rem_4.5rem] items-center gap-x-3 border-b border-border px-3 last:rounded-b-lg last:border-b-0 hover:bg-accent data-focused:bg-raised data-focused:ring-1 data-focused:ring-ring data-focused:ring-inset"
       >
         <span className="flex min-w-0 items-center gap-3">
           <button

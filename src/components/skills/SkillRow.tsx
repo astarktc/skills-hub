@@ -429,7 +429,7 @@ const SkillRow = ({
       aria-busy={busyHere || undefined}
       onClick={handleRowClick}
       className={cn(
-        "relative grid h-row items-center gap-x-3 border-b border-border px-3 hover:bg-card data-selected:bg-raised data-focused:bg-raised data-focused:ring-1 data-focused:ring-ring data-focused:ring-inset",
+        "relative grid h-row items-center gap-x-3 border-b border-border px-3 hover:bg-accent data-selected:bg-raised data-focused:bg-raised data-focused:ring-1 data-focused:ring-ring data-focused:ring-inset",
         SELECTED_EDGE,
         LIST_COLUMNS,
       )}

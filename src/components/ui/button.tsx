@@ -40,13 +40,13 @@ const buttonVariants = cva(
       { variant: "solid", tone: "stale", class: "bg-stale text-stale-foreground not-aria-disabled:hover:bg-stale/90" },
       { variant: "solid", tone: "danger", class: "bg-destructive text-destructive-foreground not-aria-disabled:hover:bg-destructive/90" },
       // outline
-      { variant: "outline", tone: "neutral", class: "border-border-strong text-foreground not-aria-disabled:hover:bg-accent" },
+      { variant: "outline", tone: "neutral", class: "border-border-strong text-foreground not-aria-disabled:hover:bg-raised" },
       { variant: "outline", tone: "accent", class: ["border-primary/60 text-ring", hoverGround.accent] },
       { variant: "outline", tone: "ok", class: ["border-ok/50 text-ok", hoverGround.ok] },
       { variant: "outline", tone: "stale", class: ["border-stale/50 text-stale", hoverGround.stale] },
       { variant: "outline", tone: "danger", class: ["border-destructive/50 text-destructive", hoverGround.failed] },
       // ghost
-      { variant: "ghost", tone: "neutral", class: "text-muted-foreground not-aria-disabled:hover:bg-accent not-aria-disabled:hover:text-foreground" },
+      { variant: "ghost", tone: "neutral", class: "text-muted-foreground not-aria-disabled:hover:bg-raised not-aria-disabled:hover:text-foreground" },
       { variant: "ghost", tone: "accent", class: ["text-ring", hoverGround.accent] },
       { variant: "ghost", tone: "ok", class: ["text-ok", hoverGround.ok] },
       { variant: "ghost", tone: "stale", class: ["text-stale", hoverGround.stale] },

@@ -80,10 +80,11 @@ type CommandPaletteProps<T extends CommandPaletteItem> = {
 
 const itemClass = [
   // Row height (36 px, `h-row`: rows, headers, palette items); the highlighted
-  // one carries the inset ring as well as the ground (the ground alone is
-  // ~1.1:1, never the cue — DESIGN.md § DropdownMenu).
+  // one carries the inset ring as well as the ground (`raised`, the current
+  // item's tone — ticket 35; the ground alone is ~1.2:1, never the cue —
+  // DESIGN.md § DropdownMenu).
   "flex min-h-row cursor-default items-center gap-3 rounded-sm px-2 text-sm text-foreground select-none",
-  "data-highlighted:bg-accent data-highlighted:text-accent-foreground",
+  "data-highlighted:bg-raised data-highlighted:text-accent-foreground",
   "data-highlighted:outline-2 data-highlighted:outline-solid data-highlighted:-outline-offset-2 data-highlighted:outline-ring",
   "aria-disabled:text-muted-foreground",
 ].join(" ");

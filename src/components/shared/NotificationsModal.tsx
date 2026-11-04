@@ -414,7 +414,7 @@ function RunRowView({
               aria-expanded={expanded}
               aria-controls={itemsId}
               onClick={onToggle}
-              className={cn("-mx-1 flex min-w-0 items-start gap-1 rounded-sm px-1 text-left hover:bg-accent", focusRing)}
+              className={cn("-mx-1 flex min-w-0 items-start gap-1 rounded-sm px-1 text-left hover:bg-raised", focusRing)}
             >
               <ChevronRight
                 aria-hidden="true"

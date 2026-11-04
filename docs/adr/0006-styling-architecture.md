@@ -60,6 +60,10 @@ shape**. The round-19 world ticket fixes the values, taking them from the direct
     `identity-<hue>` tint/text pairs for the source chip, keyed on the repo owner and never on state — one meaning
     (identity), drawn only by `Badge tone="identity"`, so still no palette tier. `stale` is re-valued to an amber.
     The type scale gains `2xs` (10.5 px) for bold initials marks only.
+    *Amended 2026-11-04 (round-19 ticket 35):* dark follows T3 Code's two-tone ground — a true-black `background`
+    (= `row`), `card` one pane tone above it, `popover` = `accent` = `muted` as the panel tone, and `raised` the current
+    item, so **dark splits `accent` from `raised`** (light keeps them one value); dark text and lines are neutral greys,
+    not blue-grey. No token was added or renamed.
   - `primary` is the iris accent, used only for selection, focus and the one primary action.
   - Non-colour tokens: radius (4/6/10), type scale (12/13/14/16), row height (36), and motion durations and easings.
     Spacing keeps Tailwind's 4px base.

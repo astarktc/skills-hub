@@ -32,52 +32,77 @@ those touch is computed from the hex values by `.scratch/round19/evidence/30-con
 or composited intermediate is never quantised to 8 bits before the luminance step, so the numbers are the CSS
 mixture's, not a rounded pixel's). It exits non-zero on any failing gated pair.
 
-"On grounds" lists the ratios against **background / card / popover / raised / row**, in that order (`row` is the
-skill-row ground, ticket 30; in light it equals `background`). Surface sections further down quote ratios measured on
-their own dates; where ticket 30's light grounds moved a light value there, the token tables here supersede it (the
-floors are in § The hardest pairs).
+**Ticket 35 (2026-11-04)** re-valued the whole dark theme (four ground levels, neutral greys, black ink on the state
+fills). Every dark cell in the tables below is that script's output on the new values (rebuilt for ticket 35; its
+`--old` flag prints the pre-35 dark and reproduces every former dark ratio). Light did not move.
 
-**Direction (ticket 30).** T3 Code's design language is the reference, not a template: a near-black single ground
-for the list (`row`), identity colour only as 2-letter source chips, and one accent (iris) for selection, focus and
-the primary action. State colours stay semantic and never green for "deployed".
+"On grounds" lists the ratios against **background / card / popover / raised / row**, in that order (`row` is the
+skill-row ground, ticket 30; it equals `background` in both themes since ticket 35). Surface sections further down
+quote ratios measured on their own dates; where ticket 30's light grounds or ticket 35's dark grounds moved a value
+there, the token tables here supersede it (the floors are in § The hardest pairs; token-pair cells in the surface
+tables carry the ticket 35 dark values).
+
+**Direction (tickets 30, 35).** T3 Code's design language is the reference, not a template: identity colour only as
+2-letter source chips, and one accent (iris) for selection, focus and the primary action. State colours stay semantic
+and never green for "deployed". **Dark now follows T3's two-tone ground structure** (ticket 35, prototype
+`30-dark-ground` pick f, values sampled from a T3 Code window capture on 2026-11-04): a true-black ground (`#000000`)
+for the app and the rows, a pane tone just above it for the sidebar and group headers (`#040404`), a panel tone for
+hover and every floating layer (`#0e0e0e`), one raised tone for the current item (`#1e1e1e`), `#171717` hairlines, and
+neutral greys for text (`#f5f5f5` / `#a3a3a3` / `#898989`) — no blue-grey tint. The 3 px iris selection edge (ticket 13)
+stays. Light is unchanged (ticket 30's three grounds).
 
 ### Surfaces
 
 | Token | Dark | Light | Role |
 |---|---|---|---|
-| `background` | `#0e0f12` | `#ffffff` | App ground. |
-| `row` | `#09090b` | `#ffffff` (= `background`) | Skill-row ground (D38): near-black in dark, one step below `background`; in light the brightest ground, because nothing is lighter than `background`. The group header sits on `card` above it, a hovered row lifts to `card`, the focused row to `raised` (ticket 31 applies it). |
-| `card` | `#15171b` | `#f0f1f4` | Panel: sidebar, list panes, dialog footer, code blocks, a source group's header. |
-| `popover` | `#15171b` | `#ffffff` | Floating layers: dialog, popover, menu, toast. |
-| `raised` (= `muted`, `accent`) | `#1d2025` | `#e4e7ec` | Third level: hover/selected rows, solid-neutral controls, inline code. |
-| `sidebar*` | = card / muted-foreground / primary / raised / border / ring | same mapping | App sidebar (shadcn names). |
+| `background` | `#000000` | `#ffffff` | App ground. |
+| `row` | `#000000` (= `background`) | `#ffffff` (= `background`) | Skill-row ground (D38), kept as its own role so ticket 31 draws rows by name: the app ground in both themes (true black in dark; in light the brightest ground, because nothing is lighter than `background`). The group header sits on `card` above it, a hovered row lifts to `accent`, the focused row to `raised` (ticket 31 applies it). |
+| `card` | `#040404` | `#f0f1f4` | The pane: sidebar, group headers, list panes, dialog footer, code blocks. In dark 1.02 on the ground — a pane cue, not a contrast cue. |
+| `popover` | `#0e0e0e` | `#ffffff` | The panel: dialogs, menus, popovers, toasts, panels. |
+| `accent`, `muted` | `#0e0e0e` (= `popover`) | `#e4e7ec` (= `raised`) | Hover ground (`accent`); quiet fills such as the neutral soft Badge (`muted`). |
+| `raised` | `#1e1e1e` | `#e4e7ec` | The current item: focused / selected row, a menu's or the palette's highlighted item, the sidebar's current area, solid-neutral controls, inline code. |
+| `sidebar*` | = card / muted-foreground / primary / accent / border / ring | same mapping | App sidebar (shadcn names); its current area draws `raised`. |
 
-Ground steps (ratio between adjacent grounds; ticket 30 strengthened light, whose steps were 1.07 / 1.06 and read
-flat):
+**`accent` and `raised` are one value in light and two in dark** (ticket 35): in dark, hover is the panel tone and the
+current item the raised tone. Two hover rules follow: **a row hovers to `accent`** (My Skills, Explore, the matrix —
+`card` is 1.02 on the dark ground, invisible; in light `accent` = `raised`, and the focused / selected row still carries
+its ring / edge), and **a control hovers to `raised`** (`ghost` / `outline neutral` Button, the notification rows) — a
+hover drawn as `accent` *inside* a `popover` layer shows no step in dark (both `#0e0e0e`); the menus and the palette
+highlight with `raised` for the same reason (§ Popover, DropdownMenu).
+
+Ground steps (ratio between grounds; ticket 30 strengthened light, whose steps were 1.07 / 1.06 and read flat; ticket
+35 gave dark its four levels):
 
 | Step | Dark | Light |
 |---|---|---|
-| `background` → `card` | 1.07 | 1.13 |
-| `card` → `raised` | 1.10 | 1.10 |
-| `row` → `card` (row → its header, and row → hover) | 1.11 | 1.13 |
-| `row` → `raised` (row → focused row) | 1.22 | 1.24 |
-| `row` → `background` | 1.04 | 1.00 (same value) |
+| `background` → `card` (ground → pane) | 1.02 † | 1.13 |
+| `card` → `popover` (pane → panel) | 1.06 | 1.13 |
+| `popover` → `raised` (panel → current item) | 1.16 | 1.24 |
+| `card` → `raised` | 1.23 | 1.10 |
+| `row` → `card` (row → its header) | 1.02 † | 1.13 |
+| `row` → `accent` (row → hover) | 1.09 | 1.24 |
+| `row` → `raised` (row → focused row) | 1.26 | 1.24 |
+| `row` → `background` | 1.00 (same value) | 1.00 (same value) |
+
+† **A pane cue, not a contrast cue.** `#040404` on `#000000` is below any naming threshold on its own; it reads as a
+pane because it is a large field beside a black one and a `#171717` hairline (`border`) separates them. Nothing relies on
+it to say state or identity.
 
 ### Text
 
 | Token | Dark | Light | Role | Dark, on grounds | Light, on grounds |
 |---|---|---|---|---|---|
-| `foreground` | `#e6e7ea` | `#16181d` | Primary text. | 15.50 / 14.51 / 14.51 / 13.21 / 16.09 | 17.76 / 15.72 / 17.76 / 14.33 / 17.76 |
-| `muted-foreground` | `#a6abb4` | `#494e57` | Secondary text; the "on" switch. | 8.31 / 7.78 / 7.78 / 7.08 / 8.63 | 8.36 / 7.41 / 8.36 / 6.75 / 8.36 |
-| `faint` | `#8c929c` ¹ | `#5b616a` ¹ | Third level: timestamps, helper text, placeholders, sort labels. | 6.12 / 5.73 / 5.73 / 5.22 / 6.35 | 6.24 / 5.53 / 6.24 / 5.04 / 6.24 |
-| `ring` (iris as text) | `#9690ff` | `#5a4fdc` | Selection and focus; accent text (ghost/outline accent). | 7.05 / 6.61 / 6.61 / 6.01 / 7.32 | 5.86 / 5.18 / 5.86 / 4.72 / 5.86 |
+| `foreground` | `#f5f5f5` | `#16181d` | Primary text. | 19.26 / 18.81 / 17.71 / 15.29 / 19.26 | 17.76 / 15.72 / 17.76 / 14.33 / 17.76 |
+| `muted-foreground` | `#a3a3a3` | `#494e57` | Secondary text; the "on" switch. | 8.33 / 8.13 / 7.65 / 6.61 / 8.33 | 8.36 / 7.41 / 8.36 / 6.75 / 8.36 |
+| `faint` | `#898989` ¹ | `#5b616a` ¹ | Third level: timestamps, helper text, placeholders, sort labels. | 6.00 / 5.86 / 5.52 / 4.77 / 6.00 | 6.24 / 5.53 / 6.24 / 5.04 / 6.24 |
+| `ring` (iris as text) | `#9690ff` | `#5a4fdc` | Selection and focus; accent text (ghost/outline accent). | 7.73 / 7.55 / 7.11 / 6.14 / 7.73 | 5.86 / 5.18 / 5.86 / 4.72 / 5.86 |
 
 ¹ **Deviation from the contract.** The contract's dark tertiary is `#858b95`, and the first light derivation was
-`#646a74`. Both are lifted one step. The legacy hover ground (`--bg-element-hover`, from the App.css alias block)
-measured them at 4.20:1 and 4.08:1 under the tertiary "(Disabled)" label of a hovered harness pill. On that ground they
-now measure 4.60:1 and 4.68:1 (4.41 light on ticket 30's grounds, where the alias has no reader left — § The hardest
-pairs). The step between `faint` and `muted-foreground` stays visible (luminance ratio 1.36
-dark, 1.34 light).
+`#646a74`. Both were lifted one step (to `#8c929c` / `#5b616a`): the legacy hover ground (`--bg-element-hover`, from the
+App.css alias block) measured them at 4.20:1 and 4.08:1 under the tertiary "(Disabled)" label of a hovered harness pill.
+Dark is now T3's sampled muted grey, `#898989` (ticket 35): 4.77 on `raised`, its floor, and 5.04 on that legacy hover
+ground (4.41 light on ticket 30's grounds, where the alias has no reader left — § The hardest pairs). The step between
+`faint` and `muted-foreground` stays visible (luminance ratio 1.39 dark, 1.34 light).
 
 ### Accent and state
 
@@ -86,10 +111,10 @@ shape always carries it too.
 
 | Token | Dark | Light | Role | Dark, on grounds | Light, on grounds |
 |---|---|---|---|---|---|
-| `primary` | `#6a61e8` | `#5a4fdc` | Iris fill: the one primary action, checked checkbox. | 4.10 / 3.83 / 3.83 / 3.49 / 4.25 (non-text) | 5.86 / 5.18 / 5.86 / 4.72 / 5.86 |
-| `ok` | `#3ddc84` | `#127440` | Deployed / success. | 10.74 / 10.06 / 10.06 / 9.15 / 11.15 | 5.84 / 5.17 / 5.84 / 4.71 / 5.84 |
-| `stale` | `#fbac16` | `#985700` | Out of date / warning (amber): an Out of date copy (a deployment drifted). | 10.05 / 9.41 / 9.41 / 8.57 / 10.44 | 5.68 / 5.03 / 5.68 / 4.58 / 5.68 |
-| `failed` (= `destructive`) | `#ff6b6b` | `#c22e2e` | Failed / destructive. | 6.91 / 6.47 / 6.47 / 5.89 / 7.17 | 5.64 / 4.99 / 5.64 / 4.55 / 5.64 |
+| `primary` | `#6a61e8` | `#5a4fdc` | Iris fill: the one primary action, checked checkbox. | 4.49 / 4.38 / 4.13 / 3.56 / 4.49 (non-text) | 5.86 / 5.18 / 5.86 / 4.72 / 5.86 |
+| `ok` | `#3ddc84` | `#127440` | Deployed / success. | 11.77 / 11.49 / 10.82 / 9.34 / 11.77 | 5.84 / 5.17 / 5.84 / 4.71 / 5.84 |
+| `stale` | `#fbac16` | `#985700` | Out of date / warning (amber): an Out of date copy (a deployment drifted). | 11.01 / 10.75 / 10.13 / 8.74 / 11.01 | 5.68 / 5.03 / 5.68 / 4.58 / 5.68 |
+| `failed` (= `destructive`) | `#ff6b6b` | `#c22e2e` | Failed / destructive. | 7.57 / 7.39 / 6.96 / 6.01 / 7.57 | 5.64 / 4.99 / 5.64 / 4.55 / 5.64 |
 
 **Amber (ticket 30).** The token keeps the name `stale` (`text-stale`, `bg-stale`, the soft ground), re-valued from
 `#f5b400` / `#8a5d00`: the old light value read brown or olive at 12 px. Dark is the prototype's `#fbac16` (OKLCH
@@ -103,26 +128,27 @@ the project list's "Folder not found" / stale status words (`ProjectList.tsx`) a
 hover and selected ground is `raised` — 4.58, passing; the specimen's all-ground matrix prints amber on `raised` on
 purpose.
 
-Text on the fills:
+Text on the fills (dark ink `#000000` since ticket 35 — the ground as ink on the fill; the former `#0e0f12` measured
+lower on every fill, e.g. `failed/90` 5.66):
 
 | Pair | Dark | Light |
 |---|---|---|
 | `primary-foreground` on `primary` (`#fff`) | 4.68 | 5.86 |
-| … on `primary/90` (hover, worst of the five grounds) | 5.31 | 4.79 |
-| `ok-foreground` on `ok` | 10.74 (`#0e0f12`) | 5.84 (`#fff`) |
-| … on `ok/90` | 8.76 | 4.76 |
-| `stale-foreground` on `stale` | 10.05 (`#0e0f12`) | 5.68 (`#fff`) |
-| … on `stale/90` | 8.22 | 4.64 |
-| `destructive-foreground` on `destructive` | 6.91 | 5.64 |
-| … on `destructive/90` | 5.72 | 4.84 |
+| … on `primary/90` (hover, worst of the five grounds) | 5.32 | 4.79 |
+| `ok-foreground` on `ok` | 11.77 (`#000`) | 5.84 (`#fff`) |
+| … on `ok/90` | 9.50 | 4.76 |
+| `stale-foreground` on `stale` | 11.01 (`#000`) | 5.68 (`#fff`) |
+| … on `stale/90` | 8.92 | 4.64 |
+| `destructive-foreground` on `destructive` | 7.57 | 5.64 |
+| … on `destructive/90` | 6.20 | 4.84 |
 
 Soft grounds are the state colour mixed into `popover`, opaque, so the text on them measures the same on every
 surface:
 
 | Soft ground | Dark | Light |
 |---|---|---|
-| Badge `soft` or hover ground: 10 % state into `popover`, state text on it (accent / ok / stale / failed) | 6.05 / 8.57 / 8.06 / 5.72 | 5.08 / 5.05 / 4.93 / 4.90 |
-| Toast: 8 % state into `popover`, state text on it (accent / ok / stale / failed) | 6.17 / 8.89 / 8.35 / 5.88 | 5.23 / 5.20 / 5.07 / 5.04 |
+| Badge `soft` or hover ground: 10 % state into `popover`, state text on it (accent / ok / stale / failed) | 6.61 / 9.49 / 8.93 / 6.29 | 5.08 / 5.05 / 4.93 / 4.90 |
+| Toast: 8 % state into `popover`, state text on it (accent / ok / stale / failed) | 6.72 / 9.80 / 9.20 / 6.44 | 5.23 / 5.20 / 5.07 / 5.04 |
 
 ### Identity (ticket 30)
 
@@ -147,36 +173,40 @@ owner (a local folder, Individual sources) gets the neutral chip, no hue.
 
 Tokens: `--identity-<hue>` (tint) and `--identity-<hue>-foreground` (text), utilities `bg-identity-<hue>` /
 `text-identity-<hue>-foreground`, drawn only by the Badge. The chip's text is 10.5 px bold, so the small-text rule
-(4.5:1) applies; the worst pair is light teal, 5.59. The tint itself is decorative (1.29–1.35 dark, 1.07–1.11 light
-against `card`, the header it sits on): the letters identify the chip, and they measure 10.45–11.83 dark /
-5.98–7.05 light against `card` as well. The prototype's "edge" values (variant B) were not minted.
+(4.5:1) applies; the worst pair is light teal, 5.59. The tint itself is decorative (1.47–1.54 dark, 1.07–1.11 light
+against `card`, the header it sits on): the letters identify the chip, and they measure 11.94–13.51 dark /
+5.98–7.05 light against `card` as well (dark re-measured on ticket 35's `card`; the hues themselves did not move —
+slate keeps its blue-grey, it is a hue, not a neutral). The prototype's "edge" values (variant B) were not minted.
 
 ### Lines
 
 | Token | Dark | Light | Role | Dark, on grounds | Light, on grounds |
 |---|---|---|---|---|---|
-| `border` | `#262a31` | `#d5d9e0` | Structural hairline. **Decorative**: never the only cue. | 1.33 / 1.25 / 1.25 / 1.13 / 1.38 | 1.42 / 1.25 / 1.42 / 1.14 / 1.42 |
-| `border-strong` | `#343942` | `#bcc2cc` | Edge of a text-bearing control (outline button, segmented group). Decorative, because the text identifies the control. | 1.65 / 1.55 / 1.55 / 1.41 / 1.71 | 1.79 / 1.59 / 1.79 / 1.44 / 1.79 |
-| `input` | `#6b717b` | `#737983` | Boundary that identifies a control on its own: text field, checkbox, switch track. Light moved with the grounds (`#7c828b` would measure 3.12 on the new `raised`). | 3.90 / 3.65 / 3.65 / 3.32 / 4.05 | 4.38 / 3.88 / 4.38 / 3.54 / 4.38 |
-| `ring` | `#9690ff` | `#5a4fdc` | Focus ring (non-text). | 7.05 / 6.61 / 6.61 / 6.01 / 7.32 | 5.86 / 5.18 / 5.86 / 4.72 / 5.86 |
+| `border` | `#171717` | `#d5d9e0` | Structural hairline. **Decorative**: never the only cue. | 1.17 / 1.14 / 1.08 / 1.08 / 1.17 | 1.42 / 1.25 / 1.42 / 1.14 / 1.42 |
+| `border-strong` | `#262626` | `#bcc2cc` | Edge of a text-bearing control (outline button, segmented group). Decorative, because the text identifies the control. | 1.39 / 1.35 / 1.28 / 1.10 / 1.39 | 1.79 / 1.59 / 1.79 / 1.44 / 1.79 |
+| `input` | `#6b6b6b` | `#737983` | Boundary that identifies a control on its own: text field, checkbox, switch track. Light moved with the grounds (`#7c828b` would measure 3.12 on the new `raised`); dark is the neutral `#6b6b6b` (ticket 35), 3.13 on `raised`, its floor. | 3.94 / 3.85 / 3.62 / 3.13 / 3.94 | 4.38 / 3.88 / 4.38 / 3.54 / 4.38 |
+| `ring` | `#9690ff` | `#5a4fdc` | Focus ring (non-text). | 7.73 / 7.55 / 7.11 / 6.14 / 7.73 | 5.86 / 5.18 / 5.86 / 4.72 / 5.86 |
 
 Other non-text pairs, dark / light:
 
-- Switch thumb (`muted-foreground`) on its `raised` track: 7.08 / 6.75.
-- Checked thumb (`background`) on the `muted-foreground` track: 8.31 / 8.36.
+- Switch thumb (`muted-foreground`) on its `raised` track: 6.61 / 6.75.
+- Checked thumb (`background`) on the `muted-foreground` track: 8.33 / 8.36.
 - Check glyph on `primary`: 4.68 / 5.86.
-- Selected segment/tab iris edge on `raised`: 6.01 / 4.72.
+- Selected segment/tab iris edge on `raised`: 6.14 / 4.72.
+- Neutral soft Badge text (`muted-foreground` on `muted`): 7.65 / 6.75; solid neutral (`foreground` on `raised`):
+  15.29 / 14.33.
+- Tooltip (`background` on `foreground`, inverted): 19.26 / 17.76.
 
 ### Prose (read only through `var()` by `styles/prose.css`)
 
 | Token | Dark | Light | Worst ground (dark / light) |
 |---|---|---|---|
-| `syntax-keyword` | `#f29fd8` | `#a1306e` | 8.34 on raised / 5.36 on raised |
-| `syntax-string` | `#7fc8dc` | `#16677d` | 8.71 / 5.18 |
-| `syntax-number` | `#e8b48a` | `#87460f` | 8.81 / 5.82 |
-| `syntax-function` | `#a9b6ff` | `#3a4cb0` | 8.42 / 5.96 |
+| `syntax-keyword` | `#f29fd8` | `#a1306e` | 8.52 on raised / 5.36 on raised |
+| `syntax-string` | `#7fc8dc` | `#16677d` | 8.89 / 5.18 |
+| `syntax-number` | `#e8b48a` | `#87460f` | 8.99 / 5.82 |
+| `syntax-function` | `#a9b6ff` | `#3a4cb0` | 8.59 / 5.96 |
 
-Light values re-measured on ticket 30's `raised`. Comments and line numbers use `faint` (≥ 5.22 dark, ≥ 5.04 light). Punctuation uses `muted-foreground`.
+Light values re-measured on ticket 30's `raised`, dark on ticket 35's (the syntax colours did not move). Comments and line numbers use `faint` (≥ 4.77 dark, ≥ 5.04 light). Punctuation uses `muted-foreground`.
 
 ### The hardest pairs, and the round-18 regression list
 
@@ -190,38 +220,47 @@ fixture app, through the alias block:
 | Failed harness pill | 4.41 light | 6.39 | 4.94 |
 | "+N more" pill | 2.33 light | 5.22 | 5.37 |
 | Explore Install | 2.14 dark | 4.68 ² | 5.86 ² |
-| Explore Installed | 1.82 dark / 3.58 light | 7.08 ² | 7.20 ² |
+| Explore Installed | 1.82 dark / 3.58 light | 7.65 ² | 6.75 ² |
 | Success toast ("Harness selection saved.") | 4.26 both | 8.89 | 5.22 |
 | Search placeholder | 3.36 light | 5.73 | 5.67 |
 | Import review "Match" / "Conflict" | 3.07 / 4.41 light | 9.41 / 6.39 | 5.03 / 4.94 |
 | Light `faint` on the new `raised` (ticket 30) | — | — | 5.04 |
 | Light `input` on the new `raised` (ticket 30, non-text) | — | — | 3.54 |
 | Light amber on `raised` (ticket 30) | — | — | 4.58; drawn there only as a non-text mark (§ Accent and state) |
+| Dark `faint` on `raised` (ticket 35) | — | 4.77 | — |
+| Dark `primary` fill on `raised` (ticket 35, non-text: the checked box of a selected row) | — | 3.56 | — |
+| Dark `input` on `raised` (ticket 35, non-text) | — | 3.13 | — |
 
-The "Light now" column of the round-18 rows is the 2026-09-29 rendered measurement on the former light grounds. Ticket
-30 re-measures the tokens beneath them on the new grounds (tables above): the lowest light text pair on any ground is
-`failed` on `raised`, 4.55.
+The "Dark now" / "Light now" columns of the round-18 rows are the 2026-09-29 rendered measurements on the former grounds,
+**superseded by the token tables above** (light by ticket 30's grounds, dark by ticket 35's). On the current tokens the
+lowest light text pair on any ground is `failed` on `raised`, 4.55, and the lowest dark text pair is `faint` on
+`raised`, 4.77.
 
 ² Re-measured on tokens when Explore became rows (ticket 22, 2026-11-02; § Explore): Install is the `solid accent`
-Button (`primary-foreground` on `primary`), Installed the `soft neutral` Badge (`muted-foreground` on `muted`).
+Button (`primary-foreground` on `primary`), Installed the `soft neutral` Badge (`muted-foreground` on `muted`) — dark
+re-measured on ticket 35's `muted`, light on ticket 30's.
 
 Legacy identifying input boundaries (`.search-input`, `.input` in Add / Re-point, `.settings-input`,
 `.settings-select`, `.explore-search-input` — gone with ticket 22; Explore's search is the `Input` primitive) draw their edge in `input`, not the decorative `border` (ticket-07
 review B2: they measured 1.33 / 1.25). Rendered edge against its outside ground, dark / light, 2026-09-29: Library
 search 3.90 / 3.78, Add `.input` 3.65 / 3.87, Settings select and input 3.90 / 3.78, Explore search 3.90 / 3.78;
 focused (the `accent-primary` iris edge) ≥ 6.61 / ≥ 5.71; disabled keeps the same edge. On ticket 30's light grounds
-`input` measures 4.38 on `background` and 3.88 on `card`.
+`input` measures 4.38 on `background` and 3.88 on `card`; on ticket 35's dark grounds 3.94 on `background`, 3.85 on
+`card` and 3.62 on `popover`, and the focused iris edge ≥ 7.11 on those three.
 
 The lowest passing pairs anywhere are:
 
-- `input` on `raised`: 3.54 light (non-text);
+- `input` on `raised`: 3.13 dark, 3.54 light (non-text);
+- `primary` fill on `raised`: 3.56 dark (non-text);
 - `failed` on `raised`: 4.55 light;
 - `stale-foreground` on `stale/90`: 4.64 light;
-- `primary-foreground` on `primary`: 4.68 dark.
+- `primary-foreground` on `primary`: 4.68 dark;
+- `faint` on `raised`: 4.77 dark;
+- the focused-disabled ring (75 %, § Focus ring): 4.05 dark on `raised`, 3.08 light on `raised` (non-text).
 
 Re-measure them after any change to `faint`, `primary`, `stale`, `failed`, `input` or the grounds
-(`node .scratch/round19/evidence/30-contrast.mjs`). `faint` on the legacy hover ground `--bg-element-hover` (4.60 dark,
-4.41 light on ticket 30's grounds) is no longer a rendered pair: the App.css alias block still defines it, but no rule or
+(`node .scratch/round19/evidence/30-contrast.mjs`). `faint` on the legacy hover ground `--bg-element-hover` (5.04 dark
+on ticket 35's, 4.41 light on ticket 30's grounds) is no longer a rendered pair: the App.css alias block still defines it, but no rule or
 utility reads it.
 
 **Exempt, by rule:**
@@ -268,7 +307,7 @@ Props: `variant` · `tone` · `size`, plus `pending`.
 |---|---|---|
 | `variant` | `solid` | Filled. `solid accent` is **the one primary action** of a view. |
 | | `outline` (default) | `border-strong` edge, transparent. Secondary actions. |
-| | `ghost` | No edge, and a ground only on hover. Toolbars and dense rows. |
+| | `ghost` | No edge, and a ground (`raised`) only on hover. Toolbars and dense rows. |
 | `tone` | `neutral` (default) | No semantic role. |
 | | `accent` | Iris: primary action or selection-related. |
 | | `ok` | Confirms a healthy outcome, used rarely. |
@@ -296,7 +335,7 @@ Props: `variant` · `tone` · `size`, plus `pending`.
 | Prop | Values | Meaning |
 |---|---|---|
 | `variant` | `soft` (default) | 10 % state ground (opaque, into `popover`) with state text. |
-| | `outline` | Tinted edge, transparent ground. |
+| | `outline` | Tinted edge, transparent ground. Neutral `outline` on a `raised` parent has no hover delta (its hover ground is `raised`) — do not rely on it for pointer feedback there; use `ghost` (its text brightens) or a semantic tone. |
 | | `solid` | State fill with its `-foreground` text. |
 | `tone` | `neutral` (default) · `accent` · `ok` · `stale` · `failed` | Semantic role. |
 | | `identity` (requires `hue`) | A source's identity chip: the hue's tint with the hue's text (§ Identity). **Always `soft`, always `chip`**: `variant="outline"` / `"solid"` with `identity` is a type error, and so is `hue` on any other tone. |
@@ -456,9 +495,10 @@ stays out: the palette is a layer of the one layer stack like every dialog, with
 - **Filtering is the caller's.** The primitive filters nothing (`filter={null}`): `groups` are what to show for
   `query`; empty groups are skipped.
 - **Rows.** `h-row` (36 px), `sm` `foreground`; a quiet hint on the right (`xs muted`). The highlighted option has the
-  `accent` ground **and** the inset ring (2 px `ring`, offset −2 px: 6.01 dark / 4.72 light on the ground, 6.61 /
-  5.86 on `popover`) — the ground alone is never the cue. Group labels `xs` medium `faint` (5.73 / 6.24 on
-  `popover`); hints `muted` (7.78 / 8.36 on `popover`, 7.08 / 7.20 on the highlight). The input draws no ring of its
+  `raised` ground (the current item's tone, ticket 35 — in dark `accent` is the palette's own `popover` ground) **and**
+  the inset ring (2 px `ring`, offset −2 px: 6.14 dark / 4.72 light on the ground, 7.11 / 5.86 on `popover`) — the
+  ground alone (1.16 / 1.24 on `popover`) is never the cue. Group labels `xs` medium `faint` (5.52 / 6.24 on
+  `popover`); hints `muted` (7.65 / 8.36 on `popover`, 6.61 / 6.75 on the highlight). The input draws no ring of its
   own: it is the popup's one control and always focused.
 - **A refused command** (`refusal`: something runs, or it would change nothing) stays listed and reachable —
   `aria-disabled`, its reason replacing the hint. Activating it (Enter, a click) runs nothing and dispatches the held
@@ -474,10 +514,18 @@ stays out: the palette is a layer of the one layer stack like every dialog, with
 These are floating surfaces on `popover` with a `border` and `shadow-lg`. All three **appear instantly**.
 Escape closes them and returns focus to the trigger.
 
+**Elevation on black** (ticket 35): on the dark `#000000` ground a black shadow draws nothing, so a floating layer is
+told apart by its 1 px edge and its `popover` ground (1.06 on `card`, 1.09 on the ground) — every one already draws
+the edge in the primitive: Popover and DropdownMenu `border` (`floatingSurface`, `ui/styles.ts`), Dialog — the ⌘K
+palette included — and Toast `border-strong`. The Tooltip needs none: it is inverted (`foreground`, 19.26 on the dark
+ground). No primitive relied on its shadow alone; the shadow stays for light, where it still reads.
+
 - **DropdownMenu** items are 32 px tall. `variant="destructive"` both words the action and tints it.
+  - The highlighted item takes the `raised` ground — the current item's tone (ticket 35: in dark `accent` equals
+    `popover`, so an `accent` highlight would draw nothing; in light the two are one value, so light is unchanged).
   - The item holding keyboard focus draws the ring **inset** (`insetFocusRing`: 2 px `ring`, offset −2 px, so the
-    scrolling popup cannot clip it): 6.01 / 4.72 against the highlight ground, 6.61 / 5.86 against `popover`. The
-    highlight ground alone (`accent` on `popover`, 1.10 / 1.16) is never the cue. A pointer highlight shows the
+    scrolling popup cannot clip it): 6.14 / 4.72 against the highlight ground, 7.11 / 5.86 against `popover`. The
+    highlight ground alone (`raised` on `popover`, 1.16 / 1.24) is never the cue. A pointer highlight shows the
     ground only.
   - `DropdownMenuLabel` names a group and must sit inside a `DropdownMenuGroup` (Base UI throws otherwise).
   - **axe `region` on an open menu is an accepted exception** (ticket 17 audit, recorded by ticket 23): the open
@@ -535,12 +583,13 @@ motion: sonner's `transition: none !important` and the base layer both still win
   classes against CSS compiled by the installed Tailwind; a trusted-keyboard run measured `solid 2px` on every
   primitive in both themes (ticket 07, 2026-09-29).
 - **No transition**: the ring never animates in.
-- It measures ≥ 4.72:1 against every ground in both themes.
+- It measures ≥ 4.72:1 against every ground in both themes (dark ≥ 6.14, on `raised`).
 - **A control that holds focus while disabled** (`focusableWhenDisabled`, `pending` — it keeps focus while its action
-  runs, or is refused with a reason) is drawn at 50 % opacity, and the ring with it: 2.60 dark / 2.19 light. While it
+  runs, or is refused with a reason) is drawn at 50 % opacity, and the ring with it: 2.53–2.60 dark / 2.19 light. While it
   holds keyboard focus it steps up to **75 %** (`aria-disabled:focus-visible:opacity-75`, in the shared
-  `disabledState`), so the ring measures **4.42 dark / 3.49 light** (≥ 3:1; on ticket 30's light grounds 3.54 on `background`, floor 3.08 on
-  `raised`) and the control still reads dimmed
+  `disabledState`), so the ring measures **4.60 dark / 3.49 light** (≥ 3:1; on ticket 35's dark grounds 4.60 / 4.55 /
+  4.43 / 4.05 / 4.60 on background / card / popover / raised / row, floor 4.05 on `raised`; on ticket 30's light grounds
+  3.54 on `background`, floor 3.08 on `raised`) and the control still reads dimmed
   (ticket 15, measured on Add skill and a row switch mid-Update all). Such a control carries the
   `data-focusable-when-disabled` mark (Button, Switch): when a Popover restores its controls' Tab order after a layer
   above it closed, that mark is what keeps a focusable-disabled control in the order, while a control that became
@@ -662,7 +711,8 @@ Composed from the primitives and tokens only; no variant was added. Files: `comp
 - **Shell.** Sidebar 200 px on `card` (`sidebar` tokens): the areas My Skills · Explore · Projects, then at the
   foot Notifications (unread count as a `solid accent` Badge) · Theme (a menu) · Keyboard shortcuts (a popover) ·
   Settings. Items are 32 px; the current area has `aria-current="page"`, a `raised` ground and an iris icon
-  (6.01 dark / 4.72 light on `raised`). In the icon rail every label stays in the accessibility tree (`sr-only`)
+  (6.14 dark / 4.72 light on `raised`); hover is `sidebar-accent` (in dark the panel tone, a step below `raised` —
+  ticket 35). In the icon rail every label stays in the accessibility tree (`sr-only`)
   and is the hover title.
 - **Header row** (48 px + its 1 px hairline: 8 px around 32 px controls): title (`lg`, the `data-surface-heading` focus target) + count (`faint`) · the
   exception summary · a status region reserved for ticket 14's progress · Configure harnesses (`ghost`) · Update
@@ -674,7 +724,7 @@ Composed from the primitives and tokens only; no variant was added. Files: `comp
   clears it) · Chips All · Issues · Edited · Disabled with their counts (`faint`) · Segmented Grouped / Flat · one
   "Sort and view" menu (radio groups). Auto-deploy moved to Settings; library-wide Disable is the bulk rail's
   (ticket 13) — nothing library-wide is one click away.
-- **Row** (36 px, `h-row`, `border` hairline, `card` on hover, `raised` + a 3 px iris edge when selected): checkbox · name
+- **Row** (36 px, `h-row`, `border` hairline, `accent` on hover (ticket 35), `raised` + a 3 px iris edge when selected): checkbox · name
   (`sm` medium; the Tab stop that opens the skill) + Edit pencil (`ghost icon-sm`, only when overridden) +
   **exception marks** (soft Badges: `failed` with a ⊗ icon, `stale` with a ⚠ icon, `neutral` for "Not
   deployed"; skill-level rows first, then target-level, in the fold's order; Disabled rows stay silent because the
@@ -701,14 +751,14 @@ deployment row for outside that set. It is **read-only** (D22): each mark is `ro
 skill. Shape carries the state; colour only reinforces it; the strip was checked in grayscale
 (`.scratch/round19/evidence/11/*-grayscale.png`).
 
-| Mark | Shape | Colour | Accessible name | Dark / light on background · card · raised |
+| Mark | Shape | Colour | Accessible name | Dark (ticket 35 tokens) / light on background · card · raised |
 |---|---|---|---|---|
-| deployed (`synced`) | filled dot | `muted-foreground`; `input` when every mark is deployed (the quiet N/N strip) | "Cursor: deployed" | 8.31 · 7.78 · 7.08 / 8.16 · 7.60 · 7.20; quiet 3.90 · 3.65 · 3.32 / 3.78 · 3.52 · 3.33 |
-| not deployed | hollow ring | `input` | "Amp: not deployed" ("…not deployed yet" for a `pending` row) | 3.90 · 3.65 · 3.32 / 3.78 · 3.52 · 3.33 |
-| out of date copy (`stale`) | half-filled ring | `stale` | "Codex: out of date copy — the copy differs from the skill" | 10.41 · 9.75 · 8.88 / 5.62 · 5.23 · 4.95 (token table) |
-| failed / copy missing | × | `failed` | "Amp: failed — the last deploy did not complete" ("…first deploy…"; "Amp: copy missing — the deployed copy is gone") | 6.91 · 6.47 · 5.89 / 5.50 · 5.12 · 4.85 |
+| deployed (`synced`) | filled dot | `muted-foreground`; `input` when every mark is deployed (the quiet N/N strip) | "Cursor: deployed" | 8.33 · 8.13 · 6.61 / 8.16 · 7.60 · 7.20; quiet 3.94 · 3.85 · 3.13 / 3.78 · 3.52 · 3.33 |
+| not deployed | hollow ring | `input` | "Amp: not deployed" ("…not deployed yet" for a `pending` row) | 3.94 · 3.85 · 3.13 / 3.78 · 3.52 · 3.33 |
+| out of date copy (`stale`) | half-filled ring | `stale` | "Codex: out of date copy — the copy differs from the skill" | 11.01 · 10.75 · 8.74 / 5.62 · 5.23 · 4.95 (token table) |
+| failed / copy missing | × | `failed` | "Amp: failed — the last deploy did not complete" ("…first deploy…"; "Amp: copy missing — the deployed copy is gone") | 7.57 · 7.39 · 6.01 / 5.50 · 5.12 · 4.85 |
 | central copy missing (`broken`) | × | `failed` | "Pi: central copy missing — the link has nothing to follow" | as failed |
-| disabled | slashed ring | `faint` | "Codex: disabled" / "…disabled — the skill is off everywhere" | 6.12 · 5.73 · 5.22 / 6.09 · 5.67 · 5.37 |
+| disabled | slashed ring | `faint` | "Codex: disabled" / "…disabled — the skill is off everywhere" | 6.00 · 5.86 · 4.77 / 6.09 · 5.67 · 5.37 |
 
 - A harness detection no longer sees is named "Windsurf (not detected): …"; a label is always the Harness catalog's (`useToolCatalog`).
 - A skill whose **central copy is missing never shows a filled mark**: a deployed or out-of-date row is `broken` (its
@@ -746,7 +796,7 @@ Composed from primitives and tokens; the one new variant is Dialog `placement="s
   `sheet`. Header: name (`lg` semibold, the `data-inspector-heading` focus target) · description (`sm`
   `muted-foreground`, 3 lines) · Close (`ghost icon`, 32 px).
 - **The focused row** shows it: `aria-current="true"`, `raised` ground and a 1 px inset `ring` edge (the ≥ 3:1 cue:
-  6.01 dark / 4.72 light on `raised`); a selected (checked) row has the ground and a 3 px `ring` edge on its leading
+  6.14 dark / 4.72 light on `raised`); a selected (checked) row has the ground and a 3 px `ring` edge on its leading
   side (ticket 13) — the two coexist.
 - **Sections** (`h3` `sm` semibold, a `border` hairline between): Health · Deployments · Source · Edits · Projects ·
   Files, then Remove (`outline danger sm`) in a footer. Section controls are `sm` (24 px) Buttons.
@@ -799,7 +849,7 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
 
 - **Selection** is My Skills' surface selection (`useSurfaceState`, D4). A selected row: checked checkbox (`primary`
   fill) + `raised` ground + a 3 px `ring` edge on its leading side — iris's selection use. Measured on `raised`:
-  edge 6.01 dark / 4.72 light; checked box 3.49 / 4.72. A group header's checkbox selects its source (`mixed` when
+  edge 6.14 dark / 4.72 light; checked box 3.56 / 4.72. A group header's checkbox selects its source (`mixed` when
   part of it is selected).
 - **Keys** (one keymap, `useSkillListKeymap`; listed in the sidebar's Keyboard shortcuts): `/` search · `j` / `k`
   next / previous row · Enter open · `x` select the row holding focus · ⇧-click a range from the last row toggled ·
@@ -814,7 +864,7 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
   breakpoint) · `outline sm` Buttons Deploy to harnesses… · Deploy to project… · Disable on all harnesses · Enable · Update ·
   Remove… (`danger`) · Clear (`ghost icon-sm`). A verb that would change nothing is disabled with the reason as its
   title; every rail Button keeps focus while disabled (`focusableWhenDisabled`), so D21's "same control" holds after
-  it ran. Text on the rail: ≥ 5.22 dark / 4.85 light.
+  it ran. Text on the rail: ≥ 5.86 dark (`faint` on `card`, ticket 35) / 4.85 light.
 - **Count-bearing confirmation** (`confirmCount`): ConfirmDialog, focus on Cancel, one sentence of counts from
   `bulkCounts` ("Disable 25 skills on 8 harnesses — 80 global deployments are removed and kept disabled; 12 project
   deployments for these skills are disabled too. Updates will not re-add them."), a `muted-foreground` second line for
@@ -915,7 +965,7 @@ Checkbox `focusableWhenDisabled`.
 - **Selection** (≥ 1200 px): the project list (`card`, 256 px) is one **named selection button** per project —
   name (`sm` medium), path (`font-mono xs faint`, wrapping only after a `/`), then "3 harnesses · 5 skills" (`xs muted`;
   a `failed` / `stale` word when the project has one) or "Folder not found" (`stale` with ⚠). The selected project has
-  `aria-current="true"`, a `raised` ground and a 3 px `ring` edge (6.01 / 4.72 on `raised`); the focused one draws the
+  `aria-current="true"`, a `raised` ground and a 3 px `ring` edge (6.14 / 4.72 on `raised`); the focused one draws the
   inset focus ring — the two never share a cue. ↑ / ↓ / Home / End move focus between projects (Enter / Space select;
   Tab keeps the native order). Each project's overflow (`ghost icon-sm`, "More actions for {project}") holds Update
   path… (a missing folder), Project settings…, Remove project… (`destructive`) — separate from selection.
@@ -949,18 +999,18 @@ Checkbox `focusableWhenDisabled`.
   `unassignFromProject`, the inspector's). Both stay mounted: a verb that would change nothing is refused with the
   reason ("Deployed to every configured harness already"), so focus never drops.
 
-| Cell state | Mark (shape) | Word | Meaning (in the name and title) | Mark dark / light on background |
+| Cell state | Mark (shape) | Word | Meaning (in the name and title) | Mark dark (ticket 35 tokens) / light on background |
 |---|---|---|---|---|
-| `synced` | filled dot, `muted-foreground` | deployed | the copy matches the skill | 8.31 / 8.16 |
-| `stale` | half-filled ring, `stale` | out of date copy | the copy differs from the skill — Deploy this to fix | 10.41 / 5.62 |
-| `missing` | ×, `failed` | copy missing | the deployed copy is gone — Deploy this to fix | 6.91 / 5.50 |
-| `pending` | hollow ring, `input` | not deployed yet | recorded here, not deployed yet | 3.90 / 3.78 |
-| `failed` | ×, `failed` | failed | {the error} — Deploy this to retry | 6.91 / 5.50 |
-| `disabled` | slashed ring, `faint` | disabled | not deployed here (disabled) / the skill is off everywhere | 6.12 / 6.09 |
-| also global | ⊕ (lucide Globe), `muted-foreground` | also global | the skill is also deployed globally for this harness | 8.31 / 8.16 |
+| `synced` | filled dot, `muted-foreground` | deployed | the copy matches the skill | 8.33 / 8.16 |
+| `stale` | half-filled ring, `stale` | out of date copy | the copy differs from the skill — Deploy this to fix | 11.01 / 5.62 |
+| `missing` | ×, `failed` | copy missing | the deployed copy is gone — Deploy this to fix | 7.57 / 5.50 |
+| `pending` | hollow ring, `input` | not deployed yet | recorded here, not deployed yet | 3.94 / 3.78 |
+| `failed` | ×, `failed` | failed | {the error} — Deploy this to retry | 7.57 / 5.50 |
+| `disabled` | slashed ring, `faint` | disabled | not deployed here (disabled) / the skill is off everywhere | 6.00 / 6.09 |
+| also global | ⊕ (lucide Globe), `muted-foreground` | also global | the skill is also deployed globally for this harness | 8.33 / 8.16 |
 
 Copy missing and failed share the strip's ×; the word (on hover / focus, in the name and the legend) tells them apart.
-Words are `muted-foreground` (8.31 / 8.16). On a hovered cell (`raised`) the marks keep ≥ 3:1 (token table).
+Words are `muted-foreground` (8.33 / 8.16). On a hovered cell (`raised`) the marks keep ≥ 3:1 (token table).
 Measured 2026-10-01 on the fixture (`failures`), `.scratch/round19/evidence/17/a11y-*.json`; grayscale capture
 `matrix-grayscale-*.png`.
 
@@ -1023,7 +1073,7 @@ from primitives and tokens; no variant was added. Tracker rows, not cards (D25, 
   `rounded-lg` card, header (36 px, `card`: `h2` `sm` semibold · count `faint`) over rows on the base `background`.
   A card with nothing under the chip says so in one line (`sm muted`); "Searching skills.sh…" and "Loading featured
   skills…" are `role="status"`.
-- **Row** (36 px, `border` hairline, `card` on hover, instant): name (`sm` medium, the Tab stop; Enter or a click on the
+- **Row** (36 px, `border` hairline, `accent` on hover (ticket 35), instant): name (`sm` medium, the Tab stop; Enter or a click on the
   row opens it; ↑ / ↓ walk the rows, ↑ from the first returns to the search) · source (`font-mono xs faint`) ·
   description (`sm muted`; gone in a pane under 48 rem) · popularity (`xs faint tabular-nums`, ↓ downloads / ☆ stars /
   installs, compact "12.3K", the full figure as its name and title — secondary, never a sort) · **Installed** (`soft
@@ -1053,6 +1103,9 @@ from primitives and tokens; no variant was added. Tracker rows, not cards (D25, 
   5.37 on the focused row's `raised`; description and mode line 8.31 / 8.16; the focused row's `ring` edge on `raised`
   6.01 / 4.72; search edge (`input`) 3.90 / 3.78; scope label / value on the aside's `card` 7.78 / 7.60 and 14.51 /
   16.14 (in the sheet, on `popover`, light 8.36 / 17.76). axe: no violations at 1280 × 800 and 960 × 640, either theme.
+  The dark figures are superseded by ticket 35's token tables (2026-11-04): Install 4.68 (hover 5.32); Installed 7.65;
+  name 19.26; `faint` 6.00 on `background`, 4.77 on `raised`; description 8.33; `ring` edge on `raised` 6.14; search
+  edge 3.94; scope label / value on `card` 8.13 / 18.81 (on `popover` in the sheet 7.65 / 17.71).
 
 ## Migration rule
 

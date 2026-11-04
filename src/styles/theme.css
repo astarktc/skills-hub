@@ -29,17 +29,30 @@
 :root {
   color-scheme: dark;
 
-  /* surfaces: ground → panel → raised */
-  --background: #0e0f12;
-  --foreground: #e6e7ea;
-  --card: #15171b;
-  --card-foreground: #e6e7ea;
-  --popover: #15171b;
-  --popover-foreground: #e6e7ea;
-  --raised: #1d2025;
-  /* the skill-row ground (D38, ticket 30): near-black, one step below
-     `background`; the group header sits on `card` above it */
-  --row: #09090b;
+  /* Dark ground (ticket 35, 2026-11-04): T3 Code's two-tone structure, values
+     sampled from a T3 Code window capture (prototype 30-dark-ground, pick f):
+     ground #000000, sidebar #030303–#040404, panels #0d0d0d–#0e0e0e, panel
+     border #171717, current item #1e1e1e, text #f5f5f5, muted #898989 —
+     neutral greys, no blue-grey tint. Four levels:
+       background = row #000000   app ground, skill rows
+       card = sidebar   #040404   the pane: sidebar, group headers, list panes,
+                                  dialog footer (1.02 on the ground — a pane
+                                  cue, not a contrast cue)
+       popover = accent = muted #0e0e0e   hover ground, dialogs, menus, toasts
+       raised           #1e1e1e   focused / selected row, solid controls,
+                                  inline code, a menu's highlighted item
+     `accent` ≠ `raised` in dark on purpose: hover is the panel tone, the
+     current item the raised tone (in light they stay one value). */
+  --background: #000000;
+  --foreground: #f5f5f5;
+  --card: #040404;
+  --card-foreground: #f5f5f5;
+  --popover: #0e0e0e;
+  --popover-foreground: #f5f5f5;
+  --raised: #1e1e1e;
+  /* the skill-row ground (D38): = background (ticket 35; ticket 30 had it
+     one step below a #0e0f12 ground); the group header sits on `card` */
+  --row: #000000;
 
   /* iris: the one primary action (fill), selection and focus (ring) */
   --primary: #6a61e8;
@@ -47,41 +60,44 @@
   --ring: #9690ff;
 
   /* neutral roles */
-  --muted: #1d2025;
-  --muted-foreground: #a6abb4;
-  /* contract #858b95, lifted one step: the legacy hover ground
-     (--bg-element-hover, App.css alias block) measured it at 4.20:1 */
-  --faint: #8c929c;
-  --accent: #1d2025;
-  --accent-foreground: #e6e7ea;
+  --muted: #0e0e0e;
+  --muted-foreground: #a3a3a3;
+  /* T3's muted sample; 4.77 on `raised`, its floor */
+  --faint: #898989;
+  --accent: #0e0e0e;
+  --accent-foreground: #f5f5f5;
 
   /* lines: border = structural hairline (decorative), border-strong =
      control edges beside text, input = boundary that identifies a control
      on its own (≥ 3:1 against every surface) */
-  --border: #262a31;
-  --border-strong: #343942;
-  --input: #6b717b;
+  --border: #171717;
+  --border-strong: #262626;
+  /* 3.13 on `raised`, its floor */
+  --input: #6b6b6b;
 
-  /* state — used only to say state; healthy is silent */
+  /* state — used only to say state; healthy is silent. The `-foreground`
+     ink on a state fill is the ground itself (#000000, ticket 35): it
+     measures higher than the former #0e0f12 on every fill and every /90
+     hover composite (worst failed/90 6.20 vs 5.66) */
   --ok: #3ddc84;
-  --ok-foreground: #0e0f12;
+  --ok-foreground: #000000;
   /* amber: out of date / warning (ticket 30; 7° warmer than the former
      #f5b400, clear of yellow and of the moss identity hue) */
   --stale: #fbac16;
-  --stale-foreground: #0e0f12;
+  --stale-foreground: #000000;
   --failed: #ff6b6b;
-  --failed-foreground: #0e0f12;
+  --failed-foreground: #000000;
   --destructive: #ff6b6b;
-  --destructive-foreground: #0e0f12;
+  --destructive-foreground: #000000;
 
   /* app sidebar */
-  --sidebar: #15171b;
-  --sidebar-foreground: #a6abb4;
+  --sidebar: #040404;
+  --sidebar-foreground: #a3a3a3;
   --sidebar-primary: #6a61e8;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #1d2025;
-  --sidebar-accent-foreground: #e6e7ea;
-  --sidebar-border: #262a31;
+  --sidebar-accent: #0e0e0e;
+  --sidebar-accent-foreground: #f5f5f5;
+  --sidebar-border: #171717;
   --sidebar-ring: #9690ff;
 
   /* prose-only: syntax highlighting (read by styles/prose.css through var()) */
@@ -110,7 +126,10 @@
   --syntax-number: #e8b48a;
   --syntax-function: #a9b6ff;
 
-  /* elevation for floating layers (dialog, popover, menu, toast) */
+  /* elevation for floating layers (dialog, popover, menu, toast). On the
+     #000000 ground a black shadow draws nothing: every floating layer is
+     told apart by its 1 px edge (`border`, or `border-strong` for Dialog
+     and Toast) and its `popover` ground (ticket 35) */
   --elevation-sm: 0 1px 2px 0 rgb(0 0 0 / 0.4);
   --elevation-lg: 0 16px 32px -12px rgb(0 0 0 / 0.6);
 }
