@@ -1,6 +1,6 @@
 # 30 — Colour and identity tokens: state hues, the identity treatment the prototype picks, light-theme ground steps
 
-Status: ready-for-agent (blocked until the prototype pick is recorded below)
+Status: ready-for-agent
 Blocked by: 32; the colour prototype's pick (`round19/prototypes/30-colour/`, operator decision)
 Blocks: 31
 Source: BACKLOG #78 (absorbed here 2026-11-02 — operator 2026-10-27 and 10-29: *"in both light and dark mode, it's
@@ -57,3 +57,14 @@ operator identified Cursor's mark by counting positions, #72).
 
 - 2026-11-02 — opened from BACKLOG #78 at the grill (D36, D43). Prototype dispatched the same evening.
 - 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.
+
+- 2026-11-02 — **Operator pick: A (source chip), header only.** `round19/prototypes/30-colour/` (`?variant=A`),
+  `NOTES.md` for the palette (7 hues, dark/light chip ground + text, measured), the amber re-value of `--stale`
+  (`#fbac16` dark / `#9e5d00` light — a mark only on light `raised`), and the stronger light grounds (`background`
+  `#ffffff` · `card` `#f0f1f4` · `raised` `#e4e7ec` · `border` `#d5d9e0` · `border-strong` `#bcc2cc` · `input` `#737983`).
+  Per-row mini-chips under "Individual sources" are **dropped** (hash collisions visible on one screen). The operator
+  adds: **skill rows sit on a black / near-black ground** — darker than today's `background` (#0e0f12): a new
+  `--row` (or re-valued `background`) at ≈ #09090b with the group header on `card` above it, hover `card`, focused
+  `raised`; measure every row text pair on it. Ticket 31 applies it; this ticket mints the token.
+  Carry to 31: at 16 px mark spacing the harness initials run together ("GMAM") — the prototype used 20 px (strip
+  column 200 px, not 168).

@@ -78,3 +78,7 @@ D39, D40, D41, D42, D44; D43's pick (ticket 30). BACKLOG #80, #81, #82 absorbed 
 
 - 2026-11-02 — opened at the grill; absorbs BACKLOG #80, #81, #82 and the project-count gap from ticket 11.
 - 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.
+- 2026-11-02 — operator (prototype review): rows on a **black / near-black** ground, darker than `background` — ticket
+  30 mints the token (`--row` ≈ #09090b dark; light stays the proposed `background`); D38's hover `card` / focused
+  `raised` / header `card` stand. Identity chip in the group header only (A). Harness initials over the strip at
+  **20 px** spacing (16 px runs "GMAM" together) — `--strip-marks` step becomes 1.25rem, the strip column 200 px at 8 marks.

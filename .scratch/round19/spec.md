@@ -233,6 +233,9 @@ shadcn** (grill Q1); the D8 exclusions (sectioned app sidebar, Updates page, hom
 - **D50 (Q21) Settings dialog shape**: max ≈ 880 × 640, capped at 90 vw / 85 vh, pane list left (General · Harnesses ·
   Appearance · Updates · Diagnostics), not resizable.
 - **D51 (Q23) 19b order**: **33 ∥ research ∥ prototype → 32 → 30 → 31 → 20 ∥ 22 ∥ 23 → 21 → 24 → 25 → 26.**
+  Amended 2026-11-02 evening: 33, 32, 23, 22 done; prototype pick **A** (D43 settled — header chip only, rows on a
+  near-black ground); ticket **34** (registry truth, operator-approved) follows 20. Remaining: **30 → 31 → 20 ∥ 21 → 34
+  → 24 → 25 → 26**.
 
 ## What the world ticket fixes in values (from the direction contract)
 
@@ -288,6 +291,7 @@ Order is dependency order; `Blocked by` is the edge list. Every surface ticket c
 | 30 | **Colour and identity tokens**: state hues, identity treatment per the prototype's pick, light-theme ground steps, DESIGN.md contrast table (D43; BACKLOG #78) | 32, prototype pick | world |
 | 31 | **My Skills row and group anatomy**: card-per-group ground, `--name-col`, Not-deployed mark dropped, projects on the wire + scope cell, collapsible groups, unfiltered grouping, harness initials over the strip; riders #80 #81 #82 (D38–D42, D44) | 30 | surface + enabler |
 | 32 | **Vocabulary**: Harness · Deploy · Update · state words · Library, across CONTEXT.md, `resources.ts`, README, DESIGN.md, fixture, tickets; retired-word catalog test (D45, D46) | 33 | docs + strings — done 60dc80e |
+| 34 | **Registry truth pass**: rows corrected to vendor docs (Codex → AGENTS-standard group, Antigravity, Kimi (Amp hazard), Kilo, Xum, 4 new rows), `reads_agents_standard_globally` + `also_reads` facts, cross-read warning, the "prefer the AGENTS standard dir" preference in the Harnesses pane (BACKLOG #67 #45 #83, #40's detection half) | 20 | enabler + surface |
 | 33 | **Auto-deploy is arrival-only**: re-assert deleted, `delete_incomplete` skipped as report data, policy DTO gone, first-deploy failure copy (D34, D35; BACKLOG #71) | — | enabler — done 948f12b + 23938db |
 ## Execution
 
