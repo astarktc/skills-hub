@@ -1,6 +1,6 @@
 # 30 — Colour and identity tokens: state hues, the identity treatment the prototype picks, light-theme ground steps
 
-Status: ready-for-agent
+Status: done — 9ca0bc8
 Blocked by: 32; the colour prototype's pick (`round19/prototypes/30-colour/`, operator decision)
 Blocks: 31
 Source: BACKLOG #78 (absorbed here 2026-11-02 — operator 2026-10-27 and 10-29: *"in both light and dark mode, it's

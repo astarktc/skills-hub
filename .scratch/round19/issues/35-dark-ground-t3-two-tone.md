@@ -1,6 +1,6 @@
 # 35 — Dark ground: true black + T3's two-tone structure (prototype 30-dark-ground pick **d**, selection edge kept)
 
-Status: ready-for-agent
+Status: done — 03065db
 Blocked by: 30 (done 9ca0bc8)
 Blocks: 31
 Source: operator 2026-11-04, on `round19/prototypes/30-dark-ground/` (grounds a–f; screenshots gitignored under
