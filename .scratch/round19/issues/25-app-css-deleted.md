@@ -40,3 +40,4 @@ Spec: `.scratch/round19/spec.md` — D32; ADR-0006 §5–§6. Phase 19b closure.
   keep useful utilities. Keep claims precise: dormant source is not the same as no reference. Source:
   `round19/review/ticket-15-audit.md` § A4.
 - 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.
+- 2026-11-04 — operator: **delete `src/components/Layout.tsx` and `src/pages/Dashboard.tsx`** (dead scaffold from `24c5ae4`, never rendered, palette classes that no longer exist). The child deletes them with `App.css`, drops their `dashboard.*` i18n leaves if nothing else reads them, and removes AGENTS.md's "dormant by design" bullet.
