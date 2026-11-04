@@ -5,8 +5,8 @@
  *   1. raw values as plain custom properties — dark in :root (dark is designed
  *      first), light in :root[data-theme='light'] as a measured derivation;
  *   2. `@theme inline` registering the semantic tier (shadcn's names) and the
- *      world extension (raised, border-strong, faint, ok, stale, failed) as
- *      utilities that resolve to the switching variable;
+ *      world extension (row, raised, border-strong, faint, ok, stale, failed,
+ *      identity-<hue>) as utilities that resolve to the switching variable;
  *   3. `@theme static` for the non-colour scale (type, radius, row height,
  *      motion, fonts, elevation), emitted whether or not a utility uses it.
  *
@@ -37,6 +37,9 @@
   --popover: #15171b;
   --popover-foreground: #e6e7ea;
   --raised: #1d2025;
+  /* the skill-row ground (D38, ticket 30): near-black, one step below
+     `background`; the group header sits on `card` above it */
+  --row: #09090b;
 
   /* iris: the one primary action (fill), selection and focus (ring) */
   --primary: #6a61e8;
@@ -62,7 +65,9 @@
   /* state — used only to say state; healthy is silent */
   --ok: #3ddc84;
   --ok-foreground: #0e0f12;
-  --stale: #f5b400;
+  /* amber: out of date / warning (ticket 30; 7° warmer than the former
+     #f5b400, clear of yellow and of the moss identity hue) */
+  --stale: #fbac16;
   --stale-foreground: #0e0f12;
   --failed: #ff6b6b;
   --failed-foreground: #0e0f12;
@@ -80,6 +85,26 @@
   --sidebar-ring: #9690ff;
 
   /* prose-only: syntax highlighting (read by styles/prose.css through var()) */
+  /* identity: a source chip's tint and its text (ticket 30, prototype pick A).
+     The hue comes from a stable key (the repo owner, skillPresentation
+     identityHue), never from state. The seven hues avoid failed red, amber,
+     iris and green by construction, so identity never reads as state or
+     selection; equal OKLCH lightness, so every pair measures alike. */
+  --identity-moss: #283215;
+  --identity-moss-foreground: #bddb8a;
+  --identity-teal: #09362e;
+  --identity-teal-foreground: #74e5ce;
+  --identity-cyan: #0a3437;
+  --identity-cyan-foreground: #76e1ea;
+  --identity-sky: #0e3242;
+  --identity-sky-foreground: #7cdbff;
+  --identity-orchid: #39253f;
+  --identity-orchid-foreground: #efb5ff;
+  --identity-rose: #422232;
+  --identity-rose-foreground: #ffadd9;
+  --identity-slate: #292e36;
+  --identity-slate-foreground: #bfcfe5;
+
   --syntax-keyword: #f29fd8;
   --syntax-string: #7fc8dc;
   --syntax-number: #e8b48a;
@@ -93,47 +118,71 @@
 :root[data-theme='light'] {
   color-scheme: light;
 
-  --background: #fcfcfd;
+  /* ticket 30: stronger ground steps (background→card 1.13, card→raised
+     1.10; were 1.07 / 1.06) */
+  --background: #ffffff;
   --foreground: #16181d;
-  --card: #f3f4f6;
+  --card: #f0f1f4;
   --card-foreground: #16181d;
   --popover: #ffffff;
   --popover-foreground: #16181d;
-  --raised: #eceef1;
+  --raised: #e4e7ec;
+  /* rows sit on the brightest ground, the light counterpart of dark's
+     near-black: = background (nothing is lighter than white) */
+  --row: #ffffff;
 
   --primary: #5a4fdc;
   --primary-foreground: #ffffff;
   --ring: #5a4fdc;
 
-  --muted: #eceef1;
+  --muted: #e4e7ec;
   --muted-foreground: #494e57;
   --faint: #5b616a;
-  --accent: #eceef1;
+  --accent: #e4e7ec;
   --accent-foreground: #16181d;
 
-  --border: #e1e3e8;
-  --border-strong: #cdd1d8;
-  --input: #7c828b;
+  --border: #d5d9e0;
+  --border-strong: #bcc2cc;
+  /* moves with the grounds: the former #7c828b measured 3.12 on the new raised */
+  --input: #737983;
 
   /* the prototype's light ok/stale (#16a35a, #b77f00) were dot colours at
-     ~3:1; these are darkened so the same token also passes as text */
+     ~3:1; these are darkened so the same token also passes as text. Amber
+     (ticket 30) is the prototype's #9e5d00 one OKLCH step darker (L 0.54 →
+     0.52, same hue and chroma): at #9e5d00 the solid Button's stale/90 hover
+     measured 4.32 and text on raised 4.21 */
   --ok: #127440;
   --ok-foreground: #ffffff;
-  --stale: #8a5d00;
+  --stale: #985700;
   --stale-foreground: #ffffff;
   --failed: #c22e2e;
   --failed-foreground: #ffffff;
   --destructive: #c22e2e;
   --destructive-foreground: #ffffff;
 
-  --sidebar: #f3f4f6;
+  --sidebar: #f0f1f4;
   --sidebar-foreground: #494e57;
   --sidebar-primary: #5a4fdc;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #eceef1;
+  --sidebar-accent: #e4e7ec;
   --sidebar-accent-foreground: #16181d;
-  --sidebar-border: #e1e3e8;
+  --sidebar-border: #d5d9e0;
   --sidebar-ring: #5a4fdc;
+
+  --identity-moss: #e1edcf;
+  --identity-moss-foreground: #475f06;
+  --identity-teal: #cbf2e8;
+  --identity-teal-foreground: #006855;
+  --identity-cyan: #ccf0f3;
+  --identity-cyan-foreground: #00656d;
+  --identity-sky: #cdeeff;
+  --identity-sky-foreground: #005f86;
+  --identity-orchid: #f5dffc;
+  --identity-orchid-foreground: #703c80;
+  --identity-rose: #ffdcec;
+  --identity-rose-foreground: #84345f;
+  --identity-slate: #e2e8f1;
+  --identity-slate-foreground: #485669;
 
   --syntax-keyword: #a1306e;
   --syntax-string: #16677d;
@@ -182,6 +231,7 @@
   --color-sidebar-ring: var(--sidebar-ring);
 
   /* world extension */
+  --color-row: var(--row);
   --color-raised: var(--raised);
   --color-border-strong: var(--border-strong);
   --color-faint: var(--faint);
@@ -191,6 +241,23 @@
   --color-stale-foreground: var(--stale-foreground);
   --color-failed: var(--failed);
   --color-failed-foreground: var(--failed-foreground);
+
+  /* identity chips: `bg-identity-<hue>` + `text-identity-<hue>-foreground`,
+     drawn only by Badge tone="identity" (ui/styles.ts identityGround) */
+  --color-identity-moss: var(--identity-moss);
+  --color-identity-moss-foreground: var(--identity-moss-foreground);
+  --color-identity-teal: var(--identity-teal);
+  --color-identity-teal-foreground: var(--identity-teal-foreground);
+  --color-identity-cyan: var(--identity-cyan);
+  --color-identity-cyan-foreground: var(--identity-cyan-foreground);
+  --color-identity-sky: var(--identity-sky);
+  --color-identity-sky-foreground: var(--identity-sky-foreground);
+  --color-identity-orchid: var(--identity-orchid);
+  --color-identity-orchid-foreground: var(--identity-orchid-foreground);
+  --color-identity-rose: var(--identity-rose);
+  --color-identity-rose-foreground: var(--identity-rose-foreground);
+  --color-identity-slate: var(--identity-slate);
+  --color-identity-slate-foreground: var(--identity-slate-foreground);
 }
 
 /* ── 3. Non-colour scale ───────────────────────────────────────────────── */
@@ -202,8 +269,11 @@
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
     "Liberation Mono", monospace;
 
-  /* type: 12 / 13 / 14 / 16 — the whole scale */
+  /* type: 12 / 13 / 14 / 16 — the whole scale for words; 2xs (10.5 px)
+     is for bold initials marks only (the identity chip), never running text */
   --text-*: initial;
+  --text-2xs: 0.65625rem;
+  --text-2xs--line-height: 1rem;
   --text-xs: 0.75rem;
   --text-xs--line-height: 1rem;
   --text-sm: 0.8125rem;

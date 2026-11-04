@@ -7,6 +7,7 @@
  */
 
 import type { CommandError } from "../bindings";
+import { IDENTITY_HUES, type IdentityHue } from "../components/ui/styles";
 import type {
   InvocationMode,
   RepointTarget,
@@ -202,6 +203,40 @@ export function repoInfo(url: string | null | undefined): RepoInfo | null {
     if (!match) return null;
     return build(match[1], match[2].replace(/\.git$/, ""));
   }
+}
+
+/**
+ * FNV-1a 32-bit over UTF-16 code units: offset basis 0x811c9dc5, prime
+ * 0x01000193. Exported for its test; the identity fold is the only reader.
+ */
+export function fnv1a32(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash;
+}
+
+/**
+ * A source's identity hue (ticket 30): derived from a stable key — the
+ * repo owner, case-insensitively — and never from state. Seven hues, so
+ * collisions are expected; the chip supplements the name, never replaces it.
+ * A source without an owner (local folder, Individual sources) has no hue.
+ */
+export function identityHue(owner: string): IdentityHue {
+  return IDENTITY_HUES[fnv1a32(owner.toLowerCase()) % IDENTITY_HUES.length];
+}
+
+/**
+ * The chip's two initials: the first letters of the owner's first two
+ * `-` / `_` / `.` parts, else its first two letters, upper-cased
+ * (`vercel-labs` → `VL`, `anthropics` → `AN`).
+ */
+export function identityInitials(owner: string): string {
+  const parts = owner.split(/[-_.]+/).filter(Boolean);
+  const initials = parts.length >= 2 ? parts[0][0] + parts[1][0] : (parts[0] ?? owner).slice(0, 2);
+  return initials.toUpperCase();
 }
 
 /** Whether a source ref looks like a git remote rather than a local path. */

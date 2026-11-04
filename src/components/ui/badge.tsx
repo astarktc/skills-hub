@@ -2,12 +2,25 @@ import * as React from "react";
 import { Toggle as TogglePrimitive } from "@base-ui/react/toggle";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
-import { disabledState, focusRing, iconSlot, softGround } from "./styles";
+import {
+  disabledState,
+  focusRing,
+  iconSlot,
+  identityGround,
+  softGround,
+  type IdentityHue,
+} from "./styles";
 
 /**
  * Badge — a static label (a count, a state word). Words carry the meaning;
  * colour only reinforces it (never colour-only). `tone` is the semantic
  * role, `variant` the weight, `size` the density (DESIGN.md § Badge).
+ *
+ * `tone="identity"` is the source chip (ticket 30): the `hue`'s tint with the
+ * hue's text, always `soft` and always `chip`-sized — `outline` / `solid`
+ * identity is a type error. The hue comes from a stable key
+ * (`skillPresentation.identityHue`), never from state, and the chip only
+ * supplements the name beside it.
  */
 const badgeVariants = cva(
   [
@@ -17,8 +30,13 @@ const badgeVariants = cva(
   {
     variants: {
       variant: { soft: "", outline: "bg-transparent", solid: "" },
-      tone: { neutral: "", accent: "", ok: "", stale: "", failed: "" },
-      size: { sm: "h-5 px-1.5 text-xs", md: "h-6 px-2 text-xs" },
+      tone: { neutral: "", accent: "", ok: "", stale: "", failed: "", identity: "" },
+      size: {
+        sm: "h-5 px-1.5 text-xs",
+        md: "h-6 px-2 text-xs",
+        /* 22 px square, two bold initials (or one icon): the source chip */
+        chip: "size-5.5 justify-center rounded-md px-0 text-2xs font-bold",
+      },
     },
     compoundVariants: [
       { variant: "soft", tone: "neutral", class: "bg-muted text-muted-foreground" },
@@ -41,17 +59,40 @@ const badgeVariants = cva(
   },
 );
 
-type BadgeProps = Omit<React.ComponentProps<"span">, "className"> &
-  VariantProps<typeof badgeVariants> & {
-    /** Layout only. */
-    className?: string;
+type BadgeVariants = VariantProps<typeof badgeVariants>;
+
+type BadgeCommonProps = Omit<React.ComponentProps<"span">, "className"> & {
+  /** Layout only. */
+  className?: string;
+};
+
+/** A state or count label: any variant × state tone × size. */
+type StateBadgeProps = BadgeCommonProps &
+  Omit<BadgeVariants, "tone"> & {
+    tone?: Exclude<BadgeVariants["tone"], "identity">;
+    hue?: never;
   };
 
-function Badge({ variant, tone, size, className, ...props }: BadgeProps) {
+/** The source chip: one identity hue, soft, chip-sized. */
+type IdentityBadgeProps = BadgeCommonProps & {
+  tone: "identity";
+  hue: IdentityHue;
+  variant?: "soft";
+  size?: "chip";
+};
+
+type BadgeProps = StateBadgeProps | IdentityBadgeProps;
+
+function Badge({ variant, tone, size, hue, className, ...props }: BadgeProps) {
+  const identity = tone === "identity" && hue ? identityGround[hue] : null;
   return (
     <span
       data-slot="badge"
-      className={cn(badgeVariants({ variant, tone, size }), className)}
+      className={cn(
+        badgeVariants({ variant, tone, size: identity ? (size ?? "chip") : size }),
+        identity,
+        className,
+      )}
       {...props}
     />
   );
@@ -88,4 +129,4 @@ function Chip({ className, ...props }: ChipProps) {
   );
 }
 
-export { Badge, Chip, type BadgeProps, type ChipProps };
+export { Badge, Chip, type BadgeProps, type ChipProps, type IdentityBadgeProps };

@@ -25,5 +25,8 @@ export default defineConfig(({ mode }) => ({
   test: {
     environment: 'jsdom',
     include: ['src/**/*.test.{ts,tsx}'],
+    // Vitest blanks every CSS import by default, `?raw` included; the token file is
+    // read raw by ui/badge.test.tsx (each identity hue compiled against the real theme).
+    css: { include: [/theme\.css/] },
   },
 }))

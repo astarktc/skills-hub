@@ -16,7 +16,7 @@ const DropdownMenuGroup = MenuPrimitive.Group;
 const DropdownMenuRadioGroup = MenuPrimitive.RadioGroup;
 
 // The highlight ground (`accent` on `popover`) is only ~1.1:1, so it is never
-// the keyboard cue on its own: the inset ring (≥ 5.04:1) marks the item that
+// the keyboard cue on its own: the inset ring (≥ 4.72:1) marks the item that
 // holds keyboard focus.
 const itemBase = [
   "relative flex h-8 cursor-default items-center gap-2 rounded-sm px-2 text-sm text-foreground select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50",

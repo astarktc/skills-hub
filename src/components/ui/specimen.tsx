@@ -7,7 +7,9 @@
  * Strings here are specimen labels, not product copy (never shipped).
  */
 import { useState } from "react";
+import { Layers } from "lucide-react";
 import { toast } from "sonner";
+import { identityHue, identityInitials } from "@/lib/skillPresentation";
 import { Badge, Chip } from "./badge";
 import { Button } from "./button";
 import { Checkbox } from "./checkbox";
@@ -43,13 +45,16 @@ import { Segmented, SegmentedItem } from "./segmented";
 import { Toaster } from "./sonner";
 import { Switch } from "./switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./tabs";
+import { IDENTITY_HUES } from "./styles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
 
 const variants = ["solid", "outline", "ghost"] as const;
 const tones = ["neutral", "accent", "ok", "stale", "danger"] as const;
 const badgeVariants = ["soft", "outline", "solid"] as const;
 const badgeTones = ["neutral", "accent", "ok", "stale", "failed"] as const;
-const surfaces = ["bg-background", "bg-card", "bg-popover", "bg-raised"] as const;
+const surfaces = ["bg-background", "bg-card", "bg-popover", "bg-raised", "bg-row"] as const;
+/** Real owners through the real fold (anthropics → teal AN, vercel-labs → sky VL). */
+const owners = ["anthropics", "vercel-labs", "obra", "mattpocock"] as const;
 
 function Row({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-wrap items-center gap-2">{children}</div>;
@@ -105,6 +110,27 @@ function Surface({ surface }: { surface: (typeof surfaces)[number] }) {
           </Badge>
         </Row>
       ))}
+      <Row>
+        {IDENTITY_HUES.map((hue) => (
+          <Badge key={hue} tone="identity" hue={hue} title={hue} data-specimen={`badge-identity-${hue}`}>
+            {hue.slice(0, 2).toUpperCase()}
+          </Badge>
+        ))}
+        {owners.map((owner) => (
+          <span key={owner} className="flex items-center gap-1.5 text-sm text-foreground">
+            <Badge tone="identity" hue={identityHue(owner)} aria-hidden="true">
+              {identityInitials(owner)}
+            </Badge>
+            {owner}
+          </span>
+        ))}
+        <span className="flex items-center gap-1.5 text-sm text-foreground">
+          <Badge size="chip" aria-hidden="true">
+            <Layers />
+          </Badge>
+          Individual sources
+        </span>
+      </Row>
       <Row>
         <Chip pressed={chip} onPressedChange={setChip}>
           Issues

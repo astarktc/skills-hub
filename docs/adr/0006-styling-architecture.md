@@ -56,6 +56,10 @@ shape**. The round-19 world ticket fixes the values, taking them from the direct
     `ring`, `sidebar-*`, each with `-foreground` where it applies.
   - The **world extension** adds only what the direction contract names and shadcn lacks: `raised` (third surface
     level), `border-strong`, `faint` (third text level), and the three state colours `ok`, `stale`, `failed`.
+    *Amended 2026-11-02 (round-19 ticket 30, D43):* `row` (the skill-row ground, near-black in dark) and seven
+    `identity-<hue>` tint/text pairs for the source chip, keyed on the repo owner and never on state — one meaning
+    (identity), drawn only by `Badge tone="identity"`, so still no palette tier. `stale` is re-valued to an amber.
+    The type scale gains `2xs` (10.5 px) for bold initials marks only.
   - `primary` is the iris accent, used only for selection, focus and the one primary action.
   - Non-colour tokens: radius (4/6/10), type scale (12/13/14/16), row height (36), and motion durations and easings.
     Spacing keeps Tailwind's 4px base.

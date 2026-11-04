@@ -6,7 +6,7 @@
 /**
  * The focus ring: a 2 px iris outline offset from the control, shown on
  * keyboard focus only, with no transition (the ring never animates in).
- * `--ring` measures ≥ 5.04:1 against every surface in both themes (DESIGN.md;
+ * `--ring` measures ≥ 4.72:1 against every surface in both themes (DESIGN.md;
  * the floor is light `raised`).
  *
  * `focus-visible:outline-solid` is load-bearing. Tailwind 4's `outline-none`
@@ -74,6 +74,31 @@ export const softGround = {
   stale: "bg-[color-mix(in_oklab,var(--stale)_10%,var(--popover))]",
   failed: "bg-[color-mix(in_oklab,var(--failed)_10%,var(--popover))]",
 } as const;
+
+/**
+ * The identity hues (ticket 30): the one list the Badge's `hue` prop and the
+ * presentation fold (`skillPresentation.identityHue`, which indexes it) agree
+ * on. **The order is a compatibility contract**: the fold maps an owner's hash
+ * onto this index, so reordering re-colours every source. Pure data, so a
+ * `lib/` fold may import it.
+ */
+export const IDENTITY_HUES = ["moss", "teal", "cyan", "sky", "orchid", "rose", "slate"] as const;
+export type IdentityHue = (typeof IDENTITY_HUES)[number];
+
+/**
+ * An identity chip's ground and text: the hue's tint with the hue's
+ * foreground on it (every pair measures "fg on tint" in DESIGN.md § Badge).
+ * Literal strings so Tailwind generates them.
+ */
+export const identityGround: Record<IdentityHue, string> = {
+  moss: "bg-identity-moss text-identity-moss-foreground",
+  teal: "bg-identity-teal text-identity-teal-foreground",
+  cyan: "bg-identity-cyan text-identity-cyan-foreground",
+  sky: "bg-identity-sky text-identity-sky-foreground",
+  orchid: "bg-identity-orchid text-identity-orchid-foreground",
+  rose: "bg-identity-rose text-identity-rose-foreground",
+  slate: "bg-identity-slate text-identity-slate-foreground",
+};
 
 /**
  * The same grounds on hover — never on a held (aria-disabled) control, which

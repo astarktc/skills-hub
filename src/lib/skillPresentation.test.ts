@@ -7,7 +7,10 @@ import {
   skillHealth,
   skillSourceLine,
   filterAndSortSkills,
+  fnv1a32,
   formatRelativeTime,
+  identityHue,
+  identityInitials,
   groupSkillsByRepo,
   groupState,
   importedSourceLine,
@@ -910,5 +913,31 @@ describe("My Skills folds (ticket 11)", () => {
     it("a group's state counts by loudest severity, and Deploy all acts on the undeployed", () => {
       expect(groupState(library)).toEqual({ failed: 1, stale: 2, notDeployed: 1, disabled: 1, deployable: 2 });
     });
+  });
+});
+
+describe("identity (ticket 30)", () => {
+  // The NOTES table of the colour prototype (round19/prototypes/30-colour):
+  // the hash, its index into IDENTITY_HUES and the hue are a compatibility
+  // contract — a change re-colours every source the operator knows.
+  it.each([
+    ["anthropics", 2569612480, "teal"],
+    ["vercel-labs", 703213605, "sky"],
+    ["obra", 3167613737, "teal"],
+    ["mattpocock", 3169730402, "slate"],
+  ] as const)("%s hashes to %d and lands on %s", (owner, hash, hue) => {
+    expect(fnv1a32(owner)).toBe(hash);
+    expect(identityHue(owner)).toBe(hue);
+  });
+
+  it("keys the hue on the owner case-insensitively", () => {
+    expect(identityHue("Vercel-Labs")).toBe(identityHue("vercel-labs"));
+  });
+
+  it("takes the first letters of the first two -_. parts, else the first two letters", () => {
+    expect(identityInitials("vercel-labs")).toBe("VL");
+    expect(identityInitials("anthropics")).toBe("AN");
+    expect(identityInitials("my_org.tools")).toBe("MO");
+    expect(identityInitials("x")).toBe("X");
   });
 });
