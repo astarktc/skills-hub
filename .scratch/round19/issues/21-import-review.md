@@ -1,6 +1,6 @@
 # 21 — Import review: unchecked conflicts and managed names, Replace/Leave, remove-originals checkbox, counts, variant details, Tool labels, first-run empty state
 
-Status: ready-for-agent
+Status: done — e6be057
 Blocked by: 05, 19
 Spec: `.scratch/round19/spec.md` — D13, D14 (grill Q11, Q12); absorbs BACKLOG **#46**'s UI half. Sources: `flows.md`
 Flow 3; `critique-astra` F08; `critique-opus` P1-5; `audit.md` Import rows. Phase 19b.

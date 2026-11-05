@@ -282,7 +282,7 @@ Order is dependency order; `Blocked by` is the edge list. Every surface ticket c
 | # | Title | Blocked by | Kind |
 |---|---|---|---|
 | 20 | **Settings panes**; Configure Tools → Settings → Tools; theme radio group; named header controls (D24) | 19 | surface |
-| 21 | **Import review**: unchecked conflicts / managed names, Replace/Leave, remove-originals checkbox, counts, variant details, Tool labels, first-run empty state (D13, D14) | 05 19 | surface |
+| 21 | **Import review**: unchecked conflicts / managed names, Replace/Leave, remove-originals checkbox, counts, variant details, Tool labels, first-run empty state (D13, D14) | 05 19 | surface — done e6be057 |
 | 22 | **Explore rows**: Not-in-library filter, Preview primary, scope summary, installed → inspector, contrast + search label (D25) | 19 | surface — done a2a09bd + 37c8999 |
 | 23 | **⌘K palette** on the surface module and the action door; `cmdk` vs Base UI Combobox decided here | 19 | surface — done 359bb3b + 13a677b |
 | 24 | **Card-grid view mode** designed inside the world (same selection, strip, marks; no clipped labels) | 19 | surface |
