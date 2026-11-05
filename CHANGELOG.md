@@ -4,8 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [1.3.2] - Unreleased
 
-A patch: four fixes from the 1.3.1 field report, two more Windows fixes the new Windows test run found, and a CI
-job that runs the Rust suite on Windows. The harness-registry corrections and the four new harnesses announced in
+A patch: four fixes from the 1.3.1 field report, three more fixes the new Windows test run found, and a CI job that
+runs the Rust suite on Windows. The harness-registry corrections and the four new harnesses announced in
 1.3.1 as "held for 1.3.2" move to a later release: ticket 34's registry work is being rebuilt from `main`.
 
 ### Fixed
@@ -14,8 +14,9 @@ job that runs the Rust suite on Windows. The harness-registry corrections and th
   folder (Augment's `~/.augment/rules`) by comparing paths as written, so a skills folder that is a symlink or other
   directory alias could make it delete Library skill files. It returns with the relocation redesign; nothing else
   changes at launch.
-- **A run whose toast reports a failure stays on screen until you close it** ("12 updated · 5 failed"); skipped,
-  to-review and declined results still fade after a few seconds. The Notifications panel keeps every run as before.
+- **A run whose toast reports a failure stays on screen until you close it** ("12 updated · 5 failed") or the next
+  run's toast replaces it: a run's toast always replaces the previous run's, so old results never pile up. Skipped and
+  to-review results still fade after 5 s, declined ones after 2 s. The Notifications panel keeps every run as before.
 - **"Deploy all skills" in the New harnesses dialog deploys**, whether Auto-deploy is on or off. Auto-deploy governs
   only a new skill's arrival; an explicit Deploy always deploys. Before, with Auto-deploy off, it only selected the new
   harnesses.
@@ -27,17 +28,33 @@ job that runs the Rust suite on Windows. The harness-registry corrections and th
   is now removed as itself; the Library copy it points at is never touched.
 - **Windows: picking one skill in a repository with several works** (Add, Re-point): discovered folders were named
   with `\` and then refused as outside the repository; they are named with `/` on every platform.
+- **A skill from a git clone keeps the line endings its repository commits.** A clone followed the computer's git
+  configuration: with `core.autocrlf=true` (Git for Windows' default) every text file of a skill — scripts included —
+  landed with CRLF line endings, so the same skill fetched by clone and by the GitHub download differed in bytes and
+  content identity, and an Update could rewrite deployed copies just because it fetched the other way. The app's own
+  checkouts now use `core.autocrlf=false` and `core.eol=lf`, through both the git command line and the built-in git;
+  clones already in the git cache from an earlier version are cloned again once (the Library itself is not rewritten
+  by the upgrade). A repository's own `.gitattributes` (`eol=crlf`, filters) still applies.
 
 ### Internal
 
-- CI runs clippy and `cargo test` on `windows-latest` too (five clone-byte tests excluded there: Git for Windows'
-  default `core.autocrlf=true` checks a clone out with CRLF line endings — the app's clone path does the same today;
-  and the eight-writer SQLite contention test, which outlasts the 5 s busy timeout on the hosted runner's disk).
-  The Windows test binaries load now: the app manifest (Common Controls v6) is embedded by the linker into every
-  artifact instead of as a bins-only resource. New Windows-only tests force the junction leg of the deploy fallback
-  (symlink → junction → copy) — the mode non-elevated Windows installs record — and prove a junction target reads the
-  Library skill's files, counts as present, and is removed (Delete and Disable settlements, and overwrite replacement)
-  without touching the Library copy, and that content identity reads through it as through a symlink.
+- CI runs clippy and `cargo test` on `windows-latest` too, every test but the eight-writer SQLite contention test
+  (see Known limitations). The Windows test binaries load now: the app manifest (Common Controls v6) is embedded by
+  the linker into every artifact instead of as a bins-only resource. New Windows-only tests force the junction leg of
+  the deploy fallback (symlink → junction → copy) — the mode non-elevated Windows installs record — and prove a
+  junction target reads the Library skill's files, counts as present, and is removed (Delete and Disable settlements,
+  and overwrite replacement) without touching the Library copy, and that content identity reads through it as through
+  a symlink; file symlinks and dangling directory and file symlinks are removed as themselves too.
+- The git checkout policy is tested under an ambient `core.autocrlf=true` on every platform (child test processes):
+  both git transports, a nested sparse checkout, in-place updates, a pre-policy cache entry, and the whole acquisition
+  suite.
+
+### Known limitations
+
+- **Windows: many concurrent database writes can time out on a slow disk.** The SQLite contention test (eight writers
+  × 50 rounds) fails with "database is locked" past the 5 s busy timeout on GitHub's hosted Windows runner, even run
+  alone; it passes on a Windows 11 PC. Whether Refresh's four workers can hit it on a slow disk is not yet measured.
+  The test is excluded from the Windows CI job until the database's write admission is fixed.
 
 ## [1.3.1] - 2026-11-04
 
