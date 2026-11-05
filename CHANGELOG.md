@@ -20,6 +20,10 @@ runs the Rust suite on Windows. The harness-registry corrections and the four ne
 - **"Deploy all skills" in the New harnesses dialog deploys**, whether Auto-deploy is on or off. Auto-deploy governs
   only a new skill's arrival; an explicit Deploy always deploys. Before, with Auto-deploy off, it only selected the new
   harnesses.
+- **Windows: in-app updates work.** Every release up to 1.3.2's first build shipped an update feed (`updater.json`)
+  without Windows in it, so Settings → Updates → Check on Windows failed ("None of the fallback platforms
+  `windows-x86_64-nsis`, `windows-x86_64` were found"). The Windows installers are now signed for the updater and listed
+  for x64 and Arm; from 1.3.2 on, a Windows install updates itself like macOS and Linux.
 - **Windows: no console windows flash when git runs** (Install from Explore, Add from a repository, Update): every
   `git` the app starts runs without a window.
 - **Windows: removing a linked deployment works.** A deployment Windows made as a junction (the usual case without

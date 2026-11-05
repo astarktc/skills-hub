@@ -5,7 +5,7 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#106**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#107**.
 
 Round 19 closed 2026-11-05 (`archive/round19/spec.md` § Closure — 2026-11-05); every line it carried was re-derived from
 the code that day (`archive/round19/closure/extract-{A..G}.md`). The next effort is **round 20**: candidates #92 (first),
@@ -166,6 +166,11 @@ code before scheduling.)
 - **#105 `derive_name_from_repo_url` splits only on `/`.** A Windows-style `file://C:\…` URL makes the derived skill name an
   absolute path (seen only through a test fixture in 1.3.2's Windows work). Guard it: split on both separators, or
   refuse a name that is not a plain leaf. Source: 1.3.2 implementer report, 2026-11-05.
+- **#106 An update-check failure shows the updater plugin's raw English.** Settings → Updates printed "None of the
+  fallback platforms `["windows-x86_64-nsis", "windows-x86_64"]` were found in the response `platforms` object" (operator,
+  Windows, 2026-11-05 — the feed lacked Windows; fixed in the release workflow). `useAppUpdate`'s check shows the
+  rejection text as-is; give it one copy line ("Couldn't check for updates — download the latest release from GitHub",
+  with the link) and keep the raw text as detail. Source: operator screenshot, 2026-11-05.
 - **#87 Project-scope relocation for corrected harness dirs.** Blocked by #88: `main` still has Kilo global *and*
   project `.kilocode/skills` (`tool_adapters/mod.rs:636, :639`) and Xum both `.mux/skills` (`:480, :483`) — ticket 34
   never merged. When #88 corrects the global dirs, the project dirs still need a project relocation pass (per project,
