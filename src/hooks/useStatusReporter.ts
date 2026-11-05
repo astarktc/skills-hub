@@ -40,7 +40,8 @@ export type ActionErrorEntry = {
 /**
  * The single owner of toast lifetime: errors stay until closed, and so does
  * a run's toast whose fold settled with a failure (`persist`, the `failure`
- * tone — its kind stays `warning`, so it keeps the warning look); warnings
+ * tone — its kind stays `warning`, so it keeps the warning look) until it is
+ * closed or the next run's toast replaces it (`runToastRef`); warnings
  * allow 5 s of reading time; success/info briefly confirm for 2 s. Sonner
  * pauses finite timers while the toaster is hovered/interacting or the
  * document is hidden, so these are not wall-clock deadlines. Errors and
@@ -66,8 +67,16 @@ const REFUSAL_TOAST_ID = "lifecycle-refusal";
 /** A toast's optional parts: its action, a shared id, and `persist` (stay until closed). */
 type ToastExtras = { action?: NotificationAction; id?: string; persist?: boolean };
 
-/** The one place the toast library is called. */
-function showToast(kind: NotificationKind, title: string, message?: string, extras: ToastExtras = {}) {
+/** The toast library's handle on one toast. */
+type ToastId = string | number;
+
+/** The one place the toast library is called. Answers the shown toast's id. */
+function showToast(
+  kind: NotificationKind,
+  title: string,
+  message?: string,
+  extras: ToastExtras = {},
+): ToastId {
   const { action, id, persist } = extras;
   const options = {
     description: message,
@@ -78,17 +87,13 @@ function showToast(kind: NotificationKind, title: string, message?: string, extr
   switch (kind) {
     case "error":
       // An infinite toast needs an explicit way off the screen.
-      toast.error(title, { ...options, closeButton: true });
-      break;
+      return toast.error(title, { ...options, closeButton: true });
     case "warning":
-      toast.warning(title, { ...options, closeButton: true });
-      break;
+      return toast.warning(title, { ...options, closeButton: true });
     case "success":
-      toast.success(title, options);
-      break;
+      return toast.success(title, options);
     case "info":
-      toast.info(title, options);
-      break;
+      return toast.info(title, options);
   }
 }
 
@@ -491,14 +496,25 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
     deferredToastRef.current = null;
     deferred.show();
   });
-  /** The one toast call site: nothing is toasted while the panel is open. */
+  /**
+   * The one toast call site: nothing is toasted while the panel is open.
+   * Answers the shown toast's id (`undefined` when the panel held it back).
+   */
   const toastUnlessPanel = useCallback(
-    (kind: NotificationKind, title: string, message?: string, extras?: ToastExtras) => {
-      if (panelOpenRef.current) return;
-      showToast(kind, title, message, extras);
+    (kind: NotificationKind, title: string, message?: string, extras?: ToastExtras): ToastId | undefined => {
+      if (panelOpenRef.current) return undefined;
+      return showToast(kind, title, message, extras);
     },
     [],
   );
+  /**
+   * The run channel's one toast on screen: a run's headline replaces the
+   * previous run's (dismissed, never merged into, so no earlier "View
+   * report" survives on a newer headline). Each run keeps its own history
+   * block; only the screen holds one. Other toasts (errors, refusals) are
+   * not this channel's.
+   */
+  const runToastRef = useRef<ToastId | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   // The one-shot completion trigger. Public callers set a string (see
@@ -613,8 +629,8 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
         // ONE toast per run (D11): the headline — or, without one, the first
         // entry's title ("+N more") — and "View report" when there is more
         // to read than the toast says. Toned by the fold; a failure-toned
-        // headline stays until dismissed (1.3.2) — skipped, conflict and
-        // declined keep their kind's timer.
+        // headline stays until dismissed or replaced by the next run's
+        // (1.3.2) — skipped, conflict and declined keep their kind's timer.
         const head = headline
           ? { kind: headline.kind, title: headline.message }
           : {
@@ -622,16 +638,14 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
               title: rows[0].title + (rows.length > 1 ? t("errors.moreCount", { count: rows.length - 1 }) : ""),
             };
         const more = rows.length > 0 || Boolean(headline?.detail);
-        const show = () =>
-          toastUnlessPanel(
-            head.kind,
-            head.title,
-            undefined,
-            {
+        const show = () => {
+          if (runToastRef.current !== null) toast.dismiss(runToastRef.current);
+          runToastRef.current =
+            toastUnlessPanel(head.kind, head.title, undefined, {
               action: more ? { label: t("runReport.viewReport"), onClick: () => openReport(runId) } : undefined,
               persist: headline?.tone === "failure",
-            },
-          );
+            }) ?? null;
+        };
         const dialog = handlers.resultShownIn;
         if (dialog && doorRef.current?.isOpen(dialog)) deferredToastRef.current = { dialog, show };
         else show();

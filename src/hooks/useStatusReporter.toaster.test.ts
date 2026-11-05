@@ -156,3 +156,56 @@ describe("View report hands focus from the toast to the panel (A1)", () => {
     expect(document.activeElement).toBe(m.initial);
   });
 });
+
+describe("the run channel keeps one toast on screen (1.3.2)", () => {
+  const run = (kind: "warning" | "success", message: string) => ({
+    toast: { kind, tone: kind === "warning" ? ("failure" as const) : ("success" as const), message },
+    errors: kind === "warning" ? [{ title: `${message}: alpha`, message: "offline" }] : [],
+    warnings: [],
+    notes: [],
+    completion: { reload: false, closeModal: false, conflict: false },
+  });
+
+  /** The toasts on screen: a dismissed one (`data-removed`, in its exit animation) has left. */
+  async function onScreen() {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    return [...document.querySelectorAll('[data-sonner-toast]:not([data-removed="true"])')].map((node) => ({
+      title: node.querySelector("[data-title]")?.textContent,
+      action: node.querySelector("[data-button]")?.textContent ?? null,
+    }));
+  }
+
+  it("failure → failure → success leaves only the success, without a stale View report", async () => {
+    const m = mount();
+    await act(async () => {
+      await m.hook.result.current.applyOutcome(run("warning", "run 1 failed"));
+    });
+    await act(async () => {
+      await m.hook.result.current.applyOutcome(run("warning", "run 2 failed"));
+    });
+    expect(await onScreen()).toEqual([{ title: "run 2 failed", action: "runReport.viewReport" }]);
+    await act(async () => {
+      await m.hook.result.current.applyOutcome(run("success", "run 3 ok"));
+    });
+    expect(await onScreen()).toEqual([{ title: "run 3 ok", action: null }]);
+    // The screen holds one toast; the history keeps every run.
+    expect(m.hook.result.current.notifications.filter((row) => row.role === "headline").map((row) => row.title)).toEqual([
+      "run 3 ok",
+      "run 2 failed",
+      "run 1 failed",
+    ]);
+  });
+
+  it("opening the Notifications panel takes a persistent failure toast off the screen", async () => {
+    const m = mount();
+    await act(async () => {
+      await m.hook.result.current.applyOutcome(run("warning", "run 1 failed"));
+    });
+    expect(await onScreen()).toHaveLength(1);
+    act(() => m.hook.result.current.openReport());
+    m.hook.rerender();
+    expect(await onScreen()).toEqual([]);
+  });
+});
