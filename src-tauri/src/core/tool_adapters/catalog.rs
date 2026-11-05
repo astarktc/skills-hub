@@ -21,14 +21,32 @@ pub struct ToolCatalogEntry {
     /// global dir for the global catalog, the project dir for the project
     /// catalog — in registry order, including the entry itself (len >= 1).
     ///
-    /// The dir itself is deliberately absent: it is absolute under the
-    /// operator's home at global scope but project-relative at project scope,
-    /// so one field could not carry both honestly, and no consumer needs the
-    /// path — only the grouping it induces.
+    /// The dir itself is not a field of the entry: it is home-relative at
+    /// global scope but project-relative at project scope, so one field could
+    /// not carry both honestly. The global catalog states it in `placement`
+    /// (for display); grouping always reads this list, never the path.
     pub shared_with: Vec<&'static str>,
     /// Display names of the constituent tools absorbed into this entry when
     /// it is a virtual group; empty for real tools.
     pub constituents: Vec<&'static str>,
+    /// Where this Tool lives on the operator's machine and how Skills Hub
+    /// deploys into it — the global catalog only (`None` in the project
+    /// catalog, whose dirs are project-relative and whose detection is a
+    /// group's union). Every path is relative to the operator's home.
+    pub placement: Option<GlobalPlacement>,
+}
+
+/// A global catalog entry's placement facts, straight from the registry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GlobalPlacement {
+    /// The global skills dir, relative to home (`.claude/skills`).
+    pub skills_dir: &'static str,
+    /// The dirs any one of whose presence marks the Tool installed, relative
+    /// to home, in registry order.
+    pub detect_dirs: &'static [&'static str],
+    /// The registry capability (`ToolAdapter::supports_symlink`): `true`
+    /// deploys a link (symlink → junction → copy fallback), `false` a copy.
+    pub supports_symlink: bool,
 }
 
 /// Global-scope catalog: every registry entry, grouped by shared global
@@ -52,6 +70,11 @@ pub fn global_tool_entries(home: &Path) -> Vec<ToolCatalogEntry> {
                 .map(ToolAdapter::key)
                 .collect(),
             constituents: vec![],
+            placement: Some(GlobalPlacement {
+                skills_dir: adapter.relative_skills_dir,
+                detect_dirs: adapter.relative_detect_dirs,
+                supports_symlink: adapter.supports_symlink,
+            }),
         })
         .collect()
 }
@@ -90,6 +113,7 @@ pub fn project_tool_entries(home: &Path) -> Vec<ToolCatalogEntry> {
                     .map(|a| a.key())
                     .collect(),
                 constituents,
+                placement: None,
             }
         })
         .collect()

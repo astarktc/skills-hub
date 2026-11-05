@@ -334,6 +334,15 @@ export type StatusReporter = {
    * `handOff` or `fail` exit → pending cleared, always. Resolves to the
    * body's value on completion, else `undefined`.
    */
+  /**
+   * Resolves once no action runs (at once when none does): `true`, or
+   * `false` when the reporter went away first. For an operator's answer that
+   * must follow a read the same gesture started — Settings → Harnesses saves
+   * the selection, which rescans the import plan, and its "Deploy now" (D48)
+   * waits for that scan instead of being refused by it. Nothing is queued:
+   * the caller's `runAction` still meets the one-at-a-time rule.
+   */
+  whenIdle: () => Promise<boolean>;
   runAction: <T>(
     opts: RunActionOptions<T>,
     fn: (action: ActionHandle) => Promise<T | ActionExit>,
@@ -774,6 +783,14 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
 
   const refusal = useMemo(() => refusalFor(pending), [pending]);
 
+  const whenIdle = useCallback(async () => {
+    while (pendingRef.current) {
+      await new Promise<void>((resolve) => idleWaitersRef.current.push(resolve));
+      if (disposedRef.current) return false;
+    }
+    return !disposedRef.current;
+  }, []);
+
   const refuseHeld = useCallback(
     (reason: string | null) => {
       // The ref, not render state: a click in the same tick as the action's
@@ -789,6 +806,7 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
     loading: pending !== null,
     refusal,
     actionMessage: pending?.cancelling ? t("lifecycle.cancelling") : actionMessage,
+    whenIdle,
     runAction,
     setActionMessage,
     reportProgress,

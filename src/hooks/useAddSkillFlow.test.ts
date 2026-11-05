@@ -224,6 +224,7 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
     loading: false,
     refusal: null,
     actionMessage: null,
+    whenIdle: vi.fn(async () => true),
     // vi.fn erases the generic; the spy still records calls.
     runAction: runAction as StatusReporter["runAction"],
     setActionMessage: vi.fn(),

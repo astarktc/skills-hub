@@ -2,6 +2,7 @@ import type { ManagedSkillDto as ManagedSkill } from "../bindings";
 import type { SurfaceState } from "../hooks/useSurfaceState";
 import { disableCounts, enableCounts, updateCounts } from "./bulkCounts";
 import { filterAndSortSkills, queryMatcher, repoInfo, type Translate } from "./skillPresentation";
+import { SETTINGS_FIELD_PANE, SETTINGS_PANES, type SettingsField, type SettingsPane } from "./settingsPanes";
 
 /**
  * The ⌘K palette's item fold (round-19 ticket 23): what the palette lists for
@@ -12,7 +13,8 @@ import { filterAndSortSkills, queryMatcher, repoInfo, type Translate } from "./s
  *
  * Reach (one entry each):
  * - every skill by name → focus it (the inspector opens);
- * - every area (My Skills · Explore · Projects), Settings and each Settings pane;
+ * - every area (My Skills · Explore · Projects), Settings and each Settings pane
+ *   (the dialog, D37), Keyboard shortcuts;
  * - every door verb on the **showing surface's selection** (D4), its count in
  *   the label — "Disable 3 selected on all harnesses…" — the same verbs as
  *   the bulk rail, refused for the same reasons (`bulkCounts`);
@@ -37,9 +39,6 @@ import { filterAndSortSkills, queryMatcher, repoInfo, type Translate } from "./s
 /** How many recently used entries the palette remembers (this session only). */
 export const RECENT_MAX = 5;
 
-/** The Settings panes the palette reaches today (ticket 20 adds the rest with its panes). */
-export const SETTINGS_PANES = ["github"] as const;
-export type SettingsPane = (typeof SETTINGS_PANES)[number];
 
 /** The door verbs the palette offers on a selection: the bulk rail's. */
 export const SELECTION_VERBS = ["syncToTargets", "assignToProject", "disable", "enable", "update", "delete"] as const;
@@ -52,6 +51,7 @@ export type PaletteIntent =
   | { kind: "skill"; skillId: string }
   | { kind: "area"; area: PaletteArea }
   | { kind: "settings"; pane: SettingsPane | null }
+  | { kind: "shortcuts" }
   | { kind: "selection"; verb: SelectionVerb; skillIds: readonly string[] }
   | { kind: "updateAll" }
   | { kind: "disableAll" }
@@ -185,13 +185,21 @@ function placeEntries(t: Translate): PaletteEntry[] {
     ...SETTINGS_PANES.map(
       (pane): PaletteEntry => ({
         id: `settings:${pane}`,
-        label: t("palette.settingsPane", { pane: t(`palette.panes.${pane}`) }),
-        keywords: t("palette.keywords.place"),
+        label: t("palette.settingsPane", { pane: t(`settingsDialog.panes.${pane}`) }),
+        keywords: `${t("palette.keywords.place")} ${t(`palette.keywords.panes.${pane}`)}`,
         hint: null,
         refusal: null,
         intent: { kind: "settings", pane },
       }),
     ),
+    {
+      id: "place:shortcuts",
+      label: t("shell.shortcuts"),
+      keywords: t("palette.keywords.shortcuts"),
+      hint: null,
+      refusal: null,
+      intent: { kind: "shortcuts" },
+    },
   ];
 }
 
@@ -242,16 +250,25 @@ export function rememberRecent(recent: readonly string[], id: string, max: numbe
 }
 
 /**
- * Settings, or one of its panes — the **one** route every "Settings → …"
- * palette entry takes. Today Settings is an area (`#/settings/<pane>`);
- * ticket 20 makes it a dialog (D37) and retargets this function alone.
+ * Settings, on one of its panes — the **one** route every way into Settings
+ * takes (the sidebar item, the palette, My Skills' Configure harnesses, the
+ * Notifications panel's "Open Settings → GitHub"). Settings is a dialog
+ * (D37): it opens as the only dialog, on `pane` (General when none is
+ * named), or on the pane a `field` lives on with that control focused. The
+ * pane is dialog state and never reaches the hash.
  */
 export function openSettingsPane(
-  surface: Pick<SurfaceState, "open" | "focus">,
+  surface: Pick<SurfaceState, "openDialog">,
   pane: SettingsPane | null,
+  field?: SettingsField,
 ): void {
-  if (pane) surface.focus({ kind: "settings", pane });
-  else surface.open("settings");
+  if (field) surface.openDialog({ kind: "settings", pane: SETTINGS_FIELD_PANE[field], field });
+  else surface.openDialog({ kind: "settings", pane: pane ?? "general" });
+}
+
+/** Keyboard shortcuts (the Settings frame, D37) — the one route from the sidebar and the palette. */
+export function openKeyboardShortcuts(surface: Pick<SurfaceState, "openDialog">): void {
+  surface.openDialog({ kind: "shortcuts", pane: "general" });
 }
 
 /** The modifier keys a chord reads; a subset of `KeyboardEvent`. */

@@ -41,6 +41,7 @@ import {
   Select,
 } from "./field";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "./popover";
+import { RadioGroup, RadioGroupItem } from "./radio-group";
 import { Segmented, SegmentedItem } from "./segmented";
 import { Toaster } from "./sonner";
 import { Switch } from "./switch";
@@ -64,6 +65,7 @@ function Surface({ surface }: { surface: (typeof surfaces)[number] }) {
   const [checked, setChecked] = useState(true);
   const [on, setOn] = useState(true);
   const [view, setView] = useState("grouped");
+  const [theme, setTheme] = useState("system");
   const [chip, setChip] = useState(true);
   return (
     <section
@@ -171,6 +173,22 @@ function Surface({ surface }: { surface: (typeof surfaces)[number] }) {
           panel
         </TabsContent>
       </Tabs>
+      <div className="flex h-28 w-96 rounded-md border border-border bg-popover">
+        <Tabs variant="pane" defaultValue="a" className="flex-1">
+          <TabsList aria-label="Panes">
+            <TabsTrigger value="a">Selected</TabsTrigger>
+            <TabsTrigger value="b">Other</TabsTrigger>
+          </TabsList>
+          <TabsContent value="a">
+            <span className="p-3 text-sm text-muted-foreground">pane</span>
+          </TabsContent>
+        </Tabs>
+      </div>
+      <RadioGroup aria-label="Theme" value={theme} onValueChange={setTheme}>
+        <RadioGroupItem value="system">System</RadioGroupItem>
+        <RadioGroupItem value="light">Light</RadioGroupItem>
+        <RadioGroupItem value="dark">Dark</RadioGroupItem>
+      </RadioGroup>
       <div className="grid max-w-3xl grid-cols-3 gap-3">
         <Field>
           <FieldLabel>Label</FieldLabel>

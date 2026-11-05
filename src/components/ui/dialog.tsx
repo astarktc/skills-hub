@@ -142,6 +142,12 @@ const sizeClass = {
   md: "w-[min(520px,calc(100vw-48px))]",
   lg: "w-[min(600px,calc(100vw-48px))]",
   xl: "w-[min(720px,calc(100vw-48px))]",
+  /**
+   * The pane frame (Settings, Keyboard shortcuts; D37 / D50): a fixed
+   * 880 × 640 box capped at 90 vw / 85 vh, so switching panes never resizes
+   * it — its panes scroll inside. Not resizable.
+   */
+  settings: "h-[min(640px,85vh)] w-[min(880px,90vw)]",
 } as const;
 
 /**
@@ -165,7 +171,11 @@ type DialogContentProps = Omit<
   DialogPrimitive.Popup.Props,
   "className" | "render" | "finalFocus"
 > & {
-  /** Popup width: sm 400 · md 520 · lg 600 · xl 720 (capped at viewport − 48). Centre and top only. */
+  /**
+   * Popup width: sm 400 · md 520 · lg 600 · xl 720 (capped at viewport − 48);
+   * `settings` is the fixed pane frame, 880 × 640 capped at 90 vw / 85 vh.
+   * Centre and top only.
+   */
   size?: keyof typeof sizeClass;
   /** `center` (default), `top` (pinned near the top edge) or `sheet` (full height, right edge; see `placementClass`). */
   placement?: keyof typeof placementClass;

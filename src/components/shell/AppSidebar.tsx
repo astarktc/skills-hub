@@ -11,7 +11,6 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import type { Area } from "../../hooks/useSurfaceState";
 import type { AppUpdate } from "../../hooks/useAppUpdate";
 
@@ -20,8 +19,11 @@ type ThemePreference = "system" | "light" | "dark";
 type AppSidebarProps = {
   /** The area showing (surface state); `aria-current` marks it. */
   activeArea: Area;
-  onViewChange: (area: Exclude<Area, "settings">) => void;
+  onViewChange: (area: Area) => void;
+  /** Settings is a dialog (D37), opened on General. */
   onOpenSettings: () => void;
+  /** Keyboard shortcuts, in the Settings frame (D37). */
+  onOpenShortcuts: () => void;
   /** Errors and warnings not yet seen in the notification panel. */
   unreadNotifications: number;
   onOpenNotifications: () => void;
@@ -58,12 +60,15 @@ function NavItem({
   icon,
   label,
   current,
+  opensDialog = false,
   onClick,
   children,
 }: {
   icon: ReactNode;
   label: string;
   current: boolean;
+  /** The item opens a dialog (Settings, Keyboard shortcuts), not an area. */
+  opensDialog?: boolean;
   onClick: () => void;
   children?: ReactNode;
 }) {
@@ -72,6 +77,7 @@ function NavItem({
       type="button"
       className={itemClass}
       aria-current={current ? "page" : undefined}
+      aria-haspopup={opensDialog ? "dialog" : undefined}
       title={label}
       onClick={onClick}
     >
@@ -91,12 +97,14 @@ const THEME_ICON: Record<ThemePreference, ReactNode> = {
 /**
  * The app shell's sidebar (200 px; an icon rail below the shell
  * breakpoint): the three areas, then — at the foot — notifications, theme,
- * keyboard shortcuts and Settings. Every control is named.
+ * keyboard shortcuts and Settings (the last two open dialogs, D37). Every
+ * control is named.
  */
 const AppSidebar = ({
   activeArea,
   onViewChange,
   onOpenSettings,
+  onOpenShortcuts,
   unreadNotifications,
   onOpenNotifications,
   themePreference,
@@ -115,17 +123,6 @@ const AppSidebar = ({
       : update.status === "installing"
         ? t("appUpdate.installing", { version: update.version })
         : t("appUpdate.available", { version: update.version });
-  // The palette's chord, then My Skills' keymap (`useSkillListKeymap`), in the order one uses it.
-  const shortcuts: [string, string][] = [
-    [t("palette.shortcutKey"), t("palette.shortcutOpen")],
-    ["/", t("shell.shortcutSearch")],
-    [t("bulk.shortcuts.jk"), t("bulk.shortcuts.move")],
-    [t("shell.shortcutEnter"), t("shell.shortcutOpen")],
-    [t("bulk.shortcuts.x"), t("bulk.shortcuts.select")],
-    [t("bulk.shortcuts.shiftClick"), t("bulk.shortcuts.range")],
-    [t("bulk.shortcuts.modA"), t("bulk.shortcuts.selectAll")],
-    [t("shell.shortcutEscape"), t("bulk.shortcuts.clear")],
-  ];
   return (
     <aside className="flex w-50 shrink-0 flex-col border-r border-sidebar-border bg-sidebar max-shell:w-14">
       <div className="flex h-12 shrink-0 items-center gap-2 px-4 max-shell:justify-center max-shell:px-0">
@@ -215,34 +212,19 @@ const AppSidebar = ({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <Popover>
-          <PopoverTrigger
-            render={<button type="button" className={itemClass} title={t("shell.shortcuts")} />}
-          >
-            <Keyboard aria-hidden="true" />
-            <span className={labelClass}>{t("shell.shortcuts")}</span>
-          </PopoverTrigger>
-          <PopoverContent side="right" align="end">
-            <PopoverTitle>{t("shell.shortcuts")}</PopoverTitle>
-            <dl className="m-0 grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1.5">
-              {shortcuts.map(([key, action]) => (
-                <div key={action} className="contents">
-                  <dt>
-                    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded-sm border border-border-strong px-1 font-mono text-xs text-foreground">
-                      {key}
-                    </kbd>
-                  </dt>
-                  <dd className="m-0 text-sm text-muted-foreground">{action}</dd>
-                </div>
-              ))}
-            </dl>
-          </PopoverContent>
-        </Popover>
+        <NavItem
+          icon={<Keyboard aria-hidden="true" />}
+          label={t("shell.shortcuts")}
+          current={false}
+          opensDialog
+          onClick={onOpenShortcuts}
+        />
 
         <NavItem
           icon={<Settings aria-hidden="true" />}
           label={t("settings")}
-          current={activeArea === "settings"}
+          current={false}
+          opensDialog
           onClick={onOpenSettings}
         />
       </div>

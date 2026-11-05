@@ -1512,8 +1512,8 @@ export type ToolInfoDto = {
 	 *  Keys of every listed tool sharing this tool's skills dir (global dir
 	 *  for the global list, project dir for the project list), in adapter
 	 *  order, including this tool itself (len >= 1). The backend owns the
-	 *  shared-dir invariant; the frontend only presents it. The dir itself is
-	 *  not on the wire — see `ToolCatalogEntry`.
+	 *  shared-dir invariant; the frontend only presents it, never re-deriving
+	 *  it from `placement.skills_dir` (see `ToolCatalogEntry`).
 	 */
 	shared_with: string[],
 	/**
@@ -1522,6 +1522,21 @@ export type ToolInfoDto = {
 	 *  tools. The backend owns group membership; the frontend only presents it.
 	 */
 	constituents: string[],
+	/**
+	 *  Where the tool lives and how it is deployed to — the global list only;
+	 *  `null` in the project list (see `ToolCatalogEntry::placement`).
+	 */
+	placement: ToolPlacementDto | null,
+};
+
+/**  A global tool's registry placement (the Settings → Harnesses row). */
+export type ToolPlacementDto = {
+	/**  The global skills dir, relative to the operator's home. */
+	skills_dir: string,
+	/**  The detect dirs (any one present marks the tool installed), relative to home. */
+	detect_dirs: string[],
+	/**  `true`: deployed as a link (symlink → junction → copy fallback); `false`: copied. */
+	supports_symlink: boolean,
 };
 
 export type ToolStatusDto = {

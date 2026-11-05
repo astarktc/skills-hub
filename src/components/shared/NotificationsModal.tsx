@@ -37,6 +37,8 @@ import {
   type RunGroup,
 } from "../../lib/notificationRuns";
 import { formatRelativeTime } from "../../lib/skillPresentation";
+import { openSettingsPane } from "../../lib/commandPalette";
+import { SETTINGS_FIELD_ID } from "../../lib/settingsPanes";
 
 type NotificationsModalProps = {
   open: boolean;
@@ -50,8 +52,8 @@ type NotificationsModalProps = {
   projectLabelById: Readonly<Record<string, string>>;
   /** The skill action door: Retry, Overwrite…, Change source…, Remove… */
   actions: Pick<SkillActions, "run">;
-  /** Surface state: Show (focus the skill) and Settings → GitHub. */
-  surface: Pick<SurfaceState, "focus">;
+  /** Surface state: Show (focus the skill) and Settings → GitHub (the Settings dialog, D37). */
+  surface: Pick<SurfaceState, "focus" | "openDialog">;
   /** Why a mutation cannot start now (D19), or null. */
   blockedReason: string | null;
   onRequestClose: () => void;
@@ -253,7 +255,9 @@ function ReportBody({
         );
         return;
       case "githubSettings":
-        leave("#settings-github-token", () => focus({ kind: "settings", pane: "github" }));
+        // Settings opens on Diagnostics with the token field focused; the
+        // panel leaves beneath it.
+        leave(`#${SETTINGS_FIELD_ID.githubToken}`, () => openSettingsPane(surface, null, "githubToken"));
         return;
       case "retry":
         void run("retry", [action.skillId], { tool: action.tool });

@@ -14,6 +14,8 @@
  * - **Sync to Tools**: skills × picked Tools, less the pairs already synced
  *   and the pairs a Disable gates (skipped as report data, never failed).
  * - **Update**: the skills Refresh can re-acquire; the rest are skipped.
+ * - **Deploy to a harness just turned on** (D48): the enabled, locatable skills
+ *   with no deployment there yet (`harnessArrivals`).
  * - **Delete**: the Tools and projects that carry each skill, the Edits that
  *   go with it, and whether Skills Hub's copy is the only one.
  */
@@ -143,6 +145,21 @@ export function syncCounts(skills: readonly ManagedSkill[], tools: readonly stri
   }
   const pairs = skills.length * tools.length;
   return { skills: skills.length, tools: tools.length, pairs, alreadySynced, disabled, added: pairs - alreadySynced - disabled };
+}
+
+/**
+ * The skills a harness just turned on would receive (D48's "Deploy your N
+ * skills to {harness} now?"): enabled (no skill-grain Disable), locatable
+ * (a central copy to deploy) and without a deployment there already — a pair
+ * Disable gates is skipped, a deployed or out-of-date one is not new. The ask
+ * states this count and the batch deploys exactly these skills.
+ */
+export function harnessArrivals(skills: readonly ManagedSkill[], tool: string): ManagedSkill[] {
+  return skills.filter((skill) => {
+    if (skill.disabled_at !== null || skill.unlocatable !== null) return false;
+    const target = skill.targets.find((row) => row.tool === tool);
+    return !target || !(target.status === "disabled" || target.status === "synced" || target.status === "stale");
+  });
 }
 
 export type UpdateCounts = {

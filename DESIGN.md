@@ -244,7 +244,8 @@ re-measured on ticket 35's `muted`, light on ticket 30's.
 (7.65 dark / 6.75 light), Conflict the `soft stale` Badge (8.94 / 4.94).
 
 Legacy identifying input boundaries (`.search-input`, `.input` in Add / Re-point, `.settings-input`,
-`.settings-select`, `.explore-search-input` — gone with ticket 22; Explore's search is the `Input` primitive) draw their edge in `input`, not the decorative `border` (ticket-07
+`.settings-select`, `.explore-search-input` — Explore's gone with ticket 22, Settings' with ticket 20; both are the
+`Input` / `Select` primitives now) draw their edge in `input`, not the decorative `border` (ticket-07
 review B2: they measured 1.33 / 1.25). Rendered edge against its outside ground, dark / light, 2026-09-29: Library
 search 3.90 / 3.78, Add `.input` 3.65 / 3.87, Settings select and input 3.90 / 3.78, Explore search 3.90 / 3.78;
 focused (the `accent-primary` iris edge) ≥ 6.61 / ≥ 5.71; disabled keeps the same edge. On ticket 30's light grounds
@@ -408,13 +409,35 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
     control stating no reason while nothing runs shows nothing. Like every toast, it yields to the open
     Notifications panel.
 
-### Tabs and Segmented (`tabs.tsx`, `segmented.tsx`)
+### Tabs, Segmented and RadioGroup (`tabs.tsx`, `segmented.tsx`, `radio-group.tsx`)
 
 - **Tabs** (`tablist` / `tab` / `tabpanel`, arrow keys) take `variant` on `TabsList`:
   - `line` (default): an iris underline marks the selected tab. Use it for switching sections.
   - `segmented`: a `raised` segment with an iris inset edge marks it. Use it for a compact switch of views.
+  - `pane` (ticket 20; set on `Tabs`, which it forces `orientation="vertical"`): the pane frame's vertical pane list
+    (Settings, Keyboard shortcuts). The list is a fixed 192 px column (`w-48`, `p-2`, a `border` hairline on its right,
+    scrolling on its own); each tab is 32 px, full width, start-aligned (icon + label), `muted-foreground` (7.65 dark /
+    8.36 light on `popover`), hover brightens the text; the selected tab takes the `raised` ground, `foreground` text
+    (15.29 / 14.33) and a **2 px iris bar on its leading edge** (`ring` on `raised` 6.14 / 4.72 — the ≥ 3:1 cue; the
+    ground alone is not) with an iris icon. **Activation follows focus** (`activateOnFocus`): ↑ / ↓ move between panes
+    and show each (Home / End, wrap); Tab leaves the list for the shown pane's first control, because a `pane` panel
+    with controls is `tabindex="-1"`. A pane with **no** focusable control — Keyboard shortcuts' lists, Updates while
+    a check or install runs (or outside the app) — sets `staticPane` on `TabsContent` (the frame's `PaneSpec.static`):
+    its panel is `tabindex="0"`, so Tab lands on the content rather than skipping to Close (WAI-ARIA makes a panel a
+    stop exactly when it holds no focusable content). The panel fills the rest and scrolls (`overflow-y-auto`); its
+    ring and the tab's are inset (`insetFocusRing`) so the scrolling columns cannot clip them. `tabs.test.tsx` pins
+    the vertical orientation, ↓ → next pane shown, and both panel `tabindex` values.
 - **Segmented** is a single choice among 2–5 options that does **not** switch panels (Grouped / Flat). It is a named
-  group of `aria-pressed` toggles that always has exactly one selection.
+  group of `aria-pressed` toggles that always has exactly one selection. A view switch, not a setting.
+- **RadioGroup** (ticket 20; Base UI Radio) is the same row of segments for a **saved setting** — the operator's
+  choice of one of 2–5 short options (Settings → Appearance's theme). `role="radiogroup"` named by `aria-label` /
+  `aria-labelledby`; each `RadioGroupItem` is a `role="radio"` with `aria-checked`, named by its content (icon +
+  word). One Tab stop (the checked radio); **arrow keys move and select**, and the choice applies at once. Checked:
+  `raised` ground, `foreground` text (15.29 / 14.33) and a 1 px iris inset edge (`ring` on `raised` 6.14 / 4.72, the
+  state cue); unchecked `muted-foreground` on `popover` (7.65 / 8.36). No `variant`, `tone` or `size` (32 px group,
+  24 px items, Segmented's measure). Pick Segmented for a view (`aria-pressed`), RadioGroup for a setting
+  (`aria-checked`): a screen reader then says what it is. `tabs.test.tsx` pins the roles, `aria-checked` and
+  arrow-selects; `focus-ring.test.tsx` its ring.
 
 ### Dialog and ConfirmDialog (`dialog.tsx`, `confirm-dialog.tsx`)
 
@@ -448,7 +471,10 @@ pressed it shows a `raised` ground, `foreground` text and an **iris edge**. The 
   first; answering `true` spends it (the inspector sheet collapses expanded Files) and the layer stays open.
 - **Name.** `<DialogTitle>` names the popup through `aria-labelledby`.
 - **Close.** The corner ✕ is 32 × 32 and named.
-- **Size.** `sm` 400 · `md` 520 (default) · `lg` 600 · `xl` 720, each capped at viewport − 48.
+- **Size.** `sm` 400 · `md` 520 (default) · `lg` 600 · `xl` 720, each capped at viewport − 48. `settings` (ticket 20,
+  D50) is the **pane frame**: a fixed 880 × 640 box capped at 90 vw / 85 vh (864 × 544 at the 960 × 640 minimum
+  window), not resizable, so switching panes never resizes it — the panes scroll inside. Settings and Keyboard
+  shortcuts use it, through `components/settings/PaneDialog.tsx` (§ Settings).
 - **Placement** (`DialogContent placement`): `center` (default) is the card above; `top` is the same card pinned
   12 vh from the top edge (`max-h` 76 vh, the same sizes) — for a popup whose content grows and shrinks as one
   types, so its input never moves (the ⌘K palette, ticket 23); `sheet` is a full-height panel on
@@ -729,8 +755,8 @@ Composed from the primitives and tokens only; no variant was added. Files: `comp
 `components/skills/{LibraryHeader,FilterBar,SkillsList,SkillRow,SyncedStrip,listColumns}.tsx`.
 
 - **Shell.** Sidebar 200 px on `card` (`sidebar` tokens): the areas My Skills · Explore · Projects, then at the
-  foot Notifications (unread count as a `solid accent` Badge) · Theme (a menu) · Keyboard shortcuts (a popover) ·
-  Settings. Items are 32 px; the current area has `aria-current="page"`, a `raised` ground and an iris icon
+  foot Notifications (unread count as a `solid accent` Badge) · Theme (a menu) · Keyboard shortcuts · Settings (the
+  last two open dialogs in the pane frame, `aria-haspopup="dialog"`, never `aria-current` — ticket 20). Items are 32 px; the current area has `aria-current="page"`, a `raised` ground and an iris icon
   (6.14 dark / 4.72 light on `raised`); hover is `sidebar-accent` (in dark the panel tone, a step below `raised` —
   ticket 35). In the icon rail every label stays in the accessibility tree (`sr-only`)
   and is the hover title.
@@ -1112,8 +1138,10 @@ dialog, so it never reaches the hash (D5).
   owns the keyboard: ⌘K does nothing while one is open. The inspector sheet is not a surface dialog, so the palette
   opens over it and Escape closes the palette alone.
 - **Reach.** Every skill by name (→ the inspector, focus on its heading; the sheet below 1200 px), every area
-  (Projects returns to the project the world holds, as the sidebar does), Settings and each pane it addresses today
-  (GitHub token) through **one** route, `openSettingsPane` (ticket 20 retargets it to the Settings dialog), every
+  (Projects returns to the project the world holds, as the sidebar does), Settings and each of its five panes
+  ("Settings → Harnesses"; each pane also found by what it holds — "github" finds Diagnostics, "theme" Appearance)
+  through **one** route, `openSettingsPane` (the Settings dialog, ticket 20), Keyboard shortcuts
+  (`openKeyboardShortcuts`), every
   door verb on the **showing surface's selection** with its count ("Disable 3 selected on all harnesses…" — the
   bulk rail's six verbs), Update all, Add skill…, Configure harnesses…, and the library-wide undeploy "Disable every
   skill on all harnesses…" (D8's select-all → Disable; "remove" finds it — Remove itself is Delete in this app).
@@ -1127,11 +1155,102 @@ dialog, so it never reaches the hash (D5).
   when that is gone) and only then runs the choice: a verb goes through `actions.run` without a confirming option, so
   the door opens the same count confirmation, harness pick or Delete dialog as the bulk rail, with the returned element
   as its opener — cancelling it returns focus there. A place moves focus to its heading (the area's `h1`, or the
-  main landmark) unless the place took focus itself (Settings → GitHub token focuses the token field).
+  main landmark) unless the place took focus itself; Settings and Keyboard shortcuts are dialogs and take it (the
+  shown pane's tab), so their focus returns to the palette's opener when they close.
 - **Refused** (D19): while something runs every verb and action stays listed, `aria-disabled` with the lifecycle's
   reason; places and skills never are. A verb that would change nothing says so (the rail's `bulkCounts` reasons).
 - **Not the matrix's keymap.** The palette's keys (↑ / ↓ / Enter / Esc) live inside its own popup; it defines
   no grid model, so the Projects matrix keeps its Tab walk (ticket 17 N1 — its spatial keymap is separate work).
+
+## Settings (ticket 20)
+
+Files: `components/settings/{PaneDialog,SettingsDialog,GeneralPane,HarnessesPane,AppearancePane,UpdatesPane,DiagnosticsPane,ShortcutsDialog,DeployHarnessAsk}.tsx`,
+the vocabulary in `lib/settingsPanes.ts`, D48's flow in `hooks/useHarnessSelection.ts`. Composed from primitives and
+tokens; two variants were added (Dialog `size="settings"`, Tabs `variant="pane"`) and one primitive (RadioGroup).
+
+- **A dialog, not an area (D37).** Settings is the surface module's `settings` dialog `{ pane, field? }` on the layer
+  stack, opened as the only dialog by **one** route, `openSettingsPane(surface, pane, field?)` (`lib/commandPalette.ts`):
+  the sidebar's Settings item (General), My Skills' **Configure harnesses** and the palette's "Configure harnesses…"
+  (Harnesses), the palette's "Settings → …" entries, and Notifications' **Open Settings → GitHub** (Diagnostics, the
+  token field focused — the panel leaves beneath it and hands it its return chain, so Escape returns to the bell).
+  Escape and the ✕ close it; focus returns to the opener (the layer stack; the frame stays mounted and toggles
+  `open`). A pane change is `updateDialog` — dialog state, **never `location.hash`**. `#/settings/<pane>` left the hash
+  contract: an old link (on load or typed) opens the dialog once on the pane it meant (`github` → Diagnostics + the
+  token field, `tools` → Harnesses, anything else → General) and the address is replaced with the route showing.
+- **The frame** (`PaneDialog`, D50): `Dialog size="settings"` (880 × 640, ≤ 90 vw / 85 vh, fixed), the title in the
+  header (`h2`, 48 px + hairline), the pane list on the left (`Tabs variant="pane"`: General · Harnesses ·
+  Appearance · Updates · Diagnostics, each with its Lucide icon), the shown pane on the right. The header and the
+  list never scroll; the pane does. While an action this dialog started runs (D48's deploy, its scan), the header
+  progress sits at the frame's foot (App's `progressInDialog`; the page copy yields).
+- **Pane anatomy.** `px-6 py-5`, 20 px between blocks. Heading `h3` (`base` semibold `foreground`, 17.71 / 17.76 on
+  `popover`) · what the pane holds (`sm muted`, 7.65 / 8.36) · how it saves (`xs faint`, 5.52 / 6.24). Settings sit
+  in groups (an optional `h4`, `xs` medium `faint`) of rows divided by `border` hairlines: label (`sm` medium
+  `foreground`) and helper (`xs muted`) on the left, the control on the right; a wide control (a path, the token)
+  goes under its label (`stacked`). Every control is labelled: Field wiring (`FieldLabel` ↔ control,
+  `FieldDescription` → `aria-describedby`), or `aria-labelledby` / `aria-describedby` for a Switch / RadioGroup.
+- **Saving, disclosed once per pane** ("Changes save as you make them."): Auto-deploy, zoom, the Library folder (on
+  a pick), both Git cache numbers (each change, clamped by the backend's bounds), every harness switch and the scan
+  scope **auto-save**; the GitHub token is the one **explicit Save** (Save token / Remove token; Diagnostics says so).
+  A harness switch or the scan scope saves as a **lifecycle action** ("Harness settings change", D19): admitted
+  before anything moves, it holds the slot, so while it runs every other harness switch, Remove from selection, the
+  scan checkbox and General's Auto-deploy / Browse… / Clean Now are held with the reason (`focusableWhenDisabled`);
+  settled, the pane shows what the backend echoed it saved, or — on failure — rolls back that one write and shows
+  the error. Nothing is queued.
+- **General:** Auto-deploy (Switch; it, Browse… and Clean Now are held with the lifecycle's reason while an action
+  runs) with D49's line on where it
+  acts — "When on, a skill you add or import is deployed to your selected harnesses. Deployments that already exist
+  are never changed by it." · Default zoom (`Select`) · Library folder (read-only `Input` + **Browse…** →
+  `pickFolder`) · group "Git cache": cleanup days (`Input` number) + **Clean Now**, freshness seconds.
+- **Harnesses** (D47; Configure harnesses retired here — the project world's own harness dialog stays, as
+  `projects/ProjectToolsModal.tsx`). Above the list: "Deploying to N of M harnesses · K detected on this computer"
+  (`sm foreground`), Auto-deploy's state where it acts (D49: "Auto-deploy is on: turning a harness on offers to deploy
+  your skills to it." / "…off: turning a harness on deploys nothing until you choose Deploy all.", `xs muted`, with a
+  `ghost accent sm` **Change in General**) and "Turning a harness off removes nothing: skills already deployed there
+  stay, and Update keeps them current." (true: a saved selection writes no target; Propagation ignores it). The list
+  (a `rounded-lg` bordered card, `divide-y`) has one 36 px row per Tool catalog entry — `ghost` disclosure button
+  (chevron, name; `aria-expanded` / `aria-controls`) · Badge **Detected** (`soft neutral`) / **Not detected**
+  (`outline neutral`; `soft stale` when it is selected — the one that needs a decision) · Switch `sm` "Deploy to
+  {harness}" (the saved global selection = the Effective target set; held while an action runs). "Show detected
+  harnesses only" (Checkbox, on by default) hides undetected rows **unless selected**. Expanded (`xs`, a `8rem / 1fr`
+  grid): Skills folder `~/…` (`font-mono`) with "Shared with …" when the dir is shared · Deploys as (the registry's
+  `supports_symlink`: a link, a copy where the system refuses links — or a copy) · Detected by `~/…`. A **selected but
+  undetected** harness explains itself — "Selected, but not detected on this computer: every deploy skips it, and the
+  Deployments strip shows it hollow. Remove it unless you are about to install it." — with **Remove from selection**
+  (`outline sm`); when that takes the row out of the list, focus moves to the next row (else the previous) first.
+  The placement facts are the backend's (`ToolInfoDto.placement`, global list only), never re-derived. Below, its own
+  group **Import scan**: "Only scan for existing skills within selected harnesses" (Checkbox) — "Which harness folders
+  Import reviews for skills that are already there. It deploys nothing."
+- **D48 — turning a harness on.** The switch saves the selection (`useSyncOrchestration.setHarnessSelected`; the
+  save rescans the import plan). With Auto-deploy **on**, for a harness the Tool catalog **detects** (an undetected
+  one is saved with no ask — every deploy would skip it; its row explains and offers Remove from selection), and with
+  skills to give it (`bulkCounts.harnessArrivals`: enabled, locatable, no deployment there yet; N ≥ 1) it asks once, a ConfirmDialog above Settings (the `deployHarness` ask): "Deploy
+  your N skills to {harness} now?" — **Deploy now** (`solid accent`, initial focus) / **Not now**. Deploy now waits
+  out the rescan (`reporter.whenIdle`) and runs one global batch of exactly those skills to that harness through the
+  door (`run("syncToTargets", skills, { tools: [harness], confirmed: true })`: the one overwrite ask, the header
+  progress at the frame's foot, one report). Not now, Escape or Auto-deploy off: nothing (hollow marks; Deploy all per
+  group). Turning a harness off never asks. Focus returns to the switch, which stays focused while the batch runs.
+  Only the harness's **latest** gesture asks or deploys: before the ask and again after the rescan, the gesture must
+  still be current, the saved selection must still include the harness, and Auto-deploy and detection must still
+  permit it — else it drops silently; turning the harness off withdraws its open ask. A refused gesture supersedes
+  nothing.
+- **Appearance:** Theme as a RadioGroup System · Light · Dark (icon + word), arrow keys move and select, applied at
+  once; the sidebar's Theme menu stays as the quick toggle over the same preference (operator 2026-11-04).
+- **Updates** (`useAppUpdate`, the module the sidebar item and `UpdateDialog` read): "Skills Hub v…" with the status
+  line (`role="status"`: Click "Check"… · Checking… · up to date · v… available · Installing… · installed — restart)
+  and **Check**; a found release adds its notes (rendered Markdown in a scrolling `.prose` box), **Download &
+  Install** (`solid accent`) and **Don't remind again** (stops the sidebar announcing it; it stays listed here).
+- **Diagnostics:** Version (`font-mono`) · App log **Open log folder** (the existing `open_log_folder` command) ·
+  Library folder read-only (General owns its picker — one editor per setting) · GitHub Token: password `Input`
+  (`#settings-github-token`, never prefilled) + **Save token** + **Remove token** (when one may be saved), presence
+  and the keychain assurance as its description.
+- **Keyboard.** Settings item → Enter: focus on the shown pane's tab · ↑ / ↓ walk the panes, each shown as it is
+  reached · Tab enters the pane's first control (a static pane — Keyboard shortcuts' two, Updates with no action — is
+  itself the stop) · Shift+Tab back to the list · Escape closes (a nested ask first) →
+  the opener. Recorded on the fixture (ticket 20 Result).
+- **Keyboard shortcuts** adopt the frame (D37): their own `shortcuts` dialog, the same `PaneDialog` — General (⌘K,
+  Esc, ↑ ↓ in the pane lists, ⌘ + / ⌘ −) · My Skills (the list keymap) — opened from the sidebar and the palette
+  (`openKeyboardShortcuts`), same focus and Escape rules. Keys are `kbd` chips (24 px, `border-strong`, `font-mono xs
+  foreground`), actions `sm muted`.
 
 ## Explore (ticket 22)
 

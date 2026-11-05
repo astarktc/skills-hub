@@ -33,7 +33,6 @@ export const resources = {
         refreshWarning: "{{name}}: upstream changed its invocation mode to {{upstream}}; your override ({{override}}) is kept.",
       },
       settings: "Settings",
-      themeMode: "Appearance",
       themeOptions: {
         system: "System",
         light: "Light",
@@ -87,9 +86,7 @@ export const resources = {
         "The keychain accepted the change, but Skills Hub could not read it back to confirm it. Unlock the keychain and allow Skills Hub access; on Linux, start your desktop's secret service and restart Skills Hub.",
       githubTokenSave: "Save token",
       githubTokenClear: "Remove token",
-      appUpdates: "App updates",
       updateHint: "Click “Check” to look for updates.",
-      diagnostics: "Diagnostics",
       openLogFolder: "Open log folder",
       openLogFolderHint:
         "The app log records what the backend did, including failures after their notification is gone.",
@@ -105,7 +102,6 @@ export const resources = {
       updateBannerText: "New version v{{version}} is available.",
       updateBannerDismiss: "Don't remind again",
       cleanNow: "Clean Now",
-      browse: "Browse",
       done: "Done",
       selectLocalFolder: "Select local folder",
       selectStoragePath: "Select the Library folder",
@@ -171,14 +167,10 @@ export const resources = {
       newToolsBody:
         "We detected newly installed harnesses: {{tools}}. Deploy your skills to the ones you have selected?",
       configureTools: "Configure harnesses",
-      globalToolConfigTitle: "Configure harnesses",
-      globalToolConfigDesc:
-        "Choose the harnesses your skills are deployed to — Claude Code, Cursor, Codex, … Detected harnesses are pre-selected.",
       toolConfigDetectedOnly: "Show detected harnesses only",
       toolNotDetected: "not detected",
       globalToolConfigScanSelectedOnly:
         "Only scan for existing skills within selected harnesses",
-      globalToolConfigConfirm: "Save harnesses",
       later: "Later",
       syncAll: "Deploy all skills",
       common: {
@@ -335,7 +327,6 @@ export const resources = {
           "{{name}}: also deployed to {{tool}}, where the original was found.",
         skillRemoved: "Skill removed.",
         skillDeleteKept: "Skill kept: {{failed}} deployments could not be removed. You can retry.",
-        toolConfigSaved: "Harness selection saved.",
         syncDisabled: "Deploying disabled.",
         syncEnabled: "Deploying enabled.",
         updated: "{{name}} updated.",
@@ -367,7 +358,6 @@ export const resources = {
         allGood: "All Good",
       },
       detail: {
-        back: "Back",
         noFiles: "No files found",
         loadingFiles: "Loading files...",
         loadingContent: "Loading file content...",
@@ -560,6 +550,7 @@ export const resources = {
           registerProject: "Add project",
           editProject: "Project settings",
           updateProjectPath: "Update project path",
+          harnessSettings: "Harness settings change",
         },
         deployNoTargets_one:
           "{{count}} skill was not deployed: no harnesses are selected. Choose them under Configure harnesses.",
@@ -723,7 +714,6 @@ export const resources = {
         notDetected: "{{name}} (not detected)",
       },
       settingsAutoDeploy: "Auto-deploy",
-      settingsAutoDeployHint: "Deploy added and imported skills to your selected harnesses.",
       // The inspector (ticket 12): the focused skill beside the list, or a sheet below 1200 px.
       inspector: {
         close: "Close details",
@@ -1037,6 +1027,7 @@ export const resources = {
         adding: "Adding",
         importing: "Importing",
         scanning: "Scanning harnesses",
+        savingHarnesses: "Saving harness settings",
         previewing: "Loading preview",
         addingProject: "Adding project",
         removingProject: "Removing project",
@@ -1363,15 +1354,20 @@ export const resources = {
         nothingToUpdateAll: "No skill has a source to update from",
         nothingToDisableAll: "Every skill is already off everywhere",
         settingsPane: "Settings \u2192 {{pane}}",
-        panes: {
-          github: "GitHub token",
-        },
         // Words a query also finds an entry by (never shown).
         keywords: {
           delete: "delete",
           add: "install new",
           disableAll: "remove all undeploy off",
           place: "go open",
+          shortcuts: "keys keyboard hotkeys",
+          panes: {
+            general: "auto-deploy zoom library folder git cache",
+            harnesses: "configure detected scan",
+            appearance: "theme light dark system",
+            updates: "version upgrade release",
+            diagnostics: "github token log",
+          },
         },
         footer: {
           move: "move",
@@ -1563,6 +1559,88 @@ export const resources = {
           retryNamed: "Retry {{name}}",
           retryFailed: "Retry failed ({{count}})",
         },
+      },
+      // Settings as a dialog (round 19 ticket 20, D37 / D47–D50).
+      settingsDialog: {
+        paneList: "Settings panes",
+        panes: {
+          general: "General",
+          harnesses: "Harnesses",
+          appearance: "Appearance",
+          updates: "Updates",
+          diagnostics: "Diagnostics",
+        },
+        autoSaves: "Changes save as you make them.",
+        general: {
+          description: "How new skills arrive, the app\u2019s zoom, and where your Library and its Git cache live.",
+          autoDeployHint: "When on, a skill you add or import is deployed to your selected harnesses. Deployments that already exist are never changed by it.",
+          gitCache: "Git cache",
+          browse: "Browse\u2026",
+        },
+        harnesses: {
+          description: "Where your skills are deployed: one row per harness Skills Hub knows. Open a row for its folder and how it is deployed to.",
+          summary: "Deploying to {{selected}} of {{total}} harnesses \u00b7 {{detected}} detected on this computer",
+          autoDeployOn: "Auto-deploy is on: turning a harness on offers to deploy your skills to it.",
+          autoDeployOff: "Auto-deploy is off: turning a harness on deploys nothing until you choose Deploy all.",
+          autoDeployLink: "Change in General",
+          offKeeps: "Turning a harness off removes nothing: skills already deployed there stay, and Update keeps them current.",
+          list: "Harnesses",
+          detected: "Detected",
+          notDetected: "Not detected",
+          select: "Deploy to {{harness}}",
+          skillsFolder: "Skills folder",
+          sharedWith: "Shared with {{harnesses}}",
+          deploysAs: "Deploys as",
+          link: "A link to the Library copy (a copy where the system refuses links)",
+          copy: "A copy of the Library copy",
+          detectedBy: "Detected by",
+          undetectedSelected: "Selected, but not detected on this computer: every deploy skips it, and the Deployments strip shows it hollow. Remove it unless you are about to install it.",
+          remove: "Remove from selection",
+          noMatches: "No harness is detected on this computer. Turn off \u201cShow detected harnesses only\u201d to choose one anyway.",
+          scanTitle: "Import scan",
+          scanHint: "Which harness folders Import reviews for skills that are already there. It deploys nothing.",
+        },
+        deployAsk: {
+          title_one: "Deploy your {{count}} skill to {{harness}} now?",
+          title_other: "Deploy your {{count}} skills to {{harness}} now?",
+          body: "Auto-deploy is on, so you can fill {{harness}} now. Not now leaves it empty until you choose Deploy all.",
+          confirm: "Deploy now",
+          cancel: "Not now",
+        },
+        appearance: {
+          description: "How Skills Hub looks. The sidebar\u2019s Theme menu sets the same choice.",
+          themeHint: "System follows this computer\u2019s light or dark setting.",
+        },
+        updates: {
+          description: "The app\u2019s version, and new releases.",
+          version: "Skills Hub {{version}}",
+          notes: "Release notes",
+          ignoreHint: "Don\u2019t remind again stops the sidebar announcing this version; it stays listed here.",
+        },
+        diagnostics: {
+          description: "What to look at when something went wrong, and the GitHub token.",
+          version: "Version",
+          log: "App log",
+          libraryFolderHint: "Change it in General.",
+          tokenSaves: "The token saves only when you press Save token.",
+        },
+      },
+      // Keyboard shortcuts, in the Settings frame (D37).
+      shortcutsDialog: {
+        paneList: "Shortcut groups",
+        panes: {
+          general: "General",
+          skills: "My Skills",
+        },
+        description: {
+          general: "Anywhere in the app.",
+          skills: "In the My Skills list.",
+        },
+        zoomKey: "\u2318 + / \u2318 \u2212",
+        zoom: "Zoom in or out",
+        escape: "Close the top dialog or menu",
+        arrowsKey: "\u2191 \u2193",
+        panesMove: "Move between panes here and in Settings",
       },
     },
   },

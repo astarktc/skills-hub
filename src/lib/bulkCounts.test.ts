@@ -5,6 +5,7 @@ import {
   deleteTotals,
   disableCounts,
   enableCounts,
+  harnessArrivals,
   syncCounts,
   updateCounts,
   type AssignmentsOf,
@@ -112,6 +113,21 @@ describe("syncCounts", () => {
       disabled: 4, // a:pi + c × 3
       added: 4,
     });
+  });
+});
+
+describe("harnessArrivals (D48)", () => {
+  it("counts the enabled, locatable skills with no deployment on the harness yet", () => {
+    const skills = [
+      skill("fresh", [target("claude")]),
+      skill("failedThere", [target("cursor", "error", false)]),
+      skill("deployed", [target("cursor")]),
+      skill("outOfDate", [target("cursor", "stale")]),
+      skill("pairOff", [target("cursor", "disabled")]),
+      skill("skillOff", [], { disabled_at: 5 }),
+      skill("gone", [], { unlocatable: "central_missing" }),
+    ];
+    expect(harnessArrivals(skills, "cursor").map((s) => s.id)).toEqual(["fresh", "failedThere"]);
   });
 });
 

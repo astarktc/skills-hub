@@ -65,6 +65,16 @@ function choicesOf(
   return answer.choices;
 }
 
+/** The saved harness configuration: the selection (null: never configured) and the scan scope. */
+type HarnessConfig = { selected: string[] | null; scanOnly: boolean };
+
+/**
+ * How one harness-configuration save ended: `saved` (the backend's echo is
+ * shown), `failed` (rolled back, the error shown) or `refused` (another
+ * action held the slot — nothing changed, nothing was sent).
+ */
+export type HarnessSaveResult = "saved" | "failed" | "refused";
+
 export type SyncPolicy = {
   overwrite?: boolean;
   overwriteIfSameContent?: boolean;
@@ -198,6 +208,8 @@ export type SyncOrchestrationDeps = {
     StatusReporter,
     | "loading"
     | "notify"
+    | "notifyError"
+    | "runAction"
     | "setActionMessage"
     | "setError"
     | "setSuccessToastMessage"
@@ -255,12 +267,13 @@ export function useSyncOrchestration({
   const {
     loading,
     notify,
+    notifyError,
+    runAction,
     setActionMessage,
     setError,
-    setSuccessToastMessage,
     formatError,
   } = reporter;
-  const { ask, offerDialog, openDialog, closeDialog, dismissDialog } = surface;
+  const { ask, offerDialog, closeDialog } = surface;
   const {
     toolStatus,
     tools,
@@ -360,14 +373,28 @@ export function useSyncOrchestration({
       .join(t("common.listSeparator"));
   }, [relevantNewlyInstalled, t, tools]);
 
+  // The saved harness configuration, read synchronously: the next save
+  // extends it, and D48 re-checks it after each await (render state lags).
+  // Written by the startup read, by an admitted save (optimistic) and by that
+  // save's settlement (the echo, or its rollback) — never by a render.
+  const configRef = useRef<HarnessConfig>({ selected: null, scanOnly: true });
+  const configSavedRef = useRef(false);
+
   useEffect(() => {
     if (!isTauri) return;
     void (async () => {
       try {
         const settings = await invokeTauri("getSettings");
         setAutoSyncEnabled(settings.auto_sync_enabled);
-        setGlobalSelectedTools(settings.global_selected_tools);
-        setScanSelectedToolsOnly(settings.scan_selected_tools_only);
+        // A save admitted before this read landed owns the configuration.
+        if (!configSavedRef.current) {
+          setGlobalSelectedTools(settings.global_selected_tools);
+          setScanSelectedToolsOnly(settings.scan_selected_tools_only);
+          configRef.current = {
+            selected: settings.global_selected_tools,
+            scanOnly: settings.scan_selected_tools_only,
+          };
+        }
         // A corrupt saved selection reads as "unconfigured" for display only:
         // every global sync refuses (SETTING_CORRUPT) until the operator
         // saves the selection again, so say so once, up front.
@@ -651,41 +678,107 @@ export function useSyncOrchestration({
     [formatError, setError],
   );
 
-  const handleOpenToolConfig = useCallback(() => {
-    openDialog({ kind: "toolConfig" });
-  }, [openDialog]);
-
-  const handleCloseToolConfig = useCallback(() => {
-    if (!loading) closeDialog("toolConfig");
-  }, [closeDialog, loading]);
-
   const handleCloseNewTools = useCallback(() => {
     if (!loading) closeDialog("newTools");
   }, [closeDialog, loading]);
 
-  const handleToolConfigConfirm = useCallback(
-    async (selected: string[], scanOnly = false) => {
-      try {
-        await invokeTauri("updateSetting", {
-          key: "global_tool_config",
-          value: { selected_tools: selected, scan_selected_only: scanOnly },
-        });
-        setGlobalSelectedTools(selected);
-        setScanSelectedToolsOnly(scanOnly);
-        setScanScopeRevision((revision) => revision + 1);
-        // Deploy targets follow the saved selection exactly.
-        const next: Record<string, boolean> = {};
-        for (const info of toolInfos) {
-          next[info.key] = selected.includes(info.key);
-        }
-        setChosenSyncTargets(next);
-        dismissDialog("toolConfig");
-        setSuccessToastMessage(t("status.toolConfigSaved"));
-      } catch (err) {
-        setError(formatError(err));
+  /** Show `config` as the saved configuration; the Add modal's deploy targets follow the selection exactly. */
+  const adoptConfig = useCallback(
+    (config: HarnessConfig) => {
+      configRef.current = config;
+      setGlobalSelectedTools(config.selected);
+      setScanSelectedToolsOnly(config.scanOnly);
+      const { selected } = config;
+      if (selected === null) {
+        setChosenSyncTargets(null);
+        return;
       }
+      const targets: Record<string, boolean> = {};
+      for (const info of toolInfos) targets[info.key] = selected.includes(info.key);
+      setChosenSyncTargets(targets);
     },
-    [dismissDialog, formatError, setError, setSuccessToastMessage, t, toolInfos],
+    [toolInfos],
+  );
+
+  /**
+   * Save the global harness configuration (Settings → Harnesses): the
+   * selection — the Effective global target set — and the scan scope, as
+   * each control changes (auto-save). It changes no deployment: turning a
+   * harness off removes nothing (Propagation keeps what is there current);
+   * turning one on deploys nothing by itself (D48 asks first).
+   *
+   * A save is a lifecycle mutation (D19, audit F1): `runAction` admits it
+   * before anything moves, so while it runs every other mutation is refused
+   * with its reason — and held on screen — never queued. Admitted, the UI
+   * moves at once; settled, it shows what the backend echoed it saved, or
+   * rolls back exactly this write (the configuration it was admitted over)
+   * and says why through `notifyError`. No write carries another's intent.
+   * `selected` as a function derives the selection from the saved one at
+   * admission.
+   */
+  const saveToolConfig = useCallback(
+    async (change: {
+      selected?: readonly string[] | ((saved: readonly string[]) => readonly string[]);
+      scanSelectedOnly?: boolean;
+    }): Promise<HarnessSaveResult> => {
+      let admitted = false;
+      const saved = await runAction(
+        { label: t("lifecycle.verbs.harnessSettings"), activity: t("activity.savingHarnesses") },
+        async (action) => {
+          admitted = true;
+          configSavedRef.current = true;
+          const before = configRef.current;
+          const base = before.selected ?? installedToolIds;
+          const selected = [...(typeof change.selected === "function" ? change.selected(base) : change.selected ?? base)];
+          const scanOnly = change.scanSelectedOnly ?? before.scanOnly;
+          adoptConfig({ selected, scanOnly });
+          try {
+            const echoed = await invokeTauri("updateSetting", {
+              key: "global_tool_config",
+              value: { selected_tools: selected, scan_selected_only: scanOnly },
+            });
+            adoptConfig({ selected: echoed.global_selected_tools, scanOnly: echoed.scan_selected_tools_only });
+          } catch (err) {
+            adoptConfig(before);
+            notifyError(err);
+            return action.fail(null);
+          }
+          // The onboarding plan's scope changed: the add/import world's read
+          // queues behind this action and runs once it releases the slot.
+          setScanScopeRevision((revision) => revision + 1);
+          return true;
+        },
+      );
+      return saved ? "saved" : admitted ? "failed" : "refused";
+    },
+    [adoptConfig, installedToolIds, notifyError, runAction, t],
+  );
+
+  /** The saved selection now (null: never configured), for a check after an await. */
+  const readSavedSelection = useCallback((): readonly string[] | null => configRef.current.selected, []);
+
+  /**
+   * Turn one harness on or off in the saved selection (the first change
+   * turns "never configured — every detected harness" into an explicit
+   * list). Registry order is kept; a saved key the catalog no longer lists
+   * stays at the end.
+   */
+  const setHarnessSelected = useCallback(
+    (toolId: string, selected: boolean): Promise<HarnessSaveResult> => {
+      const known = toolInfos.map((info) => info.key);
+      return saveToolConfig({
+        selected: (current) => {
+          const wanted = new Set(current);
+          if (selected) wanted.add(toolId);
+          else wanted.delete(toolId);
+          return [
+            ...known.filter((key) => wanted.has(key)),
+            ...current.filter((key) => wanted.has(key) && !known.includes(key)),
+          ];
+        },
+      });
+    },
+    [saveToolConfig, toolInfos],
   );
 
   const handleSyncTargetChange = useCallback(
@@ -736,10 +829,10 @@ export function useSyncOrchestration({
     enableSkillTargets,
     requestOverwriteConfirmation,
     handleAutoSyncToggle,
-    handleOpenToolConfig,
-    handleCloseToolConfig,
     handleCloseNewTools,
-    handleToolConfigConfirm,
+    saveToolConfig,
+    setHarnessSelected,
+    readSavedSelection,
     handleSyncTargetChange,
     enableTargetsFor,
   };

@@ -18,7 +18,7 @@ import type {
 import type { StatusReporter } from "./useStatusReporter";
 
 vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn(), dismiss: vi.fn() },
 }));
 vi.mock("../lib/tauri", () => ({
   isTauri: true,
@@ -38,8 +38,10 @@ vi.mock("../lib/platform", () => ({
   },
 }));
 
+import { toast } from "sonner";
 import { invokeTauri, type CommandName } from "../lib/tauri";
 import { useSyncOrchestration } from "./useSyncOrchestration";
+import { ActionExit, useStatusReporter } from "./useStatusReporter";
 import { useSurfaceState } from "./useSurfaceState";
 import { useToolCatalog } from "./useToolCatalog";
 
@@ -67,6 +69,7 @@ function toolInfo(key: string, shared_with: string[] = [key]): ToolInfoDto {
     installed: true,
     shared_with,
     constituents: [],
+    placement: { skills_dir: `.${key}/skills`, detect_dirs: [`.${key}`], supports_symlink: true },
   };
 }
 
@@ -116,7 +119,7 @@ function stubBackend(overrides?: {
   status?: Partial<ToolStatusDto>;
   syncReport?: BatchTargetOutcome[];
 }) {
-  mockInvoke.mockImplementation((command) => {
+  mockInvoke.mockImplementation((command, ...args) => {
     switch (command) {
       case "getSettings":
         return Promise.resolve(appSettings(overrides?.config));
@@ -126,6 +129,19 @@ function stubBackend(overrides?: {
         return Promise.resolve(
           overrides?.syncReport ?? [],
         );
+      case "updateSetting": {
+        // The command answers the effective snapshot it saved.
+        const update = args[0] as { key: string; value: { selected_tools: string[]; scan_selected_only: boolean } };
+        return Promise.resolve(
+          update.key === "global_tool_config"
+            ? appSettings({
+                ...overrides?.config,
+                global_selected_tools: update.value.selected_tools,
+                scan_selected_tools_only: update.value.scan_selected_only,
+              })
+            : appSettings(overrides?.config),
+        );
+      }
       default:
         return Promise.resolve(undefined);
     }
@@ -136,6 +152,8 @@ function makeReporter(): Pick<
   StatusReporter,
   | "loading"
   | "notify"
+  | "notifyError"
+  | "runAction"
   | "setActionMessage"
   | "setError"
   | "setSuccessToastMessage"
@@ -144,6 +162,18 @@ function makeReporter(): Pick<
   return {
     loading: false,
     notify: vi.fn(),
+    notifyError: vi.fn(),
+    // Admits every action (the lifecycle's own rules are pinned in
+    // useStatusReporter.test.ts and, composed, by the harness tests below).
+    runAction: vi.fn(async (_opts, fn) => {
+      const value = await fn({
+        handOff: () => ActionExit.handOff(),
+        fail: (message: string | null) => ActionExit.failed(message),
+        uncancellable: <R,>(run: () => Promise<R>) => run(),
+        cancelRequested: () => false,
+      });
+      return value instanceof ActionExit ? undefined : value;
+    }) as StatusReporter["runAction"],
     setActionMessage: vi.fn(),
     setError: vi.fn(),
     setSuccessToastMessage: vi.fn(),
@@ -171,7 +201,6 @@ function renderSync(reporter = makeReporter()) {
       toolStatus: catalog.toolStatus,
       surface,
       showNewToolsModal: surface.isOpen("newTools"),
-      showToolConfigModal: surface.isOpen("toolConfig"),
       sharedDirPending,
       cancelSharedDirConfirmation: () => sharedDirPending?.answer("declined"),
       overwritePending,
@@ -290,30 +319,207 @@ describe("useSyncOrchestration target defaulting", () => {
   });
 });
 
-describe("useSyncOrchestration tool configuration dialog", () => {
-  it("opens as a surface dialog, closes unless loading, and a saved config dismisses it", async () => {
+/** A deferred promise: the test settles a backend call when it chooses. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/** The sync world over the real lifecycle (one mutation at a time, D19). */
+function renderSyncWithLifecycle() {
+  return renderHook(() => {
+    const reporter = useStatusReporter(t);
+    const surface = useSurfaceState();
+    const catalog = useToolCatalog({ t });
+    const sync = useSyncOrchestration({ t, reporter, surface, catalog });
+    return { ...sync, reporter, toolStatus: catalog.toolStatus };
+  });
+}
+
+describe("useSyncOrchestration harness configuration (Settings → Harnesses)", () => {
+  const configWrites = () =>
+    mockInvoke.mock.calls.filter(([command, update]) => command === "updateSetting" && (update as { key: string }).key === "global_tool_config").map(([, update]) => (update as { value: unknown }).value);
+
+  it("turning a harness on writes the whole selection, starting from the detected set when none was saved", async () => {
     stubBackend();
     const { result } = renderSync();
     await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
 
-    act(() => result.current.handleOpenToolConfig());
-    expect(result.current.showToolConfigModal).toBe(true);
-    act(() => result.current.handleCloseToolConfig());
-    expect(result.current.showToolConfigModal).toBe(false);
-
-    act(() => result.current.handleOpenToolConfig());
+    let saved = "";
     await act(async () => {
-      await result.current.handleToolConfigConfirm(["claude"]);
+      saved = await result.current.setHarnessSelected("goose", true);
     });
-    expect(result.current.showToolConfigModal).toBe(false);
+    expect(saved).toBe("saved");
+    // Registry order, the never-configured default (every detected harness) made explicit.
+    expect(configWrites()).toEqual([{ selected_tools: ["claude", "pi", "cursor", "goose"], scan_selected_only: true }]);
+    expect(result.current.effectiveSyncTargetIds).toEqual(["claude", "pi", "cursor", "goose"]);
+    expect(result.current.readSavedSelection()).toEqual(["claude", "pi", "cursor", "goose"]);
+    // It deploys nothing by itself (D48 asks first).
+    expect(mockInvoke.mock.calls.some(([command]) => command === "syncSkillsToTools")).toBe(false);
   });
 
-  it("stays open while an action runs", async () => {
-    stubBackend();
-    const { result } = renderSync({ ...makeReporter(), loading: true });
-    act(() => result.current.handleOpenToolConfig());
-    act(() => result.current.handleCloseToolConfig());
-    expect(result.current.showToolConfigModal).toBe(true);
+  it("the save is a lifecycle action: it holds the slot, and every other mutation is refused while it runs", async () => {
+    stubBackend({ config: { global_selected_tools: ["claude"] } });
+    const { result } = renderSyncWithLifecycle();
+    await waitFor(() => expect(result.current.globalSelectedTools).toEqual(["claude"]));
+    const base = mockInvoke.getMockImplementation()!;
+    const write = deferred<AppSettings>();
+    mockInvoke.mockImplementation((command, ...args) => (command === "updateSetting" ? write.promise : base(command, ...args)));
+
+    let first: Promise<string> = Promise.resolve("");
+    await act(async () => {
+      first = result.current.setHarnessSelected("cursor", true);
+    });
+    // Held with the reason in words (the switches read `blockedReason`).
+    expect(result.current.reporter.pending?.label).toBe("lifecycle.verbs.harnessSettings");
+    expect(result.current.reporter.refusal).toEqual({ code: "MUTATION_RUNNING", running: "lifecycle.verbs.harnessSettings" });
+    // Optimistic only once admitted.
+    expect(result.current.globalSelectedTools).toEqual(["claude", "cursor"]);
+
+    await act(async () => {
+      write.resolve(appSettings({ global_selected_tools: ["claude", "cursor"] }));
+      await first;
+    });
+    expect(result.current.reporter.pending).toBeNull();
+  });
+
+  it("two rapid toggles, the first write failing: the second is refused (not queued) and the UI equals the persisted selection", async () => {
+    stubBackend({ config: { global_selected_tools: ["claude", "pi", "cursor"], scan_selected_tools_only: false } });
+    const { result } = renderSyncWithLifecycle();
+    await waitFor(() => expect(result.current.globalSelectedTools).toEqual(["claude", "pi", "cursor"]));
+    const persisted = { selected: ["claude", "pi", "cursor"] };
+    const base = mockInvoke.getMockImplementation()!;
+    const write = deferred<AppSettings>();
+    mockInvoke.mockImplementation((command, ...args) => {
+      if (command === "getSettings") return Promise.resolve(appSettings({ global_selected_tools: persisted.selected, scan_selected_tools_only: false }));
+      if (command === "updateSetting") return write.promise;
+      return base(command, ...args);
+    });
+
+    let first: Promise<string> = Promise.resolve("");
+    let second = "";
+    await act(async () => {
+      first = result.current.setHarnessSelected("cursor", false);
+    });
+    await act(async () => {
+      second = await result.current.setHarnessSelected("pi", false);
+    });
+    // Refused with the reason; never sent, never queued.
+    expect(second).toBe("refused");
+    expect(vi.mocked(toast.info)).toHaveBeenCalledWith(
+      'lifecycle.running {"action":"lifecycle.verbs.harnessSettings"}',
+      expect.anything(),
+    );
+    expect(configWrites()).toEqual([{ selected_tools: ["claude", "pi"], scan_selected_only: false }]);
+
+    let outcome = "";
+    await act(async () => {
+      write.reject({ code: "OTHER", message: "first write failed" });
+      outcome = await first;
+    });
+    expect(outcome).toBe("failed");
+    // The failed write's error, through the one failure dialect.
+    expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
+    // Rolled back to exactly what the backend holds; no write replays an intent.
+    expect(result.current.globalSelectedTools).toEqual(persisted.selected);
+    expect(result.current.effectiveSyncTargetIds).toEqual(persisted.selected);
+    expect(result.current.readSavedSelection()).toEqual(persisted.selected);
+    expect(configWrites()).toHaveLength(1);
+    expect(result.current.reporter.pending).toBeNull();
+  });
+
+  it("a successful save adopts the backend's echoed configuration", async () => {
+    stubBackend({ config: { global_selected_tools: ["claude"], scan_selected_tools_only: false } });
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.globalSelectedTools).toEqual(["claude"]));
+    const base = mockInvoke.getMockImplementation()!;
+    // The backend normalises what it stores (here: drops an unknown key).
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "updateSetting"
+        ? Promise.resolve(appSettings({ global_selected_tools: ["claude"], scan_selected_tools_only: true }))
+        : base(command, ...args),
+    );
+
+    await act(async () => {
+      await result.current.saveToolConfig({ selected: ["claude", "retired"], scanSelectedOnly: false });
+    });
+    expect(result.current.globalSelectedTools).toEqual(["claude"]);
+    expect(result.current.scanSelectedToolsOnly).toBe(true);
+    expect(result.current.syncTargets).toEqual({ claude: true, pi: false, cursor: false, goose: false });
+  });
+
+  it("the scan scope saves on its own, keeping the selection", async () => {
+    stubBackend({ config: { global_selected_tools: ["cursor"], scan_selected_tools_only: true } });
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.globalSelectedTools).toEqual(["cursor"]));
+
+    await act(async () => {
+      await result.current.saveToolConfig({ scanSelectedOnly: false });
+    });
+    expect(configWrites()).toEqual([{ selected_tools: ["cursor"], scan_selected_only: false }]);
+    expect(result.current.scanSelectedToolsOnly).toBe(false);
+  });
+
+  it("a failed write rolls back only itself and says why through notifyError", async () => {
+    stubBackend({ config: { global_selected_tools: ["claude"] } });
+    const reporter = makeReporter();
+    const { result } = renderSync(reporter);
+    await waitFor(() => expect(result.current.globalSelectedTools).toEqual(["claude"]));
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "updateSetting" ? Promise.reject({ code: "OTHER" }) : base(command, ...args),
+    );
+
+    let saved = "";
+    await act(async () => {
+      saved = await result.current.setHarnessSelected("cursor", true);
+    });
+    expect(saved).toBe("failed");
+    expect(reporter.notifyError).toHaveBeenCalledWith({ code: "OTHER" });
+    expect(reporter.setError).not.toHaveBeenCalled();
+    expect(result.current.globalSelectedTools).toEqual(["claude"]);
+    expect(result.current.scanScopeRevision).toBe(0);
+  });
+
+  it("save → scan → deploy: the import-plan read waits for the save to release the slot, and a deploy after it is admitted", async () => {
+    stubBackend({ config: { global_selected_tools: ["claude"] } });
+    const { result } = renderSyncWithLifecycle();
+    await waitFor(() => expect(result.current.globalSelectedTools).toEqual(["claude"]));
+    const base = mockInvoke.getMockImplementation()!;
+    const write = deferred<AppSettings>();
+    mockInvoke.mockImplementation((command, ...args) => (command === "updateSetting" ? write.promise : base(command, ...args)));
+
+    let save: Promise<string> = Promise.resolve("");
+    await act(async () => {
+      save = result.current.setHarnessSelected("cursor", true);
+    });
+    // The scan the add/import world starts on the revision bump is a read: it waits its turn.
+    const order: string[] = [];
+    let scan: Promise<unknown> = Promise.resolve();
+    await act(async () => {
+      scan = result.current.reporter.runAction({ read: true, label: "Scan" }, async () => {
+        order.push(`scan while pending=${String(result.current.reporter.pending?.label)}`);
+      });
+    });
+    expect(order).toEqual([]);
+    await act(async () => {
+      write.resolve(appSettings({ global_selected_tools: ["claude", "cursor"] }));
+      await save;
+      await scan;
+    });
+    expect(result.current.scanScopeRevision).toBe(1);
+    expect(order).toHaveLength(1);
+    let deployed = false;
+    await act(async () => {
+      expect(await result.current.reporter.whenIdle()).toBe(true);
+      deployed = (await result.current.reporter.runAction({ label: "Deploy" }, async () => true)) === true;
+    });
+    expect(deployed).toBe(true);
   });
 });
 
@@ -358,13 +564,13 @@ describe("useSyncOrchestration effective sync targets", () => {
     expect(result.current.effectiveSyncTargetIds).toEqual([]);
   });
 
-  it("follows the selection saved through the tool config modal", async () => {
+  it("follows the selection saved in Settings → Harnesses", async () => {
     stubBackend();
     const { result } = renderSync();
     await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
 
     await act(async () => {
-      await result.current.handleToolConfigConfirm(["claude"]);
+      await result.current.saveToolConfig({ selected: ["claude"] });
     });
 
     expect(result.current.effectiveSyncTargetIds).toEqual(["claude"]);
@@ -379,11 +585,11 @@ describe("useSyncOrchestration effective sync targets", () => {
     expect(result.current.scanScopeRevision).toBe(0);
 
     await act(async () => {
-      await result.current.handleToolConfigConfirm(["claude"], true);
+      await result.current.saveToolConfig({ selected: ["claude"], scanSelectedOnly: true });
     });
     expect(result.current.scanScopeRevision).toBe(1);
     await act(async () => {
-      await result.current.handleToolConfigConfirm(["claude"], false);
+      await result.current.saveToolConfig({ selected: ["claude"], scanSelectedOnly: false });
     });
     expect(result.current.scanScopeRevision).toBe(2);
   });

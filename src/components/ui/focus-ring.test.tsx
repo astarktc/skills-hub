@@ -27,6 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "./dropdown-menu";
 import { Input, Select, Textarea } from "./field";
+import { RadioGroup, RadioGroupItem } from "./radio-group";
 import { Segmented, SegmentedItem } from "./segmented";
 import { Switch } from "./switch";
 import { Tabs, TabsList, TabsTrigger } from "./tabs";
@@ -246,6 +247,28 @@ describe("every focusable primitive draws a solid 2 px ring on focus-visible", (
       </Tabs>,
     );
     await expectRing(screen.getByRole("tab", { name: "Overview" }));
+  });
+
+  it("Tabs pane trigger, drawn inset so the scrolling pane list cannot clip it", async () => {
+    render(
+      <Tabs variant="pane" defaultValue="a">
+        <TabsList aria-label="Panes">
+          <TabsTrigger value="a">General</TabsTrigger>
+        </TabsList>
+      </Tabs>,
+    );
+    const tab = screen.getByRole("tab", { name: "General" });
+    await expectRing(tab);
+    expect(tab.className).toContain("focus-visible:-outline-offset-2");
+  });
+
+  it("RadioGroup item", async () => {
+    render(
+      <RadioGroup aria-label="Theme" value="dark" onValueChange={() => {}}>
+        <RadioGroupItem value="dark">Dark</RadioGroupItem>
+      </RadioGroup>,
+    );
+    await expectRing(screen.getByRole("radio", { name: "Dark" }));
   });
 
   it("Segmented item", async () => {

@@ -183,8 +183,9 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   keep data and actions and *ask* it to open/close (`openDialog`, `pushDialog` for a nested step, `ask`
   for a confirmation, `offerDialog` for a startup announcement, `focus`) — no world keeps a visibility
   flag or a "which skill is this modal about" cell. Only area + focused subject reach `location.hash`
-  (`#/skills/<id>`, `#/projects/<id>`, `#/explore`, `#/settings/<pane>`); dialogs, selection and drafts
-  never do. A catalog owner calls `useFocusReconciliation` so a focused/selected id that leaves it
+  (`#/skills/<id>`, `#/projects/<id>`, `#/explore`); dialogs, selection and drafts never do — Settings is a
+  dialog (`{ kind: "settings", pane }`, opened only through `openSettingsPane`), and an old `#/settings/<pane>` link
+  opens it once and is cleaned. A catalog owner calls `useFocusReconciliation` so a focused/selected id that leaves it
   clears itself. **Query, sort, grouping and view mode are the list lens, `src/hooks/useListLens.ts`**,
   one instance per list surface (My Skills in App, the matrix in `AssignmentMatrix`), persisting through
   `preferences.ts`; its folds stay pure in `skillPresentation.ts`. After a mutation, the **project**

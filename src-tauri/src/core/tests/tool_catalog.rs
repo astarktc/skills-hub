@@ -92,8 +92,8 @@ fn global_catalog_groups_shared_skills_dirs_and_resolves_paths_under_home() {
     assert_eq!(agents.shared_with, vec![agents.key]);
     assert_eq!(entry(&entries, "cursor").shared_with, vec!["cursor"]);
 
-    // The catalog carries no dir (see `ToolCatalogEntry`); the grouping it
-    // reports must still match what the registry resolves under this home.
+    // Grouping is `shared_with`, never the displayed `placement` dir (see
+    // `ToolCatalogEntry`); it must match what the registry resolves here.
     assert_eq!(
         skills_dir_in(home.path(), adapter_by_key("amp").unwrap()),
         home.path().join(".config/agents/skills")
@@ -180,4 +180,23 @@ fn project_catalog_groups_by_project_skills_dir() {
         vec!["claude_code"]
     );
     assert!(entries.iter().all(|e| e.shared_with.contains(&e.key)));
+}
+
+#[test]
+fn only_the_global_catalog_carries_placement_straight_from_the_registry() {
+    let home = tempfile::tempdir().unwrap();
+    for entry in global_tool_entries(home.path()) {
+        let adapter = adapter_by_key(entry.key).unwrap();
+        let placement = entry.placement.expect("every global entry is placed");
+        assert_eq!(placement.skills_dir, adapter.relative_skills_dir);
+        assert_eq!(placement.detect_dirs, adapter.relative_detect_dirs);
+        assert_eq!(placement.supports_symlink, adapter.supports_symlink);
+        // Relative to home: the catalog never resolves the operator's root.
+        assert!(!Path::new(placement.skills_dir).is_absolute());
+    }
+    // Project dirs are project-relative and a group's detection is a union:
+    // one field could not say both honestly, so the project list carries none.
+    assert!(project_tool_entries(home.path())
+        .iter()
+        .all(|entry| entry.placement.is_none()));
 }

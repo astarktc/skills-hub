@@ -1256,6 +1256,38 @@ describe("useStatusReporter reads", () => {
   });
 });
 
+describe("useStatusReporter whenIdle (ticket 20, D48)", () => {
+  it("resolves at once when nothing runs, else once the running action settles", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    await expect(result.current.whenIdle()).resolves.toBe(true);
+
+    let open: () => void = () => {};
+    const body = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let running: Promise<unknown> = Promise.resolve();
+    act(() => {
+      running = result.current.runAction({ read: true }, () => body);
+    });
+    let idle = false;
+    const waiting = result.current.whenIdle().then((value) => {
+      idle = value;
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(idle).toBe(false);
+    await act(async () => {
+      open();
+      await running;
+      await waiting;
+    });
+    expect(idle).toBe(true);
+    // It queued nothing and refused nothing.
+    expect(toast.info).not.toHaveBeenCalled();
+  });
+});
+
 describe("useStatusReporter queued reads (lifetime and intent)", () => {
   const gate = () => {
     let open: () => void = () => {};

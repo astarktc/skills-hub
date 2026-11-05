@@ -73,7 +73,12 @@ describe("paletteGroups — reach", () => {
       ["Explore", { kind: "area", area: "explore" }],
       ["Projects", { kind: "area", area: "projects" }],
       ["Settings", { kind: "settings", pane: null }],
-      ["Settings \u2192 GitHub token", { kind: "settings", pane: "github" }],
+      ["Settings \u2192 General", { kind: "settings", pane: "general" }],
+      ["Settings \u2192 Harnesses", { kind: "settings", pane: "harnesses" }],
+      ["Settings \u2192 Appearance", { kind: "settings", pane: "appearance" }],
+      ["Settings \u2192 Updates", { kind: "settings", pane: "updates" }],
+      ["Settings \u2192 Diagnostics", { kind: "settings", pane: "diagnostics" }],
+      ["Keyboard shortcuts", { kind: "shortcuts" }],
     ]);
     expect(group(groups, "actions").items.map((item) => [item.label, item.intent.kind])).toEqual([
       ["Update all", "updateAll"],
@@ -190,12 +195,25 @@ describe("paletteGroups — refusal (D19)", () => {
 });
 
 describe("openSettingsPane — the one route of every Settings entry", () => {
-  it("opens Settings, or focuses the named pane", () => {
-    const surface = { open: vi.fn(), focus: vi.fn() };
+  it("opens the Settings dialog on the named pane (General by default), never an area", () => {
+    const surface = { openDialog: vi.fn() };
     openSettingsPane(surface, null);
-    openSettingsPane(surface, "github");
-    expect(surface.open).toHaveBeenCalledWith("settings");
-    expect(surface.focus).toHaveBeenCalledWith({ kind: "settings", pane: "github" });
+    openSettingsPane(surface, "harnesses");
+    openSettingsPane(surface, null, "githubToken");
+    expect(surface.openDialog.mock.calls).toEqual([
+      [{ kind: "settings", pane: "general" }],
+      [{ kind: "settings", pane: "harnesses" }],
+      [{ kind: "settings", pane: "diagnostics", field: "githubToken" }],
+    ]);
+  });
+});
+
+describe("paletteGroups — Settings panes by what they hold", () => {
+  it("finds the token's pane by its old name and the Harnesses pane by its own", () => {
+    const ids = (query: string) => group(fold({ query }), "places").items.map((item) => item.id);
+    expect(ids("github")).toContain("settings:diagnostics");
+    expect(ids("harnesses")).toContain("settings:harnesses");
+    expect(ids("theme")).toContain("settings:appearance");
   });
 });
 

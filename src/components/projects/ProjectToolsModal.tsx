@@ -34,15 +34,18 @@ function buildInitialSelection(
   return initial;
 }
 
-export type ToolConfigModalLabels = {
+export type ProjectToolsModalLabels = {
   title: string;
   description: string;
   confirmLabel: string;
-  /** Label for the scan-only checkbox; required when scanSelectedOnly is set. */
-  scanToggleLabel?: string;
 };
 
-type ToolConfigModalProps = {
+/**
+ * A project's harnesses (Project → Configure harnesses…): the project world's
+ * selection dialog. The global selection it once shared this shell with is
+ * Settings → Harnesses (round-19 ticket 20, D47).
+ */
+type ProjectToolsModalProps = {
   open: boolean;
   loading: boolean;
   /**
@@ -53,42 +56,29 @@ type ToolConfigModalProps = {
   toolStatus: ToolStatusDto | null;
   /** Saved selection baseline; null = nothing saved yet, default to installed tools. */
   savedSelection: string[] | null;
-  /**
-   * When provided, renders the "scan selected only" checkbox initialized to
-   * this value; the draft value is passed as onConfirm's second argument.
-   */
-  scanSelectedOnly?: boolean;
-  labels: ToolConfigModalLabels;
-  onConfirm: (
-    selectedTools: string[],
-    scanSelectedOnly?: boolean,
-  ) => Promise<void>;
+  labels: ProjectToolsModalLabels;
+  onConfirm: (selectedTools: string[]) => Promise<void>;
   onRequestClose: () => void;
   /** The header progress at the dialog's foot while its own save runs. */
   progress?: ReactNode;
   t: TFunction;
 };
 
-const ToolConfigModalInner = ({
+const ProjectToolsModalInner = ({
   loading,
   blockedReason = null,
   toolStatus,
   savedSelection,
-  scanSelectedOnly: savedScanSelectedOnly,
   labels,
   onConfirm,
   onRequestClose,
   progress,
   t,
-}: Omit<ToolConfigModalProps, "open">) => {
+}: Omit<ProjectToolsModalProps, "open">) => {
   const [selectedTools, setSelectedTools] = useState<Set<string>>(() =>
     buildInitialSelection(toolStatus, savedSelection),
   );
   const [detectedOnly, setDetectedOnly] = useState(true);
-  const [scanSelectedOnly, setScanSelectedOnly] = useState(
-    savedScanSelectedOnly ?? false,
-  );
-  const hasScanToggle = savedScanSelectedOnly !== undefined;
 
   const allTools = toolStatus?.tools ?? [];
   const installed = toolStatus?.installed ?? [];
@@ -116,10 +106,7 @@ const ToolConfigModalInner = ({
   };
 
   const handleConfirm = async () => {
-    await onConfirm(
-      Array.from(selectedTools),
-      hasScanToggle ? scanSelectedOnly : undefined,
-    );
+    await onConfirm(Array.from(selectedTools));
   };
 
   return (
@@ -169,12 +156,6 @@ const ToolConfigModalInner = ({
               ))}
             </ul>
           </FieldSet>
-          {hasScanToggle ? (
-            <Field className="flex-row items-center gap-2">
-              <Checkbox checked={scanSelectedOnly} onCheckedChange={(checked) => setScanSelectedOnly(checked)} />
-              <FieldLabel>{labels.scanToggleLabel}</FieldLabel>
-            </Field>
-          ) : null}
         </DialogBody>
         <DialogFooter>
           <Button onClick={onRequestClose} disabled={loading}>
@@ -197,9 +178,9 @@ const ToolConfigModalInner = ({
   );
 };
 
-const ToolConfigModal = ({ open, ...rest }: ToolConfigModalProps) => {
+const ProjectToolsModal = ({ open, ...rest }: ProjectToolsModalProps) => {
   if (!open) return null;
-  return <ToolConfigModalInner {...rest} />;
+  return <ProjectToolsModalInner {...rest} />;
 };
 
-export default memo(ToolConfigModal);
+export default memo(ProjectToolsModal);

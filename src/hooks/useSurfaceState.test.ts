@@ -54,8 +54,6 @@ describe("hash grammar", () => {
     { area: "skills", focused: { kind: "skill", id: "s 1/é" } },
     { area: "projects", focused: null },
     { area: "projects", focused: { kind: "project", id: "p1" } },
-    { area: "settings", focused: null },
-    { area: "settings", focused: { kind: "settings", pane: "sync" } },
     { area: "explore", focused: null },
   ];
 
@@ -80,6 +78,11 @@ describe("hash grammar", () => {
     expect(parseHash("#/skills/a/b")).toBeNull();
     expect(parseHash("#/skills/%E0%A4%A")).toBeNull();
     expect(parseHash("#/skills/")).toEqual({ area: "skills", focused: null });
+  });
+
+  it("no longer addresses Settings: it is a dialog (D37)", () => {
+    expect(parseHash("#/settings")).toBeNull();
+    expect(parseHash("#/settings/github")).toBeNull();
   });
 });
 
@@ -114,11 +117,11 @@ describe("route and hash", () => {
     expect(result.current.route).toEqual({ area: "projects", focused: null });
     expect(window.location.hash).toBe("#/projects");
 
-    act(() => result.current.open("settings"));
-    expect(window.location.hash).toBe("#/settings");
+    act(() => result.current.open("explore"));
+    expect(window.location.hash).toBe("#/explore");
     // Opening the area already showing is not a navigation.
     const settled = window.history.length;
-    act(() => result.current.open("settings"));
+    act(() => result.current.open("explore"));
     expect(window.history.length).toBe(settled);
   });
 
@@ -176,6 +179,45 @@ describe("route and hash", () => {
 
     act(() => result.current.unfocus());
     expect(result.current.route).toEqual({ area: "explore", focused: null });
+  });
+});
+
+describe("old Settings links (D37)", () => {
+  it("opens the Settings dialog on the pane an old link meant, once, and cleans the address", () => {
+    window.history.replaceState(null, "", "/#/settings/github");
+    const before = window.history.length;
+    const { result } = render();
+
+    expect(result.current.stack).toEqual([{ kind: "settings", pane: "diagnostics", field: "githubToken" }]);
+    expect(result.current.route).toEqual({ area: "skills", focused: null });
+    expect(window.location.hash).toBe("#/skills");
+    expect(window.history.length).toBe(before);
+
+    // Closing it leaves nothing to reopen it: the address no longer names it.
+    act(() => result.current.closeDialog("settings"));
+    expect(result.current.stack).toEqual([]);
+    expect(window.location.hash).toBe("#/skills");
+  });
+
+  it("follows a typed old link over an empty stack and keeps the route showing", async () => {
+    const { result } = render();
+    act(() => result.current.focus({ kind: "project", id: "p1" }));
+
+    act(() => {
+      window.location.hash = "#/settings";
+    });
+    await waitFor(() => expect(result.current.stack).toEqual([{ kind: "settings", pane: "general" }]));
+    expect(result.current.route).toEqual({ area: "projects", focused: { kind: "project", id: "p1" } });
+    expect(window.location.hash).toBe("#/projects/p1");
+  });
+
+  it("changes the pane in dialog state, never in the hash", () => {
+    const { result } = render();
+    act(() => result.current.openDialog({ kind: "settings", pane: "general" }));
+    act(() => result.current.updateDialog({ kind: "settings", pane: "harnesses" }));
+
+    expect(result.current.layer("settings")).toEqual({ kind: "settings", pane: "harnesses" });
+    expect(window.location.hash).toBe("#/skills");
   });
 });
 
@@ -330,7 +372,7 @@ describe("dialog stack", () => {
 
     act(() => result.current.dismissDialog("notifications"));
     expect(result.current.stack.map((l) => l.kind)).toEqual(["repoint"]);
-    act(() => result.current.dismissDialog("toolConfig"));
+    act(() => result.current.dismissDialog("settings"));
     expect(result.current.stack.map((l) => l.kind)).toEqual(["repoint"]);
   });
 

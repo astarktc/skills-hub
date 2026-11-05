@@ -2,6 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { RepointKind } from "../lib/skillPresentation";
 import type { OverwriteChoice, OverwriteRow } from "../lib/overwriteAsk";
 import type { DeleteSettlement } from "../lib/reportOutcome";
+import {
+  legacySettingsLink,
+  type SettingsField,
+  type SettingsPane,
+  type ShortcutPane,
+} from "../lib/settingsPanes";
 
 /**
  * Surface state: "what is on screen", as one value — the area, the focused
@@ -26,13 +32,15 @@ import type { DeleteSettlement } from "../lib/reportOutcome";
  *   records nothing durable for `dismissed`.
  *
  * Only the area and the focused subject are addressable (D5): they round-trip
- * through `location.hash` (`#/skills/<id>`, `#/projects/<id>`, `#/explore`,
- * `#/settings/<pane>`), so Back/Forward and deep links work. Dialogs,
- * selection and drafts never enter the hash; neither does an Explore preview
- * (it needs a clone, so it is not a place one can link to).
+ * through `location.hash` (`#/skills/<id>`, `#/projects/<id>`, `#/explore`),
+ * so Back/Forward and deep links work. Dialogs, selection and drafts never
+ * enter the hash; neither does an Explore preview (it needs a clone, so it is
+ * not a place one can link to). Settings is a dialog (D37): an old
+ * `#/settings/<pane>` link opens it on that pane once, and the address is
+ * cleaned to the route showing.
  */
 
-export type Area = "skills" | "explore" | "projects" | "settings";
+export type Area = "skills" | "explore" | "projects";
 
 /** An online skill cloned for preview: shown in the detail, never managed. */
 export type ExplorePreview = {
@@ -48,8 +56,7 @@ export type ExplorePreview = {
 export type Route =
   | { area: "skills"; focused: { kind: "skill"; id: string } | null }
   | { area: "explore"; focused: { kind: "explore"; ref: ExplorePreview } | null }
-  | { area: "projects"; focused: { kind: "project"; id: string } | null }
-  | { area: "settings"; focused: { kind: "settings"; pane: string } | null };
+  | { area: "projects"; focused: { kind: "project"; id: string } | null };
 
 export type FocusedSubject = NonNullable<Route["focused"]>;
 
@@ -83,9 +90,15 @@ export type DialogState =
   /** Assign to project…: the picker for one skill or a selection. */
   | { kind: "assignProject"; skillIds: readonly string[] }
   // Tools + sync world
-  | { kind: "toolConfig" }
   | { kind: "newTools" }
   // App shell
+  /**
+   * Settings (D37): one dialog, its pane the dialog's state (never the
+   * hash); `field` is a control it focuses as it opens.
+   */
+  | { kind: "settings"; pane: SettingsPane; field?: SettingsField }
+  /** Keyboard shortcuts, in the Settings frame (D37). */
+  | { kind: "shortcuts"; pane: ShortcutPane }
   /** The session's report, grouped by run (D11); `runId` opens it on one run ("View report"). */
   | { kind: "notifications"; runId?: number }
   | { kind: "update" }
@@ -100,7 +113,9 @@ export type DialogState =
 /** A question an action awaits. */
 export type AskRequest =
   | { kind: "sharedDir"; toolKey: string; toolLabel: string; labels: string[] }
-  | { kind: "overwrite"; rows: OverwriteRow[] };
+  | { kind: "overwrite"; rows: OverwriteRow[] }
+  /** D48: a harness just turned on with auto-deploy on — deploy the library's `count` skills to it now? */
+  | { kind: "deployHarness"; toolKey: string; toolLabel: string; count: number };
 
 export type AskLayer = AskRequest & { askId: number };
 
@@ -141,7 +156,7 @@ export type SurfaceValue = {
   selection: Readonly<Record<SelectionSurface, ReadonlySet<string>>>;
 };
 
-const ASK_KINDS: ReadonlySet<DialogKind> = new Set(["sharedDir", "overwrite"]);
+const ASK_KINDS: ReadonlySet<DialogKind> = new Set(["sharedDir", "overwrite", "deployHarness"]);
 const isAsk = (layer: DialogLayer): layer is AskLayer => ASK_KINDS.has(layer.kind);
 
 const DEFAULT_ROUTE: Route = { area: "skills", focused: null };
@@ -157,8 +172,6 @@ export function formatHash(route: Route): string {
       return route.focused ? `#/skills/${seg(route.focused.id)}` : "#/skills";
     case "projects":
       return route.focused ? `#/projects/${seg(route.focused.id)}` : "#/projects";
-    case "settings":
-      return route.focused ? `#/settings/${seg(route.focused.pane)}` : "#/settings";
     case "explore":
       return "#/explore";
   }
@@ -166,7 +179,7 @@ export function formatHash(route: Route): string {
 
 /** The route a hash addresses, or null when it addresses none. */
 export function parseHash(hash: string): Route | null {
-  const match = /^#\/(skills|explore|projects|settings)(?:\/([^/]+))?\/?$/.exec(hash);
+  const match = /^#\/(skills|explore|projects)(?:\/([^/]+))?\/?$/.exec(hash);
   if (!match) return null;
   const [, area, raw] = match;
   let subject: string | null = null;
@@ -182,8 +195,6 @@ export function parseHash(hash: string): Route | null {
       return { area, focused: subject ? { kind: "skill", id: subject } : null };
     case "projects":
       return { area, focused: subject ? { kind: "project", id: subject } : null };
-    case "settings":
-      return { area, focused: subject ? { kind: "settings", pane: subject } : null };
     default:
       return { area: "explore", focused: null };
   }
@@ -198,8 +209,6 @@ export function routeFor(subject: FocusedSubject): Route {
       return { area: "explore", focused: subject };
     case "project":
       return { area: "projects", focused: subject };
-    case "settings":
-      return { area: "settings", focused: subject };
   }
 }
 
@@ -260,10 +269,20 @@ const subjectOf = (layer: DialogLayer): { kind: "skill" | "project"; ids: readon
   }
 };
 
+/** The Settings dialog an old `#/settings/<pane>` address asks for, or null. */
+function legacySettingsDialog(hash: string): DialogState | null {
+  const link = legacySettingsLink(hash);
+  if (!link) return null;
+  return link.field ? { kind: "settings", pane: link.pane, field: link.field } : { kind: "settings", pane: link.pane };
+}
+
 export function initialSurfaceValue(hash: string = readHash()): SurfaceValue {
+  const settings = legacySettingsDialog(hash);
   return {
     route: parseHash(hash) ?? DEFAULT_ROUTE,
-    stack: [],
+    // An old Settings link opens the dialog once; the mount effect then
+    // normalises the address to the route showing.
+    stack: settings ? [settings] : [],
     queue: [],
     selection: { skills: EMPTY_SELECTION, matrix: EMPTY_SELECTION, explore: EMPTY_SELECTION },
   };
@@ -328,6 +347,16 @@ export function useSurfaceState() {
     const onHash = () => {
       const hash = readHash();
       const route = parseHash(hash);
+      // An old Settings link (typed, or Back onto a 1.3 entry) opens the
+      // dialog — over an empty stack, as any operator opening — and the
+      // address goes back to the route showing.
+      const settings = legacySettingsDialog(hash);
+      if (settings) {
+        const prev = valueRef.current;
+        if (prev.stack.length === 0) commit({ ...prev, stack: [settings] }, "none");
+        writeHash(valueRef.current.route, "replace");
+        return;
+      }
       if (!route) {
         writeHash(valueRef.current.route, "replace");
         return;

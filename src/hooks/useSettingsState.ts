@@ -377,3 +377,5 @@ export function useSettingsState({
     handleZoomLevelChange,
   };
 }
+
+export type SettingsState = ReturnType<typeof useSettingsState>;

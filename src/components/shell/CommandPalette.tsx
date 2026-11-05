@@ -6,6 +6,7 @@ import type { SkillActions } from "../../hooks/useSkillActions";
 import type { SurfaceState } from "../../hooks/useSurfaceState";
 import { dialogFallback, isFocusLost, resolveFirst } from "../../lib/actionLifecycle";
 import {
+  openKeyboardShortcuts,
   openSettingsPane,
   paletteGroups,
   rememberRecent,
@@ -26,7 +27,7 @@ const APPLE_PLATFORM = isApplePlatform(typeof navigator === "undefined" ? "" : n
 type CommandPaletteProps = {
   surface: Pick<
     SurfaceState,
-    "area" | "focused" | "selection" | "stack" | "isOpen" | "openDialog" | "closeDialog" | "focus" | "open"
+    "area" | "focused" | "selection" | "stack" | "isOpen" | "openDialog" | "closeDialog" | "focus"
   >;
   /** The library (the skills world's catalog). */
   skills: readonly ManagedSkill[];
@@ -51,7 +52,8 @@ type CommandPaletteProps = {
  * confirmation a verb opens records that element as its opener and returns
  * focus there, exactly as from the bulk rail. Verbs run through the door
  * (`actions.run`), places through the surface module, Settings through
- * `openSettingsPane`.
+ * `openSettingsPane` and Keyboard shortcuts through `openKeyboardShortcuts`
+ * (dialogs: each takes focus itself).
  */
 const CommandPalette = ({
   surface,
@@ -139,7 +141,10 @@ const CommandPalette = ({
           settleOnPlace(() => onOpenArea(intent.area), intent.area === "explore" ? null : intent.area);
           return;
         case "settings":
-          settleOnPlace(() => openSettingsPane(surface, intent.pane), null);
+          openSettingsPane(surface, intent.pane);
+          return;
+        case "shortcuts":
+          openKeyboardShortcuts(surface);
           return;
         case "selection":
           void run(intent.verb, intent.skillIds);

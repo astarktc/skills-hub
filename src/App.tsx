@@ -29,9 +29,10 @@ import ImportReviewDialog from "./components/skills/import/ImportReviewDialog";
 import NewToolsModal from "./components/skills/modals/NewToolsModal";
 import SharedDirModal from "./components/skills/modals/SharedDirModal";
 import OverwriteModal from "./components/skills/modals/OverwriteModal";
-import ToolConfigModal from "./components/shared/ToolConfigModal";
 import UpdateDialog from "./components/shared/UpdateDialog";
-import SettingsPage from "./components/skills/SettingsPage";
+import SettingsDialog from "./components/settings/SettingsDialog";
+import ShortcutsDialog from "./components/settings/ShortcutsDialog";
+import DeployHarnessAsk from "./components/settings/DeployHarnessAsk";
 import ProjectsPage from "./components/projects/ProjectsPage";
 import { useProjectState } from "./components/projects/useProjectState";
 import { useAddSkillFlow } from "./hooks/useAddSkillFlow";
@@ -43,6 +44,7 @@ import { useStatusReporter } from "./hooks/useStatusReporter";
 import { useHeldRefusal } from "./hooks/useHeldRefusal";
 import { useSyncOrchestration } from "./hooks/useSyncOrchestration";
 import { useToolCatalog } from "./hooks/useToolCatalog";
+import { useHarnessSelection } from "./hooks/useHarnessSelection";
 import { useAppUpdate } from "./hooks/useAppUpdate";
 import { useListLens } from "./hooks/useListLens";
 import { SHELL_WIDE_QUERY, useMediaQuery } from "./hooks/useMediaQuery";
@@ -67,6 +69,8 @@ import {
   resolveFocusTarget,
 } from "./lib/actionLifecycle";
 import { SKILL_FILTERS, libraryExceptions } from "./lib/skillPresentation";
+import { openKeyboardShortcuts, openSettingsPane } from "./lib/commandPalette";
+import type { SettingsPane, ShortcutPane } from "./lib/settingsPanes";
 import type { ManagedSkill } from "./components/skills/types";
 
 // App is the binder: it owns only i18n, composes the surface module (what is
@@ -105,7 +109,7 @@ function App() {
     onDeploymentsChanged: library.loadManagedSkills,
   });
 
-  const { area, focused, focus, unfocus, open, closeDialog, dismissDialog } =
+  const { area, focused, focus, unfocus, open, closeDialog, dismissDialog, openDialog, updateDialog } =
     surface;
   const openExplorePreview = useCallback(
     (preview: ExplorePreview) => focus({ kind: "explore", ref: preview }),
@@ -193,6 +197,17 @@ function App() {
     order: visibleOrder,
   });
 
+  // Settings → Harnesses' switch (D48): save, then — auto-deploy on — ask once.
+  const harnessSelection = useHarnessSelection({
+    sync,
+    installed: installedToolIds,
+    skills: library.managedSkills,
+    labelOf: labelOfTool,
+    surface,
+    actions,
+    reporter,
+  });
+
   const {
     loading,
     pending,
@@ -217,13 +232,22 @@ function App() {
     [refusal, t],
   );
 
-  const handleOpenSettings = useCallback(() => {
-    open("settings");
-  }, [open]);
-
-  const handleCloseSettings = useCallback(() => {
-    open("skills");
-  }, [open]);
+  // Settings is a dialog (D37): every way in takes `openSettingsPane`; a
+  // pane change is dialog state, never the hash.
+  const surfaceDoor = useMemo(() => ({ openDialog }), [openDialog]);
+  const handleOpenSettings = useCallback(() => openSettingsPane(surfaceDoor, null), [surfaceDoor]);
+  const handleOpenHarnesses = useCallback(() => openSettingsPane(surfaceDoor, "harnesses"), [surfaceDoor]);
+  const handleSettingsPane = useCallback(
+    (pane: SettingsPane) => updateDialog({ kind: "settings", pane }),
+    [updateDialog],
+  );
+  const handleCloseSettings = useCallback(() => closeDialog("settings"), [closeDialog]);
+  const handleOpenShortcuts = useCallback(() => openKeyboardShortcuts(surfaceDoor), [surfaceDoor]);
+  const handleShortcutsPane = useCallback(
+    (pane: ShortcutPane) => updateDialog({ kind: "shortcuts", pane }),
+    [updateDialog],
+  );
+  const handleCloseShortcuts = useCallback(() => closeDialog("shortcuts"), [closeDialog]);
 
   // Opening the history marks it read (the reporter's `openReport`); what
   // was listed while it stood open counts as seen when it closes.
@@ -259,7 +283,7 @@ function App() {
   // matrix is loaded), as a real navigation; every other tab opens its area.
   const { selectedProjectId } = projects;
   const handleViewChange = useCallback(
-    (next: Exclude<Area, "settings">) => {
+    (next: Area) => {
       if (next === "projects" && selectedProjectId)
         focus({ kind: "project", id: selectedProjectId });
       else open(next);
@@ -569,6 +593,7 @@ function App() {
   // The two asks render from the surface stack and answer through it.
   const sharedDirAsk = surface.pendingAsk("sharedDir");
   const overwriteAsk = surface.pendingAsk("overwrite");
+  const deployHarnessAsk = surface.pendingAsk("deployHarness");
 
   // A dialog whose own action runs shows the header progress at its foot:
   // the page behind a modal is inert, so its Cancel must be the dialog's.
@@ -581,6 +606,7 @@ function App() {
     addFlow.add.open ||
     addFlow.importReview.open ||
     surface.isOpen("notifications") ||
+    surface.isOpen("settings") ||
     (library.pendingRepointSkill !== null && library.repointSelection !== null) ||
     (area === "projects" &&
       (surface.isOpen("projectAdd") ||
@@ -610,6 +636,7 @@ function App() {
         activeArea={area}
         onViewChange={handleViewChange}
         onOpenSettings={handleOpenSettings}
+        onOpenShortcuts={handleOpenShortcuts}
         unreadNotifications={unreadCount}
         onOpenNotifications={handleOpenNotifications}
         themePreference={settings.themePreference}
@@ -648,7 +675,7 @@ function App() {
                 onCancel={cancelPending}
                 progressYielded={progressInDialog}
                 onRefreshAll={() => void run("update", "all", { confirmed: true })}
-                onConfigureTools={sync.handleOpenToolConfig}
+                onConfigureTools={handleOpenHarnesses}
                 onAddSkill={handleOpenAdd}
                 addIsPrimary={!discoveryLeads}
                 t={t}
@@ -717,36 +744,6 @@ function App() {
               ) : null}
             </div>
           </div>
-        ) : area === "settings" ? (
-          <SettingsPage
-            isTauri={isTauri}
-            update={update}
-            storagePath={settings.storagePath}
-            gitCacheCleanupDays={settings.gitCacheCleanupDays}
-            gitCacheTtlSecs={settings.gitCacheTtlSecs}
-            bounds={settings.bounds}
-            themePreference={settings.themePreference}
-            zoomLevel={settings.zoomLevel}
-            onPickStoragePath={settings.handlePickStoragePath}
-            onThemeChange={settings.handleThemeChange}
-            onZoomLevelChange={settings.handleZoomLevelChange}
-            onGitCacheCleanupDaysChange={settings.handleGitCacheCleanupDaysChange}
-            onGitCacheTtlSecsChange={settings.handleGitCacheTtlSecsChange}
-            onClearGitCacheNow={settings.handleClearGitCacheNow}
-            onOpenLogFolder={settings.handleOpenLogFolder}
-            githubTokenSet={settings.githubTokenSet}
-            githubTokenDraft={settings.githubTokenDraft}
-            githubTokenPending={settings.githubTokenPending}
-            onGithubTokenDraftChange={settings.handleGithubTokenDraftChange}
-            onGithubTokenSave={settings.handleGithubTokenSave}
-            onGithubTokenRemove={settings.handleGithubTokenRemove}
-            autoSyncEnabled={sync.autoSyncEnabled}
-            onAutoSyncChange={sync.handleAutoSyncToggle}
-            autoSyncBlockedReason={blockedReason}
-            focusPane={focused?.kind === "settings" ? focused.pane : null}
-            onBack={handleCloseSettings}
-            t={t}
-          />
         ) : area === "projects" ? (
           <ProjectsPage
             state={projects}
@@ -831,20 +828,34 @@ function App() {
         t={t}
       />
 
-      <ToolConfigModal
-        open={surface.isOpen("toolConfig")}
-        loading={loading}
-        toolStatus={catalog.toolStatus}
-        savedSelection={sync.globalSelectedTools}
-        scanSelectedOnly={sync.scanSelectedToolsOnly}
-        labels={{
-          title: t("globalToolConfigTitle"),
-          description: t("globalToolConfigDesc"),
-          confirmLabel: t("globalToolConfigConfirm"),
-          scanToggleLabel: t("globalToolConfigScanSelectedOnly"),
+      <SettingsDialog
+        layer={surface.layer("settings")}
+        onPaneChange={handleSettingsPane}
+        onClose={handleCloseSettings}
+        settings={settings}
+        update={update}
+        deploy={{
+          autoDeployEnabled: sync.autoSyncEnabled,
+          onAutoDeployChange: sync.handleAutoSyncToggle,
+          selected: effectiveSyncTargetIds,
+          scanSelectedOnly: sync.scanSelectedToolsOnly,
+          onSelectedChange: harnessSelection.select,
+          onScanSelectedOnlyChange: (scanSelectedOnly) => void sync.saveToolConfig({ scanSelectedOnly }),
         }}
-        onConfirm={sync.handleToolConfigConfirm}
-        onRequestClose={sync.handleCloseToolConfig}
+        toolStatus={catalog.toolStatus}
+        labelOf={labelOfTool}
+        blockedReason={blockedReason}
+        progress={dialogProgress}
+        isTauri={isTauri}
+        t={t}
+      />
+
+      <DeployHarnessAsk pending={deployHarnessAsk} t={t} />
+
+      <ShortcutsDialog
+        layer={surface.layer("shortcuts")}
+        onPaneChange={handleShortcutsPane}
+        onClose={handleCloseShortcuts}
         t={t}
       />
 
@@ -961,7 +972,7 @@ function App() {
         blockedReason={blockedReason}
         onOpenArea={handleViewChange}
         onAddSkill={handleOpenAdd}
-        onConfigureHarnesses={sync.handleOpenToolConfig}
+        onConfigureHarnesses={handleOpenHarnesses}
         t={t}
       />
     </div>

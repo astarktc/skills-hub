@@ -11,7 +11,7 @@ import ProjectHeader from "./ProjectHeader";
 import AssignmentMatrix from "./AssignmentMatrix";
 import AddProjectModal from "./AddProjectModal";
 import EditProjectModal from "./EditProjectModal";
-import ToolConfigModal from "../shared/ToolConfigModal";
+import ProjectToolsModal from "./ProjectToolsModal";
 import RemoveProjectModal from "./RemoveProjectModal";
 import type { ManagedSkill } from "../skills/types";
 import type { ToolCatalog } from "../../hooks/useToolCatalog";
@@ -367,7 +367,7 @@ const ProjectsPage = ({
         t={t}
       />
 
-      <ToolConfigModal
+      <ProjectToolsModal
         open={surface.layer("projectToolConfig") !== null}
         loading={pending !== null}
         blockedReason={blockedReason}

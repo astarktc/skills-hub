@@ -85,6 +85,16 @@ import {
 } from "./model";
 import { TOOL_REGISTRY, VIRTUAL_GROUP_KEY } from "./registry";
 
+/**
+ * A plausible detect dir for the fixture's placement facts: the global dir's
+ * configuration root (`.claude/skills` → `.claude`, `.config/goose/skills` →
+ * `.config/goose`). The real list is the registry's `relative_detect_dirs`.
+ */
+function fixtureDetectDir(globalDir: string): string {
+  const parts = globalDir.split("/");
+  return parts[0] === ".config" ? parts.slice(0, 2).join("/") : parts[0];
+}
+
 type Handler<K extends CommandName> = (
   ...args: Parameters<Commands[K]>
 ) => Promise<Awaited<ReturnType<Commands[K]>>>;
@@ -1564,7 +1574,14 @@ export function createFixtureBackend(
     const newly = installed.filter((k) => !state.seenTools.includes(k));
     state.seenTools = [...installed];
     return {
-      tools: TOOL_REGISTRY.map((t) => ({ key: t.key, label: t.label, installed: isInstalled(t.key), shared_with: globalSharers(t.key), constituents: [] })),
+      tools: TOOL_REGISTRY.map((t) => ({
+        key: t.key,
+        label: t.label,
+        installed: isInstalled(t.key),
+        shared_with: globalSharers(t.key),
+        constituents: [],
+        placement: { skills_dir: t.globalDir, detect_dirs: [fixtureDetectDir(t.globalDir)], supports_symlink: true },
+      })),
       installed,
       newly_installed: newly,
     };
@@ -1578,6 +1595,7 @@ export function createFixtureBackend(
       installed: isProjectToolInstalled(state, t.key),
       shared_with: catalog.filter((o) => o.projectDir === t.projectDir).map((o) => o.key),
       constituents: t.key === VIRTUAL_GROUP_KEY ? TOOL_REGISTRY.filter((o) => o.grouped).map((o) => o.label) : [],
+      placement: null,
     }));
     return { tools, installed: tools.filter((t) => t.installed).map((t) => t.key), newly_installed: [] };
   };

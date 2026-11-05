@@ -51,6 +51,7 @@ use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
 };
 use crate::core::sync_status::{SyncMode, SyncStatus};
+use crate::core::tool_adapters::catalog::GlobalPlacement;
 use crate::core::tool_adapters::{
     global_tool_entries, installed_keys, project_tool_entries, ToolCatalogEntry,
 };
@@ -126,13 +127,41 @@ pub struct ToolInfoDto {
     /// Keys of every listed tool sharing this tool's skills dir (global dir
     /// for the global list, project dir for the project list), in adapter
     /// order, including this tool itself (len >= 1). The backend owns the
-    /// shared-dir invariant; the frontend only presents it. The dir itself is
-    /// not on the wire — see `ToolCatalogEntry`.
+    /// shared-dir invariant; the frontend only presents it, never re-deriving
+    /// it from `placement.skills_dir` (see `ToolCatalogEntry`).
     pub shared_with: Vec<String>,
     /// Display labels of the constituent tools absorbed into this entry when
     /// it is a virtual group (project-scope AgentsStandard); empty for real
     /// tools. The backend owns group membership; the frontend only presents it.
     pub constituents: Vec<String>,
+    /// Where the tool lives and how it is deployed to — the global list only;
+    /// `null` in the project list (see `ToolCatalogEntry::placement`).
+    pub placement: Option<ToolPlacementDto>,
+}
+
+/// A global tool's registry placement (the Settings → Harnesses row).
+#[derive(Debug, Serialize, Type)]
+pub struct ToolPlacementDto {
+    /// The global skills dir, relative to the operator's home.
+    pub skills_dir: String,
+    /// The detect dirs (any one present marks the tool installed), relative to home.
+    pub detect_dirs: Vec<String>,
+    /// `true`: deployed as a link (symlink → junction → copy fallback); `false`: copied.
+    pub supports_symlink: bool,
+}
+
+impl From<GlobalPlacement> for ToolPlacementDto {
+    fn from(placement: GlobalPlacement) -> Self {
+        ToolPlacementDto {
+            skills_dir: placement.skills_dir.to_string(),
+            detect_dirs: placement
+                .detect_dirs
+                .iter()
+                .map(|d| d.to_string())
+                .collect(),
+            supports_symlink: placement.supports_symlink,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Type)]
@@ -150,6 +179,7 @@ impl From<ToolCatalogEntry> for ToolInfoDto {
             installed: entry.installed,
             shared_with: entry.shared_with.iter().map(|k| k.to_string()).collect(),
             constituents: entry.constituents.iter().map(|k| k.to_string()).collect(),
+            placement: entry.placement.map(ToolPlacementDto::from),
         }
     }
 }
