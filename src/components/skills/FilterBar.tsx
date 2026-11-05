@@ -43,8 +43,8 @@ const VIEW_LABEL_KEY: Record<ViewMode, string> = {
  * The My Skills filter bar, all through the list lens: search (`/` focuses
  * it — My Skills' keymap, `useSkillListKeymap`, finds it by
  * `data-skill-search`; Enter / ↓ there move to the first row), the chips All · Issues ·
- * Edited · Disabled, Grouped / Flat, and one Sort and view menu (Collapse all / Expand all
- * while Grouped). Policy (auto-sync) and library-wide verbs live
+ * Edited · Disabled, Grouped / Flat, and one Sort and view menu — Sort by, View (List ·
+ * Grid · Dense grid, ticket 24), then Collapse all / Expand all while Grouped. Policy (auto-sync) and library-wide verbs live
  * elsewhere (Settings; the bulk rail).
  */
 const FilterBar = ({ lens, t }: FilterBarProps) => {
@@ -112,7 +112,8 @@ const FilterBar = ({ lens, t }: FilterBarProps) => {
             render={
               <Button
                 variant="ghost"
-                aria-label={`${t("library.display")}: ${t(SORT_LABEL_KEY[lens.sort])}`}
+                // The view is in the name too: the visible text is the sort alone.
+                aria-label={`${t("library.display")}: ${t(SORT_LABEL_KEY[lens.sort])} · ${t(VIEW_LABEL_KEY[lens.viewMode])}`}
               />
             }
           >

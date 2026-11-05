@@ -752,7 +752,7 @@ invisible, not motion — so "first DOM frame" is not claimed for toasts.
 ## My Skills (the first migrated surface, ticket 11; row and group anatomy, ticket 31)
 
 Composed from the primitives and tokens only; no variant was added. Files: `components/shell/AppSidebar.tsx`,
-`components/skills/{LibraryHeader,FilterBar,SkillsList,SkillRow,SyncedStrip,listColumns}.tsx`.
+`components/skills/{LibraryHeader,FilterBar,SkillsList,SourceGroupHeader,SkillRow,SyncedStrip,listColumns}.tsx`.
 
 - **Shell.** Sidebar 200 px on `card` (`sidebar` tokens): the areas My Skills · Explore · Projects, then at the
   foot Notifications (unread count as a `solid accent` Badge) · Theme (a menu) · Keyboard shortcuts · Settings (the
@@ -811,8 +811,9 @@ Composed from the primitives and tokens only; no variant was added. Files: `comp
   its rows, rows on `row` inside; cards stack 12 px apart inside 16 px of list padding. Flat is one card without a
   header. In dark the card's `border` measures 1.17 against `row` (1.14 against `card`) and the header's `card` is a
   1.02 pane step on black; the border carries the shape (light: 1.42 / 1.25, header 1.13).
-- **Group header** (40 px, sticky to the top of the scroll area within its card, `card`, a `border` hairline under it
-  unless collapsed; it shares the row's column template): checkbox (the group's skills in / out) · then, across the
+- **Group header** (`SourceGroupHeader.tsx`, one component the list and the grid both render; 40 px, sticky to the
+  top of the scroll area within its card, `card`, a `border` hairline under it unless collapsed; in the list it shares
+  the row's column template): checkbox (the group's skills in / out) · then, across the
   name and description columns, **chevron** (`ghost icon-sm`, `aria-expanded`, named "Collapse {source}" / "Expand
   {source}") · **source chip** (ticket 30's pick A, header only, `aria-hidden` — the name beside it is the label: a
   GitHub owner's `Badge tone="identity"` with `identityHue(owner)` / `identityInitials(owner)`; otherwise the neutral
@@ -841,8 +842,45 @@ Composed from the primitives and tokens only; no variant was added. Files: `comp
   library or it keeps its header — a query that leaves one skill of a multi-skill repo shows it under that repo, never
   under "Individual sources" (`groupSkillsByRepo`'s `catalog`). Sources with one skill fold into "Individual sources";
   no source pill repeats inside a group.
-- **Card view** (Auto / Dense grid) renders the same anatomy on a `card` tile with the same strip — a stop-gap
-  until round 19b designs the grid (F07's clipping is gone: marks never clip).
+
+### The grid (ticket 24)
+
+The lens's other two view modes (`ViewMode` = `list` · `auto-grid` · `dense-grid`, persisted under the compat key
+`skills-viewMode`), chosen in the "Sort and view" menu's **View** radio group (List · Grid · Dense grid; the
+trigger's accessible name carries the view, "Sort and view: Name A–Z · Grid"). Composed from the primitives and tokens
+only; no token or variant was added.
+
+- **One card = one row, in reading order** (`SkillRow` `layout="card"`): checkbox · name (+ Edit pencil) · switch ·
+  overflow on the first line; the exception marks (`rowMarks`, words always — the card has room; they wrap) on the
+  next; the description (in Flat and "Individual sources" preceded by the source in `font-mono xs faint`), two lines
+  reserved and clamped, its whole text as the title; at the foot the Deployments strip + N/M and the scope cell
+  (pushed right; it wraps under the strip before anything clips). The name truncates with its title. **No harness label
+  is ever drawn on a card**: each mark is a `role="img"` named and titled with its harness and state, and the
+  inspector lists them.
+- **Grounds** — the row's, unchanged: the card is `rounded-md` with a `border` edge on `row` (1.17 dark / 1.42 light,
+  as the group card's); hover `accent`; **focused** (the inspector's, `aria-current`) `raised` with its edge turned
+  `ring` (6.14 dark / 4.72 light on `raised`); **selected** `raised` + the 3 px iris edge on the leading side
+  (`rounded-l-md` to follow the corner) and the checked box — both together when both hold. Every text and mark pair
+  is a row pair already measured (§ above, § The Deployments strip): no new placement.
+- **Densities** (`listColumns.ts` `GRID_COLUMNS`): `repeat(auto-fill, minmax(min(100%, max(floor, strip)), 1fr))`,
+  where *strip* = `--strip-marks` × 20 px + 40 + 26 px (the card's padding and border), so a card never clips its
+  strip, and `min(100%, …)` keeps one card inside the pane. **Grid**: floor **19rem (304 px)**, 12 px gaps and inset.
+  **Dense grid**: floor **15rem (240 px)**, 8 px gaps and inset. Measured on the fixture (`rich`, 7 harnesses, overlay
+  scrollbars, inspector closed): 960 × 640 → 2 / 3 columns (cards 417 / 279 px); 1280 × 800 → 3 / 4 (333 / 252);
+  1800 × 1000 → 4 / 6 (377 / 252). With the inspector beside at 1280 the pane is 720 px: 2 / 2. In Dense a long name
+  truncates sooner (~130 px of name) — its title carries it.
+- **Reading order** is row-major: cards fill the grid's rows left to right in the DOM's order, which is the lens's
+  `onScreen` order. So `j` / `k` move to the next / previous card across a row wrap, ⇧-click selects a range in reading
+  order, ⌘A takes every card shown, and Delete's focus rule lands on the next card, else the previous, else the
+  heading — the one keymap and the one fold, no grid-specific order. The list pane's `scroll-pt-15` (60 px) keeps the row or card
+  `j` / `k` scroll to whole beneath the sticky group header, in both views.
+- **Groups** are the list's cards: the same header, the same collapse (chevron, ←/→, Collapse all / Expand all,
+  persisted) and the same singleton fold; the cards sit inside the group card on its `row` ground. **The grid header
+  shows no harness initials**: there is no strip column to sit over when cards wrap, and the initials repeated per card
+  would be the clutter D42 removed — the marks' own names (hover title, accessible name) and the inspector answer
+  "which mark is Cursor". The header there is checkbox · chevron · chip · name · count · summary · Deploy all.
+- The inspector (side at ≥ 1200 px, sheet below), the bulk rail and every verb (through the door's handle) are the
+  list's.
 
 ### The Deployments strip
 
@@ -955,7 +993,7 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
   edge 6.14 dark / 4.72 light; checked box 3.56 / 4.72. A group header's checkbox selects its source (`mixed` when
   part of it is selected).
 - **Keys** (one keymap, `useSkillListKeymap`; listed in the sidebar's Keyboard shortcuts): `/` search · `j` / `k`
-  next / previous row · Enter open · `x` select the row holding focus · ⇧-click a range from the last row toggled ·
+  next / previous row (in the grid, the next / previous card in reading order) · Enter open · `x` select the row holding focus · ⇧-click a range from the last row toggled (a shift-press on a checkbox never extends the page's text selection) ·
   ⌘A every row the lens shows (the visible subset) · Esc clears the selection, then collapses Files, then closes the
   inspector. None fires while typing or while a dialog, sheet, popover or menu is open. The row keys (`/ j k x ⌘A`)
   fire only on the list surface (header, filters, rail, rows — `inListScope`), never from the inspector or its

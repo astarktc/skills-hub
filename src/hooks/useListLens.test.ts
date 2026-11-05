@@ -266,3 +266,43 @@ describe("useListLens with a surface fold", () => {
     expect(result.current.filterCounts).toEqual({ all: 3, online: 1, featured: 2 });
   });
 });
+
+// Ticket 24: the grid is a view mode of the same lens. Both densities persist
+// under the one compat key, and no view mode reorders anything — a grid's
+// cards fill row-major in the DOM's order, so its reading order is the lens's
+// `onScreen` sequence (j / k, a shift-click range, Delete's next card).
+describe("useListLens view modes (ticket 24)", () => {
+  it("persists list, auto-grid and dense-grid under skills-viewMode, and drops an unknown value", () => {
+    const { result } = render();
+    expect(result.current.viewMode).toBe("list");
+    for (const mode of ["auto-grid", "dense-grid", "list"] as const) {
+      act(() => result.current.setViewMode(mode));
+      expect(window.localStorage.getItem("skills-viewMode")).toBe(mode);
+      expect(render().result.current.viewMode).toBe(mode);
+    }
+    window.localStorage.setItem("skills-viewMode", "masonry");
+    expect(render().result.current.viewMode).toBe("list");
+  });
+
+  it("walks the same on-screen order in every view mode, collapsed groups excluded", () => {
+    const { result } = render({ collapsePreference: collapsedSourcesPreference });
+    act(() => result.current.setGroupByRepo(true));
+    act(() => result.current.toggleCollapsed("solo/one"));
+    const orders = (["list", "auto-grid", "dense-grid"] as const).map((mode) => {
+      act(() => result.current.setViewMode(mode));
+      return result.current.onScreen.map((s) => s.name);
+    });
+    expect(orders).toEqual([
+      ["alpha", "gamma", "delta"],
+      ["alpha", "gamma", "delta"],
+      ["alpha", "gamma", "delta"],
+    ]);
+    // Delete's focus rule reads that order: removing gamma lands on delta,
+    // the next card in reading order, across the collapsed group.
+    const order = result.current.onScreen.map((s) => s.id);
+    expect(focusAfter({ verb: "delete", removed: true }, { skillId: "1", order, surface: "skills" })).toEqual({
+      kind: "row",
+      skillId: "4",
+    });
+  });
+});

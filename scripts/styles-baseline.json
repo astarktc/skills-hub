@@ -50,7 +50,8 @@
     "src/components/settings/UpdatesPane.tsx",
     "src/components/settings/DiagnosticsPane.tsx",
     "src/components/settings/ShortcutsDialog.tsx",
-    "src/components/settings/DeployHarnessAsk.tsx"
+    "src/components/settings/DeployHarnessAsk.tsx",
+    "src/components/skills/SourceGroupHeader.tsx"
   ],
   "rawColourExempt": [
     {

@@ -1,10 +1,8 @@
-import { memo, useId, useMemo, type CSSProperties, type KeyboardEvent } from "react";
-import { ChevronDown, ChevronRight, Folder, GitBranch, Inbox, Layers } from "lucide-react";
+import { memo, useId, useMemo, type CSSProperties } from "react";
+import { Inbox } from "lucide-react";
 import type { TFunction } from "i18next";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import type { ManagedSkill, OnboardingPlan } from "./types";
 import type { SkillActions } from "../../hooks/useSkillActions";
 import type { ListLens } from "../../hooks/useListLens";
@@ -12,22 +10,18 @@ import type { ImportLanding } from "../../hooks/useImportReview";
 import type { PendingAction } from "../../lib/actionLifecycle";
 import {
   INDIVIDUAL_GROUP_KEY,
-  LOCAL_GROUP_KEY,
-  groupState,
   harnessInitials,
-  identityHue,
-  identityInitials,
   nameColumnWidth,
   ROW_MARK_LABEL_KEY,
   rowMarks,
   skillHealth,
   skillSourceLine,
   syncedStrip,
-  type RepoGroup,
   type SyncedStrip,
 } from "../../lib/skillPresentation";
-import { LIST_COLUMNS } from "./listColumns";
+import { GRID_COLUMNS } from "./listColumns";
 import SkillRow, { type SkillRowLayout } from "./SkillRow";
+import SourceGroupHeader from "./SourceGroupHeader";
 
 type SkillsListProps = {
   /** My Skills' list lens: the visible skills, their groups (null = Flat), the view mode. */
@@ -63,18 +57,15 @@ type SkillsListProps = {
   t: TFunction;
 };
 
-const GRID_COLUMNS = {
-  "auto-grid": "grid-cols-[repeat(auto-fill,minmax(20rem,1fr))]",
-  "dense-grid": "grid-cols-[repeat(auto-fill,minmax(14rem,1fr))]",
-} as const;
-
 /** One group card (D38): bordered, rounded, its rows on the `row` ground, clipped to the radius. */
 const GROUP_CARD = "overflow-clip rounded-lg border border-border bg-row";
 
 /**
  * The My Skills list: source groups as cards (the singleton fold on; each
  * collapsible, its header sticky inside the scroll area) or one Flat card,
- * 36 px rows or tiles, plus its empty and first-run states. The list pane is
+ * 36 px rows or the grid's cards (`auto-grid` / `dense-grid`, ticket 24 —
+ * the same row model, in reading order), plus its empty and first-run
+ * states. Both views render one group header (`SourceGroupHeader`). The list pane is
  * a size container, so the row drops its description column when the pane
  * is narrow, whatever the window. It publishes the shared column template's
  * two measures: `--strip-marks` and `--name-col` (`listColumns.ts`).
@@ -102,7 +93,7 @@ const SkillsList = ({
   onExplore,
   t,
 }: SkillsListProps) => {
-  const { displayed, onScreen, groups, viewMode, collapsed, setCollapsed, toggleCollapsed } = lens;
+  const { displayed, onScreen, groups, viewMode, collapsed, setCollapsed } = lens;
   const layout: SkillRowLayout = viewMode === "list" ? "list" : "card";
   const discovered = plan?.group_count ?? 0;
   const busy = pending !== null;
@@ -136,7 +127,27 @@ const SkillsList = ({
 
   // The header's initials row over the strip (D42): the Harness catalog's
   // labels, unique two-letter initials, in the strip's order.
-  const initials = useMemo(() => harnessInitials(stripTools), [stripTools]);
+  // The grid has no strip column to sit over: its header shows no initials,
+  // and each card's marks carry their harness's name (AX name + title).
+  const initialsLegend = useMemo(() => {
+    if (layout !== "list") return null;
+    const initials = harnessInitials(stripTools);
+    return (
+      <span role="group" aria-label={t("library.group.harnesses")} className="flex items-center gap-2">
+        {stripTools.map((tool) => (
+          <span
+            key={tool.id}
+            role="img"
+            aria-label={tool.label}
+            title={tool.label}
+            className="flex w-3 shrink-0 justify-center overflow-visible text-2xs leading-3 font-bold whitespace-nowrap text-faint"
+          >
+            {initials[tool.id]}
+          </span>
+        ))}
+      </span>
+    );
+  }, [layout, stripTools, t]);
 
   const renderRows = (skills: readonly ManagedSkill[], inlineSource: boolean, id?: string) => (
     <ul
@@ -144,7 +155,9 @@ const SkillsList = ({
       className={cn(
         "m-0 list-none p-0",
         layout === "list" && "py-1",
-        layout === "card" && ["grid gap-3 p-3", GRID_COLUMNS[viewMode as keyof typeof GRID_COLUMNS]],
+        // Row-major auto-placement: the cards' reading order is the DOM's,
+        // which is the lens's `onScreen` order (j / k, ranges, Delete's focus).
+        viewMode !== "list" && ["grid", GRID_COLUMNS[viewMode]],
       )}
     >
       {skills.map((skill) => (
@@ -218,33 +231,14 @@ const SkillsList = ({
     );
   }
 
-  // The source's chip (ticket 30's pick A, header only): a GitHub owner's
-  // identity hue and initials; otherwise the neutral chip with the source's
-  // icon. `aria-hidden` — the source name beside it is the label.
-  const groupChip = (group: RepoGroup<ManagedSkill>) =>
-    group.owner ? (
-      <Badge tone="identity" hue={identityHue(group.owner)} aria-hidden="true">
-        {identityInitials(group.owner)}
-      </Badge>
-    ) : (
-      <Badge variant="solid" tone="neutral" size="chip" aria-hidden="true">
-        {group.key === LOCAL_GROUP_KEY ? <Folder /> : group.key === INDIVIDUAL_GROUP_KEY ? <Layers /> : <GitBranch />}
-      </Badge>
-    );
-
-  /** ←/→ on a focused header collapse / expand its group (D42). */
-  const onHeaderKey = (key: string) => (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return;
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    setCollapsed(key, event.key === "ArrowLeft");
-  };
-
   return (
     <div
       data-skill-list=""
       // `text-sm`: the name column's `ch` resolves at the names' own size.
-      className="@container min-h-0 flex-1 overflow-y-auto text-sm"
+      // `scroll-pt-15` (60 px): j / k scroll a name into view clear of the
+      // sticky 40 px group header with its row or card whole beneath it — a
+      // card's name sits 13 px inside its edge — never under the header.
+      className="@container min-h-0 flex-1 scroll-pt-15 overflow-y-auto text-sm"
       style={paneStyle}
       aria-label={t("library.list")}
       role="region"
@@ -294,128 +288,26 @@ const SkillsList = ({
       ) : groups ? (
         <div className="flex flex-col gap-3 px-4 py-3">
           {groups.map((group) => {
-            const state = groupState(group.skills);
             const headingId = `${listId}-${group.key}`;
             const rowsId = `${listId}-${group.key}-rows`;
             const isCollapsed = collapsed.has(group.key);
-            const chevronLabel = t(isCollapsed ? "library.group.expand" : "library.group.collapse", { source: group.label });
-            const selectedHere = group.skills.filter((skill) => selection.has(skill.id)).length;
-            const allSelected = selectedHere === group.skills.length;
-            const parts = (
-              [
-                ["failed", state.failed, "text-failed"],
-                ["stale", state.stale, "text-stale"],
-                ["notDeployed", state.notDeployed, "text-muted-foreground"],
-                ["disabled", state.disabled, "text-faint"],
-              ] as const
-            ).filter(([, count]) => count > 0);
             return (
               <section key={group.key} aria-labelledby={headingId} className={GROUP_CARD}>
-                {/* The header shares the rows' column template, so the harness
-                    initials sit over the strip's marks. */}
-                <div
-                  data-group-header={group.key}
-                  onKeyDown={onHeaderKey(group.key)}
-                  className={cn(
-                    "sticky top-0 z-10 grid h-10 items-center gap-x-3 bg-card px-3",
-                    !isCollapsed && "border-b border-border",
-                    LIST_COLUMNS,
-                  )}
-                >
-                  <span className="flex justify-center">
-                    <Checkbox
-                      checked={allSelected}
-                      indeterminate={selectedHere > 0 && !allSelected}
-                      onCheckedChange={() => onSelectGroup(group.skills.map((skill) => skill.id), !allSelected)}
-                      aria-label={t("bulk.selectGroup", { count: group.skills.length, source: group.label })}
-                    />
-                  </span>
-                  <span className="col-span-2 flex min-w-0 items-center gap-2 @max-3xl:col-span-1">
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-expanded={!isCollapsed}
-                      aria-controls={isCollapsed ? undefined : rowsId}
-                      aria-label={chevronLabel}
-                      title={chevronLabel}
-                      onClick={() => toggleCollapsed(group.key)}
-                    >
-                      {isCollapsed ? <ChevronRight /> : <ChevronDown />}
-                    </Button>
-                    {groupChip(group)}
-                    {/* Truncation lives on the inner text, never on an ancestor of
-                        the link: an overflow-clipping heading would cut its focus
-                        ring (2 px, offset 2 px) down to corner fragments. */}
-                    <h2 id={headingId} className="m-0 flex min-w-0 text-sm font-semibold text-foreground">
-                      {group.href ? (
-                        <a
-                          href={group.href}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex h-6 min-w-0 items-center rounded-sm hover:underline"
-                        >
-                          <span className="truncate" title={group.label}>{group.label}</span>
-                        </a>
-                      ) : (
-                        <span className="flex h-6 min-w-0 items-center">
-                          <span className="truncate" title={group.label}>{group.label}</span>
-                        </span>
-                      )}
-                    </h2>
-                    {/* Below a 48rem list the count yields to the name and the state summary. */}
-                    <span className="shrink-0 text-xs text-faint tabular-nums @max-3xl:hidden">
-                      {t("library.group.count", { count: group.skills.length })}
-                    </span>
-                    {parts.length > 0 ? (
-                      // `shrink-8`: the summary gives way long before the source name.
-                      <span
-                        className="flex min-w-0 shrink-8 items-center gap-2 truncate text-xs"
-                        title={parts.map(([key, count]) => t(`library.group.${key}`, { count })).join(" · ")}
-                      >
-                        {parts.map(([key, count, tone]) => (
-                          <span key={key} className={tone}>
-                            {t(`library.group.${key}`, { count })}
-                          </span>
-                        ))}
-                      </span>
-                    ) : null}
-                  </span>
-                  {layout === "list" ? (
-                    <span role="group" aria-label={t("library.group.harnesses")} className="flex items-center gap-2">
-                      {stripTools.map((tool) => (
-                        <span
-                          key={tool.id}
-                          role="img"
-                          aria-label={tool.label}
-                          title={tool.label}
-                          className="flex w-3 shrink-0 justify-center overflow-visible text-2xs leading-3 font-bold whitespace-nowrap text-faint"
-                        >
-                          {initials[tool.id]}
-                        </span>
-                      ))}
-                    </span>
-                  ) : (
-                    <span />
-                  )}
-                  <span className="col-span-3 flex justify-end">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void actions.run("deployGroup", group.skills)}
-                      disabled={busy || state.deployable === 0}
-                      aria-label={t("library.group.deployAllLabel", { source: group.label })}
-                      title={
-                        busy
-                          ? (blockedReason ?? undefined)
-                          : state.deployable === 0
-                            ? t("library.group.nothingToDeploy")
-                            : t("library.group.deployAllLabel", { source: group.label })
-                      }
-                    >
-                      {t("library.group.deployAll")}
-                    </Button>
-                  </span>
-                </div>
+                <SourceGroupHeader
+                  group={group}
+                  layout={layout === "list" ? "list" : "grid"}
+                  headingId={headingId}
+                  rowsId={rowsId}
+                  collapsed={isCollapsed}
+                  onCollapsedChange={(on) => setCollapsed(group.key, on)}
+                  selectedCount={group.skills.filter((skill) => selection.has(skill.id)).length}
+                  onSelectGroup={onSelectGroup}
+                  legend={initialsLegend}
+                  busy={busy}
+                  blockedReason={blockedReason}
+                  actions={actions}
+                  t={t}
+                />
                 {isCollapsed ? null : renderRows(group.skills, group.key === INDIVIDUAL_GROUP_KEY, rowsId)}
               </section>
             );

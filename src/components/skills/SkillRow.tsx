@@ -212,7 +212,10 @@ const SkillRow = ({
       <span
         data-skill-health={skill.id}
         tabIndex={-1}
-        className="relative flex shrink-0 items-center gap-1 rounded-sm"
+        className={cn(
+          "relative flex items-center gap-1 rounded-sm",
+          compact ? "shrink-0" : "flex-wrap self-start",
+        )}
       >
         {marks.map((row) => {
           const detail = markTitle(row);
@@ -396,6 +399,15 @@ const SkillRow = ({
   const checkbox = (
     <Checkbox
       checked={selected}
+      // A shift-click is a range, not a text selection: without this the
+      // browser extends the page's text selection across every row between.
+      // preventDefault also suppresses the native focus move, so focus the
+      // box by hand — the keymap (x, j/k) reads from it (ticket 24 audit F1).
+      onMouseDown={(event: MouseEvent<HTMLElement>) => {
+        if (!event.shiftKey) return;
+        event.preventDefault();
+        event.currentTarget.focus({ preventScroll: true });
+      }}
       onClickCapture={(event: MouseEvent) => {
         rangeClick.current = event.shiftKey;
       }}
@@ -407,6 +419,13 @@ const SkillRow = ({
     />
   );
 
+  // The grid's card (ticket 24): the row model in reading order — name
+  // (+ pencil) · marks · description · strip + N/M · scope, the switch and
+  // overflow on the name's line — on the row's grounds: `row`, hover
+  // `accent`, focused `raised` with a 1 px `ring` edge, selected `raised`
+  // with the 3 px iris edge. Nothing in it clips: the grid's minimum column
+  // fits the widest strip (`SkillsList`), the name truncates with its title,
+  // the description stops at two lines with its whole text as the title.
   if (layout === "card") {
     return (
       <li
@@ -417,28 +436,34 @@ const SkillRow = ({
         aria-busy={busyHere || undefined}
         onClick={handleRowClick}
         className={cn(
-          "relative flex min-w-0 flex-col gap-2 overflow-hidden rounded-lg border border-border bg-card p-3 hover:border-border-strong data-selected:bg-raised data-focused:border-ring",
+          "relative flex min-w-0 flex-col gap-2 rounded-md border border-border bg-row p-3 hover:bg-accent data-selected:bg-raised",
+          "data-focused:border-ring data-focused:bg-raised",
           SELECTED_EDGE,
+          "data-selected:before:rounded-l-md",
         )}
       >
         <div className="flex min-w-0 items-center gap-2">
-          {checkbox}
-          {name}
-          {pencil}
-          <span className="ml-auto flex shrink-0 items-center gap-1">
+          <span className="flex shrink-0 items-center">{checkbox}</span>
+          <span className="flex min-w-0 flex-1 items-center gap-1">
+            {name}
+            {pencil}
+          </span>
+          <span className="flex shrink-0 items-center gap-1">
             {toggle}
             {menu}
           </span>
         </div>
-        {exceptionMarks ? <div className="flex flex-wrap items-center gap-1">{exceptionMarks}</div> : null}
-        {skill.description ? (
-          <p className="m-0 line-clamp-2 text-sm text-muted-foreground">{skill.description}</p>
-        ) : null}
-        <div className="mt-auto flex min-w-0 items-center gap-2">
+        {exceptionMarks}
+        {/* Two lines are always reserved, so every card in a grid row keeps
+            one rhythm whatever its description's length. */}
+        <p className="m-0 line-clamp-2 min-h-10 text-sm text-muted-foreground" title={descriptionTitle}>
+          {sourceLabel ? <span className="mr-2 font-mono text-xs text-faint">{sourceLabel}</span> : null}
+          {skill.description}
+        </p>
+        <div className="mt-auto flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
           <SyncedStrip strip={strip} landing={landing} t={t} />
-          <span className="ml-auto">{scopeCell}</span>
+          <span className="ml-auto flex items-center">{scopeCell}</span>
         </div>
-        {sourceLabel ? <span className="truncate font-mono text-xs text-faint">{sourceLabel}</span> : null}
       </li>
     );
   }
