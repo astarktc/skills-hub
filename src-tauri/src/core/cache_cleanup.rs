@@ -88,3 +88,7 @@ fn cleanup_git_cache_dirs_in(cache_dir: &Path, max_age: Duration) -> Result<usiz
 
     Ok(removed)
 }
+
+#[cfg(test)]
+#[path = "tests/cache_cleanup.rs"]
+mod tests;
