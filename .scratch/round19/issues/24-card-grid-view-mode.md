@@ -26,3 +26,4 @@ Astra audit on `rich` in both densities: nothing clipped at 960×640; keyboard r
 
 - 2026-11-02 — Vocabulary: read Tool/Sync/Refresh as Harness/Deploy/Update — ticket 32.
 - 2026-11-04 — operator grill (autonomous run through 31 → 20 ∥ 21 → 34 → 24 → 25 → 26; results reviewed at the end): grid still wanted in the T3-style dark world (round-18 D2 stands).
+- 2026-11-04 — from ticket 31's standards review (S3): the group header is inline in `SkillsList.tsx` (selection, collapse, identity, summary, initials legend, Deploy all); extract it as a private header component when the grid reuses it — the grid must not copy the block.

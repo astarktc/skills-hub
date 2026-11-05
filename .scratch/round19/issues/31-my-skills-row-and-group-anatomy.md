@@ -1,6 +1,6 @@
 # 31 — My Skills row and group anatomy: card-per-group ground, `--name-col`, Not-deployed mark dropped, projects on the wire, collapsible groups, harness initials; riders #80 #81 #82
 
-Status: ready-for-agent
+Status: done — a2eed57
 Blocked by: 30 (done 9ca0bc8), 35 (done 03065db — the dark ground — rows on `row` = `background` #000000, hover `accent`, focused/selected `raised`)
 Blocks: 25
 Source: grill 2026-11-02 (operator, verbatim themes: name column "pretty much 50 % … steals from the skill
