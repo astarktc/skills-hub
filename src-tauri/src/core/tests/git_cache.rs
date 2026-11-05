@@ -12,6 +12,7 @@ use super::{
 };
 use crate::core::cancel_token::CancelToken;
 use crate::core::errors::SignalError;
+use crate::core::git_fetcher::CHECKOUT_POLICY_VERSION;
 
 /// A long TTL: any cached clone written during a test is still fresh.
 const FRESH_TTL_MS: i64 = 10 * 60 * 1000;
@@ -628,6 +629,8 @@ fn entry_checkout_subpaths(repo_dir: &Path) -> Vec<String> {
 /// an unknown shape. Unknown is treated as full — the widest shape — so the
 /// sparse request refetches the whole tree instead of narrowing what may be
 /// a full clone to its own subpath. Never-narrow holds without a record.
+/// Its checkout policy is unknown too, so its bytes are cloned again, never
+/// kept.
 #[test]
 fn a_clone_without_a_record_is_refetched_full_never_narrowed() {
     let repo = two_skill_fixture();
@@ -638,6 +641,7 @@ fn a_clone_without_a_record_is_refetched_full_never_narrowed() {
         fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("listing fetch");
     let meta_path = repo_dir.join(".skills-hub-cache.json");
     fs::remove_file(&meta_path).expect("drop the sidecar");
+    fs::write(repo_dir.join("left-by-an-old-checkout.txt"), "x").expect("plant");
 
     let (dir, _) = fetch_through_cache(
         cache.path(),
@@ -657,6 +661,95 @@ fn a_clone_without_a_record_is_refetched_full_never_narrowed() {
         entry_checkout_kind(&repo_dir),
         "full",
         "the new record says the entry is full"
+    );
+    assert!(
+        !repo_dir.join("left-by-an-old-checkout.txt").exists(),
+        "a clone of unknown checkout policy is cloned again, not refetched in place"
+    );
+    assert_eq!(entry_checkout_policy(&repo_dir), CHECKOUT_POLICY_VERSION);
+}
+
+fn entry_checkout_policy(repo_dir: &Path) -> u32 {
+    let raw = fs::read_to_string(repo_dir.join(".skills-hub-cache.json")).expect("meta written");
+    let meta: serde_json::Value = serde_json::from_str(&raw).expect("meta json");
+    meta["checkout_policy"]
+        .as_u64()
+        .expect("checkout_policy")
+        .try_into()
+        .expect("u32")
+}
+
+/// Rewrite an entry's record as a release before the checkout policy wrote
+/// it (no `checkout_policy` field), keeping it fresh.
+fn strip_checkout_policy(repo_dir: &Path) {
+    let meta_path = repo_dir.join(".skills-hub-cache.json");
+    let raw = fs::read_to_string(&meta_path).expect("meta written");
+    let mut meta: serde_json::Value = serde_json::from_str(&raw).expect("meta json");
+    meta.as_object_mut()
+        .expect("object")
+        .remove("checkout_policy")
+        .expect("the record carries the policy");
+    fs::write(&meta_path, meta.to_string()).expect("write pre-policy meta");
+}
+
+/// An entry checked out before the checkout policy existed holds whatever
+/// line endings the machine's git config produced (CRLF under Git for
+/// Windows' `core.autocrlf=true`). Even fresh, it is never served: it is
+/// cloned again — in the sparse shape it had — and its record names the
+/// current policy.
+#[test]
+fn an_entry_from_before_the_checkout_policy_is_cloned_again_even_when_fresh() {
+    let repo = two_skill_fixture();
+    let cache = tempfile::tempdir().expect("tempdir");
+    let url = url_of(repo.path());
+    let sparse = |subpath| FetchRequest {
+        subpath: Some(subpath),
+        ..request(&url, FRESH_TTL_MS)
+    };
+
+    let (repo_dir, head_a) =
+        fetch_through_cache(cache.path(), &sparse("skills/a")).expect("first fetch");
+    strip_checkout_policy(&repo_dir);
+    // What an ambient `core.autocrlf=true` checkout left behind.
+    let skill = repo_dir.join("skills/a/SKILL.md");
+    fs::write(&skill, "---\r\nname: a\r\n---\r\n").expect("crlf bytes");
+
+    let (dir, head_b) =
+        fetch_through_cache(cache.path(), &sparse("skills/a")).expect("second fetch");
+
+    assert_eq!(dir, repo_dir, "the entry keeps its place");
+    assert_eq!(head_a, head_b);
+    assert_eq!(
+        fs::read(&skill).expect("read"),
+        b"---\nname: a\n---\n",
+        "the committed bytes, not the pre-policy checkout's"
+    );
+    assert_eq!(
+        entry_checkout_subpaths(&repo_dir),
+        vec!["skills/a".to_string()],
+        "cloned again in the shape it had"
+    );
+    assert!(!repo_dir.join("skills/b/SKILL.md").exists());
+    assert_eq!(entry_checkout_policy(&repo_dir), CHECKOUT_POLICY_VERSION);
+}
+
+/// The transition is one-way: an entry written under the current policy is
+/// a plain hit, its working tree left exactly as it is.
+#[test]
+fn a_current_policy_entry_is_served_without_a_new_clone() {
+    let repo = fixture_repo();
+    let cache = tempfile::tempdir().expect("tempdir");
+    let url = url_of(repo.path());
+
+    let (repo_dir, _) =
+        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("first fetch");
+    assert_eq!(entry_checkout_policy(&repo_dir), CHECKOUT_POLICY_VERSION);
+    fs::write(repo_dir.join("sentinel.txt"), "x").expect("plant");
+
+    fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("second fetch");
+    assert!(
+        repo_dir.join("sentinel.txt").exists(),
+        "a current-policy entry is served as it is"
     );
 }
 
@@ -688,30 +781,38 @@ fn a_clone_with_an_unparseable_record_is_refetched_full_never_narrowed() {
     assert_eq!(entry_checkout_kind(&repo_dir), "full");
 }
 
-/// A sidecar that cannot be written (here: the path is a directory) does
-/// not fail the fetch — the bytes are in place — it is logged and the entry
-/// simply carries no record, which the next request reads as unknown shape.
+/// A sidecar that cannot be written (here: a read-only file, on an entry
+/// refetched in place) does not fail the fetch — the bytes are in place —
+/// it is logged and the entry keeps its old record, never replaced by force.
 #[test]
 fn a_failed_record_write_does_not_fail_the_fetch() {
     let repo = fixture_repo();
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (repo_dir, _) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("first fetch");
+    let (repo_dir, first_head) =
+        fetch_through_cache(cache.path(), &request(&url, 0)).expect("first fetch");
     let meta_path = repo_dir.join(".skills-hub-cache.json");
-    fs::remove_file(&meta_path).expect("drop the sidecar");
-    fs::create_dir(&meta_path).expect("block the sidecar path");
+    let record = fs::read_to_string(&meta_path).expect("meta written");
+    let mut permissions = fs::metadata(&meta_path).expect("stat").permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&meta_path, permissions).expect("make the sidecar read-only");
 
-    let (dir, head) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("fetch succeeds");
+    commit_more(repo.path(), "second.txt");
+    let (dir, head) = fetch_through_cache(cache.path(), &request(&url, 0)).expect("fetch succeeds");
     assert_eq!(dir, repo_dir);
-    assert!(!head.is_empty());
-    assert!(dir.join("SKILL.md").exists(), "the bytes landed");
-    assert!(
-        meta_path.is_dir(),
-        "the blocked sidecar was left alone, not replaced by force"
+    assert_ne!(head, first_head, "the in-place refetch ran");
+    assert!(dir.join("second.txt").exists(), "the bytes landed");
+    assert_eq!(
+        fs::read_to_string(&meta_path).expect("read"),
+        record,
+        "the unwritable sidecar was left alone, not replaced by force"
     );
+
+    let mut permissions = fs::metadata(&meta_path).expect("stat").permissions();
+    #[allow(clippy::permissions_set_readonly_false, reason = "test cleanup")]
+    permissions.set_readonly(false);
+    let _ = fs::set_permissions(&meta_path, permissions);
 }
 
 fn entry_checkout_kind(repo_dir: &Path) -> String {

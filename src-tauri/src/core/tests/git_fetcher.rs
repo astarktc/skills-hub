@@ -92,3 +92,279 @@ fn sparse_clone_only_materializes_requested_subpath() {
         "unrequested subdirectories should not be checked out into the workspace"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The checkout policy under an ambient `core.autocrlf=true`
+// ---------------------------------------------------------------------------
+//
+// Git for Windows ships `core.autocrlf=true` in its system config, which
+// checks every LF text file out as CRLF. These tests give a whole process
+// that ambient config and prove the app's checkouts keep the committed
+// bytes anyway. Process-wide config is only safe in a process of its own —
+// the tests of one binary share one environment and libgit2 one config
+// search path — so each runs in a re-executed child of this test binary.
+
+/// Set only in such a child: the directory holding its global git config.
+const AMBIENT_CHILD_ENV: &str = "SKILLS_HUB_TEST_AMBIENT_AUTOCRLF_HOME";
+
+/// The child's global config directory, when this process is such a child.
+fn ambient_child_home() -> Option<std::path::PathBuf> {
+    std::env::var_os(AMBIENT_CHILD_ENV).map(std::path::PathBuf::from)
+}
+
+/// Run the tests `filter` selects in a child of this test binary whose
+/// git config says `core.autocrlf=true` everywhere: the CLI through
+/// `GIT_CONFIG_COUNT` (command scope, which outranks every config file — the
+/// strongest ambient setting the app must beat) and libgit2 through a
+/// global config file the child points its search path at. Asserts the
+/// child ran at least one test, so a filter that matches nothing cannot
+/// pass.
+fn run_in_ambient_autocrlf_child(filter: &str, exact: bool) {
+    let home = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        home.path().join(".gitconfig"),
+        "[core]\n\tautocrlf = true\n",
+    )
+    .expect("write the ambient global config");
+
+    let mut cmd = std::process::Command::new(std::env::current_exe().expect("test binary"));
+    cmd.arg(filter);
+    if exact {
+        cmd.arg("--exact");
+    }
+    let out = cmd
+        .env(AMBIENT_CHILD_ENV, home.path())
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "core.autocrlf")
+        .env("GIT_CONFIG_VALUE_0", "true")
+        .output()
+        .expect("run the child test binary");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "child `{filter}` failed:\n{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ran: usize = stdout
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("running ")?
+                .split(' ')
+                .next()?
+                .parse()
+                .ok()
+        })
+        .expect("the child reports how many tests it runs");
+    assert!(ran > 0, "child `{filter}` ran no test:\n{stdout}");
+}
+
+fn commit_lf_skills(repo: &git2::Repository) {
+    commit_file(repo, "skills/a/SKILL.md", b"---\nname: a\n---\nbody\n", "a");
+    commit_file(
+        repo,
+        "skills/a/scripts/run.sh",
+        b"#!/bin/sh\necho a\n",
+        "a script",
+    );
+    commit_file(repo, "skills/b/SKILL.md", b"---\nname: b\n---\n", "b");
+}
+
+fn read(path: &std::path::Path) -> Vec<u8> {
+    fs::read(path).unwrap_or_else(|err| panic!("read {path:?}: {err}"))
+}
+
+/// Both transports, a nested sparse checkout and an in-place update keep
+/// the committed LF bytes under an ambient `core.autocrlf=true`.
+#[test]
+fn checkouts_keep_committed_line_endings_under_an_ambient_autocrlf_true() {
+    if ambient_child_home().is_some() {
+        return;
+    }
+    run_in_ambient_autocrlf_child(
+        "core::git_fetcher::tests::ambient_child_checkouts_keep_committed_line_endings",
+        true,
+    );
+}
+
+/// Runs only inside [`run_in_ambient_autocrlf_child`]; a no-op otherwise.
+#[test]
+fn ambient_child_checkouts_keep_committed_line_endings() {
+    let Some(home) = ambient_child_home() else {
+        return;
+    };
+    // SAFETY: this process is a child running this one test alone, so no
+    // other thread reads libgit2's config search path.
+    unsafe { git2::opts::set_search_path(git2::ConfigLevel::Global, home.as_path()) }
+        .expect("point libgit2 at the ambient global config");
+
+    let origin_dir = tempfile::tempdir().unwrap();
+    let origin = git2::Repository::init(origin_dir.path()).unwrap();
+    commit_lf_skills(&origin);
+    let url = origin_dir.path().to_string_lossy().to_string();
+    let work = tempfile::tempdir().unwrap();
+    let crlf_skill = b"---\r\nname: a\r\n---\r\nbody\r\n".to_vec();
+    let lf_skill = b"---\nname: a\n---\nbody\n".to_vec();
+
+    // Controls: the ambient setting is live for both transports.
+    let plain_cli = work.path().join("plain-cli");
+    let out = std::process::Command::new("git")
+        .args(["clone", "-q"])
+        .arg(&url)
+        .arg(&plain_cli)
+        .output()
+        .expect("run git");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(read(&plain_cli.join("skills/a/SKILL.md")), crlf_skill);
+    let plain_lib = work.path().join("plain-libgit2");
+    git2::Repository::clone(&url, &plain_lib).expect("plain libgit2 clone");
+    assert_eq!(read(&plain_lib.join("skills/a/SKILL.md")), crlf_skill);
+
+    // The CLI: a full clone, a nested sparse checkout.
+    let full = work.path().join("cli-full");
+    clone_or_pull(&url, &full, None, None).expect("cli clone");
+    assert_eq!(read(&full.join("skills/a/SKILL.md")), lf_skill);
+    assert_eq!(
+        read(&full.join("skills/a/scripts/run.sh")),
+        b"#!/bin/sh\necho a\n"
+    );
+    let sparse = work.path().join("cli-sparse");
+    clone_or_pull_sparse(&url, &sparse, None, &["skills/a/scripts"], None).expect("sparse clone");
+    assert_eq!(
+        read(&sparse.join("skills/a/scripts/run.sh")),
+        b"#!/bin/sh\necho a\n"
+    );
+    assert!(!sparse.join("skills/b").exists());
+
+    // libgit2: a fresh clone.
+    let lib = work.path().join("libgit2");
+    super::clone_or_pull_via_libgit2(&url, &lib, None).expect("libgit2 clone");
+    assert_eq!(read(&lib.join("skills/a/SKILL.md")), lf_skill);
+    assert_eq!(
+        read(&lib.join("skills/a/scripts/run.sh")),
+        b"#!/bin/sh\necho a\n"
+    );
+
+    // An upstream change, pulled in place by every checkout above.
+    let changed = b"---\nname: a\n---\nchanged\n".to_vec();
+    commit_file(&origin, "skills/a/SKILL.md", &changed, "change a");
+    clone_or_pull(&url, &full, None, None).expect("cli pull");
+    assert_eq!(read(&full.join("skills/a/SKILL.md")), changed);
+    clone_or_pull_sparse(&url, &sparse, None, &["skills/a"], None).expect("sparse widen");
+    assert_eq!(read(&sparse.join("skills/a/SKILL.md")), changed);
+    super::clone_or_pull_via_libgit2(&url, &lib, None).expect("libgit2 pull");
+    assert_eq!(read(&lib.join("skills/a/SKILL.md")), changed);
+}
+
+/// A cache entry a release before the checkout policy checked out under an
+/// ambient `core.autocrlf=true` (CRLF bytes, fresh record without a policy)
+/// is cloned again: its bytes and content identity become the commit's.
+#[test]
+fn a_pre_policy_cache_entry_is_cloned_again_under_an_ambient_autocrlf_true() {
+    if ambient_child_home().is_some() {
+        return;
+    }
+    run_in_ambient_autocrlf_child(
+        "core::git_fetcher::tests::ambient_child_a_pre_policy_cache_entry_is_cloned_again",
+        true,
+    );
+}
+
+/// Runs only inside [`run_in_ambient_autocrlf_child`]; a no-op otherwise.
+#[test]
+fn ambient_child_a_pre_policy_cache_entry_is_cloned_again() {
+    use crate::core::content_identity::{read as identity, Source};
+    use crate::core::git_cache::{
+        fetch_through_cache, repo_cache_key, CacheKeyInputs, FetchRequest,
+    };
+
+    if ambient_child_home().is_none() {
+        return;
+    }
+    let origin_dir = tempfile::tempdir().unwrap();
+    let origin = git2::Repository::init(origin_dir.path()).unwrap();
+    commit_lf_skills(&origin);
+    let url = origin_dir.path().to_string_lossy().to_string();
+    let head = origin.head().unwrap().target().unwrap().to_string();
+
+    // The entry as the previous release left it: an unpinned clone, then a
+    // fresh record in that release's format.
+    let cache = tempfile::tempdir().unwrap();
+    let entry = cache
+        .path()
+        .join("skills-hub-git-cache")
+        .join(repo_cache_key(&CacheKeyInputs {
+            clone_url: &url,
+            branch: None,
+        }));
+    let out = std::process::Command::new("git")
+        .args(["clone", "-q"])
+        .arg(&url)
+        .arg(&entry)
+        .output()
+        .expect("run git");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        read(&entry.join("skills/a/SKILL.md")),
+        b"---\r\nname: a\r\n---\r\nbody\r\n",
+        "control: the old entry holds CRLF"
+    );
+    fs::write(
+        entry.join(".skills-hub-cache.json"),
+        serde_json::json!({
+            "last_fetched_ms": crate::core::clock::now_ms(),
+            "head": head,
+            "checkout": { "kind": "full" },
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let committed = identity(Source::Directory(&origin_dir.path().join("skills/a")));
+    assert!(committed.is_some());
+    assert_ne!(
+        identity(Source::Directory(&entry.join("skills/a"))),
+        committed,
+        "control: CRLF bytes are another content identity"
+    );
+
+    let (dir, served) = fetch_through_cache(
+        cache.path(),
+        &FetchRequest {
+            clone_url: &url,
+            branch: None,
+            subpath: Some("skills/a"),
+            ttl_ms: 10 * 60 * 1000,
+            cancel: None,
+        },
+    )
+    .expect("fetch through the cache");
+    assert_eq!(dir, entry);
+    assert_eq!(served, head);
+    assert_eq!(
+        read(&dir.join("skills/a/SKILL.md")),
+        b"---\nname: a\n---\nbody\n"
+    );
+    assert_eq!(
+        identity(Source::Directory(&dir.join("skills/a"))),
+        committed
+    );
+}
+
+/// The whole acquisition suite — sparse and nested acquisitions, symlinked
+/// subpaths, clone fallbacks, byte comparisons against the committed files —
+/// passes with the CLI under an ambient `core.autocrlf=true`, as it does on
+/// Windows.
+#[test]
+fn the_acquisition_suite_passes_under_an_ambient_autocrlf_true() {
+    if ambient_child_home().is_some() {
+        return;
+    }
+    run_in_ambient_autocrlf_child("core::git_acquisition::tests::", false);
+}
