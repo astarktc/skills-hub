@@ -26,6 +26,13 @@
 //!    A failure there is logged; the row already describes the new target.
 //!
 //! Idempotent: a relocated row is no longer in a former dir.
+//!
+//! Not run at launch since 1.3.2 (BACKLOG #89): its path comparisons are
+//! lexical, so a Tool skills root that is a directory alias can make it
+//! delete central skill bytes. The redesign (BACKLOG #88) reuses this module.
+
+// Unwired until BACKLOG #88: nothing outside the tests calls the pass.
+#![allow(dead_code, reason = "unwired from launch until BACKLOG #88")]
 
 use std::path::{Path, PathBuf};
 
