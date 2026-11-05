@@ -5,7 +5,7 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#87**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#88**.
 
 ## Now — evidence of unfinished work is strong
 
@@ -35,6 +35,13 @@ were seeded 2026-09-24 from the upstream/field survey in `docs/design-inputs/` �
 code before scheduling.)
 
 ## Later — real, not urgent
+
+- **#87 Project-scope relocation for corrected harness dirs (Kilo `.kilo/skills`, Xum `.xum/skills`).** Ticket 34 corrected
+  the global dirs and relocates global targets on launch, but there is no facility to move an existing *project*
+  assignment's artifact, so the project dirs stay on the old values (`.kilocode/skills`, `.mux/skills`) by recorded
+  deferral (34's audit F8.1). Design a project relocation pass (per project, under the guard, same byte-identical-replace
+  rule, reported in the project view) and then flip the two project dirs. Source: `round19/review/ticket-34-backend-audit.md`
+  § F8, `docs/design-inputs/2026-11-02-harness-global-skills-dirs.md` I6/I7.
 
 - **#85 Projects matrix keyboard model (ticket 17 audit N1, carried by ticket 23).** The matrix is a plain Tab walk:
   127 Tab presses from the first to the last cell of the 25-skill fixture matrix (`round19/review/ticket-17-audit.md`
