@@ -481,6 +481,24 @@ describe("where confirmation happens", () => {
     expect(result.current.surface.isOpen("confirmCount")).toBe(false);
   });
 
+  it("the New harnesses dialog's Deploy all (\"all\", its Tools, confirmed) deploys the library to exactly those Tools (D34)", async () => {
+    const s = setup();
+    const { result } = await render(s);
+    await act(async () => {
+      await result.current.actions.run("syncToTargets", "all", { tools: ["cursor"], confirmed: true });
+    });
+    expect(result.current.surface.layer("confirmCount")).toBeNull();
+    expect(s.sync.syncSkillsToTools).toHaveBeenCalledTimes(1);
+    expect(s.sync.syncSkillsToTools).toHaveBeenCalledWith(
+      [
+        { skill_id: "s1", name: "alpha", source_path: "/hub/alpha" },
+        { skill_id: "s2", name: "beta", source_path: "/hub/beta" },
+      ],
+      ["cursor"],
+      { overwriteIfSameContent: true },
+    );
+  });
+
   it("Assign to project… over a selection opens the picker for every selected skill", async () => {
     const s = setup();
     const { result } = await render(s);

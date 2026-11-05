@@ -557,7 +557,6 @@ function App() {
     effectiveSyncTargetIds,
     enableTargetsFor,
   } = sync;
-  const { autoSyncEnabled } = sync;
   const { run } = actions;
   const handleSyncAllNewTools = useCallback(() => {
     if (relevantNewlyInstalled.length === 0) return;
@@ -575,11 +574,11 @@ function App() {
       return;
     }
     enableTargetsFor(targets);
-    // With auto-sync off the new Tools are only selected, never written to.
-    // The new-Tools notice was the confirmation.
-    if (autoSyncEnabled) void run("syncToTargets", "all", { tools: targets, confirmed: true });
+    // An explicit Deploy verb always deploys (D34): Auto-deploy governs only
+    // a new skill's arrival, never this button. The new-Tools notice was the
+    // confirmation.
+    void run("syncToTargets", "all", { tools: targets, confirmed: true });
   }, [
-    autoSyncEnabled,
     dismissDialog,
     effectiveSyncTargetIds,
     enableTargetsFor,
