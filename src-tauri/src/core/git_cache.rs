@@ -18,12 +18,15 @@
 //! the widened shape. Never narrowing is what lets two skills of one
 //! repository share an entry while a parallel Refresh copies them out.
 //!
-//! **An entry is only ever served or updated under the fetcher's current
-//! checkout policy** ([`CHECKOUT_POLICY_VERSION`], recorded per entry). The
+//! **The fetcher's checkout policy is part of the key**
+//! ([`CHECKOUT_POLICY_VERSION`], see [`repo_cache_key_under_policy`]). The
 //! policy decides the working tree's bytes (line endings), and git does not
 //! rewrite a file its index already calls clean when the policy changes, so
-//! an entry of another (or an unknown) version is deleted — only that
-//! directory, inside the cache — and cloned again in the shape it had.
+//! an entry checked out under another policy must never be served or updated
+//! in place. Each policy version therefore names its own directories: a new
+//! version clones a fresh entry beside the old one, and nothing here deletes
+//! or rewrites the old one — it is never looked up again and ages out with
+//! the cache cleanup (`cache_cleanup.rs`), like any entry nobody fetches.
 //!
 //! The module takes no database handle: freshness is a **value** the caller
 //! resolves (`settings::git_cache_ttl_ms`) and passes as `ttl_ms`, keeping the
@@ -68,10 +71,6 @@ struct RepoCacheMeta {
     /// entries used to live under their own key), so it defaults to `Full`.
     #[serde(default)]
     checkout: Checkout,
-    /// The [`CHECKOUT_POLICY_VERSION`] the working tree was written under. A
-    /// record without the field predates the policy: `0`, ambient config.
-    #[serde(default)]
-    checkout_policy: u32,
 }
 
 /// What an entry's working tree contains.
@@ -182,9 +181,8 @@ impl<'a> FetchRequest<'a> {
 ///
 /// Serves the cached head when the entry's metadata is within `req.ttl_ms`
 /// and its checkout covers `req.subpath` (widening the working tree in place
-/// first when it does not); otherwise fetches under this key's lock. An
-/// entry not written under the current checkout policy is cloned again
-/// first (see the module docs). A fetch that fails against an existing entry is retried exactly once from a clean
+/// first when it does not); otherwise fetches under this key's lock. A fetch
+/// that fails against an existing entry is retried exactly once from a clean
 /// directory, which is how a corrupt cache entry heals.
 pub(crate) fn fetch_through_cache(
     cache_dir: &Path,
@@ -198,40 +196,17 @@ pub(crate) fn fetch_through_cache(
     let lock = key_lock(&key);
     let _guard = lock.lock().unwrap_or_else(|err| err.into_inner());
 
-    let mut existing = read_meta(&repo_dir, &meta_path);
+    let existing = read_meta(&repo_dir, &meta_path);
     // The shape the entry ends up with. A clone without a readable record
     // (a crashed run, a failed sidecar write) has an unknown shape, and
-    // unknown is treated as the widest — full — so the clone below can only
-    // widen it. Only a directory with no clone at all takes the
+    // unknown is treated as the widest — full — so the refetch below can
+    // only widen it. Only a directory with no clone at all takes the
     // request's own shape.
     let checkout = match &existing {
         Some(meta) => meta.checkout.widened_to(req.subpath),
         None if clone_present(&repo_dir) => Checkout::Full,
         None => Checkout::requested(req.subpath),
     };
-
-    // Bytes checked out under another checkout policy, or under an unknown
-    // one (no readable record), are neither served nor updated in place: a
-    // refetch leaves every file git already calls clean as it was. Delete the
-    // entry and clone it again in the shape computed above.
-    let current_policy = existing
-        .as_ref()
-        .is_some_and(|meta| meta.checkout_policy == CHECKOUT_POLICY_VERSION);
-    if !current_policy && clone_present(&repo_dir) {
-        log_cache(
-            "checkout policy not current; rebuilding",
-            &started,
-            req,
-            &format!(
-                "repo_dir={:?} policy={:?}",
-                repo_dir,
-                existing.as_ref().map(|meta| meta.checkout_policy)
-            ),
-        );
-        std::fs::remove_dir_all(&repo_dir)
-            .with_context(|| format!("discard git cache entry {:?}", repo_dir))?;
-        existing = None;
-    }
 
     if let Some((meta, head)) = existing
         .as_ref()
@@ -263,7 +238,6 @@ pub(crate) fn fetch_through_cache(
                         last_fetched_ms: meta.last_fetched_ms,
                         head: Some(head.clone()),
                         checkout: checkout.clone(),
-                        checkout_policy: CHECKOUT_POLICY_VERSION,
                     },
                 );
                 log_cache(
@@ -316,7 +290,6 @@ pub(crate) fn fetch_through_cache(
             last_fetched_ms: now_ms(),
             head: Some(rev.clone()),
             checkout,
-            checkout_policy: CHECKOUT_POLICY_VERSION,
         },
     );
 
@@ -336,23 +309,36 @@ fn fetch_into(repo_dir: &Path, req: &FetchRequest, checkout: &Checkout) -> Resul
     }
 }
 
-/// Stable cache-dir name for one set of [`CacheKeyInputs`].
+/// Stable cache-dir name for one set of [`CacheKeyInputs`], under the
+/// fetcher's current checkout policy.
 pub(crate) fn repo_cache_key(inputs: &CacheKeyInputs) -> String {
-    hash_key_parts(inputs.clone_url, inputs.branch)
+    repo_cache_key_under_policy(inputs, CHECKOUT_POLICY_VERSION)
+}
+
+/// The cache-dir name of `inputs` under checkout policy version `policy`.
+/// Version `0` — every entry written before the policy existed — is the
+/// shipped digest, `sha256(url \n branch \n)`; a later version fills the
+/// digest's third slot with `checkout-policy=<version>`, so each version
+/// names its own directories and a policy change never reaches an entry
+/// checked out under another one.
+pub(crate) fn repo_cache_key_under_policy(inputs: &CacheKeyInputs, policy: u32) -> String {
+    let namespace = (policy != 0).then(|| format!("checkout-policy={policy}"));
+    hash_key_parts(inputs.clone_url, inputs.branch, namespace.as_deref())
 }
 
 /// The explore-cache's preview-directory key. It shares this module's hash
 /// scheme (and therefore its stability guarantee) but not its inputs: a
 /// preview is keyed by source URL and skill name, never by branch.
 pub(crate) fn explore_preview_key(source_url: &str, skill_name: Option<&str>) -> String {
-    hash_key_parts(source_url, skill_name)
+    hash_key_parts(source_url, skill_name, None)
 }
 
-/// The shipped digest: `sha256(first \n second \n)`, hex-encoded. The
-/// trailing separator is a fossil of a third slot the scheme once had; it
-/// stays because the digest names directories on disk. Kept private so the
-/// two named key functions above are the only way to build one.
-fn hash_key_parts(first: &str, second: Option<&str>) -> String {
+/// The shipped digest: `sha256(first \n second \n third)`, hex-encoded, an
+/// absent slot hashing as empty. With no third slot it is the digest every
+/// existing directory is named by; only the clone cache's checkout-policy
+/// namespace fills that slot. Kept private so the named key functions above
+/// are the only way to build one.
+fn hash_key_parts(first: &str, second: Option<&str>, third: Option<&str>) -> String {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
     hasher.update(first.as_bytes());
@@ -361,6 +347,9 @@ fn hash_key_parts(first: &str, second: Option<&str>) -> String {
         hasher.update(value.as_bytes());
     }
     hasher.update(b"\n");
+    if let Some(value) = third {
+        hasher.update(value.as_bytes());
+    }
     hex::encode(hasher.finalize())
 }
 
@@ -398,8 +387,8 @@ fn fresh_head(ttl_ms: i64, meta: &RepoCacheMeta) -> Option<String> {
 
 /// Record the entry's freshness and shape. A failed write is not fatal —
 /// the bytes are in place and the next request reads the missing record as
-/// an unknown shape and checkout policy (see [`fetch_through_cache`]) — but
-/// it is logged, since it costs that request a full re-clone.
+/// an unknown shape (see [`fetch_through_cache`]) — but it is logged, since
+/// it costs that request a full refetch.
 fn write_meta(meta_path: &Path, meta: &RepoCacheMeta) {
     let raw = serde_json::to_string(meta).unwrap_or_else(|_| "{}".to_string());
     if let Err(err) = std::fs::write(meta_path, raw) {

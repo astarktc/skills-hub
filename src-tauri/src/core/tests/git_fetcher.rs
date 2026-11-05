@@ -260,25 +260,50 @@ fn ambient_child_checkouts_keep_committed_line_endings() {
 }
 
 /// A cache entry a release before the checkout policy checked out under an
-/// ambient `core.autocrlf=true` (CRLF bytes, fresh record without a policy)
-/// is cloned again: its bytes and content identity become the commit's.
+/// ambient `core.autocrlf=true` (CRLF bytes, a fresh record) is never served
+/// and never touched: the acquisition clones a new entry under the current
+/// policy's key, whose bytes and content identity are the commit's, and the
+/// old entry stays on disk byte for byte until the cache cleanup ages it out.
 #[test]
-fn a_pre_policy_cache_entry_is_cloned_again_under_an_ambient_autocrlf_true() {
+fn a_pre_policy_cache_entry_is_left_alone_under_an_ambient_autocrlf_true() {
     if ambient_child_home().is_some() {
         return;
     }
     run_in_ambient_autocrlf_child(
-        "core::git_fetcher::tests::ambient_child_a_pre_policy_cache_entry_is_cloned_again",
+        "core::git_fetcher::tests::ambient_child_a_pre_policy_cache_entry_is_left_alone",
         true,
     );
 }
 
+/// Every file under `dir`, `.git` included, with its bytes.
+fn snapshot(dir: &std::path::Path) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
+    fn walk(
+        root: &std::path::Path,
+        dir: &std::path::Path,
+        into: &mut std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
+    ) {
+        for entry in fs::read_dir(dir).unwrap_or_else(|err| panic!("read_dir {dir:?}: {err}")) {
+            let path = entry.unwrap().path();
+            let kind = fs::symlink_metadata(&path).unwrap().file_type();
+            if kind.is_dir() {
+                walk(root, &path, into);
+            } else {
+                into.insert(path.strip_prefix(root).unwrap().to_path_buf(), read(&path));
+            }
+        }
+    }
+    let mut files = std::collections::BTreeMap::new();
+    walk(dir, dir, &mut files);
+    files
+}
+
 /// Runs only inside [`run_in_ambient_autocrlf_child`]; a no-op otherwise.
 #[test]
-fn ambient_child_a_pre_policy_cache_entry_is_cloned_again() {
+fn ambient_child_a_pre_policy_cache_entry_is_left_alone() {
     use crate::core::content_identity::{read as identity, Source};
     use crate::core::git_cache::{
-        fetch_through_cache, repo_cache_key, CacheKeyInputs, FetchRequest,
+        fetch_through_cache, repo_cache_key, repo_cache_key_under_policy, CacheKeyInputs,
+        FetchRequest,
     };
 
     if ambient_child_home().is_none() {
@@ -289,21 +314,21 @@ fn ambient_child_a_pre_policy_cache_entry_is_cloned_again() {
     commit_lf_skills(&origin);
     let url = origin_dir.path().to_string_lossy().to_string();
     let head = origin.head().unwrap().target().unwrap().to_string();
+    let inputs = CacheKeyInputs {
+        clone_url: &url,
+        branch: None,
+    };
 
-    // The entry as the previous release left it: an unpinned clone, then a
-    // fresh record in that release's format.
+    // The entry as the previous release left it, at the name it computed
+    // (policy 0 is the shipped key, pinned in the git-cache tests): an
+    // unpinned clone, then a fresh record in that release's format.
     let cache = tempfile::tempdir().unwrap();
-    let entry = cache
-        .path()
-        .join("skills-hub-git-cache")
-        .join(repo_cache_key(&CacheKeyInputs {
-            clone_url: &url,
-            branch: None,
-        }));
+    let cache_root = cache.path().join("skills-hub-git-cache");
+    let old_entry = cache_root.join(repo_cache_key_under_policy(&inputs, 0));
     let out = std::process::Command::new("git")
         .args(["clone", "-q"])
         .arg(&url)
-        .arg(&entry)
+        .arg(&old_entry)
         .output()
         .expect("run git");
     assert!(
@@ -312,12 +337,12 @@ fn ambient_child_a_pre_policy_cache_entry_is_cloned_again() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(
-        read(&entry.join("skills/a/SKILL.md")),
+        read(&old_entry.join("skills/a/SKILL.md")),
         b"---\r\nname: a\r\n---\r\nbody\r\n",
         "control: the old entry holds CRLF"
     );
     fs::write(
-        entry.join(".skills-hub-cache.json"),
+        old_entry.join(".skills-hub-cache.json"),
         serde_json::json!({
             "last_fetched_ms": crate::core::clock::now_ms(),
             "head": head,
@@ -328,11 +353,12 @@ fn ambient_child_a_pre_policy_cache_entry_is_cloned_again() {
     .unwrap();
     let committed = identity(Source::Directory(&origin_dir.path().join("skills/a")));
     assert!(committed.is_some());
+    let old_identity = identity(Source::Directory(&old_entry.join("skills/a")));
     assert_ne!(
-        identity(Source::Directory(&entry.join("skills/a"))),
-        committed,
+        old_identity, committed,
         "control: CRLF bytes are another content identity"
     );
+    let old_bytes = snapshot(&old_entry);
 
     let (dir, served) = fetch_through_cache(
         cache.path(),
@@ -345,7 +371,13 @@ fn ambient_child_a_pre_policy_cache_entry_is_cloned_again() {
         },
     )
     .expect("fetch through the cache");
-    assert_eq!(dir, entry);
+
+    assert_eq!(
+        dir,
+        cache_root.join(repo_cache_key(&inputs)),
+        "served from the current policy's entry"
+    );
+    assert_ne!(dir, old_entry, "the pre-policy entry is never served");
     assert_eq!(served, head);
     assert_eq!(
         read(&dir.join("skills/a/SKILL.md")),
@@ -354,6 +386,15 @@ fn ambient_child_a_pre_policy_cache_entry_is_cloned_again() {
     assert_eq!(
         identity(Source::Directory(&dir.join("skills/a"))),
         committed
+    );
+    assert_eq!(
+        snapshot(&old_entry),
+        old_bytes,
+        "the pre-policy entry is left on disk byte for byte, record and .git included"
+    );
+    assert_eq!(
+        identity(Source::Directory(&old_entry.join("skills/a"))),
+        old_identity
     );
 }
 

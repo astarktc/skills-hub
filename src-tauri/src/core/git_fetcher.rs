@@ -29,14 +29,14 @@ use super::repo_subpath::normalize_subpath;
 /// clone's repository config, written before its first checkout
 /// ([`open_with_checkout_policy`]). Changing it does not rewrite a tree
 /// already checked out (git trusts the index's stat cache), so the clone
-/// cache rebuilds an entry written under another version —
-/// [`CHECKOUT_POLICY_VERSION`].
+/// cache keys its entries by [`CHECKOUT_POLICY_VERSION`].
 const CHECKOUT_POLICY: [(&str, &str); 2] = [("core.autocrlf", "false"), ("core.eol", "lf")];
 
-/// Bumped whenever [`CHECKOUT_POLICY`] changes. The clone cache records the
-/// version each entry was checked out under and never serves, or updates in
-/// place, an entry of another version. `0` is every entry written before the
-/// policy existed (ambient config).
+/// Bumped whenever [`CHECKOUT_POLICY`] changes. It is part of the clone
+/// cache's key (`git_cache::repo_cache_key_under_policy`), so an entry
+/// checked out under another version is never served or updated in place —
+/// the new version clones its own entry. `0` is every entry written before
+/// the policy existed (ambient config).
 pub(crate) const CHECKOUT_POLICY_VERSION: u32 = 1;
 
 pub fn clone_or_pull(
