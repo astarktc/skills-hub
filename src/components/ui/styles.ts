@@ -5,7 +5,7 @@
 
 /**
  * The focus ring: a 2 px iris outline offset from the control, shown on
- * keyboard focus only, with no transition (the ring never animates in).
+ * keyboard focus only, at once (the ring never animates in).
  * `--ring` measures ≥ 4.72:1 against every surface in both themes (DESIGN.md;
  * the floor is light `raised`).
  *

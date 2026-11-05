@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import type { TFunction } from 'i18next'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogBody,
@@ -43,12 +44,12 @@ const NewToolsModal = ({
           })}
         </DialogBody>
         <DialogFooter>
-          <button className="btn btn-secondary" onClick={onLater} disabled={loading}>
+          <Button onClick={onLater} disabled={loading}>
             {t('later')}
-          </button>
-          <button className="btn btn-primary" onClick={onSyncAll} disabled={loading}>
+          </Button>
+          <Button variant="solid" tone="accent" onClick={onSyncAll} disabled={loading}>
             {t('syncAll')}
-          </button>
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

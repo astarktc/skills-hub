@@ -2,9 +2,14 @@
  * Stylesheet entry and base layer. The permanent stylesheets are exactly this
  * file, styles/theme.css (the only place a token is defined) and
  * styles/prose.css (rendered Markdown and syntax colours) — ADR-0006 §5.
- * App.css is legacy and only shrinks; `npm run styles:check` enforces all of it.
+ * The legacy App.css is gone (ticket 25); `npm run styles:check` enforces all of it.
  */
-@import "tailwindcss";
+/* Utilities are generated from the app's own source (this directory) only —
+   not from the repo's docs and tracker notes, whose prose would otherwise
+   mint utilities nothing uses (ticket 15 audit A4, closed by ticket 25). Any
+   bare word here that names a utility mints it too, so comments in src/ name
+   none. index.html carries no classes. */
+@import "tailwindcss" source(".");
 @import "./styles/theme.css";
 @import "./styles/prose.css";
 
@@ -60,8 +65,8 @@
     outline-offset: 2px;
   }
 
-  /* Reduced motion removes motion everywhere — primitives, legacy App.css
-     transitions and loops, and third-party layers alike. A layered
+  /* Reduced motion removes motion everywhere — primitives, utilities and
+     third-party layers alike. A layered
      !important outranks every unlayered declaration. */
   @media (prefers-reduced-motion: reduce) {
     *,

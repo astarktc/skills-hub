@@ -344,19 +344,6 @@ export const resources = {
         hoursAgo: "{{hours}}h ago",
         daysAgo: "{{days}}d ago",
       },
-      layout: {
-        navDashboard: "Dashboard",
-        navSkills: "My Skills",
-        navSettings: "Settings",
-        versionLabel: "v0.1.0",
-      },
-      dashboard: {
-        title: "Dashboard",
-        totalSkills: "Total Skills",
-        toolsConnected: "Harnesses connected",
-        pendingUpdates: "Pending Updates",
-        allGood: "All Good",
-      },
       detail: {
         noFiles: "No files found",
         loadingFiles: "Loading files...",

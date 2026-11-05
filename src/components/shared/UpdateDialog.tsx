@@ -1,8 +1,16 @@
-import { memo, useId } from "react";
+import { memo } from "react";
 import type { TFunction } from "i18next";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { AppUpdate } from "../../hooks/useAppUpdate";
 
 type UpdateDialogProps = {
@@ -22,7 +30,6 @@ type UpdateDialogProps = {
  * Settings reads the same module, so both show one release.
  */
 const UpdateDialog = ({ open, update, t }: UpdateDialogProps) => {
-  const titleId = useId();
   const { status, version, notes, install, dismiss, ignore } = update;
   const installing = status === "installing";
   const done = status === "done";
@@ -35,47 +42,32 @@ const UpdateDialog = ({ open, update, t }: UpdateDialogProps) => {
         if (!next) dismiss();
       }}
     >
-      <DialogContent size="sm" showCloseButton={!done} aria-labelledby={titleId}>
-        <div className="update-modal">
-          <div className="update-modal-body">
-            <div className="update-modal-title" id={titleId}>
-              {done ? t("updateInstalledRestart") : t("updateAvailable")}
-            </div>
-            {!done && (
-              <div className="update-modal-text">
-                {t("updateBannerText", { version })}
-              </div>
-            )}
-            {!done && notes && (
-              <div className="update-modal-notes">
+      <DialogContent size="sm" showCloseButton={!done}>
+        <DialogHeader>
+          <DialogTitle>{done ? t("updateInstalledRestart") : t("updateAvailable")}</DialogTitle>
+        </DialogHeader>
+        {!done ? (
+          <DialogBody>
+            <p className="m-0">{t("updateBannerText", { version })}</p>
+            {notes ? (
+              <div className="prose max-h-52 overflow-y-auto rounded-md border border-border px-4 py-3">
                 <Markdown remarkPlugins={[remarkGfm]}>{notes}</Markdown>
               </div>
-            )}
-          </div>
-          <div className="update-modal-actions">
-            {done ? (
-              <button className="btn btn-primary" type="button" onClick={dismiss}>
-                {t("done")}
-              </button>
-            ) : (
-              <>
-                <button
-                  className="btn btn-primary"
-                  type="button"
-                  disabled={installing}
-                  onClick={() => void install()}
-                >
-                  {installing ? t("installingUpdate") : t("updateNow")}
-                </button>
-                {!installing && (
-                  <button className="btn btn-secondary" type="button" onClick={ignore}>
-                    {t("updateBannerDismiss")}
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        </div>
+            ) : null}
+          </DialogBody>
+        ) : null}
+        <DialogFooter>
+          {!done && !installing ? <Button onClick={ignore}>{t("updateBannerDismiss")}</Button> : null}
+          {/* One button through install → done, so focus stays on it. */}
+          <Button
+            variant="solid"
+            tone="accent"
+            pending={installing}
+            onClick={done ? dismiss : () => void install()}
+          >
+            {done ? t("done") : installing ? t("installingUpdate") : t("updateNow")}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

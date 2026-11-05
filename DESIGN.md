@@ -11,7 +11,7 @@ changes.
 - **Utilities** go in JSX through `cn()`.
 - **Recurring shapes** are the primitives in `src/components/ui/`.
 - **Stylesheets**: the permanent ones are `src/index.css` (entry and base layer), `src/styles/theme.css` and
-  `src/styles/prose.css`. `src/App.css` is legacy and only shrinks.
+  `src/styles/prose.css`. The legacy `src/App.css` was deleted in ticket 25 (1.3.1).
 
 ## Tokens
 
@@ -101,7 +101,7 @@ it to say state or identity.
 `#646a74`. Both were lifted one step (to `#8c929c` / `#5b616a`): the legacy hover ground (`--bg-element-hover`, from the
 App.css alias block) measured them at 4.20:1 and 4.08:1 under the tertiary "(Disabled)" label of a hovered harness pill.
 Dark is now T3's sampled muted grey, `#898989` (ticket 35): 4.77 on `raised`, its floor, and 5.04 on that legacy hover
-ground (4.41 light on ticket 30's grounds, where the alias has no reader left — § The hardest pairs). The step between
+ground (4.41 light on ticket 30's grounds; the alias and its ground left with `App.css`, ticket 25 — § The hardest pairs). The step between
 `faint` and `muted-foreground` stays visible (luminance ratio 1.39 dark, 1.34 light).
 
 ### Accent and state
@@ -264,8 +264,8 @@ The lowest passing pairs anywhere are:
 
 Re-measure them after any change to `faint`, `primary`, `stale`, `failed`, `input` or the grounds
 (`node .scratch/round19/evidence/30-contrast.mjs`). `faint` on the legacy hover ground `--bg-element-hover` (5.04 dark
-on ticket 35's, 4.41 light on ticket 30's grounds) is no longer a rendered pair: the App.css alias block still defines it, but no rule or
-utility reads it.
+on ticket 35's, 4.41 light on ticket 30's grounds) is no longer a pair at all: it left with the App.css alias block
+(ticket 25).
 
 **Exempt, by rule:**
 
@@ -613,6 +613,9 @@ world's 120 ms (`--motion-fast`) transform + opacity on `ease-out` — inline st
 enters from and leaves through its own edge; its height never animates; a swipe-out takes the same 120 ms. Reduced
 motion: sonner's `transition: none !important` and the base layer both still win.
 
+A toast's description keeps its line breaks (`whitespace-pre-wrap`, the primitive's `descriptionClassName`; ticket
+25 moved it there from `App.css`): a message may carry one line per forced source harness on import.
+
 ## Focus ring
 
 - One ring everywhere: a **2 px solid `ring` outline, offset 2 px** (1 px for text fields, −2 px inside menu items),
@@ -645,7 +648,7 @@ Frequency first (round-18 D6, Emil's rubric): what the operator does tens or hun
 what moves is **opacity and transform only**, **≤ 120 ms** (`--motion-fast`), on `ease-out`
 (`--ease-out: cubic-bezier(0.16, 1, 0.3, 1)`, `theme.css`), interruptible (CSS transitions, which retarget — never
 keyframes on anything that can fire twice), and **gone under `prefers-reduced-motion: reduce`**. No `transition: all`
-anywhere: the built CSS has none, `App.css` included since ticket 15. Every motion is owned by a primitive or by the
+anywhere: the built CSS has none. Every motion is owned by a primitive or by the
 one component that owns the moving element — never by a call site's `className`.
 
 ### What moves (the motion table)
@@ -663,7 +666,7 @@ one component that owns the moving element — never by a call site's `className
 | ⌘K palette (ticket 23) | open / close (many times a day, from the keyboard) | **nothing** — decided 2026-11-02: it appears and leaves instantly, like every dialog | — | — | nothing to remove (0 transitions, 0 animations measured under `reduce`) | `ui/command-palette.tsx` |
 
 The loops are the only durations over 120 ms in the built CSS, and they are periods, not transitions: `animate-spin`
-1 s, and the legacy `.spinner` 0.9 s in `App.css` — all stopped by the base layer's reduced-motion rule. (`.cell-spinner`
+1 s — stopped by the base layer's reduced-motion rule (the legacy `.spinner` left with `App.css`, ticket 25). (`.cell-spinner`
 and the `.skeleton-row` shimmer left with Projects' migration, ticket 17: a cell in flight spins `animate-spin`
 `motion-safe`, and the loading placeholders are static `raised` blocks.) **The two permitted rare moments** (D6's delight
 budget: a large import completing, an install landing) may run as a *sequence* of ≤ 120 ms steps: the import cascade
@@ -689,7 +692,7 @@ at once, and the strip light lights the new skill's marks only when they become 
 ### Reduced motion
 
 `prefers-reduced-motion: reduce` removes all motion. The base layer zeroes every transition and animation duration
-(`!important`; legacy `App.css` loops and third-party layers included), and each moving element also carries its own
+(`!important`; third-party layers included), and each moving element also carries its own
 `motion-reduce:` / `motion-safe:` counterpart, so nothing is left mid-way: the rail and the strip light appear
 settled, the fill jumps, the header spinner is hidden, Button spinners do not run — text and counts only. The
 guarantee is **no interpolated motion**: every element is settled on its first *visible* frame. Sonner still stages
@@ -1420,28 +1423,47 @@ dismissed for good.
   "Can't be imported" (`stale`) 10.13 / 5.68; copy path 7.65 / 8.36; the legend 7.65 / 8.36; the policy line 18.81 /
   15.72.
 
+## The last four dialogs (ticket 25)
+
+Composed from Dialog parts, Button, FieldSet and tokens; no variant was added. Props, dialog kinds, focus rules and
+copy are unchanged.
+
+- **Invocation** (`skills/modals/InvocationModeModal.tsx`): a `FieldSet` + `FieldLegend` of native radios — Import
+  review's described-radio row (16 px `accent-primary` radio, `focusRing`, the row `raised` on hover), each named by
+  its mode and described by its explanation (`aria-labelledby` / `aria-describedby`). RadioGroup is not used: it is a
+  row of 2–5 short segments, and these five options each carry a sentence. The upstream-conflict line is `stale`
+  text with a `TriangleAlert` (`role="status"`), as the inspector's Edits section says it; Cancel `outline`, Save
+  `solid accent`.
+- **The overwrite ask** (`skills/modals/OverwriteModal.tsx`): its rows are one bordered list (`border` edge and
+  hairlines, `rounded-md`, scrolling past 40 vh): skill → harness in `foreground`, the path `font-mono xs faint`,
+  the facts `xs muted`.
+- **Update** (`shared/UpdateDialog.tsx`, `sm`): header title, body sentence, the release notes under `.prose` in a
+  bordered box (`max-h-52`, scrolling — as Settings → Updates shows them), footer "Don't remind again" `outline` and
+  Update now `solid accent`. Update now is one button through installing (`pending`, "Installing…") and done
+  ("Done"), so focus stays on it.
+- **New harnesses** (`skills/modals/NewToolsModal.tsx`): Later `outline`, Deploy all skills `solid accent`.
+
 ## Migration rule
 
-- A surface is **migrated** when its component files reference no class that `App.css` defines. It is then appended
-  to `migrated` in `scripts/styles-baseline.json`, never removed.
-- The same change lowers `appCssCeiling` by the lines it deleted. `npm run styles:check` (part of `npm run check` and
-  CI) fails when:
-  - `App.css` grows, or shrinks without the ceiling being lowered;
-  - a migrated file, or any file in `components/ui/`, uses a legacy class — read from the TypeScript AST, following
-    constants, objects, conditionals, templates and helpers in the file and through named relative / `@/` imports;
-  - a new stylesheet appears;
-  - `prose.css` leaks outside `.prose` (nesting resolved; `.prose + x` / `.prose ~ x` leak) or holds a colour literal,
-    `var()` fallbacks included;
-  - a raw colour or palette utility enters `src/**/*.{ts,tsx}` — arbitrary values (`bg-[#…]`, `bg-[red]`,
-    `[color:red]`) and colour literals in inline `style` objects included.
-- The guard runs its own regression suite first (`scripts/check-styles.test.mjs`): each rule's violations must exit 1
-  against a temp copy, the clean copy exit 0.
-- `className` on a primitive is layout-only **by convention**; the guard does not enforce it (review S1 note). Review
-  call sites for visual overrides.
-- **The alias block** at the top of `App.css` maps every legacy custom property (`--bg-app`, `--text-secondary`,
-  `--accent-*`, `--status-*`, …) onto these tokens, so un-migrated surfaces already render in the new palette. It
-  was the last addition `App.css` received. It is deleted together with the last legacy rule.
-- Never add a rule to `App.css`.
+**The migration is complete** (ticket 25, 1.3.1): every surface is on the primitives and tokens, and `src/App.css`
+— with its legacy alias block (`--bg-app`, `--text-secondary`, `--accent-*`, `--status-*`, …) — is deleted. There is
+no legacy stylesheet to add to, and the guard keeps it that way. `npm run styles:check` (part of `npm run check` and
+CI) fails when:
+
+- `src/App.css` exists, or a source file, a stylesheet or `index.html` imports an `App.css`;
+- a retired legacy class returns — any class in `retiredClasses` (`scripts/styles-baseline.json`: the 44 class
+  selectors `App.css` defined when it was deleted, frozen) used by a `src/` source file, read from the TypeScript AST,
+  following constants, objects, conditionals, templates and helpers in the file and through named relative / `@/`
+  imports. Nothing defines them, so such a class renders unstyled;
+- a new stylesheet appears (the permanent three are `index.css`, `styles/theme.css`, `styles/prose.css`);
+- `prose.css` leaks outside `.prose` (nesting resolved; `.prose + x` / `.prose ~ x` leak) or holds a colour literal,
+  `var()` fallbacks included;
+- a raw colour or palette utility enters `src/**/*.{ts,tsx}` — arbitrary values (`bg-[#…]`, `bg-[red]`,
+  `[color:red]`) and colour literals in inline `style` objects included.
+
+The guard runs its own regression suite first (`scripts/check-styles.test.mjs`): each rule's violations must exit 1
+against a temp copy, the clean copy exit 0. `className` on a primitive is layout-only **by convention**; the guard
+does not enforce it (review S1 note). Review call sites for visual overrides.
 
 ## How to add a variant
 

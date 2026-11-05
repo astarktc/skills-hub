@@ -199,6 +199,25 @@ The round-19 world ticket builds the guard with the tokens, the primitives and t
 Skills). Surfaces then migrate one ticket at a time, in sequence (D9). Each ticket lowers the ceiling and extends
 `migrated`.
 
+**`App.css` deleted (ticket 25, 1.3.1, 2026-11-04).** The last four surfaces (Invocation, the overwrite ask, the
+update dialog, New harnesses) moved onto the primitives; the file's one live non-class rule (a toast description
+keeps its line breaks) moved into the Toaster primitive; every other rule and the alias block were dead and went
+with the file. The guard flipped as rule 1 foresaw, and rule 2 changed with it, since a list of migrated files
+means nothing once every file is migrated:
+
+1. **`App.css` must not exist**, and no source file, stylesheet or `index.html` may import an `App.css`.
+2. **No retired class returns.** The baseline's `retiredClasses` freezes the 44 class selectors `App.css` defined
+   when it was deleted. Nothing defines them now, so any `src/` source file whose class expressions (read from the
+   AST as before) use one fails — the way a stale branch merged back would bring them in. `migrated` and
+   `appCssCeiling` left the baseline.
+3. The permanent three are the only stylesheets; rules 4 and 5 are unchanged.
+
+The dormant `Layout.tsx` and `Dashboard.tsx` were deleted on the operator's word (2026-11-04), with their i18n
+leaves and `react-router-dom`, which only `Layout.tsx` imported. Tailwind now scans the app's own source only
+(`@import "tailwindcss" source(".")` in `src/index.css`), so prose in the docs and tracker no longer mints unused
+utilities (`.transition`, `.ease-in-out` and 92 more; ticket 15 audit A4). The built CSS lost 8.2 kB and no class the
+app uses: a candidate in `src/` is still scanned. Two `src/` comments that named a utility were reworded.
+
 ### 7. Tests for primitives: a narrow exception — accepted (round-19 spec D2)
 
 AGENTS.md rules out component rendering tests. The reason is that components are thin JSX and behaviour lives in
@@ -248,9 +267,8 @@ Everything outside `src/components/ui/` keeps the no-rendering-tests rule.
   migration.
 - `SkillDetailView`'s DOM theme read and the highlighter's inline JS style objects go away when the detail surface
   migrates.
-- The dormant `Layout.tsx` and `Dashboard.tsx` keep referencing legacy classes. They are never listed as migrated.
-  When `App.css` is deleted they render unstyled, which is harmless because nothing imports them. Deleting them
-  stays an operator call.
+- The dormant `Layout.tsx` and `Dashboard.tsx` kept referencing legacy classes and were never listed as migrated.
+  The operator had them deleted with `App.css` (ticket 25, 2026-11-04).
 
 ## What would change this
 

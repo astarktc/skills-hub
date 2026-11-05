@@ -13,6 +13,10 @@ All notable changes to this project will be documented in this file.
 - **A Result step** after the import: the count line ("8 imported · 1 kept", "10 imported · 2 replaced") and one row per skill — deployed where, which copies were removed or left in place per harness, what was skipped and why — with **Retry** for a failed one. Its toast waits until you close it, so it never covers the Close button (Add's result step too). A large import lights the new rows' deployment marks once when you close it.
 - **Removing a Conflict's other copies only removes a copy known to differ.** A copy that could not be compared (an unreadable file) is left in place and reported; a folder two harnesses share is removed once and reported for both.
 
+### New look
+
+- **The last legacy styles are gone.** The Invocation, folder-already-exists, update and new-harnesses dialogs now use the same buttons, radios and lists as every other dialog (release notes render like Settings → Updates; Update now keeps focus through the install), and the old stylesheet is deleted.
+
 ## [1.3.0] - 2026-10-27
 
 Round 19, phase A of the UI effort: Skills Hub gets one visual language, My Skills becomes a dense list with an inspector beside it, removing a skill from a tool is now a choice that lasts, and every batch says what happened in one line. Settings panes, the Import review, Explore rows, the command palette and the card grid follow in 1.3.x.

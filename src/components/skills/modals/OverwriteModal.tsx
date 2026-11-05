@@ -91,15 +91,15 @@ function OverwriteAsk({
         <DialogBody>
           <p>{t('overwrite.body', { count: rows.length })}</p>
           {perRow ? <p className="mt-1">{t('overwriteAsk.perRowHint')}</p> : null}
-          <ul className="overwrite-list">
+          <ul className="m-0 flex max-h-[40vh] list-none flex-col divide-y divide-border overflow-y-auto rounded-md border border-border p-0">
             {rows.map((row, index) => (
-              <li key={overwriteRowKey(row)} className="overwrite-row">
+              <li key={overwriteRowKey(row)} className="px-3 py-2">
                 <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <span className="overwrite-pair">
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <span className="text-foreground">
                       {row.skillName} → {row.toolLabel}
                     </span>
-                    <span className="overwrite-path">{row.path}</span>
+                    <span className="font-mono text-xs break-all text-faint">{row.path}</span>
                     <RowFacts row={row} t={t} />
                   </div>
                   {perRow ? (

@@ -13,7 +13,7 @@ npm run tauri:dev        # Tauri dev window (frontend + backend) — see live-da
 npm run build            # tsc -b (TypeScript 7) && vite build
 npm run lint             # ESLint
 npm run test             # vitest unit tests (hooks + pure folds + commandError; jsdom, mocked seams)
-npm run styles:check     # styling guard (ADR-0006 §6, scripts/check-styles.mjs): App.css ratchet, migrated files, no new
+npm run styles:check     # styling guard (ADR-0006 §6, scripts/check-styles.mjs): App.css stays deleted, no retired class, no new
                          #   stylesheets, prose.css scope, no raw colours in JSX
 npm run check            # lint + styles:check + test + build + rust:fmt:check + rust:clippy + rust:test
 npm run version:check    # verify the 5 version locations (3 manifests + 2 lockfiles) agree
@@ -255,20 +255,16 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
   (worked example: `PATH_OUTSIDE_TOOL_DIRS` / `SignalError::PathOutsideToolDirs`, the refusal to delete
   a path outside every Tool skills dir — owned by the registry's
   `tool_adapters::ensure_path_within_tool_dirs`). See `docs/adr/0001-tagged-command-error-contract.md`.
-- **`src/components/Layout.tsx` and `src/pages/Dashboard.tsx` are dormant by design** — imported by nothing under `src/`.
-  Leave them alone unless explicitly wiring them up.
 - **Styling is Tailwind v4 per `docs/adr/0006-styling-architecture.md`**; `DESIGN.md` (repo root) is the reference
   for token values with measured contrast, every primitive's `variant` / `tone` / `size`, focus, motion and target
   size. Tokens only in `src/styles/theme.css` (dark `:root`, light `[data-theme='light']`, `@theme inline`; the
   Tailwind palette is removed), utilities in JSX via `cn()` (`@/lib/utils`), recurring shapes through the primitives
   in `src/components/ui/` (shadcn on Base UI, restyled to our tokens; `className` is layout only), no raw colours.
-  `src/App.css` is legacy and only shrinks: its opening alias block maps the legacy custom properties onto the tokens
-  and was its last addition — never add a rule to it; a surface counts as migrated once its files reference no class
-  `App.css` defines. The only other stylesheets are `src/index.css` (entry + base layer) and `src/styles/prose.css`
-  (rendered Markdown / code under `.prose`, token-only). No CSS Modules, no new `.css` files. `npm run styles:check`
-  (`scripts/check-styles.mjs` + `scripts/styles-baseline.json`) enforces all of it: migrating a surface appends its
-  files to `migrated` and lowers `appCssCeiling` in the same change (the baseline file is the live count — 1108 lines
-  and 36 files at 1.3.0). Read the resolved theme from the settings world
+  The only stylesheets are `src/index.css` (entry + base layer), `src/styles/theme.css` (tokens) and
+  `src/styles/prose.css` (rendered Markdown / code under `.prose`, token-only). No CSS Modules, no new `.css` files.
+  `npm run styles:check` (`scripts/check-styles.mjs` + `scripts/styles-baseline.json`) enforces all of it, including
+  that the legacy stylesheet stays gone and its classes (`retiredClasses`) never return (App.css deleted at 1.3.1,
+  ticket 25). Read the resolved theme from the settings world
   (`resolvedTheme`), never from `data-theme` on the DOM; the pre-paint script in `index.html` is the one sanctioned
   storage read outside `preferences.ts` (key pinned by `src/lib/preferences.test.ts`).
 - **Every layer is on one stack, `src/components/ui/layer-stack.ts`** — modal layers (Dialog, ConfirmDialog, the

@@ -21,7 +21,7 @@ import { LIVE_HOST_ATTRIBUTE } from "./layer-stack";
  * and a swipe-out, the stack's lift and its content fade share the same
  * 120 ms. Inline styles outrank sonner's injected (unlayered) CSS; the content
  * fade is on the toast's children, so it takes an important child utility.
- * Under reduced motion sonner's `transition: none !important` and the base
+ * Under reduced motion sonner's own `none !important` rule and the base
  * layer both still win.
  *
  * Where it lives (ticket 29): not inside the app root, which a modal layer
@@ -92,6 +92,9 @@ function Toaster({ toastOptions, ...props }: ToasterProps) {
         ...toastOptions,
         style: { ...toastMotion, ...toastOptions?.style },
         className: [toastContentMotion, toastOptions?.className].filter(Boolean).join(" "),
+        // A message may carry several lines (one per forced source harness on
+        // import): the description keeps them as lines.
+        descriptionClassName: ["whitespace-pre-wrap", toastOptions?.descriptionClassName].filter(Boolean).join(" "),
       }}
       {...props}
     />,

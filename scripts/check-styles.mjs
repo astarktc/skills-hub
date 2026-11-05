@@ -3,19 +3,19 @@
  * styles:check — the styling guard (ADR-0006 §6). Reads the committed
  * baseline `scripts/styles-baseline.json` and fails when:
  *
- *   1. App.css grows — or shrinks without the ceiling being lowered in the
- *      same change (a ratchet). Its non-blank, non-comment line count must
- *      equal `appCssCeiling`; `appCssCeiling: null` means App.css must not
- *      exist.
- *   2. A migrated file references a legacy class — any class token in a
- *      file listed in `migrated`, or in any file under src/components/ui/
- *      (the primitives are born migrated), that App.css defines as a class
- *      selector. Class expressions are read from the TypeScript AST:
- *      `className` attributes and cn()/cva()/clsx() arguments, following
- *      constants, objects, conditionals, templates and helper functions —
- *      same-file and through named relative / `@/` imports.
+ *   1. The legacy stylesheet comes back — `src/App.css` exists (it was
+ *      deleted when the last surface migrated, ticket 25), or a source file,
+ *      a stylesheet or index.html imports an `App.css`.
+ *   2. A retired legacy class returns — any class token in a src/ source
+ *      file that is one of `retiredClasses`, the class selectors App.css
+ *      defined when it was deleted. Nothing defines them any more, so such a
+ *      class renders unstyled (a stale branch merged back is the usual way
+ *      in). Class expressions are read from the TypeScript AST: `className`
+ *      attributes and cn()/cva()/clsx() arguments, following constants,
+ *      objects, conditionals, templates and helper functions — same-file and
+ *      through named relative / `@/` imports.
  *   3. A new stylesheet appears — any *.css / *.scss / *.sass / *.less under
- *      src/ other than the permanent three and App.css.
+ *      src/ other than the permanent three.
  *   4. The prose layer leaks — a selector in styles/prose.css (nesting
  *      resolved) that does not start at the prose root or leaves it through
  *      a sibling combinator (`.prose + x`, `.prose ~ x`), or a colour literal
@@ -31,7 +31,6 @@
  * own runs use it).
  *
  * Usage: node scripts/check-styles.mjs            (self-test, then check)
- *        node scripts/check-styles.mjs --count    (print App.css's counted lines)
  */
 
 import { spawnSync } from "node:child_process";
@@ -65,11 +64,23 @@ function walk(dirRel) {
 
 const stripComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ""));
 
-/** Non-blank, non-comment lines: the ratchet's unit. */
-export function countCssLines(css) {
-  return stripComments(css)
-    .split("\n")
-    .filter((line) => line.trim() !== "").length;
+/**
+ * Whether `text` imports an `App.css`: an ES import (`import "./App.css"`,
+ * `import x from "../App.css?inline"`, a dynamic `import("…")`), a CSS
+ * `@import`, or an HTML `href` / `src`. Comments are not imports.
+ */
+export function importsAppCss(text, fileName) {
+  const target = String.raw`[^"'()\s]*\bApp\.css(?:\?[^"'()\s]*)?`;
+  if (/\.(css|scss|sass|less)$/.test(fileName)) {
+    return new RegExp(String.raw`@import\s+(?:url\(\s*)?["']?${target}`).test(stripComments(text));
+  }
+  if (fileName.endsWith(".html")) {
+    return new RegExp(String.raw`\b(?:href|src)\s*=\s*["']${target}["']`).test(text.replace(/<!--[\s\S]*?-->/g, ""));
+  }
+  const code = text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+  return new RegExp(
+    String.raw`(?:\bimport\s*(?:[\w*{}\s,]+\bfrom\s*)?|\bimport\s*\(\s*|\brequire\s*\(\s*)["']${target}["']`,
+  ).test(code);
 }
 
 /**
@@ -179,18 +190,6 @@ export function cssRules(css) {
   };
   parse(src, null);
   return rules;
-}
-
-/** Class names a stylesheet defines in its selectors. */
-export function definedClasses(css) {
-  const classes = new Set();
-  for (const { selector } of cssRules(css)) {
-    const withoutStrings = selector.replace(/"[^"]*"|'[^']*'/g, "");
-    for (const match of withoutStrings.matchAll(/\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g)) {
-      classes.add(match[1]);
-    }
-  }
-  return classes;
 }
 
 /**
@@ -598,7 +597,7 @@ function loadBaseline() {
   } catch (error) {
     throw new Error(`styles-baseline.json is unreadable: ${error.message}`);
   }
-  for (const key of ["appCssCeiling", "migrated", "rawColourExempt"]) {
+  for (const key of ["retiredClasses", "rawColourExempt"]) {
     if (!(key in baseline)) throw new Error(`styles-baseline.json: missing "${key}"`);
   }
   return baseline;
@@ -608,48 +607,45 @@ function check() {
   const baseline = loadBaseline();
   const failures = [];
   const fail = (rule, message) => failures.push(`[${rule}] ${message}`);
-  const appCssExists = existsSync(join(ROOT, APP_CSS));
+  const sources = walk("src")
+    .map(toPosix)
+    .filter((file) => SOURCE_EXT.test(file) && !SOURCE_SKIP.some((re) => re.test(file)));
 
-  // 1. App.css ratchet
-  if (baseline.appCssCeiling === null) {
-    if (appCssExists) fail("growth", `${APP_CSS} must not exist (appCssCeiling is null).`);
-  } else if (!appCssExists) {
-    fail("growth", `${APP_CSS} is gone: set "appCssCeiling": null in the baseline.`);
-  } else {
-    const lines = countCssLines(read(APP_CSS));
-    if (lines > baseline.appCssCeiling) {
-      fail(
-        "growth",
-        `${APP_CSS} has ${lines} counted lines, above its ceiling ${baseline.appCssCeiling}. ` +
-          "App.css only shrinks: style the surface with utilities and primitives instead.",
-      );
-    } else if (lines < baseline.appCssCeiling) {
-      fail(
-        "growth",
-        `${APP_CSS} shrank to ${lines} counted lines: lower "appCssCeiling" from ` +
-          `${baseline.appCssCeiling} to ${lines} in scripts/styles-baseline.json (the ratchet).`,
-      );
+  // 1. The legacy stylesheet stays deleted
+  if (existsSync(join(ROOT, APP_CSS))) {
+    fail(
+      "legacy",
+      `${APP_CSS} exists. It was deleted when the last surface migrated (ADR-0006 §6): style with ` +
+        "utilities and primitives (tokens go in styles/theme.css, rendered Markdown in styles/prose.css).",
+    );
+  }
+  const importers = [
+    ...walk("src")
+      .map(toPosix)
+      .filter((file) => SOURCE_EXT.test(file) || STYLESHEET_EXT.test(file)),
+    ...(existsSync(join(ROOT, "index.html")) ? ["index.html"] : []),
+  ];
+  for (const file of importers) {
+    if (importsAppCss(read(file), file)) {
+      fail("legacy", `${file} imports an App.css. The legacy stylesheet is gone; drop the import.`);
     }
   }
 
-  // 2. Migrated files reference no legacy class
-  const legacy = appCssExists ? definedClasses(read(APP_CSS)) : new Set();
-  const primitives = walk("src/components/ui")
-    .map(toPosix)
-    .filter((file) => SOURCE_EXT.test(file) && !/\.test\.tsx?$/.test(file));
-  for (const file of new Set([...baseline.migrated, ...primitives])) {
-    if (!existsSync(join(ROOT, file))) {
-      fail("migrated", `${file} is listed as migrated but does not exist.`);
-      continue;
-    }
-    const hits = [...classTokens(read(file), file)].filter((token) => legacy.has(token));
+  // 2. No retired legacy class returns
+  const retired = new Set(baseline.retiredClasses);
+  for (const file of sources) {
+    const hits = [...classTokens(read(file), file)].filter((token) => retired.has(token));
     if (hits.length > 0) {
-      fail("migrated", `${file} references legacy App.css classes: ${hits.sort().join(", ")}.`);
+      fail(
+        "retired",
+        `${file} uses retired App.css classes ${hits.sort().join(", ")} — nothing defines them any more; ` +
+          "use the primitives (Button, Dialog, Field, Badge, …) and token utilities.",
+      );
     }
   }
 
   // 3. No new stylesheet
-  const allowed = new Set([...PERMANENT_STYLESHEETS, APP_CSS]);
+  const allowed = new Set(PERMANENT_STYLESHEETS);
   for (const file of walk("src").map(toPosix)) {
     if (STYLESHEET_EXT.test(file) && !allowed.has(file)) {
       fail(
@@ -677,10 +673,8 @@ function check() {
 
   // 5. No raw colour in JSX / TS
   const exempt = new Set(baseline.rawColourExempt.map((entry) => entry.file));
-  for (const file of walk("src").map(toPosix)) {
-    if (!SOURCE_EXT.test(file) || SOURCE_SKIP.some((re) => re.test(file)) || exempt.has(file)) {
-      continue;
-    }
+  for (const file of sources) {
+    if (exempt.has(file)) continue;
     const hits = rawColourUtilities(read(file));
     if (hits.length > 0) {
       fail(
@@ -721,10 +715,6 @@ function selfTest() {
 }
 
 function main() {
-  if (process.argv.includes("--count")) {
-    console.log(countCssLines(read(APP_CSS)));
-    return;
-  }
   if (!process.argv.includes("--no-self-test") && !selfTest()) process.exit(1);
   const failures = check();
   if (failures.length > 0) {
@@ -734,8 +724,8 @@ function main() {
   }
   const baseline = loadBaseline();
   console.log(
-    `styles:check ok — App.css ${baseline.appCssCeiling ?? "absent"} counted lines (ceiling), ` +
-      `${baseline.migrated.length} migrated file(s), prose layer scoped, no raw colours` +
+    `styles:check ok — App.css absent, ${baseline.retiredClasses.length} retired classes unused, ` +
+      "no new stylesheet, prose layer scoped, no raw colours" +
       `${process.argv.includes("--no-self-test") ? "" : "; self-test passed"}.`,
   );
 }

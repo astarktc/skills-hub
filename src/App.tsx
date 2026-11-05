@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import "./App.css";
 import { useTranslation } from "react-i18next";
 // The binder mounts the token-themed Toaster once; useStatusReporter makes
 // every toast call and owns toast lifetime.

@@ -14,7 +14,6 @@ import {
   cpSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -60,12 +59,6 @@ const write = (root, rel, text) => {
   writeFileSync(join(root, rel), text);
 };
 const appendProse = (root, css) => appendFileSync(join(root, "src/styles/prose.css"), `\n${css}\n`);
-const markMigrated = (root, file) => {
-  const path = join(root, "scripts/styles-baseline.json");
-  const baseline = JSON.parse(readFileSync(path, "utf8"));
-  baseline.migrated.push(file);
-  writeFileSync(path, JSON.stringify(baseline, null, 2));
-};
 
 function expectRejected(result, rule, fragment) {
   assert.equal(result.status, 1, `expected exit 1, got ${result.status}:\n${result.output}`);
@@ -80,36 +73,60 @@ describe("styles:check", () => {
     assert.match(result.output, /styles:check ok/);
   });
 
-  describe("rule 1 — the App.css ratchet", () => {
-    it("rejects a new App.css line", () => {
-      const result = runGuard((root) => appendFileSync(join(root, "src/App.css"), "\n.probe { display: block; }\n"));
-      expectRejected(result, "growth", "above its ceiling");
+  describe("rule 1 — the legacy stylesheet stays deleted", () => {
+    it("rejects a recreated App.css", () => {
+      const result = runGuard((root) => write(root, "src/App.css", ".probe { display: block; }\n"));
+      expectRejected(result, "legacy", "src/App.css exists");
+    });
+
+    it("rejects an App.css import in a source file, even with the file absent", () => {
+      const result = runGuard((root) => write(root, "src/ImportProbe.tsx", 'import "./App.css";\nexport const x = 1;\n'));
+      expectRejected(result, "legacy", "src/ImportProbe.tsx imports an App.css");
+    });
+
+    it("rejects an App.css @import in a stylesheet", () => {
+      const result = runGuard((root) =>
+        appendFileSync(join(root, "src/index.css"), '\n@import "./App.css";\n'),
+      );
+      expectRejected(result, "legacy", "src/index.css imports an App.css");
+    });
+
+    it("rejects an App.css link in index.html", () => {
+      const result = runGuard((root) =>
+        write(root, "index.html", '<!doctype html><link rel="stylesheet" href="/src/App.css" />\n'),
+      );
+      expectRejected(result, "legacy", "index.html imports an App.css");
+    });
+
+    it("accepts App.css named in a comment", () => {
+      const result = runGuard((root) =>
+        write(root, "src/CommentProbe.tsx", '// App.css was deleted; import "./App.css" never again\nexport const x = 1;\n'),
+      );
+      assert.equal(result.status, 0, result.output);
     });
   });
 
-  describe("rule 2 — migrated files reference no legacy class", () => {
-    it("rejects a literal legacy class", () => {
-      const result = runGuard((root) => {
-        write(root, "src/ReviewProbe.tsx", 'export const Probe = () => <div className="btn" />;\n');
-        markMigrated(root, "src/ReviewProbe.tsx");
-      });
-      expectRejected(result, "migrated", "btn");
+  describe("rule 2 — no retired legacy class returns", () => {
+    it("rejects a literal retired class", () => {
+      const result = runGuard((root) =>
+        write(root, "src/ReviewProbe.tsx", 'export const Probe = () => <div className="btn" />;\n'),
+      );
+      expectRejected(result, "retired", "btn");
     });
 
-    it("rejects a legacy class held in a local constant", () => {
-      const result = runGuard((root) => {
+    it("rejects a retired class held in a local constant", () => {
+      const result = runGuard((root) =>
         write(
           root,
           "src/ReviewProbe.tsx",
           'const legacy = "btn";\nexport const Probe = () => <div className={legacy} />;\n',
-        );
-        markMigrated(root, "src/ReviewProbe.tsx");
-      });
-      expectRejected(result, "migrated", "btn");
+        ),
+      );
+      expectRejected(result, "retired", "btn");
     });
 
-    it("rejects a legacy class behind a conditional, an object and a template", () => {
-      const result = runGuard((root) => {
+    it("rejects a retired class behind a conditional, an object and a template", () => {
+      const result = runGuard((root) =>
         write(
           root,
           "src/ReviewProbe.tsx",
@@ -120,13 +137,12 @@ describe("styles:check", () => {
             ");",
             "",
           ].join("\n"),
-        );
-        markMigrated(root, "src/ReviewProbe.tsx");
-      });
-      expectRejected(result, "migrated", "btn-primary");
+        ),
+      );
+      expectRejected(result, "retired", "btn-primary");
     });
 
-    it("rejects a legacy class imported from a sibling module", () => {
+    it("rejects a retired class imported from a sibling module", () => {
       const result = runGuard((root) => {
         write(root, "src/probeClasses.ts", 'export const legacy = "btn";\n');
         write(
@@ -134,16 +150,26 @@ describe("styles:check", () => {
           "src/ReviewProbe.tsx",
           'import { legacy } from "./probeClasses";\nexport const Probe = () => <div className={legacy} />;\n',
         );
-        markMigrated(root, "src/ReviewProbe.tsx");
       });
-      expectRejected(result, "migrated", "btn");
+      expectRejected(result, "retired", "btn");
     });
 
-    it("rejects a legacy class inside a primitive (born migrated)", () => {
+    it("rejects a retired class inside a primitive", () => {
       const result = runGuard((root) =>
-        write(root, "src/components/ui/probe.tsx", 'export const Probe = () => <span className="btn" />;\n'),
+        write(root, "src/components/ui/probe.tsx", 'export const Probe = () => <span className="modal-title" />;\n'),
       );
-      expectRejected(result, "migrated", "btn");
+      expectRejected(result, "retired", "modal-title");
+    });
+
+    it("ignores a retired word that is not a class (role, copy, variant name)", () => {
+      const result = runGuard((root) =>
+        write(
+          root,
+          "src/ReviewProbe.tsx",
+          'export const Probe = ({ tone }: { tone: string }) => <p role="alert" className={tone === "error" ? "text-failed" : "text-stale"}>status</p>;\n',
+        ),
+      );
+      assert.equal(result.status, 0, result.output);
     });
   });
 
