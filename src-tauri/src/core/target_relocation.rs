@@ -32,7 +32,10 @@
 //! delete central skill bytes. The redesign (BACKLOG #88) reuses this module.
 
 // Unwired until BACKLOG #88: nothing outside the tests calls the pass.
-#![allow(dead_code, reason = "unwired from launch until BACKLOG #88")]
+#![cfg_attr(
+    not(test),
+    allow(dead_code, reason = "unwired from launch until BACKLOG #88")
+)]
 
 use std::path::{Path, PathBuf};
 
@@ -58,6 +61,10 @@ pub struct RelocationSummary {
 /// skills dir.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
+#[allow(
+    dead_code,
+    reason = "the launch entry point, unwired until BACKLOG #88; tests drive relocate_unlocked"
+)]
 pub fn relocate_former_global_targets(
     store: &SkillStore,
     home: &Path,
