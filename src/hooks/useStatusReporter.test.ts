@@ -1023,6 +1023,43 @@ describe("useStatusReporter applyOutcome", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
+  it("a later run's toast replaces the previous run's; every run keeps its history block", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    vi.mocked(toast.warning).mockReturnValueOnce(1).mockReturnValueOnce(2);
+    vi.mocked(toast.success).mockReturnValueOnce(3);
+    await act(async () => {
+      await result.current.applyOutcome(outcome({ toast: { kind: "warning", tone: "failure", message: "run 1 failed" } }));
+    });
+    expect(toast.dismiss).not.toHaveBeenCalled();
+    await act(async () => {
+      await result.current.applyOutcome(outcome({ toast: { kind: "warning", tone: "failure", message: "run 2 failed" } }));
+    });
+    expect(vi.mocked(toast.dismiss).mock.calls).toEqual([[1]]);
+    await act(async () => {
+      await result.current.applyOutcome(
+        outcome({ toast: { kind: "success", tone: "success", message: "run 3 ok" }, errors: [], warnings: [], notes: [] }),
+      );
+    });
+    // Each run dismissed its predecessor alone — never a dismiss-all.
+    expect(vi.mocked(toast.dismiss).mock.calls).toEqual([[1], [2]]);
+    // The newest toast is a fresh one, not an update merged into an old id.
+    expect(vi.mocked(toast.success).mock.calls[0][1]).not.toHaveProperty("id");
+    const headlines = result.current.notifications.filter((row) => row.role === "headline").map((row) => row.title);
+    expect(headlines).toEqual(["run 3 ok", "run 2 failed", "run 1 failed"]);
+  });
+
+  it("a standalone error toast is not the run channel's: a run never dismisses it", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    vi.mocked(toast.error).mockReturnValueOnce("err");
+    vi.mocked(toast.warning).mockReturnValueOnce("run").mockReturnValueOnce("run");
+    act(() => result.current.notify("error", "Install failed"));
+    await act(async () => {
+      await result.current.applyOutcome(outcome());
+      await result.current.applyOutcome(outcome());
+    });
+    expect(vi.mocked(toast.dismiss).mock.calls).toEqual([["run"]]);
+  });
+
   it("names the run by the action that produced it", async () => {
     const { result } = renderHook(() => useStatusReporter(t));
     await act(async () => {
