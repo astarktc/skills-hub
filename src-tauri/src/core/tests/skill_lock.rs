@@ -117,6 +117,8 @@ fn try_enrich_symlink_into_agents_skills_returns_entry() {
     fs::create_dir_all(&tool_dir).unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink(&skill_dir, tool_dir.join("test-skill")).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&skill_dir, tool_dir.join("test-skill")).unwrap();
 
     let result =
         super::try_enrich_from_skill_lock_with_home(&tool_dir.join("test-skill"), dir.path());

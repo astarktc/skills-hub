@@ -9,7 +9,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::*;
-use crate::core::artifact_removal::{remove_skill, RemovalTargetStatus};
+use crate::core::artifact_removal::remove_skill;
+// Only the unix-only removal-failure test reads a target status.
+#[cfg(unix)]
+use crate::core::artifact_removal::RemovalTargetStatus;
 use crate::core::errors::{CommandError, SignalError};
 use crate::core::global_sync::{
     sync_skills_to_planned_tools, BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus,

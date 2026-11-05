@@ -467,8 +467,11 @@ fn listing_reconciles_when_no_mutation_is_in_flight() {
     let f = fixture("listing-reconcile-guard");
     let (_tool, assignment_id) = make_drifted_copy_assignment(&f);
 
+    // The guard is process-wide and other tests take it in parallel; on a
+    // slower host (the Windows suite) they hold it nearly back to back, so
+    // the poll gets a generous window (30 s) rather than 5 s.
     let mut listing = None;
-    for _ in 0..100 {
+    for _ in 0..600 {
         let attempt = project_sync::list_assignments_with_staleness(&f.store, &f.project.id)
             .expect("listing");
         if attempt.reconciled {

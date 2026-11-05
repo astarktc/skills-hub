@@ -570,7 +570,8 @@ fn finalize_step_failed_rollback_keeps_and_names_backup() {
     else {
         panic!("{err:#}");
     };
-    assert!(format!("{err:#}").contains(backup));
+    // The diagnostic names the backup in its Debug form (escaped on Windows).
+    assert!(format!("{err:#}").contains(&format!("{backup:?}")));
     assert_eq!(fs::read(Path::new(backup).join("a.txt")).unwrap(), b"data");
     assert_eq!(central_entries(central.path()).len(), 2);
     assert_eq!(
@@ -667,7 +668,8 @@ fn rollback_cleanup_failure_retains_backup_and_original_error() {
     let err = super::rollback_update(path, Some(&backup), anyhow::anyhow!("original failure"));
 
     assert_eq!(err.root_cause().to_string(), "original failure");
-    assert!(format!("{err:#}").contains(backup.to_str().unwrap()));
+    // The diagnostic names the backup in its Debug form (escaped on Windows).
+    assert!(format!("{err:#}").contains(&format!("{:?}", backup.to_string_lossy())));
     assert_eq!(fs::read(backup.join("a.txt")).unwrap(), b"data");
     assert_eq!(fs::read(path).unwrap(), b"obstruction");
     // Recovery siblings are hidden from the ordinary root/recursive scan ladder.
