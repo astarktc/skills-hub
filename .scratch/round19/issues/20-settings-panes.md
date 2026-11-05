@@ -1,6 +1,6 @@
 # 20 — Settings panes; Configure Tools moves into Settings → Tools; theme radio group; named header controls
 
-Status: ready-for-agent
+Status: done — 1c2cc4b
 Blocked by: 19
 Spec: `.scratch/round19/spec.md` — D24 (grill Q18). Sources: `critique-astra` F16, Settings read; `critique-opus` Q8,
 P2-6; `audit.md` Settings rows. Phase 19b.
