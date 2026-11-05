@@ -1,6 +1,6 @@
 # 34 — Registry truth pass: harness rows corrected to vendor docs, global AGENTS-standard membership, cross-read dedupe, and the "prefer the AGENTS standard dir" preference
 
-Status: parked — held out of 1.3.1 (operator rule 11: a P0 needing a design decision parks the ticket); branch `t3/registry-truth-pass` holds the work; BACKLOG #88 is the redesign
+Status: superseded — BACKLOG #88 (the relocation redesign; branch `t3/registry-truth-pass` holds three audit/fix passes) and BACKLOG #89 (the pre-existing lexical hazard)
 Blocked by: 20 (the Harnesses pane is this ticket's UI home); 32 (vocabulary — done)
 Blocks: 25
 Source: `docs/design-inputs/2026-11-02-harness-global-skills-dirs.md` (the research brief — every claim below cites
