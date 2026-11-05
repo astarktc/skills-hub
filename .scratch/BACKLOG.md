@@ -5,7 +5,7 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#90**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#91**.
 
 ## Now — evidence of unfinished work is strong
 
@@ -51,6 +51,12 @@ were seeded 2026-09-24 from the upstream/field survey in `docs/design-inputs/` �
 code before scheduling.)
 
 ## Later — real, not urgent
+
+- **#90 The New harnesses dialog is unreachable in the fixture under StrictMode.** `src/fixtures/backend.ts` reports newly
+  detected harnesses once (`seenTools` is set on the first `toolStatus()`), and the dev-mode startup effect runs twice, so
+  the app never shows `NewToolsModal` in any scenario; `backend.test.ts:449–453` pins the once-only behaviour on purpose
+  (it mirrors the backend). Give the fixture a StrictMode-safe way to surface the dialog (a scenario flag, or report
+  until acknowledged). Source: `round19/review/ticket-25-audit.md` § F3.
 
 - **#87 Project-scope relocation for corrected harness dirs (Kilo `.kilo/skills`, Xum `.xum/skills`).** Ticket 34 corrected
   the global dirs and relocates global targets on launch, but there is no facility to move an existing *project*

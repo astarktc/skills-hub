@@ -1,6 +1,6 @@
 # 25 — `App.css` deleted; the guard flips to "must not exist"; `Layout.tsx` / `Dashboard.tsx` disposition
 
-Status: done — (sha in the tracker commit)
+Status: done — 20d3fb4
 Blocked by: 20, 21, 22, 23, 24
 Spec: `.scratch/round19/spec.md` — D32; ADR-0006 §5–§6. Phase 19b closure.
 
