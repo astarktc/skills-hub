@@ -5,9 +5,25 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#88**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#90**.
 
 ## Now — evidence of unfinished work is strong
+
+- **#88 Relocation redesign: alias-aware artifact identity in every seam, resumable moves with truthful status.** Ticket 34's
+  backend half (branch `t3/registry-truth-pass`, three audit/fix rounds, parked 2026-11-04) showed that moving a live
+  deployment between dirs needs one physical identity (canonical parent + leaf, never the link's referent) applied by
+  relocation, cleanup, rollback, Keep **and** `sync_engine`'s overwrite, plus a move that survives a crash at any boundary
+  without an unowned artifact or a `synced` row at a missing path. Audit 3's F14–F16 are the acceptance tests (aliased
+  source/destination roots; a destination aliased onto the central repo; Keep over a copy with local-only edits). Owns:
+  the #83 preference's accept path, Codex/Goose/OpenHands joining the AGENTS group globally, the Antigravity / Kilo /
+  Xum / Kimi dir corrections, OpenClaw's former-name re-key. Source: `round19/review/ticket-34-backend-audit-3.md` § F15.
+- **#89 Pre-existing P0 hazard on `main`: the launch relocation pass is lexical.** `main` already relocates Augment's
+  `.augment/rules` → `.augment/skills` on launch through `target_relocation.rs`; audit 3's F15 reproductions use exactly
+  that row: a user whose Tool skills root is a directory symlink (onto the former dir, or onto the central repo) loses
+  the destination or the central skill while the pass reports success. Narrow precondition, destructive outcome. Either
+  guard the pass (refuse a move whose source and destination resolve to one artifact or into the central repo — the
+  smallest safe change) in 1.3.2 ahead of #88, or disable the pass until #88. Source: same report, test
+  `audit3_directory_aliases_must_never_delete_central_bytes`.
 
 (#79 absorbed by `round19/issues/29-toast-announcement-under-a-modal.md` on 2026-10-27 — operator: fix before the 1.3.0 push.
 #71 grilled 2026-11-02 — decision D34 "auto-deploy is arrival-only", absorbed by `round19/issues/33-auto-deploy-arrival-only.md`.
