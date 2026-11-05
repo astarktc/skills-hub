@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use crate::core::artifact_removal::remove_superseded_artifact_unlocked;
 use crate::core::errors::SignalError;
 use crate::core::installer::InstallerPaths;
+// Only the unix-only symlink tests propagate.
+#[cfg(unix)]
 use crate::core::propagation::propagate_unlocked;
 use crate::core::skill_disable::{disable_targets, DisableScope};
 use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord, TargetTransition};

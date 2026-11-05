@@ -859,8 +859,10 @@ fn sync_skills_to_tools_writes_under_temp_home_and_reports_unknown_tools() {
         .get_skill_target("skill-1", "claude_code")
         .expect("query")
         .expect("record for claude_code");
+    // Compared as paths: the registry joins `.claude/skills` as written, so
+    // on Windows the recorded string mixes separators.
     assert_eq!(
-        record.target_path,
-        home.join(".claude/skills/skill-1").to_string_lossy()
+        Path::new(&record.target_path),
+        home.join(".claude/skills/skill-1")
     );
 }

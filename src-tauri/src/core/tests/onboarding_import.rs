@@ -1337,6 +1337,8 @@ fn original_at<'a>(
         .status
 }
 
+// Used by the unix-only unreadable-copy tests alone.
+#[cfg(unix)]
 fn is_identity_unknown(status: &OriginalStatus, path: &Path) -> bool {
     matches!(
         status,

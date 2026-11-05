@@ -1,11 +1,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+// The refusal assertions are all in unix-only link tests.
+#[cfg(unix)]
 use crate::core::errors::{RevealPathFailure, SignalError};
 use crate::core::log_reveal::{
-    admit_reveal_path, central_contains, log_reveal_target, path_reveal_item, resolve_reveal_item,
-    LogRevealTarget, RevealAdmission,
+    admit_reveal_path, log_reveal_target, path_reveal_item, resolve_reveal_item, LogRevealTarget,
+    RevealAdmission,
 };
+// Only the containment tests use it, and they build their links with unix symlinks.
+#[cfg(unix)]
+use crate::core::log_reveal::central_contains;
 use crate::core::project_sync;
 use crate::core::skill_store::{
     ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore, SkillTargetRecord,
@@ -81,19 +86,44 @@ fn the_bundle_suffix_rule_ignores_case() {
 const HOME: &str = "/Users/u";
 const CENTRAL: &str = "/Users/u/.skillshub";
 
+/// The fixtures are written as unix absolute paths; on Windows `/Users/u` is
+/// drive-relative, which the admission rule refuses by design, so each one
+/// is rooted on a drive there (`C:/Users/u`) and stays absolute.
+fn abs(path: &str) -> String {
+    if cfg!(windows) && path.starts_with('/') {
+        format!("C:{path}")
+    } else {
+        path.to_string()
+    }
+}
+
 fn known() -> Vec<PathBuf> {
     vec![
-        PathBuf::from("/Users/u/.claude/skills/release-train"),
-        PathBuf::from("/Users/u/code/monorepo/.pi/skills/release-train"),
+        PathBuf::from(abs("/Users/u/.claude/skills/release-train")),
+        PathBuf::from(abs("/Users/u/code/monorepo/.pi/skills/release-train")),
     ]
 }
 
 fn admit(requested: &str) -> Option<PathBuf> {
-    admit_reveal_path(requested, Path::new(HOME), Path::new(CENTRAL), &known()).map(|(p, _)| p)
+    let (home, central) = (abs(HOME), abs(CENTRAL));
+    admit_reveal_path(
+        &abs(requested),
+        Path::new(&home),
+        Path::new(&central),
+        &known(),
+    )
+    .map(|(p, _)| p)
 }
 
 fn admission(requested: &str) -> Option<RevealAdmission> {
-    admit_reveal_path(requested, Path::new(HOME), Path::new(CENTRAL), &known()).map(|(_, via)| via)
+    let (home, central) = (abs(HOME), abs(CENTRAL));
+    admit_reveal_path(
+        &abs(requested),
+        Path::new(&home),
+        Path::new(&central),
+        &known(),
+    )
+    .map(|(_, via)| via)
 }
 
 /// A path the store records (the identity a Delete report carries) is
@@ -102,13 +132,13 @@ fn admission(requested: &str) -> Option<RevealAdmission> {
 fn a_recorded_target_or_a_central_repo_path_is_admitted() {
     assert_eq!(
         admit("/Users/u/.claude/skills/release-train"),
-        Some(PathBuf::from("/Users/u/.claude/skills/release-train"))
+        Some(PathBuf::from(abs("/Users/u/.claude/skills/release-train")))
     );
     assert_eq!(
         admit("/Users/u/code/monorepo/.pi/skills/release-train/"),
-        Some(PathBuf::from(
+        Some(PathBuf::from(abs(
             "/Users/u/code/monorepo/.pi/skills/release-train"
-        ))
+        )))
     );
     assert!(admit("/Users/u/.skillshub/release-train/SKILL.md").is_some());
     assert!(admit("/Users/u/.skillshub").is_some());
@@ -139,11 +169,11 @@ fn malformed_input_is_refused_and_a_trailing_separator_is_normalised() {
     }
     assert_eq!(
         admit("/Users/u/.skillshub/release-train/"),
-        Some(PathBuf::from("/Users/u/.skillshub/release-train"))
+        Some(PathBuf::from(abs("/Users/u/.skillshub/release-train")))
     );
     assert_eq!(
         admit("/Users/u/.skillshub/release-train//"),
-        Some(PathBuf::from("/Users/u/.skillshub/release-train"))
+        Some(PathBuf::from(abs("/Users/u/.skillshub/release-train")))
     );
 }
 
@@ -173,11 +203,11 @@ fn an_unknown_path_outside_every_managed_root_is_refused() {
 fn tilde_expands_against_home_and_a_relative_path_is_refused() {
     assert_eq!(
         admit("~/.claude/skills/release-train"),
-        Some(PathBuf::from("/Users/u/.claude/skills/release-train"))
+        Some(PathBuf::from(abs("/Users/u/.claude/skills/release-train")))
     );
     assert!(admit_reveal_path(
         "~/.skillshub/x",
-        Path::new(HOME),
+        Path::new(&abs(HOME)),
         Path::new("~/.skillshub"),
         &[]
     )
@@ -429,6 +459,8 @@ fn seed_kept_target(store: &SkillStore, skill: &SkillRecord, tool: &str, target:
         .expect("upsert target");
 }
 
+// Used by the unix-only link tests alone.
+#[cfg(unix)]
 fn refusal(result: anyhow::Result<PathBuf>) -> RevealPathFailure {
     match result.expect_err("refused").downcast::<SignalError>() {
         Ok(SignalError::RevealPathFailed { reason, .. }) => reason,

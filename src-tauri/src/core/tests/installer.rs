@@ -1486,7 +1486,16 @@ fn settings_and_credential_read_failures_do_not_block_listing_install_or_preview
     let repo_dir = tempfile::tempdir().unwrap();
     fs::write(repo_dir.path().join("SKILL.md"), "---\nname: solo\n---\n").unwrap();
     let _repo = init_git_repo(repo_dir.path());
-    let url = format!("file://{}", repo_dir.path().display());
+    // A `file:` URL with `/` separators on every platform (on Windows,
+    // `file://C:\…` would make the derived skill name an absolute path).
+    let url = format!(
+        "file:///{}",
+        repo_dir
+            .path()
+            .to_string_lossy()
+            .replace('\\', "/")
+            .trim_start_matches('/')
+    );
     // Damage only settings; skill writes still work, unlike a closed DB.
     rusqlite::Connection::open(dir.path().join("test.db"))
         .unwrap()
