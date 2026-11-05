@@ -4,7 +4,7 @@
 // A primitive contract test (ADR-0006 §7): where it mounts and what stays in
 // the accessibility tree, never pixels or copy.
 
-import { act, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { toast } from "sonner";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { LIVE_HOST_ATTRIBUTE, applyInert, closeLayer, openLayer, setLayerPopup } from "./layer-stack";
@@ -24,8 +24,13 @@ beforeAll(() => {
   })) as unknown as typeof window.matchMedia;
 });
 
-afterEach(() => {
+afterEach(async () => {
   act(() => toast.dismiss());
+  // Unmount every rendered Toaster before the DOM goes: a tree left mounted
+  // keeps React/sonner work scheduled past jsdom's teardown ("window is not
+  // defined" after the run — CI 771358b).
+  cleanup();
+  await act(async () => {});
   closeLayer("modal");
   document.body.innerHTML = "";
 });
