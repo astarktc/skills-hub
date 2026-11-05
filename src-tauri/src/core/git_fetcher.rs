@@ -466,8 +466,28 @@ fn resolve_git_bin() -> Option<String> {
         .clone()
 }
 
+/// Windows `CREATE_NO_WINDOW` process-creation flag.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// The one way this crate builds a child process. The release app is a
+/// GUI-subsystem binary (`windows_subsystem = "windows"`), so on Windows
+/// every console program it spawns would otherwise open a console window of
+/// its own; `CREATE_NO_WINDOW` runs it on a hidden console, which git's own
+/// helpers (`git-remote-https`, …) inherit.
+fn background_command(program: &str) -> Command {
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 fn git_bin_works(bin: &str) -> bool {
-    Command::new(bin)
+    background_command(bin)
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -479,7 +499,7 @@ fn git_bin_works(bin: &str) -> bool {
 
 fn git_cmd() -> Command {
     let bin = resolve_git_bin().unwrap_or_else(|| "git".to_string());
-    let mut cmd = Command::new(bin);
+    let mut cmd = background_command(&bin);
     // Never block on interactive auth prompts inside a GUI app.
     cmd.env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_ASKPASS", "echo");
