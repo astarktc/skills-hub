@@ -1,6 +1,6 @@
 # 08 — Windows junction fallback executed once (BACKLOG #18, facet a)
 
-Status: ready-for-human
+Status: done — 80d3e9d + e3fc6ed (forced-junction tests in a windows-latest CI job) and operator field evidence 2026-11-05
 Blocked by: 07 (needs the 1.2.16 release build)
 Spec: `.scratch/round16/spec.md` — Dispositions #18.
 
@@ -25,3 +25,13 @@ vendor docs say symlinked dirs are supported).
    instead, say so — that is evidence too (Developer Mode was on).
 
 ## Comments
+- 2026-11-05 — **done.** Field evidence (operator's Windows 11 PC `gpc`, Developer Mode off, non-elevated, installed
+  1.3.1 from the GitHub exe; read by the orchestrator over SSH): Explore → `grill-me` deployed to Claude Code and Pi;
+  `dir /AL %USERPROFILE%\.claude\skills` shows `<JUNCTION> grill-me [C:\Users\Alexlocal\.skillshub\grill-me]`; both
+  rows `mode = junction`, `status = synced`, `synced_at` set. Step 5 (unsync) would have **failed** on 1.3.1:
+  `remove_path_any` removed links with `remove_file`, which Windows refuses for a junction — found by the new Windows
+  tests and fixed in 1.3.2 (`80d3e9d`, removal by `remove_dir`, the Library copy untouched). Standing proof: 1.3.2's
+  `windows-latest` CI job (`e3fc6ed`) runs nine forced-junction tests (creation, presence, removal, dangling junction,
+  Disable/Delete settlement, overwrite, content identity) on every push — green on CI run 42112761270. Facet (b) stays
+  dropped by name.
+

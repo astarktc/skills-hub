@@ -13,16 +13,6 @@ the code that day (`archive/round19/closure/extract-{A..G}.md`). The next effort
 
 ## Now — evidence of unfinished work is strong
 
-- **#89 Pre-existing P0 hazard on `main`: the launch relocation pass is lexical.** `main` relocates Augment's
-  `.augment/rules` → `.augment/skills` on every launch (`src-tauri/src/lib.rs` ~:172–189 →
-  `core/target_relocation.rs`): a lexical former-dir test (`:96`), a same-content overwrite with no source/target
-  identity guard (`:202`), then a lexically fenced removal (`core/artifact_removal.rs:745–755`). A user whose Tool
-  skills root is a directory symlink (onto the former dir, or onto the central repo) loses the destination or the
-  central skill while the pass reports success; the row is also settled `SyncCompleted` *before* the former artifact's
-  removal, whose failure is only logged, leaving an unowned artifact (`:126–157`, audit 2 F10). **Decided 2026-11-05
-  (operator): disable the launch call in 1.3.2; the module, its tests and `former_relative_skills_dirs` stay for #88.**
-  This item leaves with the 1.3.2 commit. Source: `archive/round19/review/ticket-34-backend-audit-3.md:52–86` (F15 —
-  the scratch test it names exists in no tree), `-audit-2.md` F10.
 - **#92 Registry truth without relocation (ticket 34's non-moving half), rebuilt from `main`.** Ticket 34 (parked,
   branch `t3/registry-truth-pass` — one commit `9d282d4`, falling behind `main`) also carried work that moves no
   existing deployment; nothing else owns it, and CHANGELOG 1.3.1 announced the four new harnesses "held for 1.3.2"
@@ -60,7 +50,7 @@ the code that day (`archive/round19/closure/extract-{A..G}.md`). The next effort
   plus a move that survives a crash at any boundary without an unowned artifact or a `synced` row at a missing path.
   Audit 3's F14–F16 are the acceptance tests (aliased source/destination roots; a destination aliased onto the central
   repo; Keep over a copy with local-only edits) — re-express F15's against the launch pass too, then **re-enable the
-  launch pass** (disabled by #89 in 1.3.2). Owns: the dir corrections that move deployments (Codex/Goose/OpenHands
+  launch pass** (disabled in 1.3.2 — the retired #89, `lib.rs` ~:172). Owns: the dir corrections that move deployments (Codex/Goose/OpenHands
   joining the AGENTS group globally; Antigravity, Kilo, Xum, Kimi); the #83 preference — its accept path **and** its UI
   half (the offer dialog, preview copy that says "would attempt to move N", the hide-harness-specific sub-setting, the
   shadowed-own-copy flag, the Disable-of-one-reader-disables-all copy for a shared dir); `RELOCATION_PENDING` /
@@ -71,7 +61,8 @@ the code that day (`archive/round19/closure/extract-{A..G}.md`). The next effort
   `ls -la` over the old and new dirs. Source: `archive/round19/review/ticket-34-backend-audit-3.md` § F15;
   `archive/round19/issues/34-…md:440–466`; `archive/round19/closure/extract-F.md` F9–F19, `extract-E.md` E18.
 
-(Absorbed: #79 → round 19 ticket 29, #71 → 33, #78 → 30, #80 #81 #82 → 31 — all shipped; #67 #45 #83 and #40's detection
+(Retired: #89 — the lexical launch relocation pass is no longer called (1.3.2, PR #5, `fc277aa`); re-enabling it is #88's.
+Absorbed: #79 → round 19 ticket 29, #71 → 33, #78 → 30, #80 #81 #82 → 31 — all shipped; #67 #45 #83 and #40's detection
 half → ticket 34, superseded 2026-11-04 → #88 (relocation, the preference) and #92 (registry facts, rows, warning).)
 
 - **#70 The overwrite ask can't be answered knowingly.** Twice in the think-aloud the operator chose Overwrite without

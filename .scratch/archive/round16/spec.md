@@ -1,6 +1,6 @@
 # Round 16 — close the backlog: project-sync report, cross-kind Re-point, bulk unassign → 1.2.16
 
-Status: open
+Status: closed — 2026-11-05 (§ Closure — 2026-11-05)
 Opened: 2026-09-22
 
 Absorbs every remaining BACKLOG line (`Later` #12 #15 #16 #17 #18 #35 #36; `Parked` #21–#30) — each leaves
@@ -153,3 +153,14 @@ Review: `.scratch/round16/review/astra-review.md`, fix-then-ship; fixes as ticke
   fold; Change source on a git skill → local folder and back; Change source on an imported skill → GitHub URL
   (skill becomes refreshable); Add flow lists a `~/.claude/skills/*` folder disabled with a reason.
 - Ticket 08 evidence pasted; BACKLOG `Now`/`Later`/`Parked` empty; Future efforts #26 #37–#41; next free #42.
+
+## Closure — 2026-11-05
+
+**Shipped:** 1.2.16 (tickets 01–07, 09 `done`). Ticket 08 (Windows junction leg, the one item that kept the round live)
+closed 2026-11-05: field evidence on the operator's Windows 11 install of 1.3.1, plus forced-junction tests in a
+`windows-latest` CI job that shipped with 1.3.2 (`80d3e9d`, `e3fc6ed`) — and that work found and fixed a real Windows
+removal bug (junction targets could not be removed). The 1.2.16 operator smoke checklist above is superseded by later
+releases' smokes over the same behaviours.
+
+**Residue:** none (Windows follow-ups found the same day are BACKLOG #103 #104 #105).
+
