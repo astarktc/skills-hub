@@ -2,7 +2,61 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.3.1] - 2026-11-04
+
+Round 19, phase B: a new dark theme, colour where it carries meaning, My Skills rows grouped in cards, Settings as a
+dialog, the Import review rewritten around what will happen, Explore as rows, a ⌘K palette, a card grid, and the last
+legacy stylesheet deleted. The registry corrections (Codex and others moving to `~/.agents/skills`, four new
+harnesses) are held for 1.3.2 — see Known limitations.
+
+### New look
+
+- **Dark is true black.** The dark theme follows T3 Code's two-tone structure: a `#000000` ground for the app and the
+  skill rows, a near-black pane for the sidebar and group headers, one panel tone for hover, dialogs, menus and toasts,
+  and one raised tone for the current item. Text and lines are neutral greys instead of blue-grey. Every pair is
+  re-measured (text ≥ 4.5:1, controls ≥ 3:1); the focus ring's floor is 4.72:1 in light.
+- **Light has visible ground steps.** White ground, a stronger card and raised step, darker hairlines and control
+  edges, so light no longer reads flat.
+- **Colour that means something.** Each GitHub source gets a two-letter identity chip in its group header, its hue
+  chosen from the repo owner (seven hues that never collide with red, amber, iris or green — identity is never
+  mistaken for state). "Out of date" is amber now, in both themes; deployed stays the quiet filled mark, never green.
+- **The last legacy styles are gone.** The Invocation, folder-already-exists, update and new-harnesses dialogs now use
+  the same buttons, radios and lists as every other dialog (release notes render like Settings → Updates; Update now
+  keeps focus through the install), the old stylesheet is deleted, and the styling guard forbids one coming back.
+
+### My Skills
+
+- **Source groups are cards.** Each repository is a bordered card: a sticky header with its identity chip, name, count,
+  state summary, **harness initials over the deployment strip** (so you can tell which mark is Cursor) and Deploy all;
+  the rows inside on the black ground. Groups **collapse** (chevron, ← / → on the header, Collapse all / Expand all)
+  and stay collapsed across restarts; a search expands the groups it matches while it lasts. Grouping is decided on
+  your whole library, so a search that leaves one skill of a repository keeps its header.
+- **Rows give the description its room.** The name column fits the longest name on screen (between 12 and 22 rem)
+  instead of taking half the row; deployment marks sit on a 20 px pitch; "Not deployed" is no longer repeated as a mark
+  on every row (the hollow marks say it; the inspector, the group summary and Deploy all still count it).
+- **Where a skill is deployed, at a glance.** The row's scope cell shows a globe for a live global deployment and a
+  folder with a count for the projects it is deployed in ("In 3 projects: monorepo, api, docs"); a failed project
+  deployment counts in the row's "N failed" and the inspector names the project. The list refreshes itself after any
+  project change.
+- **Card grid.** Grid and Dense grid views (in the Sort and view menu) show the same rows as cards — name, marks,
+  two-line description, strip, scope, switch, menu — with the same selection, the same `j` / `k` / `x` / ⇧-click
+  keys in reading order, and the same group headers. Nothing is ever clipped: a card is never narrower than its strip.
+- **Small things**: the window title is "Skills Hub"; search fields no longer autocorrect or capitalise; Enter or ↓ in
+  the search jumps to the first row; toasts sit bottom-right, never over the header's buttons, three at most.
+
+### Settings
+
+- **Settings is a dialog**, not a page: five panes on the left — General, Harnesses, Appearance, Updates,
+  Diagnostics — opened from the sidebar or ⌘K; Escape closes it and focus returns where you were. Keyboard shortcuts
+  opens in the same frame. Old `#/settings/…` links still open the right pane once.
+- **Configure harnesses became the Harnesses pane**: one expandable row per harness — detected or not, the folder it
+  deploys to, whether it gets a link or a copy, what detects it, and which other harnesses share its folder. A harness
+  you selected that is not detected says so and offers "Remove from selection". **Turning a harness on with
+  auto-deploy on asks once** — "Deploy your N skills to Cursor now?" — and deploys exactly those skills if you say yes;
+  turning one off removes nothing. Saving the selection is an action like any other: while it runs, the other switches
+  wait and say why, and a failed save rolls back only itself.
+- **Appearance** is a radio group (System · Light · Dark, arrow keys); the sidebar's Theme menu stays as the quick
+  toggle.
 
 ### Import review
 
@@ -13,9 +67,53 @@ All notable changes to this project will be documented in this file.
 - **A Result step** after the import: the count line ("8 imported · 1 kept", "10 imported · 2 replaced") and one row per skill — deployed where, which copies were removed or left in place per harness, what was skipped and why — with **Retry** for a failed one. Its toast waits until you close it, so it never covers the Close button (Add's result step too). A large import lights the new rows' deployment marks once when you close it.
 - **Removing a Conflict's other copies only removes a copy known to differ.** A copy that could not be compared (an unreadable file) is left in place and reported; a folder two harnesses share is removed once and reported for both.
 
-### New look
+### Explore and the palette
 
-- **The last legacy styles are gone.** The Invocation, folder-already-exists, update and new-harnesses dialogs now use the same buttons, radios and lists as every other dialog (release notes render like Settings → Updates; Update now keeps focus through the install), and the old stylesheet is deleted.
+- **Explore is rows**, with the same list lens as My Skills: Not in library · Installed · Hidden chips, featured and
+  online results de-duplicated, ↑ / ↓ walks the rows, and the preview opens in the inspector's slot (a sheet below
+  1200 px) with Install and the harnesses it will deploy to; an installed skill offers "Open in My Skills".
+- **⌘K / Ctrl+K opens a command palette**: areas, the current selection's verbs, Settings panes and skills by name,
+  with recents; a verb that cannot run right now says why. Built on Base UI inside the app's own dialog; no motion.
+
+### Changed
+
+- **Auto-deploy acts only on arrival** (Add and Import). Update no longer re-asserts deployments: a skill you took off
+  a harness stays off until you deploy it again. A skill whose removal was left incomplete is skipped by Update with
+  "finish removing it first".
+- **Words**: Tools are **harnesses**, Sync is **Deploy**, Refresh is **Update**; deployment states read Deployed · Not
+  deployed · Out of date copy · Copy missing · Failed · Disabled. The catalog test fails on any retired word.
+- `react-router-dom` is no longer a dependency (only the deleted scaffold used it).
+
+### Fixed
+
+- A toast raised while a dialog is open is announced (the toaster is no longer made inert by the layer stack).
+- Shift-clicking a range of rows no longer selects the page's text, and the clicked checkbox keeps keyboard focus.
+- Row hover is visible on the black ground; a hover inside a dialog no longer disappears into the dialog's ground.
+
+### Known limitations
+
+- **The harness-registry corrections are held for 1.3.2.** Codex, Goose and OpenHands joining `~/.agents/skills`
+  globally, the Antigravity / Kilo / Xum / Kimi folder corrections, four new harnesses and the "prefer the AGENTS
+  standard folder" preference were built and audited three times; each audit found a new defect in moving a live
+  deployment between folders (ownership through aliased directories, recovery after an interrupted move). They ship
+  once relocation has one physical-path identity in every seam. Today's launch-time relocation (Augment's former
+  `~/.augment/rules`) assumes real directories: if a harness's skills folder is a symlink onto its former folder or
+  onto the Library, do not rely on it until 1.3.2.
+- The Projects matrix is still a plain Tab walk (grid arrow keys come in 1.3.x); the matrix has no selection, so the
+  palette's selection verbs are My Skills-only.
+
+### Internal
+
+- Tokens: `--row`, `--identity-<hue>` × 7, amber `--stale`, the dark two-tone ground, `--text-2xs`; `Badge
+  tone="identity"` + `size="chip"`, a `RadioGroup` primitive, Dialog `size="settings"`, `Tabs variant="pane"`.
+- `ManagedSkillDto.projects` on the wire (one joined query); `ToolInfoDto.placement`; the onboarding plan's per-copy
+  `description`, `modified_at`, `same_as_managed`; `remove_divergent` on an import selection; `IDENTITY_UNKNOWN` and
+  `RELOCATION_PENDING` error codes; `content_identity::compare` (Same · Different · Unknown).
+- The reporter: `whenIdle()`, `applyOutcome({ resultShownIn })` (a dialog's own Result step defers its toast); the
+  project world's `onDeploymentsChanged`.
+- `src/i18n/resources.test.ts` fails on any `en` leaf no source reads (56 dead keys deleted) and on any retired word.
+- `scripts/check-styles.mjs`: App.css must not exist; a frozen `retiredClasses` list; Tailwind scans `src/` only.
+- Every ticket's audit is under `.scratch/round19/review/`; ticket 34's work waits on branch `t3/registry-truth-pass`.
 
 ## [1.3.0] - 2026-10-27
 
