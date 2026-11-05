@@ -1,6 +1,6 @@
 # 24 — Card-grid view mode designed inside the world
 
-Status: done — (sha in the tracker commit)
+Status: done — 6b2e343
 Blocked by: 19
 Spec: `.scratch/round19/spec.md` — D32; contract § Unresolved (grid); round-18 D2 ("both list and card-grid view
 modes exist in the new world"). Sources: `critique-astra` F07. Phase 19b.

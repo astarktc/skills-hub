@@ -285,7 +285,7 @@ Order is dependency order; `Blocked by` is the edge list. Every surface ticket c
 | 21 | **Import review**: unchecked conflicts / managed names, Replace/Leave, remove-originals checkbox, counts, variant details, Tool labels, first-run empty state (D13, D14) | 05 19 | surface — done e6be057 |
 | 22 | **Explore rows**: Not-in-library filter, Preview primary, scope summary, installed → inspector, contrast + search label (D25) | 19 | surface — done a2a09bd + 37c8999 |
 | 23 | **⌘K palette** on the surface module and the action door; `cmdk` vs Base UI Combobox decided here | 19 | surface — done 359bb3b + 13a677b |
-| 24 | **Card-grid view mode** designed inside the world (same selection, strip, marks; no clipped labels) | 19 | surface |
+| 24 | **Card-grid view mode** designed inside the world (same selection, strip, marks; no clipped labels) | 19 | surface — done 6b2e343 |
 | 25 | `App.css` deleted; guard flips to "must not exist"; `Layout.tsx` / `Dashboard.tsx` disposition | 20 21 22 23 24 | closure |
 | 26 | CHANGELOG, `version:set 1.3.x`, release; operator smoke (D31) | 25 | release |
 | 30 | **Colour and identity tokens**: state hues, identity treatment per the prototype's pick, light-theme ground steps, DESIGN.md contrast table (D43; BACKLOG #78) | 32, prototype pick | world — done 9ca0bc8 |
