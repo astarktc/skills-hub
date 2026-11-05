@@ -44,6 +44,7 @@ import { useHeldRefusal } from "./hooks/useHeldRefusal";
 import { useSyncOrchestration } from "./hooks/useSyncOrchestration";
 import { useToolCatalog } from "./hooks/useToolCatalog";
 import { useHarnessSelection } from "./hooks/useHarnessSelection";
+import { useNewHarnessesDeploy } from "./hooks/useNewHarnessesDeploy";
 import { useAppUpdate } from "./hooks/useAppUpdate";
 import { useListLens } from "./hooks/useListLens";
 import { SHELL_WIDE_QUERY, useMediaQuery } from "./hooks/useMediaQuery";
@@ -550,43 +551,12 @@ function App() {
     [focus],
   );
 
-  // "Sync all to the new tools" spans two worlds — enable the targets (sync)
-  // and push every managed skill (library) — so the binder composes it.
-  const {
-    relevantNewlyInstalled,
-    effectiveSyncTargetIds,
-    enableTargetsFor,
-  } = sync;
+  const { effectiveSyncTargetIds } = sync;
   const { run } = actions;
-  const handleSyncAllNewTools = useCallback(() => {
-    if (relevantNewlyInstalled.length === 0) return;
-    // A sync target set is the operator's recorded selection, not detection —
-    // a newly detected tool outside it is announced but never written to.
-    // (The `scan_selected_tools_only` scan setting must not gate a sync.)
-    const targets = relevantNewlyInstalled.filter((id) =>
-      effectiveSyncTargetIds.includes(id),
-    );
-    dismissDialog("newTools");
-    // Zero work is reported, never silent: every newly detected tool sat
-    // outside the operator's selection, so nothing was deployed.
-    if (targets.length === 0) {
-      notify("warning", t("noSyncTargets"));
-      return;
-    }
-    enableTargetsFor(targets);
-    // An explicit Deploy verb always deploys (D34): Auto-deploy governs only
-    // a new skill's arrival, never this button. The new-Tools notice was the
-    // confirmation.
-    void run("syncToTargets", "all", { tools: targets, confirmed: true });
-  }, [
-    dismissDialog,
-    effectiveSyncTargetIds,
-    enableTargetsFor,
-    notify,
-    relevantNewlyInstalled,
-    run,
-    t,
-  ]);
+  // "Deploy all skills" to the new harnesses spans two worlds — enable the
+  // targets (sync) and push every managed skill (library) — so the binder
+  // composes it. An explicit Deploy always deploys, whatever Auto-deploy says (D34).
+  const handleSyncAllNewTools = useNewHarnessesDeploy({ sync, surface, reporter, actions, t });
 
   // The two asks render from the surface stack and answer through it.
   const sharedDirAsk = surface.pendingAsk("sharedDir");
