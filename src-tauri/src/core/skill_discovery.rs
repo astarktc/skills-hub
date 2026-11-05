@@ -301,12 +301,16 @@ fn inspect(root: &Path, dir: &Path, subpath: String) -> DiscoveredSkill {
     }
 }
 
+/// A candidate's repo-relative subpath in its canonical `/`-separated
+/// spelling on every platform: it names a path inside a repository (sparse
+/// patterns, the Contents API, the stored record), and
+/// `repo_subpath::require_plain_subpath` refuses a backslash.
 fn relative_subpath(root: &Path, dir: &Path) -> String {
     let rel = dir
         .strip_prefix(root)
         .unwrap_or(dir)
         .to_string_lossy()
-        .to_string();
+        .replace(std::path::MAIN_SEPARATOR, "/");
     if rel.is_empty() {
         ".".to_string()
     } else {
