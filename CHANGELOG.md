@@ -2,12 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.2] - Unreleased
+
+A patch: four fixes from the 1.3.1 field report, two more Windows fixes the new Windows test run found, and a CI
+job that runs the Rust suite on Windows. The harness-registry corrections and the four new harnesses announced in
+1.3.1 as "held for 1.3.2" move to a later release: ticket 34's registry work is being rebuilt from `main`.
+
+### Fixed
+
+- **The launch-time relocation pass no longer runs.** It moved global deployments out of a harness's former skills
+  folder (Augment's `~/.augment/rules`) by comparing paths as written, so a skills folder that is a symlink or other
+  directory alias could make it delete Library skill files. It returns with the relocation redesign; nothing else
+  changes at launch.
+- **A run whose toast reports a failure stays on screen until you close it** ("12 updated · 5 failed"); skipped,
+  to-review and declined results still fade after a few seconds. The Notifications panel keeps every run as before.
+- **"Deploy all skills" in the New harnesses dialog deploys**, whether Auto-deploy is on or off. Auto-deploy governs
+  only a new skill's arrival; an explicit Deploy always deploys. Before, with Auto-deploy off, it only selected the new
+  harnesses.
+- **Windows: no console windows flash when git runs** (Install from Explore, Add from a repository, Update): every
+  `git` the app starts runs without a window.
+- **Windows: removing a linked deployment works.** A deployment Windows made as a junction (the usual case without
+  Developer Mode) or a directory symlink could not be removed — Disable, Delete, removing a skill or harness from a
+  project and replacing a folder all failed with "Access is denied" and left the deployment marked Failed. The link
+  is now removed as itself; the Library copy it points at is never touched.
+- **Windows: picking one skill in a repository with several works** (Add, Re-point): discovered folders were named
+  with `\` and then refused as outside the repository; they are named with `/` on every platform.
+
+### Internal
+
+- CI runs clippy and `cargo test` on `windows-latest` too (five clone-byte tests excluded there: Git for Windows'
+  default `core.autocrlf=true` checks a clone out with CRLF line endings — the app's clone path does the same today;
+  and the eight-writer SQLite contention test, which outlasts the 5 s busy timeout on the hosted runner's disk).
+  The Windows test binaries load now: the app manifest (Common Controls v6) is embedded by the linker into every
+  artifact instead of as a bins-only resource. New Windows-only tests force the junction leg of the deploy fallback
+  (symlink → junction → copy) — the mode non-elevated Windows installs record — and prove a junction target reads the
+  Library skill's files, counts as present, and is removed (Delete and Disable settlements, and overwrite replacement)
+  without touching the Library copy, and that content identity reads through it as through a symlink.
+
 ## [1.3.1] - 2026-11-04
 
 Round 19, phase B: a new dark theme, colour where it carries meaning, My Skills rows grouped in cards, Settings as a
 dialog, the Import review rewritten around what will happen, Explore as rows, a ⌘K palette, a card grid, and the last
 legacy stylesheet deleted. The registry corrections (Codex and others moving to `~/.agents/skills`, four new
-harnesses) are held for 1.3.2 — see Known limitations.
+harnesses) are held for a later release — see Known limitations.
 
 ### New look
 
@@ -92,13 +129,13 @@ harnesses) are held for 1.3.2 — see Known limitations.
 
 ### Known limitations
 
-- **The harness-registry corrections are held for 1.3.2.** Codex, Goose and OpenHands joining `~/.agents/skills`
+- **The harness-registry corrections are held for a later release** (announced here for 1.3.2; see 1.3.2). Codex, Goose and OpenHands joining `~/.agents/skills`
   globally, the Antigravity / Kilo / Xum / Kimi folder corrections, four new harnesses and the "prefer the AGENTS
   standard folder" preference were built and audited three times; each audit found a new defect in moving a live
   deployment between folders (ownership through aliased directories, recovery after an interrupted move). They ship
   once relocation has one physical-path identity in every seam. Today's launch-time relocation (Augment's former
   `~/.augment/rules`) assumes real directories: if a harness's skills folder is a symlink onto its former folder or
-  onto the Library, do not rely on it until 1.3.2.
+  onto the Library, do not rely on it (1.3.2 stops running it).
 - The Projects matrix is still a plain Tab walk (grid arrow keys come in 1.3.x); the matrix has no selection, so the
   palette's selection verbs are My Skills-only.
 
