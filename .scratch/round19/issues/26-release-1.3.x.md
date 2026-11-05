@@ -1,6 +1,6 @@
 # 26 — CHANGELOG, `version:set 1.3.x`, release; operator smoke
 
-Status: done — ecf3752 (tag v1.3.1; operator smoke pending)
+Status: done — ecf3752 (tag v1.3.1; operator smoke passed 2026-11-05)
 Blocked by: 25
 Spec: `.scratch/round19/spec.md` — D31, D32. Phase 19b release.
 
@@ -36,3 +36,9 @@ Spec: `.scratch/round19/spec.md` — D31, D32. Phase 19b release.
 - 2026-11-04 — orchestrator: CHANGELOG 1.3.1 block written (30 35 31 20 21 22 23 24 25 32 33; 34 under Known limitations
   with the #89 caveat); `npm run version:set 1.3.1`; `version:check && check` green (vitest 1250, cargo 854, App.css
   absent). Operator confirmed the GitHub "Leave fork network" detach finished; the release push follows (pre-authorised).
+- 2026-11-05 — **operator smoke on 1.3.1: passed.** 960×640 ✅ (operator). VoiceOver and reduced motion **skipped, and
+  never part of a release smoke again** (operator decision; D31 amended, AGENTS.md § Release). Work-Mac exec bit ✅
+  (orchestrator over `ssh mac-uni-auto`, host `UNIF02R9PL7LD`, app 1.3.1): `impeccable` updated 2026-11-05 11:09 at
+  `c8891a9ae8` (= `pbakaus/impeccable` `main`); `~/.skillshub/impeccable/scripts/impeccable` is `-rwxr-xr-x` and is the
+  only executable file in the skill, matching upstream's tree (the only `100755` entry under
+  `.claude/skills/impeccable/`). Closes ticket 19 smoke item 8.

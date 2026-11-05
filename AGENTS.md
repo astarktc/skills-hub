@@ -50,7 +50,9 @@ Releases are built on GitHub, never locally. `npm run version:set X.Y.Z` + CHANG
 `git fetch && git rebase origin/main`, push `main`: `auto-tag.yml` sees the `package.json` change, creates `vX.Y.Z`
 and dispatches `release.yml` (macOS ×2, Windows ×2, Linux). **A push that bumps the version is the release** — there is
 no separate approval step. `release.yml` only compiles and packages; tests, clippy and the bindings-drift guard run in
-`ci.yml` and in the local gate. The operator smoke-tests by installing the built release, not via `tauri:dev`.
+`ci.yml` and in the local gate. The operator smoke-tests by installing the built release, not via `tauri:dev`; VoiceOver
+and reduced-motion checks are never on that smoke list (operator, 2026-11-05) — the fixture audits and the primitives'
+ARIA/focus tests carry accessibility.
 
 ## Environment gotchas
 

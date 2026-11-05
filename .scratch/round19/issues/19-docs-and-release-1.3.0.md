@@ -175,7 +175,7 @@ screenshots under gitignored `evidence/19-smoke/`), Alex listened. Everything pa
 | 5 | ✅ | Disable `context-file-cleanup` on Pi → Refresh all → still disabled ("Pi · Disabled", no symlink) → Enable restored it |
 | 6 | ✅ | "Disable 86 skills on 4 Tools — 108 Sync targets … 141 project assignments" matched the DB (108 target rows, 141 assignments); after Cancel: 0 disabled |
 | 7 | fixture | no handy colliding repo; ticket 16's audit proof stands |
-| 8 | ✅ this Mac | `impeccable/scripts/impeccable` `-rwxr-xr-x` after three Refreshes (10:47, 16:44, 16:49); `ui-ux-pro-max/scripts/design_system.py` (shebang, upstream 100644) stays 644 — the trees path decided, not the shebang fallback. **Work Mac: pending** |
+| 8 | ✅ this Mac | `impeccable/scripts/impeccable` `-rwxr-xr-x` after three Refreshes (10:47, 16:44, 16:49); `ui-ux-pro-max/scripts/design_system.py` (shebang, upstream 100644) stays 644 — the trees path decided, not the shebang fallback. **Work Mac ✅ 2026-11-05** (on 1.3.1, ticket 26 § Comments) |
 | 9a | ✅ | Enter on a held row switch during Refresh: toast "Refresh is running — wait for it to finish / Nothing was changed.", switch unchanged, focus held; VoiceOver read the toast as its own announcement (Alex) |
 | 9b | ✅ | same on held "Disable on Codex" inside the inspector sheet: toast over the sheet, read aloud (ticket 29); "Sync disabled." outcome toasts were also announced inside the sheet |
 

@@ -163,6 +163,9 @@ shadcn** (grill Q1); the D8 exclusions (sectioned app sidebar, Updates page, hom
   actual token pairs, both themes, 960×640 and 1280×800, reduced-motion CSS coverage — recorded under the ticket.
   The **operator** does one VoiceOver + `prefers-reduced-motion: reduce` + native-minimum-window pass on the
   release build over the six core flows as each release's closure smoke.
+  *Amended 2026-11-05 (operator):* VoiceOver and reduced motion are **never** part of a release smoke — the child-run
+  fixture audit and the primitives' ARIA/focus tests are the a11y gate. The operator smoke is window size plus whatever
+  the release ticket names.
 - **D32 (Q34) Two phases.** **19a → 1.3.0**: enablers ∥ world ticket → frontend modules → My Skills (list, inspector,
   selection + verbs, notifications + progress) → Emil pass → Add → Projects → release. **19b → 1.3.x**: Settings
   panes, Import review, Explore, ⌘K palette, card-grid view mode, `App.css` deleted. D9 (sequential on styling
