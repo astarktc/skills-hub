@@ -210,7 +210,8 @@ fn hybrid_with_overwrite(
     })
 }
 
-#[cfg(test)]
+// Only the unix-only broken-symlink test drives the copy leg directly.
+#[cfg(all(test, unix))]
 pub fn sync_dir_copy_with_overwrite(
     source: &Path,
     identity: Source<'_>,
@@ -425,8 +426,20 @@ pub(crate) fn remove_path_any(path: &Path) -> Result<()> {
     };
     let ft = meta.file_type();
 
-    // A symlink (even one pointing to a directory) should be removed with remove_file, which deletes the link itself
+    // A link is removed as itself, never through it. On Windows a directory
+    // link — a directory symlink or a junction, which std reports as a
+    // symlink — is a directory entry: `remove_file` is refused ("Access is
+    // denied"), `remove_dir` deletes the link and leaves its target alone.
     if ft.is_symlink() {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::FileTypeExt;
+            if ft.is_symlink_dir() {
+                std::fs::remove_dir(path)
+                    .with_context(|| format!("remove directory link {:?}", path))?;
+                return Ok(());
+            }
+        }
         std::fs::remove_file(path).with_context(|| format!("remove symlink {:?}", path))?;
         return Ok(());
     }
@@ -457,7 +470,7 @@ fn try_link_dir(source: &Path, target: &Path) -> Result<()> {
     {
         std::os::windows::fs::symlink_dir(source, target)
             .with_context(|| format!("symlink {:?} -> {:?}", target, source))?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(unix, windows)))]

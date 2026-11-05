@@ -466,3 +466,319 @@ fn global_sync_still_creates_missing_parents() {
         fs::remove_dir_all(home.path().join("not-yet")).unwrap();
     }
 }
+
+/// The Windows junction leg of the sync fallback (symlink → junction → copy).
+///
+/// Field installs on non-elevated Windows record `mode = junction`, yet a CI
+/// runner (and an elevated shell) can create symlinks, so the leg would never
+/// run there. These tests force it by calling `try_junction` directly and
+/// then drive the production paths a junction target meets: presence,
+/// removal (artifact_removal, both settlements), overwrite replacement and
+/// content identity. The invariant throughout: removing or replacing a
+/// junction target never touches the central skill it points at.
+#[cfg(windows)]
+mod junction_leg {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    use crate::core::artifact_removal::{
+        execute_settling_unlocked, execute_unlocked, plan, RemovalScope, Settlement,
+    };
+    use crate::core::content_identity::{self, Comparison, Source};
+    use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
+    use crate::core::sync_engine::{
+        remove_path_any, sync_dir_hybrid_with_overwrite, try_junction, Occupant, SyncMode,
+    };
+    use crate::core::sync_status::SyncStatus;
+
+    /// A central skill with a nested file, so "intact" covers more than one level.
+    fn central_skill(base: &Path, name: &str) -> PathBuf {
+        let dir = base.join("central").join(name);
+        fs::create_dir_all(dir.join("scripts")).unwrap();
+        fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\n---\n# {name}\n"),
+        )
+        .unwrap();
+        fs::write(dir.join("scripts").join("run.ps1"), b"Write-Output ok\r\n").unwrap();
+        dir
+    }
+
+    fn assert_central_intact(central: &Path, name: &str) {
+        assert!(central.is_dir(), "central skill dir survives: {central:?}");
+        assert_eq!(
+            fs::read_to_string(central.join("SKILL.md")).unwrap(),
+            format!("---\nname: {name}\n---\n# {name}\n")
+        );
+        assert_eq!(
+            fs::read(central.join("scripts").join("run.ps1")).unwrap(),
+            b"Write-Output ok\r\n"
+        );
+    }
+
+    /// A junction at `<base>/tools/claude/skills/<name>` → `central`, made by
+    /// the engine's own junction leg.
+    fn junction_target(base: &Path, central: &Path, name: &str) -> PathBuf {
+        let parent = base.join("tools").join("claude").join("skills");
+        fs::create_dir_all(&parent).unwrap();
+        let target = parent.join(name);
+        try_junction(central, &target).expect("junction leg");
+        assert!(
+            junction::exists(&target).unwrap(),
+            "a real junction: {target:?}"
+        );
+        target
+    }
+
+    fn store_with_junction_row(
+        base: &Path,
+        central: &Path,
+        name: &str,
+        target: &Path,
+    ) -> (SkillStore, SkillRecord) {
+        let store = SkillStore::new(base.join("test.db"));
+        store.ensure_schema().unwrap();
+        let skill = SkillRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            description: None,
+            source_type: "local".to_string(),
+            source_ref: None,
+            source_subpath: None,
+            source_revision: None,
+            central_path: central.to_string_lossy().to_string(),
+            content_hash: None,
+            created_at: 1,
+            updated_at: 1,
+            last_sync_at: None,
+            last_seen_at: 1,
+            status: "ok".to_string(),
+            imported_from_tool: None,
+        };
+        store.upsert_skill(&skill).unwrap();
+        store
+            .upsert_skill_target(&SkillTargetRecord {
+                id: uuid::Uuid::new_v4().to_string(),
+                skill_id: skill.id.clone(),
+                tool: "claude_code".to_string(),
+                target_path: target.to_string_lossy().to_string(),
+                mode: SyncMode::Junction,
+                status: SyncStatus::Synced,
+                last_error: None,
+                synced_at: Some(1),
+            })
+            .unwrap();
+        (store, skill)
+    }
+
+    #[test]
+    fn a_junction_target_resolves_to_the_central_skill_and_is_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        let central = central_skill(tmp.path(), "demo");
+        let target = junction_target(tmp.path(), &central, "demo");
+
+        // The presence rule (`symlink_metadata`) sees the link itself.
+        let meta = fs::symlink_metadata(&target).expect("present");
+        assert!(
+            meta.file_type().is_symlink(),
+            "std reports a junction (a name-surrogate reparse point) as a link"
+        );
+        // Reading through it reaches the central bytes.
+        assert_eq!(
+            fs::read_to_string(target.join("SKILL.md")).unwrap(),
+            fs::read_to_string(central.join("SKILL.md")).unwrap()
+        );
+        assert_eq!(
+            fs::read(target.join("scripts").join("run.ps1")).unwrap(),
+            b"Write-Output ok\r\n"
+        );
+        assert_eq!(
+            fs::canonicalize(&target).unwrap(),
+            fs::canonicalize(&central).unwrap()
+        );
+    }
+
+    #[test]
+    fn remove_path_any_removes_the_junction_and_never_the_central_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let central = central_skill(tmp.path(), "demo");
+        let target = junction_target(tmp.path(), &central, "demo");
+
+        remove_path_any(&target).expect("remove junction");
+
+        assert_eq!(
+            fs::symlink_metadata(&target).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        assert_central_intact(&central, "demo");
+    }
+
+    /// A junction whose target is gone still counts as present and is removed.
+    #[test]
+    fn a_dangling_junction_is_present_and_removed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let central = central_skill(tmp.path(), "demo");
+        let target = junction_target(tmp.path(), &central, "demo");
+        fs::remove_dir_all(&central).unwrap();
+
+        assert!(fs::symlink_metadata(&target).is_ok(), "present");
+        assert!(!target.exists(), "dangling");
+        remove_path_any(&target).expect("remove dangling junction");
+        assert!(fs::symlink_metadata(&target).is_err());
+    }
+
+    /// A directory symlink (the first leg, where the host allows it) is removed
+    /// the same way, as itself.
+    #[test]
+    fn remove_path_any_removes_a_directory_symlink_and_never_its_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let central = central_skill(tmp.path(), "demo");
+        let link = tmp.path().join("via-symlink");
+        if std::os::windows::fs::symlink_dir(&central, &link).is_err() {
+            return; // this host may not create symlinks; the junction tests carry the rule
+        }
+
+        remove_path_any(&link).expect("remove directory symlink");
+
+        assert!(fs::symlink_metadata(&link).is_err());
+        assert_central_intact(&central, "demo");
+    }
+
+    #[test]
+    fn artifact_removal_of_a_junction_target_deletes_the_row_and_keeps_the_central_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let central = central_skill(tmp.path(), "demo");
+        let target = junction_target(tmp.path(), &central, "demo");
+        let (store, skill) = store_with_junction_row(tmp.path(), &central, "demo", &target);
+
+        let scope = RemovalScope::SkillGlobal {
+            skill_id: skill.id.clone(),
+        };
+        let report = execute_unlocked(&store, plan(&store, &scope).unwrap()).unwrap();
+
+        assert_eq!(
+            (report.removed_rows(), report.failed_rows()),
+            (1, 0),
+            "{report:?}"
+        );
+        assert!(fs::symlink_metadata(&target).is_err(), "junction removed");
+        assert!(store.list_skill_targets(&skill.id).unwrap().is_empty());
+        assert_central_intact(&central, "demo");
+    }
+
+    #[test]
+    fn disabling_a_junction_target_keeps_the_row_disabled_and_the_central_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let central = central_skill(tmp.path(), "demo");
+        let target = junction_target(tmp.path(), &central, "demo");
+        let (store, skill) = store_with_junction_row(tmp.path(), &central, "demo", &target);
+
+        let scope = RemovalScope::SkillGlobal {
+            skill_id: skill.id.clone(),
+        };
+        let report =
+            execute_settling_unlocked(&store, plan(&store, &scope).unwrap(), Settlement::Disable)
+                .unwrap();
+
+        assert_eq!(report.failed_rows(), 0, "{report:?}");
+        assert!(fs::symlink_metadata(&target).is_err(), "junction removed");
+        let rows = store.list_skill_targets(&skill.id).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, SyncStatus::Disabled);
+        assert_central_intact(&central, "demo");
+    }
+
+    #[test]
+    fn overwriting_a_junction_target_replaces_the_link_not_the_central_bytes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let old_central = central_skill(tmp.path(), "old");
+        let target = junction_target(tmp.path(), &old_central, "demo");
+        let new_central = central_skill(tmp.path(), "new");
+
+        let out = sync_dir_hybrid_with_overwrite(
+            &new_central,
+            Source::Directory(&new_central),
+            &target,
+            true,
+        )
+        .expect("overwrite");
+
+        assert!(out.replaced);
+        assert_central_intact(&old_central, "old");
+        assert_eq!(
+            fs::read_to_string(target.join("SKILL.md")).unwrap(),
+            fs::read_to_string(new_central.join("SKILL.md")).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_junction_collision_without_overwrite_is_target_exists_and_touches_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let old_central = central_skill(tmp.path(), "old");
+        let target = junction_target(tmp.path(), &old_central, "demo");
+        let new_central = central_skill(tmp.path(), "new");
+
+        let err = sync_dir_hybrid_with_overwrite(
+            &new_central,
+            Source::Directory(&new_central),
+            &target,
+            false,
+        )
+        .unwrap_err();
+
+        assert!(
+            err.downcast_ref::<crate::core::sync_engine::TargetExistsError>()
+                .is_some(),
+            "{err:#}"
+        );
+        assert!(junction::exists(&target).unwrap());
+        assert_central_intact(&old_central, "old");
+    }
+
+    /// Content identity reads a junction target as it reads a symlink: the
+    /// central bytes behind it.
+    #[test]
+    fn content_identity_through_a_junction_matches_a_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let central = central_skill(tmp.path(), "demo");
+        let target = junction_target(tmp.path(), &central, "demo");
+        let other = central_skill(tmp.path(), "other");
+
+        assert_eq!(
+            content_identity::compare(Source::Directory(&central), &target),
+            Comparison::Same
+        );
+        assert!(content_identity::same_content(
+            Source::Directory(&central),
+            &target
+        ));
+        assert_eq!(
+            content_identity::compare(Source::Directory(&other), &target),
+            Comparison::Different
+        );
+        assert!(Occupant::observe(Source::Directory(&central), &target).same_content);
+        assert_eq!(
+            content_identity::read(Source::Directory(&target)),
+            content_identity::read(Source::Directory(&central))
+        );
+
+        // Where this host may create a directory symlink (an elevated shell, a
+        // CI runner), the two link kinds must read identically.
+        let link = tmp
+            .path()
+            .join("tools")
+            .join("claude")
+            .join("skills")
+            .join("via-symlink");
+        if std::os::windows::fs::symlink_dir(&central, &link).is_ok() {
+            assert_eq!(
+                content_identity::read(Source::Directory(&link)),
+                content_identity::read(Source::Directory(&target))
+            );
+            assert_eq!(
+                content_identity::compare(Source::Directory(&central), &link),
+                Comparison::Same
+            );
+        }
+    }
+}
