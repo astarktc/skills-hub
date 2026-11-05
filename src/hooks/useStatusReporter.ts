@@ -38,7 +38,9 @@ export type ActionErrorEntry = {
 };
 
 /**
- * The single owner of toast lifetime: errors stay until closed; warnings
+ * The single owner of toast lifetime: errors stay until closed, and so does
+ * a run's toast whose fold settled with a failure (`persist`, the `failure`
+ * tone — its kind stays `warning`, so it keeps the warning look); warnings
  * allow 5 s of reading time; success/info briefly confirm for 2 s. Sonner
  * pauses finite timers while the toaster is hovered/interacting or the
  * document is hidden, so these are not wall-clock deadlines. Errors and
@@ -61,17 +63,15 @@ const TOAST_DURATION_MS: Record<NotificationKind, number> = {
  */
 const REFUSAL_TOAST_ID = "lifecycle-refusal";
 
+/** A toast's optional parts: its action, a shared id, and `persist` (stay until closed). */
+type ToastExtras = { action?: NotificationAction; id?: string; persist?: boolean };
+
 /** The one place the toast library is called. */
-function showToast(
-  kind: NotificationKind,
-  title: string,
-  message?: string,
-  action?: NotificationAction,
-  id?: string,
-) {
+function showToast(kind: NotificationKind, title: string, message?: string, extras: ToastExtras = {}) {
+  const { action, id, persist } = extras;
   const options = {
     description: message,
-    duration: TOAST_DURATION_MS[kind],
+    duration: persist ? Infinity : TOAST_DURATION_MS[kind],
     ...(action ? { action } : {}),
     ...(id ? { id } : {}),
   };
@@ -493,9 +493,9 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
   });
   /** The one toast call site: nothing is toasted while the panel is open. */
   const toastUnlessPanel = useCallback(
-    (kind: NotificationKind, title: string, message?: string, action?: NotificationAction, id?: string) => {
+    (kind: NotificationKind, title: string, message?: string, extras?: ToastExtras) => {
       if (panelOpenRef.current) return;
-      showToast(kind, title, message, action, id);
+      showToast(kind, title, message, extras);
     },
     [],
   );
@@ -557,7 +557,7 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
         visible.length > 1
           ? t("errors.moreCount", { count: visible.length - 1 })
           : "";
-      toastUnlessPanel(kind, head.title, `${head.message}${more}`, head.action);
+      toastUnlessPanel(kind, head.title, `${head.message}${more}`, { action: head.action });
     },
     [t, toastUnlessPanel],
   );
@@ -612,7 +612,9 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
         );
         // ONE toast per run (D11): the headline — or, without one, the first
         // entry's title ("+N more") — and "View report" when there is more
-        // to read than the toast says. Toned by the fold.
+        // to read than the toast says. Toned by the fold; a failure-toned
+        // headline stays until dismissed (1.3.2) — skipped, conflict and
+        // declined keep their kind's timer.
         const head = headline
           ? { kind: headline.kind, title: headline.message }
           : {
@@ -625,7 +627,10 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
             head.kind,
             head.title,
             undefined,
-            more ? { label: t("runReport.viewReport"), onClick: () => openReport(runId) } : undefined,
+            {
+              action: more ? { label: t("runReport.viewReport"), onClick: () => openReport(runId) } : undefined,
+              persist: headline?.tone === "failure",
+            },
           );
         const dialog = handlers.resultShownIn;
         if (dialog && doorRef.current?.isOpen(dialog)) deferredToastRef.current = { dialog, show };
@@ -722,7 +727,7 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
       const refusal = refusalFor(pendingRef.current);
       if (refusal) {
         // Refused, not queued: say why, record nothing (it never ran).
-        toastUnlessPanel("info", describeRefusal(refusal, t), undefined, undefined, REFUSAL_TOAST_ID);
+        toastUnlessPanel("info", describeRefusal(refusal, t), undefined, { id: REFUSAL_TOAST_ID });
         return undefined;
       }
       cancelWithdrawnRef.current = false;
@@ -796,7 +801,7 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
       // The ref, not render state: a click in the same tick as the action's
       // start still names it.
       const notice = heldRefusalNotice(reason, pendingRef.current, t);
-      if (notice) toastUnlessPanel("info", notice.title, notice.message, undefined, REFUSAL_TOAST_ID);
+      if (notice) toastUnlessPanel("info", notice.title, notice.message, { id: REFUSAL_TOAST_ID });
     },
     [t, toastUnlessPanel],
   );

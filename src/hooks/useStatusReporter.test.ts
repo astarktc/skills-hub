@@ -23,7 +23,7 @@ vi.mock("../lib/tauri", () => ({
 import { toast } from "sonner";
 import { invokeTauri } from "../lib/tauri";
 import { useStatusReporter } from "./useStatusReporter";
-import type { Outcome } from "../lib/reportOutcome";
+import { refreshOutcome, type Outcome } from "../lib/reportOutcome";
 
 const t = (key: string, opts?: Record<string, unknown>) =>
   opts ? `${key} ${JSON.stringify(opts)}` : key;
@@ -976,9 +976,15 @@ describe("useStatusReporter applyOutcome", () => {
     // Only the headline is toasted (D11): the entries live in the report.
     expect(toast.error).not.toHaveBeenCalled();
     expect(toast.warning).toHaveBeenCalledTimes(1);
-    const [, options] = vi.mocked(toast.warning).mock.calls[0] as unknown as [string, { description?: string; action?: { label: string } }];
+    const [, options] = vi.mocked(toast.warning).mock.calls[0] as unknown as [
+      string,
+      { description?: string; action?: { label: string }; duration?: number; closeButton?: boolean },
+    ];
     expect(options.description).toBeUndefined();
     expect(options.action?.label).toBe("runReport.viewReport");
+    // A run with a failure stays until dismissed (1.3.2), keeping the warning look.
+    expect(options.duration).toBe(Infinity);
+    expect(options.closeButton).toBe(true);
     const rows = result.current.notifications;
     // headline over its entries, silenced entry dropped, one runId.
     expect(rows.map((row) => [row.role, row.kind, row.title])).toEqual([
@@ -989,6 +995,32 @@ describe("useStatusReporter applyOutcome", () => {
     expect(new Set(rows.map((row) => row.runId)).size).toBe(1);
     // Entries keep their data for the panel's actions.
     expect(rows[1]).toMatchObject({ subject: { skillId: "s1" }, error: { code: "GITHUB_SKILL_NOT_FOUND" }, repair: { verb: "update" } });
+  });
+
+  it("a run toast's lifetime follows its fold's tone: failure persists, skipped / conflict 5 s, declined 2 s", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    // Real folds, so the tone the reporter reads is the one a report settles to.
+    const failed = refreshOutcome(
+      { skills: [{ skill_id: "s1", skill_name: "alpha", status: { status: "failed", error: { code: "OTHER", message: "x" } } }] },
+      { t },
+    );
+    const skipped = refreshOutcome(
+      { skills: [{ skill_id: "s1", skill_name: "alpha", status: { status: "skipped_acquisition", reason: "skill_gone" } }] },
+      { t },
+    );
+    expect(failed.toast).toMatchObject({ kind: "warning", tone: "failure" });
+    expect(skipped.toast).toMatchObject({ kind: "warning", tone: "skipped" });
+    await act(async () => {
+      await result.current.applyOutcome(failed);
+      await result.current.applyOutcome(skipped);
+      await result.current.applyOutcome(outcome({ toast: { kind: "warning", tone: "conflict", message: "1 to review" } }));
+      await result.current.applyOutcome(outcome({ toast: { kind: "info", tone: "declined", message: "1 kept" } }));
+    });
+    const durations = (mock: typeof toast.warning) =>
+      vi.mocked(mock).mock.calls.map(([, options]) => (options as { duration?: number }).duration);
+    expect(durations(toast.warning)).toEqual([Infinity, 5000, 5000]);
+    expect(durations(toast.info)).toEqual([2000]);
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("names the run by the action that produced it", async () => {
