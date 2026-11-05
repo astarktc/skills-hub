@@ -115,6 +115,12 @@ pub enum SignalError {
     /// fallback. `detail` is the store's diagnostic, not user copy. Owned by
     /// `core::credentials`.
     CredentialStoreUnavailable { detail: String },
+    /// A copy's content could not be compared with the skill's (either
+    /// identity unreadable, or the copy's metadata unreadable), so a step
+    /// that needs a known difference — Onboarding import removing a
+    /// conflict's other copies — left it in place. `detail` is diagnostic
+    /// text, not user copy. Owned by `core::onboarding_import`.
+    IdentityUnknown { path: String, detail: String },
 }
 
 impl fmt::Display for SignalError {
@@ -215,6 +221,9 @@ impl fmt::Display for SignalError {
             }
             SignalError::CredentialStoreUnavailable { detail } => {
                 write!(f, "OS credential store unavailable: {detail}")
+            }
+            SignalError::IdentityUnknown { path, detail } => {
+                write!(f, "content could not be compared: {path}: {detail}")
             }
         }
     }
@@ -404,6 +413,14 @@ pub enum CommandError {
         /// The credential store's diagnostic, not user copy.
         detail: String,
     },
+    /// A copy's content could not be compared with the skill's, so it was
+    /// left in place (never removed on an unknown comparison).
+    IdentityUnknown {
+        /// The copy that was left in place.
+        path: String,
+        /// Which read failed, diagnostics only.
+        detail: String,
+    },
     /// An Update replayed the operator's invocation Edit onto new upstream
     /// bytes whose own invocation mode disagrees with both the Edit's base
     /// and its override: the Edit was kept and needs review. Settled by
@@ -591,6 +608,9 @@ impl From<SignalError> for CommandError {
             }
             SignalError::CredentialStoreUnavailable { detail } => {
                 CommandError::CredentialStoreUnavailable { detail }
+            }
+            SignalError::IdentityUnknown { path, detail } => {
+                CommandError::IdentityUnknown { path, detail }
             }
         }
     }

@@ -500,6 +500,7 @@ fn onboarding_import_leaves_a_disabled_pair(replace: bool) {
             chosen_path: reappeared.clone(),
             name: None,
             replace,
+            remove_divergent: false,
         }],
         &ImportPolicy {
             auto_sync: true,

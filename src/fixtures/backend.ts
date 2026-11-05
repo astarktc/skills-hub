@@ -1325,6 +1325,11 @@ export function createFixtureBackend(
           fingerprint: dir.fingerprint,
           is_link: dir.linkTarget !== null,
           link_target: dir.linkTarget,
+          description: dir.description ?? null,
+          modified_at: dir.modifiedAt ?? null,
+          // Rust `compare_with_managed`: the copy's fingerprint against the
+          // Managed skill's stored identity.
+          same_as_managed: managed ? managed.contentHash === dir.fingerprint : null,
         });
         group.has_conflict = new Set(group.variants.map((v) => v.fingerprint)).size > 1;
         groups.set(dir.name, group);
@@ -1384,7 +1389,13 @@ export function createFixtureBackend(
       { overwrite: false, overwrite_if_same_content: true },
       null,
     );
-    return { status: "replaced", skill_id: skill.dto.id, skill_name: skill.dto.name, targets };
+    return {
+      status: "replaced",
+      skill_id: skill.dto.id,
+      skill_name: skill.dto.name,
+      central_path: skill.dto.central_path,
+      targets,
+    };
   };
 
   /**
@@ -1418,12 +1429,30 @@ export function createFixtureBackend(
       hashOverride: chosen.fingerprint ?? undefined,
     });
     const identical = (v: (typeof group.variants)[number]) => v.fingerprint === skill.contentHash;
+    const present = (v: (typeof group.variants)[number]) =>
+      state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === v.path);
     const originals: OriginalOutcome[] = [];
+    // Rust `remove_divergent_original`: the operator's "remove the other
+    // copies" runs first, so a target Tool then gets the link at that path.
+    const settled = new Set<string>();
+    if (selection.remove_divergent) {
+      for (const v of group.variants) {
+        if (identical(v) || !present(v)) continue;
+        settled.add(v.path);
+        if (state.unwritableTools.includes(v.tool)) {
+          originals.push({ path: v.path, tool: v.tool, status: { status: "failed", error: PERMISSION_DENIED(v.path) } });
+        } else {
+          state.foreign = state.foreign.filter((f) => !(`${globalRoot(f.tool)}/${f.name}` === v.path));
+          originals.push({ path: v.path, tool: v.tool, status: { status: "removed" } });
+        }
+      }
+    }
+    const variants = group.variants.filter((v) => !settled.has(v.path));
     let targets: BatchTargetOutcome[] = [];
     let forced: string[] = [];
     if (policy.auto_sync ?? false) {
       const identicalTools: string[] = [];
-      for (const v of group.variants) {
+      for (const v of variants) {
         if (identical(v)) {
           if (!identicalTools.includes(v.tool)) identicalTools.push(v.tool);
         } else {
@@ -1451,13 +1480,13 @@ export function createFixtureBackend(
     } else if (!policy.remove_originals) {
       // Rust `leave_original`: nothing touched; every original still present
       // is reported per Tool.
-      for (const v of group.variants) {
+      for (const v of variants) {
         if (!state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === v.path)) continue;
         originals.push({ path: v.path, tool: v.tool, status: { status: identical(v) ? "left_in_place" : "kept_divergent" } });
       }
     } else {
       // Rust `settle_original`, per variant in plan order.
-      for (const v of group.variants) {
+      for (const v of variants) {
         const gone = !state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === v.path);
         if (gone) {
           originals.push({ path: v.path, tool: v.tool, status: { status: "removed" } });
@@ -1476,7 +1505,15 @@ export function createFixtureBackend(
     if (failedOriginal && failedOriginal.status.status === "failed") {
       recordHealth(skill, "import_failed", failedOriginal.status.error);
     }
-    return { status: "imported", skill_id: skill.dto.id, skill_name: name, targets, forced_tools: forced, originals };
+    return {
+      status: "imported",
+      skill_id: skill.dto.id,
+      skill_name: name,
+      central_path: skill.dto.central_path,
+      targets,
+      forced_tools: forced,
+      originals,
+    };
   };
 
   // -------------------------------------------------------------------------

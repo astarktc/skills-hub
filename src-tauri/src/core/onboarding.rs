@@ -6,7 +6,9 @@ use serde::Serialize;
 use specta::Type;
 
 use super::content_identity::{self, Source};
+use super::manifest::{find_skill_md, parse_skill_md};
 use super::skill_discovery::InvalidManifestReason;
+use super::skill_files::is_ignored;
 use super::skill_store::SkillStore;
 use super::tool_adapters::{
     default_tool_adapters, is_installed_in, scan_tool_dir, skills_dir_in, DetectedSkill,
@@ -21,6 +23,17 @@ pub struct OnboardingVariant {
     pub fingerprint: Option<String>,
     pub is_link: bool,
     pub link_target: Option<PathBuf>,
+    /// The copy's `SKILL.md` `description`, so the review can tell two copies
+    /// of a conflict apart before the operator chooses one.
+    pub description: Option<String>,
+    /// The newest modification time among the copy's files (ms since the
+    /// epoch); `None` when the filesystem cannot say.
+    pub modified_at: Option<i64>,
+    /// Managed-name groups only: whether this copy is byte-identical to the
+    /// Managed skill holding the name (the content identity rule — the
+    /// copy's fingerprint against the skill's stored identity). `None` when
+    /// the name is not managed or either identity is unknown.
+    pub same_as_managed: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Type)]
@@ -93,19 +106,60 @@ pub fn build_onboarding_plan(
     scope: &OnboardingScanScope,
 ) -> Result<OnboardingPlan> {
     let managed_targets = store
-        .list_all_skill_target_paths()
+        .list_owned_skill_target_paths()
         .unwrap_or_default()
         .into_iter()
         .map(|(tool, path)| managed_target_key(&tool, Path::new(&path)))
         .collect::<std::collections::HashSet<_>>();
     let managed_names = managed_names(store)?;
-    build_onboarding_plan_in_home(
+    let mut plan = build_onboarding_plan_in_home(
         home,
         scope,
         Some(central_dir),
         Some(&managed_targets),
         &managed_names,
-    )
+    )?;
+    compare_with_managed(store, &mut plan.groups);
+    Ok(plan)
+}
+
+/// A managed-name group's copies against the Managed skill: one stored
+/// identity read per skill, compared with each copy's fingerprint (never a
+/// second hash of the copy).
+fn compare_with_managed(store: &SkillStore, groups: &mut [OnboardingGroup]) {
+    for group in groups.iter_mut() {
+        let Some(skill_id) = group.managed_skill_id.as_deref() else {
+            continue;
+        };
+        let managed = content_identity::read(Source::Managed { store, skill_id });
+        for variant in group.variants.iter_mut() {
+            variant.same_as_managed = match (&managed, &variant.fingerprint) {
+                (Some(managed), Some(copy)) => Some(managed == copy),
+                _ => None,
+            };
+        }
+    }
+}
+
+/// The newest modification time among a copy's files (ignored names and
+/// internal symlinks excluded, as content identity excludes them), else the
+/// directory's own.
+fn newest_modified(dir: &Path) -> Option<i64> {
+    let millis = |meta: std::fs::Metadata| {
+        meta.modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|since| since.as_millis() as i64)
+    };
+    let files = walkdir::WalkDir::new(dir)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| !is_ignored(entry))
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().is_file())
+        .filter_map(|entry| entry.metadata().ok().and_then(millis))
+        .max();
+    files.or_else(|| std::fs::metadata(dir).ok().and_then(millis))
 }
 
 /// Every name a Managed skill holds → its id: the record's name and its
@@ -172,6 +226,11 @@ fn build_onboarding_plan_in_home(
             fingerprint,
             is_link: skill.is_link,
             link_target: skill.link_target.clone(),
+            description: find_skill_md(&skill.path)
+                .and_then(|md| parse_skill_md(&md))
+                .and_then(|(_, description)| description),
+            modified_at: newest_modified(&skill.path),
+            same_as_managed: None,
         });
     }
 

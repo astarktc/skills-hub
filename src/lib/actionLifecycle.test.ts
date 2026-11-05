@@ -9,6 +9,7 @@ import {
   dialogFallback,
   focusAfter,
   heldRefusalNotice,
+  importReviewFallback,
   isPendingSkill,
   pendingCellKeys,
   refusalFor,
@@ -128,6 +129,41 @@ describe("resolveFocusTarget", () => {
     // Under the sheet the row stays inert: the sheet's heading.
     const behindSheet = (element: Element) => !element.closest("main");
     expect(resolveFirst(chain, null, behindSheet)?.dataset.inspectorHeading).toBe("b");
+  });
+});
+
+describe("importReviewFallback (audit F2)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("returns to the surviving Review invitation — focusable even while disabled", () => {
+    document.body.innerHTML = `
+      <main>
+        <h1 data-surface-heading="skills" tabindex="-1">My Skills</h1>
+        <button data-import-review aria-disabled="true">Review 4 discovered skills</button>
+      </main>`;
+    expect(resolveFirst(importReviewFallback())?.hasAttribute("data-import-review")).toBe(true);
+  });
+
+  it("when the import consumed every group (no invitation left), the My Skills heading", () => {
+    document.body.innerHTML = `<main><h1 data-surface-heading="skills" tabindex="-1">My Skills</h1></main>`;
+    expect(resolveFirst(importReviewFallback())?.dataset.surfaceHeading).toBe("skills");
+  });
+
+  it("with no heading on screen, the main landmark — never body", () => {
+    document.body.innerHTML = "<main></main>";
+    expect(resolveFirst(importReviewFallback())?.tagName).toBe("MAIN");
+  });
+
+  it("skips an invitation the closing layer's usable test rejects", () => {
+    document.body.innerHTML = `
+      <main>
+        <h1 data-surface-heading="skills" tabindex="-1">My Skills</h1>
+        <div inert><button data-import-review>Review</button></div>
+      </main>`;
+    const usable = (element: Element) => !element.closest("[inert]");
+    expect(resolveFirst(importReviewFallback(), null, usable)?.dataset.surfaceHeading).toBe("skills");
   });
 });
 

@@ -279,6 +279,19 @@ describe("describeCommandError", () => {
     ).toBe("errors.credentialStoreUnavailable\n\nUser interaction is not allowed.");
   });
 
+  it("says IDENTITY_UNKNOWN left the copy in place and keeps the path as the detail line", () => {
+    expect(
+      describeCommandError(
+        {
+          code: "IDENTITY_UNKNOWN",
+          path: "/home/.codex/skills/alpha",
+          detail: "metadata unreadable: Permission denied",
+        },
+        t,
+      ),
+    ).toBe("errors.identityUnknown\n\n/home/.codex/skills/alpha");
+  });
+
   it("names the unknown tool key for UNKNOWN_TOOL", () => {
     expect(
       describeCommandError({ code: "UNKNOWN_TOOL", tool: "not-a-tool" }, t),

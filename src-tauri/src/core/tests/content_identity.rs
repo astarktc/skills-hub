@@ -109,3 +109,58 @@ fn hash_changes_with_content_and_ignores_git_dir() {
     let h3 = directory_identity(root).unwrap();
     assert_ne!(h2, h3);
 }
+
+/// The tri-state comparison: only two successfully read identities decide
+/// Same / Different; an unreadable or absent side is `Unknown`, never
+/// "different" (a caller may only act destructively on `Different`).
+#[test]
+fn compare_says_unknown_when_either_identity_cannot_be_read() {
+    use super::{compare, Comparison};
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a");
+    let b = dir.path().join("b");
+    let c = dir.path().join("c");
+    for (path, body) in [(&a, "one"), (&b, "one"), (&c, "two")] {
+        fs::create_dir(path).unwrap();
+        fs::write(path.join("SKILL.md"), body).unwrap();
+    }
+    assert_eq!(compare(Source::Directory(&a), &b), Comparison::Same);
+    assert_eq!(compare(Source::Directory(&a), &c), Comparison::Different);
+    let missing = dir.path().join("missing");
+    assert_eq!(
+        compare(Source::Directory(&a), &missing),
+        Comparison::Unknown
+    );
+    assert_eq!(
+        compare(Source::Directory(&missing), &a),
+        Comparison::Unknown
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Byte-identical to `a` except that one file cannot be read.
+        fs::write(a.join("notes.txt"), "same").unwrap();
+        let unreadable = dir.path().join("unreadable");
+        fs::create_dir(&unreadable).unwrap();
+        fs::write(unreadable.join("SKILL.md"), "one").unwrap();
+        fs::write(unreadable.join("notes.txt"), "same").unwrap();
+        fs::set_permissions(
+            unreadable.join("notes.txt"),
+            fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+        if fs::read(unreadable.join("notes.txt")).is_err() {
+            assert_eq!(
+                compare(Source::Directory(&a), &unreadable),
+                Comparison::Unknown
+            );
+            assert!(!super::same_content(Source::Directory(&a), &unreadable));
+        }
+        fs::set_permissions(
+            unreadable.join("notes.txt"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+    }
+}

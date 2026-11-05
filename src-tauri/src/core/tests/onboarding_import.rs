@@ -98,6 +98,7 @@ fn selection(group_name: &str, chosen: &Path) -> ImportSelection {
         chosen_path: chosen.to_path_buf(),
         name: None,
         replace: false,
+        remove_divergent: false,
     }
 }
 
@@ -1088,6 +1089,7 @@ fn replace_over_a_divergent_copy_produces_an_askable_target_exists_row() {
         skill_id: id,
         skill_name,
         targets,
+        ..
     } = imported(&report, "alpha")
     else {
         panic!("alpha should be replaced: {:?}", report);
@@ -1164,4 +1166,455 @@ fn an_invalid_manifest_is_never_admitted() {
         other => panic!("expected an unknown-group failure: {other:?}"),
     }
     assert!(broken.join("SKILL.md").is_file());
+}
+
+// ---------------------------------------------------------------------------
+// The keep/remove choice for a conflict's other copies (ticket 21)
+// ---------------------------------------------------------------------------
+
+fn remove_others(group_name: &str, chosen: &Path) -> ImportSelection {
+    ImportSelection {
+        remove_divergent: true,
+        ..selection(group_name, chosen)
+    }
+}
+
+/// Auto-sync off, originals kept: "remove the other copies" removes the
+/// divergent copy alone — the chosen one follows the originals policy.
+#[test]
+fn remove_divergent_removes_only_the_copies_that_differ() {
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    install_tool(&f, "cursor");
+    let chosen = seed_skill_dir(&f, "claude_code", "alpha", "chosen-body");
+    let divergent = seed_skill_dir(&f, "cursor", "alpha", "different-body");
+
+    let report = run(&f, &[remove_others("alpha", &chosen)], policy_off(false));
+
+    let ImportGroupStatus::Imported { originals, .. } = imported(&report, "alpha") else {
+        panic!("alpha should import: {:?}", report);
+    };
+    let removed = originals
+        .iter()
+        .find(|o| o.path == divergent)
+        .expect("the divergent copy is reported");
+    assert!(
+        matches!(removed.status, OriginalStatus::Removed),
+        "{:?}",
+        removed.status
+    );
+    assert_eq!(removed.tool, "cursor");
+    assert!(!divergent.exists(), "the divergent copy is gone");
+    let left = originals
+        .iter()
+        .find(|o| o.path == chosen)
+        .expect("the chosen copy is reported");
+    assert!(
+        matches!(left.status, OriginalStatus::LeftInPlace),
+        "the chosen copy follows remove_originals=false: {:?}",
+        left.status
+    );
+    assert!(chosen.join("SKILL.md").is_file());
+    assert_eq!(
+        originals.len(),
+        2,
+        "each copy is reported once: {:?}",
+        originals
+    );
+}
+
+/// Without the choice the divergent copy stays (the default, keep).
+#[test]
+fn without_remove_divergent_the_other_copies_stay() {
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    install_tool(&f, "cursor");
+    let chosen = seed_skill_dir(&f, "claude_code", "alpha", "chosen-body");
+    let divergent = seed_skill_dir(&f, "cursor", "alpha", "different-body");
+
+    let report = run(&f, &[selection("alpha", &chosen)], policy_off(false));
+
+    let ImportGroupStatus::Imported { originals, .. } = imported(&report, "alpha") else {
+        panic!("alpha should import: {:?}", report);
+    };
+    let kept = originals
+        .iter()
+        .find(|o| o.path == divergent)
+        .expect("reported");
+    assert!(matches!(kept.status, OriginalStatus::KeptDivergent));
+    assert!(divergent.join("SKILL.md").is_file());
+}
+
+/// Auto-sync on: the removed divergent copy frees its path, so a target Tool
+/// gets the link there — no `TARGET_EXISTS` row, no ask.
+#[test]
+fn remove_divergent_frees_a_target_path_for_the_link() {
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    install_tool(&f, "cursor");
+    let chosen = seed_skill_dir(&f, "claude_code", "alpha", "chosen-body");
+    let divergent = seed_skill_dir(&f, "cursor", "alpha", "different-body");
+
+    let report = run(
+        &f,
+        &[remove_others("alpha", &chosen)],
+        ImportPolicy {
+            auto_sync: true,
+            remove_originals: true,
+            tools: Some(vec!["cursor".to_string()]),
+            scan_scope: OnboardingScanScope::Installed,
+        },
+    );
+
+    let ImportGroupStatus::Imported {
+        targets,
+        originals,
+        central_path,
+        ..
+    } = imported(&report, "alpha")
+    else {
+        panic!("alpha should import: {:?}", report);
+    };
+    assert_eq!(*central_path, f.paths.central_dir.join("alpha"));
+    assert!(
+        targets.iter().all(|t| matches!(
+            t.status,
+            crate::core::global_sync::BatchTargetStatus::Synced { .. }
+        )),
+        "every target synced, no collision: {:?}",
+        targets
+    );
+    assert_eq!(originals.len(), 1, "{:?}", originals);
+    assert_eq!(originals[0].path, divergent);
+    assert!(matches!(originals[0].status, OriginalStatus::Removed));
+    assert_links_to_central(&f, &divergent, "alpha");
+    assert_links_to_central(&f, &chosen, "alpha");
+}
+
+/// A managed-name group ignores the choice: Replace's divergent copies stay
+/// askable rows, never removed by a plan.
+#[test]
+fn remove_divergent_never_touches_a_managed_name_group() {
+    let f = fixture();
+    install_tool(&f, "cursor");
+    let skill_id = manage_alpha(&f, "mine");
+    let copy = seed_skill_dir(&f, "cursor", "alpha", "a fork");
+
+    let report = run(
+        &f,
+        &[ImportSelection {
+            replace: true,
+            ..remove_others("alpha", &copy)
+        }],
+        policy_off(true),
+    );
+
+    let ImportGroupStatus::Replaced {
+        skill_id: replaced,
+        central_path,
+        ..
+    } = imported(&report, "alpha")
+    else {
+        panic!("alpha should be replaced: {:?}", report);
+    };
+    assert_eq!(*replaced, skill_id);
+    assert_eq!(*central_path, f.paths.central_dir.join("alpha"));
+    assert!(copy.join("SKILL.md").is_file(), "the fork is still there");
+}
+
+// ── remove_divergent: deletion needs two known, unequal identities (audit F1)
+
+/// The status a removal attempt left on the copy at `path`, for `tool`.
+fn original_at<'a>(
+    originals: &'a [crate::core::onboarding_import::OriginalOutcome],
+    path: &Path,
+    tool: &str,
+) -> &'a OriginalStatus {
+    &originals
+        .iter()
+        .find(|o| o.path == path && o.tool == tool)
+        .unwrap_or_else(|| panic!("{tool} {path:?} reported: {originals:?}"))
+        .status
+}
+
+fn is_identity_unknown(status: &OriginalStatus, path: &Path) -> bool {
+    matches!(
+        status,
+        OriginalStatus::Failed {
+            error: crate::core::errors::CommandError::IdentityUnknown { path: reported, .. },
+        } if Path::new(reported) == path
+    )
+}
+
+/// Make one file unreadable; `false` when the platform (or root) still
+/// reads it, so a test cannot construct the unknown identity.
+#[cfg(unix)]
+fn make_unreadable(file: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(file, fs::Permissions::from_mode(0o000)).expect("chmod 000");
+    fs::read(file).is_err()
+}
+
+#[cfg(unix)]
+fn make_readable(file: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(file, fs::Permissions::from_mode(0o644)).expect("chmod 644");
+}
+
+/// The audit's A/B/C construction: A (chosen) and C are byte-identical, B
+/// differs; one of C's files cannot be read, so C's identity is unknown.
+/// Only B — two known, unequal identities — is removed. C is retained and
+/// reported `Failed` with `IDENTITY_UNKNOWN`; A follows the originals policy.
+#[cfg(unix)]
+#[test]
+fn remove_divergent_retains_a_copy_whose_identity_is_unknown() {
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    install_tool(&f, "cursor");
+    install_tool(&f, "codex");
+    let chosen = seed_skill_dir(&f, "claude_code", "alpha", "same-body");
+    fs::write(chosen.join("notes.txt"), "notes").unwrap();
+    let divergent = seed_skill_dir(&f, "cursor", "alpha", "different-body");
+    let unknown = seed_skill_dir(&f, "codex", "alpha", "same-body");
+    fs::write(unknown.join("notes.txt"), "notes").unwrap();
+    if !make_unreadable(&unknown.join("notes.txt")) {
+        eprintln!("skipped: this user can read a 000 file");
+        return;
+    }
+
+    let report = run(&f, &[remove_others("alpha", &chosen)], policy_off(false));
+    make_readable(&unknown.join("notes.txt"));
+
+    let ImportGroupStatus::Imported { originals, .. } = imported(&report, "alpha") else {
+        panic!("alpha should import: {:?}", report);
+    };
+    assert!(
+        matches!(
+            original_at(originals, &divergent, "cursor"),
+            OriginalStatus::Removed
+        ),
+        "{originals:?}"
+    );
+    assert!(divergent.symlink_metadata().is_err(), "B is gone");
+    assert!(
+        is_identity_unknown(original_at(originals, &unknown, "codex"), &unknown),
+        "C is retained and reported as an unknown comparison: {originals:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(unknown.join("SKILL.md")).unwrap(),
+        "---\nname: alpha\n---\nsame-body\n"
+    );
+    assert_eq!(
+        fs::read_to_string(unknown.join("notes.txt")).unwrap(),
+        "notes"
+    );
+    assert!(matches!(
+        original_at(originals, &chosen, "claude_code"),
+        OriginalStatus::LeftInPlace
+    ));
+    assert!(chosen.join("SKILL.md").is_file());
+    assert_eq!(originals.len(), 3, "each copy once: {originals:?}");
+}
+
+/// A Managed identity that cannot be read (no stored hash, central copy
+/// unreadable) is just as unknown: the differing copy is retained.
+#[cfg(unix)]
+#[test]
+fn remove_divergent_retains_a_copy_when_the_managed_identity_is_unknown() {
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    install_tool(&f, "cursor");
+    let chosen = seed_skill_dir(&f, "claude_code", "alpha", "chosen-body");
+    let report = run(&f, &[selection("alpha", &chosen)], policy_off(false));
+    let ImportGroupStatus::Imported {
+        skill_id,
+        central_path,
+        ..
+    } = imported(&report, "alpha")
+    else {
+        panic!("alpha should import: {:?}", report);
+    };
+    let copy = seed_skill_dir(&f, "cursor", "alpha", "different-body");
+    let conn = rusqlite::Connection::open(f.store.db_path()).unwrap();
+    conn.execute("UPDATE skills SET content_hash = NULL", [])
+        .unwrap();
+    if !make_unreadable(&central_path.join("SKILL.md")) {
+        eprintln!("skipped: this user can read a 000 file");
+        return;
+    }
+
+    let status = super::remove_divergent_copy(&f.paths.home, &f.store, skill_id, &chosen, &copy);
+    make_readable(&central_path.join("SKILL.md"));
+
+    assert!(
+        status
+            .as_ref()
+            .is_some_and(|s| is_identity_unknown(s, &copy)),
+        "{status:?}"
+    );
+    assert!(copy.join("SKILL.md").is_file(), "the copy is retained");
+}
+
+/// A copy whose metadata cannot be read (its Tool dir is not searchable) is
+/// not "already gone": it is retained and reported, never dropped.
+#[cfg(unix)]
+#[test]
+fn remove_divergent_retains_and_reports_a_copy_whose_metadata_is_unreadable() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    install_tool(&f, "cursor");
+    let chosen = seed_skill_dir(&f, "claude_code", "alpha", "chosen-body");
+    let report = run(&f, &[selection("alpha", &chosen)], policy_off(false));
+    let ImportGroupStatus::Imported { skill_id, .. } = imported(&report, "alpha") else {
+        panic!("alpha should import: {:?}", report);
+    };
+    let copy = seed_skill_dir(&f, "cursor", "alpha", "different-body");
+    let tool_dir = copy.parent().unwrap().to_path_buf();
+    fs::set_permissions(&tool_dir, fs::Permissions::from_mode(0o000)).unwrap();
+    let blocked = copy.symlink_metadata().is_err();
+
+    let status = blocked
+        .then(|| super::remove_divergent_copy(&f.paths.home, &f.store, skill_id, &chosen, &copy));
+    fs::set_permissions(&tool_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    let Some(status) = status else {
+        eprintln!("skipped: this user can stat through a 000 dir");
+        return;
+    };
+
+    assert!(
+        status
+            .as_ref()
+            .is_some_and(|s| is_identity_unknown(s, &copy)),
+        "{status:?}"
+    );
+    assert!(copy.join("SKILL.md").is_file(), "the copy is retained");
+}
+
+/// The chosen source is never a removal candidate, whatever it compares as
+/// (here it changed after finalize, so it now differs from the central copy).
+#[test]
+fn remove_divergent_never_touches_the_chosen_path() {
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    let chosen = seed_skill_dir(&f, "claude_code", "alpha", "chosen-body");
+    let report = run(&f, &[selection("alpha", &chosen)], policy_off(false));
+    let ImportGroupStatus::Imported { skill_id, .. } = imported(&report, "alpha") else {
+        panic!("alpha should import: {:?}", report);
+    };
+    fs::write(chosen.join("SKILL.md"), "---\nname: alpha\n---\nedited\n").unwrap();
+
+    let status = super::remove_divergent_copy(&f.paths.home, &f.store, skill_id, &chosen, &chosen);
+
+    assert!(status.is_none(), "{status:?}");
+    assert!(chosen.join("SKILL.md").is_file(), "the chosen copy stays");
+}
+
+/// A divergent copy that is a link into another Tool's skill: the link is
+/// removed, the directory it points at is untouched.
+#[test]
+fn remove_divergent_removes_a_link_not_the_other_tools_dir_it_points_at() {
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    install_tool(&f, "cursor");
+    install_tool(&f, "codex");
+    let chosen = seed_skill_dir(&f, "claude_code", "alpha", "chosen-body");
+    let beta = seed_skill_dir(&f, "codex", "beta", "beta-body");
+    let link = seed_skill_link(&f, "cursor", "alpha", &beta);
+
+    let report = run(&f, &[remove_others("alpha", &chosen)], policy_off(false));
+
+    let ImportGroupStatus::Imported { originals, .. } = imported(&report, "alpha") else {
+        panic!("alpha should import: {:?}", report);
+    };
+    assert!(
+        matches!(
+            original_at(originals, &link, "cursor"),
+            OriginalStatus::Removed
+        ),
+        "{originals:?}"
+    );
+    assert!(link.symlink_metadata().is_err(), "the link is gone");
+    assert_eq!(
+        fs::read_to_string(beta.join("SKILL.md")).unwrap(),
+        "---\nname: beta\n---\nbeta-body\n",
+        "the linked-to skill is untouched"
+    );
+}
+
+/// A Tool's link into the central repo is the app's, never a discovered
+/// copy: remove_divergent neither removes nor follows it.
+#[test]
+fn remove_divergent_never_follows_a_link_into_the_central_repo() {
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    install_tool(&f, "cursor");
+    let gamma = seed_skill_dir(&f, "claude_code", "gamma", "gamma-body");
+    let report = run(&f, &[selection("gamma", &gamma)], policy_off(true));
+    let ImportGroupStatus::Imported {
+        central_path: gamma_central,
+        ..
+    } = imported(&report, "gamma")
+    else {
+        panic!("gamma should import: {:?}", report);
+    };
+    let chosen = seed_skill_dir(&f, "claude_code", "alpha", "chosen-body");
+    let link = seed_skill_link(&f, "cursor", "alpha", gamma_central);
+
+    let report = run(&f, &[remove_others("alpha", &chosen)], policy_off(false));
+
+    let ImportGroupStatus::Imported { originals, .. } = imported(&report, "alpha") else {
+        panic!("alpha should import: {:?}", report);
+    };
+    assert!(
+        originals.iter().all(|o| o.path != link),
+        "a link into the central repo is not a copy: {originals:?}"
+    );
+    assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+    assert_eq!(
+        fs::read_to_string(gamma_central.join("SKILL.md")).unwrap(),
+        "---\nname: gamma\n---\ngamma-body\n"
+    );
+}
+
+/// Amp and Kimi share `.config/agents/skills`: the plan carries one variant
+/// per harness at one path. The path is removed once and both harnesses get
+/// the same row (audit F6).
+#[test]
+fn remove_divergent_settles_a_shared_dir_once_and_reports_every_harness() {
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    install_tool(&f, "amp");
+    install_tool(&f, "kimi_cli");
+    let chosen = seed_skill_dir(&f, "claude_code", "alpha", "chosen-body");
+    let shared = seed_skill_dir(&f, "amp", "alpha", "different-body");
+    assert_eq!(
+        adapter_by_key("kimi_cli").unwrap().relative_skills_dir,
+        adapter_by_key("amp").unwrap().relative_skills_dir,
+        "the shared dir this test is about"
+    );
+
+    let report = run(&f, &[remove_others("alpha", &chosen)], policy_off(false));
+
+    let ImportGroupStatus::Imported { originals, .. } = imported(&report, "alpha") else {
+        panic!("alpha should import: {:?}", report);
+    };
+    assert!(
+        shared.symlink_metadata().is_err(),
+        "the shared copy is gone"
+    );
+    for tool in ["amp", "kimi_cli"] {
+        assert!(
+            matches!(
+                original_at(originals, &shared, tool),
+                OriginalStatus::Removed
+            ),
+            "{tool}: {originals:?}"
+        );
+    }
+    assert_eq!(
+        originals.len(),
+        3,
+        "chosen + one row per harness: {originals:?}"
+    );
 }

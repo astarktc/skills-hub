@@ -172,7 +172,9 @@ export type FocusTarget =
   /** The inspector's heading while it shows the skill (beside the list or as a sheet). */
   | { kind: "inspector"; skillId: string }
   /** The showing surface's heading (the list emptied). */
-  | { kind: "heading"; surface: "skills" | "projects" };
+  | { kind: "heading"; surface: "skills" | "projects" }
+  /** My Skills' Review invitation (the discovered banner's, or the empty state's). */
+  | { kind: "importReview" };
 
 /** What settled, as the focus rule needs it. */
 export type FocusOutcome = {
@@ -284,6 +286,9 @@ export function resolveFocusTarget(
         document.querySelector(`[data-inspector-health="${escape(target.skillId)}"]`) ??
           document.querySelector(`[data-skill-health="${escape(target.skillId)}"]`),
       );
+    case "importReview":
+      // Focusable while disabled (`focusableWhenDisabled`), so it counts then too.
+      return focusable(document.querySelector("[data-import-review]"));
     case "heading":
       return (
         focusable(document.querySelector(`[data-surface-heading="${target.surface}"]`)) ??
@@ -297,6 +302,17 @@ export function resolveFocusTarget(
  * layer's `usable` test (the Dialog primitive's `fallbackFocus` argument),
  * that will take focus once the layer has closed.
  */
+/**
+ * Where the Import review returns focus when its opener cannot take it (the
+ * Review button was re-rendered during the scan, or the import consumed every
+ * group so the banner is gone): the surviving Review invitation, then the My
+ * Skills heading (the main landmark when that is not on screen) — never
+ * `<body>` (audit F2).
+ */
+export function importReviewFallback(): FocusTarget[] {
+  return [{ kind: "importReview" }, { kind: "heading", surface: "skills" }];
+}
+
 export function resolveFirst(
   targets: readonly FocusTarget[],
   trigger: Element | null = null,

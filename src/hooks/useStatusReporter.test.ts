@@ -1094,6 +1094,67 @@ describe("useStatusReporter and the Notifications panel (D11)", () => {
     expect(toast.dismiss).toHaveBeenCalled();
   });
 
+  it("a dialog that shows its own Result defers the run's toast until it closes; everything else happens at once (F5)", async () => {
+    const surface = door();
+    surface.stack.push({ kind: "import" });
+    const { result, rerender } = renderHook(() => useStatusReporter(t, surface as never));
+    const reload = vi.fn(async () => {});
+    const closeModal = vi.fn();
+    const run = (message: string, kind: "warning" | "success") => ({
+      toast: { kind, tone: kind === "warning" ? ("failure" as const) : ("success" as const), message },
+      errors: kind === "warning" ? [{ title: "pdf failed", message: "moved" }] : [],
+      warnings: [],
+      notes: [],
+      completion: { reload: true, closeModal: false, conflict: false },
+    });
+    let completion: unknown;
+    await act(async () => {
+      completion = await result.current.applyOutcome(run("6 imported · 1 failed", "warning"), {
+        reload,
+        closeModal,
+        resultShownIn: "import",
+      });
+    });
+    // Reloaded, recorded and answered — only the toast waits (it would cover the Result's footer).
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(completion).toEqual({ reload: true, closeModal: false, conflict: false });
+    expect(result.current.notifications.map((row) => row.title)).toEqual(["6 imported · 1 failed", "pdf failed"]);
+    expect(toast.warning).not.toHaveBeenCalled();
+    rerender();
+    expect(toast.warning).not.toHaveBeenCalled();
+    // A Retry in the same Result supersedes the waiting toast.
+    await act(async () => {
+      await result.current.applyOutcome(run("7 imported", "success"), { reload, resultShownIn: "import" });
+    });
+    expect(toast.success).not.toHaveBeenCalled();
+    // The Result closes: its one toast shows now, once.
+    surface.stack.length = 0;
+    rerender();
+    expect(toast.success).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.success).mock.calls[0][0]).toBe("7 imported");
+    expect(toast.warning).not.toHaveBeenCalled();
+    rerender();
+    expect(toast.success).toHaveBeenCalledTimes(1);
+  });
+
+  it("the deferral applies only while that dialog is open: a closed one toasts at once", async () => {
+    const surface = door();
+    const { result } = renderHook(() => useStatusReporter(t, surface as never));
+    await act(async () => {
+      await result.current.applyOutcome(
+        {
+          toast: { kind: "success", tone: "success", message: "3 added" },
+          errors: [],
+          warnings: [],
+          notes: [],
+          completion: { reload: false, closeModal: false, conflict: false },
+        },
+        { resultShownIn: "addSkill" },
+      );
+    });
+    expect(toast.success).toHaveBeenCalledWith("3 added", { description: undefined, duration: 2000 });
+  });
+
   it("while the panel is open no toast covers it: notifications are recorded, not toasted", async () => {
     const surface = door();
     surface.stack.push({ kind: "notifications" });

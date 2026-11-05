@@ -61,21 +61,36 @@ function markTone(state: StripMarkState, quiet: boolean): string {
  * A mark that becomes synced on screen lights (the contract's signature
  * interaction): its glyph is a new element that fades in from opacity 0 over
  * 120 ms (`--motion-fast`, `ease-out`) — opacity only, once, never on mount;
- * reduced motion shows it at once. The ticket-21 import cascade staggers the
- * same light with a per-mark delay.
+ * reduced motion shows it at once.
+ *
+ * The import cascade (ticket 21, DESIGN.md § Empty and first-run) is the same
+ * light, once, for a deployed mark of a row a large import just added:
+ * `landing` keys a fresh glyph to the run's token and delays its entry by
+ * 20 ms × the mark's index, so the strips light left to right. The flow
+ * withdraws `landing` after the run; the glyph then re-keys, already opaque.
  */
-export default function StripMarkIcon({ state, quiet = false }: { state: StripMarkState; quiet?: boolean }) {
+export default function StripMarkIcon({
+  state,
+  quiet = false,
+  landing,
+}: {
+  state: StripMarkState;
+  quiet?: boolean;
+  landing?: { token: number; index: number };
+}) {
   const lit = useSyncLight(state);
+  const landed = landing !== undefined && state === "synced";
   return (
     <svg
-      key={state}
+      key={landed ? `${state}:${landing.token}` : state}
       viewBox="0 0 12 12"
-      data-lit={lit || undefined}
+      data-lit={lit || landed || undefined}
       className={cn(
         "size-3 shrink-0 transition-opacity duration-(--motion-fast) ease-out motion-reduce:transition-none",
-        lit && "starting:opacity-0",
+        (lit || landed) && "starting:opacity-0",
         markTone(state, quiet),
       )}
+      style={landed ? { transitionDelay: `${landing.index * 20}ms` } : undefined}
       aria-hidden="true"
     >
       <MarkGlyph state={state} />

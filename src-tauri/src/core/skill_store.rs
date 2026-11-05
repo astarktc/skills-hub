@@ -1117,7 +1117,7 @@ impl SkillStore {
     /// a "Keep existing" decline, a failed first sync's `error` row) owns
     /// nothing at its path, so an unmanaged folder sitting there stays
     /// discoverable.
-    pub fn list_all_skill_target_paths(&self) -> Result<Vec<(String, String)>> {
+    pub fn list_owned_skill_target_paths(&self) -> Result<Vec<(String, String)>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT tool, target_path

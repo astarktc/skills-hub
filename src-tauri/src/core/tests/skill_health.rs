@@ -796,7 +796,7 @@ fn onboarding_discovery_sees_past_a_row_that_owns_nothing() {
         .unwrap()
         .is_some());
     assert!(
-        f.store.list_all_skill_target_paths().unwrap().is_empty(),
+        f.store.list_owned_skill_target_paths().unwrap().is_empty(),
         "a marker is not a managed target"
     );
 }

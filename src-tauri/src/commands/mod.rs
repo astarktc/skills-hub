@@ -827,6 +827,11 @@ pub struct OnboardingSelectionDto {
     /// skill. Absent/false = no decision — the group is skipped.
     #[serde(default)]
     pub replace: bool,
+    /// The keep/remove choice for the group's other copies: remove every
+    /// copy whose content differs from the chosen one. Absent/false keeps
+    /// them in place.
+    #[serde(default)]
+    pub remove_divergent: bool,
 }
 
 /// What happens to the originals: sync the imported skill to `tools`
@@ -882,6 +887,7 @@ pub async fn import_onboarding_selection(
                 chosen_path: PathBuf::from(s.chosen_path),
                 name: s.name,
                 replace: s.replace,
+                remove_divergent: s.remove_divergent,
             })
             .collect();
         let report = import_onboarding_selection_core(

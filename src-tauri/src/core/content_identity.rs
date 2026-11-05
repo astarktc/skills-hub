@@ -57,15 +57,35 @@ pub fn read(source: Source<'_>) -> Option<String> {
     }
 }
 
-/// Targets are always re-hashed; a managed source goes through the stored read.
-pub fn same_content(source: Source<'_>, target: &Path) -> bool {
+/// What comparing two identities established. Only `Same` and `Different`
+/// are answers; `Unknown` (either side absent or unreadable) is not drift and
+/// never authorizes a destructive step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Comparison {
+    Same,
+    Different,
+    Unknown,
+}
+
+/// Compare a source with a target directory. Targets are always re-hashed; a
+/// managed source goes through the stored read. A missing target (a dangling
+/// link included) is `Unknown`.
+pub fn compare(source: Source<'_>, target: &Path) -> Comparison {
     if !target.exists() {
-        return false;
+        return Comparison::Unknown;
     }
     match (read(source), read(Source::Directory(target))) {
-        (Some(source), Some(target)) => source == target,
-        _ => false,
+        (Some(source), Some(target)) if source == target => Comparison::Same,
+        (Some(_), Some(_)) => Comparison::Different,
+        _ => Comparison::Unknown,
     }
+}
+
+/// The conservative two-state answer: `true` only for a known `Same`, so an
+/// unknown identity reads as "not the same" — right for keep / refuse-to-
+/// overwrite decisions, never for a deletion (use [`compare`]).
+pub fn same_content(source: Source<'_>, target: &Path) -> bool {
+    compare(source, target) == Comparison::Same
 }
 
 /// Hash skill content, excluding internal symlinks entirely: neither their names

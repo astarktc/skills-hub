@@ -39,6 +39,14 @@
 //!   touched and each identical original is reported `LeftInPlace`. Either
 //!   way a divergent sibling is left in place and reported: sharing a name
 //!   never proved it was the same skill.
+//! * **The other copies of a conflict** (`remove_divergent`, the operator's
+//!   keep/remove choice): when set, every copy whose content is *known* to
+//!   differ from the finalized central copy is removed first (within the
+//!   Tool dirs only, once per physical path, reported per Tool as `Removed`
+//!   / `Failed`), so a Tool the sync reaches then gets the link; a copy
+//!   whose comparison is unknown is retained and reported `Failed`
+//!   (`IDENTITY_UNKNOWN`), and the chosen source is never a candidate. When
+//!   unset they stay, as above.
 //! * **Managed-name groups** (the plan's `name_is_managed`): never finalized
 //!   — the name is taken. Without the operator's `replace` the group is
 //!   `Skipped` with a typed reason and nothing is touched. With it, the
@@ -57,7 +65,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::content_identity::{self, Source};
+use super::content_identity::{self, Comparison, Source};
 use super::errors::{CommandError, SignalError};
 use super::global_sync::{
     sync_skills_to_tools_unlocked, BatchPolicy, BatchSkill, BatchTargetOutcome,
@@ -85,6 +93,11 @@ pub struct ImportSelection {
     /// skill. `false` is "no decision" — the group is skipped. Ignored for a
     /// group whose name is not managed.
     pub replace: bool,
+    /// The operator's keep/remove choice for the group's other copies:
+    /// remove every copy whose content differs from the chosen one (it is
+    /// not the skill the operator kept). `false` leaves them in place, as
+    /// before. Ignored for a managed-name group.
+    pub remove_divergent: bool,
 }
 
 /// The batch's policy: what happens to the originals.
@@ -125,11 +138,13 @@ pub struct ImportProgress<'a> {
 }
 
 /// What happened to one original directory.
-#[derive(Debug, serde::Serialize, specta::Type)]
+#[derive(Clone, Debug, serde::Serialize, specta::Type)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum OriginalStatus {
-    /// Byte-identical to the central copy (or already gone) — removed
-    /// (auto-sync off, `remove_originals`).
+    /// Removed: byte-identical to the central copy (or already gone) under
+    /// auto-sync off with `remove_originals`, or a copy that differs from it
+    /// when the operator chose to remove the group's other copies
+    /// (`remove_divergent`).
     Removed,
     /// Byte-identical to the central copy and left where it was because the
     /// operator chose not to remove originals (auto-sync off).
@@ -137,7 +152,8 @@ pub enum OriginalStatus {
     /// Content differs from the central copy, so it was left in place
     /// (either policy).
     KeptDivergent,
-    /// The path was refused or could not be removed. Report data.
+    /// The path was refused or could not be removed, or (`IDENTITY_UNKNOWN`)
+    /// its content could not be compared so it was retained. Report data.
     Failed { error: CommandError },
 }
 
@@ -154,6 +170,9 @@ pub enum ImportGroupStatus {
     Imported {
         skill_id: String,
         skill_name: String,
+        /// The new Managed skill's central copy: the source a retry of one
+        /// of its `TARGET_EXISTS` rows syncs from.
+        central_path: PathBuf,
         /// Sync targets (auto-sync on); empty when auto-sync is off.
         targets: Vec<BatchTargetOutcome>,
         /// The Tools synced beyond the policy's Tools because they held a
@@ -173,6 +192,9 @@ pub enum ImportGroupStatus {
     Replaced {
         skill_id: String,
         skill_name: String,
+        /// The Managed skill's central copy: the source a retry of one of its
+        /// `TARGET_EXISTS` rows syncs from.
+        central_path: PathBuf,
         targets: Vec<BatchTargetOutcome>,
     },
     /// Not imported by design; nothing of this group was touched.
@@ -377,6 +399,7 @@ fn replace_with_managed_unlocked(
     ImportGroupStatus::Replaced {
         skill_id: record.id,
         skill_name: record.name,
+        central_path: PathBuf::from(record.central_path),
         targets,
     }
 }
@@ -408,8 +431,26 @@ fn apply_one_unlocked(
         }
     };
 
-    let (targets, forced_tools, originals) = if policy.auto_sync {
-        sync_imported_unlocked(paths, store, &installed, group, policy, now)
+    // The operator's keep/remove choice runs first: a divergent copy removed
+    // here leaves its path free, so a Tool the sync reaches gets the link.
+    let removed_divergent: Vec<OriginalOutcome> = if selection.remove_divergent {
+        remove_divergent_copies(
+            &paths.home,
+            store,
+            &installed.skill_id,
+            group,
+            &selection.chosen_path,
+        )
+    } else {
+        Vec::new()
+    };
+    let settled = |variant: &&OnboardingVariant| {
+        !removed_divergent
+            .iter()
+            .any(|original| original.path == variant.path)
+    };
+    let (targets, forced_tools, mut originals) = if policy.auto_sync {
+        sync_imported_unlocked(paths, store, &installed, group, policy, now, &settled)
     } else {
         (
             Vec::new(),
@@ -417,6 +458,7 @@ fn apply_one_unlocked(
             group
                 .variants
                 .iter()
+                .filter(settled)
                 .filter_map(|variant| {
                     if policy.remove_originals {
                         Some(settle_original(
@@ -433,6 +475,7 @@ fn apply_one_unlocked(
                 .collect(),
         )
     };
+    originals.splice(0..0, removed_divergent);
     // Finalised, then an original could not be settled: that settles here as
     // the new skill's health (its targets' failures are their own `error`
     // rows).
@@ -454,6 +497,7 @@ fn apply_one_unlocked(
     ImportGroupStatus::Imported {
         skill_id: installed.skill_id,
         skill_name: installed.name,
+        central_path: installed.central_path,
         targets,
         forced_tools,
         originals,
@@ -481,6 +525,7 @@ fn sync_imported_unlocked(
     group: &OnboardingGroup,
     policy: &ImportPolicy,
     now: i64,
+    unsettled: &dyn Fn(&&OnboardingVariant) -> bool,
 ) -> (Vec<BatchTargetOutcome>, Vec<String>, Vec<OriginalOutcome>) {
     // No per-import selection means the operator's recorded global selection,
     // not raw detection (`settings::effective_global_tool_targets`). Detection
@@ -498,7 +543,7 @@ fn sync_imported_unlocked(
     };
     let mut identical_tools: Vec<String> = Vec::new();
     let mut originals: Vec<OriginalOutcome> = Vec::new();
-    for variant in &group.variants {
+    for variant in group.variants.iter().filter(unsettled) {
         if content_identity::same_content(
             Source::Managed {
                 store,
@@ -591,6 +636,95 @@ fn leave_original(
         tool: tool.to_string(),
         status,
     })
+}
+
+/// The keep/remove choice's "remove" for every copy of the group: each
+/// physical path is settled **once** ([`remove_divergent_copy`]) and its
+/// status fanned out to every variant naming it — Tools sharing a skills dir
+/// (Amp and Kimi's `.config/agents/skills`) each get the same row; the path is
+/// never removed twice, and the second harness never reads the first's
+/// removal as "already gone".
+fn remove_divergent_copies(
+    home: &Path,
+    store: &SkillStore,
+    skill_id: &str,
+    group: &OnboardingGroup,
+    chosen: &Path,
+) -> Vec<OriginalOutcome> {
+    let mut settled: Vec<(&Path, Option<OriginalStatus>)> = Vec::new();
+    let mut outcomes = Vec::new();
+    for variant in &group.variants {
+        let status = match settled.iter().find(|(path, _)| *path == variant.path) {
+            Some((_, status)) => status.clone(),
+            None => {
+                let status = remove_divergent_copy(home, store, skill_id, chosen, &variant.path);
+                settled.push((&variant.path, status.clone()));
+                status
+            }
+        };
+        if let Some(status) = status {
+            outcomes.push(OriginalOutcome {
+                path: variant.path.clone(),
+                tool: variant.tool.clone(),
+                status,
+            });
+        }
+    }
+    outcomes
+}
+
+/// Delete one copy of the group whose content is **known** to differ from
+/// the imported skill (the operator kept another one). Deletion needs two
+/// successfully read identities that are unequal:
+///
+/// * the chosen source is never a candidate (`None`), whatever it compares as;
+/// * a path already gone is `None` — nothing to report;
+/// * a known-identical copy (a link to the chosen one) is `None`: it follows
+///   the originals policy;
+/// * an unknown comparison — either identity unreadable, or the copy's
+///   metadata unreadable — retains the path and is `Failed` with
+///   `IDENTITY_UNKNOWN`: an inaccessible copy is neither absent nor different.
+///
+/// A link is removed as a link (`remove_path_any`), never followed. The
+/// registry fence runs immediately before the removal. Refusals and removal
+/// failures are reported, never thrown.
+fn remove_divergent_copy(
+    home: &Path,
+    store: &SkillStore,
+    skill_id: &str,
+    chosen: &Path,
+    path: &Path,
+) -> Option<OriginalStatus> {
+    if path == chosen {
+        return None;
+    }
+    let unknown = |detail: String| {
+        Some(OriginalStatus::Failed {
+            error: CommandError::from(SignalError::IdentityUnknown {
+                path: path.to_string_lossy().into_owned(),
+                detail,
+            }),
+        })
+    };
+    match path.symlink_metadata() {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => return unknown(format!("metadata unreadable: {error}")),
+    }
+    match content_identity::compare(Source::Managed { store, skill_id }, path) {
+        Comparison::Same => None,
+        Comparison::Unknown => {
+            unknown("the copy's or the managed skill's content could not be read".to_string())
+        }
+        Comparison::Different => Some(
+            match ensure_path_within_tool_dirs(home, path).and_then(|()| remove_path_any(path)) {
+                Ok(()) => OriginalStatus::Removed,
+                Err(error) => OriginalStatus::Failed {
+                    error: CommandError::from_anyhow(error),
+                },
+            },
+        ),
+    }
 }
 
 /// Auto-sync off: remove one original, but only when it is byte-identical to

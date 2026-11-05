@@ -2,6 +2,7 @@ import type {
   BatchTargetOutcome,
   CommandError,
   EnableReport,
+  ImportGroupStatus,
   ImportReport,
   InstallBatchReport,
   InstallResult,
@@ -136,6 +137,13 @@ export type OutcomeTally = {
   done: { verb: HeadlineVerb; count: number }[];
   counts: Omit<Partial<HeadlineCounts>, "done">;
   review?: ReviewKind;
+  /**
+   * How a declined count is phrased: "kept existing" (a pair's unit), or —
+   * where the done counts are groups that may themselves read "kept"
+   * (Import) — "existing folders kept", so a target-level decline is never
+   * mistaken for a group.
+   */
+  declined?: "pairs" | "folders";
 };
 export type ReportContext = {
   t: TranslateFn;
@@ -170,6 +178,10 @@ export type HeadlineVerb =
   | "installed"
   | "synced"
   | "imported"
+  /** Import: a managed name whose copies were replaced by the managed skill (≥ 1 target deployed). */
+  | "replaced"
+  /** Import: a managed name the operator chose Replace for and then kept every copy in the ask. */
+  | "kept"
   | "removed"
   | "assigned"
   | "enabled"
@@ -180,6 +192,8 @@ export const HEADLINE_DONE_KEY: Record<HeadlineVerb, string> = {
   installed: "outcome.done.installed",
   synced: "outcome.done.synced",
   imported: "outcome.done.imported",
+  replaced: "outcome.done.replaced",
+  kept: "outcome.done.kept",
   removed: "outcome.done.removed",
   assigned: "outcome.done.assigned",
   enabled: "outcome.done.enabled",
@@ -251,7 +265,7 @@ function tallyHeadline(t: TranslateFn, tally: OutcomeTally): string {
   part("outcome.failed", counts.failed);
   part("outcome.targetsFailed", counts.targetsFailed);
   part("outcome.skipped", counts.skipped);
-  part("outcome.declined", counts.declined);
+  part(tally.declined === "folders" ? "outcome.declinedFolders" : "outcome.declined", counts.declined);
   part("outcome.cancelled", counts.cancelled);
   part(REVIEW_KEY[review], counts.review);
   part("runReport.collisions", counts.collisions);
@@ -295,8 +309,7 @@ type TargetExists = Extract<CommandError, { code: "TARGET_EXISTS" }>;
  * A `TARGET_EXISTS` that reached a fold is an unresolved collision: an
  * answered row is replaced by its retry (or becomes `declined`), so one a
  * report still carries was not answered — the ask was dismissed, or the
- * producer raised none (Import does not ask yet: ticket 21). This is not
- * proof that an ask happened. It is "to review": the pair stays as it was,
+ * producer raised none. This is not proof that an ask happened. It is "to review": the pair stays as it was,
  * nothing was retried, nothing failed (D10).
  */
 const unansweredCollision = (error: CommandError): TargetExists | null =>
@@ -363,9 +376,38 @@ function projectSyncCounts(report: ProjectSyncReport) {
   return counts;
 }
 
+/**
+ * What one sent Import group settled as — the one settlement rule the Result
+ * rows and the headline share (audit F3 / F4). An import, a skipped managed
+ * name and a failed admission are the group's own status. A Replace is what
+ * its settled target rows say: `replaced` when at least one target was
+ * deployed; `failed` when none was and a target failed; `kept` when the
+ * operator answered Keep for every collision (and nothing was deployed);
+ * otherwise `skipped` — every target skipped (disabled, not installed), no
+ * target at all, or a collision nobody answered.
+ */
+export type ImportGroupKind = "imported" | "replaced" | "kept" | "skipped" | "failed";
+
+/** A target row that failed outright (a collision is not one; an unwritable harness is). */
+export const isImportTargetFailure = (row: BatchTargetOutcome) =>
+  (row.status.status === "failed" && row.status.error.code !== "TARGET_EXISTS") ||
+  (row.status.status === "skipped" && row.status.error.code === "TOOL_NOT_WRITABLE");
+
+export function importGroupKind(status: ImportGroupStatus): ImportGroupKind {
+  if (status.status !== "replaced") return status.status;
+  const rows = status.targets;
+  if (rows.some((row) => row.status.status === "synced")) return "replaced";
+  if (rows.some(isImportTargetFailure)) return "failed";
+  const declined = rows.some((row) => row.status.status === "declined");
+  const unanswered = rows.some(
+    (row) => row.status.status === "failed" && row.status.error.code === "TARGET_EXISTS",
+  );
+  return declined && !unanswered ? "kept" : "skipped";
+}
+
 function importCounts(report: ImportReport) {
-  const counts = { imported: 0, replaced: 0, skipped: 0, failed: 0 };
-  for (const group of report.groups) counts[group.status.status]++;
+  const counts: Record<ImportGroupKind, number> = { imported: 0, replaced: 0, kept: 0, skipped: 0, failed: 0 };
+  for (const group of report.groups) counts[importGroupKind(group.status)]++;
   return counts;
 }
 
@@ -1023,15 +1065,24 @@ export function enableOutcome(
 }
 
 /**
- * Import's headline counts groups: imported (a Replace included) · failed ·
- * targets failed (a target sync or an original's cleanup that failed under
- * an imported group) · skipped (a managed name left alone) · kept existing ·
- * originals to review (kept because they differ). Forced-tool lines and
- * declined notes ride as the toast's detail.
+ * Import's headline counts groups, each by what it settled as
+ * (`importGroupKind`): imported · replaced · kept · failed · skipped — the
+ * group counts reconcile to the sent selections. Target-level kinds are
+ * additional dimensions, never summed as groups: deployments failed (a target
+ * sync or an original's cleanup under a group that imported or replaced) ·
+ * existing folders kept (a declined target under such a group — a `kept`
+ * group's declines are that group) · originals to review (a different copy
+ * kept without the operator's say) · folders to review (a collision nobody
+ * answered). A different copy the operator chose to keep (`keptByChoice`: the
+ * review offered keep / remove and the operator kept) is a quiet note, not a
+ * review item. Forced-tool lines and notes ride as the toast's detail.
  */
 export function importOutcome(
   report: ImportReport,
-  ctx: ReportContext,
+  ctx: ReportContext & {
+    /** Groups whose different copies the operator chose to keep (sent without `remove_divergent`). */
+    keptByChoice?: ReadonlySet<string>;
+  },
 ): Outcome<PlainEntry> {
   const out = empty();
   const { t } = ctx;
@@ -1052,10 +1103,6 @@ export function importOutcome(
       });
       continue;
     }
-    const skill: EntrySubject =
-      group.status.status === "skipped"
-        ? { skillName: name }
-        : { skillId: group.status.skill_id, skillName: group.status.skill_name };
     // A managed name with no Replace decision: nothing was touched.
     if (group.status.status === "skipped") {
       out.warnings.push({
@@ -1064,6 +1111,11 @@ export function importOutcome(
       });
       continue;
     }
+    const kind = importGroupKind(group.status);
+    // Target-level counts belong to a group that went ahead; a Replace that
+    // replaced nothing is counted once, as its own kind.
+    const wentAhead = kind === "imported" || kind === "replaced";
+    const skill: EntrySubject = { skillId: group.status.skill_id, skillName: group.status.skill_name };
     const forcedTools =
       group.status.status === "imported" ? group.status.forced_tools : [];
     const originals =
@@ -1078,7 +1130,7 @@ export function importOutcome(
       // skipped by design, silently — never a sync failure.
       if (isDisabledSkip(target)) continue;
       if (target.status.status === "declined") {
-        declined++;
+        if (wentAhead) declined++;
         out.notes.push(declinedNote(ctx, name, target.tool_key));
         continue;
       }
@@ -1089,7 +1141,7 @@ export function importOutcome(
         out.warnings.push(collisionEntry(ctx, collision, subject));
         continue;
       }
-      targetsFailed++;
+      if (wentAhead) targetsFailed++;
       out.errors.push({
         title: t("errors.syncFailedTitle", {
           name,
@@ -1101,9 +1153,15 @@ export function importOutcome(
         repair: { verb: "retry", tool: target.tool_key },
       });
     }
+    const keptByChoice = ctx.keptByChoice?.has(name) ?? false;
+    const keptTools: string[] = [];
     for (const original of originals) {
       const tool = label(ctx, original.tool);
       if (original.status.status === "kept_divergent") {
+        if (keptByChoice) {
+          keptTools.push(tool);
+          continue;
+        }
         divergent++;
         out.warnings.push({
           title: t("errors.importKeptDivergentTitle", { name, tool }),
@@ -1122,21 +1180,44 @@ export function importOutcome(
         });
       }
     }
+    if (keptTools.length > 0) {
+      const harnesses = [...new Set(keptTools)];
+      out.notes.push(
+        t("outcome.keptDifferentLine", {
+          name,
+          count: keptTools.length,
+          harnesses: harnesses.join(t("common.listSeparator")),
+        }),
+      );
+    }
   }
   // Warnings keep the modal open (kept_divergent needs a look), but a stale
   // selection is not the import's problem: the skip warnings do not.
   out.completion.closeModal =
     out.errors.length === 0 && out.warnings.length === collisions;
   out.warnings.push(...skips.warnings(ctx));
-  out.toast = headlineToast(t, "imported", {
-    done: counts.imported + counts.replaced,
-    failed: counts.failed,
-    targetsFailed,
-    skipped: counts.skipped,
-    declined,
-    review: divergent,
-    collisions,
-  }, { review: "originals", detail: detailOf([...forcedLines, ...out.notes]) });
+  const tally: OutcomeTally = {
+    done: [
+      { verb: "imported", count: counts.imported },
+      { verb: "replaced", count: counts.replaced },
+      { verb: "kept", count: counts.kept },
+    ],
+    counts: {
+      failed: counts.failed,
+      targetsFailed,
+      skipped: counts.skipped,
+      declined,
+      review: divergent,
+      collisions,
+    },
+    review: "originals",
+    declined: "folders",
+  };
+  out.toast = toast(
+    headlineTone(tally.counts),
+    tallyHeadline(t, tally),
+    detailOf([...forcedLines, ...out.notes]),
+  );
   return out;
 }
 

@@ -25,7 +25,7 @@ import RepointModal from "./components/skills/modals/RepointModal";
 import DetachModal from "./components/skills/modals/DetachModal";
 import AssignProjectModal from "./components/skills/modals/AssignProjectModal";
 import InvocationModeModal from "./components/skills/modals/InvocationModeModal";
-import ImportModal from "./components/skills/modals/ImportModal";
+import ImportReviewDialog from "./components/skills/import/ImportReviewDialog";
 import NewToolsModal from "./components/skills/modals/NewToolsModal";
 import SharedDirModal from "./components/skills/modals/SharedDirModal";
 import OverwriteModal from "./components/skills/modals/OverwriteModal";
@@ -579,7 +579,7 @@ function App() {
   // copy under the scrim yields, so a run never shows twice (14 audit N5).
   const progressInDialog =
     addFlow.add.open ||
-    (addFlow.showImportModal && addFlow.plan !== null) ||
+    addFlow.importReview.open ||
     surface.isOpen("notifications") ||
     (library.pendingRepointSkill !== null && library.repointSelection !== null) ||
     (area === "projects" &&
@@ -673,6 +673,7 @@ function App() {
                   lens={lens}
                   librarySize={librarySize}
                   plan={addFlow.plan}
+                  landing={addFlow.importLanding}
                   stripTools={stripTools}
                   labelOf={labelOfTool}
                   isDetected={isToolDetected}
@@ -794,22 +795,13 @@ function App() {
         t={t}
       />
 
-      {addFlow.showImportModal && addFlow.plan ? (
-        <ImportModal
-          open={addFlow.showImportModal}
-          loading={loading}
-          plan={addFlow.plan}
-          selected={addFlow.selected}
-          variantChoice={addFlow.variantChoice}
-          onRequestClose={addFlow.handleCloseImport}
-          onToggleAll={addFlow.toggleAll}
-          onToggleGroup={addFlow.handleToggleGroup}
-          onSelectVariant={addFlow.handleSelectVariant}
-          onImport={addFlow.handleImport}
-          progress={dialogProgress}
-          t={t}
-        />
-      ) : null}
+      <ImportReviewDialog
+        review={addFlow.importReview}
+        busy={loading}
+        blockedReason={blockedReason}
+        progress={dialogProgress}
+        t={t}
+      />
 
       <NotificationsModal
         open={surface.isOpen("notifications")}

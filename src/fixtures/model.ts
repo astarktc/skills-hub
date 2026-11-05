@@ -61,6 +61,10 @@ export type ForeignDir = {
   /** Content fingerprint; equal fingerprints mean byte-identical. */
   fingerprint: string;
   linkTarget: string | null;
+  /** Its `SKILL.md` description (the review tells a Conflict's copies apart by it). */
+  description?: string | null;
+  /** Its newest file's modification time (ms); absent = unknown. */
+  modifiedAt?: number | null;
   /**
    * Its `SKILL.md` fails the scan's manifest gate (Rust `scan_tool_dir`):
    * listed in the plan's `invalid`, never in a group. Absent = valid.

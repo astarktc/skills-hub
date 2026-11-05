@@ -17,7 +17,9 @@
 
 import type { CommandError, FeaturedSkillDto, OnlineSkillDto } from "../bindings";
 import {
+  DAY,
   HOME,
+  HOUR,
   defaultSettings,
   fingerprint,
   globalRoot,
@@ -417,7 +419,11 @@ function rich(now: number): FixtureState {
     foreign("pi", "release-notes", "release notes"),
     foreign("claude_code", "sql-review", "sql review A"),
     foreign("gemini_cli", "sql-review", "sql review B"),
-  ];
+  ].map((dir, i) => ({
+    ...dir,
+    description: `${dir.name.replace(/-/g, " ")} (${dir.tool.replace(/_/g, " ")} copy)`,
+    modifiedAt: now - (i + 1) * 2 * DAY,
+  }));
   return state;
 }
 
@@ -434,27 +440,41 @@ function firstRun(now: number): FixtureState {
   state.settings = defaultSettings(null);
   state.seenTools = [];
   state.gitCacheEntries = 0;
-  const plan: Array<[string, string[], boolean]> = [
-    // name, tools holding it, divergent copies?
-    ["frontend-design", ["claude_code", "cursor"], false],
-    ["pdf", ["claude_code"], false],
-    ["tdd", ["claude_code", "codex", "pi"], false],
-    ["systematic-debugging", ["claude_code", "pi"], false],
-    ["handoff", ["claude_code", "pi"], true],
-    ["ego-browser", ["claude_code", "codex", "amp"], false],
-    ["commit-message", ["codex", "gemini_cli"], true],
-    ["mcp-builder", ["cursor"], false],
-    ["writing-plans", ["claude_code"], false],
-    ["web-design-guidelines", ["cursor", "codex"], false],
-    ["release-notes", ["pi"], false],
-    ["sql-review", ["gemini_cli", "claude_code"], true],
+  const plan: Array<[string, string[], boolean, string[]]> = [
+    // name, tools holding it, divergent copies?, descriptions (one per divergent copy)
+    ["frontend-design", ["claude_code", "cursor"], false, ["Distinctive production-grade frontends"]],
+    ["pdf", ["claude_code"], false, ["Read, fill and merge PDF files"]],
+    ["tdd", ["claude_code", "codex", "pi"], false, ["Test-driven development, red-green-refactor"]],
+    ["systematic-debugging", ["claude_code", "pi"], false, ["Find the root cause before fixing anything"]],
+    ["handoff", ["claude_code", "pi"], true, [
+      "Compact the conversation into a handoff document",
+      "Write a short handoff note for the next session",
+    ]],
+    ["ego-browser", ["claude_code", "codex", "amp"], false, ["Drive the operator's own browser"]],
+    ["commit-message", ["codex", "gemini_cli"], true, [
+      "Conventional Commits with a scope and a body",
+      "Short imperative commit subjects, no body",
+    ]],
+    ["mcp-builder", ["cursor"], false, ["Build Model Context Protocol servers"]],
+    ["writing-plans", ["claude_code"], false, ["Turn a spec into an implementation plan"]],
+    ["web-design-guidelines", ["cursor", "codex"], false, ["Review UI code against web interface guidelines"]],
+    ["release-notes", ["pi"], false, ["Draft release notes from merged pull requests"]],
+    ["sql-review", ["gemini_cli", "claude_code"], true, [
+      "Review SQL for injection and N+1 queries",
+      "Review SQL migrations for locking and rollback",
+    ]],
   ];
-  for (const [name, tools, divergent] of plan) {
+  plan.forEach(([name, tools, divergent, descriptions], groupIndex) => {
     tools.forEach((tool, i) => {
       const linkBack = !divergent && i > 0 && name.length % 2 === 0 ? tools[0] : undefined;
-      state.foreign.push(foreign(tool, name, divergent ? `${name} variant ${i}` : `${name} body`, linkBack));
+      state.foreign.push({
+        ...foreign(tool, name, divergent ? `${name} variant ${i}` : `${name} body`, linkBack),
+        description: descriptions[divergent ? i : 0] ?? null,
+        // Spread over the last weeks; a Conflict's copies were edited apart.
+        modifiedAt: now - (((groupIndex * 5 + i * 9) % 30) + 2) * 7 * HOUR,
+      });
     });
-  }
+  });
   // Two names Skills Hub already manages (the review's Replace / Leave
   // groups): `tdd`'s copies are someone's fork, so Replace answers askable
   // TARGET_EXISTS rows; `frontend-design`'s copies are byte-identical to the

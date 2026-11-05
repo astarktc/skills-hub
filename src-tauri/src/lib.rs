@@ -257,11 +257,43 @@ pub fn run() {
 mod bindings_export {
     /// Regenerates `src/bindings/index.ts` on every `cargo test`; CI fails
     /// when the committed file drifts from the Rust types.
+    ///
+    /// specta writes `field; ` before a documented field's inline doc
+    /// comment, so the raw export carries trailing whitespace that
+    /// `git diff --check` rejects. The export is normalised here — every
+    /// line's trailing whitespace trimmed — so the committed file and every
+    /// regeneration agree byte for byte.
     #[test]
     fn export_bindings() {
         let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/bindings/index.ts");
         super::specta_builder()
-            .export(specta_typescript::Typescript::default(), out)
+            .export(specta_typescript::Typescript::default(), &out)
             .expect("failed to export TypeScript bindings");
+        let raw = std::fs::read_to_string(&out).expect("read exported bindings");
+        let normalised = trim_trailing_whitespace(&raw);
+        if normalised != raw {
+            std::fs::write(&out, normalised).expect("write normalised bindings");
+        }
+    }
+
+    fn trim_trailing_whitespace(text: &str) -> String {
+        let mut out: String = text
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if text.ends_with('\n') {
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn bindings_normalisation_trims_line_ends_and_keeps_the_final_newline() {
+        assert_eq!(
+            trim_trailing_whitespace("a; \n/** doc */\t\nb\n"),
+            "a;\n/** doc */\nb\n"
+        );
+        assert_eq!(trim_trailing_whitespace("x "), "x");
     }
 }

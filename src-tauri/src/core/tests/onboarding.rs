@@ -275,3 +275,63 @@ fn the_store_backed_plan_marks_managed_names_from_the_library() {
         Some(installed.skill_id.as_str())
     );
 }
+
+/// The review's facts per copy (ticket 21): the `SKILL.md` description, the
+/// newest modification time, and — for a managed name — whether the copy is
+/// the Managed skill's bytes.
+#[test]
+fn each_copy_carries_its_description_modified_time_and_managed_comparison() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let central = dir.path().join("central");
+    fs::create_dir_all(&home).unwrap();
+    let store = crate::core::skill_store::SkillStore::new(dir.path().join("t.db"));
+    store.ensure_schema().unwrap();
+    let source = dir.path().join("src/tdd");
+    fs::create_dir_all(&source).unwrap();
+    let body = "---\nname: tdd\ndescription: Red, green, refactor\n---\nmine\n";
+    fs::write(source.join("SKILL.md"), body).unwrap();
+    crate::core::installer::install_imported_skill(
+        &crate::core::installer::InstallerPaths {
+            home: home.clone(),
+            central_dir: central.clone(),
+            cache_dir: dir.path().join("cache"),
+        },
+        &store,
+        &source,
+        None,
+        None,
+    )
+    .unwrap();
+    // Cursor holds the same bytes; Pi holds a fork; Codex an unmanaged name.
+    for (key, text) in [
+        ("cursor", body.to_string()),
+        (
+            "pi",
+            "---\nname: tdd\ndescription: A fork\n---\nfork\n".to_string(),
+        ),
+    ] {
+        let adapter = adapter_by_key(key).unwrap();
+        mark_installed_in(&home, adapter);
+        let skill = home.join(adapter.relative_skills_dir).join("tdd");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), text).unwrap();
+    }
+    installed_with_skill(&home, "codex", "solo", b"solo");
+
+    let plan =
+        super::build_onboarding_plan(&home, &central, &store, &OnboardingScanScope::Installed)
+            .unwrap();
+
+    let tdd = plan.groups.iter().find(|g| g.name == "tdd").unwrap();
+    let cursor = tdd.variants.iter().find(|v| v.tool == "cursor").unwrap();
+    let pi = tdd.variants.iter().find(|v| v.tool == "pi").unwrap();
+    assert_eq!(cursor.same_as_managed, Some(true));
+    assert_eq!(pi.same_as_managed, Some(false));
+    assert_eq!(cursor.description.as_deref(), Some("Red, green, refactor"));
+    assert_eq!(pi.description.as_deref(), Some("A fork"));
+    assert!(cursor.modified_at.is_some_and(|ms| ms > 0));
+    let solo = plan.groups.iter().find(|g| g.name == "solo").unwrap();
+    assert_eq!(solo.variants[0].same_as_managed, None, "not a managed name");
+    assert_eq!(solo.variants[0].description, None);
+}

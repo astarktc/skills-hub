@@ -6,6 +6,8 @@ import StripMarkIcon from "./StripMarkIcon";
 
 type SyncedStripProps = {
   strip: SyncedStripFold;
+  /** The import cascade's token while this row's strip lights (ticket 21); `null` otherwise. */
+  landing?: number | null;
   t: TFunction;
 };
 
@@ -14,7 +16,7 @@ type SyncedStripProps = {
  * is an image with its own name (the Tool label and the state in words);
  * clicking the row, not a mark, opens the skill.
  */
-const SyncedStrip = ({ strip, t }: SyncedStripProps) => {
+const SyncedStrip = ({ strip, landing = null, t }: SyncedStripProps) => {
   if (strip.total === 0) {
     return <span className="text-xs text-faint">{t("library.row.noTargets")}</span>;
   }
@@ -23,7 +25,7 @@ const SyncedStrip = ({ strip, t }: SyncedStripProps) => {
       {/* 12 px marks at a 20 px pitch (8 px gap): the group header's harness
           initials sit over them, two letters each (ticket 31). */}
       <span role="group" aria-label={t("library.row.strip")} className="flex items-center gap-2">
-        {strip.marks.map((mark) => {
+        {strip.marks.map((mark, index) => {
           const name = stripMarkName(mark, t);
           return (
             <span
@@ -34,7 +36,11 @@ const SyncedStrip = ({ strip, t }: SyncedStripProps) => {
               data-mark={mark.state}
               className="inline-flex size-3 shrink-0"
             >
-              <StripMarkIcon state={mark.state} quiet={strip.complete} />
+              <StripMarkIcon
+                state={mark.state}
+                quiet={strip.complete}
+                landing={landing !== null ? { token: landing, index } : undefined}
+              />
             </span>
           );
         })}

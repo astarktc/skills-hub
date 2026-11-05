@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import type { ManagedSkill, OnboardingPlan } from "./types";
 import type { SkillActions } from "../../hooks/useSkillActions";
 import type { ListLens } from "../../hooks/useListLens";
+import type { ImportLanding } from "../../hooks/useImportReview";
 import type { PendingAction } from "../../lib/actionLifecycle";
 import {
   INDIVIDUAL_GROUP_KEY,
@@ -34,6 +35,8 @@ type SkillsListProps = {
   /** How many skills the library holds (the empty state is the library's, not the filter's). */
   librarySize: number;
   plan: OnboardingPlan | null;
+  /** The import cascade (ticket 21): the rows a large import just added, and the run's token. */
+  landing: ImportLanding;
   /** The strip's Tools: the effective target set, registry order, labelled. */
   stripTools: readonly { id: string; label: string }[];
   /** The Tool catalog's label for any key (a row outside the set). */
@@ -80,6 +83,7 @@ const SkillsList = ({
   lens,
   librarySize,
   plan,
+  landing,
   stripTools,
   labelOf,
   isDetected,
@@ -158,6 +162,7 @@ const SkillsList = ({
           actions={actions}
           onOpen={onOpen}
           labelOf={labelOf}
+          landing={landing && landing.ids.has(skill.id) ? landing.token : null}
           t={t}
         />
       ))}
@@ -177,7 +182,18 @@ const SkillsList = ({
           ) : null}
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {discovered > 0 ? (
-              <Button variant="solid" tone="accent" onClick={onReviewImport} disabled={busy} title={blockedReason ?? undefined}>
+              <Button
+                data-import-review=""
+                variant="solid"
+                tone="accent"
+                onClick={onReviewImport}
+                disabled={busy}
+                // Held focus survives the scan Review starts, so the dialog
+                // returns it here (audit F2); the reason says why it waits.
+                focusableWhenDisabled
+                title={blockedReason ?? undefined}
+                aria-description={busy ? (blockedReason ?? undefined) : undefined}
+              >
                 <Inbox />
                 {t("library.discovered.review", { count: discovered })}
               </Button>
@@ -246,9 +262,14 @@ const SkillsList = ({
             tone="accent"
             size="sm"
             className="ml-auto"
+            data-import-review=""
             onClick={onReviewImport}
             disabled={busy}
+            // Held focus survives the scan Review starts, so the dialog
+            // returns it here (audit F2); the reason says why it waits.
+            focusableWhenDisabled
             title={blockedReason ?? undefined}
+            aria-description={busy ? (blockedReason ?? undefined) : undefined}
           >
             {t("library.discovered.review", { count: discovered })}
           </Button>

@@ -528,6 +528,41 @@ describe("first-run and empty", () => {
     }
   });
 
+  it("ticket 21: each copy carries its description, modified time and comparison with the managed copy", async () => {
+    const { handlers } = backendFor("first-run");
+    const plan = await handlers.getOnboardingPlan();
+    const handoff = plan.groups.find((g) => g.name === "handoff")!;
+    expect(handoff.has_conflict).toBe(true);
+    expect(handoff.variants.map((v) => v.description)).toEqual([
+      "Compact the conversation into a handoff document",
+      "Write a short handoff note for the next session",
+    ]);
+    expect(handoff.variants.every((v) => typeof v.modified_at === "number")).toBe(true);
+    expect(handoff.variants.every((v) => v.same_as_managed === null)).toBe(true);
+    // tdd's copies are someone's fork; frontend-design's are the managed bytes.
+    const compare = (name: string) => plan.groups.find((g) => g.name === name)!.variants.map((v) => v.same_as_managed);
+    expect(compare("tdd")).toEqual([false, false, false]);
+    expect(compare("frontend-design")).toEqual([true, true]);
+  });
+
+  it("ticket 21: remove_divergent removes the copies that differ; without it they stay", async () => {
+    for (const remove of [false, true]) {
+      const { handlers } = backendFor("first-run");
+      const group = (await handlers.getOnboardingPlan()).groups.find((g) => g.name === "handoff")!;
+      const report = await handlers.importOnboardingSelection(
+        [{ group_name: group.name, chosen_path: group.variants[0].path, name: null, remove_divergent: remove }],
+        { auto_sync: false, tools: null, remove_originals: false },
+        sink().channel,
+      );
+      const status = report.groups[0].status;
+      if (status.status !== "imported") throw new Error(`expected imported, got ${status.status}`);
+      expect(status.central_path).toMatch(/handoff$/);
+      expect(status.originals.map((o) => [o.tool, o.status.status]).sort()).toEqual(
+        [["claude_code", "left_in_place"], ["pi", remove ? "removed" : "kept_divergent"]],
+      );
+    }
+  });
+
   it("empty has nothing managed and nothing to import", async () => {
     const { handlers, state } = backendFor("empty");
     const typed: FixtureState = state;

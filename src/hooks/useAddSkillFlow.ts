@@ -1,17 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   GitSkillCandidate,
-  ImportProgressDto,
   InstallProgressDto,
   InstallRequest,
   InstallSource,
   LocalSkillCandidate,
-  OnboardingPlan,
-  OnboardingSelectionDto,
 } from "../components/skills/types";
 
 import {
-  importOutcome,
   installBatchSettlements,
   installOutcome,
   type InstallSettlement,
@@ -29,10 +25,11 @@ import {
   type SettlementNotice,
   type SettlementRow,
 } from "../lib/addFlow";
-import { defaultImportVariantPath, repoInfo } from "../lib/skillPresentation";
+import { repoInfo } from "../lib/skillPresentation";
 import { createProgressChannel, pickFolder } from "../lib/platform";
-import { invokeTauri, isTauri } from "../lib/tauri";
+import { invokeTauri } from "../lib/tauri";
 import { useCandidatePick, type CandidatePick } from "./useCandidatePick";
+import { useImportReview } from "./useImportReview";
 import type { SkillLibrary } from "./useSkillLibrary";
 import type { SyncOrchestration } from "./useSyncOrchestration";
 import type { ToolCatalog } from "./useToolCatalog";
@@ -48,6 +45,7 @@ export type AddSkillFlowDeps = {
     | "handleSyncTargetChange"
     | "resolveGlobalCollisions"
     | "scanScopeRevision"
+    | "settleCollisionParts"
     | "syncTargets"
   >;
   /** The Tool catalog: which Tools the scope offers, and their labels. */
@@ -159,7 +157,6 @@ export function useAddSkillFlow({
   const {
     loading,
     runAction,
-    setActionMessage,
     reportProgress,
     setError,
     formatError,
@@ -169,20 +166,13 @@ export function useAddSkillFlow({
     autoSyncEnabled,
     handleSyncTargetChange,
     resolveGlobalCollisions,
-    scanScopeRevision,
     syncTargets,
   } = sync;
   const { installedTools, toolLabelById, tools } = catalog;
   const { isSkillNameTaken, loadManagedSkills } = library;
 
-  const [plan, setPlan] = useState<OnboardingPlan | null>(null);
-  const [selected, setSelected] = useState<Record<string, boolean>>({});
-  const [variantChoice, setVariantChoice] = useState<Record<string, string>>(
-    {},
-  );
   const { isOpen, openDialog, closeDialog, dismissDialog } = surface;
   const showAddModal = isOpen("addSkill");
-  const showImportModal = isOpen("import");
 
   // ---------------------------------------------------------------------
   // Add: the draft, the step and the two pickers are this hook's own.
@@ -258,6 +248,18 @@ export function useAddSkillFlow({
     () => tools.filter((tool) => syncTargets[tool.id]).map((t) => t.id),
     [syncTargets, tools],
   );
+
+  // Import: the onboarding plan and its review — this world's other half.
+  const importFlow = useImportReview({
+    t,
+    reporter,
+    sync,
+    catalog,
+    deployTools: getSelectedIds,
+    loadManagedSkills,
+    surface,
+    isReviewWanted,
+  });
 
   /**
    * The Add action as one backend batch (`installSelection`, D12): every
@@ -550,6 +552,9 @@ export function useAddSkillFlow({
       const single = picks.length === 1 ? source.kind : "selection";
       await applyOutcome(installOutcome(settlements, { t, toolLabelById, source: single }), {
         reload: () => refreshWithoutFailingAction(loadManagedSkills),
+        // The settlement step is Add's Result: while it stays open (a failure
+        // or a cancellation to read) the run's toast waits for its Close (F5).
+        resultShownIn: "addSkill",
         closeModal: () => {
           const current = settlementRef.current;
           if (!current || !settlementComplete(current.entries)) return;
@@ -762,183 +767,16 @@ export function useAddSkillFlow({
     close,
   };
 
-  // ---------------------------------------------------------------------
-  // Import: the onboarding plan and its review.
-  // ---------------------------------------------------------------------
-
-  /** Fetch the onboarding plan and reset the selection to its defaults. */
-  const fetchPlan = useCallback(async () => {
-    const result = await invokeTauri("getOnboardingPlan");
-    setPlan(result);
-    const defaultSelected: Record<string, boolean> = {};
-    const defaultChoice: Record<string, string> = {};
-    result.groups.forEach((group) => {
-      defaultSelected[group.name] = true;
-      const chosen = defaultImportVariantPath(group);
-      if (chosen) {
-        defaultChoice[group.name] = chosen;
-      }
-    });
-    setSelected(defaultSelected);
-    setVariantChoice(defaultChoice);
-    return result;
-  }, []);
-
-  /**
-   * fetchPlan as its own action (header progress, error toast). Resolves to
-   * the plan, or undefined when loading it failed.
-   */
-  const loadPlan = useCallback(
-    () => runAction({ read: true, label: t("activity.labels.scan"), activity: t("activity.scanning") }, fetchPlan),
-    [fetchPlan, runAction, t],
-  );
-
-  useEffect(() => {
-    if (!isTauri) return;
-    // Fire-and-forget load on mount (see loadManagedSkills effect) and again
-    // whenever the saved tool configuration changes: the backend resolves
-    // the scan's scope from it, so the banner, its count and the reviewed
-    // plan must follow the configuration, never a plan from before it.
-    // loadPlan's intentional eager progress setState is preserved.
-    void (async () => {
-      await loadPlan();
-    })();
-  }, [loadPlan, scanScopeRevision]);
-
-  /** Modals stay put while their action runs (its progress and Cancel are at the dialog's foot). */
-  const handleCloseImport = useCallback(() => {
-    if (!loading) closeDialog("import");
-  }, [closeDialog, loading]);
-
-  /**
-   * Review always reviews a plan fetched now: the import re-derives the
-   * plan under the current scope and acts on the originals it finds, so the
-   * operator must have seen exactly those. The banner's plan is only the
-   * invitation.
-   */
-  const reviewGenerationRef = useRef(0);
-  const handleReviewImport = useCallback(async () => {
-    // Still wanted while it is the latest request and its invitation is on
-    // screen — checked when its turn comes and before the dialog opens.
-    const generation = ++reviewGenerationRef.current;
-    const stillWanted = () =>
-      reviewGenerationRef.current === generation && (isReviewWanted?.() ?? true);
-    const result = await runAction(
-      { read: true, stillWanted, label: t("activity.labels.scan"), activity: t("activity.scanning") },
-      fetchPlan,
-    );
-    if (result && stillWanted()) {
-      openDialog({ kind: "import" });
-    }
-  }, [fetchPlan, isReviewWanted, openDialog, runAction, t]);
-
-  const handleToggleGroup = useCallback(
-    (groupName: string, checked: boolean) => {
-      setSelected((prev) => ({
-        ...prev,
-        [groupName]: checked,
-      }));
-    },
-    [],
-  );
-
-  const handleSelectVariant = useCallback((groupName: string, path: string) => {
-    setVariantChoice((prev) => ({
-      ...prev,
-      [groupName]: path,
-    }));
-  }, []);
-
-  const toggleAllGroups = useCallback(
-    (checked: boolean) => {
-      if (!plan) return;
-      const next: Record<string, boolean> = {};
-      plan.groups.forEach((group) => {
-        next[group.name] = checked;
-      });
-      setSelected(next);
-    },
-    [plan],
-  );
-
-  /**
-   * Import is one backend call: the selections plus the auto-sync policy.
-   * The backend admits each chosen variant, finalizes it, and either syncs
-   * it (auto-sync on — every Tool holding a byte-identical variant is
-   * overwritten in place, whether or not the policy names it) or removes
-   * the byte-identical originals; this side only states the selection and
-   * renders the report.
-   */
-  const handleImport = async () => {
-    if (!plan) return;
-    await runAction({ label: t("activity.labels.import"), activity: t("activity.importing") }, async () => {
-      const selections: OnboardingSelectionDto[] = [];
-      for (const group of plan.groups) {
-        if (!selected[group.name]) continue;
-        const chosenPath =
-          variantChoice[group.name] ?? defaultImportVariantPath(group);
-        if (!chosenPath) continue;
-        selections.push({
-          group_name: group.name,
-          chosen_path: chosenPath,
-          name: null,
-        });
-      }
-
-      const onProgress = await createProgressChannel<ImportProgressDto>((progress) => {
-        setActionMessage(
-          t(
-            progress.phase === "admitting"
-              ? "actions.importStep"
-              : "actions.importApplyStep",
-            {
-              index: progress.index,
-              total: progress.total,
-              name: progress.group_name,
-            },
-          ),
-        );
-      });
-      const report = await invokeTauri(
-        "importOnboardingSelection",
-        selections,
-        {
-          auto_sync: autoSyncEnabled,
-          tools: autoSyncEnabled ? getSelectedIds() : null,
-          // Today's policy until the review offers the per-run choice
-          // (ticket 21): auto-sync off removes the byte-identical
-          // originals; auto-sync on ignores it (the sync takes them over).
-          remove_originals: true,
-        },
-        onProgress,
-      );
-      await applyOutcome(importOutcome(report, { t, toolLabelById }), {
-        reload: () =>
-          refreshWithoutFailingAction(async () => {
-            await loadManagedSkills();
-            await fetchPlan();
-          }),
-        closeModal: () => dismissDialog("import"),
-      });
-    });
-  };
-
   return {
     // Add — intents and the dialog's view.
     open,
     install,
     retry,
     add,
-    // Import.
-    plan,
-    selected,
-    variantChoice,
-    showImportModal,
-    handleCloseImport,
-    handleReviewImport,
-    handleToggleGroup,
-    handleSelectVariant,
-    toggleAll: toggleAllGroups,
-    handleImport,
+    // Import — the plan (the banner's invitation), Review, and the review's view.
+    plan: importFlow.plan,
+    handleReviewImport: importFlow.openReview,
+    importReview: importFlow.view,
+    importLanding: importFlow.landing,
   };
 }

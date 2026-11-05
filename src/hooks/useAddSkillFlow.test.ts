@@ -19,12 +19,14 @@ import type {
   InstallBatchReport,
   InstallRequest,
   LocalSkillCandidate,
+  OnboardingGroup,
   OnboardingPlan,
+  OnboardingVariant,
 } from "../components/skills/types";
 import * as folds from "../lib/reportOutcome";
 import { describeCommandError } from "../commandError";
 import type { AddSkillFlowDeps } from "./useAddSkillFlow";
-import type { SyncOrchestration } from "./useSyncOrchestration";
+import type { CollisionPart, SyncOrchestration } from "./useSyncOrchestration";
 
 vi.mock("sonner", () => ({
   // warning/info: the real reporter (the cancellation cases) uses every kind.
@@ -261,6 +263,12 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
     scanScopeRevision: 0,
     // The one overwrite ask + retry: answers the report as settled.
     resolveGlobalCollisions: vi.fn<SyncOrchestration["resolveGlobalCollisions"]>(async (report) => report),
+    // The one ask over several reports (Import): answers every part as settled.
+    settleCollisionParts: vi.fn(async (parts: readonly CollisionPart[]) => ({
+      parts: parts.map((part) => ({ ...part, declined: [] })),
+      retried: false,
+      projectIds: [],
+    })) as unknown as SyncOrchestration["settleCollisionParts"],
     // cursor is deselected; goose is selected but not installed and stays
     // in the deploy set (round 12 D3: the batch reports it as a skip).
     syncTargets: { claude: true, cursor: false, goose: true } as Record<string, boolean>,
@@ -840,6 +848,8 @@ describe("Add: the Result closes only when every accumulated entry is complete (
     expect(installCalls()).toHaveLength(2);
     expect(installCalls()[1][1]).toMatchObject({ candidates: [{ subpath: "skills/beta", name_override: null }] });
     expect(setup.reporter.applyOutcome).toHaveBeenCalledTimes(1);
+    // The settlement is Add's Result: its toast waits for the Close (F5).
+    expect(vi.mocked(setup.reporter.applyOutcome).mock.calls[0][1]).toMatchObject({ resultShownIn: "addSkill" });
     expect(setup.reporter.notify).toHaveBeenCalledTimes(1);
     return result;
   }
@@ -1143,30 +1153,38 @@ describe("Add: Cancel (D20) over the real reporter", () => {
 });
 
 describe("useAddSkillFlow import flow", () => {
-  const PLAN: OnboardingPlan = {
-    total_tools_scanned: 1,
-    group_count: 1,
-    copy_count: 1,
+  const variant = (
+    tool: string,
+    name: string,
+    overrides: Partial<OnboardingVariant> = {},
+  ): OnboardingVariant => ({
+    tool,
+    name,
+    path: `/home/.${tool}/skills/${name}`,
+    fingerprint: null,
+    is_link: false,
+    link_target: null,
+    description: null,
+    modified_at: null,
+    same_as_managed: null,
+    ...overrides,
+  });
+  const group = (name: string, variants: OnboardingVariant[], overrides: Partial<OnboardingGroup> = {}): OnboardingGroup => ({
+    name,
+    variants,
+    has_conflict: false,
+    name_is_managed: false,
+    managed_skill_id: null,
+    ...overrides,
+  });
+  const planOf = (groups: OnboardingGroup[]): OnboardingPlan => ({
+    total_tools_scanned: 2,
+    group_count: groups.length,
+    copy_count: groups.reduce((n, g) => n + g.variants.length, 0),
     invalid: [],
-    groups: [
-      {
-        name: "alpha",
-        has_conflict: false,
-        name_is_managed: false,
-        managed_skill_id: null,
-        variants: [
-          {
-            tool: "claude",
-            name: "alpha",
-            path: "/home/.claude/skills/alpha",
-            fingerprint: null,
-            is_link: false,
-            link_target: null,
-          },
-        ],
-      },
-    ],
-  };
+    groups,
+  });
+  const PLAN = planOf([group("alpha", [variant("claude", "alpha")])]);
 
   /** An `imported` group with nothing to report. */
   const importedGroup = (
@@ -1175,26 +1193,29 @@ describe("useAddSkillFlow import flow", () => {
     status: "imported",
     skill_id: "imported-id",
     skill_name: "alpha",
+    central_path: "/central/alpha",
     targets: [],
     forced_tools: [],
     originals: [],
     ...overrides,
   });
 
-  const report = (status: ImportGroupStatus): ImportReport => ({
-    groups: [{ group_name: "alpha", status }],
+  const report = (status: ImportGroupStatus, group_name = "alpha"): ImportReport => ({
+    groups: [{ group_name, status }],
   });
 
   /**
    * Plan loads on mount and again on Review (the reviewed plan is always a
-   * fresh one); the import is one command returning one report — the hook
+   * fresh one); each import is one command returning one report — the hook
    * states the selection and renders what comes back.
    */
   function stubImportBackend(
     planCalls: (() => Promise<unknown>)[],
-    importReport: ImportReport = report(importedGroup()),
+    importReports: ImportReport | ImportReport[] = report(importedGroup()),
   ) {
     let call = 0;
+    let run = 0;
+    const reports = Array.isArray(importReports) ? importReports : [importReports];
     mockInvoke.mockImplementation((command) => {
       switch (command) {
         case "getOnboardingPlan": {
@@ -1202,134 +1223,260 @@ describe("useAddSkillFlow import flow", () => {
           call += 1;
           return next() as Promise<unknown>;
         }
-        case "importOnboardingSelection":
-          return Promise.resolve(importReport);
+        case "importOnboardingSelection": {
+          const next = reports[Math.min(run, reports.length - 1)];
+          run += 1;
+          return Promise.resolve(next);
+        }
         default:
           return Promise.resolve(undefined);
       }
     });
   }
 
-  async function runImport(setup: ReturnType<typeof makeDeps>) {
-    const { result } = renderHook(() => useAddSkillFlow(setup.deps));
+  async function openReview(setup: ReturnType<typeof makeDeps>) {
+    const rendered = renderHook(() => useAddSkillFlow(setup.deps));
+    const { result } = rendered;
     await waitFor(() => expect(result.current.plan).not.toBeNull());
     await act(async () => {
       await result.current.handleReviewImport();
     });
+    return rendered;
+  }
+
+  async function runImport(setup: ReturnType<typeof makeDeps>) {
+    const { result } = await openReview(setup);
     await act(async () => {
-      await result.current.handleImport();
+      await result.current.importReview.importSelected();
     });
     return result;
   }
 
-  function importCall() {
-    return mockInvoke.mock.calls.find(
-      ([cmd]) => cmd === "importOnboardingSelection",
-    );
+  function importCalls() {
+    return mockInvoke.mock.calls.filter(([cmd]) => cmd === "importOnboardingSelection");
   }
 
-  it("imports every selected group in one call carrying the auto-sync policy", async () => {
+  it("imports every selected group in one call carrying the auto-deploy policy, then shows the Result", async () => {
     stubImportBackend([() => Promise.resolve(PLAN)]);
     const setup = makeDeps();
 
     const result = await runImport(setup);
 
     // One command per batch — not an install/sync/remove sequence per group.
-    expect(
-      mockInvoke.mock.calls.filter(
-        ([cmd]) => cmd === "importOnboardingSelection",
-      ),
-    ).toHaveLength(1);
-    const [, selections, policy] = importCall()!;
-    expect(selections).toEqual([
-      {
-        group_name: "alpha",
-        chosen_path: "/home/.claude/skills/alpha",
-        name: null,
-      },
-    ]);
+    expect(importCalls()).toHaveLength(1);
+    const [, selections, policy] = importCalls()[0];
+    expect(selections).toEqual([{ group_name: "alpha", chosen_path: "/home/.claude/skills/alpha", name: null }]);
     // goose is selected but not installed and still named; cursor is deselected.
     expect(policy).toEqual({ auto_sync: true, tools: ["claude", "goose"], remove_originals: true });
     expect(setup.reporter.notify).toHaveBeenCalledWith("success", t("outcome.done.imported", { count: 1 }), undefined);
     expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([]);
-    expect(result.current.showImportModal).toBe(false);
+    // The Result shows the outcome itself: its toast waits for the Close (F5).
+    expect(vi.mocked(setup.reporter.applyOutcome).mock.calls[0][1]).toMatchObject({ resultShownIn: "import" });
+    // The dialog stays on its Result: the operator reads it and closes it.
+    expect(result.current.importReview.open).toBe(true);
+    expect(result.current.importReview.step).toBe("result");
+    expect(result.current.importReview.result?.headline).toBe(t("outcome.done.imported", { count: 1 }));
+    expect(result.current.importReview.result?.rows.map((row) => [row.name, row.status])).toEqual([["alpha", "imported"]]);
+    act(() => result.current.importReview.close());
+    expect(result.current.importReview.open).toBe(false);
   });
 
-  it("names the real directory, not a link listed before it, as a consistent group's chosen variant", async () => {
+  it("names the real directory, not a link listed before it, as a consistent group's chosen copy", async () => {
     // Registry order lists Claude before Pi, so the plan lists Claude's
     // symlink first even though it points at Pi's real directory. A link
     // is never what the app copies when the directory is also in the group.
-    const linked: OnboardingPlan = {
-      total_tools_scanned: 2,
-      group_count: 1,
-      copy_count: 2,
-      invalid: [],
-      groups: [
-        {
-          name: "alpha",
-          has_conflict: false,
-          name_is_managed: false,
-          managed_skill_id: null,
-          variants: [
-            {
-              tool: "claude",
-              name: "alpha",
-              path: "/home/.claude/skills/alpha",
-              fingerprint: "same",
-              is_link: true,
-              link_target: "/home/.pi/agent/skills/alpha",
-            },
-            {
-              tool: "pi",
-              name: "alpha",
-              path: "/home/.pi/agent/skills/alpha",
-              fingerprint: "same",
-              is_link: false,
-              link_target: null,
-            },
-          ],
-        },
-      ],
-    };
+    const linked = planOf([
+      group("alpha", [
+        variant("claude", "alpha", { fingerprint: "same", is_link: true, link_target: "/home/.pi/skills/alpha" }),
+        variant("pi", "alpha", { fingerprint: "same" }),
+      ]),
+    ]);
     stubImportBackend([() => Promise.resolve(linked)]);
     const setup = makeDeps();
 
-    const result = await runImport(setup);
+    await runImport(setup);
 
-    expect(result.current.variantChoice).toEqual({
-      alpha: "/home/.pi/agent/skills/alpha",
-    });
-    const [, selections] = importCall()!;
-    expect(selections).toEqual([
-      {
-        group_name: "alpha",
-        chosen_path: "/home/.pi/agent/skills/alpha",
-        name: null,
-      },
-    ]);
+    const [, selections] = importCalls()[0];
+    expect(selections).toEqual([{ group_name: "alpha", chosen_path: "/home/.pi/skills/alpha", name: null }]);
   });
 
-  it("asks for original removal instead of tools when auto-sync is off", async () => {
+  it("sends the per-run originals choice when auto-deploy is off (D13)", async () => {
     stubImportBackend([() => Promise.resolve(PLAN)]);
     const setup = makeDeps();
     setup.sync.autoSyncEnabled = false;
 
-    await runImport(setup);
+    const { result } = await openReview(setup);
+    // Default: today's policy — remove the identical originals.
+    expect(result.current.importReview.model?.action.label).toBe(t("importReview.action.importAndRemove", { count: 1 }));
+    act(() => result.current.importReview.setRemoveOriginals(false));
+    expect(result.current.importReview.model?.action.label).toBe(t("importReview.action.import"));
+    await act(async () => {
+      await result.current.importReview.importSelected();
+    });
 
-    const [, , policy] = importCall()!;
-    expect(policy).toEqual({ auto_sync: false, tools: null, remove_originals: true });
+    const [, , policy] = importCalls()[0];
+    expect(policy).toEqual({ auto_sync: false, tools: null, remove_originals: false });
+  });
+
+  it("starts a Conflict and a managed name unchecked; Replace and a chosen copy with its keep/remove choice are sent", async () => {
+    const plan = planOf([
+      group("alpha", [variant("claude", "alpha")]),
+      group("beta", [variant("claude", "beta", { fingerprint: "b1" }), variant("cursor", "beta", { fingerprint: "b2" })], {
+        has_conflict: true,
+      }),
+      group("tdd", [variant("cursor", "tdd", { same_as_managed: false })], { name_is_managed: true, managed_skill_id: "tdd-id" }),
+    ]);
+    stubImportBackend([() => Promise.resolve(plan)], { groups: [] });
+    const setup = makeDeps();
+
+    const { result } = await openReview(setup);
+    const model = result.current.importReview.model!;
+    expect(model.importRows.map((row) => [row.name, row.checked])).toEqual([
+      ["alpha", true],
+      ["beta", false],
+    ]);
+    expect(model.managedRows.map((row) => [row.name, row.replace])).toEqual([["tdd", false]]);
+
+    act(() => result.current.importReview.chooseVariant("beta", "/home/.cursor/skills/beta"));
+    act(() => result.current.importReview.setRemoveOthers("beta", true));
+    act(() => result.current.importReview.setReplace("tdd", true));
+    await act(async () => {
+      await result.current.importReview.importSelected();
+    });
+
+    const [, selections] = importCalls()[0];
+    expect(selections).toEqual([
+      { group_name: "alpha", chosen_path: "/home/.claude/skills/alpha", name: null },
+      { group_name: "beta", chosen_path: "/home/.cursor/skills/beta", name: null, remove_divergent: true },
+      { group_name: "tdd", chosen_path: "/home/.cursor/skills/tdd", name: null, replace: true },
+    ]);
+  });
+
+  it("a Conflict sent without remove-other folds its kept different copy as a quiet note, not 'to review' (F7)", async () => {
+    const plan = planOf([
+      group("beta", [variant("claude", "beta", { fingerprint: "b1" }), variant("cursor", "beta", { fingerprint: "b2" })], {
+        has_conflict: true,
+      }),
+    ]);
+    const kept = importedGroup({
+      skill_name: "beta",
+      originals: [{ path: "/home/.cursor/skills/beta", tool: "cursor", status: { status: "kept_divergent" } }],
+    });
+    stubImportBackend([() => Promise.resolve(plan)], report(kept, "beta"));
+    const setup = makeDeps();
+
+    const { result } = await openReview(setup);
+    act(() => result.current.importReview.chooseVariant("beta", "/home/.claude/skills/beta"));
+    await act(async () => {
+      await result.current.importReview.importSelected();
+    });
+
+    const [, selections] = importCalls()[0];
+    expect(selections).toEqual([{ group_name: "beta", chosen_path: "/home/.claude/skills/beta", name: null }]);
+    expect(result.current.importReview.result?.headline).toBe(t("outcome.done.imported", { count: 1 }));
+    expect(result.current.importReview.result?.rows[0].attention).toBe(false);
+    const [outcome] = vi.mocked(setup.reporter.applyOutcome).mock.calls[0];
+    expect(outcome.warnings).toEqual([]);
+    expect(outcome.notes).toEqual([
+      t("outcome.keptDifferentLine", { name: "beta", count: 1, harnesses: "CURSOR" }),
+    ]);
+  });
+
+  it("routes the import's collisions into the one ask and folds the answered rows into the Result", async () => {
+    const collided = importedGroup({
+      targets: [
+        {
+          skill_id: "imported-id",
+          skill_name: "alpha",
+          tool_key: "cursor",
+          status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/home/.cursor/skills/alpha", modifiedAt: null, sameContent: false } },
+        },
+      ],
+    });
+    stubImportBackend([() => Promise.resolve(PLAN)], report(collided));
+    const setup = makeDeps();
+    const declined = {
+      skill_id: "imported-id",
+      skill_name: "alpha",
+      tool_key: "cursor",
+      status: { status: "declined" as const },
+    };
+    vi.mocked(setup.sync.settleCollisionParts).mockImplementation((async (parts: readonly CollisionPart[]) => ({
+      parts: parts.map((part) => ({ ...part, report: [declined], declined: [] })),
+      retried: true,
+      projectIds: [],
+    })) as unknown as SyncOrchestration["settleCollisionParts"]);
+
+    const result = await runImport(setup);
+
+    expect(setup.sync.settleCollisionParts).toHaveBeenCalledTimes(1);
+    const [parts] = vi.mocked(setup.sync.settleCollisionParts).mock.calls[0];
+    expect(parts).toEqual([
+      {
+        kind: "sync",
+        report: (collided as Extract<ImportGroupStatus, { status: "imported" }>).targets,
+        skills: [{ skill_id: "imported-id", name: "alpha", source_path: "/central/alpha" }],
+        policy: { overwriteIfSameContent: true },
+      },
+    ]);
+    const row = result.current.importReview.result!.rows[0];
+    expect(row.lines).toContain(t("importReview.result.declined", { harnesses: "CURSOR" }));
+  });
+
+  it("Retry re-sends the failed group alone; the next review annotates and deselects a group still failing", async () => {
+    const twoGroups = planOf([group("alpha", [variant("claude", "alpha")]), group("beta", [variant("claude", "beta")])]);
+    const rateLimited = { code: "RATE_LIMITED" as const, resetMinutes: 1 };
+    stubImportBackend(
+      [() => Promise.resolve(twoGroups)],
+      [
+        { groups: [{ group_name: "alpha", status: importedGroup() }, { group_name: "beta", status: { status: "failed", error: rateLimited } }] },
+        { groups: [{ group_name: "beta", status: { status: "failed", error: rateLimited } }] },
+      ],
+    );
+    const setup = makeDeps();
+
+    const result = await runImport(setup);
+    const rows = () => result.current.importReview.result!.rows;
+    expect(rows().map((row) => [row.name, row.status, row.retryable])).toEqual([
+      ["alpha", "imported", false],
+      ["beta", "failed", true],
+    ]);
+    await act(async () => {
+      await result.current.importReview.retry(["beta"]);
+    });
+    const [, retried] = importCalls()[1];
+    expect(retried).toEqual([{ group_name: "beta", chosen_path: "/home/.claude/skills/beta", name: null }]);
+    // The run's rows: alpha's outcome kept, beta's replaced in place.
+    expect(rows().map((row) => row.name)).toEqual(["alpha", "beta"]);
+
+    act(() => result.current.importReview.close());
+    await act(async () => {
+      await result.current.handleReviewImport();
+    });
+    const beta = result.current.importReview.model!.importRows.find((row) => row.name === "beta")!;
+    expect(beta.checked).toBe(false);
+    expect(beta.lastFailure).toBe(describeCommandError(rateLimited, t));
+  });
+
+  it("closing the Result of a large import with auto-deploy plays the strip cascade once", async () => {
+    const names = Array.from({ length: 10 }, (_, i) => `skill-${i}`);
+    const plan = planOf(names.map((name) => group(name, [variant("claude", name)])));
+    stubImportBackend([() => Promise.resolve(plan)], {
+      groups: names.map((name) => ({
+        group_name: name,
+        status: importedGroup({ skill_id: `${name}-id`, skill_name: name, central_path: `/central/${name}` }),
+      })),
+    });
+    const setup = makeDeps();
+
+    const result = await runImport(setup);
+    expect(result.current.importLanding).toBeNull();
+    act(() => result.current.importReview.close());
+    expect(result.current.importLanding?.ids).toEqual(new Set(names.map((name) => `${name}-id`)));
   });
 
   it("Review always reviews a plan fetched now, never the banner's cached one", async () => {
-    // The backend resolves the scan's scope from the saved configuration at
-    // fetch time; the import acts on what it finds under that scope, so the
-    // reviewed plan must be current.
-    const widened = {
-      ...PLAN,
-      groups: [...PLAN.groups, { name: "beta", has_conflict: false, name_is_managed: false, managed_skill_id: null, variants: [
-        { tool: "cursor", name: "beta", path: "/home/.cursor/skills/beta", fingerprint: "f2", is_link: false, link_target: null },
-      ] }],
-    };
+    const widened = planOf([...PLAN.groups, group("beta", [variant("cursor", "beta", { fingerprint: "f2" })])]);
     stubImportBackend([() => Promise.resolve(PLAN), () => Promise.resolve(widened)]);
     const setup = makeDeps();
     const { result } = renderHook(() => useAddSkillFlow(setup.deps));
@@ -1340,12 +1487,13 @@ describe("useAddSkillFlow import flow", () => {
       await result.current.handleReviewImport();
     });
     expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "getOnboardingPlan")).toHaveLength(2);
-    expect(result.current.showImportModal).toBe(true);
+    expect(result.current.importReview.open).toBe(true);
+    expect(result.current.importReview.step).toBe("review");
     expect(result.current.plan!.groups.map((g) => g.name)).toEqual(["alpha", "beta"]);
-    expect(result.current.selected).toEqual({ alpha: true, beta: true });
+    expect(result.current.importReview.model!.importRows.map((row) => row.checked)).toEqual([true, true]);
   });
 
-  it("reloads the plan when the saved tool configuration changes", async () => {
+  it("reloads the plan when the saved harness configuration changes", async () => {
     // A narrowed scope can empty the plan (the banner disappears) and a
     // widened one can populate it: the banner follows the configuration.
     const empty = { ...PLAN, group_count: 0, copy_count: 0, groups: [] };
@@ -1372,17 +1520,16 @@ describe("useAddSkillFlow import flow", () => {
 
     const result = await runImport(setup);
 
-    // Every selected group imported, so the action completed: success toast
-    // fires and the modal closes...
+    // The import completed: its success toast fires and the Result shows...
     expect(setup.reporter.notify).toHaveBeenCalledWith("success", t("outcome.done.imported", { count: 1 }), undefined);
-    expect(result.current.showImportModal).toBe(false);
+    expect(result.current.importReview.step).toBe("result");
     // ...while the reload failure is surfaced on its own, not as an import
     // failure.
     expect(setup.reporter.setError).toHaveBeenCalledWith("plan reload boom");
     expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([]);
   });
 
-  it.each([false, true])("applies import fold completion=%s and publishes its entries", async (complete) => {
+  it.each([false, true])("applies the import fold (reload=%s), publishes its entries and stays on the Result", async (complete) => {
     stubImportBackend([() => Promise.resolve(PLAN)]);
     const setup = makeDeps();
     const outcome: folds.Outcome = { toast: { kind: "warning", tone: "failure", message: "fold toast" }, errors: [{ title: "error", message: "detail" }], warnings: [{ title: "warning", message: "detail" }], notes: [], completion: { reload: complete, closeModal: complete, conflict: false } };
@@ -1390,7 +1537,7 @@ describe("useAddSkillFlow import flow", () => {
     const result = await runImport(setup);
     expect(spy).toHaveBeenCalledWith(report(importedGroup()), expect.objectContaining({ t }));
     expect(setup.library.loadManagedSkills).toHaveBeenCalledTimes(complete ? 1 : 0);
-    expect(result.current.showImportModal).toBe(!complete);
+    expect(result.current.importReview.open).toBe(true);
     expect(setup.reporter.showActionErrors).toHaveBeenCalledWith(outcome.errors);
     expect(setup.reporter.showActionWarnings).toHaveBeenCalledWith(outcome.warnings);
     expect(setup.reporter.notify).toHaveBeenCalledWith("warning", "fold toast", undefined);

@@ -23,6 +23,7 @@ import {
   headlineTone,
   enableOutcome,
   invocationEditOutcome,
+  importGroupKind,
   importOutcome,
   installBatchSettlements,
   installOutcome,
@@ -1303,6 +1304,7 @@ const imported = (
   status: "imported",
   skill_id: "git",
   skill_name: "git",
+  central_path: "/central/git",
   targets: [],
   forced_tools: [],
   originals: [],
@@ -1475,8 +1477,10 @@ describe("importOutcome", () => {
       "removed original": ["success", line(imported1)],
       "original left in place by choice": ["success", line(imported1)],
       "managed name without a decision": ["skipped", line(["outcome.skipped", 1])],
-      "replaced over an identical copy": ["success", line(imported1)],
-      "replace answered TARGET_EXISTS": ["conflict", line(imported1, ["runReport.collisions", 1])],
+      // A Replace counts as what its targets settled as (audit F3): one
+      // deployed copy is a replace; an unanswered collision replaced nothing.
+      "replaced over an identical copy": ["success", line(["outcome.done.replaced", 1])],
+      "replace answered TARGET_EXISTS": ["conflict", line(["outcome.skipped", 1], ["runReport.collisions", 1])],
     };
     const [tone, message] = expected[name];
     expect(out.toast).toEqual({ kind: tone === "success" ? "success" : "warning", tone, message });
@@ -1563,7 +1567,7 @@ describe("importOutcome", () => {
     expect(out.toast).toEqual({
       kind: "info",
       tone: "declined",
-      message: line(["outcome.done.imported", 1], ["outcome.declined", 1]),
+      message: line(["outcome.done.imported", 1], ["outcome.declinedFolders", 1]),
       detail: [t("status.importSourceToolForced", { name: "git", tool: "CLAUDE" }), note].join("\n"),
     });
   });
@@ -2217,5 +2221,152 @@ describe("Enable over several skills (ticket 13)", () => {
     expect(single.toast?.message).toBe("status.targetsEnabled");
     const batch = enableOutcome(report, { ...ctx, batch: true });
     expect(batch.toast).toEqual({ kind: "success", tone: "success", message: t("outcome.done.enabled", { count: 1 }) });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Import's group settlement (audit F3 / F4 / F7): each sent group's outcome
+// is derived from its settled target rows; the headline names each kind.
+// ---------------------------------------------------------------------------
+
+describe("importGroupKind / import headline by settled targets", () => {
+  const target = (tool: string, status: BatchTargetOutcome["status"]): BatchTargetOutcome => ({
+    skill_id: "tdd",
+    skill_name: "tdd",
+    tool_key: tool,
+    status,
+  });
+  const synced = (tool: string) =>
+    target(tool, { status: "synced", outcome: { mode_used: "symlink", target_path: `/t/${tool}`, replaced: true } });
+  const declined = (tool: string) => target(tool, { status: "declined" });
+  const unanswered = (tool: string) =>
+    target(tool, { status: "failed", error: { code: "TARGET_EXISTS", path: `/t/${tool}`, modifiedAt: null, sameContent: false } });
+  const disabled = (tool: string) => target(tool, { status: "skipped", error: { code: "TARGET_DISABLED", tool } });
+  const notInstalled = (tool: string) => target(tool, { status: "skipped", error: { code: "TOOL_NOT_INSTALLED", tool } });
+  const replaced = (targets: BatchTargetOutcome[]): ImportGroupStatus => ({
+    status: "replaced",
+    skill_id: "tdd",
+    skill_name: "tdd",
+    central_path: "/central/tdd",
+    targets,
+  });
+  const groups = (count: number, prefix = "s") =>
+    Array.from({ length: count }, (_, i) => ({ group_name: `${prefix}${i}`, status: imported({ skill_id: `${prefix}${i}` }) }));
+
+  it.each([
+    ["every copy kept in the ask", [declined("cursor"), declined("pi"), declined("codex")], "kept"],
+    ["at least one copy actually replaced", [synced("cursor"), declined("pi")], "replaced"],
+    ["every target skipped (disabled)", [disabled("cursor"), disabled("pi")], "skipped"],
+    ["every target skipped (not installed)", [notInstalled("cursor")], "skipped"],
+    ["synced and skipped", [synced("cursor"), disabled("pi")], "replaced"],
+    ["declined and unanswered: not every collision answered Keep", [declined("cursor"), unanswered("pi")], "skipped"],
+    ["no target at all", [], "skipped"],
+    ["nothing replaced and a target failed", [target("cursor", { status: "failed", error: { code: "OTHER", message: "busy" } })], "failed"],
+  ] as const)("a Replace: %s", (_name, targets, kind) => {
+    expect(importGroupKind(replaced([...targets]))).toBe(kind);
+  });
+
+  it("the group's own status decides an import, a skip and a failure", () => {
+    expect(importGroupKind(imported({ targets: [declined("pi")] }))).toBe("imported");
+    expect(importGroupKind({ status: "skipped", reason: { reason: "name_managed", skill_id: "s" } })).toBe("skipped");
+    expect(importGroupKind({ status: "failed", error: { code: "OTHER", message: "x" } })).toBe("failed");
+  });
+
+  it("8 imported + an all-Keep Replace reads '8 imported · 1 kept' — never 9 imported", () => {
+    const out = importOutcome(
+      { groups: [...groups(8), { group_name: "tdd", status: replaced([declined("cursor"), declined("pi"), declined("codex")]) }] },
+      ctx,
+    );
+    expect(out.toast?.message).toBe(line(["outcome.done.imported", 8], ["outcome.done.kept", 1]));
+    expect(out.toast?.tone).toBe("success");
+  });
+
+  it("10 imported + two real Replaces reads '10 imported · 2 replaced'", () => {
+    const out = importOutcome(
+      {
+        groups: [
+          ...groups(10),
+          { group_name: "tdd", status: replaced([synced("cursor"), synced("pi")]) },
+          { group_name: "zod", status: replaced([synced("codex")]) },
+        ],
+      },
+      ctx,
+    );
+    expect(out.toast?.message).toBe(line(["outcome.done.imported", 10], ["outcome.done.replaced", 2]));
+  });
+
+  it("an all-skipped (disabled) Replace is a skipped group, not a green replace", () => {
+    const out = importOutcome({ groups: [{ group_name: "tdd", status: replaced([disabled("cursor"), disabled("pi")]) }] }, ctx);
+    expect(out.toast).toMatchObject({ tone: "skipped", message: line(["outcome.skipped", 1]) });
+  });
+
+  it("a mixed synced / skipped Replace is one replaced group; its disabled skip is no failure", () => {
+    const out = importOutcome({ groups: [{ group_name: "tdd", status: replaced([synced("cursor"), disabled("pi")]) }] }, ctx);
+    expect(out.toast).toMatchObject({ tone: "success", message: line(["outcome.done.replaced", 1]) });
+    expect(out.errors).toEqual([]);
+  });
+
+  it("a declined + unanswered Replace with nothing replaced is skipped, its unanswered folder to review", () => {
+    const out = importOutcome({ groups: [{ group_name: "tdd", status: replaced([declined("cursor"), unanswered("pi")]) }] }, ctx);
+    expect(out.toast).toMatchObject({
+      tone: "conflict",
+      message: line(["outcome.skipped", 1], ["runReport.collisions", 1]),
+    });
+  });
+
+  it("a declined target under an imported or replaced group is named as an existing folder kept, not a group", () => {
+    const out = importOutcome(
+      {
+        groups: [
+          { group_name: "git", status: imported({ targets: [synced("claude"), declined("pi")] }) },
+          { group_name: "tdd", status: replaced([synced("cursor"), declined("codex")]) },
+        ],
+      },
+      ctx,
+    );
+    expect(out.toast?.message).toBe(
+      line(["outcome.done.imported", 1], ["outcome.done.replaced", 1], ["outcome.declinedFolders", 2]),
+    );
+  });
+
+  it("reads in English: '8 imported · 1 kept', '1 replaced · 2 existing folders kept', the kept-copy note", async () => {
+    const i18n = i18next.createInstance();
+    await i18n.init({ resources, lng: "en", interpolation: { escapeValue: false } });
+    const en = i18n.t.bind(i18n) as unknown as typeof t;
+    const kept = importOutcome(
+      { groups: [...groups(8), { group_name: "tdd", status: replaced([declined("cursor"), declined("pi")]) }] },
+      { t: en },
+    );
+    expect(kept.toast?.message).toBe("8 imported · 1 kept");
+    const mixed = importOutcome({ groups: [{ group_name: "tdd", status: replaced([synced("cursor"), declined("pi"), declined("codex")]) }] }, { t: en });
+    expect(mixed.toast?.message).toBe("1 replaced · 2 existing folders kept");
+    expect(en("outcome.keptDifferentLine", { name: "handoff", count: 1, harnesses: "Pi" })).toBe(
+      "handoff: 1 different copy kept in Pi",
+    );
+  });
+
+  it("a different copy the operator chose to keep is a quiet note, not an original to review (F7)", () => {
+    const report: ImportReport = {
+      groups: [
+        {
+          group_name: "handoff",
+          status: imported({
+            skill_name: "handoff",
+            originals: [{ tool: "pi", path: "/pi/handoff", status: { status: "kept_divergent" } }],
+          }),
+        },
+      ],
+    };
+    const chosen = importOutcome(report, { ...ctx, keptByChoice: new Set(["handoff"]) });
+    const note = t("outcome.keptDifferentLine", { name: "handoff", count: 1, harnesses: "pi" });
+    expect(chosen.warnings).toEqual([]);
+    expect(chosen.notes).toEqual([note]);
+    expect(chosen.toast).toMatchObject({ tone: "success", message: line(["outcome.done.imported", 1]), detail: note });
+    // Without the operator's keep (a sibling that diverged after the review) it is to review.
+    const unresolved = importOutcome(report, ctx);
+    expect(unresolved.toast).toMatchObject({
+      tone: "conflict",
+      message: line(["outcome.done.imported", 1], ["outcome.review.originals", 1]),
+    });
   });
 });

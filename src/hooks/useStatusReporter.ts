@@ -14,7 +14,7 @@ import {
   type PendingSubject,
 } from "../lib/actionLifecycle";
 import type { Outcome, OutcomeEntry } from "../lib/reportOutcome";
-import type { SurfaceState } from "./useSurfaceState";
+import type { DialogKind, SurfaceState } from "./useSurfaceState";
 import {
   useNotificationHistory,
   type Notification,
@@ -275,6 +275,15 @@ export type OutcomeHandlers = {
   reload?: () => Promise<unknown>;
   /** Close the dialog the action ran from (`completion.closeModal`). */
   closeModal?: () => void;
+  /**
+   * The dialog that shows this outcome as its own Result step (Import's
+   * Result, Add's settlement). While it is open the run's one toast waits —
+   * it would repeat the Result and cover its footer (audit F5) — and shows
+   * when the dialog closes; a later run of the same dialog (a Retry)
+   * supersedes it. Reload, the history block and the completion happen at
+   * once, as always. A dialog not open now toasts at once.
+   */
+  resultShownIn?: DialogKind;
 };
 
 /** The completion an executed Outcome answers with. */
@@ -461,6 +470,18 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
   useEffect(() => {
     doorRef.current = door;
   });
+  /**
+   * A run's toast waiting for the dialog that shows its Result to close
+   * (`OutcomeHandlers.resultShownIn`). Checked after every render: the
+   * dialog stack lives in the surface the App re-renders on.
+   */
+  const deferredToastRef = useRef<{ dialog: DialogKind; show: () => void } | null>(null);
+  useEffect(() => {
+    const deferred = deferredToastRef.current;
+    if (!deferred || doorRef.current?.isOpen(deferred.dialog)) return;
+    deferredToastRef.current = null;
+    deferred.show();
+  });
   /** The one toast call site: nothing is toasted while the panel is open. */
   const toastUnlessPanel = useCallback(
     (kind: NotificationKind, title: string, message?: string, action?: NotificationAction, id?: string) => {
@@ -590,12 +611,16 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
               title: rows[0].title + (rows.length > 1 ? t("errors.moreCount", { count: rows.length - 1 }) : ""),
             };
         const more = rows.length > 0 || Boolean(headline?.detail);
-        toastUnlessPanel(
-          head.kind,
-          head.title,
-          undefined,
-          more ? { label: t("runReport.viewReport"), onClick: () => openReport(runId) } : undefined,
-        );
+        const show = () =>
+          toastUnlessPanel(
+            head.kind,
+            head.title,
+            undefined,
+            more ? { label: t("runReport.viewReport"), onClick: () => openReport(runId) } : undefined,
+          );
+        const dialog = handlers.resultShownIn;
+        if (dialog && doorRef.current?.isOpen(dialog)) deferredToastRef.current = { dialog, show };
+        else show();
       }
       if (outcome.completion.closeModal) handlers.closeModal?.();
       return outcome.completion;

@@ -44,6 +44,7 @@ const COMMAND_ERROR_CODE_MAP = {
   LOCAL_SOURCE_INSIDE_TOOL_DIR: true,
   SETTING_CORRUPT: true,
   CREDENTIAL_STORE_UNAVAILABLE: true,
+  IDENTITY_UNKNOWN: true,
   EDIT_CONFLICT: true,
   OTHER: true,
 } as const satisfies Record<CommandError["code"], true>;
@@ -197,6 +198,11 @@ export function describeCommandError(
       // The copy names the repair (unlock / allow access); the store's own
       // diagnostic is a detail line. Never a plaintext fallback.
       return withDetail(t("errors.credentialStoreUnavailable"), e.detail);
+    case "IDENTITY_UNKNOWN":
+      // A copy Import was asked to remove could not be compared with the
+      // skill, so it was left in place; the folder is the detail line (the
+      // read diagnostic stays in `detail` for the log).
+      return withDetail(t("errors.identityUnknown"), e.path);
     case "EDIT_CONFLICT":
       // Stored as a skill's health: upstream changed its own invocation
       // setting after the operator overrode it; the override was kept.

@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Import review
+
+- **The review says what will happen before it happens.** Discovered skills are rows: new names (a quiet **Match** when the copies agree with each other, **Conflict** when they differ), names you already manage, and folders that can't be imported with the reason in words. The header counts skills and copies separately ("12 skills · 22 copies in 6 harnesses").
+- **A Conflict shows each copy** — its harness, path, description and when it was modified — and what happens to it: the copy you choose becomes the Library skill, and you decide whether the other copies are kept or removed. Conflicts and names you already manage start unchecked.
+- **Names you already manage** say so first, compare each copy with your managed copy ("Differs from your managed copy"), and offer **Leave** or **Replace … with the managed skill**; a copy that differs is asked about before it is replaced.
+- **The policy line says what auto-deploy does**: with it on, identical originals become links and the skills are deployed to your selected harnesses; with it off, a checkbox decides whether your identical originals are removed, and the button names the action ("Import and remove 11 originals").
+- **A Result step** after the import: the count line ("8 imported · 1 kept", "10 imported · 2 replaced") and one row per skill — deployed where, which copies were removed or left in place per harness, what was skipped and why — with **Retry** for a failed one. Its toast waits until you close it, so it never covers the Close button (Add's result step too). A large import lights the new rows' deployment marks once when you close it.
+- **Removing a Conflict's other copies only removes a copy known to differ.** A copy that could not be compared (an unreadable file) is left in place and reported; a folder two harnesses share is removed once and reported for both.
+
 ## [1.3.0] - 2026-10-27
 
 Round 19, phase A of the UI effort: Skills Hub gets one visual language, My Skills becomes a dense list with an inspector beside it, removing a skill from a tool is now a choice that lasts, and every batch says what happened in one line. Settings panes, the Import review, Explore rows, the command palette and the card grid follow in 1.3.x.

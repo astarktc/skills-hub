@@ -223,7 +223,7 @@ fixture app, through the alias block:
 | Explore Installed | 1.82 dark / 3.58 light | 7.65 ² | 6.75 ² |
 | Success toast ("Harness selection saved.") | 4.26 both | 8.89 | 5.22 |
 | Search placeholder | 3.36 light | 5.73 | 5.67 |
-| Import review "Match" / "Conflict" | 3.07 / 4.41 light | 9.41 / 6.39 | 5.03 / 4.94 |
+| Import review "Match" / "Conflict" | 3.07 / 4.41 light | 9.41 / 6.39 ³ | 5.03 / 4.94 ³ |
 | Light `faint` on the new `raised` (ticket 30) | — | — | 5.04 |
 | Light `input` on the new `raised` (ticket 30, non-text) | — | — | 3.54 |
 | Light amber on `raised` (ticket 30) | — | — | 4.58; drawn there only as a non-text mark (§ Accent and state) |
@@ -239,6 +239,9 @@ lowest light text pair on any ground is `failed` on `raised`, 4.55, and the lowe
 ² Re-measured on tokens when Explore became rows (ticket 22, 2026-11-02; § Explore): Install is the `solid accent`
 Button (`primary-foreground` on `primary`), Installed the `soft neutral` Badge (`muted-foreground` on `muted`) — dark
 re-measured on ticket 35's `muted`, light on ticket 30's.
+
+³ Superseded when Import migrated (ticket 21, 2026-11-04; § Import review): Match is the `soft neutral` Badge
+(7.65 dark / 6.75 light), Conflict the `soft stale` Badge (8.94 / 4.94).
 
 Legacy identifying input boundaries (`.search-input`, `.input` in Add / Re-point, `.settings-input`,
 `.settings-select`, `.explore-search-input` — gone with ticket 22; Explore's search is the `Input` primitive) draw their edge in `input`, not the decorative `border` (ticket-07
@@ -629,6 +632,7 @@ one component that owns the moving element — never by a call site's `className
 | Header progress fill | each tick of a streamed action | `transform: scaleX`, retargeting tick to tick | 120 ms | `ease-out` | jumps | `shell/HeaderProgress.tsx` |
 | Toast | once per settled run (occasional) | `transform` from its own edge + opacity; never height | 120 ms | `ease-out` | none | `ui/sonner.tsx` |
 | Spinners: Button `pending`, header progress, Files loading, a matrix cell in flight | while work runs | rotation loop (`animate-spin`) | 1 s period | linear | hidden (header) / not running (`motion-safe:` only) | `ui/button.tsx`, `HeaderProgress`, `SkillFiles`, `projects/AssignmentMatrix` |
+| Import cascade (the rare moment, ticket 21) | the Result of an import that added ≥ 10 skills with auto-deploy on is closed (a few times a year) | opacity 0 → 1 of each **deployed** mark of the imported rows (`@starting-style`), `transition-delay` 20 ms × the mark's index — the strips light left to right; the entry styles are withdrawn after 1.2 s | 120 ms each | `ease-out` | shown at once | `skills/StripMarkIcon.tsx` (`landing`), keyed by `useImportReview`'s `landing` token |
 | Install landing (the rare moment, ticket 16) | an Add's settlement rows settle (a few times a week) | opacity 0 → 1 of a row's settled glyph (`@starting-style`; added / failed / cancelled), **staggered 20 ms per row** (capped at 8 rows) — a sequence of 120 ms steps | 120 ms each | `ease-out` | shown at once | `skills/add/AddSkillDialog.tsx` |
 | ⌘K palette (ticket 23) | open / close (many times a day, from the keyboard) | **nothing** — decided 2026-11-02: it appears and leaves instantly, like every dialog | — | — | nothing to remove (0 transitions, 0 animations measured under `reduce`) | `ui/command-palette.tsx` |
 
@@ -637,7 +641,7 @@ The loops are the only durations over 120 ms in the built CSS, and they are peri
 and the `.skeleton-row` shimmer left with Projects' migration, ticket 17: a cell in flight spins `animate-spin`
 `motion-safe`, and the loading placeholders are static `raised` blocks.) **The two permitted rare moments** (D6's delight
 budget: a large import completing, an install landing) may run as a *sequence* of ≤ 120 ms steps: the import cascade
-(§ Empty and first-run, ticket 21 — the strip light above, staggered 20 ms per mark; not built yet) and an install
+(§ Empty and first-run, ticket 21 — the strip light above, staggered 20 ms per mark; built) and an install
 landing (ticket 16, built: the settlement glyphs above — nothing else in the dialog moves, the rows' words are there
 at once, and the strip light lights the new skill's marks only when they become deployed on screen).
 
@@ -848,9 +852,11 @@ skill. Shape carries the state; colour only reinforces it; the strip was checked
   discovered skills**. While the discovery outweighs the library (N ≥ library size) Review is the one
   `solid accent` action and Add skill steps back to `outline`; otherwise Review is `outline accent` and the list's
   real issues lead. In an empty library with discoveries, Review leads the empty state's buttons.
-- **The rare delight** (D6; implemented with Import's migration, ticket 21): when an import of ≥ 10 skills
-  completes, the imported rows' strips light mark by mark, left to right, 20 ms apart (opacity 0 → 1, each
-  ≤ 120 ms, `ease-out`), once, and the header summary reads "12 skills imported · all deployed" for one run.
+- **The rare delight** (D6; built with Import's migration, ticket 21): when the Result of an import that added
+  ≥ 10 skills with auto-deploy on is closed — the moment the list is on screen again — the imported rows' strips
+  light mark by mark, left to right, 20 ms apart (opacity 0 → 1, each ≤ 120 ms, `ease-out`), once. The composite
+  count line ("10 imported · 2 replaced") is the Result's heading and, once the Result closes, the run's toast; no
+  other summary is added.
   Nothing else moves; reduced motion shows the settled strip at once. The per-mark light exists since ticket 15
   (§ Motion, `useSyncLight`); the cascade adds only the stagger (a `transition-delay` per mark index).
 
@@ -1177,6 +1183,85 @@ from primitives and tokens; no variant was added. Tracker rows, not cards (D25, 
   The dark figures are superseded by ticket 35's token tables (2026-11-04): Install 4.68 (hover 5.32); Installed 7.65;
   name 19.26; `faint` 6.00 on `background`, 4.77 on `raised`; description 8.33; `ring` edge on `raised` 6.14; search
   edge 3.94; scope label / value on `card` 8.13 / 18.81 (on `popover` in the sheet 7.65 / 17.71).
+
+## Import review (ticket 21)
+
+Files: `components/skills/import/ImportReviewDialog.tsx`, the folds in `lib/importReview.ts`, the flow in
+`hooks/useImportReview.ts` (a building block of the Add world). Composed from primitives and tokens; no variant was
+added. Opened from the "Skills already in your harnesses" banner (§ Empty and first-run), which stays while the plan
+has any group — a name Leave left, a copy kept — so unmanaged skills stay visible and revisitable; it is never
+dismissed for good.
+
+- **One stepped Dialog** (`xl`, the `import` kind; the shell stays mounted so closing returns focus to the banner's
+  Review — it stays focusable while disabled during the scan Review starts, `focusableWhenDisabled` + the refusal as
+  its description — else the Dialog's `fallbackFocus`, `importReviewFallback`: the surviving Review invitation, then
+  the My Skills heading, then the main landmark; never `<body>`): **Review** → **Result**, named in the header as
+  an `ol` with `aria-current="step"`, like Add. Above it, while the import runs, only the one overwrite ask (D12).
+  Not dismissible while its own import runs; its progress (`HeaderProgress placement="dialog"`) sits at its foot.
+- **Counts** (the Review's first focus, an `h3` `sm` semibold `tabular-nums`): "12 skills · 22 copies in 6 harnesses
+  · 1 can't be imported" — name-groups and copies counted separately (D14), the harnesses holding a copy, the
+  invalid manifests. One sentence under it says what importing does.
+- **Rows** in three bordered lists, each under its `h4`:
+  - **New to your Library** — one row per name the Library does not hold: a Checkbox named by the name (its badge
+    in the label), described by where the copies are, the copy's description and modified time. "Select all" (over
+    these rows only) and "N of M selected" (`role="status"`). One line states what the badges compare, once:
+    *"Match: the copies in your harnesses agree with each other. Conflict: they differ — choose the copy that becomes
+    the Library skill."* **Match** is the quiet `soft neutral` Badge (only with ≥ 2 copies); **Conflict** the
+    `soft stale` Badge — the exceptional row. A checked Match row states its copies' one fate in `foreground`
+    medium ("Becomes the Library skill; its 3 folders are replaced by links to it").
+  - A **Conflict** row lists its copies as native radios in a `radiogroup` fieldset (indented under the checkbox):
+    each named by **harness — path** (`aria-labelledby`), described by its description, "Modified 3d ago" (`faint`)
+    and, while the row is checked, **its fate**: the chosen copy "Becomes the Library skill; this folder is replaced
+    by a link to it / is then removed / is left in place" (`foreground` medium); a copy that differs "Removed"
+    (`failed`), "Left in place", or "Left in place until you answer: you're asked before a link replaces it" (a kept
+    copy in a harness auto-deploy reaches — D12's ask decides). Choosing a copy checks the row. Under the radios one
+    Checkbox per Conflict, **"Remove the other copy of handoff"** (default unchecked = keep), described by what it does.
+  - **Names you already manage** — one row per managed-name group, starting at **Leave**: the name + "In your
+    Library" (`soft neutral`), "You already manage a skill named tdd, so this one can't be imported under that name",
+    then each copy (harness — path) **compared with your managed copy**: "Same as your managed copy" (muted) or
+    "Differs from your managed copy" (`stale`) · modified time. A `radiogroup`: **Leave** ("Nothing is touched; they
+    stay listed here") / **Replace the copies in Claude Code, Codex, Pi with the managed skill** ("Each copy is
+    replaced by a link" or "The 3 copies that differ are asked about before they're replaced"). Replace states each
+    copy's fate; it never pre-authorizes an overwrite — differing copies go through the one ask.
+  - **Can't be imported** — each invalid manifest as a disabled Checkbox row (out of the Tab order): name, "harness —
+    path" (`font-mono faint`), "Can't be imported: {reason}" (`stale`).
+  - A group whose last import failed starts unchecked with "Last import failed: {reason}" (`failed`).
+- **The policy line** (a `card` band between the body and the footer, shown while a row is checked; D13 / D49):
+  auto-deploy **on** — "Your identical originals in *Claude Code, Codex* are replaced by links to the managed copy;
+  the imported skills are deployed to your selected harnesses (*…*)." Auto-deploy **off** — a Checkbox **"Remove my
+  11 identical originals from *Claude Code, Codex, …*"** (default = today's policy, checked), described by "Skills
+  Hub's copy in your Library replaces them" / "Your originals stay where they are", then "Auto-deploy is off: the
+  imported skills are added to your Library only." The count is the checked groups' copies holding the chosen bytes.
+- **The button names the action**: "Import and deploy" (auto-deploy on) · "Import and remove 11 originals" (off,
+  checkbox on) · "Import" (off, checkbox off) · "Replace N skills' copies" (only Replace chosen). With nothing to do
+  it stays focusable, disabled, and says why ("Select a skill to import, or choose Replace…"). Cancel beside it.
+- **Result** (its heading takes focus): the **composite count line** (D11; "8 imported · 1 kept", "10 imported · 2
+  replaced") over one row per sent group, in sent order. Each group's state is **one settlement rule**
+  (`reportOutcome.importGroupKind`, shared by the rows and the headline) over its settled target rows, so the group
+  counts reconcile to what was sent: imported · replaced (≥ 1 copy actually linked) · kept (a Replace whose every
+  collision was answered Keep) · skipped · failed; target-level outcomes are separate dimensions ("2 existing
+  folders kept", "1 folder to review", "4 deployments failed"), never summed as groups. Each row: a 16 px glyph, the
+  name, the state in words and one line per outcome kind: **Imported** (`CircleCheck` `ok`; `stale` when something
+  is left to look at) — "Deployed to …" / "Added to your Library only", "Copies removed from *harnesses*", "Copies
+  left in place in …", "Your different copy kept in …" (no attention when the operator chose keep for that Conflict;
+  the toast's detail says "handoff: 1 different copy kept in Pi" instead of "1 original to review"), "Kept your
+  existing folder in …" (declined), "Folder left to review in …" (an unanswered ask), "Skipped Cursor: {reason}" (a
+  skip by design — disabled, not installed — neutral), "Not deployed to Amp: {reason}", "Left the copy in Codex in
+  place: it could not be compared…" (`IDENTITY_UNKNOWN`); **Replaced** — "Linked in …"; **Kept** (`CircleMinus`
+  muted) — a Replace whose every collision was kept in the ask; **Skipped** (`CircleMinus` muted) — why (a managed
+  name left alone; a Replace whose every target was skipped, each reason a line; a Replace whose collision nobody
+  answered); **Failed** (`CircleX` `failed`) — the typed error in words and
+  **Retry** (`outline accent sm`, "Retry handoff"; "Retry failed (N)" in the footer when several), which re-sends that
+  group's selection and replaces its row in place. Close (`solid accent`). The Result glyphs do not move (the
+  cascade below is the import's one moment). **The run's toast waits for the Result to close**
+  (`applyOutcome(…, { resultShownIn: "import" })`): the Result already says it, and a toast in the corner would cover
+  its footer; the run is recorded and the catalog reloaded at once, a Retry's toast supersedes the waiting one. Add's
+  settlement step uses the same option (`"addSkill"`).
+- **Contrast** (measured 2026-11-04, fixture `first-run`, rendered, `.scratch/round19/evidence/21/contrast.json`),
+  dark / light: Match badge 7.65 / 6.75; Conflict badge 8.94 / 4.94; "In your Library" 7.65 / 6.75; "Differs from
+  your managed copy" (`stale`) 10.13 / 5.68; "Removed" (`failed`) 6.96 / 5.64; modified time (`faint`) 5.52 / 6.24;
+  "Can't be imported" (`stale`) 10.13 / 5.68; copy path 7.65 / 8.36; the legend 7.65 / 8.36; the policy line 18.81 /
+  15.72.
 
 ## Migration rule
 

@@ -84,6 +84,8 @@ type SkillRowProps = {
   onOpen: (skill: ManagedSkill) => void;
   /** The Harness catalog's label for a key (a mark's tooltip names its harnesses). */
   labelOf: (tool: string) => string;
+  /** The import cascade's token while this row's strip lights (ticket 21); `null` otherwise. */
+  landing: number | null;
   t: TFunction;
 };
 
@@ -108,6 +110,7 @@ const SkillRow = ({
   actions,
   onOpen,
   labelOf,
+  landing,
   t,
 }: SkillRowProps) => {
   const { run, repair } = actions;
@@ -432,7 +435,7 @@ const SkillRow = ({
           <p className="m-0 line-clamp-2 text-sm text-muted-foreground">{skill.description}</p>
         ) : null}
         <div className="mt-auto flex min-w-0 items-center gap-2">
-          <SyncedStrip strip={strip} t={t} />
+          <SyncedStrip strip={strip} landing={landing} t={t} />
           <span className="ml-auto">{scopeCell}</span>
         </div>
         {sourceLabel ? <span className="truncate font-mono text-xs text-faint">{sourceLabel}</span> : null}
@@ -466,7 +469,7 @@ const SkillRow = ({
         {exceptionMarks}
       </span>
       <span className="flex min-w-0 @max-3xl:hidden">{description}</span>
-      <SyncedStrip strip={strip} t={t} />
+      <SyncedStrip strip={strip} landing={landing} t={t} />
       <span className="flex items-center">{scopeCell}</span>
       <span className="flex items-center justify-center">{toggle}</span>
       <span className="flex items-center justify-center">{menu}</span>
