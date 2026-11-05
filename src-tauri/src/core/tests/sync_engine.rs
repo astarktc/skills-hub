@@ -627,6 +627,26 @@ mod junction_leg {
         assert!(fs::symlink_metadata(&target).is_err());
     }
 
+    /// Windows' `ERROR_PRIVILEGE_NOT_HELD`.
+    const ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
+
+    /// Create a symlink, or report that this host may not. Windows creates
+    /// symlinks only for a process holding `SeCreateSymbolicLinkPrivilege`
+    /// (elevated, or Developer Mode on); without it the shape cannot exist
+    /// here at all — the deploy fallback makes a junction instead, which the
+    /// junction tests cover — so the calling test has nothing to remove and
+    /// passes, saying so on stderr. Any other failure is a real one.
+    fn symlink_or_skip(made: std::io::Result<()>, test: &str) -> bool {
+        match made {
+            Ok(()) => true,
+            Err(err) if err.raw_os_error() == Some(ERROR_PRIVILEGE_NOT_HELD) => {
+                eprintln!("{test}: skipped, this process may not create symlinks ({err})");
+                false
+            }
+            Err(err) => panic!("{test}: create symlink: {err}"),
+        }
+    }
+
     /// A directory symlink (the first leg, where the host allows it) is removed
     /// the same way, as itself.
     #[test]
@@ -634,14 +654,89 @@ mod junction_leg {
         let tmp = tempfile::tempdir().unwrap();
         let central = central_skill(tmp.path(), "demo");
         let link = tmp.path().join("via-symlink");
-        if std::os::windows::fs::symlink_dir(&central, &link).is_err() {
-            return; // this host may not create symlinks; the junction tests carry the rule
+        if !symlink_or_skip(
+            std::os::windows::fs::symlink_dir(&central, &link),
+            "directory symlink",
+        ) {
+            return;
         }
 
         remove_path_any(&link).expect("remove directory symlink");
 
         assert!(fs::symlink_metadata(&link).is_err());
         assert_central_intact(&central, "demo");
+    }
+
+    /// A file symlink is a file entry: removed as itself, its target's bytes
+    /// untouched.
+    #[test]
+    fn remove_path_any_removes_a_file_symlink_and_never_its_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let central = central_skill(tmp.path(), "demo");
+        let link = tmp.path().join("SKILL-link.md");
+        if !symlink_or_skip(
+            std::os::windows::fs::symlink_file(central.join("SKILL.md"), &link),
+            "file symlink",
+        ) {
+            return;
+        }
+        assert!(!fs::symlink_metadata(&link).unwrap().file_type().is_dir());
+
+        remove_path_any(&link).expect("remove file symlink");
+
+        assert!(fs::symlink_metadata(&link).is_err());
+        assert_central_intact(&central, "demo");
+    }
+
+    /// A dangling directory symlink keeps its own directory flag: it is
+    /// present, removed with `remove_dir`, and nothing is created at its
+    /// missing referent.
+    #[test]
+    fn a_dangling_directory_symlink_is_present_and_removed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let gone = tmp.path().join("gone-dir");
+        let link = tmp.path().join("dangling-dir-link");
+        if !symlink_or_skip(
+            std::os::windows::fs::symlink_dir(&gone, &link),
+            "dangling directory symlink",
+        ) {
+            return;
+        }
+        assert!(fs::symlink_metadata(&link).is_ok(), "present");
+        assert!(!link.exists(), "dangling");
+
+        remove_path_any(&link).expect("remove dangling directory symlink");
+
+        assert!(fs::symlink_metadata(&link).is_err());
+        assert!(
+            fs::symlink_metadata(&gone).is_err(),
+            "referent never created"
+        );
+    }
+
+    /// A dangling file symlink: present, removed, its missing referent left
+    /// missing.
+    #[test]
+    fn a_dangling_file_symlink_is_present_and_removed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let gone = tmp.path().join("gone.md");
+        let link = tmp.path().join("dangling-file-link.md");
+        if !symlink_or_skip(
+            std::os::windows::fs::symlink_file(&gone, &link),
+            "dangling file symlink",
+        ) {
+            return;
+        }
+        assert!(fs::symlink_metadata(&link).is_ok(), "present");
+        assert!(!link.exists(), "dangling");
+
+        remove_path_any(&link).expect("remove dangling file symlink");
+
+        assert!(fs::symlink_metadata(&link).is_err());
+        assert!(
+            fs::symlink_metadata(&gone).is_err(),
+            "referent never created"
+        );
     }
 
     #[test]
