@@ -32,9 +32,11 @@ runs the Rust suite on Windows. The harness-registry corrections and the four ne
   configuration: with `core.autocrlf=true` (Git for Windows' default) every text file of a skill — scripts included —
   landed with CRLF line endings, so the same skill fetched by clone and by the GitHub download differed in bytes and
   content identity, and an Update could rewrite deployed copies just because it fetched the other way. The app's own
-  checkouts now use `core.autocrlf=false` and `core.eol=lf`, through both the git command line and the built-in git;
-  clones already in the git cache from an earlier version are cloned again once (the Library itself is not rewritten
-  by the upgrade). A repository's own `.gitattributes` (`eol=crlf`, filters) still applies.
+  checkouts now use `core.autocrlf=false` and `core.eol=lf`, through both the git command line and the built-in git.
+  Clones an earlier version left in the git cache are not rewritten or used again: the new checkout settings fetch into
+  a new cache entry, and the old one ages out with the git cache cleanup (Settings → Git cache cleanup (days), or Clean
+  Now). The Library itself is not rewritten by the upgrade. A repository's own `.gitattributes`
+  (`eol=crlf`, filters) still applies.
 
 ### Internal
 

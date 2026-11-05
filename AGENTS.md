@@ -405,7 +405,9 @@ than re-tagging.
   and read the report; they never delete a path themselves (project reconcile may probe one with `symlink_metadata`).
 - **Git bytes have two single entry points.** `git_cache::fetch_through_cache` is the only way into the
   clone cache (per-key locks, TTL as an `i64` value from `settings::git_cache_ttl_ms`, no DB handle in
-  its interface). The key is the normalised URL + ref only — never the subpath: the checkout shape
+  its interface). The key is the normalised URL + ref plus the fetcher's `CHECKOUT_POLICY_VERSION` (a policy bump
+  clones new entries beside the old, never rewrites or deletes them; `cache_cleanup` ages the orphans out) — never
+  the subpath: the checkout shape
   (full / sparse union) is entry metadata, a hit needs freshness *and* coverage, and an entry is only
   ever widened, never narrowed (so the Add flow's listing clone serves its install, and two skills of
   one repo share an entry safely under parallel Refresh). `git_acquisition::acquire` is the only way
