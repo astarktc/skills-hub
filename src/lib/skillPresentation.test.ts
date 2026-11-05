@@ -1174,7 +1174,7 @@ describe("harnessInitials", () => {
 });
 
 describe("identity (ticket 30)", () => {
-  // The NOTES table of the colour prototype (round19/prototypes/30-colour):
+  // The NOTES table of the colour prototype (.scratch/archive/round19/prototypes/30-colour):
   // the hash, its index into IDENTITY_HUES and the hue are a compatibility
   // contract — a change re-colours every source the operator knows.
   it.each([

@@ -106,6 +106,11 @@ that props cannot express becomes a new variant, documented in `DESIGN.md`, not 
 `useOverwriteConfirmation` resolve a boolean from `request()`. Ticket 05 rated them model deep modules; they get a new
 shell underneath.
 
+*Amended at round 19's closure (2026-11-05):* `useOverwriteConfirmation` no longer exists (round 19 ticket 08). The
+overwrite ask is `useSyncOrchestration.requestOverwriteConfirmation`, raised through the surface module's `ask` and
+answered per row — `OverwriteChoice[]` or `"dismissed"`, never a boolean — by `OverwriteModal`, which composes the
+Dialog primitive itself. `useSharedDirConfirmation` still resolves a boolean through `ConfirmDialog`.
+
 ### 3. Behavioural primitives: shadcn on Base UI, not Radix
 
 **Base UI, because it is shadcn's default and recommended base for new projects since July 2026 and a stable 1.x
@@ -208,7 +213,7 @@ means nothing once every file is migrated:
 1. **`App.css` must not exist**, and no source file, stylesheet or `index.html` may import an `App.css`.
 2. **No retired class returns.** The baseline's `retiredClasses` freezes the 44 class selectors `App.css` defined
    when it was deleted. Nothing defines them now, so any `src/` source file whose class expressions (read from the
-   AST as before) use one fails — the way a stale branch merged back would bring them in. `migrated` and
+   AST as before) use one fails (test files, `src/fixtures/` and `src/bindings/` are not scanned — `SOURCE_SKIP`) — the way a stale branch merged back would bring them in. `migrated` and
    `appCssCeiling` left the baseline.
 3. The permanent three are the only stylesheets; rules 4 and 5 are unchanged.
 

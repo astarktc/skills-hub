@@ -489,3 +489,6 @@ behaviour) and stays as a crash-boundary guard. The audit's own run had the four
   CHANGELOG drops the registry lines. Open for the operator's review: whether the registry **facts and rows** (no
   dir corrections, no group moves, no preference) are worth splitting out for 1.3.1 — the orchestrator's read is no:
   the diff is 44 files and three fix passes deep; a clean cut is its own risk.
+- 2026-11-05 — round 19 closure: the half that moves no deployment (four new rows, cross-read facts + warning, Xum label,
+  Windsurf candidate, Clawdbot/MoltBot retirement — keeping OpenClaw, operator) → BACKLOG #92, to be rebuilt from `main`;
+  the relocation half and the preference stay in #88 (amended from this ticket's audits, `closure/extract-F.md`).

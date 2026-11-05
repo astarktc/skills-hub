@@ -21,7 +21,7 @@ type HarnessesPaneProps = {
   autoDeployEnabled: boolean;
   /** Save one harness on or off (D48's ask follows turning one on, when auto-deploy is on). */
   onSelectedChange: (toolId: string, selected: boolean) => void;
-  /** A switch activated while held: the operator's gesture, saved nowhere (D48 asks only for the latest one). */
+  /** Save "scan only the selected harnesses" for Import. */
   onScanSelectedOnlyChange: (scanSelectedOnly: boolean) => void;
   /** Show the General pane (where Auto-deploy is switched). */
   onOpenGeneral: () => void;

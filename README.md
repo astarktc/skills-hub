@@ -8,8 +8,9 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 
 ## Key Features
 
-- **Explore page**: Browse featured skills (ClawHub, updated daily) and search online (skills.sh) — one-click add & deploy to your selected harnesses
-- **Skill detail view**: Click a skill name to browse its files with Markdown rendering and syntax highlighting (40+ languages)
+- **Explore page**: Browse featured skills (ClawHub, updated daily) and search online (skills.sh); preview a skill's files, then add it to your Library and deploy it to your selected harnesses
+- **Inspector**: Select a skill to see its health, source and per-harness deployments, repair what failed, and browse its files with Markdown rendering and syntax highlighting (40+ languages)
+- **Command palette**: ⌘K / Ctrl+K finds a skill, a place or an action
 - **Unified view**: Your Library of skills and where each one is deployed, per harness
 - **Onboarding import**: Scan existing skills in installed harnesses, import them into your Library, and deploy — an original is removed only when it is byte-identical to the imported copy; a same-named but different sibling is kept and reported
 - **Import sources**: Local folder / Git URL (including multi-skill repo selection, `.claude/skills/` directory support); GitHub sources download through the GitHub API where possible (recording the real commit) and fall back to cloning

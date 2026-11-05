@@ -39,7 +39,7 @@ type SettingsDialogProps = {
     selected: readonly string[];
     scanSelectedOnly: boolean;
     onSelectedChange: (toolId: string, selected: boolean) => void;
-    /** A harness switch activated while held: the gesture, nothing saved (D48's latest intent). */
+    /** Save "scan only the selected harnesses" for Import. */
     onScanSelectedOnlyChange: (scanSelectedOnly: boolean) => void;
   };
   /** The Tool catalog's global list and labels. */

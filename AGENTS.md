@@ -52,7 +52,9 @@ and dispatches `release.yml` (macOS ×2, Windows ×2, Linux). **A push that bump
 no separate approval step. `release.yml` only compiles and packages; tests, clippy and the bindings-drift guard run in
 `ci.yml` and in the local gate. The operator smoke-tests by installing the built release, not via `tauri:dev`; VoiceOver
 and reduced-motion checks are never on that smoke list (operator, 2026-11-05) — the fixture audits and the primitives'
-ARIA/focus tests carry accessibility.
+ARIA/focus tests carry accessibility. Hosted macOS runners can take an hour or a night to
+acquire on this account: push a release off-peak, and re-run only the failed job (`gh run rerun <id> --failed`) rather
+than re-tagging.
 
 ## Environment gotchas
 
@@ -173,8 +175,8 @@ ARIA/focus tests carry accessibility.
   command that follows a token-less step (the command resets the token); `cancelPending` hides
   nothing until the command returns; `applyOutcome(outcome, { reload, closeModal, onAction })` executes every
   fold's Outcome (reload first, toasts, one `recordRun` history block, close) — no caller unpacks an Outcome;
-  `notifyError(err)` is the one failure dialect (`setError` remains only in the sync and Add worlds until they
-  migrate). The project matrix's pending cells are the reporter's `{ kind: "cell" }` subject. **Progress is
+  `notifyError(err)` is the one failure dialect (`setError` remains only in the sync, Add and Import-review worlds until
+  they migrate — BACKLOG #68). The project matrix's pending cells are the reporter's `{ kind: "cell" }` subject. **Progress is
   `src/components/shell/HeaderProgress.tsx`, read from `pending` alone** (`showsHeaderProgress`): My Skills' header
   slot, a strip above any other area, or the foot of the dialog whose action runs (App's `progressInDialog`; the
   header copy yields while it shows) — there is no overlay; a bulk Remove shows in its Delete dialog. A refused

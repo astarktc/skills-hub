@@ -27,7 +27,7 @@ Thresholds: **text ≥ 4.5:1** and **non-text ≥ 3:1** (focus ring, a control b
 its own, state marks). Measured 2026-09-29.
 
 **Ticket 30 (2026-11-02)** re-valued the light grounds, the amber and added `row` and the identity hues. Every pair
-those touch is computed from the hex values by `.scratch/round19/evidence/30-contrast.mjs` (WCAG 2.x luminance;
+those touch is computed from the hex values by `scripts/contrast.mjs` (WCAG 2.x luminance;
 `color-mix(in oklab, …)` mixed in OKLab and `/90` fills alpha-composited over the ground, in floating point — a mixed
 or composited intermediate is never quantised to 8 bits before the luminance step, so the numbers are the CSS
 mixture's, not a rounded pixel's). It exits non-zero on any failing gated pair.
@@ -263,7 +263,7 @@ The lowest passing pairs anywhere are:
 - the focused-disabled ring (75 %, § Focus ring): 4.05 dark on `raised`, 3.08 light on `raised` (non-text).
 
 Re-measure them after any change to `faint`, `primary`, `stale`, `failed`, `input` or the grounds
-(`node .scratch/round19/evidence/30-contrast.mjs`). `faint` on the legacy hover ground `--bg-element-hover` (5.04 dark
+(`node scripts/contrast.mjs`). `faint` on the legacy hover ground `--bg-element-hover` (5.04 dark
 on ticket 35's, 4.41 light on ticket 30's grounds) is no longer a pair at all: it left with the App.css alias block
 (ticket 25).
 
@@ -601,7 +601,7 @@ props are sonner's own; the host is the primitive's.
 nor the bulk rail (41 px at 960 and 1280), a dialog's foot or the inspector's; it passes over list content, which
 scrolls. Measured on the fixture with the rail up: at 960×640 the toast spans y 491–544 (rail 599–640), at 1280×800
 y 651–704 (rail 759–800); no header, filter-bar or rail control intersects it
-(`.scratch/round19/evidence/31/toast-dark-960.png`). Pointer events and hover-pause are sonner's own — a notice under
+(round 19 ticket 31 audit, `.scratch/archive/round19/review/ticket-31-audit.md`). Pointer events and hover-pause are sonner's own — a notice under
 the pointer stays while it is read, and **View report** still takes a click; neither is disabled to make room.
 The stack is **three** toasts (`visibleToasts={3}`, sonner's default; ticket 31 audit F2): five persistent errors
 expanded under the pointer climbed to the header at 960×640 — three expanded multi-line errors stay below the bulk
@@ -871,7 +871,7 @@ only; no token or variant was added.
   **Dense grid**: floor **15rem (240 px)**, 8 px gaps and inset. Measured on the fixture (`rich`, 7 harnesses, overlay
   scrollbars, inspector closed): 960 × 640 → 2 / 3 columns (cards 417 / 279 px); 1280 × 800 → 3 / 4 (333 / 252);
   1800 × 1000 → 4 / 6 (377 / 252). With the inspector beside at 1280 the pane is 720 px: 2 / 2. In Dense a long name
-  truncates sooner (~130 px of name) — its title carries it.
+  truncates sooner (~138 px of name, ~110 px beside the Edit pencil) — its title carries it.
 - **Reading order** is row-major: cards fill the grid's rows left to right in the DOM's order, which is the lens's
   `onScreen` order. So `j` / `k` move to the next / previous card across a row wrap, ⇧-click selects a range in reading
   order, ⌘A takes every card shown, and Delete's focus rule lands on the next card, else the previous, else the
@@ -891,7 +891,7 @@ One 12 px mark per harness of the effective target set (registry order), then an
 deployment row for outside that set, on a **20 px pitch** (8 px gaps; ticket 31 — at 16 px the header's two-letter
 initials ran together, "GMAM"), so the strip column is marks × 20 + 40 px. It is **read-only** (D22): each mark is `role="img"` with its own name, and the row opens the
 skill. Shape carries the state; colour only reinforces it; the strip was checked in grayscale
-(`.scratch/round19/evidence/11/*-grayscale.png`).
+(round 19 ticket 11 audit, `.scratch/archive/round19/review/ticket-11-audit.md`).
 
 | Mark | Shape | Colour | Accessible name | Dark (ticket 35 tokens) / light on background · card · raised |
 |---|---|---|---|---|
@@ -1155,8 +1155,8 @@ Checkbox `focusableWhenDisabled`.
 
 Copy missing and failed share the strip's ×; the word (on hover / focus, in the name and the legend) tells them apart.
 Words are `muted-foreground` (8.33 / 8.16). On a hovered cell (`raised`) the marks keep ≥ 3:1 (token table).
-Measured 2026-10-01 on the fixture (`failures`), `.scratch/round19/evidence/17/a11y-*.json`; grayscale capture
-`matrix-grayscale-*.png`.
+Measured 2026-10-01 on the fixture (`failures`), with a grayscale capture (round 19 ticket 17 audit,
+`.scratch/archive/round19/review/ticket-17-audit.md`).
 
 - **Remove project** (`sm`): "Remove {project}?" · what goes (the skills Skills Hub deployed into the project's harness
   folders; the project and its deployments) · the path · what stays (`foreground`: the project's own files, the
@@ -1334,7 +1334,7 @@ from primitives and tokens; no variant was added. Tracker rows, not cards (D25, 
   one resolver (`exploreFocusReturn`) for the aside and the sheet's `finalFocus`, whose Dialog stays mounted. The Add
   dialog opened from Install returns to Install. Installed is the whole library's answer (`exploreInstalledId`, the
   rows' identity rule), never whether the search still lists the candidate.
-- **Contrast** (measured 2026-11-02, fixture `rich`, both themes, `.scratch/round19/evidence/22/*-a11y.json`), dark /
+- **Contrast** (measured 2026-11-02, fixture `rich`, both themes, round 19 ticket 22 audit), dark /
   light: Install text on `primary` 4.68 / 5.86 (hover `primary/90` 5.31 / 4.79, token table); Installed badge text
   7.08 / 7.20; name on `background` 15.50 / 17.32; source and popularity (`faint`) 6.12 / 6.09 on `background`, 5.22 /
   5.37 on the focused row's `raised`; description and mode line 8.31 / 8.16; the focused row's `ring` edge on `raised`
@@ -1417,7 +1417,7 @@ dismissed for good.
   (`applyOutcome(…, { resultShownIn: "import" })`): the Result already says it, and a toast in the corner would cover
   its footer; the run is recorded and the catalog reloaded at once, a Retry's toast supersedes the waiting one. Add's
   settlement step uses the same option (`"addSkill"`).
-- **Contrast** (measured 2026-11-04, fixture `first-run`, rendered, `.scratch/round19/evidence/21/contrast.json`),
+- **Contrast** (measured 2026-11-04, fixture `first-run`, rendered, round 19 ticket 21 audit),
   dark / light: Match badge 7.65 / 6.75; Conflict badge 8.94 / 4.94; "In your Library" 7.65 / 6.75; "Differs from
   your managed copy" (`stale`) 10.13 / 5.68; "Removed" (`failed`) 6.96 / 5.64; modified time (`faint`) 5.52 / 6.24;
   "Can't be imported" (`stale`) 10.13 / 5.68; copy path 7.65 / 8.36; the legend 7.65 / 8.36; the policy line 18.81 /
@@ -1452,7 +1452,7 @@ CI) fails when:
 
 - `src/App.css` exists, or a source file, a stylesheet or `index.html` imports an `App.css`;
 - a retired legacy class returns — any class in `retiredClasses` (`scripts/styles-baseline.json`: the 44 class
-  selectors `App.css` defined when it was deleted, frozen) used by a `src/` source file, read from the TypeScript AST,
+  selectors `App.css` defined when it was deleted, frozen) used by a `src/` source file (test files, `src/fixtures/` and `src/bindings/` are not scanned), read from the TypeScript AST,
   following constants, objects, conditionals, templates and helpers in the file and through named relative / `@/`
   imports. Nothing defines them, so such a class renders unstyled;
 - a new stylesheet appears (the permanent three are `index.css`, `styles/theme.css`, `styles/prose.css`);

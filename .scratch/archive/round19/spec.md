@@ -1,6 +1,6 @@
 # Round 19 — the new world and the workflow features (UI effort phase B) → 1.3.0 (19a), 1.3.x (19b)
 
-Status: open
+Status: closed — 2026-11-05 (§ Closure — 2026-11-05)
 Opened: 2026-09-27 (grill: `archive/round18/issues/09`, operator + orchestrator, pre-accepted for the session)
 
 Round 18 judged; round 19 builds. This spec records the decisions of the ticket-09 grill over round 18's findings
@@ -346,3 +346,75 @@ scarcity on Free; `assemble-updater-json` moved to `ubuntu-latest` in `457085e`)
 
 **Archived with this closure:** `archive/round18/` → `archive/round18/` (its closure block dated 2026-09-27 in `753e895`).
 - 2026-11-04 — operator pre-authorised the 1.3.1 release push and an unattended run of the remaining 19b order (31 → 20 ∥ 21 → 34 → 24 → 25 → 26); a P0 that needs a design decision parks its ticket with a dated Comment and the queue continues. Per-ticket decisions recorded on tickets 20, 24, 26, 34.
+
+## Closure — 2026-11-05
+
+**Shipped:** 19a as **1.3.0** (tag `v1.3.0` = `457085e`, 2026-10-28; § Closure — 2026-10-29 above) and 19b as **1.3.1**
+(tag `v1.3.1` = `ecf3752`, `release.yml` run 41972658019, 2026-11-04; CI green at `718509e`). Operator smoke on 1.3.1
+passed 2026-11-05: 960×640 by the operator; the work-Mac `impeccable` exec bit by the orchestrator over SSH (ticket 26
+§ Comments). D31 amended the same day: VoiceOver and reduced motion are never part of a release smoke.
+
+**Tickets:** 01–33 and 35 are `done — <sha>`; 34 is `superseded — BACKLOG #88 / #89`, its non-relocation half → #92.
+
+**Extract walk:** seven read-only children walked every ticket's Comments/Result, every review and audit finding, and
+re-verified the BACKLOG against `main`; each item's evidence was re-derived from code that day. Their reports are kept
+beside this spec: `closure/extract-{A..G}.md` (ids below are theirs). Operator answers: grill of 2026-11-05 (Q1–Q16),
+recorded here and on the BACKLOG items they shaped.
+
+**Residue → BACKLOG (new):** #91 library-folder move + Clean Now outside the lifecycle (E1 E2) · #92 registry truth
+without relocation (F8; Q7, Q8: keep OpenClaw) · #93 selection hidden by a filter (C2; Q11) · #94 global Deployments
+never reconciled (F7; Q13) · #95 intent-only Disable reads as a no-op (A1; Q12b) · #96 My Skills stale after a project
+selection reconciles (F2) · #97 layer/focus-contract gaps (D1 D3 E3 E7) · #98 Import review gaps (E4 E5) · #99 tests and
+guards that over-promise (A3 B2 F1 E9) · #100 flaky guard-polling tests (F6) · #101 run toast over a report dialog (E12)
+· #102 README screenshots (E10) · #103 Windows path separators (found this session on the operator's Windows install).
+
+**Residue → BACKLOG (amended):** #88 (F9–F19, E18: the Import original-removal seam, the preference UI half, pending /
+incomplete in the fold, near-misses, layout immutability, onboarding, re-enable the launch pass, a first-launch smoke
+line; registry facts moved to #92) · #89 (F18; decided Q1: disable the launch pass in 1.3.2; source re-pointed to the
+audit report) · #87 (premise false on `main` — blocked by #88; Goose/OpenHands, retired-key assignments) · #90 widened to
+fixture parity (E6, A4) · #70 ("re-assert" gone; kept rows already recorded) · #72 (current words and pointers; C1 group
+header Q12a; D2 rail placement Q12c) · #73 (pointers, current words) · #74 (the vanishing toast explained; persisting it
+ships in 1.3.2, Q9) · #76 (bullet (a) struck — contradicted by code since `56da8d9`) · #68 (six call sites, Import added)
+· #85 (1.3.1 CHANGELOG pointer) · #84 moved to Parked · #40 / #53 pointers.
+
+**Residue → 1.3.2 (in flight):** #89's disable; the failure run toast persists (Q9); New harnesses "Deploy all skills"
+deploys whatever Auto-deploy says (F5, Q10); no console windows when git runs on Windows (found by the operator on
+1.3.1 this session); a Windows CI job with a forced-junction test (round 16 ticket 08's leg).
+
+**Residue → docs, in the closure commit:** B1/A2/E11 stale `useOverwriteConfirmation` and held-switch comments
+(`confirm-dialog.tsx`, ADR-0006 amendment note, `HarnessesPane.tsx`, `SettingsDialog.tsx`); E11 DESIGN.md Dense
+allowance (~138 px); E8 the guard's scan exclusions named in DESIGN.md and ADR-0006; F4 CONTEXT.md — Enable never reads
+Auto-deploy; E13 AGENTS.md § Release runner note; E10 README feature text; B3 `src/tauri-plugin-dialog.d.ts` deleted; F3
+and #69 — `scripts/contrast.mjs` and `scripts/browser/cdp-keys.ts` promoted out of gitignored evidence (driver re-proven
+on the fixture: ⌘K, typed text, Escape, Tab), DESIGN.md re-pointed. BACKLOG #69 closed by that promotion.
+
+**Closed since (no residue):** A11–A33, B6–B25, C9–C26, D18–D39, E19–E37, F21–F41, and G's struck lines — every one
+with its sha and code line in its extract.
+
+**Dropped by name:** A34 byte-adapter disabled test · A35 `import_failed` writer test · A36 timing-based guard tests ·
+A37 `missing`/`pending` rows as deployed · A38 uninstalled-tool precedence · A39 binder growth (D7) · A40 historical
+model ids · A41 a mutation queue (Q14a: D19 is permanent) · A42 rounds 16/17 (closed separately, below) · B26 ConfirmDialog
+`onDismiss` · B27 a `className` lint rule · B28 jsdom Tab-wrap · B29 swallowed cancel failure · B30 the `loading`-sites
+claim · B31 a disabled-collision fixture scenario · B32 the lens for pickers/palette · B33 the full health cross-product ·
+C27 stand-in dialog tests · C28 name-first offset · C29 other `sr-only` scrollers · C30 per-Tool project assign (D26) ·
+C31 `placementViews` staleness · C32 generator whitespace · C33 row keys from sidebar controls · C34 Delete Cancel (D20)
+· C35 project-only-disabled counts · C36 View report on clean success · C37 re-Disable of a marker · C38 one-off test
+timeout · C39 / D39 / E38 / E39 / F42 VoiceOver and reduced-motion smoke (operator 2026-11-05) · C40 out-of-slice
+F10/F12 · D40 a per-skill project-view command · D41 Enable over a missing folder · D42 mid-copy partial files · D43 native
+Select type-ahead · D44 keyboard-triggered motion (Q14b) · D45 recording artefacts · D46 count wording in closed tickets
+· D47 the Tool-scope step in Add · D48 headline-only run toast · D49 instant summary↔progress swap · E40 real-library
+collision smoke · E41 zoom / cache inputs not held · E42 Dense name allowance (only the figure was wrong) · E43
+native-only paths · E44 extra palette harness tests · E45 `newest_modified` · E46 Explore's deliberate choices · E47
+Explore's one-frame BODY · E48 axe "incomplete" items · E49 build warnings · E50 Contents/Trees SHA pin and shebang
+fallback · E51 ⌥T and SSR · E52 a CandidatePicker variants mode · E53 the "Auto-sync moved" hint (D49) · F43 141 px
+description at 960 · F44 toast queueing · F45 Reveal on `delete_incomplete` · F46 a D35 sentence in AGENTS.md · F47 code
+names keeping old words (D45) · F48 `ok` hover steps · F49 3.09 vs 3.08 · F50 the Chinese README · ticket 28's
+upstream report (operator: no reports to the detached upstream).
+
+**Archived with this closure:** `round17/` (its closure block dated 2026-11-05) → `archive/round17/`; round 16 follows
+once 1.3.2's Windows junction test is green (its ticket 08 closes on that test plus the operator's 2026-11-05 field
+evidence).
+
+**Evidence pruned:** `evidence/` (215 MB, gitignored: screenshots, JSON captures, per-ticket drivers, the unreviewed
+end-of-wave deck — operator: skip it) and `evidence-09-gate.log`. Kept: `review/`, `prototypes/`, `closure/`.
+

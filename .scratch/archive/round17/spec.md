@@ -1,6 +1,6 @@
 # Round 17 — honest detection, scoped scan, overwrite ask → 1.2.17
 
-Status: open
+Status: closed — 2026-11-05 (§ Closure — 2026-11-05)
 Opened: 2026-09-23
 
 Absorbs BACKLOG **#42** (overwrite ask on `TARGET_EXISTS`, recorded and absorbed in this opening commit). The two
@@ -92,3 +92,14 @@ precedent rather than synthesising report rows.
 - Sync a skill onto a tool where a foreign folder of the same name sits: differing content → the ask; Overwrite
   replaces it and the row turns Synced; Cancel leaves it and the toast says so. Identical content → replaced
   silently, no ask.
+
+## Closure — 2026-11-05
+
+**Shipped:** 1.2.17 (tickets 01–05 `done`; `04-docs-and-release` = `747efbe`). The 1.2.17 smoke above was never recorded
+as such; it is **superseded** by later smokes over the same behaviours as they were rebuilt: the footprint rule
+(`tool_adapters::is_installed_in`, AGENTS.md) and the scan scope (`OnboardingScanScope`, re-surfaced in round 19's
+Harnesses pane and Import review, ticket 20/21 audits); the overwrite ask became round 19's one ask (D12), smoked on
+1.3.0 (`archive/round19/issues/19-docs-and-release-1.3.0.md` § Smoke outcome, item 7) and audited in ticket 16.
+
+**Residue:** none — closed during round 19's closure walk (`archive/round19/spec.md` § Closure — 2026-11-05).
+

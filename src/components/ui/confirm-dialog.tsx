@@ -14,9 +14,9 @@ import type { FocusFallback } from "./dialog";
  * ConfirmDialog — a question the operator answers with one of two buttons.
  * Escape / outside press answer "cancel" (the safe answer); there is no ✕.
  * Initial focus is on the safe button for `danger`, on the confirm button
- * for `accent`. The "ask" hooks (useSharedDirConfirmation,
- * useOverwriteConfirmation) resolve their `request()` promise from these
- * two callbacks.
+ * for `accent`. `useSharedDirConfirmation` resolves its `request()` promise
+ * from these two callbacks. (The overwrite ask is not a ConfirmDialog: it
+ * answers per row — see `OverwriteModal`.)
  */
 type ConfirmDialogProps = {
   open: boolean;

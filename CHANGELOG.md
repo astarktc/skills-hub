@@ -113,7 +113,7 @@ harnesses) are held for 1.3.2 — see Known limitations.
   project world's `onDeploymentsChanged`.
 - `src/i18n/resources.test.ts` fails on any `en` leaf no source reads (56 dead keys deleted) and on any retired word.
 - `scripts/check-styles.mjs`: App.css must not exist; a frozen `retiredClasses` list; Tailwind scans `src/` only.
-- Every ticket's audit is under `.scratch/round19/review/`; ticket 34's work waits on branch `t3/registry-truth-pass`.
+- Every ticket's audit is under `.scratch/archive/round19/review/`; ticket 34's work waits on branch `t3/registry-truth-pass`.
 
 ## [1.3.0] - 2026-10-27
 
