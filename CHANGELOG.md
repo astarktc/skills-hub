@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.3.2] - Unreleased
+## [1.3.2] - 2026-11-05
 
 A patch: four fixes from the 1.3.1 field report, three more fixes the new Windows test run found, and a CI job that
 runs the Rust suite on Windows. The harness-registry corrections and the four new harnesses announced in
