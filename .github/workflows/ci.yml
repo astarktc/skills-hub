@@ -86,20 +86,14 @@ jobs:
         with:
           workspaces: src-tauri
       - run: cargo clippy --all-targets --all-features -- -D warnings
-      # Excluded: five git_acquisition tests that clone a local LF repository
-      # and compare bytes. Git for Windows' system config sets
-      # core.autocrlf=true, so the clone checks out CRLF — real behaviour of
-      # the app's clone path on Windows today (the Contents API path delivers
-      # LF) and an open decision, not a test bug. Also excluded: skill_store's
+      # Git for Windows' system config sets core.autocrlf=true; the app pins
+      # its own checkouts (core.autocrlf=false, core.eol=lf), so the byte-exact
+      # acquisition tests run here as everywhere. Excluded: skill_store's
       # contention test (8 writers × 50 rounds, rollback-journal SQLite) — on
       # the hosted runner's disk the writers starve past the 5 s busy timeout
-      # even when it runs alone (it passes on a Windows 11 PC); an open
-      # finding about the DB on slow Windows disks. Everything else runs.
+      # even when it runs alone (it passes on a Windows 11 PC). That is a known
+      # Windows limitation of the database under write contention on a slow
+      # disk, not a test-portability problem. Everything else runs.
       - run: >-
           cargo test --all --
           --skip concurrent_readers_and_writers_all_succeed
-          --skip a_named_skill_resolves_its_subpath_in_a_multi_skill_repo
-          --skip per_tool_symlink_aliases_of_one_skill_do_not_make_its_name_ambiguous
-          --skip unnamed_and_lenient_intents_keep_the_root_with_one_nested_skill
-          --skip a_subpath_that_is_an_upstream_symlink_acquires_the_targets_content
-          --skip a_symlinked_component_of_the_subpath_is_followed

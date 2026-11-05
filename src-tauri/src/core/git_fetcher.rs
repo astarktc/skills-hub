@@ -5,11 +5,39 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use git2::{FetchOptions, Repository};
+use git2::build::{CheckoutBuilder, RepoBuilder};
+use git2::{ConfigLevel, FetchOptions, Repository};
 
 use super::cancel_token::CancelToken;
 use super::errors::SignalError;
 use super::repo_subpath::normalize_subpath;
+
+/// The line-ending policy of every working tree this module writes, on both
+/// transports: no ambient end-of-line conversion. A skill's bytes are what
+/// the commit holds — what the GitHub Contents API path delivers — whatever
+/// the machine's git config says (Git for Windows installs
+/// `core.autocrlf=true` system-wide, which turns every LF text file into
+/// CRLF on checkout). `core.eol=lf` covers the other ambient lever: a file
+/// the repository marks `text` (`* text=auto`) checks out with the
+/// configured `core.eol`, native CRLF on Windows when unset.
+///
+/// What this does **not** remove: a repository's own `.gitattributes`
+/// (`eol=crlf`, `working-tree-encoding`, filter drivers, `ident`) still
+/// transforms checkout bytes on both transports.
+///
+/// The CLI takes it as `-c` on every command ([`git_cmd`]); libgit2 as the
+/// clone's repository config, written before its first checkout
+/// ([`open_with_checkout_policy`]). Changing it does not rewrite a tree
+/// already checked out (git trusts the index's stat cache), so the clone
+/// cache rebuilds an entry written under another version —
+/// [`CHECKOUT_POLICY_VERSION`].
+const CHECKOUT_POLICY: [(&str, &str); 2] = [("core.autocrlf", "false"), ("core.eol", "lf")];
+
+/// Bumped whenever [`CHECKOUT_POLICY`] changes. The clone cache records the
+/// version each entry was checked out under and never serves, or updates in
+/// place, an entry of another version. `0` is every entry written before the
+/// policy existed (ambient config).
+pub(crate) const CHECKOUT_POLICY_VERSION: u32 = 1;
 
 pub fn clone_or_pull(
     repo_url: &str,
@@ -62,13 +90,30 @@ pub fn clone_or_pull(
         log::info!("[git_fetcher] system git not available; using libgit2");
     }
 
+    clone_or_pull_via_libgit2(repo_url, dest, branch)
+}
+
+/// The built-in transport: a full clone (libgit2 has no sparse checkout),
+/// checked out under [`CHECKOUT_POLICY`].
+fn clone_or_pull_via_libgit2(repo_url: &str, dest: &Path, branch: Option<&str>) -> Result<String> {
     let repo = if dest.exists() {
-        let repo = Repository::open(dest).with_context(|| format!("open repo at {:?}", dest))?;
+        let repo = open_with_checkout_policy(dest)?;
         fetch_origin(&repo)?;
         repo
     } else {
-        Repository::clone(repo_url, dest)
-            .with_context(|| format!("clone {} into {:?}", repo_url, dest))?
+        // Clone without a checkout: the policy is repository config, which
+        // exists only once the clone does. The first checkout follows it,
+        // forced because the empty working tree reads as deleted files.
+        let mut no_checkout = CheckoutBuilder::new();
+        no_checkout.dry_run();
+        RepoBuilder::new()
+            .with_checkout(no_checkout)
+            .clone(repo_url, dest)
+            .with_context(|| format!("clone {} into {:?}", repo_url, dest))?;
+        let repo = open_with_checkout_policy(dest)?;
+        repo.checkout_head(Some(CheckoutBuilder::new().force()))
+            .with_context(|| format!("checkout HEAD in {:?}", dest))?;
+        repo
     };
 
     // Best-effort: move working tree HEAD to the fetched remote head (so "pull" actually updates).
@@ -497,9 +542,16 @@ fn git_bin_works(bin: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Every git CLI command this module runs: the working-tree-producing ones
+/// (clone, checkout, reset, sparse-checkout) and the rest alike carry
+/// [`CHECKOUT_POLICY`] as `-c`, which outranks every config file and the
+/// `GIT_CONFIG_COUNT` environment, and reaches git's own subprocesses.
 fn git_cmd() -> Command {
     let bin = resolve_git_bin().unwrap_or_else(|| "git".to_string());
     let mut cmd = background_command(&bin);
+    for (key, value) in CHECKOUT_POLICY {
+        cmd.arg("-c").arg(format!("{key}={value}"));
+    }
     // Never block on interactive auth prompts inside a GUI app.
     cmd.env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_ASKPASS", "echo");
@@ -698,6 +750,26 @@ fn clone_or_pull_via_git_cli(
         );
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Open the clone at `dest` with [`CHECKOUT_POLICY`] written to its local
+/// config, which outranks the global and system files libgit2 reads. The
+/// repository is reopened after the write so no value libgit2 cached from
+/// the old config can reach a checkout.
+fn open_with_checkout_policy(dest: &Path) -> Result<Repository> {
+    {
+        let repo = Repository::open(dest).with_context(|| format!("open repo at {:?}", dest))?;
+        let mut local = repo
+            .config()
+            .and_then(|config| config.open_level(ConfigLevel::Local))
+            .with_context(|| format!("open local git config in {:?}", dest))?;
+        for (key, value) in CHECKOUT_POLICY {
+            local
+                .set_str(key, value)
+                .with_context(|| format!("set {key}={value} in {:?}", dest))?;
+        }
+    }
+    Repository::open(dest).with_context(|| format!("open repo at {:?}", dest))
 }
 
 fn fetch_origin(repo: &Repository) -> Result<()> {
