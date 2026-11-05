@@ -86,6 +86,7 @@ export type PlainEntry = OutcomeEntry;
  * failure › conflict › skipped › declined › success. `neutral` is a run the
  * operator cancelled with nothing else to report. The tone chooses the toast
  * kind; it never chooses the headline's words — the composite count line does.
+ * The reporter keeps a `failure`-toned toast until it is dismissed.
  */
 export type OutcomeTone =
   | "failure"
