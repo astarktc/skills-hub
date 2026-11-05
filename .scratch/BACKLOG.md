@@ -5,7 +5,7 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#104**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#106**.
 
 Round 19 closed 2026-11-05 (`archive/round19/spec.md` § Closure — 2026-11-05); every line it carried was re-derived from
 the code that day (`archive/round19/closure/extract-{A..G}.md`). The next effort is **round 20**: candidates #92 (first),
@@ -53,6 +53,8 @@ the code that day (`archive/round19/closure/extract-{A..G}.md`). The next effort
   deployment between dirs needs one physical identity (canonical parent + leaf, never the link's referent) applied by
   relocation, cleanup, rollback, Keep, `sync_engine`'s overwrite **and** Import's original removal
   (`onboarding_import.rs:719–720, 740–748`, fenced only by the lexical `tool_adapters::ensure_path_within_tool_dirs`),
+  and `sync_engine::remove_path_any` itself (a *real* leaf under a parent aliased onto the central repo is deleted at
+  its physical location — reproduced on 1.3.1 and 1.3.2 by the 1.3.2 review's differential probe; a leaf *link* is safe),
   plus a move that survives a crash at any boundary without an unowned artifact or a `synced` row at a missing path.
   Audit 3's F14–F16 are the acceptance tests (aliased source/destination roots; a destination aliased onto the central
   repo; Keep over a copy with local-only edits) — re-express F15's against the launch pass too, then **re-enable the
@@ -162,6 +164,15 @@ code before scheduling.)
   `C:\Users\…\.claude/skills\grill-me` — registry relative dirs carry `/` and are joined onto a `\` home. Harmless to
   `Path` comparisons (components accept both), ugly wherever a path is shown or copied. Normalise at the registry join.
   Source: round 19 closure session (`ssh gpc`, DB read).
+- **#104 SQLite write contention fails on a slow Windows disk.** `skill_store::concurrent_readers_and_writers_all_succeed`
+  (8 writers × 50 rounds, default rollback journal, 5 s busy timeout, `core/skill_store.rs:1885`) fails even when run
+  alone on GitHub's `windows-latest` ("database is locked", run 42101089457) and is excluded from the Windows CI job
+  (1.3.2); it passes on the operator's Windows 11 PC. Refresh's pool is 4 workers, so first add a representative
+  four-worker probe; if it fails, decide the connection / write-admission policy (WAL, one writer, longer timeout).
+  Source: `.scratch/reviews/1.3.2-patch-review.md` § F3.
+- **#105 `derive_name_from_repo_url` splits only on `/`.** A Windows-style `file://C:\…` URL makes the derived skill name an
+  absolute path (seen only through a test fixture in 1.3.2's Windows work). Guard it: split on both separators, or
+  refuse a name that is not a plain leaf. Source: 1.3.2 implementer report, 2026-11-05.
 - **#87 Project-scope relocation for corrected harness dirs.** Blocked by #88: `main` still has Kilo global *and*
   project `.kilocode/skills` (`tool_adapters/mod.rs:636, :639`) and Xum both `.mux/skills` (`:480, :483`) — ticket 34
   never merged. When #88 corrects the global dirs, the project dirs still need a project relocation pass (per project,
