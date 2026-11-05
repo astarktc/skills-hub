@@ -55,6 +55,8 @@ the code that day (`archive/round19/closure/extract-{A..G}.md`). The next effort
   (`onboarding_import.rs:719–720, 740–748`, fenced only by the lexical `tool_adapters::ensure_path_within_tool_dirs`),
   and `sync_engine::remove_path_any` itself (a *real* leaf under a parent aliased onto the central repo is deleted at
   its physical location — reproduced on 1.3.1 and 1.3.2 by the 1.3.2 review's differential probe; a leaf *link* is safe),
+  and the git clone cache's error-retry `remove_dir_all` (`git_cache.rs` ~:306–308: lexically confined to
+  `<cache_dir>/skills-hub-git-cache/<sha256>`, not physically — a symlinked cache ancestor redirects it; 1.3.2 re-check R1),
   plus a move that survives a crash at any boundary without an unowned artifact or a `synced` row at a missing path.
   Audit 3's F14–F16 are the acceptance tests (aliased source/destination roots; a destination aliased onto the central
   repo; Keep over a copy with local-only edits) — re-express F15's against the launch pass too, then **re-enable the
