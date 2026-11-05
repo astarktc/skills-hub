@@ -93,7 +93,8 @@ jobs:
       # the hosted runner's disk the writers starve past the 5 s busy timeout
       # even when it runs alone (it passes on a Windows 11 PC). That is a known
       # Windows limitation of the database under write contention on a slow
-      # disk, not a test-portability problem. Everything else runs.
+      # disk, not a test-portability problem (BACKLOG #104). Everything else
+      # runs.
       - run: >-
           cargo test --all --
           --skip concurrent_readers_and_writers_all_succeed
