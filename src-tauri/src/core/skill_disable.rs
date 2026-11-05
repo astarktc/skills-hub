@@ -66,9 +66,10 @@ use super::global_sync::{
 };
 use super::mutation_guard;
 use super::project_sync::{first_sync_assignments_unlocked, ProjectSyncReport};
+use super::settings;
 use super::skill_store::{SkillRecord, SkillStore, TargetTransition};
 use super::sync_status::{SyncMode, SyncStatus};
-use super::tool_adapters::{adapter_by_key, adapters_sharing_skills_dir, skills_dir_in};
+use super::tool_adapters::{adapter_by_key, adapters_sharing_skills_dir, global_skills_dir_in};
 
 /// What the operator asked to disable or enable. Crosses the wire as itself:
 /// `{ kind: "skill_tool", skill_id, tool }`, `{ kind: "skill", skill_id }`
@@ -210,7 +211,8 @@ fn disable_pair(
         // retry that removes it records the marker then. The row may also
         // have appeared meanwhile; it is never overwritten.
         if report.failed_rows() == 0 && store.get_skill_target(&skill.id, tool)?.is_none() {
-            let target_path = skills_dir_in(home, adapter).join(&skill.name);
+            let target_path = global_skills_dir_in(home, adapter, settings::global_layout(store))
+                .join(&skill.name);
             let mode = if adapter.supports_symlink {
                 SyncMode::Symlink
             } else {
@@ -364,10 +366,11 @@ fn enable_pair(
     }
     let group: Vec<String> = match adapter_by_key(tool) {
         Some(adapter) => {
-            let mut keys: Vec<String> = adapters_sharing_skills_dir(adapter)
-                .into_iter()
-                .map(|a| a.key().to_string())
-                .collect();
+            let mut keys: Vec<String> =
+                adapters_sharing_skills_dir(adapter, settings::global_layout(store))
+                    .into_iter()
+                    .map(|a| a.key().to_string())
+                    .collect();
             if !keys.iter().any(|key| key == tool) {
                 keys.push(tool.to_string());
             }

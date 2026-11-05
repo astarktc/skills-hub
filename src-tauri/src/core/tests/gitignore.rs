@@ -26,7 +26,8 @@ fn patterns_use_project_scope_mapping_not_global() {
     // The gitignore patterns must match what project sync actually writes.
     let windsurf = adapter_by_key("windsurf").expect("windsurf adapter");
     assert_ne!(
-        windsurf.relative_skills_dir, windsurf.project_relative_skills_dir,
+        Some(windsurf.relative_skills_dir),
+        windsurf.project_relative_skills_dir,
         "test premise: windsurf global and project dirs differ"
     );
     let patterns = patterns_for_tools([windsurf]);
@@ -40,7 +41,10 @@ fn patterns_for_divergent_tools_all_use_project_dirs() {
         let patterns = patterns_for_tools([adapter]);
         assert_eq!(
             patterns,
-            vec![format!("/{}/", adapter.project_relative_skills_dir)],
+            vec![format!(
+                "/{}/",
+                adapter.project_relative_skills_dir.unwrap()
+            )],
             "wrong pattern for {}",
             key
         );

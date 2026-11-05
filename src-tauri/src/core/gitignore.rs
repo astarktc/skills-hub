@@ -34,7 +34,11 @@ pub const MARKER: &str = "# Skills Hub";
 pub fn patterns_for_tools<'a>(adapters: impl IntoIterator<Item = &'a ToolAdapter>) -> Vec<String> {
     let mut patterns: Vec<String> = Vec::new();
     for adapter in adapters {
-        let pattern = format!("/{}/", adapter.project_relative_skills_dir);
+        // A global-only Tool has no project dir to ignore.
+        let Some(dir) = adapter.project_relative_skills_dir else {
+            continue;
+        };
+        let pattern = format!("/{dir}/");
         if !patterns.contains(&pattern) {
             patterns.push(pattern);
         }

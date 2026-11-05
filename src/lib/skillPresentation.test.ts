@@ -32,6 +32,7 @@ import {
   skillSourceLabel,
   sourceKind,
   toolLabel,
+  catalogToolLabel,
   skillToolChips,
   unlocatableRepairs,
   visibleToolChoices,
@@ -557,6 +558,53 @@ describe("importedSourceLine", () => {
   });
 });
 
+// The retained translations of OpenClaw's former names (`tools.clawdbot` /
+// `tools.moltbot`); any other key falls back to i18next's `defaultValue`.
+const RETIRED_T = (key: string, opts?: Record<string, unknown>) =>
+  ({ "tools.clawdbot": "Clawdbot", "tools.moltbot": "MoltBot", "tools.cursor": "Cursor" })[key] ??
+  String(opts?.defaultValue ?? key);
+const KEY_ONLY_T = (key: string, opts?: Record<string, unknown>) =>
+  String(opts?.defaultValue ?? key);
+
+describe("catalogToolLabel", () => {
+  it("prefers the Tool catalog's label", () => {
+    expect(catalogToolLabel(RETIRED_T, { cursor: "Cursor (catalog)" }, "cursor")).toBe(
+      "Cursor (catalog)",
+    );
+  });
+
+  it("labels a key the catalog no longer lists by its retained translation", () => {
+    expect(catalogToolLabel(RETIRED_T, {}, "clawdbot")).toBe("Clawdbot");
+    expect(catalogToolLabel(RETIRED_T, {}, "moltbot")).toBe("MoltBot");
+  });
+
+  it("falls back to the raw key only when no translation exists", () => {
+    expect(catalogToolLabel(RETIRED_T, {}, "gone_tool")).toBe("gone_tool");
+  });
+
+  it("names a retired Tool's strip mark readably, undetected", () => {
+    const labels = { cursor: "Cursor" };
+    const fold = syncedStrip(
+      {
+        disabled_at: null,
+        unlocatable: null,
+        targets: [{ tool: "clawdbot", status: "synced", synced_at: 1 }],
+      },
+      [{ id: "cursor", label: "Cursor" }],
+      {
+        labelOf: (tool) => catalogToolLabel(RETIRED_T, labels, tool),
+        isDetected: (tool) => tool in labels,
+      },
+    );
+    expect(fold.marks.at(-1)).toMatchObject({
+      tool: "clawdbot",
+      label: "Clawdbot",
+      state: "synced",
+      detected: false,
+    });
+  });
+});
+
 describe("skillToolChips", () => {
   const target = (tool: string): SkillTargetDto => ({
     tool,
@@ -576,7 +624,7 @@ describe("skillToolChips", () => {
   ];
 
   it("renders a row-only tool as an undetected chip keeping its target", () => {
-    const chips = skillToolChips([target("cursor")], [], allTools);
+    const chips = skillToolChips([target("cursor")], [], allTools, KEY_ONLY_T);
     expect(chips).toEqual([
       {
         id: "cursor",
@@ -588,7 +636,7 @@ describe("skillToolChips", () => {
   });
 
   it("renders an installed-only tool as a detected chip with no target", () => {
-    const chips = skillToolChips([], installed, allTools);
+    const chips = skillToolChips([], installed, allTools, KEY_ONLY_T);
     expect(chips.map((c) => [c.id, c.detected, c.target])).toEqual([
       ["claude_code", true, null],
       ["pi", true, null],
@@ -596,7 +644,7 @@ describe("skillToolChips", () => {
   });
 
   it("renders a tool that is both installed and synced exactly once", () => {
-    const chips = skillToolChips([target("pi")], installed, allTools);
+    const chips = skillToolChips([target("pi")], installed, allTools, KEY_ONLY_T);
     expect(chips).toHaveLength(2);
     expect(chips[1]).toEqual({
       id: "pi",
@@ -607,13 +655,18 @@ describe("skillToolChips", () => {
   });
 
   it("renders nothing when the skill has no row and nothing is installed", () => {
-    expect(skillToolChips([], [], allTools)).toEqual([]);
+    expect(skillToolChips([], [], allTools, KEY_ONLY_T)).toEqual([]);
   });
 
   it("labels a row whose tool the registry no longer knows by its key", () => {
-    const chips = skillToolChips([target("gone_tool")], [], allTools);
+    const chips = skillToolChips([target("gone_tool")], [], allTools, KEY_ONLY_T);
     expect(chips[0].label).toBe("gone_tool");
     expect(chips[0].detected).toBe(false);
+  });
+
+  it("labels a retired Tool's row by its retained translation, undetected", () => {
+    const chips = skillToolChips([target("clawdbot")], [], allTools, RETIRED_T);
+    expect(chips[0]).toMatchObject({ id: "clawdbot", label: "Clawdbot", detected: false });
   });
 
   it("keeps installed tools first, undetected rows after", () => {
@@ -621,6 +674,7 @@ describe("skillToolChips", () => {
       [target("cursor"), target("claude_code")],
       installed,
       allTools,
+      KEY_ONLY_T,
     );
     expect(chips.map((c) => c.id)).toEqual(["claude_code", "pi", "cursor"]);
   });

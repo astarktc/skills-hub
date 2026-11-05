@@ -70,9 +70,11 @@ import {
   expandHome,
   fingerprint,
   globalRoot,
+  crossReads,
   globalSharers,
   hashFiles,
   isProjectToolInstalled,
+  onboardingReaders,
   projectCatalog,
   projectToolDir,
   skillFiles,
@@ -1320,6 +1322,7 @@ export function createFixtureBackend(
         };
         group.variants.push({
           tool: tool.key,
+          readers: onboardingReaders(tool.key, scope, state.installedTools),
           name: dir.name,
           path,
           fingerprint: dir.fingerprint,
@@ -1518,6 +1521,9 @@ export function createFixtureBackend(
       case "ui_zoom_level":
         s.ui_zoom_level = Number.isFinite(update.value) ? clamp(update.value, s.bounds.ui_zoom_level) : 1;
         break;
+      case "hide_harness_specific_dirs":
+        s.hide_harness_specific_dirs = update.value;
+        break;
     }
     return clone(s);
   };
@@ -1527,7 +1533,16 @@ export function createFixtureBackend(
     const newly = installed.filter((k) => !state.seenTools.includes(k));
     state.seenTools = [...installed];
     return {
-      tools: TOOL_REGISTRY.map((t) => ({ key: t.key, label: t.label, installed: isInstalled(t.key), shared_with: globalSharers(t.key), constituents: [] })),
+      tools: TOOL_REGISTRY.map((t) => ({
+        key: t.key,
+        label: t.label,
+        installed: isInstalled(t.key),
+        shared_with: globalSharers(t.key),
+        constituents: [],
+        also_reads: crossReads(t.key, installed),
+        agents_standard_read: t.reads ? { since: t.reads.since ?? null, precedence: t.reads.precedence } : null,
+        shadowed_by_own_dir: false,
+      })),
       installed,
       newly_installed: newly,
     };
@@ -1541,6 +1556,9 @@ export function createFixtureBackend(
       installed: isProjectToolInstalled(state, t.key),
       shared_with: catalog.filter((o) => o.projectDir === t.projectDir).map((o) => o.key),
       constituents: t.key === VIRTUAL_GROUP_KEY ? TOOL_REGISTRY.filter((o) => o.grouped).map((o) => o.label) : [],
+      also_reads: [],
+      agents_standard_read: null,
+      shadowed_by_own_dir: false,
     }));
     return { tools, installed: tools.filter((t) => t.installed).map((t) => t.key), newly_installed: [] };
   };
@@ -1682,6 +1700,18 @@ export function createFixtureBackend(
     updateSetting: async (update) => {
       await pause(60);
       return applySetting(update);
+    },
+    // The fixture does not simulate the "prefer the AGENTS standard folder"
+    // layout (see `registry.ts`): nothing relocates, the flag is stored.
+    previewPreferAgentsStandardDir: async () => {
+      await pause(40);
+      return 0;
+    },
+    setPreferAgentsStandardDir: async (enabled) => {
+      await pause(120);
+      state.settings.prefer_agents_standard_dir = enabled;
+      state.settings.agents_standard_offer_pending = false;
+      return { settings: clone(state.settings), relocation: { relocated: 0, left_in_place: 0, incomplete: [] } };
     },
     getToolStatus: async () => {
       await pause(80);

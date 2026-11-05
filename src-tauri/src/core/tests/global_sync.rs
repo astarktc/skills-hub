@@ -8,7 +8,7 @@
 
 use crate::core::sync_status::{SyncMode, SyncStatus};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::core::global_sync::{
     plan_batch_tool_targets, sync_skill_into_root, sync_skills_to_planned_tools,
@@ -16,7 +16,7 @@ use crate::core::global_sync::{
     GlobalSyncError, OverrideDecision, OverwritePolicy, PlannedToolTarget,
 };
 use crate::core::skill_store::{SkillRecord, SkillStore};
-use crate::core::tool_adapters::{adapter_by_key, mark_installed_in, ToolAdapter};
+use crate::core::tool_adapters::{adapter_by_key, mark_installed_in, GlobalLayout, ToolAdapter};
 
 fn make_store(base: &Path) -> SkillStore {
     let store = SkillStore::new(base.join("test.db"));
@@ -86,6 +86,7 @@ fn sync_creates_target_and_records_for_all_group_tools() {
         "my-skill",
         &no_overwrite(),
         &record_tools,
+        &[],
         1000,
     )
     .expect("sync");
@@ -126,6 +127,7 @@ fn sync_without_overwrite_fails_with_target_exists() {
         "my-skill",
         &no_overwrite(),
         std::slice::from_ref(&adapter),
+        &[],
         1000,
     )
     .expect_err("must fail");
@@ -172,6 +174,7 @@ fn sync_with_overwrite_replaces_existing_target() {
             overwrite_if_same_content: false,
         },
         std::slice::from_ref(&adapter),
+        &[],
         1000,
     )
     .expect("sync");
@@ -220,6 +223,7 @@ fn overwrite_if_same_content_only_replaces_identical_targets() {
         "my-skill",
         &policy,
         std::slice::from_ref(&adapter),
+        &[],
         1000,
     )
     .expect("same-content sync must succeed");
@@ -235,6 +239,7 @@ fn overwrite_if_same_content_only_replaces_identical_targets() {
         "other-skill",
         &policy,
         std::slice::from_ref(&adapter),
+        &[],
         1000,
     )
     .expect_err("different content must not be replaced");
@@ -275,6 +280,7 @@ fn the_collision_fact_reads_the_stored_identity_like_the_policy() {
         "my-skill",
         &same_content_policy,
         std::slice::from_ref(&adapter),
+        &[],
         1000,
     )
     .expect_err("the stored identity differs: not replaced");
@@ -301,6 +307,7 @@ fn the_collision_fact_reads_the_stored_identity_like_the_policy() {
         "ghost",
         &same_content_policy,
         std::slice::from_ref(&adapter),
+        &[],
         1000,
     )
     .expect_err("unknown identity: not replaced");
@@ -321,6 +328,7 @@ fn the_collision_fact_reads_the_stored_identity_like_the_policy() {
         "same",
         &same_content_policy,
         std::slice::from_ref(&adapter),
+        &[],
         1000,
     )
     .expect("same content: replaced silently");
@@ -349,6 +357,7 @@ fn copy_only_capability_gets_copy_mode() {
         "my-skill",
         &no_overwrite(),
         std::slice::from_ref(&cursor),
+        &[],
         1000,
     )
     .expect("sync");
@@ -378,7 +387,12 @@ fn planned(adapter: &'static ToolAdapter, root: &Path, installed: bool) -> Plann
         adapter,
         root: root.to_path_buf(),
         installed,
+        sharers: crate::core::tool_adapters::adapters_sharing_skills_dir(
+            adapter,
+            crate::core::tool_adapters::GlobalLayout::OWN_DIRS,
+        ),
         record_tools: vec![adapter],
+        superseded_dirs: Vec::new(),
     }
 }
 
@@ -597,14 +611,14 @@ fn batch_override_applies_to_named_tool_and_its_shared_dir_group() {
         }
     ));
 
-    // Override naming amp while the target is kimi_cli — they share
-    // ~/.config/agents/skills — must apply and replace the target.
-    let kimi = adapter_by_key("kimi_cli");
-    let amp = adapter_by_key("amp").expect("amp adapter");
-    if let Some(kimi) = kimi {
+    // Override naming codex while the target is goose — they share
+    // ~/.agents/skills — must apply and replace the target.
+    let goose = adapter_by_key("goose");
+    let codex = adapter_by_key("codex").expect("codex adapter");
+    if let Some(goose) = goose {
         assert_eq!(
-            kimi.relative_skills_dir, amp.relative_skills_dir,
-            "test premise: amp and kimi share a skills dir"
+            goose.relative_skills_dir, codex.relative_skills_dir,
+            "test premise: codex and goose share a skills dir"
         );
         let root_b = dir.path().join("root-b");
         make_skill_dir(&root_b, "my-skill", "# Old");
@@ -613,14 +627,14 @@ fn batch_override_applies_to_named_tool_and_its_shared_dir_group() {
             overwrite_if_same_content: false,
             overrides: vec![BatchOverride {
                 skill_id: "skill-1".to_string(),
-                tool_key: "amp".to_string(),
+                tool_key: "codex".to_string(),
                 decision: OverrideDecision::Overwrite,
             }],
         };
         let outcomes = sync_skills_to_planned_tools(
             &store,
             &skills,
-            &[planned(kimi, &root_b, true)],
+            &[planned(goose, &root_b, true)],
             &policy_shared,
             1000,
             |_| {},
@@ -763,16 +777,16 @@ fn install_tool(home: &Path, key: &str) {
 fn plan_resolves_root_installedness_and_installed_shared_group_from_home() {
     let home = tempfile::tempdir().expect("home");
     install_tool(home.path(), "claude_code");
-    // amp and kimi_cli share ~/.config/agents/skills but are detected by
-    // their own config roots; install both so the shared group is complete.
-    install_tool(home.path(), "amp");
-    install_tool(home.path(), "kimi_cli");
+    // codex and goose share ~/.agents/skills but are detected by their own
+    // config roots; install both so the shared group is complete.
+    install_tool(home.path(), "codex");
+    install_tool(home.path(), "goose");
 
-    let keys = ["claude_code", "cursor", "amp", "nope"]
+    let keys = ["claude_code", "cursor", "codex", "nope"]
         .iter()
         .map(|k| k.to_string())
         .collect::<Vec<_>>();
-    let plans = plan_batch_tool_targets(home.path(), &keys);
+    let plans = plan_batch_tool_targets(home.path(), GlobalLayout::OWN_DIRS, &keys);
     assert_eq!(plans.len(), 4);
 
     let claude = plans[0].as_ref().expect("claude plan");
@@ -792,16 +806,124 @@ fn plan_resolves_root_installedness_and_installed_shared_group_from_home() {
     assert_eq!(cursor.root, home.path().join(".cursor/skills"));
     assert!(cursor.record_tools.is_empty());
 
-    let amp = plans[2].as_ref().expect("amp plan");
-    assert!(amp.installed);
-    assert_eq!(amp.root, home.path().join(".config/agents/skills"));
-    let group: Vec<&str> = amp.record_tools.iter().map(|a| a.id.as_key()).collect();
-    assert!(group.contains(&"amp"), "got {:?}", group);
-    assert!(group.contains(&"kimi_cli"), "got {:?}", group);
+    let codex = plans[2].as_ref().expect("codex plan");
+    assert!(codex.installed);
+    assert_eq!(codex.root, home.path().join(".agents/skills"));
+    let group: Vec<&str> = codex.record_tools.iter().map(|a| a.id.as_key()).collect();
+    assert_eq!(group, vec!["codex", "goose"], "installed sharers only");
 
     let (key, err) = plans[3].as_ref().expect_err("unknown tool fails planning");
     assert_eq!(key, "nope");
     assert!(matches!(err, GlobalSyncError::Other(_)));
+}
+
+/// #83: the effective target set. With the preference on, an AGENTS-standard
+/// reader plans `~/.agents/skills` (whatever its precedence) and records
+/// every installed sharer there; a non-reader keeps its own dir. Off, every
+/// harness plans its own dir.
+#[test]
+fn the_preference_resolves_readers_to_the_agents_standard_dir() {
+    let home = tempfile::tempdir().expect("home");
+    for key in ["amp", "gemini_cli", "cursor", "claude_code", "codex"] {
+        install_tool(home.path(), key);
+    }
+    // OwnWins, AgentsWins, Unknown, None, BothShown.
+    let keys: Vec<String> = ["amp", "gemini_cli", "cursor", "claude_code", "codex"]
+        .iter()
+        .map(|k| k.to_string())
+        .collect();
+    let agents = home.path().join(".agents/skills");
+
+    let on = plan_batch_tool_targets(home.path(), GlobalLayout::PREFER_AGENTS_STANDARD, &keys);
+    let roots: Vec<PathBuf> = on
+        .iter()
+        .map(|p| p.as_ref().unwrap().root.clone())
+        .collect();
+    assert_eq!(
+        roots,
+        vec![
+            agents.clone(),
+            agents.clone(),
+            agents.clone(),
+            home.path().join(".claude/skills"),
+            agents.clone()
+        ]
+    );
+    let amp = on[0].as_ref().unwrap();
+    let recorded: Vec<&str> = amp.record_tools.iter().map(|a| a.key()).collect();
+    assert_eq!(recorded, vec!["cursor", "codex", "amp", "gemini_cli"]);
+
+    let off = plan_batch_tool_targets(home.path(), GlobalLayout::OWN_DIRS, &keys);
+    let roots: Vec<PathBuf> = off
+        .iter()
+        .map(|p| p.as_ref().unwrap().root.clone())
+        .collect();
+    assert_eq!(
+        roots,
+        vec![
+            home.path().join(".config/agents/skills"),
+            home.path().join(".gemini/skills"),
+            home.path().join(".cursor/skills"),
+            home.path().join(".claude/skills"),
+            agents,
+        ]
+    );
+}
+
+/// The batch reads the saved preference: on (the default), a skill synced to
+/// Cursor lands once in `~/.agents/skills` — no `~/.cursor/skills` copy —
+/// and is recorded for every installed sharer; off, it lands in Cursor's dir.
+#[test]
+fn the_batch_stops_the_harness_specific_deployment_under_the_preference() {
+    for (prefer, expected_dir) in [(true, ".agents/skills"), (false, ".cursor/skills")] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path().join("home");
+        install_tool(&home, "cursor");
+        install_tool(&home, "codex");
+        let store = make_store(dir.path());
+        seed_skill(&store, "skill-1");
+        crate::core::settings::write_prefer_agents_standard_dir(&store, prefer).unwrap();
+        let source = make_skill_dir(dir.path(), "central", "# New");
+        let skills = vec![BatchSkill {
+            skill_id: "skill-1".to_string(),
+            skill_name: "my-skill".to_string(),
+            source_path: source,
+        }];
+        let outcomes = sync_skills_to_tools(
+            &home,
+            &store,
+            &skills,
+            &["cursor".to_string()],
+            &BatchPolicy::default(),
+            1000,
+            |_| {},
+        );
+        assert!(
+            matches!(outcomes[0].status, BatchTargetStatus::Synced { .. }),
+            "{:?}",
+            outcomes[0].status
+        );
+        assert!(
+            home.join(expected_dir).join("my-skill").exists(),
+            "{prefer}"
+        );
+        let rows: Vec<String> = store
+            .list_skill_targets("skill-1")
+            .unwrap()
+            .into_iter()
+            .map(|r| r.tool)
+            .collect();
+        if prefer {
+            assert!(!home.join(".cursor/skills/my-skill").exists());
+            assert!(rows.contains(&"cursor".to_string()));
+            assert!(
+                rows.contains(&"codex".to_string()),
+                "a sharer there: {rows:?}"
+            );
+        } else {
+            assert_eq!(rows, vec!["cursor".to_string()]);
+        }
+    }
 }
 
 #[test]

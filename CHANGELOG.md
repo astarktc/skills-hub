@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Harness folders checked against the vendors' docs
+
+Every harness's global skills folder was reviewed on 2026-11-02 (`docs/design-inputs/2026-11-02-harness-global-skills-dirs.md`); most rows are verified against the vendor's docs or source, a few rest on secondary sources or remain unknown, and the brief marks which (WorkBuddy's folder is secondary-only). Where Skills Hub deployed to a folder the evidence shows is wrong, it now deploys to the right one, and existing deployments move there on the next launch — whatever the new setting below says: a byte-identical copy already in the new folder is replaced, anything else there is left alone and logged. If the old copy cannot be removed, the move is undone: the deployment stays in the old folder, marked failed, and the next launch tries again.
+
+- **Codex, Goose and OpenHands deploy to `~/.agents/skills`**, their documented user folder. Codex calls `~/.codex/skills` deprecated and lists a skill found in both twice. They now share that folder with the `.agents/skills` entry.
+- **Antigravity** moves to `~/.gemini/config/skills`, the folder all three of its surfaces document (from `~/.gemini/antigravity/global_skills`).
+- **Kimi Code CLI** moves to `~/.kimi-code/skills`. Its old folder, `~/.config/agents/skills`, is also Amp's: only Kimi's deployments move, and a deployment Amp still uses stays where it is.
+- **Kilo Code** moves to `~/.kilo/skills` (from `~/.kilocode/skills`). **Mux is now Xum**, at `~/.xum/skills` (from `~/.mux/skills`). Both are still detected by either folder.
+- **New harnesses:** DeepSeek Harness (`~/.dsh/skills`), ZCode (`~/.zcode/skills`), Codewhale (`~/.codewhale/skills`) and WorkBuddy (`~/.workbuddy/skills`, global only: its project folder is not documented).
+- **Clawdbot and MoltBot rows retired** — they were former names of OpenClaw, which keeps its row; old deployments relocate to OpenClaw on the next launch (a deployment that cannot move still shows and can still be removed).
+- A harness folder holding only an old skills folder (`~/.codex` with just `skills/` in it, as other installers leave it) no longer counts as the harness being installed.
+
+### Prefer the AGENTS standard folder
+
+- **New setting, on for a new install:** 27 harnesses are verified to read `~/.agents/skills`; the 24 of them that have a folder of their own (Cursor, OpenCode, Amp, Kimi Code CLI, Augment, OpenClaw, Cline, Gemini CLI, GitHub Copilot, Pi and 14 more — Codex, Goose and OpenHands already deploy there) get their skills there instead of in their own folder, so a harness no longer sees one skill in both its own folder and `~/.agents/skills`. A harness that also reads another harness's folder (Cursor reads Claude Code's) can still see a skill deployed to both; the harness list's "also reads" warning names those. An existing install keeps its folders until you choose: you are asked once, with the number of deployments that would move, and they move only when you turn it on; turning it off moves them back. Its switch arrives with the Harnesses settings pane. While a harness's deployment is waiting to move, updating the skill updates that copy in place and does not deploy a second one to `~/.agents/skills`. Answering "Keep existing" when its new folder is taken removes the old copy instead of leaving it in use.
+- The harness list now says which other harnesses' folders a harness also reads (Cursor reads Claude Code's and Codex's), for the warnings that pane will show.
+- Onboarding scans a folder several harnesses share once, so one copy is one entry — also when one harness's skills folder is a symlink to another's, and a copy Skills Hub already deployed is never offered through such a link. Importing with auto-deploy on removes a byte-identical original left in a harness's own folder once the skill is deployed to `~/.agents/skills` for that harness.
+
 ## [1.3.0] - 2026-10-27
 
 Round 19, phase A of the UI effort: Skills Hub gets one visual language, My Skills becomes a dense list with an inspector beside it, removing a skill from a tool is now a choice that lasts, and every batch says what happened in one line. Settings panes, the Import review, Explore rows, the command palette and the card grid follow in 1.3.x.

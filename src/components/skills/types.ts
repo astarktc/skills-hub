@@ -43,6 +43,8 @@ export type { FeaturedSkillDto } from "../../bindings";
 export type { OnlineSkillDto } from "../../bindings";
 export type { SkillFileEntry } from "../../bindings";
 export type { ToolInfoDto } from "../../bindings";
+export type { AgentsStandardReadDto, Precedence } from "../../bindings";
+export type { AgentsStandardPreferenceResult, RelocationIncomplete, RelocationSummary } from "../../bindings";
 export type { ToolStatusDto } from "../../bindings";
 export type { BatchSyncSkillDto } from "../../bindings";
 export type { BatchSyncOverrideDto } from "../../bindings";

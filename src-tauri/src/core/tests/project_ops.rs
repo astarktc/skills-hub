@@ -485,7 +485,8 @@ fn remove_project_tool_and_artifacts_handles_missing_skill_gracefully() {
 fn pi_adapter() -> &'static crate::core::tool_adapters::ToolAdapter {
     let adapter = crate::core::tool_adapters::adapter_by_key("pi").expect("pi adapter");
     assert_ne!(
-        adapter.relative_skills_dir, adapter.project_relative_skills_dir,
+        Some(adapter.relative_skills_dir),
+        adapter.project_relative_skills_dir,
         "test precondition: pi's global and project mappings must diverge"
     );
     adapter
@@ -526,7 +527,8 @@ fn setup_pi_assignment(
         .unwrap();
     project_sync::assign_and_sync(store, &project, &skill, "pi", now_ms()).expect("assign");
 
-    let target = project_sync::resolve_project_sync_target(&project_dir, pi_adapter(), name);
+    let target = project_sync::resolve_project_sync_target(&project_dir, pi_adapter(), name)
+        .expect("project dir");
     assert!(
         target.symlink_metadata().is_ok(),
         "precondition: project-scope target should exist at {:?}",
@@ -982,6 +984,25 @@ fn configure_tools_rejects_unknown_tool_before_writing_anything() {
     );
     assert!(store.list_project_tools(&project.id).unwrap().is_empty());
     assert!(!project_dir.join(".gitignore").exists());
+}
+
+/// A global-only Tool (WorkBuddy: project dir unresolved, brief § 4) is not
+/// offered at project scope and is refused before anything is written.
+#[test]
+fn configure_tools_refuses_a_global_only_tool_before_writing_anything() {
+    let (dir, store) = make_store();
+    let project_dir = dir.path().join("proj");
+    fs::create_dir_all(&project_dir).unwrap();
+    let project = register_dir_project(&store, &project_dir);
+
+    project_ops::configure_project_tools(
+        &store,
+        &project.id,
+        &strs(&["claude_code", "workbuddy"]),
+        None,
+    )
+    .expect_err("a global-only tool has no project dir");
+    assert!(store.list_project_tools(&project.id).unwrap().is_empty());
 }
 
 #[test]

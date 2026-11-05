@@ -35,13 +35,13 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `agents_skills` | .agents/skills | `.agents/skills` | `.agents` |
 | `cursor` | Cursor | `.cursor/skills` | `.cursor` |
 | `claude_code` | Claude Code | `.claude/skills` | `.claude` |
-| `codex` | Codex | `.codex/skills` | `.codex` |
+| `codex` | Codex | `.agents/skills` (formerly `.codex/skills`) | `.codex` |
 | `opencode` | OpenCode | `.config/opencode/skills` | `.config/opencode` |
-| `antigravity` | Antigravity | `.gemini/antigravity/global_skills` | `.gemini/antigravity` |
+| `antigravity` | Antigravity | `.gemini/config/skills` (formerly `.gemini/antigravity/global_skills`) | `.gemini/antigravity` |
 | `amp` | Amp | `.config/agents/skills` | `.config/amp` |
-| `kimi_cli` | Kimi Code CLI | `.config/agents/skills` | `.kimi-code` or `.kimi` |
+| `kimi_cli` | Kimi Code CLI | `.kimi-code/skills` (formerly `.config/agents/skills`) | `.kimi-code` or `.kimi` |
 | `augment` | Augment | `.augment/skills` | `.augment` |
-| `openclaw` | OpenClaw | `.openclaw/skills` | `.openclaw` |
+| `openclaw` | OpenClaw | `.openclaw/skills` (formerly `.clawdbot/skills`, `.moltbot/skills`) | `.openclaw` |
 | `copaw` | Copaw | `.copaw/skill_pool` | `.copaw` |
 | `cline` | Cline | `.cline/skills` | `.cline` |
 | `codebuddy` | CodeBuddy | `.codebuddy/skills` | `.codebuddy` |
@@ -54,9 +54,9 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `kode` | Kode | `.kode/skills` | `.kode` |
 | `mcpjam` | MCPJam | `.mcpjam/skills` | `.mcpjam` |
 | `mistral_vibe` | Mistral Vibe | `.vibe/skills` | `.vibe` |
-| `mux` | Mux | `.mux/skills` | `.mux` |
+| `mux` | Xum (formerly Mux) | `.xum/skills` (formerly `.mux/skills`) | `.xum` or `.mux` |
 | `openclaude` | OpenClaude IDE | `.openclaude/skills` | `.openclaude` |
-| `openhands` | OpenHands | `.openhands/skills` | `.openhands` |
+| `openhands` | OpenHands | `.agents/skills` (formerly `.openhands/skills`) | `.openhands` |
 | `pi` | Pi | `.pi/agent/skills` | `.pi` |
 | `qoder` | Qoder | `.qoder/skills` | `.qoder` |
 | `qoderwork` | QoderWork | `.qoderwork/skills` | `.qoderwork` |
@@ -67,23 +67,41 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `neovate` | Neovate | `.neovate/skills` | `.neovate` |
 | `pochi` | Pochi | `.pochi/skills` | `.pochi` |
 | `adal` | AdaL | `.adal/skills` | `.adal` |
-| `kilo_code` | Kilo Code | `.kilocode/skills` | `.kilocode` |
+| `kilo_code` | Kilo Code | `.kilo/skills` (formerly `.kilocode/skills`) | `.kilo` or `.kilocode` |
 | `roo_code` | Roo Code | `.roo/skills` | `.roo` |
-| `goose` | Goose | `.config/goose/skills` | `.config/goose` |
+| `goose` | Goose | `.agents/skills` (formerly `.config/goose/skills`) | `.config/goose` |
 | `gemini_cli` | Gemini CLI | `.gemini/skills` | `.gemini` |
 | `github_copilot` | GitHub Copilot | `.copilot/skills` | `.copilot` |
-| `clawdbot` | Clawdbot | `.clawdbot/skills` | `.clawdbot` |
 | `droid` | Droid | `.factory/skills` | `.factory` |
 | `windsurf` | Windsurf | `.codeium/windsurf/skills` | `.codeium/windsurf` |
-| `moltbot` | MoltBot | `.moltbot/skills` | `.moltbot` |
 | `hermes-agent` | Hermes Agent | `.hermes/skills` | `.hermes` |
+| `deepseek_harness` | DeepSeek Harness | `.dsh/skills` | `.dsh` |
+| `zcode` | ZCode | `.zcode/skills` | `.zcode` |
+| `codewhale` | Codewhale | `.codewhale/skills` | `.codewhale` |
+| `workbuddy` | WorkBuddy (global only — no project dir) | `.workbuddy/skills` | `.workbuddy` |
 
-`agents_skills` is scope-dependent. **Globally** it is a plain, independently selectable target: it
-manages `~/.agents/skills` and nothing else — Cursor still reads `~/.cursor/skills`, Codex still reads
-`~/.codex/skills`, so those harnesses keep their own rows in the global list. **In a project** it is an
-aggregate shown as `.agents/skills (9 harnesses)`: one folder, `<project>/.agents/skills`, that nine harnesses
-(Cursor, Codex, OpenCode, Antigravity, Amp, Kimi Code CLI, Cline, Gemini CLI, GitHub Copilot) all read,
-so those nine have no separate project row.
+Every path was reviewed in
+[`docs/design-inputs/2026-11-02-harness-global-skills-dirs.md`](docs/design-inputs/2026-11-02-harness-global-skills-dirs.md),
+which marks each row's evidence: most are VERIFIED against the harness's own docs, release notes or source; others
+rely on secondary sources only (LIKELY — WorkBuddy's folder is one: its vendor doc names no path), and some facts remain
+UNKNOWN (Trae's official global path; MCPJam, OpenClaude IDE and AdaL have no vendor docs; whether Kilo Code and
+Windsurf still read their old folders).
+A "formerly" dir is where Skills Hub deployed before; existing deployments there move to the current dir on the next
+launch (only Kimi's own deployments leave Amp's `.config/agents/skills`). Clawdbot and MoltBot, former names of
+OpenClaw, are no longer listed separately; a deployment recorded for one of them moves to OpenClaw on the next launch.
+
+`agents_skills` is scope-dependent. **Globally** it is the `~/.agents/skills` folder: Codex, Goose and OpenHands
+deploy there too (it is their documented user dir), so they share one deployment with it. With **Prefer the AGENTS
+standard folder** on (the default for a new install; an existing install is asked once, and the setting moves nothing
+until it answers — the registry corrections above still move on the next launch), every harness that is verified to
+read `~/.agents/skills` — Cursor, OpenCode, Amp, Kimi Code CLI, Augment, Cline, Gemini CLI, GitHub Copilot, Pi and
+others — deploys there as well instead of to its own folder, so it does not see one skill in both its own folder and
+`~/.agents/skills` (a deployment that could not move — a different folder already in its way — stays, and is logged).
+It does not remove other duplicates: a harness that also reads another harness's folder (Cursor reads Claude Code's
+`~/.claude/skills`) still sees a skill deployed to both, which is what the harness list's "also reads" warning is for.
+**In a project** it is an aggregate shown as `.agents/skills (9 harnesses)`: one folder, `<project>/.agents/skills`, that nine harnesses (Cursor, Codex, OpenCode,
+Antigravity, Amp, Kimi Code CLI, Cline, Gemini CLI, GitHub Copilot) all read, so those nine have no separate project
+row.
 
 ## Development
 

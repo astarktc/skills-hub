@@ -85,6 +85,9 @@ fn fixture() -> Fixture {
 
     let store = SkillStore::new(dir.path().join("test.db"));
     store.ensure_schema().expect("ensure_schema");
+    // Every harness on its own dir; the shared-dir cases use the
+    // AGENTS-standard sharers (Codex, Goose), which share in either layout.
+    crate::core::settings::write_prefer_agents_standard_dir(&store, false).expect("layout");
     let skill = SkillRecord {
         id: "skill-1".to_string(),
         name: "skill".to_string(),
@@ -307,19 +310,19 @@ fn an_uninstalled_tool_is_skipped() {
 #[test]
 fn a_shared_skills_dir_group_syncs_once_and_settles_every_member_row() {
     let f = fixture();
-    let amp = adapter_by_key("amp").expect("amp adapter");
-    let kimi = adapter_by_key("kimi_cli").expect("kimi_cli adapter");
-    assert_eq!(amp.relative_skills_dir, kimi.relative_skills_dir);
-    install_tool(&f, amp);
-    install_tool(&f, kimi);
-    let target = f.paths.home.join(".config/agents/skills/skill");
+    let codex = adapter_by_key("codex").expect("codex adapter");
+    let goose = adapter_by_key("goose").expect("goose adapter");
+    assert_eq!(codex.relative_skills_dir, goose.relative_skills_dir);
+    install_tool(&f, codex);
+    install_tool(&f, goose);
+    let target = f.paths.home.join(".agents/skills/skill");
     seed_stale_copy(&target);
-    seed_global_target(&f, "t-amp", "amp", &target, SyncMode::Copy);
-    seed_global_target(&f, "t-kimi", "kimi_cli", &target, SyncMode::Copy);
+    seed_global_target(&f, "t-codex", "codex", &target, SyncMode::Copy);
+    seed_global_target(&f, "t-goose", "goose", &target, SyncMode::Copy);
 
     let outcomes = propagate(&f);
 
-    for tool in ["amp", "kimi_cli"] {
+    for tool in ["codex", "goose"] {
         assert!(
             matches!(
                 outcome_for(&outcomes, &global(tool)),
@@ -389,18 +392,18 @@ fn a_row_whose_tool_shares_no_dir_with_the_registry_is_still_its_own_group() {
 #[test]
 fn a_missing_central_source_fails_every_row_as_report_data() {
     let f = fixture();
-    let amp = adapter_by_key("amp").expect("amp adapter");
-    install_tool(&f, amp);
-    install_tool(&f, adapter_by_key("kimi_cli").expect("kimi_cli adapter"));
-    let target = f.paths.home.join(".config/agents/skills/skill");
+    let codex = adapter_by_key("codex").expect("codex adapter");
+    install_tool(&f, codex);
+    install_tool(&f, adapter_by_key("goose").expect("goose adapter"));
+    let target = f.paths.home.join(".agents/skills/skill");
     seed_stale_copy(&target);
-    seed_global_target(&f, "t-amp", "amp", &target, SyncMode::Copy);
-    seed_global_target(&f, "t-kimi", "kimi_cli", &target, SyncMode::Copy);
+    seed_global_target(&f, "t-codex", "codex", &target, SyncMode::Copy);
+    seed_global_target(&f, "t-goose", "goose", &target, SyncMode::Copy);
     fs::remove_dir_all(&f.central_path).expect("remove central copy");
 
     let outcomes = propagate(&f);
 
-    for tool in ["amp", "kimi_cli"] {
+    for tool in ["codex", "goose"] {
         match outcome_for(&outcomes, &global(tool)) {
             PropagationStatus::Failed {
                 error,
@@ -455,7 +458,7 @@ fn seed_project_copy_assignment(f: &Fixture, project_path: &Path) -> PathBuf {
         })
         .expect("seed assignment");
     project_path
-        .join(cursor.project_relative_skills_dir)
+        .join(cursor.project_relative_skills_dir.unwrap())
         .join("skill")
 }
 
@@ -703,9 +706,9 @@ fn a_project_artifact_is_found_by_its_stored_name_after_the_skill_is_renamed() {
 // leave the same row set.
 // ---------------------------------------------------------------------------
 
-/// Amp's global skills dir, shared with Kimi Code CLI.
+/// The AGENTS-standard dir, shared by Codex and Goose (and the entry).
 fn shared_target(f: &Fixture) -> PathBuf {
-    f.paths.home.join(".config/agents/skills/skill")
+    f.paths.home.join(".agents/skills/skill")
 }
 
 /// A failed first sync's row: `error`, never synced, owning nothing.
@@ -754,28 +757,28 @@ fn foreign_folder(path: &Path) {
     fs::write(path.join("SKILL.md"), "foreign").expect("write foreign SKILL.md");
 }
 
-fn amp_and_kimi() -> (&'static ToolAdapter, &'static ToolAdapter) {
-    let amp = adapter_by_key("amp").expect("amp adapter");
-    let kimi = adapter_by_key("kimi_cli").expect("kimi_cli adapter");
+fn codex_and_goose() -> (&'static ToolAdapter, &'static ToolAdapter) {
+    let codex = adapter_by_key("codex").expect("codex adapter");
+    let goose = adapter_by_key("goose").expect("goose adapter");
     assert_eq!(
-        amp.relative_skills_dir, kimi.relative_skills_dir,
-        "test premise: amp and kimi_cli share a skills dir"
+        codex.relative_skills_dir, goose.relative_skills_dir,
+        "test premise: codex and goose share a skills dir"
     );
-    (amp, kimi)
+    (codex, goose)
 }
 
 #[test]
 fn a_first_sync_records_every_installed_sharer_of_the_shared_dir() {
     let f = fixture();
-    let (amp, kimi) = amp_and_kimi();
-    install_tool(&f, amp);
-    install_tool(&f, kimi);
+    let (codex, goose) = codex_and_goose();
+    install_tool(&f, codex);
+    install_tool(&f, goose);
     let target = shared_target(&f);
-    seed_unowned_target(&f, "amp", &target);
+    seed_unowned_target(&f, "codex", &target);
 
     let outcomes = propagate(&f);
 
-    for tool in ["amp", "kimi_cli"] {
+    for tool in ["codex", "goose"] {
         assert!(
             matches!(
                 outcome_for(&outcomes, &global(tool)),
@@ -788,7 +791,7 @@ fn a_first_sync_records_every_installed_sharer_of_the_shared_dir() {
     }
     assert_eq!(outcomes.len(), 2, "each row reported once: {outcomes:?}");
     let rows = row_set(&f);
-    assert_eq!(tools_of(&f), ["amp", "kimi_cli"]);
+    assert_eq!(tools_of(&f), ["codex", "goose"]);
     for (tool, status, mode, path, owns) in &rows {
         assert_eq!(*status, SyncStatus::Synced, "{tool}");
         assert_eq!(*mode, SyncMode::Symlink, "{tool}");
@@ -809,45 +812,45 @@ fn a_first_sync_records_every_installed_sharer_of_the_shared_dir() {
 #[test]
 fn a_first_sync_records_no_sharer_that_is_not_installed() {
     let f = fixture();
-    let (amp, _) = amp_and_kimi();
-    install_tool(&f, amp);
+    let (codex, _) = codex_and_goose();
+    install_tool(&f, codex);
     let target = shared_target(&f);
-    seed_unowned_target(&f, "amp", &target);
+    seed_unowned_target(&f, "codex", &target);
 
     let outcomes = propagate(&f);
 
     assert_eq!(outcomes.len(), 1, "{outcomes:?}");
     assert!(matches!(
-        outcome_for(&outcomes, &global("amp")),
+        outcome_for(&outcomes, &global("codex")),
         PropagationStatus::Synced { .. }
     ));
-    assert_eq!(tools_of(&f), ["amp"]);
+    assert_eq!(tools_of(&f), ["codex"]);
 }
 
 #[test]
 fn an_update_of_an_owned_artifact_records_no_new_sharer() {
     let f = fixture();
-    let (amp, kimi) = amp_and_kimi();
-    install_tool(&f, amp);
-    install_tool(&f, kimi);
+    let (codex, goose) = codex_and_goose();
+    install_tool(&f, codex);
+    install_tool(&f, goose);
     let target = shared_target(&f);
     seed_stale_copy(&target);
-    seed_global_target(&f, "t-amp", "amp", &target, SyncMode::Copy);
+    seed_global_target(&f, "t-codex", "codex", &target, SyncMode::Copy);
 
     let outcomes = propagate(&f);
 
     assert_eq!(outcomes.len(), 1, "{outcomes:?}");
     assert!(matches!(
-        outcome_for(&outcomes, &global("amp")),
+        outcome_for(&outcomes, &global("codex")),
         PropagationStatus::Synced { .. }
     ));
-    assert_eq!(tools_of(&f), ["amp"], "an ordinary update adds no row");
+    assert_eq!(tools_of(&f), ["codex"], "an ordinary update adds no row");
 }
 
 /// The audit's exact sequence: the Update's first sync meets a foreign folder
 /// (`TARGET_EXISTS`, first deploy; the batch's rule records no sharer until
 /// the ask is answered), then the confirmed retry through the global batch
-/// records Amp and Kimi — the same row set Propagation writes when nothing
+/// records Codex and Goose — the same row set Propagation writes when nothing
 /// is in the way.
 #[test]
 fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_propagation() {
@@ -858,24 +861,24 @@ fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_prop
     };
 
     let f = fixture();
-    let (amp, kimi) = amp_and_kimi();
-    install_tool(&f, amp);
-    install_tool(&f, kimi);
+    let (codex, goose) = codex_and_goose();
+    install_tool(&f, codex);
+    install_tool(&f, goose);
     let target = shared_target(&f);
-    seed_unowned_target(&f, "amp", &target);
+    seed_unowned_target(&f, "codex", &target);
     foreign_folder(&target);
 
     let outcomes = propagate(&f);
 
     assert_eq!(outcomes.len(), 1, "only the asked pair: {outcomes:?}");
-    match outcome_for(&outcomes, &global("amp")) {
+    match outcome_for(&outcomes, &global("codex")) {
         PropagationStatus::Failed {
             error: CommandError::TargetExists { .. },
             first_deploy: true,
         } => {}
         other => panic!("expected a first-deploy TARGET_EXISTS, got {other:?}"),
     }
-    assert_eq!(tools_of(&f), ["amp"], "a collision records no sharer");
+    assert_eq!(tools_of(&f), ["codex"], "a collision records no sharer");
     assert_eq!(
         fs::read_to_string(target.join("SKILL.md")).expect("foreign bytes"),
         "foreign"
@@ -889,13 +892,13 @@ fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_prop
             skill_name: "skill".to_string(),
             source_path: f.central_path.clone(),
         }],
-        &["amp".to_string()],
+        &["codex".to_string()],
         &BatchPolicy {
             overwrite: false,
             overwrite_if_same_content: true,
             overrides: vec![BatchOverride {
                 skill_id: f.skill_id.clone(),
-                tool_key: "amp".to_string(),
+                tool_key: "codex".to_string(),
                 decision: OverrideDecision::Overwrite,
             }],
         },
@@ -909,13 +912,16 @@ fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_prop
         "{retry:?}"
     );
 
+    // The foreign folder made `~/.agents` exist, so the AGENTS-standard
+    // entry is an installed sharer by then; the control matches that.
     let control = fixture();
-    install_tool(&control, amp);
-    install_tool(&control, kimi);
-    seed_unowned_target(&control, "amp", &shared_target(&control));
+    install_tool(&control, codex);
+    install_tool(&control, goose);
+    install_tool(&control, adapter_by_key("agents_skills").unwrap());
+    seed_unowned_target(&control, "codex", &shared_target(&control));
     propagate(&control);
 
-    assert_eq!(tools_of(&f), ["amp", "kimi_cli"]);
+    assert_eq!(tools_of(&f), ["agents_skills", "codex", "goose"]);
     assert_eq!(
         row_set(&f),
         row_set(&control),
@@ -928,16 +934,16 @@ fn a_failed_first_sync_records_installed_sharers_error_as_the_batch_does() {
     use crate::core::errors::CommandError;
 
     let f = fixture();
-    let (amp, kimi) = amp_and_kimi();
-    install_tool(&f, amp);
-    install_tool(&f, kimi);
+    let (codex, goose) = codex_and_goose();
+    install_tool(&f, codex);
+    install_tool(&f, goose);
     let target = shared_target(&f);
-    seed_unowned_target(&f, "amp", &target);
+    seed_unowned_target(&f, "codex", &target);
     fs::remove_dir_all(&f.central_path).expect("remove central copy");
 
     let outcomes = propagate(&f);
 
-    for tool in ["amp", "kimi_cli"] {
+    for tool in ["codex", "goose"] {
         match outcome_for(&outcomes, &global(tool)) {
             PropagationStatus::Failed {
                 error: CommandError::InvalidPath { reason, .. },
@@ -947,7 +953,7 @@ fn a_failed_first_sync_records_installed_sharers_error_as_the_batch_does() {
         }
     }
     let rows = row_set(&f);
-    assert_eq!(tools_of(&f), ["amp", "kimi_cli"]);
+    assert_eq!(tools_of(&f), ["codex", "goose"]);
     for (tool, status, _, path, owns) in &rows {
         assert_eq!(*status, SyncStatus::Error, "{tool}");
         assert!(!owns, "{tool}: a failed first sync owns nothing");
@@ -958,15 +964,15 @@ fn a_failed_first_sync_records_installed_sharers_error_as_the_batch_does() {
 #[test]
 fn a_disabled_member_mints_no_sharer_and_skips_the_group() {
     let f = fixture();
-    let (amp, kimi) = amp_and_kimi();
-    install_tool(&f, amp);
-    install_tool(&f, kimi);
+    let (codex, goose) = codex_and_goose();
+    install_tool(&f, codex);
+    install_tool(&f, goose);
     let target = shared_target(&f);
     f.store
         .upsert_skill_target(&SkillTargetRecord {
-            id: "t-amp".to_string(),
+            id: "t-codex".to_string(),
             skill_id: f.skill_id.clone(),
-            tool: "amp".to_string(),
+            tool: "codex".to_string(),
             target_path: target.to_string_lossy().to_string(),
             mode: SyncMode::Symlink,
             status: SyncStatus::Disabled,
@@ -979,19 +985,19 @@ fn a_disabled_member_mints_no_sharer_and_skips_the_group() {
 
     assert_eq!(outcomes.len(), 1, "{outcomes:?}");
     assert!(matches!(
-        outcome_for(&outcomes, &global("amp")),
+        outcome_for(&outcomes, &global("codex")),
         PropagationStatus::Skipped {
             reason: PropagationSkip::Disabled
         }
     ));
-    assert_eq!(tools_of(&f), ["amp"]);
+    assert_eq!(tools_of(&f), ["codex"]);
     assert!(fs::symlink_metadata(&target).is_err(), "nothing written");
 
     // Skill grain: an unowned `error` row of a skill disabled everywhere.
     let g = fixture();
-    install_tool(&g, amp);
-    install_tool(&g, kimi);
-    seed_unowned_target(&g, "amp", &shared_target(&g));
+    install_tool(&g, codex);
+    install_tool(&g, goose);
+    seed_unowned_target(&g, "codex", &shared_target(&g));
     g.store
         .set_skill_disabled_at(&g.skill_id, Some(1))
         .expect("disable skill");
@@ -999,11 +1005,77 @@ fn a_disabled_member_mints_no_sharer_and_skips_the_group() {
     let outcomes = propagate(&g);
 
     assert!(matches!(
-        outcome_for(&outcomes, &global("amp")),
+        outcome_for(&outcomes, &global("codex")),
         PropagationStatus::Skipped {
             reason: PropagationSkip::Disabled
         }
     ));
-    assert_eq!(tools_of(&g), ["amp"]);
+    assert_eq!(tools_of(&g), ["codex"]);
     assert!(fs::symlink_metadata(shared_target(&g)).is_err());
+}
+
+/// Ticket-34 audit F3: a relocation that could not finish leaves two owned
+/// artifacts in what the preference makes one shared-dir group — Cursor's
+/// copy in its own dir, Codex's (locally divergent) copy in
+/// `~/.agents/skills`. An Update brings each artifact into line **in place**:
+/// rows at different stored paths are different write targets, so no row is
+/// settled at another row's path, no path changes, and Delete afterwards
+/// leaves nothing behind.
+#[test]
+fn an_update_after_a_partial_relocation_updates_each_owned_path_in_place() {
+    use crate::core::artifact_removal::remove_skill;
+
+    let f = fixture();
+    crate::core::settings::write_prefer_agents_standard_dir(&f.store, true).expect("layout");
+    let cursor = adapter_by_key("cursor").expect("cursor adapter");
+    let codex = adapter_by_key("codex").expect("codex adapter");
+    install_tool(&f, cursor);
+    install_tool(&f, codex);
+    let own = f.paths.home.join(".cursor/skills/skill");
+    let agents = shared_target(&f);
+    seed_stale_copy(&own);
+    seed_stale_copy(&agents);
+    fs::write(agents.join("local.txt"), "divergent").expect("diverge");
+    seed_global_target(&f, "t-cursor", "cursor", &own, SyncMode::Copy);
+    seed_global_target(&f, "t-codex", "codex", &agents, SyncMode::Copy);
+
+    let outcomes = propagate(&f);
+
+    for tool in ["cursor", "codex"] {
+        assert!(
+            matches!(
+                outcome_for(&outcomes, &global(tool)),
+                PropagationStatus::Synced { .. }
+            ),
+            "{tool}: {outcomes:?}"
+        );
+    }
+    for (tool, path) in [("cursor", &own), ("codex", &agents)] {
+        let row = f
+            .store
+            .get_skill_target(&f.skill_id, tool)
+            .expect("read row")
+            .expect("row kept");
+        assert_eq!(
+            Path::new(&row.target_path),
+            path.as_path(),
+            "{tool} keeps its path"
+        );
+        assert!(row.owns_artifact(), "{tool}");
+        assert_eq!(
+            fs::read_to_string(path.join("a.txt")).expect("updated bytes"),
+            "v2",
+            "{tool}'s artifact is updated in place"
+        );
+    }
+
+    let removal = remove_skill(&f.store, &f.skill_id).expect("delete");
+    assert_eq!(removal.failed_rows(), 0, "{removal}");
+    for path in [&own, &agents] {
+        assert!(
+            fs::symlink_metadata(path).is_err(),
+            "{} orphaned",
+            path.display()
+        );
+    }
 }

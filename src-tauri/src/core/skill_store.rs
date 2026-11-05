@@ -1169,6 +1169,33 @@ impl SkillStore {
         })
     }
 
+    /// Whether any global target row exists, of any status — the line
+    /// between a fresh install and one with deployments
+    /// (`settings::global_layout`).
+    pub fn has_skill_targets(&self) -> Result<bool> {
+        self.with_conn(|conn| {
+            Ok(
+                conn.query_row("SELECT EXISTS(SELECT 1 FROM skill_targets)", [], |row| {
+                    row.get(0)
+                })?,
+            )
+        })
+    }
+
+    /// Move one global target row to another Tool key — a retired key's row
+    /// onto the Tool it was a former name of (`ToolAdapter::former_keys`),
+    /// by `target_relocation` only. The caller has checked that the skill
+    /// holds no row under `tool` (`UNIQUE(skill_id, tool)`).
+    pub(crate) fn rekey_skill_target(&self, target_id: &str, tool: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE skill_targets SET tool = ?2 WHERE id = ?1",
+                params![target_id, tool],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn delete_skill_target(&self, skill_id: &str, tool: &str) -> Result<()> {
         self.with_conn(|conn| {
             conn.execute(

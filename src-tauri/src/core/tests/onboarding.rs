@@ -12,7 +12,7 @@ fn plan_in(
     home: &Path,
     scope: &OnboardingScanScope,
     exclude_root: Option<&Path>,
-    exclude_managed_targets: Option<&HashSet<String>>,
+    exclude_managed_targets: Option<&HashSet<std::path::PathBuf>>,
 ) -> anyhow::Result<OnboardingPlan> {
     build_onboarding_plan_in_home(
         home,
@@ -39,11 +39,7 @@ fn groups_by_name_and_detects_conflicts_by_fingerprint() {
     let home = tempfile::tempdir().unwrap();
 
     installed_with_skill(home.path(), "cursor", "foo", b"cursor");
-    installed_with_skill(home.path(), "codex", "foo", b"codex");
-
-    // Codex .system should be ignored
-    fs::create_dir_all(home.path().join(".codex/skills/.system")).unwrap();
-    fs::write(home.path().join(".codex/skills/.system/SKILL.md"), b"x").unwrap();
+    installed_with_skill(home.path(), "pi", "foo", b"pi");
 
     let plan = plan_in(home.path(), &OnboardingScanScope::Installed, None, None).unwrap();
     assert_eq!(plan.total_tools_scanned, 2);
@@ -148,7 +144,6 @@ fn excludes_managed_skill_targets() {
 
     let mut exclude = std::collections::HashSet::new();
     exclude.insert(super::managed_target_key(
-        "cursor",
         &home.path().join(".cursor/skills/foo"),
     ));
 
@@ -200,7 +195,7 @@ fn invalid_manifests_are_listed_apart_from_the_groups() {
 fn plan_counts_groups_and_copies_separately() {
     let home = tempfile::tempdir().unwrap();
     installed_with_skill(home.path(), "cursor", "foo", b"same");
-    installed_with_skill(home.path(), "codex", "foo", b"same");
+    installed_with_skill(home.path(), "pi", "foo", b"same");
     installed_with_skill(home.path(), "claude_code", "foo", b"other");
     installed_with_skill(home.path(), "claude_code", "bar", b"bar");
 
@@ -274,4 +269,124 @@ fn the_store_backed_plan_marks_managed_names_from_the_library() {
         tdd.managed_skill_id.as_deref(),
         Some(installed.skill_id.as_str())
     );
+}
+
+/// `~/.agents/skills` is shared by the AGENTS-standard entry, Codex, Goose
+/// and OpenHands: it is scanned once, and its copy is one variant.
+#[test]
+fn a_shared_skills_dir_is_scanned_once() {
+    let home = tempfile::tempdir().unwrap();
+    installed_with_skill(home.path(), "codex", "foo", b"x");
+    let goose = adapter_by_key("goose").unwrap();
+    mark_installed_in(home.path(), goose);
+
+    let plan = plan_in(home.path(), &OnboardingScanScope::Installed, None, None).unwrap();
+    assert_eq!(plan.copy_count, 1);
+    assert_eq!(plan.groups[0].variants.len(), 1);
+    assert_eq!(
+        plan.groups[0].variants[0].tool, "agents_skills",
+        "attributed to the first sharer in scope, in registry order"
+    );
+}
+
+/// A store holding one Managed skill `foo` with an owned global row for
+/// `tool` at `path` — the exclusion the production plan reads.
+fn store_owning(dir: &Path, tool: &str, path: &Path) -> crate::core::skill_store::SkillStore {
+    use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
+    use crate::core::sync_status::{SyncMode, SyncStatus};
+
+    let store = SkillStore::new(dir.join("test.db"));
+    store.ensure_schema().unwrap();
+    store
+        .upsert_skill(&SkillRecord {
+            id: "skill-1".to_string(),
+            name: "foo".to_string(),
+            description: None,
+            source_type: "local".to_string(),
+            source_ref: None,
+            source_subpath: None,
+            source_revision: None,
+            central_path: dir.join("central/foo").to_string_lossy().into_owned(),
+            content_hash: None,
+            created_at: 1,
+            updated_at: 1,
+            last_sync_at: None,
+            last_seen_at: 1,
+            status: "ok".to_string(),
+            imported_from_tool: None,
+        })
+        .unwrap();
+    store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "t-1".to_string(),
+            skill_id: "skill-1".to_string(),
+            tool: tool.to_string(),
+            target_path: path.to_string_lossy().into_owned(),
+            mode: SyncMode::Copy,
+            status: SyncStatus::Synced,
+            last_error: None,
+            synced_at: Some(1),
+        })
+        .unwrap();
+    store
+}
+
+/// Ticket-34 audit F4: a managed **copy** in `~/.agents/skills` owned only by
+/// Codex's row (a copy-fallback relocation) is the app's own artifact. The
+/// shared dir is scanned once and attributed to the first sharer in scope —
+/// under Installed scope the AGENTS-standard entry — but the exclusion is by
+/// physical path, so the copy is never re-offered, whatever the attribution.
+#[test]
+fn an_owned_copy_in_a_shared_dir_is_never_offered_whatever_its_attribution() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    installed_with_skill(&home, "codex", "foo", b"managed");
+    let path = home.join(".agents/skills/foo");
+    let store = store_owning(dir.path(), "codex", &path);
+    let central = dir.path().join("central");
+
+    for scope in [
+        OnboardingScanScope::Installed,
+        OnboardingScanScope::Selected(vec!["codex".to_string()]),
+    ] {
+        let plan = super::build_onboarding_plan(&home, &central, &store, &scope).unwrap();
+        assert_eq!(plan.copy_count, 0, "{scope:?}: {:?}", plan.groups);
+        assert!(plan.groups.is_empty(), "{scope:?}");
+    }
+}
+
+/// F4: an unmanaged copy in the shared `~/.agents/skills` is one variant whose
+/// roster names every in-scope harness loading it — the dir's sharers and a
+/// VERIFIED AGENTS-standard reader (Cursor) — never one that is not
+/// installed (Pi is a reader too) or not selected.
+#[test]
+fn a_shared_copy_names_every_in_scope_reader() {
+    let home = tempfile::tempdir().unwrap();
+    installed_with_skill(home.path(), "codex", "foo", b"x");
+    for key in ["goose", "openhands", "cursor", "claude_code"] {
+        mark_installed_in(home.path(), adapter_by_key(key).unwrap());
+    }
+
+    let plan = plan_in(home.path(), &OnboardingScanScope::Installed, None, None).unwrap();
+    assert_eq!(plan.copy_count, 1, "one physical copy, one variant");
+    let variant = &plan.groups[0].variants[0];
+    assert_eq!(variant.tool, "agents_skills");
+    assert_eq!(
+        variant.readers,
+        ["agents_skills", "cursor", "codex", "openhands", "goose"],
+        "registry order; Claude Code reads its own dir only, Pi is not installed"
+    );
+
+    let selected = OnboardingScanScope::Selected(vec!["goose".to_string(), "codex".to_string()]);
+    let plan = plan_in(home.path(), &selected, None, None).unwrap();
+    let variant = &plan.groups[0].variants[0];
+    assert_eq!(variant.tool, "codex", "the first selected sharer");
+    assert_eq!(variant.readers, ["codex", "goose"]);
+
+    // An own-dir copy is read by its own Tool and by every installed
+    // cross-reader of that dir (Cursor and Goose read `~/.claude/skills`).
+    installed_with_skill(home.path(), "claude_code", "bar", b"y");
+    let plan = plan_in(home.path(), &OnboardingScanScope::Installed, None, None).unwrap();
+    let bar = plan.groups.iter().find(|g| g.name == "bar").unwrap();
+    assert_eq!(bar.variants[0].readers, ["cursor", "claude_code", "goose"]);
 }

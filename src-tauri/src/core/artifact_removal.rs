@@ -62,12 +62,17 @@ use crate::core::{
     errors::{CommandError, SignalError},
     mutation_guard,
     project_sync::resolve_assignment_artifact,
+    settings,
     skill_health::{self, SkillOutcomeKind},
-    skill_store::{AssignmentTransition, ProjectRecord, SkillRecord, SkillStore, TargetTransition},
+    skill_store::{
+        AssignmentTransition, ProjectRecord, SkillRecord, SkillStore, SkillTargetRecord,
+        TargetTransition,
+    },
     sync_engine::remove_path_any,
     tool_adapters::{
         adapter_by_key, adapters_sharing_skills_dir, ensure_path_within_tool_dirs,
-        former_skills_dirs_in, is_installed_in, ToolAdapter,
+        global_skills_dir_in, is_installed_in, superseded_skills_dirs_in, GlobalLayout,
+        ToolAdapter,
     },
 };
 
@@ -326,7 +331,7 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
             home,
         } => {
             let rows = store.list_skill_targets(skill_id)?;
-            match global_group_keys(home, tool_key) {
+            match global_group_keys(home, settings::global_layout(store), tool_key) {
                 Some(group_keys) => {
                     for row in rows {
                         if group_keys.iter().any(|k| k == &row.tool) {
@@ -419,17 +424,74 @@ pub(crate) fn recorded_target_paths(store: &SkillStore) -> Result<Vec<PathBuf>> 
     Ok(paths)
 }
 
+/// Whether any row still owns the artifact at `path` — a global target row
+/// of any skill, or a resolved project assignment — by the one ownership
+/// inventory ([`recorded_target_paths`]). A project root is stored
+/// canonicalised (`project_ops::register_project_path`) while a global row
+/// records the home-joined path, so two spellings of one artifact (a
+/// symlinked home, macOS's `/var` → `/private/var`) are compared by
+/// [`artifact_identity`]. Read-only; what target relocation checks before
+/// removing a path a moved row used to own.
+pub(crate) fn artifact_is_owned(store: &SkillStore, path: &Path) -> Result<bool> {
+    artifact_is_owned_except(store, path, &[])
+}
+
+/// [`artifact_is_owned`], disregarding the global target rows named in
+/// `except` (by id): whether anything *besides* the rows about to move off
+/// `path` (relocation) or give it up (a Keep) still owns the artifact there.
+pub(crate) fn artifact_is_owned_except(
+    store: &SkillStore,
+    path: &Path,
+    except: &[&str],
+) -> Result<bool> {
+    let identity = artifact_identity(path);
+    for skill in store.list_skills()? {
+        let scope = RemovalScope::Skill { skill_id: skill.id };
+        for target in plan(store, &scope)?.targets {
+            if artifact_identity(&target.path) != identity {
+                continue;
+            }
+            if target.rows.iter().any(|row| match row {
+                RowRef::GlobalTarget { id, .. } => !except.contains(&id.as_str()),
+                RowRef::Assignment { .. } => true,
+            }) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// The physical identity of the artifact at `path`: its parent directory
+/// canonicalised, joined with the leaf name as written. Two spellings of one
+/// artifact (a symlinked home or Tool skills dir, macOS's `/var` →
+/// `/private/var`) share it. The leaf itself is never canonicalised — an
+/// artifact is usually a link, and following it would conflate distinct
+/// deployments with their one referent (the central copy). When the parent
+/// cannot be resolved (it is gone), the path is normalised lexically.
+///
+/// The one rule for "same artifact": removal's ownership inventory and
+/// onboarding's managed exclusion and scan-root dedupe all read it.
+pub(crate) fn artifact_identity(path: &Path) -> PathBuf {
+    if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
+        if let Ok(parent) = std::fs::canonicalize(parent) {
+            return parent.join(name);
+        }
+    }
+    path.components().collect()
+}
+
 /// The global tool keys one Tool's artifact is shared with: every tool
-/// resolving to the same global skills dir. `None` means the registry can no
+/// resolving to the same global skills dir under `layout`. `None` means the registry can no
 /// longer locate the Tool — no member of the group is installed for this
 /// operator — so no path may be *derived* for it; the caller falls back to
 /// the row's own recorded `target_path`. An unknown key stands for itself:
 /// its rows still carry their own paths.
-fn global_group_keys(home: &Path, tool_key: &str) -> Option<Vec<String>> {
+fn global_group_keys(home: &Path, layout: GlobalLayout, tool_key: &str) -> Option<Vec<String>> {
     let Some(adapter) = adapter_by_key(tool_key) else {
         return Some(vec![tool_key.to_string()]);
     };
-    let group = adapters_sharing_skills_dir(adapter);
+    let group = adapters_sharing_skills_dir(adapter, layout);
     if !group.iter().any(|a| is_installed_in(home, a)) {
         return None;
     }
@@ -733,16 +795,19 @@ fn settle_row_as_error(store: &SkillStore, row: &RowRef, error: &str) -> Result<
 /// No row is touched: the row already describes the new artifact, so there
 /// is nothing to settle here — a failure is the caller's to log.
 ///
-/// Fenced to `adapter`'s **former** skills dirs, the only place a relocation
-/// leaves an artifact behind; anything else is refused as
-/// `PathOutsideToolDirs`. Presence follows the module rule. Unlocked
-/// internal seam.
+/// Fenced to `adapter`'s **superseded** skills dirs under `layout` (its
+/// former dirs, and the dir the layout moved it away from), the only places
+/// a relocation leaves an artifact behind; anything else is refused as
+/// `PathOutsideToolDirs`. Whether another row still owns the artifact is
+/// the caller's check ([`artifact_is_owned`]; relocation keeps it then).
+/// Presence follows the module rule. Unlocked internal seam.
 pub(crate) fn remove_superseded_artifact_unlocked(
     home: &Path,
     adapter: &ToolAdapter,
+    layout: GlobalLayout,
     path: &Path,
 ) -> Result<()> {
-    let fenced = former_skills_dirs_in(home, adapter)
+    let fenced = superseded_skills_dirs_in(home, adapter, layout)
         .iter()
         .any(|dir| path.parent() == Some(dir.as_path()));
     if !fenced {
@@ -754,6 +819,78 @@ pub(crate) fn remove_superseded_artifact_unlocked(
         remove_path_any(path)?;
     }
     Ok(())
+}
+
+/// Roll back a relocation's destination: the artifact it just materialised
+/// at `path` for a move whose source could not be removed, so the move
+/// leaves no second, unrecorded copy (ADR-0002 applied to the move — the row
+/// stays at its source). The caller removes only a destination it created
+/// and no row owns. No row is touched.
+///
+/// Fenced to the dir `adapter` deploys to under `layout` (where a
+/// relocation materialises); anything else is refused as
+/// `PathOutsideToolDirs`. Unlocked internal seam.
+pub(crate) fn remove_relocation_destination_unlocked(
+    home: &Path,
+    adapter: &ToolAdapter,
+    layout: GlobalLayout,
+    path: &Path,
+) -> Result<()> {
+    if path.parent() != Some(global_skills_dir_in(home, adapter, layout).as_path()) {
+        anyhow::bail!(SignalError::PathOutsideToolDirs {
+            path: path.to_string_lossy().into_owned(),
+        });
+    }
+    if is_present(path) {
+        remove_path_any(path)?;
+    }
+    Ok(())
+}
+
+/// A Keep (`global_sync`'s `OverrideDecision::Keep`) for a pair whose row
+/// still owns an artifact at another, superseded path — a relocation that
+/// could not finish. Before the pair is recorded `disabled`, that former
+/// artifact is settled here by the module's rules: removed (presence rule)
+/// unless another row owns it too, then the row is deleted so the caller
+/// records the Keep marker afresh, owning nothing. A failed removal keeps
+/// the row at its path, owning it, with Sync status `error` and the chain
+/// (ADR-0002); the classified error is returned as report data.
+///
+/// Fenced to `superseded_dirs` (the planned group's superseded dirs);
+/// anything else is refused, the row kept. Unlocked internal seam.
+pub(crate) fn settle_superseded_owner_unlocked(
+    store: &SkillStore,
+    row: &SkillTargetRecord,
+    superseded_dirs: &[PathBuf],
+) -> Result<std::result::Result<(), CommandError>> {
+    let path = PathBuf::from(&row.target_path);
+    let row_ref = RowRef::GlobalTarget {
+        id: row.id.clone(),
+        skill_id: row.skill_id.clone(),
+        tool: row.tool.clone(),
+    };
+    let fenced = path
+        .parent()
+        .is_some_and(|parent| superseded_dirs.iter().any(|dir| dir == parent));
+    let result = if !fenced {
+        Err(anyhow::anyhow!(SignalError::PathOutsideToolDirs {
+            path: row.target_path.clone(),
+        }))
+    } else if artifact_is_owned_except(store, &path, &[row.id.as_str()])? || !is_present(&path) {
+        Ok(())
+    } else {
+        remove_path_any(&path)
+    };
+    match result {
+        Ok(()) => {
+            delete_row(store, &row_ref)?;
+            Ok(Ok(()))
+        }
+        Err(error) => {
+            settle_row_as_error(store, &row_ref, &format!("{error:#}"))?;
+            Ok(Err(CommandError::from_anyhow(error)))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

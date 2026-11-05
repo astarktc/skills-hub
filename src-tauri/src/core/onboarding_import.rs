@@ -67,10 +67,13 @@ use super::mutation_guard;
 use super::onboarding::{
     build_onboarding_plan, OnboardingGroup, OnboardingScanScope, OnboardingVariant,
 };
+use super::settings;
 use super::skill_discovery::require_skill_md;
 use super::skill_store::SkillStore;
 use super::sync_engine::remove_path_any;
-use super::tool_adapters::ensure_path_within_tool_dirs;
+use super::tool_adapters::{
+    adapter_by_key, ensure_path_within_tool_dirs, global_skills_dir_in, skills_dir_in,
+};
 
 /// One name-group the operator chose to import, as the frontend states it.
 #[derive(Clone, Debug)]
@@ -555,7 +558,79 @@ fn sync_imported_unlocked(
         })
         .collect();
     originals.retain(|original| !collided.contains(&original.path.as_path()));
+    originals.extend(settle_superseded_originals(
+        &paths.home,
+        store,
+        &installed.skill_id,
+        group,
+    ));
     (targets, forced_tools, originals)
+}
+
+/// Auto-sync on, under the #83 preference **in effect** (saved on, or a
+/// fresh install's latched default — `settings::global_layout`; never an
+/// existing install's unset default): a Tool the preference moved deploys
+/// outside its own dir (Cursor's `~/.cursor/skills/x` deploys to
+/// `~/.agents/skills/x`), so its original there is not taken over in place
+/// and would show beside the deployed copy in that harness (brief I1). Such
+/// an original is settled as on the auto-sync-off path — removed only when
+/// byte-identical, through the registry's deletion rule — and only when it
+/// sits directly in that moved Tool's own dir and the Tool's row is synced
+/// at another path; no row may still record it. Any other original keeps
+/// the behaviour every release had.
+fn settle_superseded_originals(
+    home: &Path,
+    store: &SkillStore,
+    skill_id: &str,
+    group: &OnboardingGroup,
+) -> Vec<OriginalOutcome> {
+    let layout = settings::global_layout(store);
+    if !layout.prefer_agents_standard {
+        return Vec::new();
+    }
+    let rows = match store.list_skill_targets(skill_id) {
+        Ok(rows) => rows,
+        Err(err) => {
+            log::warn!("cannot read {skill_id}'s targets to settle originals: {err:#}");
+            return Vec::new();
+        }
+    };
+    let mut settled: Vec<OriginalOutcome> = Vec::new();
+    for variant in &group.variants {
+        let moved_from_own_dir = adapter_by_key(&variant.tool).is_some_and(|adapter| {
+            let own = skills_dir_in(home, adapter);
+            global_skills_dir_in(home, adapter, layout) != own
+                && variant.path.parent() == Some(own.as_path())
+        });
+        if !moved_from_own_dir {
+            continue;
+        }
+        let recorded_here = rows
+            .iter()
+            .any(|row| Path::new(&row.target_path) == variant.path);
+        let synced_elsewhere = rows.iter().any(|row| {
+            row.tool == variant.tool
+                && row.status == super::sync_status::SyncStatus::Synced
+                && Path::new(&row.target_path) != variant.path
+        });
+        let already = settled.iter().any(|o| o.path == variant.path);
+        if recorded_here || !synced_elsewhere || already {
+            continue;
+        }
+        if variant.path.symlink_metadata().is_err()
+            || !content_identity::same_content(Source::Managed { store, skill_id }, &variant.path)
+        {
+            continue;
+        }
+        settled.push(settle_original(
+            home,
+            store,
+            skill_id,
+            &variant.path,
+            &variant.tool,
+        ));
+    }
+    settled
 }
 
 /// The group's variant the selection chose. `admit` proved it is one of

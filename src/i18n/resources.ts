@@ -323,6 +323,8 @@ export const resources = {
           "Its central copy is missing. Restore or remove it from its card.",
         targetDisabled:
           "{{tool}} is disabled for this skill. Enable it to deploy there again.",
+        relocationPending:
+          "Waiting for {{harness}}'s folder to move — relaunch or re-deploy to finish",
         syncSkippedDisabledTitle: "Not deployed: {{name}} -> {{tool}}",
       },
       actions: {
@@ -401,7 +403,7 @@ export const resources = {
         kode: "Kode",
         mcpjam: "MCPJam",
         mistral_vibe: "Mistral Vibe",
-        mux: "Mux",
+        mux: "Xum",
         openclaude: "OpenClaude IDE",
         openhands: "OpenHands",
         pi: "Pi",
@@ -420,10 +422,17 @@ export const resources = {
         gemini_cli: "Gemini CLI",
         antigravity: "Antigravity",
         github_copilot: "GitHub Copilot",
+        // clawdbot / moltbot: OpenClaw's former names, retired from the
+        // registry (ticket 34); kept so a stored row that could not move to
+        // OpenClaw still shows a readable name.
         clawdbot: "Clawdbot",
         droid: "Droid",
         windsurf: "Windsurf",
         moltbot: "MoltBot",
+        deepseek_harness: "DeepSeek Harness",
+        zcode: "ZCode",
+        codewhale: "Codewhale",
+        workbuddy: "WorkBuddy",
       },
       unsyncNothingPlanned:
         "Nothing was removed — no deployment could be located for this request",

@@ -21,14 +21,19 @@ use crate::core::{
 /// (`ToolAdapter::project_relative_skills_dir`) is chosen here and callers cannot reach for
 /// the global `relative_skills_dir` by mistake — that mix-up has shipped more
 /// than once (see `gitignore.rs` and the Artifact removal callers in `project_ops.rs`).
+///
+/// `None` for a global-only Tool (no project dir): it has no project
+/// artifact to locate, the same answer as an unresolvable name.
 pub(crate) fn resolve_project_sync_target(
     project_path: &Path,
     adapter: &ToolAdapter,
     skill_name: &str,
-) -> PathBuf {
-    project_path
-        .join(adapter.project_relative_skills_dir)
-        .join(skill_name)
+) -> Option<PathBuf> {
+    Some(
+        project_path
+            .join(adapter.project_relative_skills_dir?)
+            .join(skill_name),
+    )
 }
 
 /// Which name locates a Project assignment's artifact on disk.
@@ -70,7 +75,7 @@ pub(crate) fn resolve_assignment_artifact(
     live_name: impl FnOnce() -> Result<Option<String>>,
 ) -> Result<Option<PathBuf>> {
     Ok(assignment_artifact_name(assignment, live_name)?
-        .map(|name| resolve_project_sync_target(project_path, adapter, &name)))
+        .and_then(|name| resolve_project_sync_target(project_path, adapter, &name)))
 }
 
 /// What one Project assignment's sync needs and its caller has already

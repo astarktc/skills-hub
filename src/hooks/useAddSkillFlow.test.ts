@@ -1157,6 +1157,7 @@ describe("useAddSkillFlow import flow", () => {
         variants: [
           {
             tool: "claude",
+            readers: ["claude"],
             name: "alpha",
             path: "/home/.claude/skills/alpha",
             fingerprint: null,
@@ -1273,6 +1274,7 @@ describe("useAddSkillFlow import flow", () => {
           variants: [
             {
               tool: "claude",
+              readers: ["claude"],
               name: "alpha",
               path: "/home/.claude/skills/alpha",
               fingerprint: "same",
@@ -1281,6 +1283,7 @@ describe("useAddSkillFlow import flow", () => {
             },
             {
               tool: "pi",
+              readers: ["pi"],
               name: "alpha",
               path: "/home/.pi/agent/skills/alpha",
               fingerprint: "same",

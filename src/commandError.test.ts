@@ -58,6 +58,17 @@ describe("describeCommandError", () => {
     ).toBe('errors.toolNotWritable {"tool":"cursor","path":"/x"}');
   });
 
+  it("names the harness whose folder is still to move for RELOCATION_PENDING", () => {
+    expect(
+      describeCommandError(
+        { code: "RELOCATION_PENDING", tool: "cursor", path: "/h/.cursor/skills/s" },
+        t,
+      ),
+    ).toBe(
+      `errors.relocationPending ${JSON.stringify({ harness: t("tools.cursor", { defaultValue: "cursor" }) })}`,
+    );
+  });
+
   it("special-cases the missing_skill_md reason of SKILL_INVALID", () => {
     expect(
       describeCommandError(

@@ -48,6 +48,11 @@ fn load_on_empty_store_yields_defaults_and_bounds() {
     assert!(!s.global_selected_tools_corrupt);
     assert_eq!(s.scan_selected_tools_only, DEFAULT_SCAN_SELECTED_TOOLS_ONLY);
     assert_eq!(s.ui_zoom_level, DEFAULT_UI_ZOOM_LEVEL);
+    // #83: an empty store is a fresh install — on, latched, no offer
+    // (operator, 2026-11-04); the collapse sub-setting off.
+    assert!(s.prefer_agents_standard_dir);
+    assert!(!s.agents_standard_offer_pending);
+    assert!(!s.hide_harness_specific_dirs);
 
     assert_eq!(
         s.bounds.git_cache_cleanup_days,
@@ -271,6 +276,152 @@ fn global_selected_tools_prunes_keys_the_registry_no_longer_knows() {
             .unwrap()
             .as_deref(),
         Some(r#"["ghost","claude_code","retired_tool"]"#)
+    );
+}
+
+/// A user's saved selection naming a Tool ticket 34 retired is pruned like
+/// any key the registry no longer knows: no sync is attempted for it.
+#[test]
+fn a_selection_naming_a_retired_tool_is_pruned() {
+    let (dir, store) = make_store();
+    let home = dir.path().join("home");
+    let mut stored: Vec<&str> = crate::core::tool_adapters::RETIRED_TOOL_KEYS.to_vec();
+    stored.push("claude_code");
+    raw(
+        &store,
+        "global_selected_tools_v1",
+        &serde_json::to_string(&stored).unwrap(),
+    );
+    assert_eq!(
+        effective_global_tool_targets(&store, &home).unwrap(),
+        vec!["claude_code".to_string()]
+    );
+}
+
+/// One global target row: what separates an existing install from a fresh one.
+fn seed_deployment(store: &SkillStore) {
+    use crate::core::skill_store::SkillTargetRecord;
+    use crate::core::sync_status::{SyncMode, SyncStatus};
+    store
+        .upsert_skill(&SkillRecord {
+            id: "s1".to_string(),
+            name: "my-skill".to_string(),
+            description: None,
+            source_type: "local".to_string(),
+            source_ref: None,
+            source_subpath: None,
+            source_revision: None,
+            central_path: "/central/my-skill".to_string(),
+            content_hash: None,
+            created_at: 1,
+            updated_at: 1,
+            last_sync_at: None,
+            last_seen_at: 1,
+            status: "ok".to_string(),
+            imported_from_tool: None,
+        })
+        .unwrap();
+    store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "t1".to_string(),
+            skill_id: "s1".to_string(),
+            tool: "cursor".to_string(),
+            target_path: "/home/.cursor/skills/my-skill".to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Synced,
+            last_error: None,
+            synced_at: Some(1),
+        })
+        .unwrap();
+}
+
+/// #83 on a fresh install (no target row): unset reads on and is written,
+/// so the install keeps it once it deploys; no offer.
+#[test]
+fn a_fresh_install_latches_the_preference_on() {
+    use crate::core::settings::global_layout;
+    use crate::core::tool_adapters::GlobalLayout;
+    let (dir, store) = make_store();
+    assert_eq!(global_layout(&store), GlobalLayout::PREFER_AGENTS_STANDARD);
+    assert_eq!(
+        store.get_setting("prefer_agents_standard_dir").unwrap(),
+        Some("true".to_string()),
+        "latched"
+    );
+    seed_deployment(&store);
+    assert_eq!(
+        global_layout(&store),
+        GlobalLayout::PREFER_AGENTS_STANDARD,
+        "still on after the first deployment"
+    );
+    let s = load_settings(&store, &MemoryStore::new(), &dir.path().join("home")).unwrap();
+    assert!(s.prefer_agents_standard_dir);
+    assert!(!s.agents_standard_offer_pending);
+}
+
+/// #83 on an existing install (deployments recorded) with the setting
+/// unset: own dirs, nothing written, the one-time offer pending — the
+/// default never moves the operator's library.
+#[test]
+fn an_existing_install_keeps_its_own_dirs_and_is_offered_the_preference() {
+    use crate::core::settings::global_layout;
+    use crate::core::tool_adapters::GlobalLayout;
+    let (dir, store) = make_store();
+    seed_deployment(&store);
+    assert_eq!(global_layout(&store), GlobalLayout::OWN_DIRS);
+    assert_eq!(
+        store.get_setting("prefer_agents_standard_dir").unwrap(),
+        None,
+        "nothing written"
+    );
+    let s = load_settings(&store, &MemoryStore::new(), &dir.path().join("home")).unwrap();
+    assert!(!s.prefer_agents_standard_dir);
+    assert!(s.agents_standard_offer_pending);
+}
+
+/// A saved value wins either way and ends the offer; a malformed one reads
+/// as unset (an existing install: own dirs, offer pending).
+#[test]
+fn a_saved_preference_wins_and_garbage_reads_as_unset() {
+    use crate::core::settings::{global_layout, write_prefer_agents_standard_dir};
+    use crate::core::tool_adapters::GlobalLayout;
+    let (dir, store) = make_store();
+    let home = dir.path().join("home");
+    seed_deployment(&store);
+    for (prefer, layout) in [
+        (true, GlobalLayout::PREFER_AGENTS_STANDARD),
+        (false, GlobalLayout::OWN_DIRS),
+    ] {
+        write_prefer_agents_standard_dir(&store, prefer).unwrap();
+        assert_eq!(global_layout(&store), layout);
+        let s = load_settings(&store, &MemoryStore::new(), &home).unwrap();
+        assert_eq!(s.prefer_agents_standard_dir, prefer);
+        assert!(!s.agents_standard_offer_pending);
+    }
+    raw(&store, "prefer_agents_standard_dir", "sideways");
+    assert_eq!(global_layout(&store), GlobalLayout::OWN_DIRS);
+    assert!(
+        load_settings(&store, &MemoryStore::new(), &home)
+            .unwrap()
+            .agents_standard_offer_pending
+    );
+}
+
+#[test]
+fn apply_hide_harness_specific_dirs_round_trips() {
+    let (dir, store) = make_store();
+    let home = dir.path().join("home");
+    let s = apply_setting(
+        &store,
+        &MemoryStore::new(),
+        &home,
+        SettingUpdate::HideHarnessSpecificDirs(true),
+    )
+    .unwrap();
+    assert!(s.hide_harness_specific_dirs);
+    assert!(
+        s.prefer_agents_standard_dir,
+        "the collapse never writes the preference itself"
     );
 }
 

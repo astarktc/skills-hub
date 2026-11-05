@@ -34,6 +34,9 @@ fn fixture() -> Fixture {
     fs::create_dir_all(&paths.home).expect("create home");
     let store = SkillStore::new(dir.path().join("test.db"));
     store.ensure_schema().expect("ensure_schema");
+    // Every harness on its own dir: the cases below pin the own-dir
+    // semantics; the #83 preference has its own cases at the end.
+    crate::core::settings::write_prefer_agents_standard_dir(&store, false).expect("layout");
     Fixture {
         _dir: dir,
         paths,
@@ -208,12 +211,13 @@ fn import_of_a_variant_installed_by_npx_skills_add_records_its_upstream_as_git()
 
 #[test]
 fn auto_sync_on_overwrites_the_source_tool_in_place_across_its_shared_dir_group() {
-    // amp and kimi_cli share `.config/agents/skills` (one detect dir, one
+    // The AGENTS-standard entry, codex and goose share `.agents/skills`
+    // (scanned once, its copy attributed to the entry; one
     // artifact): the source variant's own path IS one of the sync targets.
     let f = fixture();
-    install_tool(&f, "amp");
-    install_tool(&f, "kimi_cli");
-    let original = seed_skill_dir(&f, "amp", "alpha", "v1");
+    install_tool(&f, "codex");
+    install_tool(&f, "goose");
+    let original = seed_skill_dir(&f, "codex", "alpha", "v1");
 
     let report = run(
         &f,
@@ -221,7 +225,11 @@ fn auto_sync_on_overwrites_the_source_tool_in_place_across_its_shared_dir_group(
         ImportPolicy {
             auto_sync: true,
             remove_originals: true,
-            tools: Some(vec!["amp".to_string(), "kimi_cli".to_string()]),
+            tools: Some(vec![
+                "agents_skills".to_string(),
+                "codex".to_string(),
+                "goose".to_string(),
+            ]),
             scan_scope: OnboardingScanScope::Installed,
         },
     );
@@ -252,7 +260,7 @@ fn auto_sync_on_overwrites_the_source_tool_in_place_across_its_shared_dir_group(
         "source tool overwritten in place: {:?}",
         targets[0].status
     );
-    for key in ["amp", "kimi_cli"] {
+    for key in ["agents_skills", "codex", "goose"] {
         let row = f
             .store
             .get_skill_target(skill_id, key)
@@ -890,10 +898,10 @@ fn auto_sync_off_without_remove_originals_leaves_and_reports_every_original() {
     let f = fixture();
     install_tool(&f, "claude_code");
     install_tool(&f, "cursor");
-    install_tool(&f, "codex");
+    install_tool(&f, "pi");
     let chosen = seed_skill_dir(&f, "claude_code", "alpha", "same");
     let sibling = seed_skill_dir(&f, "cursor", "alpha", "same");
-    let divergent = seed_skill_dir(&f, "codex", "alpha", "different");
+    let divergent = seed_skill_dir(&f, "pi", "alpha", "different");
 
     let report = run(&f, &[selection("alpha", &chosen)], policy_off(false));
 
@@ -915,7 +923,7 @@ fn auto_sync_off_without_remove_originals_leaves_and_reports_every_original() {
                 matches!(status, OriginalStatus::LeftInPlace),
                 "{tool}: {status:?}"
             ),
-            "codex" => assert!(
+            "pi" => assert!(
                 matches!(status, OriginalStatus::KeptDivergent),
                 "{tool}: {status:?}"
             ),
@@ -1164,4 +1172,161 @@ fn an_invalid_manifest_is_never_admitted() {
         other => panic!("expected an unknown-group failure: {other:?}"),
     }
     assert!(broken.join("SKILL.md").is_file());
+}
+
+/// #83 on: Cursor deploys to `~/.agents/skills`, so its original in
+/// `~/.cursor/skills` is not taken over in place — an identical one is
+/// removed (it would show twice in Cursor), a divergent one is kept.
+#[cfg(unix)]
+#[test]
+fn auto_sync_on_under_the_preference_removes_the_superseded_identical_original() {
+    let f = fixture();
+    crate::core::settings::write_prefer_agents_standard_dir(&f.store, true).unwrap();
+    install_tool(&f, "cursor");
+    let original = seed_skill_dir(&f, "cursor", "alpha", "v1");
+
+    let report = run(
+        &f,
+        &[selection("alpha", &original)],
+        ImportPolicy {
+            auto_sync: true,
+            remove_originals: false,
+            tools: Some(vec!["cursor".to_string()]),
+            scan_scope: OnboardingScanScope::Installed,
+        },
+    );
+    let ImportGroupStatus::Imported {
+        skill_id,
+        originals,
+        ..
+    } = imported(&report, "alpha")
+    else {
+        panic!("alpha should import: {:?}", report);
+    };
+    let deployed = f.paths.home.join(".agents/skills/alpha");
+    assert_links_to_central(&f, &deployed, "alpha");
+    let row = f
+        .store
+        .get_skill_target(skill_id, "cursor")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.target_path, deployed.to_string_lossy());
+    assert!(
+        original.symlink_metadata().is_err(),
+        "superseded original removed"
+    );
+    assert_eq!(originals.len(), 1, "{originals:?}");
+    assert!(matches!(originals[0].status, OriginalStatus::Removed));
+}
+
+/// #83 unset on an existing install (fix pass): the preference is not in
+/// effect, so Cursor's original is taken over in place in `~/.cursor/skills`
+/// as every release did — nothing lands in `~/.agents/skills`, nothing is
+/// removed, and the import writes no preference.
+#[cfg(unix)]
+#[test]
+fn auto_sync_on_with_the_preference_unset_on_an_existing_install_keeps_own_dirs() {
+    use crate::core::skill_store::{SkillRecord, SkillTargetRecord};
+    use crate::core::sync_status::{SyncMode, SyncStatus};
+
+    let f = fixture();
+    // An earlier deployment makes this an existing install; a blank row
+    // reads as "never saved" (the fixture wrote `false`).
+    f.store
+        .upsert_skill(&SkillRecord {
+            id: "earlier".to_string(),
+            name: "earlier".to_string(),
+            description: None,
+            source_type: "local".to_string(),
+            source_ref: None,
+            source_subpath: None,
+            source_revision: None,
+            central_path: f
+                .paths
+                .central_dir
+                .join("earlier")
+                .to_string_lossy()
+                .to_string(),
+            content_hash: None,
+            created_at: 1,
+            updated_at: 1,
+            last_sync_at: None,
+            last_seen_at: 1,
+            status: "ok".to_string(),
+            imported_from_tool: None,
+        })
+        .unwrap();
+    f.store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "t-earlier".to_string(),
+            skill_id: "earlier".to_string(),
+            tool: "claude_code".to_string(),
+            target_path: f
+                .paths
+                .home
+                .join(".claude/skills/earlier")
+                .to_string_lossy()
+                .to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Synced,
+            last_error: None,
+            synced_at: Some(1),
+        })
+        .unwrap();
+    f.store
+        .set_setting("prefer_agents_standard_dir", "")
+        .unwrap();
+    install_tool(&f, "cursor");
+    let original = seed_skill_dir(&f, "cursor", "alpha", "v1");
+
+    let report = run(
+        &f,
+        &[selection("alpha", &original)],
+        ImportPolicy {
+            auto_sync: true,
+            remove_originals: false,
+            tools: Some(vec!["cursor".to_string()]),
+            scan_scope: OnboardingScanScope::Installed,
+        },
+    );
+    let ImportGroupStatus::Imported {
+        skill_id,
+        originals,
+        ..
+    } = imported(&report, "alpha")
+    else {
+        panic!("alpha should import: {:?}", report);
+    };
+    let row = f
+        .store
+        .get_skill_target(skill_id, "cursor")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.target_path,
+        original.to_string_lossy(),
+        "taken over in place"
+    );
+    assert_links_to_central(&f, &original, "alpha");
+    assert!(f
+        .paths
+        .home
+        .join(".agents/skills/alpha")
+        .symlink_metadata()
+        .is_err());
+    assert!(
+        !originals
+            .iter()
+            .any(|o| matches!(o.status, OriginalStatus::Removed)),
+        "{originals:?}"
+    );
+    assert_eq!(
+        crate::core::settings::global_layout(&f.store),
+        crate::core::tool_adapters::GlobalLayout::OWN_DIRS
+    );
+    assert_eq!(
+        f.store.get_setting("prefer_agents_standard_dir").unwrap(),
+        Some(String::new()),
+        "the import writes no preference"
+    );
 }

@@ -9,14 +9,17 @@ use anyhow::Result;
 use uuid::Uuid;
 
 use crate::core::{
+    artifact_removal,
     content_identity::{self, Source},
     errors::CommandError,
-    mutation_guard,
-    skill_store::{SkillStore, TargetTransition},
+    mutation_guard, settings,
+    skill_store::{SkillStore, SkillTargetRecord, TargetTransition},
     sync_engine::{self, SyncOutcome},
     sync_status::{SyncMode, SyncStatus},
+    target_relocation,
     tool_adapters::{
-        adapter_by_key, adapters_sharing_skills_dir, is_installed_in, skills_dir_in, ToolAdapter,
+        adapter_by_key, adapters_sharing_skills_dir, global_skills_dir_in, is_installed_in,
+        superseded_skills_dirs_in, GlobalLayout, ToolAdapter,
     },
 };
 
@@ -102,6 +105,7 @@ pub(crate) fn sync_skill_into_root(
     skill_name: &str,
     policy: &OverwritePolicy,
     record_tools: &[&'static ToolAdapter],
+    superseded_dirs: &[PathBuf],
     now: i64,
 ) -> Result<SyncOutcome, GlobalSyncError> {
     // Pre-check: ensure the skills directory is writable (fixes #20 — Windows OS error 5).
@@ -136,6 +140,22 @@ pub(crate) fn sync_skill_into_root(
     // Some tools share the same global skills directory; keep DB records consistent across them.
     let target_path = outcome.target_path.to_string_lossy();
     for a in record_tools {
+        // A row that still owns its artifact in a superseded dir (a
+        // relocation that could not finish) is never re-pointed here: that
+        // would orphan the old artifact. The batch entry hands it to the
+        // relocation seam once the new artifact is in place
+        // (`sync_skills_to_tools_unlocked`).
+        if let Some(existing) = store.get_skill_target(skill_id, a.key())? {
+            if owns_a_superseded_artifact(&existing, &outcome.target_path, superseded_dirs) {
+                log::info!(
+                    "{} for {} still owns {}; left to relocation",
+                    skill_name,
+                    a.key(),
+                    existing.target_path
+                );
+                continue;
+            }
+        }
         store.transition_skill_target(
             &Uuid::new_v4().to_string(),
             TargetTransition::Recorded {
@@ -149,6 +169,23 @@ pub(crate) fn sync_skill_into_root(
     }
 
     Ok(outcome)
+}
+
+/// The row owns a present artifact at another path, directly in one of the
+/// superseded dirs of the planned group (`tool_adapters::superseded_skills_dirs_in`).
+fn owns_a_superseded_artifact(
+    row: &SkillTargetRecord,
+    new_path: &Path,
+    superseded_dirs: &[PathBuf],
+) -> bool {
+    let old = Path::new(&row.target_path);
+    row.owns_artifact()
+        && row.status != SyncStatus::Disabled
+        && old != new_path
+        && old
+            .parent()
+            .is_some_and(|parent| superseded_dirs.iter().any(|dir| dir == parent))
+        && old.symlink_metadata().is_ok()
 }
 
 fn classify_sync_error(
@@ -237,8 +274,10 @@ pub struct BatchPolicy {
     pub overrides: Vec<BatchOverride>,
 }
 
-/// A probed tool target: adapter, resolved skills root, installedness, and
-/// the installed tools sharing that root (DB record fan-out). Produced by
+/// A probed tool target: adapter, resolved skills root (where it deploys
+/// under the `GlobalLayout`), installedness, every tool sharing that root
+/// (`sharers`: the Disabled rule and override matching) and the installed
+/// ones among them (`record_tools`: DB record fan-out). Produced by
 /// [`plan_batch_tool_targets`] (environment probing); consumed by the
 /// deterministic [`sync_skills_to_planned_tools`], which tests drive with
 /// fabricated roots.
@@ -247,7 +286,12 @@ pub struct PlannedToolTarget {
     pub adapter: &'static ToolAdapter,
     pub root: PathBuf,
     pub installed: bool,
+    pub sharers: Vec<&'static ToolAdapter>,
     pub record_tools: Vec<&'static ToolAdapter>,
+    /// Every dir a sharer's row may still sit in awaiting relocation (each
+    /// sharer's `superseded_skills_dirs_in` under the layout): a first sync
+    /// never re-points an owned row out of one of these.
+    pub superseded_dirs: Vec<PathBuf>,
 }
 
 /// Per-(skill, tool) result. `Skipped` is the expected-and-ignorable class
@@ -292,11 +336,14 @@ pub struct BatchProgress<'a> {
 }
 
 /// Probe the environment under `home` for each requested tool key: resolve
-/// the adapter, its skills root, installedness, and the installed shared-dir
-/// group. Unknown keys become planning entries via `Err`, which the batch
-/// turns into `Failed` outcomes.
+/// the adapter, the skills root it deploys to under `layout` — the effective
+/// target set: with the #83 preference on, an AGENTS-standard reader resolves
+/// to `~/.agents/skills` and its own dir is not written — installedness, and
+/// the shared-dir group. Unknown keys become planning entries via `Err`,
+/// which the batch turns into `Failed` outcomes.
 pub fn plan_batch_tool_targets(
     home: &Path,
+    layout: GlobalLayout,
     tool_keys: &[String],
 ) -> Vec<Result<PlannedToolTarget, (String, GlobalSyncError)>> {
     tool_keys
@@ -309,16 +356,29 @@ pub fn plan_batch_tool_targets(
                 )
             })?;
             let installed = is_installed_in(home, adapter);
-            let root = skills_dir_in(home, adapter);
-            let record_tools: Vec<&'static ToolAdapter> = adapters_sharing_skills_dir(adapter)
-                .into_iter()
+            let root = global_skills_dir_in(home, adapter, layout);
+            let sharers = adapters_sharing_skills_dir(adapter, layout);
+            let record_tools: Vec<&'static ToolAdapter> = sharers
+                .iter()
+                .copied()
                 .filter(|a| is_installed_in(home, a))
                 .collect();
+            let mut superseded_dirs: Vec<PathBuf> = Vec::new();
+            for dir in sharers
+                .iter()
+                .flat_map(|a| superseded_skills_dirs_in(home, a, layout))
+            {
+                if !superseded_dirs.contains(&dir) {
+                    superseded_dirs.push(dir);
+                }
+            }
             Ok(PlannedToolTarget {
                 adapter,
                 root,
                 installed,
+                sharers,
                 record_tools,
+                superseded_dirs,
             })
         })
         .collect()
@@ -389,13 +449,11 @@ pub(crate) fn sync_skills_to_planned_tools(
             });
 
             let blocked = match &gate {
-                Ok(gate) => gate
-                    .blocks(target.adapter)
-                    .then(|| BatchTargetStatus::Skipped {
-                        error: CommandError::from(GlobalSyncError::TargetDisabled {
-                            tool_key: tool_key.to_string(),
-                        }),
+                Ok(gate) => gate.blocks(target).then(|| BatchTargetStatus::Skipped {
+                    error: CommandError::from(GlobalSyncError::TargetDisabled {
+                        tool_key: tool_key.to_string(),
                     }),
+                }),
                 Err(error) => Some(BatchTargetStatus::Failed {
                     error: CommandError::internal(format!("{error:#}")),
                 }),
@@ -411,14 +469,13 @@ pub(crate) fn sync_skills_to_planned_tools(
             }
 
             // An override names a tool key; it applies to this target when
-            // that tool shares the target's skills dir (the registry's answer).
+            // that tool shares the target's skills dir (the plan's answer).
             let decision = |wanted: OverrideDecision| {
                 policy.overrides.iter().any(|o| {
                     o.decision == wanted
                         && o.skill_id == skill.skill_id
-                        && adapters_sharing_skills_dir(target.adapter)
-                            .iter()
-                            .any(|a| a.key() == o.tool_key)
+                        && (o.tool_key == target.adapter.key()
+                            || target.sharers.iter().any(|a| a.key() == o.tool_key))
                 })
             };
             if decision(OverrideDecision::Keep) {
@@ -445,6 +502,7 @@ pub(crate) fn sync_skills_to_planned_tools(
                 &skill.skill_name,
                 &pair_policy,
                 &target.record_tools,
+                &target.superseded_dirs,
                 now,
             ) {
                 Ok(outcome) => BatchTargetStatus::Synced { outcome },
@@ -526,6 +584,14 @@ fn record_failed(
 /// nothing at its path, and that the Disabled rule extends to the Tool's
 /// shared-dir siblings — and reported `Declined`. A store failure fails the
 /// pair as report data.
+///
+/// When the pair's row still owns a different, former artifact in a
+/// superseded dir (a relocation that could not finish), that artifact is
+/// settled through Artifact removal first
+/// (`artifact_removal::settle_superseded_owner_unlocked`) — the kept folder
+/// is never touched — so no live copy hides behind a `disabled` row and
+/// Enable starts clean. If it cannot be removed, the row keeps its path and
+/// ownership as `error` and the pair fails with that typed error.
 fn record_kept(
     store: &SkillStore,
     target: &PlannedToolTarget,
@@ -533,6 +599,25 @@ fn record_kept(
 ) -> BatchTargetStatus {
     let (target_path, mode) = would_be(target, skill);
     let tool_key = target.adapter.key();
+    let former = store
+        .get_skill_target(&skill.skill_id, tool_key)
+        .and_then(|row| {
+            let Some(row) = row.filter(|row| {
+                owns_a_superseded_artifact(row, Path::new(&target_path), &target.superseded_dirs)
+            }) else {
+                return Ok(Ok(()));
+            };
+            artifact_removal::settle_superseded_owner_unlocked(store, &row, &target.superseded_dirs)
+        });
+    match former {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return BatchTargetStatus::Failed { error },
+        Err(err) => {
+            return BatchTargetStatus::Failed {
+                error: CommandError::internal(format!("{err:#}")),
+            }
+        }
+    }
     match store.transition_skill_target(
         &Uuid::new_v4().to_string(),
         TargetTransition::DisabledRecorded {
@@ -554,13 +639,18 @@ fn record_kept(
 /// of the skill describing the target's artifact is `Disabled` — the
 /// target's own Tool or any Tool sharing its skills dir, because a shared
 /// artifact written for a sibling is the disabled Tool's artifact too.
-struct DisabledGate {
+/// A Disabled row counts whether or not it owns anything: a never-synced
+/// marker is the operator's "not on this Tool" all the same. Target
+/// relocation applies the same admission to a move's destination group
+/// (`core::target_relocation`), so a move never re-materialises a skill
+/// where a disabled Tool reads.
+pub(crate) struct DisabledGate {
     skill_disabled: bool,
     disabled_tools: Vec<String>,
 }
 
 impl DisabledGate {
-    fn read(store: &SkillStore, skill_id: &str) -> Result<Self> {
+    pub(crate) fn read(store: &SkillStore, skill_id: &str) -> Result<Self> {
         Ok(Self {
             skill_disabled: store.skill_disabled_at(skill_id)?.is_some(),
             disabled_tools: store
@@ -572,14 +662,22 @@ impl DisabledGate {
         })
     }
 
-    fn blocks(&self, adapter: &ToolAdapter) -> bool {
+    fn blocks(&self, target: &PlannedToolTarget) -> bool {
+        self.blocks_group(target.adapter, &target.sharers)
+    }
+
+    /// The rule for any write into the skills dir `adapter` deploys to,
+    /// shared by `sharers` (the dir's whole group under the layout).
+    pub(crate) fn blocks_group(
+        &self,
+        adapter: &ToolAdapter,
+        sharers: &[&'static ToolAdapter],
+    ) -> bool {
         self.skill_disabled
-            || self.disabled_tools.iter().any(|tool| {
-                tool == adapter.key()
-                    || adapters_sharing_skills_dir(adapter)
-                        .iter()
-                        .any(|a| a.key() == tool)
-            })
+            || self
+                .disabled_tools
+                .iter()
+                .any(|tool| tool == adapter.key() || sharers.iter().any(|a| a.key() == tool))
     }
 }
 
@@ -615,7 +713,8 @@ pub(crate) fn sync_skills_to_tools_unlocked(
 ) -> Vec<BatchTargetOutcome> {
     let mut targets: Vec<PlannedToolTarget> = Vec::new();
     let mut outcomes: Vec<BatchTargetOutcome> = Vec::new();
-    for plan in plan_batch_tool_targets(home, tool_keys) {
+    let layout = settings::global_layout(store);
+    for plan in plan_batch_tool_targets(home, layout, tool_keys) {
         match plan {
             Ok(target) => targets.push(target),
             Err((tool_key, error)) => {
@@ -642,7 +741,62 @@ pub(crate) fn sync_skills_to_tools_unlocked(
         now,
         on_progress,
     ));
+    relocate_synced_skills(home, store, layout, &mut outcomes, now);
     outcomes
+}
+
+/// A synced skill may have left an owned row in a superseded dir (see
+/// [`owns_a_superseded_artifact`]): with the new artifact in place, the
+/// relocation seam moves that row and removes its old artifact by its own
+/// rules (Disabled admission, byte-identical replace, ownership-aware
+/// cleanup). A move the seam rolls back (its old artifact could not be
+/// removed: the row stays there as `error`, and the new artifact no row
+/// records is removed) turns the attempted pair's `Synced` into `Failed`
+/// with that error. Any other failure is logged: the row still owns its old
+/// artifact.
+fn relocate_synced_skills(
+    home: &Path,
+    store: &SkillStore,
+    layout: GlobalLayout,
+    outcomes: &mut [BatchTargetOutcome],
+    now: i64,
+) {
+    let mut done: Vec<String> = Vec::new();
+    for index in 0..outcomes.len() {
+        let skill_id = outcomes[index].skill_id.clone();
+        if !matches!(outcomes[index].status, BatchTargetStatus::Synced { .. })
+            || done.contains(&skill_id)
+        {
+            continue;
+        }
+        done.push(skill_id.clone());
+        let mut summary = target_relocation::RelocationSummary::default();
+        let result = store.get_skill_by_id(&skill_id).and_then(|skill| {
+            let Some(skill) = skill else { return Ok(()) };
+            target_relocation::relocate_skill_unlocked(
+                store,
+                home,
+                layout,
+                &skill,
+                now,
+                &mut summary,
+            )
+        });
+        if let Err(err) = result {
+            log::warn!("relocating {skill_id}'s superseded targets after sync failed: {err:#}");
+        }
+        for incomplete in summary.incomplete {
+            if let Some(outcome) = outcomes.iter_mut().find(|o| {
+                o.skill_id == skill_id
+                    && o.tool_key == incomplete.tool
+                    && matches!(o.status, BatchTargetStatus::Synced { .. })
+            }) {
+                outcome.status = BatchTargetStatus::Failed {
+                    error: incomplete.error,
+                };
+            }
+        }
+    }
 }
 
 #[cfg(test)]

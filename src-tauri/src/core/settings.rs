@@ -9,6 +9,9 @@
 //! exception: the global tool selection drives sync writes, so a corrupt row
 //! is a typed refusal (`SignalError::SettingCorrupt`) on the write-driving
 //! read, not a silent fallback to "every detected tool" (round 12 D1).
+//! The #83 preference has no single default: unset, it is on for a fresh
+//! install (latched on first read) and off — with a pending offer — for an
+//! install that already has deployments (`global_layout`).
 //!
 //! Core never reads the environment: callers pass `fallback_root` (the
 //! operator's home in production) for the central repo default, and the
@@ -30,7 +33,7 @@ use super::central_repo::{ensure_central_repo, move_central_repo};
 use super::credentials::{self, CredentialStore};
 use super::errors::SignalError;
 use super::skill_store::SkillStore;
-use super::tool_adapters::{adapter_by_key, global_tool_entries, installed_keys};
+use super::tool_adapters::{adapter_by_key, installed_global_keys, GlobalLayout};
 
 /// Storage keys — spelled here and nowhere else.
 mod keys {
@@ -46,6 +49,8 @@ mod keys {
     pub const UI_ZOOM_LEVEL: &str = "ui_zoom_level";
     pub const FEATURED_SKILLS_CACHE: &str = "featured_skills_cache";
     pub const INSTALLED_TOOLS: &str = "installed_tools_v1";
+    pub const PREFER_AGENTS_STANDARD_DIR: &str = "prefer_agents_standard_dir";
+    pub const HIDE_HARNESS_SPECIFIC_DIRS: &str = "hide_harness_specific_dirs";
 }
 
 /// Default central repo dir name under `fallback_root`.
@@ -56,6 +61,14 @@ pub const DEFAULT_GIT_CACHE_TTL_SECS: i64 = 60;
 pub const DEFAULT_AUTO_SYNC_ENABLED: bool = true;
 pub const DEFAULT_SCAN_SELECTED_TOOLS_ONLY: bool = true;
 pub const DEFAULT_UI_ZOOM_LEVEL: f64 = 1.0;
+/// #83 "prefer the AGENTS standard folder" on a **fresh install** — no
+/// global target row yet: on, and written on first read so the install keeps
+/// it once it deploys (operator, 2026-11-04 — ticket 34). An **existing**
+/// install with the setting unset keeps its own dirs until the operator
+/// answers the one-time offer (`AppSettings::agents_standard_offer_pending`);
+/// see [`global_layout`].
+pub const FRESH_INSTALL_PREFER_AGENTS_STANDARD_DIR: bool = true;
+pub const DEFAULT_HIDE_HARNESS_SPECIFIC_DIRS: bool = false;
 
 /// Inclusive integer bound, shipped to the frontend inside `AppSettings`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
@@ -137,6 +150,22 @@ pub struct AppSettings {
     /// rather than specta's default `number | null` for `f64`.
     #[specta(type = specta_typescript::Number)]
     pub ui_zoom_level: f64,
+    /// #83: AGENTS-standard readers deploy to `~/.agents/skills` instead of
+    /// their own dir — the preference in effect (`global_layout`), so `false`
+    /// while an existing install's offer is pending. Changed only through `set_prefer_agents_standard_dir`,
+    /// which relocates existing targets in the same guarded section — never
+    /// through `SettingUpdate`.
+    pub prefer_agents_standard_dir: bool,
+    /// #83 offer: the preference was never saved on an install that already
+    /// has deployments, so it reads off and the UI offers the one-time choice
+    /// (`preview_prefer_agents_standard_dir` for the count, then
+    /// `set_prefer_agents_standard_dir`). `false` once saved either way, and
+    /// on a fresh install (latched on).
+    pub agents_standard_offer_pending: bool,
+    /// Harnesses pane: collapse the rows the preference moved into one
+    /// AGENTS-standard row. Presentation only; meaningful while the
+    /// preference is on.
+    pub hide_harness_specific_dirs: bool,
     pub bounds: SettingsBounds,
 }
 
@@ -162,6 +191,10 @@ pub enum SettingUpdate {
     /// Typed `number` (not specta's `number | null` for `f64`): `null` would
     /// fail deserialization, so it is not a value the frontend may send.
     UiZoomLevel(#[specta(type = specta_typescript::Number)] f64),
+    /// The Harnesses pane's collapse of the preference's rows. The #83
+    /// preference itself is not a `SettingUpdate`: saving it relocates
+    /// targets (`set_prefer_agents_standard_dir`).
+    HideHarnessSpecificDirs(bool),
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +209,7 @@ pub fn load_settings(
     fallback_root: &Path,
 ) -> Result<AppSettings> {
     let global_selection = read_tool_selection(store, keys::GLOBAL_SELECTED_TOOLS)?;
+    let preference = agents_standard_preference(store);
     Ok(AppSettings {
         central_repo_path: resolve_central_repo_path(store, fallback_root)?
             .to_string_lossy()
@@ -198,8 +232,102 @@ pub fn load_settings(
             DEFAULT_SCAN_SELECTED_TOOLS_ONLY,
         )?,
         ui_zoom_level: ui_zoom_level(store),
+        prefer_agents_standard_dir: preference.layout.prefer_agents_standard,
+        agents_standard_offer_pending: preference.offer_pending,
+        hide_harness_specific_dirs: read_bool(
+            store,
+            keys::HIDE_HARNESS_SPECIFIC_DIRS,
+            DEFAULT_HIDE_HARNESS_SPECIFIC_DIRS,
+        )?,
         bounds: BOUNDS,
     })
+}
+
+/// The `GlobalLayout` every global-dir derivation uses: the #83 preference
+/// as it is **in effect** — on only when saved on, or latched on for a fresh
+/// install. Never fails: the layout is read on every sync, removal and
+/// catalog path, none of which may fail on a preference row.
+///
+/// The setting row decides, in this order:
+/// - **saved** (`true` / `false`): that value;
+/// - **unset** (absent, or a malformed value) on a **fresh install** — the
+///   store holds no global target row at all: writes
+///   [`FRESH_INSTALL_PREFER_AGENTS_STANDARD_DIR`] and returns it, so the
+///   first deployment already happens under it and later reads see it saved;
+/// - **unset** on an **existing install** (any target row): own dirs, and
+///   nothing is written — the install's deployments stay where they are
+///   (the launch-time relocation pass reads this, so it never moves a
+///   reader's targets on the default) until the operator answers the offer
+///   (`AppSettings::agents_standard_offer_pending`).
+///
+/// A storage failure reads as own dirs (logged) — the layout every release
+/// before #83 deployed under.
+pub fn global_layout(store: &SkillStore) -> GlobalLayout {
+    agents_standard_preference(store).layout
+}
+
+/// The #83 preference as [`global_layout`] resolves it, plus whether the
+/// one-time offer is pending (the setting is still unset afterwards).
+struct AgentsStandardPreference {
+    layout: GlobalLayout,
+    offer_pending: bool,
+}
+
+fn agents_standard_preference(store: &SkillStore) -> AgentsStandardPreference {
+    let layout_of = |prefer: bool| {
+        if prefer {
+            GlobalLayout::PREFER_AGENTS_STANDARD
+        } else {
+            GlobalLayout::OWN_DIRS
+        }
+    };
+    let unset = AgentsStandardPreference {
+        layout: GlobalLayout::OWN_DIRS,
+        offer_pending: true,
+    };
+    let stored = match store.get_setting(keys::PREFER_AGENTS_STANDARD_DIR) {
+        Ok(stored) => stored,
+        Err(err) => {
+            log::warn!("[settings] cannot read the AGENTS-standard preference: {err:#}");
+            return AgentsStandardPreference {
+                layout: GlobalLayout::OWN_DIRS,
+                offer_pending: false,
+            };
+        }
+    };
+    if let Some(prefer) = stored.as_deref().and_then(parse_bool) {
+        return AgentsStandardPreference {
+            layout: layout_of(prefer),
+            offer_pending: false,
+        };
+    }
+    match store.has_skill_targets() {
+        Ok(false) => {
+            let prefer = FRESH_INSTALL_PREFER_AGENTS_STANDARD_DIR;
+            match write_bool(store, keys::PREFER_AGENTS_STANDARD_DIR, prefer) {
+                Ok(()) => AgentsStandardPreference {
+                    layout: layout_of(prefer),
+                    offer_pending: false,
+                },
+                Err(err) => {
+                    log::warn!("[settings] cannot latch the AGENTS-standard preference: {err:#}");
+                    unset
+                }
+            }
+        }
+        Ok(true) => unset,
+        Err(err) => {
+            log::warn!("[settings] cannot tell a fresh install from an existing one: {err:#}");
+            unset
+        }
+    }
+}
+
+/// Persist the #83 preference. Unlocked: its one caller
+/// (`target_relocation::apply_global_layout`) writes it and relocates the
+/// targets it moves inside one `mutation_guard::serialized` section.
+pub(crate) fn write_prefer_agents_standard_dir(store: &SkillStore, prefer: bool) -> Result<()> {
+    write_bool(store, keys::PREFER_AGENTS_STANDARD_DIR, prefer)
 }
 
 /// The saved Tool selection an onboarding scan is scoped to: `Some` when
@@ -307,7 +435,7 @@ pub fn effective_global_tool_targets(store: &SkillStore, home: &Path) -> Result<
     Ok(
         match read_tool_selection(store, keys::GLOBAL_SELECTED_TOOLS)? {
             StoredSelection::Configured(selected) => selected,
-            StoredSelection::Unconfigured => installed_keys(&global_tool_entries(home)),
+            StoredSelection::Unconfigured => installed_global_keys(home),
             StoredSelection::Corrupt { detail } => bail!(SignalError::SettingCorrupt {
                 key: keys::GLOBAL_SELECTED_TOOLS.to_string(),
                 detail,
@@ -377,6 +505,9 @@ pub fn apply_setting(
                 DEFAULT_UI_ZOOM_LEVEL
             };
             write_str(store, keys::UI_ZOOM_LEVEL, &effective.to_string())?;
+        }
+        SettingUpdate::HideHarnessSpecificDirs(hide) => {
+            write_bool(store, keys::HIDE_HARNESS_SPECIFIC_DIRS, hide)?;
         }
     }
     load_settings(store, credentials, fallback_root)
@@ -562,12 +693,17 @@ fn read_bounded_i64(store: &SkillStore, key: &str, range: IntRange, default: i64
 fn read_bool(store: &SkillStore, key: &str, default: bool) -> Result<bool> {
     Ok(store
         .get_setting(key)?
-        .and_then(|raw| match raw.trim().to_ascii_lowercase().as_str() {
-            "true" => Some(true),
-            "false" => Some(false),
-            _ => None,
-        })
+        .as_deref()
+        .and_then(parse_bool)
         .unwrap_or(default))
+}
+
+fn parse_bool(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
 }
 
 /// A stored Tool selection as read from its row. `Unconfigured` (absent or

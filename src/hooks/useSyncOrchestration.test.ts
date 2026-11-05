@@ -67,6 +67,9 @@ function toolInfo(key: string, shared_with: string[] = [key]): ToolInfoDto {
     installed: true,
     shared_with,
     constituents: [],
+    also_reads: [],
+    agents_standard_read: null,
+    shadowed_by_own_dir: false,
   };
 }
 
@@ -95,6 +98,9 @@ function appSettings(overrides?: Partial<AppSettings>): AppSettings {
     global_selected_tools_corrupt: false,
     scan_selected_tools_only: true,
     ui_zoom_level: 1,
+    prefer_agents_standard_dir: true,
+    agents_standard_offer_pending: false,
+    hide_harness_specific_dirs: false,
     bounds: {
       git_cache_cleanup_days: { min: 0, max: 3650 },
       git_cache_ttl_secs: { min: 0, max: 3600 },

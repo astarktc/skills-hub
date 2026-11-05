@@ -51,8 +51,10 @@ use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
 };
 use crate::core::sync_status::{SyncMode, SyncStatus};
+use crate::core::target_relocation::{apply_global_layout, preview_relocation, RelocationSummary};
 use crate::core::tool_adapters::{
-    global_tool_entries, installed_keys, project_tool_entries, ToolCatalogEntry,
+    global_tool_entries, installed_keys, project_tool_entries, AgentsStandardRead, GlobalLayout,
+    Precedence, ToolCatalogEntry,
 };
 use crate::core::unlocatable::{detach_from_source, UnlocatableState};
 
@@ -133,6 +135,43 @@ pub struct ToolInfoDto {
     /// it is a virtual group (project-scope AgentsStandard); empty for real
     /// tools. The backend owns group membership; the frontend only presents it.
     pub constituents: Vec<String>,
+    /// **Cross-read** (global list only): keys of the installed tools, beside
+    /// `shared_with`, whose skills dir this harness also reads — a skill
+    /// deployed to this tool and one of these shows twice in this harness.
+    /// A warning input, never a de-selection rule.
+    pub also_reads: Vec<String>,
+    /// The VERIFIED `~/.agents/skills` read (global list only), `null` when
+    /// none is verified.
+    pub agents_standard_read: Option<AgentsStandardReadDto>,
+    /// An `OwnWins` harness moved to `~/.agents/skills` by the preference
+    /// whose own dir still holds a foreign copy of a skill deployed there:
+    /// that copy shadows ours in this harness.
+    pub shadowed_by_own_dir: bool,
+}
+
+/// `ToolAdapter::reads_agents_standard_globally` on the wire.
+#[derive(Debug, Serialize, Type)]
+pub struct AgentsStandardReadDto {
+    /// First version / change known to read it, when verified.
+    pub since: Option<String>,
+    pub precedence: Precedence,
+}
+
+impl From<AgentsStandardRead> for AgentsStandardReadDto {
+    fn from(read: AgentsStandardRead) -> Self {
+        AgentsStandardReadDto {
+            since: read.since.map(str::to_string),
+            precedence: read.precedence,
+        }
+    }
+}
+
+/// What saving the #83 preference did: the settings snapshot after the
+/// write and the targets the relocation moved or had to leave.
+#[derive(Debug, Serialize, Type)]
+pub struct AgentsStandardPreferenceResult {
+    pub settings: AppSettings,
+    pub relocation: RelocationSummary,
 }
 
 #[derive(Debug, Serialize, Type)]
@@ -150,6 +189,9 @@ impl From<ToolCatalogEntry> for ToolInfoDto {
             installed: entry.installed,
             shared_with: entry.shared_with.iter().map(|k| k.to_string()).collect(),
             constituents: entry.constituents.iter().map(|k| k.to_string()).collect(),
+            also_reads: entry.also_reads.iter().map(|k| k.to_string()).collect(),
+            agents_standard_read: entry.agents_standard_read.map(AgentsStandardReadDto::from),
+            shadowed_by_own_dir: entry.shadowed_by_own_dir,
         }
     }
 }
@@ -160,7 +202,12 @@ pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusD
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let home = home_dir()?;
-        let entries = global_tool_entries(&home);
+        let recorded = crate::core::artifact_removal::recorded_target_paths(&store)?;
+        let entries = global_tool_entries(
+            &home,
+            crate::core::settings::global_layout(&store),
+            &recorded,
+        );
         let installed = installed_keys(&entries);
         let newly_installed = record_installed_tools(&store, &installed)?;
         Ok::<_, anyhow::Error>(ToolStatusDto {
@@ -353,6 +400,62 @@ pub async fn update_setting(
             &settings_fallback_root(&app)?,
             update,
         )
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+/// How many global targets saving the #83 preference as `enabled` would move
+/// — the count its confirmation states. Read-only.
+#[tauri::command]
+#[specta::specta]
+pub async fn preview_prefer_agents_standard_dir(
+    store: State<'_, SkillStore>,
+    enabled: bool,
+) -> Result<usize, CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = home_dir()?;
+        preview_relocation(
+            &store,
+            &home,
+            GlobalLayout {
+                prefer_agents_standard: enabled,
+            },
+        )
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+/// Save the #83 preference "prefer the AGENTS standard folder" and relocate
+/// the global targets it supersedes, in one serialized section
+/// (`target_relocation::apply_global_layout`).
+#[tauri::command]
+#[specta::specta]
+pub async fn set_prefer_agents_standard_dir(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    enabled: bool,
+) -> Result<AgentsStandardPreferenceResult, CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = home_dir()?;
+        let relocation = apply_global_layout(
+            &store,
+            &home,
+            GlobalLayout {
+                prefer_agents_standard: enabled,
+            },
+            now_ms(),
+        )?;
+        let settings = load_settings(&store, &credential_store(), &settings_fallback_root(&app)?)?;
+        Ok::<_, anyhow::Error>(AgentsStandardPreferenceResult {
+            settings,
+            relocation,
+        })
     })
     .await
     .map_err(CommandError::internal)?

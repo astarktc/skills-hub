@@ -105,7 +105,12 @@ fn planned(adapter: &'static ToolAdapter, root: &Path) -> PlannedToolTarget {
         adapter,
         root: root.to_path_buf(),
         installed: true,
+        sharers: crate::core::tool_adapters::adapters_sharing_skills_dir(
+            adapter,
+            crate::core::tool_adapters::GlobalLayout::OWN_DIRS,
+        ),
         record_tools: vec![adapter],
+        superseded_dirs: Vec::new(),
     }
 }
 
@@ -746,7 +751,8 @@ fn a_project_first_sync_collision_is_typed_target_exists() {
         })
         .unwrap();
     let target =
-        crate::core::project_sync::resolve_project_sync_target(&project_dir, claude(), "alpha");
+        crate::core::project_sync::resolve_project_sync_target(&project_dir, claude(), "alpha")
+            .expect("project dir");
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("SKILL.md"), "foreign").unwrap();
 

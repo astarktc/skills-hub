@@ -1380,6 +1380,7 @@ fn project_fanout_uses_persisted_project_tools() {
     let pi = crate::core::tool_adapters::adapter_by_key("pi").unwrap();
     assert!(
         project_sync::resolve_project_sync_target(&project_dir, pi, "pt-skill")
+            .expect("project dir")
             .symlink_metadata()
             .is_ok()
     );
@@ -1530,7 +1531,8 @@ fn toggle_assigns_then_unassigns_from_the_stored_state() {
         &skill_dir.to_string_lossy(),
     );
     let adapter = crate::core::tool_adapters::adapter_by_key("claude_code").expect("adapter");
-    let target = resolve_project_sync_target(&project_dir, adapter, "toggle-skill");
+    let target =
+        resolve_project_sync_target(&project_dir, adapter, "toggle-skill").expect("project dir");
 
     let first = toggle_skill_assignment(&store, &project.id, &skill.id, "claude_code", 4000)
         .expect("first toggle");
@@ -1610,7 +1612,8 @@ fn assign_copy_then_rename_skill(
         .expect("assign should succeed");
     assert_eq!(record.status, SyncStatus::Synced);
     let adapter = crate::core::tool_adapters::adapter_by_key(tool).expect("adapter");
-    let target = project_sync::resolve_project_sync_target(&project_dir, adapter, "named-skill");
+    let target = project_sync::resolve_project_sync_target(&project_dir, adapter, "named-skill")
+        .expect("project dir");
     assert!(target.join("SKILL.md").exists(), "assignment materialised");
 
     let mut renamed = skill.clone();
@@ -1746,7 +1749,8 @@ fn unassign_skill_from_project_clears_every_tool_of_that_skill_only() {
     assert!(!report.record_deleted, "the skill itself stays managed");
     for tool in ["claude_code", "cursor"] {
         let adapter = crate::core::tool_adapters::adapter_by_key(tool).unwrap();
-        let target = project_sync::resolve_project_sync_target(&project_dir, adapter, "bulk-off");
+        let target = project_sync::resolve_project_sync_target(&project_dir, adapter, "bulk-off")
+            .expect("project dir");
         assert!(
             target.symlink_metadata().is_err(),
             "{tool} artifact removed"
@@ -2094,7 +2098,7 @@ fn a_project_root_that_vanishes_at_parent_creation_is_not_recreated() {
         let adapter = crate::core::tool_adapters::adapter_by_key(tool).unwrap();
         assert!(
             !moved_dir
-                .join(adapter.project_relative_skills_dir)
+                .join(adapter.project_relative_skills_dir.unwrap())
                 .join("race-skill")
                 .exists(),
             "{tool}: nothing written into the moved folder"

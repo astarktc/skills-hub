@@ -41,6 +41,7 @@ use uuid::Uuid;
 use super::errors::{CommandError, SignalError};
 use super::installer::InstallerPaths;
 use super::project_sync::AssignmentSyncContext;
+use super::settings;
 use super::skill_store::{
     AssignmentTransition, ProjectSkillAssignmentRecord, SkillRecord, SkillStore, SkillTargetRecord,
     TargetTransition,
@@ -48,7 +49,8 @@ use super::skill_store::{
 use super::sync_engine;
 use super::sync_status::{SyncMode, SyncStatus};
 use super::tool_adapters::{
-    adapter_by_key, adapters_sharing_skills_dir, is_installed_in, ToolAdapter,
+    adapter_by_key, adapters_sharing_skills_dir, global_skills_dir_in, is_installed_in,
+    superseded_skills_dirs_in, ToolAdapter,
 };
 
 /// Which Sync target an outcome is about.
@@ -77,6 +79,12 @@ pub enum PropagationSkip {
     /// skills dir, or the whole skill (see **Disabled** in `CONTEXT.md`).
     /// Nothing but Enable re-materialises it.
     Disabled,
+    /// A first sync into the dir the shared group deploys to, held back
+    /// while an owned member's artifact still sits in a superseded dir (a
+    /// relocation that could not finish): writing now would leave that
+    /// harness reading a second copy. The row is not written; the error is
+    /// `RELOCATION_PENDING`, naming the Tool and the path still to move.
+    RelocationPending { error: CommandError },
 }
 
 #[derive(Debug, serde::Serialize, specta::Type)]
@@ -202,6 +210,7 @@ fn propagate_global_rows(
         })
         .collect();
     let mut handled: Vec<String> = Vec::new();
+    let layout = settings::global_layout(store);
 
     for (row, adapter) in &rows {
         if handled.contains(&row.tool) {
@@ -228,7 +237,7 @@ fn propagate_global_rows(
         // answers from its static entries while the row resolved through
         // `adapter_by_key`, and the two may disagree (a test shadow), so the
         // membership is not left to the registry's reflexivity.
-        let sharers = adapters_sharing_skills_dir(adapter);
+        let sharers = adapters_sharing_skills_dir(adapter, layout);
         let sharing: Vec<&str> = sharers.iter().map(|a| a.key()).collect();
         let group: Vec<(&SkillTargetRecord, &'static ToolAdapter)> = rows
             .iter()
@@ -266,63 +275,168 @@ fn propagate_global_rows(
                 },
             ));
         }
-        let Some((driver, _)) = installed.first() else {
+        if installed.is_empty() {
             continue;
-        };
+        }
+
+        // Each member's **write target**: an owned row's artifact is where its
+        // row says — rows at different stored paths are different artifacts
+        // (a relocation that could not finish leaves Cursor's copy in its own
+        // dir while Codex's sits in `~/.agents/skills`), so each is updated in
+        // place and no row is ever settled at another row's path; only the
+        // guarded relocation seam moves an owned row. A row that owns nothing
+        // has no artifact to keep: its first sync goes where the group deploys
+        // now, under the same artifact name.
+        let root = global_skills_dir_in(home, adapter, layout);
+        // An owned member whose artifact still sits in one of its Tool's
+        // superseded dirs: until the guarded relocation moves it, no first
+        // sync goes into the group's dir (the member's harness would read
+        // both copies). Its own partition still updates in place.
+        let pending_owner: Option<&SkillTargetRecord> = installed
+            .iter()
+            .find(|(member, a)| {
+                let stored = Path::new(&member.target_path);
+                member.owns_artifact()
+                    && stored.parent().is_some_and(|parent| {
+                        superseded_skills_dirs_in(home, a, layout)
+                            .iter()
+                            .any(|dir| dir == parent)
+                    })
+                    && stored.symlink_metadata().is_ok()
+            })
+            .map(|(member, _)| *member);
+        let mut partitions: Vec<(PathBuf, GroupMembers)> = Vec::new();
+        for (member, a) in installed {
+            let stored = Path::new(&member.target_path);
+            let at = match stored.file_name() {
+                Some(name) if !member.owns_artifact() => root.join(name),
+                _ => stored.to_path_buf(),
+            };
+            match partitions.iter_mut().find(|(path, _)| *path == at) {
+                Some((_, members)) => members.push((member, a)),
+                None => partitions.push((at, vec![(member, a)])),
+            }
+        }
+
+        for (at, members) in partitions {
+            // A shared skills dir is one artifact (D34 amendment): a first
+            // sync into the group's dir is recorded for every *installed*
+            // sharer, exactly as the global batch records its `record_tools`
+            // — the sharers this skill has no row for yet are settled here
+            // beside the group's rows. An update of an owned artifact (or a
+            // first sync of anything but the group's dir) records nothing
+            // new. A sibling minted here is never visited again in this pass
+            // (`rows` is a snapshot; `handled` names it besides).
+            let first_sync_into_root = at.parent() == Some(root.as_path())
+                && !members.iter().any(|(member, _)| member.owns_artifact());
+            if let (true, Some(owner)) = (first_sync_into_root, pending_owner) {
+                let error = CommandError::RelocationPending {
+                    tool: owner.tool.clone(),
+                    path: owner.target_path.clone(),
+                };
+                for (member, _) in &members {
+                    report.targets.push(skipped_global(
+                        &member.tool,
+                        PropagationSkip::RelocationPending {
+                            error: error.clone(),
+                        },
+                    ));
+                }
+                continue;
+            }
+            let siblings: Vec<&'static ToolAdapter> = if first_sync_into_root {
+                sharers
+                    .iter()
+                    .copied()
+                    .filter(|a| !rows.iter().any(|(r, _)| r.tool == a.key()))
+                    .filter(|a| !handled.iter().any(|tool| tool == a.key()))
+                    .filter(|a| is_installed_in(home, a))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            for sibling in &siblings {
+                handled.push(sibling.key().to_string());
+            }
+            let write = ArtifactWrite {
+                store,
+                central_path,
+                skill_id,
+                now,
+                at: &at,
+                default_adapter: adapter,
+            };
+            write.settle(&members, &siblings, report)?;
+        }
+    }
+    Ok(())
+}
+
+/// One partition of a shared-dir group: the rows whose artifact is `at`.
+type GroupMembers<'r> = Vec<(&'r SkillTargetRecord, &'static ToolAdapter)>;
+
+/// Write one global artifact and settle every row describing it.
+struct ArtifactWrite<'a> {
+    store: &'a SkillStore,
+    central_path: &'a Path,
+    skill_id: &'a str,
+    now: i64,
+    /// The artifact's path: the members' stored path (owned) or where the
+    /// group deploys now (a first sync).
+    at: &'a Path,
+    /// The group's own Tool, writing unless a member is copy-only.
+    default_adapter: &'static ToolAdapter,
+}
+
+impl ArtifactWrite<'_> {
+    /// `members` all describe the artifact at `self.at`; `siblings` are the
+    /// installed sharers a first sync into the group's dir records beside
+    /// them.
+    fn settle(
+        &self,
+        members: &[(&SkillTargetRecord, &'static ToolAdapter)],
+        siblings: &[&'static ToolAdapter],
+        report: &mut PropagationReport,
+    ) -> Result<()> {
+        let Self {
+            store,
+            central_path,
+            skill_id,
+            now,
+            ..
+        } = *self;
+        let at_str = self.at.to_string_lossy().into_owned();
 
         // A link already follows the central copy — but only a link of ours:
         // a row that never materialised (a failed first sync's `error` row,
         // `owns_artifact` false) has no link yet, so it gets a first sync.
-        if !installed
+        if !members
             .iter()
             .any(|(member, a)| needs_new_bytes(member.mode, a) || !member.owns_artifact())
         {
-            for (member, _) in &installed {
+            for (member, _) in members {
                 report.targets.push(skipped_global(
                     &member.tool,
                     PropagationSkip::LinkFollowsSource,
                 ));
             }
-            continue;
+            return Ok(());
         }
 
         // The shared artifact is ours to replace only when a member row
         // materialised it (`owns_artifact`); otherwise this is a first sync
         // and foreign bytes there are `TARGET_EXISTS`.
-        let overwrite = installed.iter().any(|(member, _)| member.owns_artifact());
-
-        // A shared skills dir is one artifact (D34 amendment): a first sync
-        // into it is recorded for every *installed* sharer, exactly as the
-        // global batch records its `record_tools` — the sharers this skill
-        // has no row for yet are settled here beside the group's rows. An
-        // update of an owned artifact records nothing new. A sibling minted
-        // here is never visited again in this pass (`rows` is a snapshot;
-        // `handled` names it besides).
-        let siblings: Vec<&'static ToolAdapter> = if overwrite {
-            Vec::new()
-        } else {
-            sharers
-                .iter()
-                .copied()
-                .filter(|a| !rows.iter().any(|(r, _)| r.tool == a.key()))
-                .filter(|a| is_installed_in(home, a))
-                .collect()
-        };
-        for sibling in &siblings {
-            if !handled.iter().any(|tool| tool == sibling.key()) {
-                handled.push(sibling.key().to_string());
-            }
-        }
+        let overwrite = members.iter().any(|(member, _)| member.owns_artifact());
 
         // The group's most restrictive member — a sibling about to be
         // recorded included — decides how the shared artifact is written:
         // one copy-only Tool makes the whole dir a copy.
-        let driving_adapter = installed
+        let driving_adapter = members
             .iter()
             .map(|(_, a)| *a)
             .chain(siblings.iter().copied())
             .find(|a| !a.supports_symlink)
-            .unwrap_or(adapter);
+            .unwrap_or(self.default_adapter);
 
         let source_missing = !central_path.is_dir();
         let result = if source_missing {
@@ -332,7 +446,7 @@ fn propagate_global_rows(
                 driving_adapter,
                 central_path,
                 super::content_identity::Source::Managed { store, skill_id },
-                Path::new(&driver.target_path),
+                self.at,
                 overwrite,
             )
         };
@@ -340,7 +454,7 @@ fn propagate_global_rows(
         match result {
             Ok(outcome) => {
                 let target_path = outcome.target_path.to_string_lossy().to_string();
-                for (member, _) in &installed {
+                for (member, _) in members {
                     store.transition_skill_target(
                         &member.id,
                         TargetTransition::SyncCompleted {
@@ -358,7 +472,7 @@ fn propagate_global_rows(
                         },
                     });
                 }
-                for sibling in &siblings {
+                for sibling in siblings {
                     store.transition_skill_target(
                         &Uuid::new_v4().to_string(),
                         TargetTransition::Recorded {
@@ -392,14 +506,14 @@ fn propagate_global_rows(
                     .chain()
                     .any(|cause| cause.is::<sync_engine::TargetExistsError>());
                 let failed_siblings: &[&'static ToolAdapter] =
-                    if collision { &[] } else { &siblings };
+                    if collision { &[] } else { siblings };
                 // Each member row is its own Sync target, so each one is
                 // settled and reported as failed. A missing central copy is
                 // the same typed condition for every row; a sync failure's
                 // full chain belongs to the row that was attempted, and the
                 // rest carry its diagnostic text.
                 let mut original = Some(error);
-                for (member, _) in &installed {
+                for (member, _) in members {
                     store.transition_skill_target(
                         &member.id,
                         TargetTransition::SyncFailed { error: &detail },
@@ -435,7 +549,7 @@ fn propagate_global_rows(
                             skill_id,
                             tool: sibling.key(),
                             mode: would_be_mode,
-                            target_path: &driver.target_path,
+                            target_path: &at_str,
                             error: &detail,
                         },
                     )?;
@@ -456,8 +570,8 @@ fn propagate_global_rows(
                 }
             }
         }
+        Ok(())
     }
-    Ok(())
 }
 
 fn skipped_global(tool: &str, reason: PropagationSkip) -> PropagationOutcome {

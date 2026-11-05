@@ -253,8 +253,14 @@ pub(crate) fn configure_project_tools_unlocked(
 ) -> Result<Vec<RemovalReport>> {
     require_project(store, project_id)?;
     for tool in tools {
-        if tool_adapters::adapter_by_key(tool).is_none() {
-            bail!(SignalError::UnknownTool { tool: tool.clone() });
+        match tool_adapters::adapter_by_key(tool) {
+            None => bail!(SignalError::UnknownTool { tool: tool.clone() }),
+            // The project catalog never offers a global-only Tool, so this
+            // guard is not a condition the UI can produce.
+            Some(adapter) if adapter.project_relative_skills_dir.is_none() => {
+                bail!("{tool} has no project-scope skills dir")
+            }
+            Some(_) => {}
         }
     }
 

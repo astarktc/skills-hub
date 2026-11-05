@@ -2,9 +2,11 @@ use std::fs;
 
 use crate::core::errors::SignalError;
 use crate::core::tool_adapters::{
-    adapter_by_key, adapters_sharing_skills_dir, constituents_of, default_tool_adapters,
-    detect_dirs_in, ensure_path_within_tool_dirs, former_skills_dirs_in, is_installed_in,
-    scan_tool_dir, skills_dir_in, tool_holding_path, ToolAdapter, ToolId, VirtualGroup,
+    adapter_by_key, adapter_succeeding_key, adapters_sharing_skills_dir, constituents_of,
+    default_tool_adapters, detect_dirs_in, ensure_path_within_tool_dirs, former_skills_dirs_in,
+    global_skills_dir_in, is_installed_in, scan_tool_dir, skills_dir_in, superseded_skills_dirs_in,
+    tool_holding_path, AgentsStandardRead, GlobalLayout, Precedence, ToolAdapter, ToolId,
+    VirtualGroup, AGENTS_STANDARD_DIR, RETIRED_TOOL_KEYS,
 };
 
 #[test]
@@ -12,16 +14,15 @@ fn path_resolution_joins_adapter_dirs_onto_home() {
     let home = tempfile::tempdir().unwrap();
     let cases: [(&str, &str, &[&str]); 6] = [
         ("claude_code", ".claude/skills", &[".claude"]),
-        ("codex", ".codex/skills", &[".codex"]),
+        // Codex deploys to the AGENTS-standard dir (brief I2) but is detected
+        // by its own root.
+        ("codex", ".agents/skills", &[".codex"]),
         ("cursor", ".cursor/skills", &[".cursor"]),
-        // Amp and Kimi share a skills convention dir but are detected by
-        // their own config roots (Kimi's moved across releases).
+        // Amp keeps the `~/.config/agents/skills` convention dir, detected by
+        // its own config root; Kimi moved to its own dir (brief I4) and is
+        // detected by either root it used across releases.
         ("amp", ".config/agents/skills", &[".config/amp"]),
-        (
-            "kimi_cli",
-            ".config/agents/skills",
-            &[".kimi-code", ".kimi"],
-        ),
+        ("kimi_cli", ".kimi-code/skills", &[".kimi-code", ".kimi"]),
         ("pi", ".pi/agent/skills", &[".pi"]),
     ];
     for (key, skills, detect) in cases {
@@ -171,15 +172,18 @@ fn no_adapter_is_detected_by_a_shared_skills_convention_dir() {
         if adapter.as_virtual_group().is_some() {
             continue;
         }
-        let shared = adapters_sharing_skills_dir(adapter).len() > 1;
-        let convention_root = std::path::Path::new(adapter.relative_skills_dir).parent();
-        for detect_dir in adapter.relative_detect_dirs {
-            assert!(
-                !(shared && convention_root == Some(std::path::Path::new(detect_dir))),
-                "{}: detected by the shared convention dir {}",
-                adapter.id.as_key(),
-                detect_dir
-            );
+        for layout in [GlobalLayout::OWN_DIRS, GlobalLayout::PREFER_AGENTS_STANDARD] {
+            let shared = adapters_sharing_skills_dir(adapter, layout).len() > 1;
+            let convention_root =
+                std::path::Path::new(adapter.global_relative_skills_dir(layout)).parent();
+            for detect_dir in adapter.relative_detect_dirs {
+                assert!(
+                    !(shared && convention_root == Some(std::path::Path::new(detect_dir))),
+                    "{}: detected by the shared convention dir {}",
+                    adapter.id.as_key(),
+                    detect_dir
+                );
+            }
         }
     }
 }
@@ -194,19 +198,60 @@ fn adapter_by_key_finds_known_tool() {
 fn adapter_by_key_finds_new_tools() {
     assert!(adapter_by_key("kimi_cli").is_some());
     assert!(adapter_by_key("augment").is_some());
-    assert!(adapter_by_key("openclaw").is_some());
     assert!(adapter_by_key("command_code").is_some());
     assert!(adapter_by_key("qwen_code").is_some());
+    // Brief § 4 / I13.
+    for key in ["deepseek_harness", "zcode", "codewhale", "workbuddy"] {
+        assert!(adapter_by_key(key).is_some(), "{key}");
+    }
 }
 
 #[test]
-fn adapters_sharing_skills_dir_groups_amp_and_kimi() {
+fn adapters_sharing_skills_dir_groups_the_agents_standard_deployers() {
+    let codex = adapter_by_key("codex").unwrap();
+    let keys: Vec<&str> = adapters_sharing_skills_dir(codex, GlobalLayout::OWN_DIRS)
+        .into_iter()
+        .map(|a| a.key())
+        .collect();
+    assert_eq!(keys, vec!["agents_skills", "codex", "openhands", "goose"]);
     let amp = adapter_by_key("amp").unwrap();
-    let group = adapters_sharing_skills_dir(amp);
-    let keys: std::collections::HashSet<&'static str> =
-        group.into_iter().map(|a| a.id.as_key()).collect();
-    assert!(keys.contains("amp"));
-    assert!(keys.contains("kimi_cli"));
+    let keys: Vec<&str> = adapters_sharing_skills_dir(amp, GlobalLayout::OWN_DIRS)
+        .into_iter()
+        .map(|a| a.key())
+        .collect();
+    assert_eq!(keys, vec!["amp"], "Kimi left Amp's dir (brief I4)");
+}
+
+#[test]
+fn retired_rows_are_not_registered() {
+    for key in RETIRED_TOOL_KEYS {
+        assert!(adapter_by_key(key).is_none(), "{key} is retired");
+    }
+}
+
+/// Brief I10: Clawdbot and MoltBot are OpenClaw's former names — their keys
+/// are OpenClaw's former keys (exactly the retired keys) and their dirs its
+/// former dirs; a registered or unknown key has no successor.
+#[test]
+fn the_retired_keys_are_openclaws_former_names() {
+    let mut former: Vec<&str> = default_tool_adapters()
+        .iter()
+        .flat_map(|a| a.former_keys.iter().copied())
+        .collect();
+    former.sort_unstable();
+    assert_eq!(former, RETIRED_TOOL_KEYS);
+    for key in RETIRED_TOOL_KEYS {
+        let successor = adapter_succeeding_key(key).expect("a successor");
+        assert_eq!(successor.key(), "openclaw", "{key}");
+        assert!(
+            successor
+                .former_relative_skills_dirs
+                .contains(&format!(".{key}/skills").as_str()),
+            "{key}'s dir is a former dir of OpenClaw"
+        );
+    }
+    assert!(adapter_succeeding_key("openclaw").is_none());
+    assert!(adapter_succeeding_key("no_such_tool").is_none());
 }
 
 /// A skill folder whose `SKILL.md` passes the gate.
@@ -226,10 +271,13 @@ fn plain_adapter(id: ToolId) -> ToolAdapter {
         group_label: None,
         relative_skills_dir: "ignored",
         former_relative_skills_dirs: &[],
+        former_keys: &[],
         relative_detect_dirs: &["ignored"],
-        project_relative_skills_dir: "ignored",
+        project_relative_skills_dir: Some("ignored"),
         group: None,
         supports_symlink: true,
+        reads_agents_standard_globally: None,
+        also_reads: &[],
     }
 }
 
@@ -252,10 +300,13 @@ fn scan_tool_dir_skips_codex_system_and_includes_symlink_dir() {
         group_label: None,
         relative_skills_dir: "ignored",
         former_relative_skills_dirs: &[],
+        former_keys: &[],
         relative_detect_dirs: &["ignored"],
-        project_relative_skills_dir: "ignored",
+        project_relative_skills_dir: Some("ignored"),
         group: None,
         supports_symlink: true,
+        reads_agents_standard_globally: None,
+        also_reads: &[],
     };
 
     let out = scan_tool_dir(&tool, dir.path()).unwrap();
@@ -288,10 +339,13 @@ fn scan_tool_dir_skips_app_support_path() {
         group_label: None,
         relative_skills_dir: "ignored",
         former_relative_skills_dirs: &[],
+        former_keys: &[],
         relative_detect_dirs: &["ignored"],
-        project_relative_skills_dir: "ignored",
+        project_relative_skills_dir: Some("ignored"),
         group: None,
         supports_symlink: false,
+        reads_agents_standard_globally: None,
+        also_reads: &[],
     };
 
     let out = scan_tool_dir(&tool, &root).unwrap();
@@ -359,56 +413,59 @@ fn scan_tool_dir_admits_only_valid_manifests_and_reports_the_rest() {
 /// (a per-scope fact: globally it absorbs nothing).
 #[test]
 fn project_relative_skills_dir_for_every_tool() {
-    let expected: &[(&str, &str, Option<&str>)] = &[
+    let expected: &[(&str, Option<&str>, Option<&str>)] = &[
         (
             "agents_skills",
-            ".agents/skills",
+            Some(".agents/skills"),
             Some(".agents/skills (9 harnesses)"),
         ),
-        ("cursor", ".agents/skills", None),
-        ("claude_code", ".claude/skills", None),
-        ("codex", ".agents/skills", None),
-        ("opencode", ".agents/skills", None),
-        ("antigravity", ".agents/skills", None),
-        ("amp", ".agents/skills", None),
-        ("kimi_cli", ".agents/skills", None),
-        ("augment", ".augment/skills", None),
-        ("openclaw", "skills", None),
-        ("copaw", ".copaw/skill_pool", None),
-        ("cline", ".agents/skills", None),
-        ("codebuddy", ".codebuddy/skills", None),
-        ("command_code", ".commandcode/skills", None),
-        ("continue", ".continue/skills", None),
-        ("crush", ".crush/skills", None),
-        ("junie", ".junie/skills", None),
-        ("iflow_cli", ".iflow/skills", None),
-        ("kiro_cli", ".kiro/skills", None),
-        ("kode", ".kode/skills", None),
-        ("mcpjam", ".mcpjam/skills", None),
-        ("mistral_vibe", ".vibe/skills", None),
-        ("mux", ".mux/skills", None),
-        ("openclaude", ".openclaude/skills", None),
-        ("openhands", ".openhands/skills", None),
-        ("pi", ".pi/skills", None),
-        ("qoder", ".qoder/skills", None),
-        ("qoderwork", ".qoderwork/skills", None),
-        ("qwen_code", ".qwen/skills", None),
-        ("trae", ".trae/skills", None),
-        ("trae_cn", ".trae/skills", None),
-        ("zencoder", ".zencoder/skills", None),
-        ("neovate", ".neovate/skills", None),
-        ("pochi", ".pochi/skills", None),
-        ("adal", ".adal/skills", None),
-        ("kilo_code", ".kilocode/skills", None),
-        ("roo_code", ".roo/skills", None),
-        ("goose", ".goose/skills", None),
-        ("gemini_cli", ".agents/skills", None),
-        ("github_copilot", ".agents/skills", None),
-        ("clawdbot", ".clawdbot/skills", None),
-        ("droid", ".factory/skills", None),
-        ("windsurf", ".windsurf/skills", None),
-        ("moltbot", ".moltbot/skills", None),
-        ("hermes-agent", ".hermes/skills", None),
+        ("cursor", Some(".agents/skills"), None),
+        ("claude_code", Some(".claude/skills"), None),
+        ("codex", Some(".agents/skills"), None),
+        ("opencode", Some(".agents/skills"), None),
+        ("antigravity", Some(".agents/skills"), None),
+        ("amp", Some(".agents/skills"), None),
+        ("kimi_cli", Some(".agents/skills"), None),
+        ("augment", Some(".augment/skills"), None),
+        ("openclaw", Some("skills"), None),
+        ("copaw", Some(".copaw/skill_pool"), None),
+        ("cline", Some(".agents/skills"), None),
+        ("codebuddy", Some(".codebuddy/skills"), None),
+        ("command_code", Some(".commandcode/skills"), None),
+        ("continue", Some(".continue/skills"), None),
+        ("crush", Some(".crush/skills"), None),
+        ("junie", Some(".junie/skills"), None),
+        ("iflow_cli", Some(".iflow/skills"), None),
+        ("kiro_cli", Some(".kiro/skills"), None),
+        ("kode", Some(".kode/skills"), None),
+        ("mcpjam", Some(".mcpjam/skills"), None),
+        ("mistral_vibe", Some(".vibe/skills"), None),
+        ("mux", Some(".mux/skills"), None),
+        ("openclaude", Some(".openclaude/skills"), None),
+        ("openhands", Some(".openhands/skills"), None),
+        ("pi", Some(".pi/skills"), None),
+        ("qoder", Some(".qoder/skills"), None),
+        ("qoderwork", Some(".qoderwork/skills"), None),
+        ("qwen_code", Some(".qwen/skills"), None),
+        ("trae", Some(".trae/skills"), None),
+        ("trae_cn", Some(".trae/skills"), None),
+        ("zencoder", Some(".zencoder/skills"), None),
+        ("neovate", Some(".neovate/skills"), None),
+        ("pochi", Some(".pochi/skills"), None),
+        ("adal", Some(".adal/skills"), None),
+        ("kilo_code", Some(".kilocode/skills"), None),
+        ("roo_code", Some(".roo/skills"), None),
+        ("goose", Some(".goose/skills"), None),
+        ("gemini_cli", Some(".agents/skills"), None),
+        ("github_copilot", Some(".agents/skills"), None),
+        ("droid", Some(".factory/skills"), None),
+        ("windsurf", Some(".windsurf/skills"), None),
+        ("hermes-agent", Some(".hermes/skills"), None),
+        ("deepseek_harness", Some(".dsh/skills"), None),
+        ("zcode", Some(".zcode/skills"), None),
+        ("codewhale", Some(".codewhale/skills"), None),
+        // Global-only: the project dir is unresolved (brief § 4).
+        ("workbuddy", None, None),
     ];
     assert_eq!(
         expected.len(),
@@ -450,7 +507,7 @@ fn agents_standard_group_has_nine_constituents_and_one_entry() {
         ]
     );
     for a in constituents_of(VirtualGroup::AgentsStandard) {
-        assert_eq!(a.project_relative_skills_dir, ".agents/skills");
+        assert_eq!(a.project_relative_skills_dir, Some(".agents/skills"));
         assert!(a.as_virtual_group().is_none());
     }
     let entries: Vec<&ToolAdapter> = default_tool_adapters()
@@ -514,24 +571,34 @@ fn augment_global_skills_dir_is_augment_skills_and_rules_is_former() {
         detect_dirs_in(home.path(), augment),
         vec![home.path().join(".augment")]
     );
-    assert_eq!(augment.project_relative_skills_dir, ".augment/skills");
+    assert_eq!(augment.project_relative_skills_dir, Some(".augment/skills"));
 }
 
-/// A former dir is a registry fact about a *correction*: it must never be a
-/// live skills dir of any Tool (relocation would then move a healthy target).
+/// A former dir is a registry fact about a *correction*: it is never the
+/// Tool's own current dir, and it is another Tool's live dir only where the
+/// brief says so — Kimi's former `~/.config/agents/skills` is Amp's (I4).
+/// Relocation handles that case by moving only Kimi's rows and keeping any
+/// artifact another row still records (`core::target_relocation`); this
+/// list pins every such overlap so a new one is a deliberate edit.
 #[test]
-fn no_former_skills_dir_is_a_current_skills_dir() {
+fn a_former_skills_dir_is_a_live_dir_only_where_pinned() {
+    let mut overlaps: Vec<(&str, &str, &str)> = Vec::new();
     for adapter in default_tool_adapters() {
         for former in adapter.former_relative_skills_dirs {
-            assert!(
-                default_tool_adapters()
-                    .iter()
-                    .all(|a| a.relative_skills_dir != *former),
-                "{}'s former dir {former} is still some Tool's skills dir",
-                adapter.key()
-            );
+            assert_ne!(adapter.relative_skills_dir, *former, "{}", adapter.key());
+            for live in default_tool_adapters()
+                .iter()
+                .filter(|a| a.relative_skills_dir == *former)
+            {
+                overlaps.push((adapter.key(), former, live.key()));
+            }
         }
     }
+    assert_eq!(
+        overlaps,
+        vec![("kimi_cli", ".config/agents/skills", "amp")],
+        "former dirs that are another Tool's live dir"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -626,5 +693,397 @@ fn a_path_resolving_into_a_tool_skills_dir_names_that_tool() {
     assert_eq!(
         tool_holding_path(home.path(), &link).map(|a| a.key()),
         Some("claude_code")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Registry truth (ticket 34): the global facts, pinned to the brief
+// `docs/design-inputs/2026-11-02-harness-global-skills-dirs.md`.
+// ---------------------------------------------------------------------------
+
+/// One row of the brief-derived snapshot. `brief` is the citation — § (a
+/// section heading), `#N` (a §1 table row), `IN` (an implication) and an
+/// evidence tag in parentheses (`LIKELY` / `UNKNOWN`) — and every part of it
+/// must exist in the brief itself ([`every_snapshot_citation_exists_in_the_brief`]),
+/// so a row names where to check it and the brief cannot lose that anchor
+/// silently.
+struct BriefRow {
+    key: &'static str,
+    display: &'static str,
+    global: &'static str,
+    former: &'static [&'static str],
+    detect: &'static [&'static str],
+    reads: Option<(Option<&'static str>, Precedence)>,
+    also_reads: &'static [&'static str],
+    brief: &'static str,
+}
+
+#[allow(clippy::too_many_arguments)]
+const fn row(
+    key: &'static str,
+    display: &'static str,
+    global: &'static str,
+    former: &'static [&'static str],
+    detect: &'static [&'static str],
+    reads: Option<(Option<&'static str>, Precedence)>,
+    also_reads: &'static [&'static str],
+    brief: &'static str,
+) -> BriefRow {
+    BriefRow {
+        key,
+        display,
+        global,
+        former,
+        detect,
+        reads,
+        also_reads,
+        brief,
+    }
+}
+
+use Precedence::{AgentsWins, BothShown, OwnWins, Unknown};
+
+/// The checked-in snapshot: every registry entry's global facts as the brief
+/// states them, transcribed and reviewed by hand (not generated from the
+/// registry, so not circular). A registry edit without an edit of this table
+/// fails; the brief itself is bound only through the citations (see
+/// [`every_snapshot_citation_exists_in_the_brief`]), not by a digest.
+#[rustfmt::skip]
+const BRIEF_SNAPSHOT: &[BriefRow] = &[
+    row("agents_skills", ".agents/skills", ".agents/skills", &[], &[".agents"], None, &[], "§1 #1"),
+    row("cursor", "Cursor", ".cursor/skills", &[], &[".cursor"], Some((None, Unknown)), &[".claude/skills", ".codex/skills"], "§1 #2, I1"),
+    row("claude_code", "Claude Code", ".claude/skills", &[], &[".claude"], None, &[], "§1 #3, I12"),
+    row("codex", "Codex", ".agents/skills", &[".codex/skills"], &[".codex"], Some((Some("rust-v0.95.0"), BothShown)), &[], "§3, I2 (a)"),
+    row("opencode", "OpenCode", ".config/opencode/skills", &[], &[".config/opencode"], Some((None, Unknown)), &[".claude/skills"], "§1 #5, I1"),
+    row("antigravity", "Antigravity", ".gemini/config/skills", &[".gemini/antigravity/global_skills", ".gemini/antigravity/skills"], &[".gemini/antigravity"], None, &[".gemini/skills"], "§2, I3, I12"),
+    row("amp", "Amp", ".config/agents/skills", &[], &[".config/amp"], Some((None, OwnWins)), &[".claude/skills"], "§1 #7, I1"),
+    row("kimi_cli", "Kimi Code CLI", ".kimi-code/skills", &[".config/agents/skills"], &[".kimi-code", ".kimi"], Some((None, Unknown)), &[".claude/skills", ".codex/skills", ".config/agents/skills"], "§2, I4"),
+    row("augment", "Augment", ".augment/skills", &[".augment/rules"], &[".augment"], Some((None, OwnWins)), &[".claude/skills"], "§1 #9, I1"),
+    row("openclaw", "OpenClaw", ".openclaw/skills", &[".clawdbot/skills", ".moltbot/skills"], &[".openclaw"], Some((None, AgentsWins)), &[], "§1 #10, #41, #44, I10"),
+    row("copaw", "Copaw", ".copaw/skill_pool", &[], &[".copaw"], None, &[], "§1 #11 (LIKELY)"),
+    row("cline", "Cline", ".cline/skills", &[], &[".cline"], Some((None, Unknown)), &[], "§2, I5"),
+    row("codebuddy", "CodeBuddy", ".codebuddy/skills", &[], &[".codebuddy"], None, &[], "§1 #13, I12"),
+    row("command_code", "Command Code", ".commandcode/skills", &[], &[".commandcode"], Some((None, OwnWins)), &[], "§1 #14"),
+    row("continue", "Continue", ".continue/skills", &[], &[".continue"], None, &[".claude/skills"], "§1 #15 (LIKELY), I1"),
+    row("crush", "Crush", ".config/crush/skills", &[], &[".config/crush"], Some((None, Unknown)), &[".config/agents/skills", ".claude/skills"], "§1 #16, I1"),
+    row("junie", "Junie", ".junie/skills", &[], &[".junie"], Some((None, Unknown)), &[], "§1 #17"),
+    row("iflow_cli", "iFlow CLI", ".iflow/skills", &[], &[".iflow"], None, &[], "§1 #18, I12"),
+    row("kiro_cli", "Kiro CLI", ".kiro/skills", &[], &[".kiro"], None, &[], "§1 #19, I12"),
+    row("kode", "Kode", ".kode/skills", &[], &[".kode"], None, &[], "§1 #20 (LIKELY)"),
+    row("mcpjam", "MCPJam", ".mcpjam/skills", &[], &[".mcpjam"], None, &[], "§1 #21 (UNKNOWN)"),
+    row("mistral_vibe", "Mistral Vibe", ".vibe/skills", &[], &[".vibe"], Some((None, Unknown)), &[], "§1 #22"),
+    row("mux", "Xum", ".xum/skills", &[".mux/skills"], &[".xum", ".mux"], Some((None, OwnWins)), &[], "§5, I7"),
+    row("openclaude", "OpenClaude IDE", ".openclaude/skills", &[], &[".openclaude"], None, &[], "§1 #24 (UNKNOWN)"),
+    row("openhands", "OpenHands", ".agents/skills", &[".openhands/skills"], &[".openhands"], Some((None, AgentsWins)), &[], "§1 #25, I8"),
+    row("pi", "Pi", ".pi/agent/skills", &[], &[".pi"], Some((None, Unknown)), &[], "§1 #26"),
+    row("qoder", "Qoder", ".qoder/skills", &[], &[".qoder"], None, &[], "§1 #27, I12"),
+    row("qoderwork", "QoderWork", ".qoderwork/skills", &[], &[".qoderwork"], None, &[], "§1 #28 (LIKELY)"),
+    row("qwen_code", "Qwen Code", ".qwen/skills", &[], &[".qwen"], Some((None, OwnWins)), &[], "§1 #29"),
+    row("trae", "Trae", ".trae/skills", &[], &[".trae"], None, &[], "§1 #30 (LIKELY)"),
+    row("trae_cn", "Trae CN", ".trae-cn/skills", &[], &[".trae-cn"], None, &[], "§1 #31 (LIKELY)"),
+    row("zencoder", "Zencoder", ".zencoder/skills", &[], &[".zencoder"], None, &[], "§1 #32 (LIKELY)"),
+    row("neovate", "Neovate", ".neovate/skills", &[], &[".neovate"], None, &[], "§1 #33 (UNKNOWN read)"),
+    row("pochi", "Pochi", ".pochi/skills", &[], &[".pochi"], Some((Some("2a9ff73 (#1360)"), OwnWins)), &[], "§1 #34"),
+    row("adal", "AdaL", ".adal/skills", &[], &[".adal"], None, &[], "§1 #35 (UNKNOWN)"),
+    row("kilo_code", "Kilo Code", ".kilo/skills", &[".kilocode/skills"], &[".kilo", ".kilocode"], Some((None, Unknown)), &[], "§5, I6"),
+    row("roo_code", "Roo Code", ".roo/skills", &[], &[".roo"], Some((Some("PR #11181"), OwnWins)), &[], "§1 #37"),
+    row("goose", "Goose", ".agents/skills", &[".config/goose/skills"], &[".config/goose"], Some((None, Unknown)), &[".claude/skills"], "§1 #38, I8, I1"),
+    row("gemini_cli", "Gemini CLI", ".gemini/skills", &[], &[".gemini"], Some((Some("PR #18151"), AgentsWins)), &[], "§1 #39"),
+    row("github_copilot", "GitHub Copilot", ".copilot/skills", &[], &[".copilot"], Some((None, Unknown)), &[], "§1 #40"),
+    row("droid", "Droid", ".factory/skills", &[], &[".factory"], Some((None, Unknown)), &[], "§1 #42"),
+    row("windsurf", "Windsurf", ".codeium/windsurf/skills", &[], &[".codeium/windsurf"], Some((None, Unknown)), &[], "§1 #43, I9 (held)"),
+    row("hermes-agent", "Hermes Agent", ".hermes/skills", &[], &[".hermes"], None, &[], "§1 #45, I12"),
+    row("deepseek_harness", "DeepSeek Harness", ".dsh/skills", &[], &[".dsh"], Some((None, OwnWins)), &[], "§4, I13"),
+    row("zcode", "ZCode", ".zcode/skills", &[], &[".zcode"], Some((None, OwnWins)), &[], "§4, I13"),
+    row("codewhale", "Codewhale", ".codewhale/skills", &[], &[".codewhale"], Some((None, OwnWins)), &[".claude/skills"], "§4, I13, I1"),
+    row("workbuddy", "WorkBuddy", ".workbuddy/skills", &[], &[".workbuddy"], None, &[], "§4, I13 (LIKELY)"),
+];
+
+/// Every `BRIEF_SNAPSHOT` citation resolves in the brief: each `§N` is a
+/// section heading, each `#N` a §1 table row, each `IN` an implication, and
+/// an evidence tag (`LIKELY`, `UNKNOWN`) appears on the cited row — the
+/// `#N` row, or the row naming the key (§4's new rows).
+#[test]
+fn every_snapshot_citation_exists_in_the_brief() {
+    let brief_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../docs/design-inputs/2026-11-02-harness-global-skills-dirs.md");
+    let brief = std::fs::read_to_string(&brief_path).expect("read the brief");
+    let lines: Vec<&str> = brief.lines().collect();
+    for row in BRIEF_SNAPSHOT {
+        let (anchors, tag) = match row.brief.split_once('(') {
+            Some((anchors, tag)) => (anchors, Some(tag.trim_end_matches(')'))),
+            None => (row.brief, None),
+        };
+        let mut cited_rows: Vec<&str> = Vec::new();
+        for anchor in anchors.split(',').map(str::trim).filter(|a| !a.is_empty()) {
+            for part in anchor.split_whitespace() {
+                if let Some(section) = part.strip_prefix('§') {
+                    let heading = format!("## §{section} ");
+                    assert!(
+                        lines.iter().any(|l| l.starts_with(&heading)),
+                        "{}: no section {part} in the brief",
+                        row.key
+                    );
+                } else if let Some(number) = part.strip_prefix('#') {
+                    let prefix = format!("| {number} |");
+                    let line = lines
+                        .iter()
+                        .find(|l| l.starts_with(&prefix))
+                        .unwrap_or_else(|| panic!("{}: no §1 row {part} in the brief", row.key));
+                    cited_rows.push(line);
+                } else if part.starts_with('I') {
+                    let implication = format!("- **{part} —");
+                    assert!(
+                        lines.iter().any(|l| l.starts_with(&implication)),
+                        "{}: no implication {part} in the brief",
+                        row.key
+                    );
+                } else {
+                    panic!("{}: unreadable citation part {part:?}", row.key);
+                }
+            }
+        }
+        if let Some(tag) = tag {
+            let word = tag.split_whitespace().next().unwrap_or(tag);
+            if word != "LIKELY" && word != "UNKNOWN" {
+                continue; // a note, e.g. "(held)"
+            }
+            if cited_rows.is_empty() {
+                let key_cell = format!("| `{}` |", row.key);
+                cited_rows.extend(lines.iter().filter(|l| l.starts_with(&key_cell)));
+            }
+            assert!(
+                !cited_rows.is_empty() && cited_rows.iter().all(|l| l.contains(word)),
+                "{}: the brief's cited row does not say {word}",
+                row.key
+            );
+        }
+    }
+}
+
+#[test]
+fn registry_matches_the_brief_snapshot() {
+    let registry: Vec<&str> = default_tool_adapters().iter().map(|a| a.key()).collect();
+    let snapshot: Vec<&str> = BRIEF_SNAPSHOT.iter().map(|r| r.key).collect();
+    assert_eq!(registry, snapshot, "registry order and membership");
+    for (adapter, expected) in default_tool_adapters().iter().zip(BRIEF_SNAPSHOT) {
+        let key = expected.key;
+        assert_eq!(
+            adapter.display_name, expected.display,
+            "display name of {key}"
+        );
+        assert_eq!(
+            adapter.relative_skills_dir, expected.global,
+            "global dir of {key}"
+        );
+        assert_eq!(
+            adapter.former_relative_skills_dirs, expected.former,
+            "former dirs of {key}"
+        );
+        assert_eq!(
+            adapter.relative_detect_dirs, expected.detect,
+            "detect dirs of {key}"
+        );
+        assert_eq!(
+            adapter.reads_agents_standard_globally,
+            expected
+                .reads
+                .map(|(since, precedence)| AgentsStandardRead { since, precedence }),
+            "AGENTS-standard read of {key}"
+        );
+        assert_eq!(
+            adapter.also_reads, expected.also_reads,
+            "cross-reads of {key}"
+        );
+    }
+}
+
+/// Brief § 1 summary 5 / I11: 24 of the 44 harness rows VERIFIED-read
+/// `~/.agents/skills`, and three of the four new rows read it too (DeepSeek
+/// Harness, ZCode, Codewhale).
+#[test]
+fn the_agents_standard_readers_are_the_briefs_verified_rows() {
+    let readers: Vec<&str> = default_tool_adapters()
+        .iter()
+        .filter(|a| a.reads_agents_standard_globally.is_some())
+        .map(|a| a.key())
+        .collect();
+    assert_eq!(readers.len(), 27, "{readers:?}");
+    // Since versions are VERIFIED only for these four (I11).
+    let with_since: Vec<&str> = default_tool_adapters()
+        .iter()
+        .filter(|a| {
+            a.reads_agents_standard_globally
+                .is_some_and(|r| r.since.is_some())
+        })
+        .map(|a| a.key())
+        .collect();
+    assert_eq!(with_since, vec!["codex", "pochi", "roo_code", "gemini_cli"]);
+    // I12: never group.
+    for key in [
+        "claude_code",
+        "antigravity",
+        "kiro_cli",
+        "qoder",
+        "iflow_cli",
+        "codebuddy",
+        "hermes-agent",
+    ] {
+        assert!(
+            adapter_by_key(key)
+                .unwrap()
+                .reads_agents_standard_globally
+                .is_none(),
+            "{key}"
+        );
+    }
+}
+
+#[test]
+fn the_agents_standard_dir_is_the_entry_dir() {
+    let entry = adapter_by_key("agents_skills").unwrap();
+    assert_eq!(entry.relative_skills_dir, AGENTS_STANDARD_DIR);
+    assert!(entry.reads_agents_standard_globally.is_none());
+}
+
+/// A cross-read names another harness's dir (own or former) — never the
+/// harness's own, and never the AGENTS-standard dir (that read is
+/// `reads_agents_standard_globally`).
+#[test]
+fn every_cross_read_is_another_harness_dir() {
+    for adapter in default_tool_adapters() {
+        for dir in adapter.also_reads {
+            assert_ne!(*dir, AGENTS_STANDARD_DIR, "{}", adapter.key());
+            assert_ne!(*dir, adapter.relative_skills_dir, "{}", adapter.key());
+            assert!(
+                default_tool_adapters()
+                    .iter()
+                    .any(|other| other.id != adapter.id
+                        && (other.relative_skills_dir == *dir
+                            || other.former_relative_skills_dirs.contains(dir))),
+                "{}: {dir} is no other harness's dir",
+                adapter.key()
+            );
+        }
+    }
+}
+
+/// I3 / I13: neither Antigravity nor Codewhale is detected on a dir that is
+/// a skills-only footprint or another product's fallback.
+#[test]
+fn detect_dirs_avoid_the_briefs_footprint_hazards() {
+    let antigravity = adapter_by_key("antigravity").unwrap();
+    assert!(!antigravity.relative_detect_dirs.contains(&".gemini/config"));
+    let codewhale = adapter_by_key("codewhale").unwrap();
+    assert!(!codewhale.relative_detect_dirs.contains(&".deepseek"));
+}
+
+/// `~/.codex` holding only `skills/` is what `gh skill install --agent codex`
+/// leaves (brief § 3): the former dir is a skills path, so it is a footprint.
+#[test]
+fn a_former_dir_alone_is_a_skills_only_footprint() {
+    let home = tempfile::tempdir().unwrap();
+    let codex = adapter_by_key("codex").unwrap();
+    fs::create_dir_all(home.path().join(".codex/skills/x")).unwrap();
+    assert!(!is_installed_in(home.path(), codex));
+    fs::write(home.path().join(".codex/config.toml"), b"").unwrap();
+    assert!(is_installed_in(home.path(), codex));
+
+    let kilo = adapter_by_key("kilo_code").unwrap();
+    fs::create_dir_all(home.path().join(".kilocode/skills/x")).unwrap();
+    assert!(!is_installed_in(home.path(), kilo));
+    fs::create_dir_all(home.path().join(".kilo/skills/x")).unwrap();
+    assert!(
+        !is_installed_in(home.path(), kilo),
+        "both roots hold only skills"
+    );
+    fs::write(home.path().join(".kilo/settings.json"), b"{}").unwrap();
+    assert!(is_installed_in(home.path(), kilo));
+}
+
+// ---------------------------------------------------------------------------
+// The #83 preference as a layout: where each harness deploys
+// ---------------------------------------------------------------------------
+
+/// The effective global dir across the precedence values: with the
+/// preference on, every VERIFIED reader resolves to the AGENTS-standard dir
+/// whatever its precedence; a `None` row keeps its own dir. Off, everyone
+/// keeps their own dir.
+#[test]
+fn the_layout_moves_every_verified_reader_and_only_them() {
+    let home = tempfile::tempdir().unwrap();
+    let cases = [
+        ("amp", Some(OwnWins), ".config/agents/skills"),
+        ("gemini_cli", Some(AgentsWins), ".gemini/skills"),
+        ("codex", Some(BothShown), ".agents/skills"),
+        ("cursor", Some(Unknown), ".cursor/skills"),
+        ("claude_code", None, ".claude/skills"),
+        ("antigravity", None, ".gemini/config/skills"),
+    ];
+    for (key, precedence, own) in cases {
+        let adapter = adapter_by_key(key).unwrap();
+        assert_eq!(
+            adapter.reads_agents_standard_globally.map(|r| r.precedence),
+            precedence,
+            "{key}"
+        );
+        assert_eq!(
+            global_skills_dir_in(home.path(), adapter, GlobalLayout::OWN_DIRS),
+            home.path().join(own),
+            "{key} with the preference off"
+        );
+        let preferred = if precedence.is_some() {
+            AGENTS_STANDARD_DIR
+        } else {
+            own
+        };
+        assert_eq!(
+            global_skills_dir_in(home.path(), adapter, GlobalLayout::PREFER_AGENTS_STANDARD),
+            home.path().join(preferred),
+            "{key} with the preference on"
+        );
+    }
+}
+
+#[test]
+fn superseded_dirs_follow_the_layout() {
+    let home = tempfile::tempdir().unwrap();
+    let h = |dir: &str| home.path().join(dir);
+    let cursor = adapter_by_key("cursor").unwrap();
+    assert_eq!(
+        superseded_skills_dirs_in(home.path(), cursor, GlobalLayout::OWN_DIRS),
+        vec![h(".agents/skills")],
+        "preference off: a reader's targets come back from the AGENTS-standard dir"
+    );
+    assert_eq!(
+        superseded_skills_dirs_in(home.path(), cursor, GlobalLayout::PREFER_AGENTS_STANDARD),
+        vec![h(".cursor/skills")]
+    );
+    let kimi = adapter_by_key("kimi_cli").unwrap();
+    assert_eq!(
+        superseded_skills_dirs_in(home.path(), kimi, GlobalLayout::OWN_DIRS),
+        vec![h(".config/agents/skills"), h(".agents/skills")]
+    );
+    assert_eq!(
+        superseded_skills_dirs_in(home.path(), kimi, GlobalLayout::PREFER_AGENTS_STANDARD),
+        vec![h(".config/agents/skills"), h(".kimi-code/skills")]
+    );
+    // Codex deploys to the AGENTS-standard dir either way.
+    let codex = adapter_by_key("codex").unwrap();
+    for layout in [GlobalLayout::OWN_DIRS, GlobalLayout::PREFER_AGENTS_STANDARD] {
+        assert_eq!(
+            superseded_skills_dirs_in(home.path(), codex, layout),
+            vec![h(".codex/skills")]
+        );
+    }
+    // A non-reader has only its former dirs.
+    let augment_like = adapter_by_key("antigravity").unwrap();
+    assert_eq!(
+        superseded_skills_dirs_in(
+            home.path(),
+            augment_like,
+            GlobalLayout::PREFER_AGENTS_STANDARD
+        ),
+        former_skills_dirs_in(home.path(), augment_like)
     );
 }

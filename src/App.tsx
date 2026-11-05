@@ -66,7 +66,7 @@ import {
   resolveFirst,
   resolveFocusTarget,
 } from "./lib/actionLifecycle";
-import { SKILL_FILTERS, libraryExceptions } from "./lib/skillPresentation";
+import { SKILL_FILTERS, catalogToolLabel, libraryExceptions } from "./lib/skillPresentation";
 import type { ManagedSkill } from "./components/skills/types";
 
 // App is the binder: it owns only i18n, composes the surface module (what is
@@ -171,10 +171,13 @@ function App() {
     const knownIds = new Set(known.map((tool) => tool.id));
     const unknown = stripTargetIds
       .filter((id) => !knownIds.has(id))
-      .map((id) => ({ id, label: toolLabelById[id] ?? id }));
+      .map((id) => ({ id, label: catalogToolLabel(t, toolLabelById, id) }));
     return [...known.map((tool) => ({ id: tool.id, label: tool.label })), ...unknown];
-  }, [catalogTools, stripTargetIds, toolLabelById]);
-  const labelOfTool = useCallback((id: string) => toolLabelById[id] ?? id, [toolLabelById]);
+  }, [catalogTools, stripTargetIds, t, toolLabelById]);
+  const labelOfTool = useCallback(
+    (id: string) => catalogToolLabel(t, toolLabelById, id),
+    [t, toolLabelById],
+  );
   const isToolDetected = useCallback((id: string) => installedToolIds.includes(id), [installedToolIds]);
 
   // The skill action door: every verb on a skill (card, detail, toolbar,

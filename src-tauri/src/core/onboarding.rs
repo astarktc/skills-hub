@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde::Serialize;
 use specta::Type;
 
+use super::artifact_removal::artifact_identity;
 use super::content_identity::{self, Source};
 use super::skill_discovery::InvalidManifestReason;
 use super::skill_store::SkillStore;
@@ -15,7 +16,20 @@ use super::tool_adapters::{
 
 #[derive(Clone, Debug, Serialize, Type)]
 pub struct OnboardingVariant {
+    /// The Tool the copy is attributed to: the first Tool in scope, in
+    /// registry order, whose own skills dir holds it.
     pub tool: String,
+    /// Every harness in scope that loads this copy (registry order): each
+    /// in-scope Tool whose own skills dir holds it (`~/.agents/skills`: the
+    /// AGENTS-standard entry, Codex, Goose, OpenHands) and each that reads
+    /// that dir besides (a VERIFIED AGENTS-standard reader, a cross-read —
+    /// `ToolAdapter::reads_global_dir`). Under Installed scope only detected
+    /// harnesses; under Selected scope the selected ones that are detected,
+    /// plus the attributed Tool itself. One physical copy is one variant: the
+    /// roster names its consumers without duplicating it — a Tool skills dir
+    /// symlinked to another's is the same physical dir, so both dirs'
+    /// readers are unioned here.
+    pub readers: Vec<String>,
     pub name: String,
     pub path: PathBuf,
     pub fingerprint: Option<String>,
@@ -92,12 +106,16 @@ pub fn build_onboarding_plan(
     store: &SkillStore,
     scope: &OnboardingScanScope,
 ) -> Result<OnboardingPlan> {
+    // Owned rows only (`synced_at` set), keyed by physical artifact identity
+    // alone: a shared dir's copy is attributed to one sharer, while the row
+    // owning it may be another's (a managed Codex copy in `~/.agents/skills`),
+    // and a Tool skills dir may be a symlink to another's.
     let managed_targets = store
         .list_all_skill_target_paths()
         .unwrap_or_default()
         .into_iter()
-        .map(|(tool, path)| managed_target_key(&tool, Path::new(&path)))
-        .collect::<std::collections::HashSet<_>>();
+        .map(|(_tool, path)| managed_target_key(Path::new(&path)))
+        .collect::<HashSet<_>>();
     let managed_names = managed_names(store)?;
     build_onboarding_plan_in_home(
         home,
@@ -127,25 +145,45 @@ fn build_onboarding_plan_in_home(
     home: &Path,
     scope: &OnboardingScanScope,
     exclude_root: Option<&Path>,
-    exclude_managed_targets: Option<&std::collections::HashSet<String>>,
+    exclude_managed_targets: Option<&HashSet<PathBuf>>,
     managed_names: &HashMap<String, String>,
 ) -> Result<OnboardingPlan> {
     let adapters = default_tool_adapters();
-    let mut all_detected: Vec<DetectedSkill> = Vec::new();
+    // Each detected copy with the index of the scanned root it came from.
+    let mut all_detected: Vec<(usize, DetectedSkill)> = Vec::new();
     let mut invalid: Vec<OnboardingInvalidEntry> = Vec::new();
     let mut scanned = 0usize;
+    let mut roots: Vec<ScannedRoot> = Vec::new();
 
     for adapter in adapters {
         if !scope.includes(home, adapter) {
             continue;
         }
         scanned += 1;
-        let scan = scan_tool_dir(adapter, &skills_dir_in(home, adapter))?;
-        all_detected.extend(filter_detected(
-            scan.skills,
-            exclude_root,
-            exclude_managed_targets,
-        ));
+        // A physical dir several Tools reach is scanned once — a dir they
+        // share (`~/.agents/skills`: the AGENTS-standard entry, Codex, Goose,
+        // OpenHands), or one Tool's skills dir symlinked to another's — and
+        // its copies are attributed to the first Tool in scope, in registry
+        // order: one copy is one variant, never one per sharer or alias.
+        let dir = skills_dir_in(home, adapter);
+        let identity = std::fs::canonicalize(&dir).unwrap_or_else(|_| dir.components().collect());
+        if let Some(root) = roots.iter_mut().find(|root| root.identity == identity) {
+            if !root.relative_dirs.contains(&adapter.relative_skills_dir) {
+                root.relative_dirs.push(adapter.relative_skills_dir);
+            }
+            continue;
+        }
+        let scan = scan_tool_dir(adapter, &dir)?;
+        let root_index = roots.len();
+        roots.push(ScannedRoot {
+            identity,
+            relative_dirs: vec![adapter.relative_skills_dir],
+        });
+        all_detected.extend(
+            filter_detected(scan.skills, exclude_root, exclude_managed_targets)
+                .into_iter()
+                .map(|skill| (root_index, skill)),
+        );
         // The same exclusions as the skills: a path the app owns is never
         // reported, valid or not.
         invalid.extend(
@@ -162,11 +200,12 @@ fn build_onboarding_plan_in_home(
     }
 
     let mut grouped: HashMap<String, Vec<OnboardingVariant>> = HashMap::new();
-    for skill in all_detected.iter() {
+    for (root_index, skill) in all_detected.iter() {
         let fingerprint = content_identity::read(Source::Directory(&skill.path));
         let entry = grouped.entry(skill.name.clone()).or_default();
         entry.push(OnboardingVariant {
             tool: skill.tool.as_key().to_string(),
+            readers: readers_of(home, scope, skill, &roots[*root_index].relative_dirs),
             name: skill.name.clone(),
             path: skill.path.clone(),
             fingerprint,
@@ -207,10 +246,39 @@ fn build_onboarding_plan_in_home(
     })
 }
 
+/// One physical skills dir the scan visited: its identity (canonicalised,
+/// lexical when it cannot be resolved) and every registry skills dir
+/// (home-relative) in scope that reaches it — its own, and any aliased to it.
+struct ScannedRoot {
+    identity: PathBuf,
+    relative_dirs: Vec<&'static str>,
+}
+
+/// The in-scope harnesses loading `skill`'s copy (see
+/// [`OnboardingVariant::readers`]): every harness reading any of the
+/// registry dirs that reach the copy's physical root (`relative_dirs`). The
+/// attributed Tool always reads it.
+fn readers_of(
+    home: &Path,
+    scope: &OnboardingScanScope,
+    skill: &DetectedSkill,
+    relative_dirs: &[&'static str],
+) -> Vec<String> {
+    let attributed = skill.tool.as_key();
+    default_tool_adapters()
+        .iter()
+        .filter(|a| {
+            a.key() == attributed || relative_dirs.iter().any(|dir| a.reads_global_dir(dir))
+        })
+        .filter(|a| a.key() == attributed || (scope.includes(home, a) && is_installed_in(home, a)))
+        .map(|a| a.key().to_string())
+        .collect()
+}
+
 fn filter_detected(
     detected: Vec<DetectedSkill>,
     exclude_root: Option<&Path>,
-    exclude_managed_targets: Option<&std::collections::HashSet<String>>,
+    exclude_managed_targets: Option<&HashSet<PathBuf>>,
 ) -> Vec<DetectedSkill> {
     detected
         .into_iter()
@@ -218,11 +286,13 @@ fn filter_detected(
         .collect()
 }
 
-/// Not inside (or linked into) the central repo, and not a recorded target.
+/// Not inside (or linked into) the central repo, and not the physical
+/// artifact an owned target row records — whichever Tool the copy is
+/// attributed to, and through whichever alias of its dir it was reached.
 fn is_unmanaged(
     skill: &DetectedSkill,
     exclude_root: Option<&Path>,
-    exclude_managed_targets: Option<&std::collections::HashSet<String>>,
+    exclude_managed_targets: Option<&HashSet<PathBuf>>,
 ) -> bool {
     if let Some(exclude_root) = exclude_root {
         if is_under(&skill.path, exclude_root) {
@@ -235,7 +305,7 @@ fn is_unmanaged(
         }
     }
     if let Some(exclude) = exclude_managed_targets {
-        if exclude.contains(&managed_target_key(skill.tool.as_key(), &skill.path)) {
+        if exclude.contains(&managed_target_key(&skill.path)) {
             return false;
         }
     }
@@ -246,23 +316,11 @@ fn is_under(path: &Path, base: &Path) -> bool {
     path.starts_with(base)
 }
 
-fn managed_target_key(tool: &str, path: &Path) -> String {
-    let tool = tool.to_ascii_lowercase();
-    let normalized = normalize_path_for_key(path);
-    format!("{tool}\n{normalized}")
-}
-
-fn normalize_path_for_key(path: &Path) -> String {
-    let normalized: PathBuf = path.components().collect();
-    let s = normalized.to_string_lossy().to_string();
-    #[cfg(windows)]
-    {
-        s.to_lowercase()
-    }
-    #[cfg(not(windows))]
-    {
-        s
-    }
+/// The exclusion key: Artifact removal's one physical identity
+/// (`artifact_removal::artifact_identity` — canonical parent + leaf, never
+/// the link's referent; lexical when the parent cannot be resolved).
+fn managed_target_key(path: &Path) -> PathBuf {
+    artifact_identity(path)
 }
 
 #[cfg(test)]

@@ -16,6 +16,7 @@ const COMMAND_ERROR_CODE_MAP = {
   TOOL_NOT_INSTALLED: true,
   TARGET_DISABLED: true,
   TARGET_EXISTS: true,
+  RELOCATION_PENDING: true,
   TOOL_NOT_WRITABLE: true,
   SKILL_INVALID: true,
   MULTI_SKILLS: true,
@@ -109,6 +110,10 @@ export function describeCommandError(
       return t("errors.targetDisabled", { tool: toolLabel(t, e.tool) });
     case "TARGET_EXISTS":
       return t("errors.targetExists");
+    case "RELOCATION_PENDING":
+      // A Propagation skip, not a failure: a first sync into the shared dir
+      // waits until this harness's owned copy has moved out of its old dir.
+      return t("errors.relocationPending", { harness: toolLabel(t, e.tool) });
     case "TOOL_NOT_WRITABLE":
       return t("errors.toolNotWritable", { tool: e.tool, path: e.path });
     case "SKILL_INVALID":

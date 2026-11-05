@@ -261,7 +261,7 @@ pub enum RevealPathFailure {
 /// Structured command failure crossing the IPC seam. `Deserialize` because a
 /// settled failure is also stored as this JSON (`skills.last_outcome_error`,
 /// see `core::skill_health`) and read back into the catalog.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(
     tag = "code",
     rename_all = "SCREAMING_SNAKE_CASE",
@@ -286,6 +286,17 @@ pub enum CommandError {
         path: String,
         modified_at: Option<i64>,
         same_content: bool,
+    },
+    /// A Propagation skip, never a failure: a first sync into the dir a
+    /// shared group deploys to waits while `tool`'s owned artifact still
+    /// sits at `path`, a superseded dir (a relocation that could not finish)
+    /// — writing now would leave the harness reading a second copy. A
+    /// relaunch's relocation pass or a re-deploy finishes the move.
+    RelocationPending {
+        /// Registry key of the Tool whose artifact has not moved yet.
+        tool: String,
+        /// Where that artifact still is.
+        path: String,
     },
     ToolNotWritable {
         tool: String,

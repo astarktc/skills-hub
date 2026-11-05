@@ -175,9 +175,48 @@ export function globalSharers(key: string): string[] {
   return TOOL_REGISTRY.filter((tool) => tool.globalDir === dir).map((t) => t.key);
 }
 
-/** Project-scope catalog entries (virtual-group constituents absorbed). */
+/** Project-scope catalog entries (virtual-group constituents absorbed; a global-only Tool absent). */
 export function projectCatalog(): FixtureTool[] {
-  return TOOL_REGISTRY.filter((tool) => !tool.grouped);
+  return TOOL_REGISTRY.filter((tool) => !tool.grouped && !tool.globalOnly);
+}
+
+/**
+ * Cross-read, resolved as the backend's catalog does: installed keys, other
+ * than the Tool and its sharers, whose global dir it also reads (its
+ * `alsoReads`, plus `.agents/skills` when it VERIFIED-reads that).
+ */
+export function crossReads(key: string, installed: readonly string[]): string[] {
+  const tool = toolByKey(key);
+  if (!tool) return [];
+  const read = [...(tool.alsoReads ?? []), ...(tool.reads ? [".agents/skills"] : [])];
+  return TOOL_REGISTRY.filter(
+    (other) =>
+      other.key !== key &&
+      installed.includes(other.key) &&
+      other.globalDir !== tool.globalDir &&
+      read.includes(other.globalDir),
+  ).map((other) => other.key);
+}
+
+/**
+ * Rust `onboarding::readers_of`: every harness in `scope` that is installed
+ * and loads the copy found in `attributed`'s global dir — its own dir, a
+ * VERIFIED AGENTS-standard read, or a cross-read — plus `attributed` itself.
+ */
+export function onboardingReaders(
+  attributed: string,
+  scope: readonly string[],
+  installed: readonly string[],
+): string[] {
+  const dir = toolByKey(attributed)?.globalDir;
+  if (dir === undefined) return [attributed];
+  return TOOL_REGISTRY.filter(
+    (tool) =>
+      (tool.globalDir === dir ||
+        (dir === ".agents/skills" && tool.reads !== undefined) ||
+        (tool.alsoReads ?? []).includes(dir)) &&
+      (tool.key === attributed || (scope.includes(tool.key) && installed.includes(tool.key))),
+  ).map((tool) => tool.key);
 }
 
 export function isProjectToolInstalled(state: FixtureState, key: string): boolean {
@@ -516,6 +555,9 @@ export function defaultSettings(
     global_selected_tools_corrupt: false,
     scan_selected_tools_only: true,
     ui_zoom_level: 1,
+    prefer_agents_standard_dir: true,
+    agents_standard_offer_pending: false,
+    hide_harness_specific_dirs: false,
     bounds: {
       git_cache_cleanup_days: { min: 0, max: 3650 },
       git_cache_ttl_secs: { min: 0, max: 3600 },

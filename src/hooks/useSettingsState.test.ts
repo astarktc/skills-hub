@@ -53,6 +53,9 @@ function appSettings(overrides?: Partial<AppSettings>): AppSettings {
     global_selected_tools_corrupt: false,
     scan_selected_tools_only: true,
     ui_zoom_level: 1.25,
+    prefer_agents_standard_dir: true,
+    agents_standard_offer_pending: false,
+    hide_harness_specific_dirs: false,
     bounds: BOUNDS,
     ...overrides,
   };

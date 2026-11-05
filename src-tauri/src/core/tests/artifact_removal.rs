@@ -260,7 +260,8 @@ fn seed_assignment(
         .expect("add assignment");
     let adapter = adapter_by_key(tool).expect("adapter");
     let target =
-        project_sync::resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name);
+        project_sync::resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name)
+            .expect("project dir");
     fs::create_dir_all(&target).expect("create project target");
     fs::write(target.join("SKILL.md"), "# synced\n").unwrap();
     target
@@ -316,7 +317,7 @@ fn skill_scope_plans_global_and_project_targets_using_project_scope_mapping() {
     let project = seed_project(&store, tmp.path(), "proj");
     // pi's global and project mappings diverge — the plan must use the project one.
     let pi = adapter_by_key("pi").unwrap();
-    assert_ne!(pi.relative_skills_dir, pi.project_relative_skills_dir);
+    assert_ne!(Some(pi.relative_skills_dir), pi.project_relative_skills_dir);
     let project_target = seed_assignment(&store, &project, &skill, "pi", SyncStatus::Synced);
 
     let planned = plan(
@@ -345,15 +346,15 @@ fn skill_scope_plans_global_and_project_targets_using_project_scope_mapping() {
 
 #[test]
 fn plan_dedupes_a_shared_skills_dir_into_one_target_with_every_member_row() {
-    // amp and kimi_cli share ~/.config/agents/skills: one artifact, two rows.
+    // codex and goose share ~/.agents/skills: one artifact, two rows.
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &["amp"]);
+    let home = home_with(tmp.path(), &["codex"]);
     let central = make_skill_dir(&tmp.path().join("central"), "shared");
     let skill = seed_skill(&store, "shared", &central);
-    let shared = home.join(".config/agents/skills/shared");
-    seed_global_target_at(&store, &skill, "amp", &shared);
-    seed_global_target_at(&store, &skill, "kimi_cli", &shared);
+    let shared = home.join(".agents/skills/shared");
+    seed_global_target_at(&store, &skill, "codex", &shared);
+    seed_global_target_at(&store, &skill, "goose", &shared);
 
     let planned = plan(
         &store,
@@ -366,7 +367,7 @@ fn plan_dedupes_a_shared_skills_dir_into_one_target_with_every_member_row() {
     assert_eq!(planned.targets.len(), 1, "one path ⇒ one target");
     let mut tools: Vec<&str> = planned.targets[0].rows.iter().map(RowRef::tool).collect();
     tools.sort();
-    assert_eq!(tools, vec!["amp", "kimi_cli"]);
+    assert_eq!(tools, vec!["codex", "goose"]);
     assert!(planned.skill.is_none(), "global scope keeps the skill row");
 }
 
@@ -374,19 +375,19 @@ fn plan_dedupes_a_shared_skills_dir_into_one_target_with_every_member_row() {
 fn skill_tool_scope_expands_the_shared_dir_group_and_leaves_other_tools_alone() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &["amp", "claude_code"]);
+    let home = home_with(tmp.path(), &["codex", "claude_code"]);
     let central = make_skill_dir(&tmp.path().join("central"), "grp");
     let skill = seed_skill(&store, "grp", &central);
-    let shared = home.join(".config/agents/skills/grp");
-    seed_global_target_at(&store, &skill, "amp", &shared);
-    seed_global_target_at(&store, &skill, "kimi_cli", &shared);
+    let shared = home.join(".agents/skills/grp");
+    seed_global_target_at(&store, &skill, "codex", &shared);
+    seed_global_target_at(&store, &skill, "goose", &shared);
     let claude = seed_global_target(&store, &skill, "claude_code", &tmp.path().join("tools"));
 
     let planned = plan(
         &store,
         &RemovalScope::SkillTool {
             skill_id: skill.id.clone(),
-            tool_key: "amp".to_string(),
+            tool_key: "codex".to_string(),
             home: home.clone(),
         },
     )
@@ -402,10 +403,9 @@ fn skill_tool_scope_expands_the_shared_dir_group_and_leaves_other_tools_alone() 
 /// alone, by the path the row itself records — no path is derived from the
 /// registry for a Tool that is not there.
 ///
-/// The rows here sit under `~/.agents/skills` (a Tool skills dir of its own),
-/// so seeding them does not create `~/.cursor` / `~/.codex` and leave those
-/// Tools "detected" — every adapter's detect dir is an ancestor of its own
-/// skills dir.
+/// The rows here sit under `~/.claude/skills` (a Tool skills dir outside
+/// Cursor's group in either layout), so seeding them does not create
+/// `~/.cursor` or `~/.agents` and leave a group member "detected".
 #[test]
 fn skill_tool_scope_plans_the_row_by_its_stored_path_when_no_group_tool_is_installed() {
     let tmp = tempfile::tempdir().unwrap();
@@ -413,10 +413,10 @@ fn skill_tool_scope_plans_the_row_by_its_stored_path_when_no_group_tool_is_insta
     let home = home_with(tmp.path(), &[]);
     let central = make_skill_dir(&tmp.path().join("central"), "nope");
     let skill = seed_skill(&store, "nope", &central);
-    let orphan = home.join(".agents/skills/nope");
+    let orphan = home.join(".claude/skills/nope");
     seed_global_target_at(&store, &skill, "cursor", &orphan);
     // A row for a different (also undetected) tool stays out of the plan.
-    seed_global_target_at(&store, &skill, "codex", &home.join(".agents/skills/other"));
+    seed_global_target_at(&store, &skill, "codex", &home.join(".claude/skills/other"));
 
     let planned = plan(
         &store,
@@ -724,14 +724,14 @@ fn removal_of_a_skill_with_no_rows_reports_nothing_and_still_deletes_the_skill()
 fn a_shared_dir_artifact_is_removed_once_and_every_member_row_is_settled() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &["amp"]);
+    let home = home_with(tmp.path(), &["codex"]);
     let central = make_skill_dir(&tmp.path().join("central"), "shared");
     let skill = seed_skill(&store, "shared", &central);
-    let shared = home.join(".config/agents/skills/shared");
-    seed_global_target_at(&store, &skill, "amp", &shared);
-    seed_global_target_at(&store, &skill, "kimi_cli", &shared);
+    let shared = home.join(".agents/skills/shared");
+    seed_global_target_at(&store, &skill, "codex", &shared);
+    seed_global_target_at(&store, &skill, "goose", &shared);
 
-    let report = unsync_skill_from_tool(&store, &home, &skill.id, "amp").expect("unsync");
+    let report = unsync_skill_from_tool(&store, &home, &skill.id, "codex").expect("unsync");
 
     assert!(!exists_any(&shared));
     assert_eq!(report.targets.len(), 1, "one artifact, one removal");
@@ -744,12 +744,12 @@ fn a_shared_dir_artifact_is_removed_once_and_every_member_row_is_settled() {
 fn a_failed_removal_keeps_every_attached_row_with_status_error() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &["amp"]);
+    let home = home_with(tmp.path(), &["codex"]);
     let central = make_skill_dir(&tmp.path().join("central"), "stuck");
     let skill = seed_skill(&store, "stuck", &central);
-    let shared = home.join(".config/agents/skills/stuck");
-    seed_global_target_at(&store, &skill, "amp", &shared);
-    seed_global_target_at(&store, &skill, "kimi_cli", &shared);
+    let shared = home.join(".agents/skills/stuck");
+    seed_global_target_at(&store, &skill, "codex", &shared);
+    seed_global_target_at(&store, &skill, "goose", &shared);
     if !make_unremovable(&shared) {
         return; // running as root
     }
@@ -777,11 +777,11 @@ fn a_failed_removal_keeps_every_attached_row_with_status_error() {
 fn a_failed_removal_classifies_the_error_after_persisting_its_chain() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &["amp"]);
+    let home = home_with(tmp.path(), &["codex"]);
     let central = make_skill_dir(&tmp.path().join("central"), "stuck");
     let skill = seed_skill(&store, "stuck", &central);
-    let shared = home.join(".config/agents/skills/stuck");
-    seed_global_target_at(&store, &skill, "amp", &shared);
+    let shared = home.join(".agents/skills/stuck");
+    seed_global_target_at(&store, &skill, "codex", &shared);
     if !make_unremovable(&shared) {
         return; // running as root
     }
@@ -795,7 +795,7 @@ fn a_failed_removal_classifies_the_error_after_persisting_its_chain() {
             error: CommandError::Other { message },
         } => {
             assert!(message.contains(shared.to_str().unwrap()));
-            let row = store.get_skill_target(&skill.id, "amp").unwrap().unwrap();
+            let row = store.get_skill_target(&skill.id, "codex").unwrap().unwrap();
             assert_eq!(row.last_error.as_deref(), Some(message.as_str()));
             assert!(message.contains("Permission denied"));
         }
@@ -1191,14 +1191,14 @@ fn unsync_skill_from_tool_with_an_uninstalled_group_refuses_a_path_outside_tool_
 fn unsync_skill_from_tool_with_an_installed_group_still_fans_out_across_the_group() {
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
-    let home = home_with(tmp.path(), &["amp"]);
+    let home = home_with(tmp.path(), &["codex"]);
     let central = make_skill_dir(&tmp.path().join("central"), "grouped");
     let skill = seed_skill(&store, "grouped", &central);
-    let shared = home.join(".config/agents/skills/grouped");
-    seed_global_target_at(&store, &skill, "amp", &shared);
-    seed_global_target_at(&store, &skill, "kimi_cli", &shared);
+    let shared = home.join(".agents/skills/grouped");
+    seed_global_target_at(&store, &skill, "codex", &shared);
+    seed_global_target_at(&store, &skill, "goose", &shared);
 
-    let report = unsync_skill_from_tool(&store, &home, &skill.id, "kimi_cli").expect("unsync");
+    let report = unsync_skill_from_tool(&store, &home, &skill.id, "goose").expect("unsync");
 
     assert!(!exists_any(&shared));
     assert_eq!(report.targets.len(), 1, "one shared artifact");

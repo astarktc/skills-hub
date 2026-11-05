@@ -119,6 +119,10 @@ fn fixture(tools: &[&str]) -> Fixture {
     }
     let store = SkillStore::new(dir.path().join("test.db"));
     store.ensure_schema().expect("schema");
+    // Every harness on its own dir: these cases pin Disable / Enable, not the
+    // #83 layout (the shared-dir ones use Codex and Goose, which share
+    // `~/.agents/skills` in either layout).
+    crate::core::settings::write_prefer_agents_standard_dir(&store, false).expect("layout");
     let source = tempfile::tempdir().expect("source");
     fs::write(source.path().join("SKILL.md"), "---\nname: alpha\n---\n").unwrap();
     let installed =
@@ -352,17 +356,17 @@ fn disabling_twice_settles_nothing_new() {
 /// batch never writes it for a sibling that has no row of its own.
 #[test]
 fn a_shared_dir_sibling_is_skipped_while_a_member_is_disabled() {
-    let f = fixture(&["amp", "kimi_cli"]);
-    disable_targets(&f.store, f.home(), &f.pair("amp"), NOW).unwrap();
-    assert_eq!(f.status("kimi_cli"), None);
+    let f = fixture(&["codex", "goose"]);
+    disable_targets(&f.store, f.home(), &f.pair("codex"), NOW).unwrap();
+    assert_eq!(f.status("goose"), None);
 
-    let outcomes = f.sync(&["kimi_cli"]);
+    let outcomes = f.sync(&["goose"]);
 
     assert!(
         matches!(outcomes.as_slice(), [o] if skipped_disabled(o)),
         "{outcomes:?}"
     );
-    assert!(!exists_any(&f.global_path(".config/agents/skills")));
+    assert!(!exists_any(&f.global_path(".agents/skills")));
 }
 
 #[test]
@@ -1149,37 +1153,41 @@ fn partial_skill_disable_resync_skips_error_assignments() {
     assert!(!exists_any(&alpha_target));
 }
 
-/// F3 (sketch 4): Amp and Kimi share `.config/agents/skills`. Only Kimi has
-/// a row; disabling Amp while the shared artifact cannot be removed must not
-/// mint an Amp `disabled` row beside it. The retry settles both.
+/// F3 (sketch 4): Codex and Goose share `.agents/skills`. Only Goose has
+/// a row; disabling Codex while the shared artifact cannot be removed must
+/// not mint a Codex `disabled` row beside it. The retry settles both.
 #[cfg(unix)]
 #[test]
 fn missing_shared_sibling_disable_failure_does_not_mint_disabled() {
-    let f = fixture(&["kimi_cli"]);
-    f.sync(&["kimi_cli"]);
-    mark_installed_in(f.home(), adapter_by_key("amp").unwrap());
-    let shared = f.global_path(".config/agents/skills");
+    let f = fixture(&["goose"]);
+    f.sync(&["goose"]);
+    mark_installed_in(f.home(), adapter_by_key("codex").unwrap());
+    let shared = f.global_path(".agents/skills");
     assert!(exists_any(&shared));
-    assert_eq!(f.status("amp"), None);
+    assert_eq!(f.status("codex"), None);
 
-    let parent = f.home().join(".config/agents/skills");
+    let parent = f.home().join(".agents/skills");
     if !lock_dir(&parent) {
         return;
     }
-    let failed = disable_targets(&f.store, f.home(), &f.pair("amp"), NOW).unwrap();
+    let failed = disable_targets(&f.store, f.home(), &f.pair("codex"), NOW).unwrap();
     unlock_dir(&parent);
 
     assert_eq!(failed.failed_rows(), 1, "{failed}");
-    assert_eq!(f.status("kimi_cli"), Some(SyncStatus::Error));
-    assert_eq!(f.status("amp"), None, "no marker while the artifact stays");
+    assert_eq!(f.status("goose"), Some(SyncStatus::Error));
+    assert_eq!(
+        f.status("codex"),
+        None,
+        "no marker while the artifact stays"
+    );
     assert!(exists_any(&shared));
 
-    let retried = disable_targets(&f.store, f.home(), &f.pair("amp"), NOW).unwrap();
+    let retried = disable_targets(&f.store, f.home(), &f.pair("codex"), NOW).unwrap();
 
     assert_eq!((retried.removed_rows(), retried.failed_rows()), (1, 0));
     assert!(!exists_any(&shared));
-    assert_eq!(f.status("kimi_cli"), Some(SyncStatus::Disabled));
-    assert_eq!(f.status("amp"), Some(SyncStatus::Disabled));
+    assert_eq!(f.status("goose"), Some(SyncStatus::Disabled));
+    assert_eq!(f.status("codex"), Some(SyncStatus::Disabled));
 }
 
 /// Sketch 7: a project assignment on the `.agents/skills` virtual group is

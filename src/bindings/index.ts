@@ -11,6 +11,17 @@ export const commands = {
 	 *  the policy layer validates and applies it.
 	 */
 	updateSetting: (update: SettingUpdate) => __TAURI_INVOKE<AppSettings>("update_setting", { update }),
+	/**
+	 *  How many global targets saving the #83 preference as `enabled` would move
+	 *  — the count its confirmation states. Read-only.
+	 */
+	previewPreferAgentsStandardDir: (enabled: boolean) => __TAURI_INVOKE<number>("preview_prefer_agents_standard_dir", { enabled }),
+	/**
+	 *  Save the #83 preference "prefer the AGENTS standard folder" and relocate
+	 *  the global targets it supersedes, in one serialized section
+	 *  (`target_relocation::apply_global_layout`).
+	 */
+	setPreferAgentsStandardDir: (enabled: boolean) => __TAURI_INVOKE<AgentsStandardPreferenceResult>("set_prefer_agents_standard_dir", { enabled }),
 	getToolStatus: () => __TAURI_INVOKE<ToolStatusDto>("get_tool_status"),
 	getProjectToolStatus: () => __TAURI_INVOKE<ToolStatusDto>("get_project_tool_status"),
 	clearGitCacheNow: () => __TAURI_INVOKE<number>("clear_git_cache_now"),
@@ -81,13 +92,13 @@ export const commands = {
 	 */
 	importOnboardingSelection: (selections: OnboardingSelectionDto[], policy: ImportPolicyDto, onProgress: Channel<ImportProgressDto>) => __TAURI_INVOKE<ImportReport>("import_onboarding_selection", { selections, policy, onProgress }),
 	getManagedSkills: () => __TAURI_INVOKE<ManagedSkillDto[]>("get_managed_skills"),
-	setSkillInvocationOverride: (skillId: string, mode: 
+	setSkillInvocationOverride: (skillId: string, mode:
 /**  Default: the user can type `/name` and the model can load it on its own. */
-"user-and-model" | 
+"user-and-model" |
 /**  `disable-model-invocation: true` — only the user can invoke it. */
-"user-only" | 
+"user-only" |
 /**  `user-invocable: false` — only the model can invoke it. */
-"model-only" | 
+"model-only" |
 /**  Both keys restrict invocation — neither the user nor the model can invoke it. */
 "neither" | null) => __TAURI_INVOKE<InvocationEditResultDto>("set_skill_invocation_override", { skillId, mode }),
 	deleteManagedSkill: (skillId: string) => __TAURI_INVOKE<RemovalReport>("delete_managed_skill", { skillId }),
@@ -190,6 +201,22 @@ export const commands = {
 
 /* Types */
 /**
+ *  What saving the #83 preference did: the settings snapshot after the
+ *  write and the targets the relocation moved or had to leave.
+ */
+export type AgentsStandardPreferenceResult = {
+	settings: AppSettings,
+	relocation: RelocationSummary,
+};
+
+/**  `ToolAdapter::reads_agents_standard_globally` on the wire. */
+export type AgentsStandardReadDto = {
+	/**  First version / change known to read it, when verified. */
+	since: string | null,
+	precedence: Precedence,
+};
+
+/**
  *  Snapshot of every backend-persisted setting, already parsed, defaulted
  *  and (for the central repo path) resolved.
  */
@@ -224,6 +251,28 @@ export type AppSettings = {
 	 *  rather than specta's default `number | null` for `f64`.
 	 */
 	ui_zoom_level: number,
+	/**
+	 *  #83: AGENTS-standard readers deploy to `~/.agents/skills` instead of
+	 *  their own dir — the preference in effect (`global_layout`), so `false`
+	 *  while an existing install's offer is pending. Changed only through `set_prefer_agents_standard_dir`,
+	 *  which relocates existing targets in the same guarded section — never
+	 *  through `SettingUpdate`.
+	 */
+	prefer_agents_standard_dir: boolean,
+	/**
+	 *  #83 offer: the preference was never saved on an install that already
+	 *  has deployments, so it reads off and the UI offers the one-time choice
+	 *  (`preview_prefer_agents_standard_dir` for the count, then
+	 *  `set_prefer_agents_standard_dir`). `false` once saved either way, and
+	 *  on a fresh install (latched on).
+	 */
+	agents_standard_offer_pending: boolean,
+	/**
+	 *  Harnesses pane: collapse the rows the preference moved into one
+	 *  AGENTS-standard row. Presentation only; meaningful while the
+	 *  preference is on.
+	 */
+	hide_harness_specific_dirs: boolean,
 	bounds: SettingsBounds,
 };
 
@@ -277,7 +326,7 @@ export type BatchTargetOutcome = {
  *  information is lost by the classification. `Declined` is the operator's
  *  own answer, neither a skip nor a failure (D10).
  */
-export type BatchTargetStatus = { status: "synced"; outcome: SyncOutcome } | { status: "skipped"; error: CommandError } | { status: "failed"; error: CommandError } | 
+export type BatchTargetStatus = { status: "synced"; outcome: SyncOutcome } | { status: "skipped"; error: CommandError } | { status: "failed"; error: CommandError } |
 /**
  *  The operator answered the `TARGET_EXISTS` ask with "Keep existing"
  *  (`OverrideDecision::Keep`): the folder in the way was left alone and
@@ -316,68 +365,80 @@ export type CandidateMatch = { kind: "resolved"; subpath: string } | { kind: "am
  *  settled failure is also stored as this JSON (`skills.last_outcome_error`,
  *  see `core::skill_health`) and read back into the catalog.
  */
-export type CommandError = { code: "TOOL_NOT_INSTALLED"; tool: string } | 
+export type CommandError = { code: "TOOL_NOT_INSTALLED"; tool: string } |
 /**
  *  A sync fan-out skipped this (skill, Tool) pair because the operator
  *  disabled it — at the pair or skill grain (see **Disabled** in
  *  `CONTEXT.md`). A skip reason, never a failure: only Enable lifts it.
  */
-{ code: "TARGET_DISABLED"; 
+{ code: "TARGET_DISABLED";
 /**  Registry key of the Tool the pair names. */
-tool: string } | 
+tool: string } |
 /**
  *  A sync target is occupied by a folder the app does not own. Every
  *  producer's row carries what the one overwrite ask shows (D12): the
  *  path, the folder's modification time and whether its content is
  *  identical to the skill's.
  */
-{ code: "TARGET_EXISTS"; path: string; modifiedAt: number | null; sameContent: boolean } | { code: "TOOL_NOT_WRITABLE"; tool: string; path: string } | { code: "SKILL_INVALID"; reason: string } | { code: "MULTI_SKILLS" } | { code: "SKILL_EXISTS"; 
+{ code: "TARGET_EXISTS"; path: string; modifiedAt: number | null; sameContent: boolean } |
+/**
+ *  A Propagation skip, never a failure: a first sync into the dir a
+ *  shared group deploys to waits while `tool`'s owned artifact still
+ *  sits at `path`, a superseded dir (a relocation that could not finish)
+ *  — writing now would leave the harness reading a second copy. A
+ *  relaunch's relocation pass or a re-deploy finishes the move.
+ */
+{ code: "RELOCATION_PENDING";
+/**  Registry key of the Tool whose artifact has not moved yet. */
+tool: string;
+/**  Where that artifact still is. */
+path: string } | { code: "TOOL_NOT_WRITABLE"; tool: string; path: string } | { code: "SKILL_INVALID"; reason: string } | { code: "MULTI_SKILLS" } | { code: "SKILL_EXISTS";
 /**  Name of the skill directory already present in the central repo. */
-name: string } | { code: "FINALIZE_ROLLBACK_FAILED"; central: string; backup: string | null; 
+name: string } | { code: "FINALIZE_ROLLBACK_FAILED"; central: string; backup: string | null;
 /**  Original failure and rollback error chain, diagnostics only. */
-detail: string } | { code: "DUPLICATE_PROJECT"; path: string } | { code: "ASSIGNMENT_EXISTS"; project: string; skill: string; tool: string } | { code: "NOT_FOUND"; kind: string; id: string } | { code: "UNKNOWN_TOOL"; 
+detail: string } | { code: "DUPLICATE_PROJECT"; path: string } | { code: "ASSIGNMENT_EXISTS"; project: string; skill: string; tool: string } | { code: "NOT_FOUND"; kind: string; id: string } | { code: "UNKNOWN_TOOL";
 /**  Registry key that matched no tool adapter. */
-tool: string } | { code: "INVALID_PATH"; path: string; 
+tool: string } | { code: "INVALID_PATH"; path: string;
 /**  Machine token (`missing` / `not_a_directory`) the frontend localizes. */
-reason: string } | { code: "CANCELLED" } | { code: "RATE_LIMITED"; 
+reason: string } | { code: "CANCELLED" } | { code: "RATE_LIMITED";
 /**  Rounded-up minutes until the limit resets; 0 = unknown. */
-resetMinutes: number } | { code: "GIT_CLONE_FAILED"; kind: GitCloneFailureKind; detail: string } | { code: "GITHUB_SKILL_NOT_FOUND"; 
+resetMinutes: number } | { code: "GIT_CLONE_FAILED"; kind: GitCloneFailureKind; detail: string } | { code: "GITHUB_SKILL_NOT_FOUND";
 /**  Human-checkable GitHub tree URL for the missing skill path. */
-url: string } | { code: "INVALID_GITHUB_URL"; url: string } | { code: "PATH_OUTSIDE_TOOL_DIRS"; 
+url: string } | { code: "INVALID_GITHUB_URL"; url: string } | { code: "PATH_OUTSIDE_TOOL_DIRS";
 /**  The refused path (not inside any Tool's skills directory). */
-path: string } | { code: "SKILL_MANIFEST_IO"; path: string; detail: string } | { code: "SOURCE_PATH_MISSING"; 
+path: string } | { code: "SKILL_MANIFEST_IO"; path: string; detail: string } | { code: "SOURCE_PATH_MISSING";
 /**  The external source folder that is not there. */
-path: string } | { code: "CENTRAL_PATH_MISSING"; 
+path: string } | { code: "CENTRAL_PATH_MISSING";
 /**  The Managed skill's central copy that is not there. */
-path: string } | { code: "SUBPATH_MISSING"; 
+path: string } | { code: "SUBPATH_MISSING";
 /**  The requested repo-relative subpath (never a cache-internal path). */
-subpath: string } | { code: "REVEAL_LOG_FAILED"; 
+subpath: string } | { code: "REVEAL_LOG_FAILED";
 /**  Opener error chain, diagnostics only. */
-detail: string } | { code: "REVEAL_PATH_FAILED"; 
+detail: string } | { code: "REVEAL_PATH_FAILED";
 /**  The path the operator asked to see. */
-path: string; 
+path: string;
 /**  Refused (not a path the app manages), gone, or the opener failed. */
-reason: RevealPathFailure; 
+reason: RevealPathFailure;
 /**  Diagnostic chain, diagnostics only. */
-detail: string } | { code: "SYMLINK_ESCAPES_REPO"; 
+detail: string } | { code: "SYMLINK_ESCAPES_REPO";
 /**  Repo-relative path of the symlink that was refused. */
-subpath: string; 
+subpath: string;
 /**  The link's raw target (absolute, or climbing out of the repository). */
-target: string } | { code: "SYMLINK_CHAIN_TOO_DEEP"; 
+target: string } | { code: "SYMLINK_CHAIN_TOO_DEEP";
 /**  Repo-relative path where the upstream chain exceeded the hop bound. */
-subpath: string } | { code: "NOT_REFRESHABLE"; 
+subpath: string } | { code: "NOT_REFRESHABLE";
 /**  The Managed skill that has no external source (imported provenance). */
-name: string } | { code: "LOCAL_SOURCE_INSIDE_TOOL_DIR"; 
+name: string } | { code: "LOCAL_SOURCE_INSIDE_TOOL_DIR";
 /**  The refused folder (inside a Tool's global skills directory). */
-path: string; 
+path: string;
 /**  Registry key of the Tool whose skills directory holds it. */
-tool: string } | { code: "SETTING_CORRUPT"; 
+tool: string } | { code: "SETTING_CORRUPT";
 /**  Storage key of the setting that could not be parsed. */
-key: string; 
+key: string;
 /**  Parser diagnostic, not user copy. */
-detail: string } | { code: "CREDENTIAL_STORE_UNAVAILABLE"; 
+detail: string } | { code: "CREDENTIAL_STORE_UNAVAILABLE";
 /**  The credential store's diagnostic, not user copy. */
-detail: string } | 
+detail: string } |
 /**
  *  An Update replayed the operator's invocation Edit onto new upstream
  *  bytes whose own invocation mode disagrees with both the Edit's base
@@ -403,14 +464,14 @@ export type ConfigureProjectToolsResultDto = {
  *  `{ kind: "skill_tool", skill_id, tool }`, `{ kind: "skill", skill_id }`
  *  or `{ kind: "skills", skill_ids }`.
  */
-export type DisableScope = 
+export type DisableScope =
 /**
  *  One (skill, Tool) pair at global scope (fanned out across the Tool's
  *  shared skills dir by `artifact_removal`).
  */
-{ kind: "skill_tool"; skill_id: string; tool: string } | 
+{ kind: "skill_tool"; skill_id: string; tool: string } |
 /**  One skill, everywhere: global targets and project assignments. */
-{ kind: "skill"; skill_id: string } | 
+{ kind: "skill"; skill_id: string } |
 /**
  *  Several skills at skill grain, in order. An id with no skill row is
  *  dropped (the listing that produced it may be stale).
@@ -440,7 +501,7 @@ export type FeaturedSkillDto = {
 
 /**
  *  Inclusive float bound, shipped to the frontend inside `AppSettings`.
- * 
+ *
  *  specta types `f64` as `number | null` because serde_json writes
  *  NaN/±Infinity as `null`; these bounds are finite constants, so the
  *  field-level override asserts the plain `number` the frontend clamps with.
@@ -454,7 +515,7 @@ export type FloatRange = {
  *  Why a GitHub clone/fetch failed, classified backend-side from the error
  *  chain (the backend has the chain; the frontend owns the copy).
  */
-export type GitCloneFailureKind = "tls" | "auth" | "notFound" | "dns" | "timeout" | "refused" | 
+export type GitCloneFailureKind = "tls" | "auth" | "notFound" | "dns" | "timeout" | "refused" |
 /**  Running the system `git` CLI itself failed (fallback disabled). */
 "execFailed" | "unknown";
 
@@ -501,31 +562,31 @@ export type ImportGroupOutcome = {
 	status: ImportGroupStatus,
 };
 
-export type ImportGroupStatus = { status: "imported"; skill_id: string; skill_name: string; 
+export type ImportGroupStatus = { status: "imported"; skill_id: string; skill_name: string;
 /**  Sync targets (auto-sync on); empty when auto-sync is off. */
-targets: BatchTargetOutcome[]; 
+targets: BatchTargetOutcome[];
 /**
  *  The Tools synced beyond the policy's Tools because they held a
  *  variant byte-identical to the chosen one (auto-sync on), in the
  *  order they were appended to the target set; empty when the
  *  policy already named every one of them or auto-sync is off.
  */
-forced_tools: string[]; 
+forced_tools: string[];
 /**
  *  Originals settled, per Tool: every variant still present when
  *  auto-sync is off (removed, left in place or kept divergent); only
  *  the divergent siblings (kept in place) when auto-sync is on — the
  *  identical ones are the `targets`.
  */
-originals: OriginalOutcome[] } | 
+originals: OriginalOutcome[] } |
 /**
  *  A managed-name group the operator chose to replace: the Managed
  *  skill was synced to every Tool holding a copy. A divergent copy is a
  *  `TARGET_EXISTS` target row — askable, never force-overwritten here.
  */
-{ status: "replaced"; skill_id: string; skill_name: string; targets: BatchTargetOutcome[] } | 
+{ status: "replaced"; skill_id: string; skill_name: string; targets: BatchTargetOutcome[] } |
 /**  Not imported by design; nothing of this group was touched. */
-{ status: "skipped"; reason: ImportSkipReason } | 
+{ status: "skipped"; reason: ImportSkipReason } |
 /**  Admission or finalize failed; nothing of this group was touched. */
 { status: "failed"; error: CommandError };
 
@@ -558,7 +619,7 @@ export type ImportReport = {
 };
 
 /**  Why a selected group was not imported, when that is not a failure. */
-export type ImportSkipReason = 
+export type ImportSkipReason =
 /**
  *  A Managed skill already holds the group's name and the selection
  *  carried no `replace` decision.
@@ -588,15 +649,15 @@ export type InstallCandidateOutcome = {
 };
 
 /**  What happened to one candidate. */
-export type InstallCandidateStatus = 
+export type InstallCandidateStatus =
 /**
  *  Finalized as a Managed skill; `targets` is its first sync (empty when
  *  the request did not deploy or named no Tools). A `TARGET_EXISTS` row
  *  is the askable collision.
  */
-{ status: "installed"; skill: InstallResult; targets: BatchTargetOutcome[] } | 
+{ status: "installed"; skill: InstallResult; targets: BatchTargetOutcome[] } |
 /**  Acquisition or finalize failed; nothing of this candidate remains. */
-{ status: "failed"; error: CommandError } | 
+{ status: "failed"; error: CommandError } |
 /**
  *  The operator cancelled before this candidate was finalized; nothing
  *  of it remains (D10 — its own kind, never a failure).
@@ -652,12 +713,12 @@ export type InstallResult = {
  *  Where the candidates come from. Crosses the wire as itself:
  *  `{ kind: "git", url, resolution }` or `{ kind: "local", root }`.
  */
-export type InstallSource = 
+export type InstallSource =
 /**
  *  A GitHub repo URL and the listing's source decision (branch / path),
  *  reused so the install makes no second refs lookup.
  */
-{ kind: "git"; url: string; resolution: GitSourceResolution | null } | 
+{ kind: "git"; url: string; resolution: GitSourceResolution | null } |
 /**  A local folder the candidates' subpaths are relative to. */
 { kind: "local"; root: string };
 
@@ -671,13 +732,13 @@ export type IntRange = {
  *  Why a directory is not a usable skill, typed for the wire (the onboarding
  *  plan lists such directories disabled, with the reason in words).
  */
-export type InvalidManifestReason = 
+export type InvalidManifestReason =
 /**  No `SKILL.md` in the directory. */
-"missing_skill_md" | 
+"missing_skill_md" |
 /**  A `SKILL.md` exists but could not be read. */
-"read_failed" | 
+"read_failed" |
 /**  The `SKILL.md` has no complete `---` frontmatter block. */
-"invalid_frontmatter" | 
+"invalid_frontmatter" |
 /**  The frontmatter has no `name`. */
 "missing_name";
 
@@ -701,7 +762,7 @@ export type InvocationEditResultDto = {
 
 /**
  *  Who may invoke a skill, derived from its `SKILL.md` frontmatter.
- * 
+ *
  *  Two Claude Code frontmatter keys govern this (the agentskills.io
  *  specification does not define them yet):
  *  `disable-model-invocation: true` blocks automatic model invocation, and
@@ -710,13 +771,13 @@ export type InvocationEditResultDto = {
  *  frontmatter — is [`InvocationMode::UserAndModel`]. Setting both keys is the
  *  documented recipe for hiding a skill from everyone: [`InvocationMode::Neither`].
  */
-export type InvocationMode = 
+export type InvocationMode =
 /**  Default: the user can type `/name` and the model can load it on its own. */
-"user-and-model" | 
+"user-and-model" |
 /**  `disable-model-invocation: true` — only the user can invoke it. */
-"user-only" | 
+"user-only" |
 /**  `user-invocable: false` — only the model can invoke it. */
-"model-only" | 
+"model-only" |
 /**  Both keys restrict invocation — neither the user nor the model can invoke it. */
 "neither";
 
@@ -852,7 +913,24 @@ export type OnboardingSelectionDto = {
 };
 
 export type OnboardingVariant = {
+	/**
+	 *  The Tool the copy is attributed to: the first Tool in scope, in
+	 *  registry order, whose own skills dir holds it.
+	 */
 	tool: string,
+	/**
+	 *  Every harness in scope that loads this copy (registry order): each
+	 *  in-scope Tool whose own skills dir holds it (`~/.agents/skills`: the
+	 *  AGENTS-standard entry, Codex, Goose, OpenHands) and each that reads
+	 *  that dir besides (a VERIFIED AGENTS-standard reader, a cross-read —
+	 *  `ToolAdapter::reads_global_dir`). Under Installed scope only detected
+	 *  harnesses; under Selected scope the selected ones that are detected,
+	 *  plus the attributed Tool itself. One physical copy is one variant: the
+	 *  roster names its consumers without duplicating it — a Tool skills dir
+	 *  symlinked to another's is the same physical dir, so both dirs'
+	 *  readers are unioned here.
+	 */
+	readers: string[],
 	name: string,
 	path: string,
 	fingerprint: string | null,
@@ -874,22 +952,22 @@ export type OriginalOutcome = {
 };
 
 /**  What happened to one original directory. */
-export type OriginalStatus = 
+export type OriginalStatus =
 /**
  *  Byte-identical to the central copy (or already gone) — removed
  *  (auto-sync off, `remove_originals`).
  */
-{ status: "removed" } | 
+{ status: "removed" } |
 /**
  *  Byte-identical to the central copy and left where it was because the
  *  operator chose not to remove originals (auto-sync off).
  */
-{ status: "left_in_place" } | 
+{ status: "left_in_place" } |
 /**
  *  Content differs from the central copy, so it was left in place
  *  (either policy).
  */
-{ status: "kept_divergent" } | 
+{ status: "kept_divergent" } |
 /**  The path was refused or could not be removed. Report data. */
 { status: "failed"; error: CommandError };
 
@@ -897,15 +975,29 @@ export type OriginalStatus =
  *  The operator's answer to a `TARGET_EXISTS` ask for one pair (D12).
  *  Crosses the wire as itself: `"overwrite"` or `"keep"`.
  */
-export type OverrideDecision = 
+export type OverrideDecision =
 /**  Replace the folder in the way with the managed skill. */
-"overwrite" | 
+"overwrite" |
 /**
  *  Keep the existing folder: the pair is not synced and is recorded
  *  `disabled` (a marker owning nothing at its path), so no later pass
  *  re-asks or re-materialises it until the operator enables it.
  */
 "keep";
+
+/**
+ *  How a harness resolves a same-name skill present both in its own global
+ *  dir and in `~/.agents/skills` (brief § 1, column "Precedence / dedupe").
+ */
+export type Precedence =
+/**  The harness's own dir wins (Amp, Augment, Qwen, Roo, Pochi, …). */
+"own_wins" |
+/**  `~/.agents/skills` wins (Gemini CLI, OpenHands). */
+"agents_wins" |
+/**  No dedupe: both copies are listed (Codex). */
+"both_shown" |
+/**  The vendor does not say. */
+"unknown";
 
 export type ProjectDto = {
 	id: string,
@@ -935,7 +1027,7 @@ export type ProjectSkillAssignmentDto = {
 };
 
 /**  Why a project sync left a whole project alone. */
-export type ProjectSkipReason = 
+export type ProjectSkipReason =
 /**
  *  The project's folder is not there (moved, deleted, an unmounted
  *  volume): syncing into it would recreate a stray tree of Tool dirs, and
@@ -970,18 +1062,18 @@ export type ProjectSyncOutcome = {
 	status: ProjectSyncOutcomeStatus,
 };
 
-export type ProjectSyncOutcomeStatus = 
+export type ProjectSyncOutcomeStatus =
 /**  The artifact was (re-)materialised and the row is `synced`. */
-{ status: "synced" } | 
+{ status: "synced" } |
 /**  Bulk assign only: the pair was already assigned; nothing changed. */
-{ status: "already_assigned" } | 
+{ status: "already_assigned" } |
 /**
  *  The sync did not happen. When `assignment_id` is present the row
  *  exists with Sync status `error` and this chain in `last_error`.
  */
-{ status: "failed"; error: CommandError } | 
+{ status: "failed"; error: CommandError } |
 /**  Deliberately not synced. Report data, never a failure. */
-{ status: "skipped"; reason: ProjectSyncSkip } | 
+{ status: "skipped"; reason: ProjectSyncSkip } |
 /**
  *  The operator answered the overwrite ask with "Keep existing" for this
  *  assignment ([`resolve_collisions`]): the folder in the way was left
@@ -1003,7 +1095,7 @@ export type ProjectSyncReport = {
 };
 
 /**  Why a project sync left an assignment alone. */
-export type ProjectSyncSkip = 
+export type ProjectSyncSkip =
 /**
  *  The row is `Disabled`, or its skill is disabled at skill grain (a new
  *  assignment of a disabled skill is recorded `Disabled`, not synced) —
@@ -1015,7 +1107,7 @@ export type ProjectSyncSkip =
  *  Roll-up of a project's assignments as shown on the project list.
  *  `Missing` folds into `Error` (both need the user's attention).
  */
-export type ProjectSyncStatus = 
+export type ProjectSyncStatus =
 /**  No assignments at all. */
 "none" | "error" | "stale" | "pending" | "synced";
 
@@ -1029,7 +1121,7 @@ export type ProjectToolDto = {
  *  Everything the project world shows for one project, as one wire value:
  *  the project row (counts and aggregate status included), its configured
  *  Tools, and its assignments with the reconcile flag.
- * 
+ *
  *  Every project mutation returns this, so the frontend applies one result
  *  instead of chasing the mutation with follow-up reads. It is always built
  *  *after* the mutation released the mutation guard, so its reconcile pass
@@ -1064,26 +1156,34 @@ export type PropagationScope = { scope: "global"; tool: string } | { scope: "pro
  *  Why a target needed no work. Not a failure: skipping is the correct
  *  outcome for a link, an uninstalled Tool, or a project that is not there.
  */
-export type PropagationSkip = 
+export type PropagationSkip =
 /**
  *  The target is a link (or junction) into the central copy, which was
  *  just refreshed in place — the target is already current.
  */
-{ reason: "link_follows_source" } | 
+{ reason: "link_follows_source" } |
 /**  The Tool is no longer installed for this operator. */
-{ reason: "tool_not_installed"; tool: string } | 
+{ reason: "tool_not_installed"; tool: string } |
 /**  The row names a tool key the registry does not know. */
-{ reason: "unknown_tool"; tool: string } | 
+{ reason: "unknown_tool"; tool: string } |
 /**  The project row is gone, or its directory no longer exists on disk. */
-{ reason: "project_unavailable"; project_id: string } | 
+{ reason: "project_unavailable"; project_id: string } |
 /**
  *  The operator disabled this target — its own row, a row sharing its
  *  skills dir, or the whole skill (see **Disabled** in `CONTEXT.md`).
  *  Nothing but Enable re-materialises it.
  */
-{ reason: "disabled" };
+{ reason: "disabled" } |
+/**
+ *  A first sync into the dir the shared group deploys to, held back
+ *  while an owned member's artifact still sits in a superseded dir (a
+ *  relocation that could not finish): writing now would leave that
+ *  harness reading a second copy. The row is not written; the error is
+ *  `RELOCATION_PENDING`, naming the Tool and the path still to move.
+ */
+{ reason: "relocation_pending"; error: CommandError };
 
-export type PropagationStatus = { status: "synced"; mode_used: SyncMode } | { status: "skipped"; reason: PropagationSkip } | 
+export type PropagationStatus = { status: "synced"; mode_used: SyncMode } | { status: "skipped"; reason: PropagationSkip } |
 /**
  *  `first_deploy` is true when the row had never materialised an
  *  artifact before this pass (`owns_artifact` false: a failed first
@@ -1110,14 +1210,14 @@ export type RefreshReport = {
  *  Why a selected skill was set aside before acquisition. Crosses the wire
  *  as `{ kind: "unlocatable", state }` or `{ kind: "delete_incomplete" }`.
  */
-export type RefreshSkipReason = 
+export type RefreshSkipReason =
 /**
  *  The app cannot locate the skill (`provenance::refresh_eligibility`).
  *  Only `All` skips for it — an explicitly named id proceeds to the
  *  acquire step, which answers with the typed condition (or, for a
  *  missing central copy, rebuilds it: that is Restore).
  */
-{ kind: "unlocatable"; state: UnlocatableState } | 
+{ kind: "unlocatable"; state: UnlocatableState } |
 /**
  *  The skill's stored health is `delete_incomplete` (D35): a Delete that
  *  could not remove every artifact kept it, and an Update must not bring
@@ -1125,6 +1225,31 @@ export type RefreshSkipReason =
  *  is no Restore-like repair here — retrying the Delete is.
  */
 { kind: "delete_incomplete" };
+
+/**  One row a move left at its source after a failed source removal. */
+export type RelocationIncomplete = {
+	skill_id: string,
+	/**  Registry key of the row's Tool. */
+	tool: string,
+	/**  The source path the row still records and owns. */
+	path: string,
+	error: CommandError,
+};
+
+/**
+ *  How many global target rows the pass moved, and how many it found in a
+ *  superseded dir but had to leave there.
+ */
+export type RelocationSummary = {
+	relocated: number,
+	left_in_place: number,
+	/**
+	 *  The left-in-place rows whose move was **rolled back** because their
+	 *  source could not be removed — each kept at its source as `error`,
+	 *  with the removal's classified error. The next launch retries them.
+	 */
+	incomplete: RelocationIncomplete[],
+};
 
 export type RemovalReport = {
 	targets: RemovalTargetOutcome[],
@@ -1152,9 +1277,9 @@ export type RemovalTargetOutcome = {
  *  Failures are classified at settlement, after writing the full chain to
  *  each attached row's diagnostic.
  */
-export type RemovalTargetStatus = 
+export type RemovalTargetStatus =
 /**  Removed, or already absent. */
-{ status: "removed" } | 
+{ status: "removed" } |
 /**  Every attached row was kept with status `error` and the original chain. */
 { status: "failed"; error: CommandError };
 
@@ -1223,14 +1348,14 @@ export type RepointSelection = {
  *  Where a Re-point sends a skill. Crosses the wire as itself:
  *  `{ kind: "git", url, selection? }` or `{ kind: "local", path }`.
  */
-export type RepointTarget = 
+export type RepointTarget =
 /**
  *  A full GitHub repository or skill URL — HTTP, HTTPS or schemeless
  *  `github.com/…`, tree/blob links and a `.git` suffix; not `owner/repo`
  *  shorthand. Stored as given (trimmed). `selection` names the candidate
  *  the operator picked when the URL is a multi-skill repository.
  */
-{ kind: "git"; url: string; selection?: RepointSelection | null } | 
+{ kind: "git"; url: string; selection?: RepointSelection | null } |
 /**
  *  A skill folder outside every Tool's skills directory, as the operator
  *  typed or picked it; `~` expands against the operator's home.
@@ -1257,47 +1382,53 @@ export type ResyncProjectResultDto = {
  *  Why Reveal could not show a path (the backend classifies; the frontend
  *  owns the copy). Owned by `core::log_reveal::resolve_reveal_item`.
  */
-export type RevealPathFailure = 
+export type RevealPathFailure =
 /**
  *  Neither a Sync target the app recorded nor inside the central repo
  *  (or not a plain absolute path): refused before the filesystem is
  *  touched.
  */
-"notManaged" | 
+"notManaged" |
 /**  Nothing on the way to the path exists (a vanished volume). */
-"gone" | 
+"gone" |
 /**  The file manager could not show it. */
 "opener";
 
 /**  Where a row lives — the two tables that record Sync targets. */
-export type RowRef = 
+export type RowRef =
 /**  A `skill_targets` row (global scope). */
-{ scope: "global_target"; id: string; skill_id: string; tool: string } | 
+{ scope: "global_target"; id: string; skill_id: string; tool: string } |
 /**  A `project_skill_assignments` row (project scope). */
 { scope: "assignment"; id: string; project_id: string; skill_id: string; tool: string };
 
 /**  One setting write, as sent by the frontend: `{ key, value }`. */
-export type SettingUpdate = 
+export type SettingUpdate =
 /**
  *  Absolute path; `~` expansion happens at the command seam. Moving the
  *  repo relocates every managed skill directory.
  */
-{ key: "central_repo_path"; value: string } | 
+{ key: "central_repo_path"; value: string } |
 /**  Clamped into `GIT_CACHE_CLEANUP_DAYS_RANGE`. */
-{ key: "git_cache_cleanup_days"; value: number } | 
+{ key: "git_cache_cleanup_days"; value: number } |
 /**  Clamped into `GIT_CACHE_TTL_SECS_RANGE`. */
-{ key: "git_cache_ttl_secs"; value: number } | 
+{ key: "git_cache_ttl_secs"; value: number } |
 /**  Trimmed and written to the `CredentialStore`; blank clears the token. */
 { key: "github_token"; value: string } | { key: "auto_sync_enabled"; value: boolean } | { key: "global_tool_config"; value: {
 	selected_tools: string[],
 	scan_selected_only: boolean,
-} } | 
+} } |
 /**
  *  Clamped into `UI_ZOOM_LEVEL_RANGE`; non-finite falls back to default.
  *  Typed `number` (not specta's `number | null` for `f64`): `null` would
  *  fail deserialization, so it is not a value the frontend may send.
  */
-{ key: "ui_zoom_level"; value: number };
+{ key: "ui_zoom_level"; value: number } |
+/**
+ *  The Harnesses pane's collapse of the preference's rows. The #83
+ *  preference itself is not a `SettingUpdate`: saving it relocates
+ *  targets (`set_prefer_agents_standard_dir`).
+ */
+{ key: "hide_harness_specific_dirs"; value: boolean };
 
 /**  Every bound the frontend needs to clamp input before sending it. */
 export type SettingsBounds = {
@@ -1329,17 +1460,17 @@ export type SkillMutationResultDto = {
  *  What went wrong with a skill, as stored. Crosses the wire as itself
  *  (`"fetch_failed"`, …).
  */
-export type SkillOutcomeKind = 
+export type SkillOutcomeKind =
 /**  An Update / Refresh could not acquire or settle the skill's bytes. */
-"fetch_failed" | 
+"fetch_failed" |
 /**  An Update kept the operator's Edit over disagreeing upstream bytes. */
-"edit_conflict" | 
+"edit_conflict" |
 /**  A Delete could not remove every artifact; the skill was kept. */
-"delete_incomplete" | 
+"delete_incomplete" |
 /**  A Re-point's new source could not be acquired or settled. */
-"repoint_failed" | 
+"repoint_failed" |
 /**  A Restore (the Update of a skill whose central copy is gone) failed. */
-"restore_failed" | 
+"restore_failed" |
 /**
  *  An Onboarding import finalised the skill but could not settle an
  *  original afterwards.
@@ -1370,21 +1501,21 @@ export type SkillRefreshOutcome = {
 	status: SkillRefreshStatus,
 };
 
-export type SkillRefreshStatus = 
+export type SkillRefreshStatus =
 /**
  *  Acquired, finalized and propagated. `targets` is Propagation's report:
  *  the deployments that already existed, and nothing else.
  */
-{ status: "refreshed"; content_hash: string | null; source_revision: string | null; targets: PropagationOutcome[]; edit_conflict: InvocationEditConflict | null } | 
+{ status: "refreshed"; content_hash: string | null; source_revision: string | null; targets: PropagationOutcome[]; edit_conflict: InvocationEditConflict | null } |
 /**  Acquisition or finalize failed; this skill's targets were left alone. */
-{ status: "failed"; error: CommandError } | 
+{ status: "failed"; error: CommandError } |
 /**
  *  The batch did not dispatch this skill; nothing was acquired and no
  *  target was touched. `reason` says why (see [`RefreshSkipReason`]).
  */
-{ status: "skipped"; reason: RefreshSkipReason } | 
+{ status: "skipped"; reason: RefreshSkipReason } |
 /**  Acquired bytes were discarded at admission; no target was touched. */
-{ status: "skipped_acquisition"; reason: UpdateSkip } | 
+{ status: "skipped_acquisition"; reason: UpdateSkip } |
 /**
  *  The operator cancelled the run before this skill was applied: nothing
  *  was finalized and no target was touched. Its own outcome kind (D10),
@@ -1407,7 +1538,7 @@ export type SkillTargetDto = {
  *  How an artifact was materialised. Stored on the row so a later pass knows
  *  whether content drift is possible (copies) or not (links).
  */
-export type SyncMode = "symlink" | 
+export type SyncMode = "symlink" |
 /**  Windows directory junction (the symlink fallback). */
 "junction" | "copy";
 
@@ -1429,17 +1560,17 @@ export type SyncProgressDto = {
 };
 
 /**  Lifecycle of one synced artifact (an assignment row or a skill target row). */
-export type SyncStatus = 
+export type SyncStatus =
 /**  Row created, sync not yet attempted. */
-"pending" | 
+"pending" |
 /**  Artifact present and (for copies) content matches the source. */
-"synced" | 
+"synced" |
 /**  Copy-mode artifact whose content no longer matches the source. */
-"stale" | 
+"stale" |
 /**  Source or a previously deployed target has disappeared. */
-"missing" | 
+"missing" |
 /**  The last sync or Artifact removal attempt failed; `last_error` carries the diagnostic. */
-"error" | 
+"error" |
 /**
  *  The operator's durable "not on this Tool" (see **Disabled** in
  *  `CONTEXT.md`): the artifact was removed and the row kept as the
@@ -1475,6 +1606,24 @@ export type ToolInfoDto = {
 	 *  tools. The backend owns group membership; the frontend only presents it.
 	 */
 	constituents: string[],
+	/**
+	 *  **Cross-read** (global list only): keys of the installed tools, beside
+	 *  `shared_with`, whose skills dir this harness also reads — a skill
+	 *  deployed to this tool and one of these shows twice in this harness.
+	 *  A warning input, never a de-selection rule.
+	 */
+	also_reads: string[],
+	/**
+	 *  The VERIFIED `~/.agents/skills` read (global list only), `null` when
+	 *  none is verified.
+	 */
+	agents_standard_read: AgentsStandardReadDto | null,
+	/**
+	 *  An `OwnWins` harness moved to `~/.agents/skills` by the preference
+	 *  whose own dir still holds a foreign copy of a skill deployed there:
+	 *  that copy shadows ours in this harness.
+	 */
+	shadowed_by_own_dir: boolean,
 };
 
 export type ToolStatusDto = {
@@ -1484,9 +1633,9 @@ export type ToolStatusDto = {
 };
 
 /**  Which of a skill's recorded paths is gone. */
-export type UnlocatableState = 
+export type UnlocatableState =
 /**  A `local` skill's source folder is not there. */
-"source_missing" | 
+"source_missing" |
 /**  The central copy is not there. */
 "central_missing";
 

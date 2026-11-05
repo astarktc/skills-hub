@@ -24,6 +24,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         .commands(tauri_specta::collect_commands![
             commands::get_settings,
             commands::update_setting,
+            commands::preview_prefer_agents_standard_dir,
+            commands::set_prefer_agents_standard_dir,
             commands::get_tool_status,
             commands::get_project_tool_status,
             commands::clear_git_cache_now,
@@ -169,9 +171,13 @@ pub fn run() {
                 }
                 Err(err) => log::warn!("failed to resolve central repo path: {}", err),
             }
-            // Once per launch: global targets still recorded in a Tool's
-            // former skills dir (Augment's `~/.augment/rules` before 1.2.18)
-            // move to its current one. Idempotent; logs every row it moves or
+            // Once per launch: global targets still recorded in a dir their
+            // Tool no longer deploys to (a former dir — Augment's
+            // `~/.augment/rules`, Codex's `~/.codex/skills` — or the dir the
+            // "prefer the AGENTS standard folder" setting moved it away from —
+            // only once saved, or latched on a fresh install; an existing
+            // install's unsaved default moves nothing, `settings::global_layout`)
+            // move to the current one. Idempotent; logs every row it moves or
             // has to leave in place.
             match core::environment::home_dir().and_then(|home| {
                 core::target_relocation::relocate_former_global_targets(
@@ -261,7 +267,20 @@ mod bindings_export {
     fn export_bindings() {
         let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/bindings/index.ts");
         super::specta_builder()
-            .export(specta_typescript::Typescript::default(), out)
+            .export(specta_typescript::Typescript::default(), &out)
             .expect("failed to export TypeScript bindings");
+        // The exporter leaves trailing spaces on multi-line unions (a
+        // documented variant's `| `); strip trailing spaces/tabs per line so
+        // the committed file passes `git diff --check`. Deterministic: the
+        // same export always normalises to the same bytes.
+        let exported = std::fs::read_to_string(&out).expect("read exported bindings");
+        let normalised = exported
+            .split('\n')
+            .map(|line| line.trim_end_matches([' ', '\t']))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if normalised != exported {
+            std::fs::write(&out, normalised).expect("write normalised bindings");
+        }
     }
 }

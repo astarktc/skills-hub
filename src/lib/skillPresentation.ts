@@ -139,6 +139,20 @@ export function toolLabel(t: Translate, key: string): string {
   return t(`tools.${key}`, { defaultValue: key });
 }
 
+/**
+ * A Tool's display label as the Tool catalog states it, falling back to
+ * {@link toolLabel} for a key the catalog no longer lists — a retired
+ * harness's stored row (`clawdbot` → "Clawdbot") reads by its retained
+ * translation, never by its raw key while one exists.
+ */
+export function catalogToolLabel(
+  t: Translate,
+  labelById: Readonly<Record<string, string>>,
+  key: string,
+): string {
+  return labelById[key] ?? toolLabel(t, key);
+}
+
 /** The pieces of an imported skill's source line. */
 export type ImportedSourceLine = {
   /** The found-in Tool's label, or the "unknown" label. */
@@ -501,6 +515,7 @@ export function skillToolChips(
   targets: SkillTargetDto[],
   installedTools: ToolOption[],
   allTools: ToolOption[],
+  t: Translate,
 ): SkillToolChip[] {
   const targetByTool = new Map(targets.map((target) => [target.tool, target]));
   const chips: SkillToolChip[] = installedTools.map((tool) => ({
@@ -510,13 +525,13 @@ export function skillToolChips(
     detected: true,
   }));
   const seen = new Set(chips.map((chip) => chip.id));
-  const labelById = new Map(allTools.map((tool) => [tool.id, tool.label]));
+  const labelById = Object.fromEntries(allTools.map((tool) => [tool.id, tool.label]));
   for (const target of targets) {
     if (seen.has(target.tool)) continue;
     seen.add(target.tool);
     chips.push({
       id: target.tool,
-      label: labelById.get(target.tool) ?? target.tool,
+      label: catalogToolLabel(t, labelById, target.tool),
       target,
       detected: false,
     });
