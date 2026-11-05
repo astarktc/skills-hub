@@ -28,3 +28,11 @@ describe("inspector Targets view preference", () => {
     expect(inspectorTargetsViewPreference.read()).toBe("list");
   });
 });
+
+describe("collapsed sources preference (ticket 31)", () => {
+  it("persists My Skills' collapsed source groups under its own key, none by default", async () => {
+    const { collapsedSourcesPreference } = await import("./preferences");
+    expect(collapsedSourcesPreference.key).toBe("skills-collapsedSources");
+    expect(collapsedSourcesPreference.read()).toEqual([]);
+  });
+});

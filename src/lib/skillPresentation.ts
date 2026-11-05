@@ -13,6 +13,7 @@ import type {
   RepointTarget,
   SkillHealth,
   SkillOutcomeKind,
+  SkillProjectDto,
   SkillTargetDto,
   ToolOption,
   UnlocatableState,
@@ -59,6 +60,12 @@ export type RepoGroup<T> = {
   key: string;
   label: string;
   href: string | null;
+  /**
+   * A GitHub repo's owner (the identity chip's key: `identityHue` /
+   * `identityInitials`); null for any other source, the local group and
+   * Individual sources.
+   */
+  owner: string | null;
   skills: T[];
 };
 
@@ -72,6 +79,23 @@ export const LOCAL_GROUP_KEY = "__local__";
  */
 export function displayOrder<T>(visible: readonly T[], groups: readonly RepoGroup<T>[] | null): T[] {
   return groups ? groups.flatMap((group) => group.skills) : [...visible];
+}
+
+/**
+ * The rows on screen (D42): the display order minus every collapsed group's
+ * rows — what keyboard order (j/k, ⌘A, a shift-click range), the post-mutation
+ * focus rule and the name column read. A collapsed row stays in the lens:
+ * still selected, still counted. Flat (no groups) or nothing collapsed = the
+ * display order itself.
+ */
+export function onScreenOrder<T>(
+  displayed: readonly T[],
+  groups: readonly RepoGroup<T>[] | null,
+  collapsed: ReadonlySet<string>,
+): T[] {
+  return groups && collapsed.size > 0
+    ? groups.filter((group) => !collapsed.has(group.key)).flatMap((group) => group.skills)
+    : [...displayed];
 }
 
 /** The folded group of sources that hold one skill each (`foldSingletons`). */
@@ -249,49 +273,64 @@ function looksLikeGitRef(ref: string): boolean {
   );
 }
 
+/** A skill's group key and its GitHub repo, if any. */
+function repoGroupOf(skill: Pick<SkillPresentationFields, "source_ref">): { key: string; repo: RepoInfo | null } {
+  const ref = skill.source_ref ?? "";
+  const isGit = ref !== "" && looksLikeGitRef(ref);
+  const repo = isGit ? repoInfo(ref) : null;
+  return { key: isGit ? (repo?.label ?? ref) : LOCAL_GROUP_KEY, repo };
+}
+
 /**
  * Fold skills into repo groups, alphabetically by label, with the local
  * group always last. With `foldSingletons`, every repo that holds exactly
  * one skill folds into one "Individual sources" group (`labels.individual`),
  * placed after the repo groups and before the local group, its skills in
  * input order (the lens's sort).
+ *
+ * `catalog` is the unfiltered library (D42, BACKLOG #81 (4)): when given, a
+ * repo is a singleton only if it holds one skill **in the catalog**, so a
+ * query or chip that leaves one skill of a multi-skill repo keeps it under
+ * its repo header. Without it the rows given decide.
  */
 export function groupSkillsByRepo<T extends Pick<SkillPresentationFields, "source_ref">>(
   skills: T[],
   labels: { local: string; ungrouped: string; individual?: string },
-  options: { foldSingletons?: boolean } = {},
+  options: { foldSingletons?: boolean; catalog?: readonly Pick<SkillPresentationFields, "source_ref">[] } = {},
 ): RepoGroup<T>[] {
-  const map = new Map<string, { href: string | null; skills: T[] }>();
+  const map = new Map<string, { href: string | null; owner: string | null; skills: T[] }>();
   for (const skill of skills) {
-    const ref = skill.source_ref ?? "";
-    const isGit = ref !== "" && looksLikeGitRef(ref);
-    const repo = isGit ? repoInfo(ref) : null;
-    const key = isGit ? (repo?.label ?? ref) : LOCAL_GROUP_KEY;
+    const { key, repo } = repoGroupOf(skill);
     const entry = map.get(key);
     if (entry) entry.skills.push(skill);
-    else map.set(key, { href: repo?.href ?? null, skills: [skill] });
+    else map.set(key, { href: repo?.href ?? null, owner: repo ? repo.label.split("/")[0] : null, skills: [skill] });
+  }
+  const catalogCounts = new Map<string, number>();
+  for (const skill of options.catalog ?? skills) {
+    const { key } = repoGroupOf(skill);
+    catalogCounts.set(key, (catalogCounts.get(key) ?? 0) + 1);
   }
   const isSingleton = (key: string) =>
-    Boolean(options.foldSingletons) &&
-    key !== LOCAL_GROUP_KEY &&
-    map.get(key)?.skills.length === 1;
+    Boolean(options.foldSingletons) && key !== LOCAL_GROUP_KEY && (catalogCounts.get(key) ?? 0) <= 1;
   const entries: RepoGroup<T>[] = [...map.entries()]
     .filter(([key]) => !isSingleton(key))
     .map(([key, entry]) => ({
       key,
       label: key === LOCAL_GROUP_KEY ? labels.local : key || labels.ungrouped,
       href: entry.href,
+      owner: entry.owner,
       skills: entry.skills,
     }));
   const rank = (key: string) =>
     key === LOCAL_GROUP_KEY ? 2 : key === INDIVIDUAL_GROUP_KEY ? 1 : 0;
   const singles = [...map.entries()].filter(([key]) => isSingleton(key));
   if (singles.length > 0) {
-    const members = new Set(singles.map(([, entry]) => entry.skills[0]));
+    const members = new Set(singles.flatMap(([, entry]) => entry.skills));
     entries.push({
       key: INDIVIDUAL_GROUP_KEY,
       label: labels.individual ?? labels.ungrouped,
       href: null,
+      owner: null,
       skills: skills.filter((skill) => members.has(skill)),
     });
   }
@@ -607,9 +646,18 @@ export type HealthRow = {
   kind: HealthRowKind;
   scope: "skill" | "target";
   severity: HealthSeverity;
-  /** Target rows: how many, and on which Tools (registry keys, in row order). */
+  /**
+   * Target rows: how many (global pairs + project deployments), and the
+   * global ones' Tools (registry keys, in row order) — the pairs the row's
+   * `retryTargets` repairs.
+   */
   count: number;
   tools: string[];
+  /**
+   * The project deployments a failed / missing target row counts (D41): each
+   * project, named, with its Tools. Empty for every other row.
+   */
+  projects: { id: string; name: string; tools: string[] }[];
   /** A stored outcome's typed error and when it settled; null otherwise. */
   error: CommandError | null;
   at: number | null;
@@ -771,6 +819,13 @@ export type SkillHealthFields = Pick<
   health: SkillHealth | null;
   invocation_override: { conflict: boolean } | null;
   targets: readonly Pick<SkillTargetDto, "tool" | "status" | "synced_at">[];
+  /** The skill's projects and its deployments there (D41); absent = none. */
+  projects?: readonly SkillProjectFields[];
+};
+
+/** The project fields the folds read (`SkillProjectDto`). */
+export type SkillProjectFields = Pick<SkillProjectDto, "project_id" | "project_name"> & {
+  deployments: readonly Pick<SkillProjectDto["deployments"][number], "tool" | "status" | "synced_at">[];
 };
 
 /** What the fold answers: the rows by precedence, the loudest severity, the source line. */
@@ -824,6 +879,7 @@ export function skillHealth(
     severity: ROW_SEVERITY[kind],
     count: 0,
     tools: [],
+    projects: [],
     error: null,
     at: null,
     repairs: [],
@@ -844,13 +900,25 @@ export function skillHealth(
 
   const byStatus = (status: SkillTargetDto["status"]) =>
     skill.targets.filter((target) => target.status === status).map((target) => target.tool);
-  const counted = (kind: HealthRowKind, tools: string[], repairs: HealthRepair[]) => {
-    if (tools.length > 0) rows.push(row(kind, { count: tools.length, tools, repairs }));
+  const inProjects = (status: SkillTargetDto["status"]) =>
+    (skill.projects ?? []).flatMap((project) => {
+      const tools = project.deployments.filter((d) => d.status === status).map((d) => d.tool);
+      return tools.length > 0 ? [{ id: project.project_id, name: project.project_name, tools }] : [];
+    });
+  const counted = (kind: HealthRowKind, tools: string[], repairs: HealthRepair[], projects: HealthRow["projects"] = []) => {
+    const count = tools.length + projects.reduce((sum, project) => sum + project.tools.length, 0);
+    if (count > 0) rows.push(row(kind, { count, tools, projects, repairs }));
   };
-  const targetRepairs: HealthRepair[] = skill.disabled_at !== null ? ["disable"] : ["retryTargets"];
-  counted("targets_failed", byStatus("error"), targetRepairs);
-  counted("targets_missing", byStatus("missing"), targetRepairs);
-  counted("targets_stale", byStatus("stale"), targetRepairs);
+  // A project deployment repairs from the project (the matrix's Re-deploy);
+  // the row's retry is the global pairs' only, so it is offered only with them.
+  const targetRepairs = (tools: string[]): HealthRepair[] =>
+    skill.disabled_at !== null ? ["disable"] : tools.length > 0 ? ["retryTargets"] : [];
+  const failedTools = byStatus("error");
+  const missingTools = byStatus("missing");
+  const staleTools = byStatus("stale");
+  counted("targets_failed", failedTools, targetRepairs(failedTools), inProjects("error"));
+  counted("targets_missing", missingTools, targetRepairs(missingTools), inProjects("missing"));
+  counted("targets_stale", staleTools, targetRepairs(staleTools));
   if (skill.disabled_at === null) counted("targets_disabled", byStatus("disabled"), ["enable"]);
   if (skill.disabled_at === null && deployAction(skill).kind === "sync" && !skill.unlocatable) {
     rows.push(row("not_deployed", { repairs: ["deploy"] }));
@@ -1071,4 +1139,117 @@ export function groupState(skills: readonly SkillHealthFields[]): GroupState {
     if (deployAction(skill).kind !== "deployed") state.deployable += 1;
   }
   return state;
+}
+
+// ---------------------------------------------------------------------------
+// My Skills row and group anatomy (ticket 31: D39–D42)
+// ---------------------------------------------------------------------------
+
+/**
+ * Rows the row never repeats as an exception mark: Disabled at either grain
+ * (the strip and the switch say it) and "Not deployed" (D40 — outright false
+ * for a skill that lives in projects; the strip's hollow marks say it
+ * globally). The kinds stay in the fold for the inspector ladder, the group
+ * summary and Deploy all's count.
+ */
+const SILENT_ROW_MARKS = new Set<HealthRowKind>(["disabled", "targets_disabled", "not_deployed"]);
+
+/** The exception marks a My Skills row shows: the fold's rows minus the silent ones. */
+export function rowMarks(fold: Pick<SkillHealthFold, "rows">): HealthRow[] {
+  return fold.rows.filter((row) => !SILENT_ROW_MARKS.has(row.kind));
+}
+
+/**
+ * A row mark's words: the target kinds in the group summary's short form
+ * ("2 failed", "1 missing", "3 out of date" — the row's "N failed", D41),
+ * every other kind its ladder label. The ladder's full sentence stays the
+ * mark's tooltip.
+ */
+export const ROW_MARK_LABEL_KEY: Readonly<Record<HealthRowKind, string>> = {
+  ...HEALTH_ROW_LABEL_KEY,
+  targets_failed: "library.row.marks.failed",
+  targets_missing: "library.row.marks.missing",
+  targets_stale: "library.row.marks.stale",
+};
+
+/** Where a skill is live (D41): the row's scope cell. */
+export type SkillScope = {
+  /** Some global deployment is live (`deployAction` = deployed). */
+  global: boolean;
+  /** The projects holding at least one live deployment (`isLiveTarget`), in the listing's order. */
+  projects: { id: string; name: string }[];
+};
+
+export function skillScope(skill: Pick<SkillHealthFields, "disabled_at" | "targets" | "projects">): SkillScope {
+  return {
+    global: deployAction(skill).kind === "deployed",
+    projects: (skill.projects ?? [])
+      .filter((project) => project.deployments.some(isLiveTarget))
+      .map((project) => ({ id: project.project_id, name: project.project_name })),
+  };
+}
+
+/**
+ * The list's name column (D39): the longest visible name plus its exception
+ * marks (each its label + 5 ch for the badge's icon, padding and gap) and the
+ * Edit pencil (4 ch), + 2 ch of slack, in `ch`, clamped by CSS to
+ * [12rem, 22rem]. The list publishes it as `--name-col`, as it does
+ * `--strip-marks`; descriptions take the rest.
+ */
+export function nameColumnWidth(
+  rows: readonly { name: string; marks: readonly string[]; edited: boolean }[],
+): string {
+  const widest = rows.reduce((max, row) => {
+    const marks = row.marks.reduce((sum, label) => sum + label.length + 5, 0);
+    return Math.max(max, row.name.length + 2 + marks + (row.edited ? 4 : 0));
+  }, 0);
+  return `clamp(12rem, ${widest}ch, 22rem)`;
+}
+
+/**
+ * Two-letter initials per harness, for the group header's row over the strip
+ * (D42): from the Harness catalog's label — the first letters of its first
+ * two words, or the first two letters of a one-word name — upper-cased.
+ * Unique within the set given (the strip's harnesses, in order): a later
+ * harness whose pair is taken keeps its first letter and takes the next
+ * unused letter of its label; a label with no free letter keeps its pair.
+ */
+export function harnessInitials(tools: readonly { id: string; label: string }[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  const taken = new Set<string>();
+  for (const { id, label } of tools) {
+    const words = label.split(/\s+/).filter(Boolean);
+    const letters = label.replace(/[^\p{L}\p{N}]/gu, "").toUpperCase();
+    const first = (words[0]?.[0] ?? label[0] ?? "").toUpperCase();
+    const preferred = (words.length >= 2 ? first + words[1][0] : letters.slice(0, 2)).toUpperCase();
+    let initials = preferred;
+    if (taken.has(initials)) {
+      const next = [...letters.slice(1)].find((letter) => !taken.has(first + letter));
+      if (next) initials = first + next;
+    }
+    taken.add(initials);
+    out[id] = initials;
+  }
+  return out;
+}
+
+/**
+ * Where a target row's pairs are, in words — "On Amp, Kimi Code CLI" and
+ * "In quartermaster (.agents/skills), api (Claude Code)" — for the inspector
+ * ladder and the row mark's tooltip alike. Empty for a skill-level row.
+ */
+export function healthRowPlaces(
+  row: Pick<HealthRow, "tools" | "projects">,
+  context: { t: Translate; labelOf: (tool: string) => string },
+): string[] {
+  const { t, labelOf } = context;
+  const parts: string[] = [];
+  if (row.tools.length > 0) parts.push(t("inspector.health.onTools", { tools: row.tools.map(labelOf).join(", ") }));
+  if (row.projects.length > 0) {
+    const projects = row.projects
+      .map((project) => `${project.name} (${project.tools.map(labelOf).join(", ")})`)
+      .join(", ");
+    parts.push(t("inspector.health.inProjects", { projects }));
+  }
+  return parts;
 }

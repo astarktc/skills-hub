@@ -51,6 +51,7 @@ function skill(id: string, name: string): ManagedSkill {
     unlocatable: null,
     detachable: false,
     health: null,
+    projects: [],
   };
 }
 

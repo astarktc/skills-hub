@@ -5,9 +5,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::core::skill_catalog::managed_skill_catalog;
+use crate::core::skill_catalog::{
+    managed_skill_catalog, managed_skill_entry, SkillProject, SkillProjectDeployment,
+};
 use crate::core::skill_discovery::InvocationMode;
-use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
+use crate::core::skill_store::{
+    ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore, SkillTargetRecord,
+};
 use crate::core::sync_status::{SyncMode, SyncStatus};
 use crate::core::unlocatable::UnlocatableState;
 
@@ -317,4 +321,163 @@ fn catalog_offers_detach_only_when_the_central_copy_is_present() {
         !catalog[2].detachable,
         "a git skill has nothing to detach from"
     );
+}
+
+fn seed_project(store: &SkillStore, id: &str, path: &str) {
+    store
+        .register_project(&ProjectRecord {
+            id: id.to_string(),
+            path: path.to_string(),
+            created_at: 1,
+            updated_at: 1,
+        })
+        .expect("register project");
+}
+
+fn seed_assignment(
+    store: &SkillStore,
+    project_id: &str,
+    skill_id: &str,
+    tool: &str,
+    status: SyncStatus,
+    synced_at: Option<i64>,
+) {
+    store
+        .add_project_skill_assignment(&ProjectSkillAssignmentRecord {
+            id: format!("{project_id}-{skill_id}-{tool}"),
+            project_id: project_id.to_string(),
+            skill_id: skill_id.to_string(),
+            skill_name: skill_id.to_string(),
+            tool: tool.to_string(),
+            mode: SyncMode::Symlink,
+            status,
+            last_error: None,
+            synced_at,
+            content_hash: None,
+            created_at: 1,
+        })
+        .expect("add assignment");
+}
+
+fn deployment(tool: &str, status: SyncStatus, synced_at: Option<i64>) -> SkillProjectDeployment {
+    SkillProjectDeployment {
+        tool: tool.to_string(),
+        status,
+        synced_at,
+    }
+}
+
+/// D41: the listing carries each skill's projects — named by folder, ordered
+/// by name, each with the skill's own assignment rows (status and ownership) —
+/// read for the whole catalog at once; a skill in no project carries none.
+#[test]
+fn catalog_carries_each_skills_projects_with_their_deployments() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = tmp.path().join("central");
+    seed_skill(
+        &store,
+        "s1",
+        "alpha",
+        &write_manifest(&central, "alpha", "---\nname: alpha\n---\n"),
+    );
+    seed_skill(
+        &store,
+        "s2",
+        "beta",
+        &write_manifest(&central, "beta", "---\nname: beta\n---\n"),
+    );
+    seed_skill(
+        &store,
+        "s3",
+        "gamma",
+        &write_manifest(&central, "gamma", "---\nname: gamma\n---\n"),
+    );
+    seed_project(&store, "p-mono", "/work/monorepo");
+    seed_project(&store, "p-api", "/work/api");
+    seed_assignment(
+        &store,
+        "p-mono",
+        "s1",
+        "claude_code",
+        SyncStatus::Synced,
+        Some(5),
+    );
+    seed_assignment(
+        &store,
+        "p-mono",
+        "s1",
+        "agents_skills",
+        SyncStatus::Error,
+        None,
+    );
+    seed_assignment(&store, "p-api", "s1", "pi", SyncStatus::Missing, Some(4));
+    seed_assignment(
+        &store,
+        "p-api",
+        "s2",
+        "claude_code",
+        SyncStatus::Disabled,
+        Some(3),
+    );
+
+    let mut catalog = managed_skill_catalog(&store).expect("catalog");
+    catalog.sort_by(|a, b| a.skill.id.cmp(&b.skill.id));
+
+    assert_eq!(
+        catalog[0].projects,
+        vec![
+            SkillProject {
+                project_id: "p-api".to_string(),
+                project_name: "api".to_string(),
+                deployments: vec![deployment("pi", SyncStatus::Missing, Some(4))],
+            },
+            SkillProject {
+                project_id: "p-mono".to_string(),
+                project_name: "monorepo".to_string(),
+                deployments: vec![
+                    deployment("agents_skills", SyncStatus::Error, None),
+                    deployment("claude_code", SyncStatus::Synced, Some(5)),
+                ],
+            },
+        ]
+    );
+    assert_eq!(
+        catalog[1].projects,
+        vec![SkillProject {
+            project_id: "p-api".to_string(),
+            project_name: "api".to_string(),
+            deployments: vec![deployment("claude_code", SyncStatus::Disabled, Some(3))],
+        }]
+    );
+    assert!(catalog[2].projects.is_empty());
+
+    // The single-skill entry (Save's catalog read) answers the same projects.
+    let entry = managed_skill_entry(&store, "s1")
+        .expect("entry")
+        .expect("s1");
+    assert_eq!(entry.projects, catalog[0].projects);
+}
+
+/// The same failure policy as targets: a deployment query that fails fails
+/// the listing, never a catalog that says the skill is in no project.
+#[test]
+fn a_failing_project_query_fails_the_catalog() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = tmp.path().join("central");
+    seed_skill(
+        &store,
+        "s1",
+        "alpha",
+        &write_manifest(&central, "alpha", "---\nname: alpha\n---\n"),
+    );
+    {
+        let conn = rusqlite::Connection::open(store.db_path()).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = OFF; DROP TABLE project_skill_assignments;")
+            .unwrap();
+    }
+
+    let err = managed_skill_catalog(&store).expect_err("the catalog must fail loudly");
+    assert!(format!("{err:#}").contains("list project deployments"));
 }

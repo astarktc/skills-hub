@@ -1296,6 +1296,26 @@ describe("useProjectState project-assignment verbs (the door's entry points)", (
     expect(result.current.assignments.map((a) => `${a.skill_id}:${a.tool}`)).toEqual(["s1:pi"]);
   });
 
+  it("tells the library after a mutation settles, never after a plain read (ticket 31 audit F1)", async () => {
+    const onDeploymentsChanged = vi.fn(async () => {});
+    const { result } = await renderReady({ onDeploymentsChanged });
+    await withSelectedProject(result, ["pi"]); // registration + tool configuration converge
+    onDeploymentsChanged.mockClear();
+    await act(async () => {
+      await result.current.selectProject("p1");
+    });
+    expect(onDeploymentsChanged).not.toHaveBeenCalled(); // selecting a project is a read
+    await act(async () => {
+      await result.current.assignToProject("p1", ["s1"]);
+    });
+    expect(onDeploymentsChanged).toHaveBeenCalled();
+    onDeploymentsChanged.mockClear();
+    await act(async () => {
+      await result.current.toggleAssignment("s1", "pi");
+    });
+    expect(onDeploymentsChanged).toHaveBeenCalled();
+  });
+
   it("assigns several skills, then asks about all their collisions once", async () => {
     const settleCollisions = vi.fn(async (report: ProjectSyncReport) => ({ report, resolved: true }));
     const { result } = await renderReady({ settleCollisions });

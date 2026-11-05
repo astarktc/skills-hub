@@ -5,6 +5,7 @@
  */
 import {
   booleanPreference,
+  stringListPreference,
   stringPreference,
   unionPreference,
 } from "./persistedPreference";
@@ -20,6 +21,12 @@ export const viewModePreference = unionPreference(
   ["list", "auto-grid", "dense-grid"] as const,
   "list",
 );
+
+/**
+ * My Skills' collapsed source groups, by group key (`owner/repo`, the local
+ * group's and Individual sources' keys). New in round 19 (ticket 31, D42).
+ */
+export const collapsedSourcesPreference = stringListPreference("skills-collapsedSources");
 
 export const projectsGroupByRepoPreference = booleanPreference(
   "skills-projects-groupByRepo",

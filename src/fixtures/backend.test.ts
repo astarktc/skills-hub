@@ -153,6 +153,25 @@ describe("rich", () => {
     expect((await handlers.listProjects()).map((p) => p.name)).toEqual(["skills-hub", "quartermaster", "agent-skills"]);
   });
 
+  // Ticket 31 (D41): the listing carries each skill's projects, derived from
+  // the assignment rows at read time — so an assignment shows at once.
+  it("lists each skill's projects: three + global, project-only, a failed project deployment", async () => {
+    const { handlers } = backendFor("rich");
+    const names = (skill: ManagedSkillDto) => skill.projects.map((p) => p.project_name);
+    const perf = await byName(handlers, "react-perf-audit");
+    expect(names(perf)).toEqual(["agent-skills", "quartermaster", "skills-hub"]);
+    expect(perf.projects[2].deployments.map((d) => d.tool)).toEqual(["agents_skills", "claude_code"]);
+    expect(perf.targets.length).toBeGreaterThan(0);
+    const prisma = await byName(handlers, "prisma-review");
+    expect([prisma.targets.length, names(prisma)]).toEqual([0, ["quartermaster"]]);
+    const plans = await byName(handlers, "writing-plans");
+    expect(plans.projects[0].deployments).toContainEqual({ tool: "agents_skills", status: "error", synced_at: null });
+    expect((await byName(handlers, "pdf")).projects).toEqual([]);
+
+    await handlers.toggleProjectSkillAssignment("prj-quartermaster", (await byName(handlers, "pdf")).id, "claude_code");
+    expect(names(await byName(handlers, "pdf"))).toEqual(["quartermaster"]);
+  });
+
   it("raises TARGET_EXISTS on an occupied target, and replaces it under an override", async () => {
     const { handlers } = backendFor("rich");
     const zod = (await handlers.getManagedSkills()).find((s) => s.name === "zod-schema-first")!;

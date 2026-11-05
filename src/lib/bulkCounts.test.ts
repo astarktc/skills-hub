@@ -39,6 +39,7 @@ function skill(id: string, targets: SkillTargetDto[], extra: Partial<ManagedSkil
     unlocatable: null,
     detachable: false,
     health: null,
+    projects: [],
     ...extra,
   };
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SkillTargetDto } from "../components/skills/types";
 import {
+  onScreenOrder,
   defaultImportVariantPath,
   deployAction,
   HEALTH_ROW_ORDER,
@@ -13,6 +14,13 @@ import {
   identityInitials,
   groupSkillsByRepo,
   groupState,
+  harnessInitials,
+  healthRowPlaces,
+  HEALTH_ROW_LABEL_KEY,
+  ROW_MARK_LABEL_KEY,
+  nameColumnWidth,
+  rowMarks,
+  skillScope,
   importedSourceLine,
   libraryExceptions,
   SKILL_FILTERS,
@@ -255,6 +263,44 @@ describe("groupSkillsByRepo", () => {
       "bee/b",
       "zoo/z",
       "Local",
+    ]);
+  });
+
+  // D42 / BACKLOG #81 (4): grouping is decided on the unfiltered catalog — a
+  // filter that leaves one skill of a multi-skill repo keeps its repo header;
+  // only a source that holds one skill in the whole library folds.
+  it("decides the singleton fold on the whole catalog, never on the filtered rows", () => {
+    const catalog = [
+      skill({ name: "alpha", source_type: "git", source_ref: "https://github.com/acme/alpha" }),
+      skill({ name: "alpha-two", source_type: "git", source_ref: "https://github.com/acme/alpha" }),
+      skill({ name: "loner", source_type: "git", source_ref: "https://github.com/zoo/z" }),
+    ];
+    const labels = { local: "Local", ungrouped: "Ungrouped", individual: "Individual sources" };
+    const filtered = [catalog[1], catalog[2]];
+    const groups = groupSkillsByRepo(filtered, labels, { foldSingletons: true, catalog });
+    expect(groups.map((g) => [g.key, g.skills.map((s) => s.name)])).toEqual([
+      ["acme/alpha", ["alpha-two"]],
+      [INDIVIDUAL_GROUP_KEY, ["loner"]],
+    ]);
+    // Without the catalog the filtered rows decide (the old behaviour).
+    expect(groupSkillsByRepo(filtered, labels, { foldSingletons: true }).map((g) => g.key)).toEqual([
+      INDIVIDUAL_GROUP_KEY,
+    ]);
+  });
+
+  it("names a GitHub group's owner (the identity chip's key); other groups have none", () => {
+    const groups = groupSkillsByRepo(
+      [
+        skill({ name: "a", source_type: "git", source_ref: "https://github.com/Vercel-Labs/skills" }),
+        skill({ name: "b", source_type: "git", source_ref: "https://example.com/team/x.git" }),
+        skill({ name: "c" }),
+      ],
+      { local: "Local", ungrouped: "Ungrouped" },
+    );
+    expect(groups.map((g) => [g.label, g.owner])).toEqual([
+      ["https://example.com/team/x.git", null],
+      ["Vercel-Labs/skills", "Vercel-Labs"],
+      ["Local", null],
     ]);
   });
 });
@@ -791,6 +837,80 @@ describe("skillHealth (the fold)", () => {
     expect(kinds({ disabled_at: 3, targets: [] })).toEqual(["disabled"]);
   });
 
+  // D41: failed project deployments join the target-failure rows, the
+  // project named; the row's count spans both scopes. The retry repair is
+  // the global pairs' only (a project deployment repairs from the matrix).
+  describe("project deployments", () => {
+    const project = (id: string, name: string, deployments: { tool: string; status: SkillTargetDto["status"]; synced_at: number | null }[]) => ({
+      project_id: id,
+      project_name: name,
+      deployments,
+    });
+
+    it("an error or missing project deployment is a failed target row naming its project", () => {
+      const fold = skillHealth(
+        {
+          ...healthy,
+          targets: [row("claude", "error")],
+          projects: [
+            project("p1", "api", [{ tool: "claude_code", status: "error", synced_at: null }, { tool: "pi", status: "synced", synced_at: 1 }]),
+            project("p2", "docs", [{ tool: "cursor", status: "missing", synced_at: 1 }]),
+          ],
+        },
+        { t },
+      );
+      expect(fold.rows).toEqual([
+        expect.objectContaining({
+          kind: "targets_failed",
+          count: 2,
+          tools: ["claude"],
+          projects: [{ id: "p1", name: "api", tools: ["claude_code"] }],
+          repairs: ["retryTargets"],
+        }),
+        expect.objectContaining({
+          kind: "targets_missing",
+          count: 1,
+          tools: [],
+          projects: [{ id: "p2", name: "docs", tools: ["cursor"] }],
+          repairs: [],
+        }),
+      ]);
+      expect(fold.severity).toBe("failed");
+    });
+
+    it("stale, disabled and synced project deployments add no row", () => {
+      expect(
+        kinds({
+          projects: [
+            project("p1", "api", [
+              { tool: "claude_code", status: "stale", synced_at: 1 },
+              { tool: "pi", status: "disabled", synced_at: 1 },
+              { tool: "cursor", status: "synced", synced_at: 1 },
+            ]),
+          ],
+        }),
+      ).toEqual([]);
+    });
+
+    it("names the row's places: its global harnesses, then each project with its harnesses", () => {
+      const labelOf = (id: string) => ({ claude_code: "Claude Code", cursor: "Cursor", amp: "Amp" })[id] ?? id;
+      const places = healthRowPlaces(
+        { tools: ["amp"], projects: [{ id: "p1", name: "api", tools: ["claude_code", "cursor"] }] },
+        { t: (key, opts) => `${key}${JSON.stringify(opts)}`, labelOf },
+      );
+      expect(places).toEqual([
+        'inspector.health.onTools{"tools":"Amp"}',
+        'inspector.health.inProjects{"projects":"api (Claude Code, Cursor)"}',
+      ]);
+      expect(healthRowPlaces({ tools: [], projects: [] }, { t, labelOf })).toEqual([]);
+    });
+
+    it("a global row carries no projects", () => {
+      const fold = skillHealth({ ...healthy, targets: [row("claude", "missing")] }, { t });
+      expect(fold.rows[0].projects).toEqual([]);
+    });
+  });
+
   it("the stored row carries its typed error and when it settled", () => {
     const fold = skillHealth({ ...healthy, health: { kind: "fetch_failed", error: failure, at: 42 } }, { t });
     expect(fold.rows[0]).toMatchObject({ error: failure, at: 42, scope: "skill" });
@@ -913,6 +1033,143 @@ describe("My Skills folds (ticket 11)", () => {
     it("a group's state counts by loudest severity, and Deploy all acts on the undeployed", () => {
       expect(groupState(library)).toEqual({ failed: 1, stale: 2, notDeployed: 1, disabled: 1, deployable: 2 });
     });
+
+    it("a failed project deployment counts in the library summary and the Issues chip", () => {
+      const inProject: Fields = {
+        ...base,
+        targets: [row("cursor", "synced")],
+        projects: [{ project_id: "p", project_name: "api", deployments: [{ tool: "pi", status: "error", synced_at: null }] }],
+      };
+      expect(libraryExceptions([inProject])).toEqual({ failedTargets: 1, staleTargets: 0, skillsWithIssues: 1 });
+      expect(SKILL_FILTERS.issues(inProject)).toBe(true);
+    });
+  });
+
+  // D40: "Not deployed" is never a row mark (outright false for a skill that
+  // lives in projects); the strip and switch already say Disabled. The kind
+  // stays in the fold for the inspector ladder, the group summary and Deploy
+  // all's count.
+  describe("rowMarks", () => {
+    it("drops not-deployed and the disabled kinds, keeps every other row in order", () => {
+      const fold = skillHealth(
+        { ...base, health: { kind: "fetch_failed", error: { code: "OTHER", message: "x" }, at: 1 }, targets: [row("cursor", "disabled")] },
+        { t: (key) => key },
+      );
+      expect(fold.rows.map((r) => r.kind)).toEqual(["fetch_failed", "targets_disabled"]);
+      expect(rowMarks(fold).map((r) => r.kind)).toEqual(["fetch_failed"]);
+      expect(ROW_MARK_LABEL_KEY.targets_failed).toBe("library.row.marks.failed");
+      expect(ROW_MARK_LABEL_KEY.fetch_failed).toBe(HEALTH_ROW_LABEL_KEY.fetch_failed);
+      const never = skillHealth({ ...base, targets: [] }, { t: (key) => key });
+      expect(never.rows.map((r) => r.kind)).toEqual(["not_deployed"]);
+      expect(rowMarks(never)).toEqual([]);
+    });
+  });
+
+  // D41: the scope cell — globe for a live global deployment, and the
+  // projects holding at least one live deployment (the ownership rule of
+  // `isLiveTarget`, so a never-synced failed row does not count).
+  describe("skillScope", () => {
+    const deployment = (tool: string, status: SkillTargetDto["status"], synced_at: number | null = 1) => ({ tool, status, synced_at });
+
+    it("a skill in three projects and globally", () => {
+      const scope = skillScope({
+        ...base,
+        targets: [row("cursor", "synced")],
+        projects: [
+          { project_id: "a", project_name: "api", deployments: [deployment("pi", "synced")] },
+          { project_id: "d", project_name: "docs", deployments: [deployment("pi", "stale")] },
+          { project_id: "m", project_name: "monorepo", deployments: [deployment("pi", "error")] },
+        ],
+      });
+      expect(scope).toEqual({
+        global: true,
+        projects: [
+          { id: "a", name: "api" },
+          { id: "d", name: "docs" },
+          { id: "m", name: "monorepo" },
+        ],
+      });
+    });
+
+    it("a project-only skill has no globe; a project holding nothing live is not counted", () => {
+      const scope = skillScope({
+        ...base,
+        targets: [],
+        projects: [
+          { project_id: "a", project_name: "api", deployments: [deployment("pi", "synced")] },
+          { project_id: "b", project_name: "blog", deployments: [deployment("pi", "error", null), deployment("cursor", "disabled")] },
+        ],
+      });
+      expect(scope).toEqual({ global: false, projects: [{ id: "a", name: "api" }] });
+    });
+
+    it("a skill disabled at skill grain is live nowhere", () => {
+      expect(
+        skillScope({
+          ...base,
+          disabled_at: 3,
+          targets: [row("cursor", "disabled")],
+          projects: [{ project_id: "a", project_name: "api", deployments: [deployment("pi", "disabled")] }],
+        }),
+      ).toEqual({ global: false, projects: [] });
+    });
+  });
+});
+
+// D39: the name column fits the longest visible name plus its exception
+// marks, clamped to [12rem, 22rem] by CSS.
+describe("nameColumnWidth", () => {
+  it("is the longest name plus its marks and pencil, in ch, inside the clamp", () => {
+    expect(nameColumnWidth([])).toBe("clamp(12rem, 0ch, 22rem)");
+    expect(
+      nameColumnWidth([
+        { name: "tdd", marks: [], edited: false },
+        { name: "improve-codebase-architecture", marks: [], edited: false },
+      ]),
+    ).toBe("clamp(12rem, 31ch, 22rem)");
+    // A mark is its label plus the badge's icon, padding and gap; the pencil a 24 px button.
+    expect(nameColumnWidth([{ name: "pdf", marks: ["1 failed"], edited: true }])).toBe("clamp(12rem, 22ch, 22rem)");
+  });
+});
+
+// The header's initials row over the strip (D42, ticket 31): two letters per
+// harness from the Harness catalog's label — the first letters of its first
+// two words, or the first two letters of a one-word name — unique within the
+// set (a collision takes the next unused letter of the later harness's label).
+describe("harnessInitials", () => {
+  it("derives two letters per harness from its label", () => {
+    const initials = harnessInitials([
+      { id: "cursor", label: "Cursor" },
+      { id: "claude_code", label: "Claude Code" },
+      { id: "codex", label: "Codex" },
+      { id: "amp", label: "Amp" },
+      { id: "kimi_cli", label: "Kimi Code CLI" },
+      { id: "pi", label: "Pi" },
+      { id: "gemini_cli", label: "Gemini CLI" },
+      { id: "windsurf", label: "Windsurf" },
+    ]);
+    expect(initials).toEqual({
+      cursor: "CU",
+      claude_code: "CC",
+      codex: "CO",
+      amp: "AM",
+      kimi_cli: "KC",
+      pi: "PI",
+      gemini_cli: "GC",
+      windsurf: "WI",
+    });
+    expect(new Set(Object.values(initials)).size).toBe(8);
+  });
+
+  it("breaks a collision deterministically: the later harness takes its next unused letter", () => {
+    expect(
+      harnessInitials([
+        { id: "codex", label: "Codex" },
+        { id: "codebuddy", label: "CodeBuddy" },
+        { id: "continue", label: "Continue" },
+        { id: "x", label: "X" },
+      ]),
+    ).toEqual({ codex: "CO", codebuddy: "CD", continue: "CN", x: "X" });
   });
 });
 
@@ -939,5 +1196,20 @@ describe("identity (ticket 30)", () => {
     expect(identityInitials("anthropics")).toBe("AN");
     expect(identityInitials("my_org.tools")).toBe("MO");
     expect(identityInitials("x")).toBe("X");
+  });
+});
+
+describe("onScreenOrder (ticket 31, D42)", () => {
+  const a = { id: "a" }, b = { id: "b" }, c = { id: "c" };
+  const groups = [
+    { key: "x/one", label: "x/one", href: null, owner: "x", skills: [a, b] },
+    { key: "y/two", label: "y/two", href: null, owner: "y", skills: [c] },
+  ];
+  it("drops a collapsed group's rows and keeps the rest in display order", () => {
+    expect(onScreenOrder([a, b, c], groups, new Set(["x/one"]))).toEqual([c]);
+  });
+  it("is the display order when nothing is collapsed or the list is flat", () => {
+    expect(onScreenOrder([a, b, c], groups, new Set())).toEqual([a, b, c]);
+    expect(onScreenOrder([c, a], null, new Set(["x/one"]))).toEqual([c, a]);
   });
 });

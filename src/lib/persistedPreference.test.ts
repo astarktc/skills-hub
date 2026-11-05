@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   booleanPreference,
   createPersistedPreference,
+  stringListPreference,
   unionPreference,
 } from "./persistedPreference";
 import {
+  collapsedSourcesPreference,
   groupByRepoPreference,
   ignoredUpdateVersionPreference,
   projectsGroupByRepoPreference,
@@ -112,6 +114,20 @@ describe("unionPreference", () => {
   });
 });
 
+describe("stringListPreference", () => {
+  it("stores a JSON array of strings; anything else reads as empty", () => {
+    const pref = stringListPreference("test-list");
+    expect(pref.read()).toEqual([]);
+    pref.write(["a", "b"]);
+    expect(window.localStorage.getItem("test-list")).toBe('["a","b"]');
+    expect(pref.read()).toEqual(["a", "b"]);
+    for (const corrupt of ["{", '"a"', "[1]", '{"a":1}']) {
+      window.localStorage.setItem("test-list", corrupt);
+      expect(pref.read()).toEqual([]);
+    }
+  });
+});
+
 describe("app preference keys", () => {
   it("keeps every migrated storage key byte-identical", () => {
     expect(groupByRepoPreference.key).toBe("skills-groupByRepo");
@@ -123,6 +139,7 @@ describe("app preference keys", () => {
     expect(ignoredUpdateVersionPreference.key).toBe(
       "skills-ignored-update-version",
     );
+    expect(collapsedSourcesPreference.key).toBe("skills-collapsedSources");
   });
 
   it("round-trips the view mode and rejects an unknown one", () => {

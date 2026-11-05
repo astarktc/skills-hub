@@ -87,3 +87,22 @@ export function stringPreference(
     fallback: null,
   });
 }
+
+/** A list of strings stored as a JSON array; anything else reads as empty. */
+export function stringListPreference(
+  key: string,
+): PersistedPreference<readonly string[]> {
+  return createPersistedPreference<readonly string[]>({
+    key,
+    encode: (value) => JSON.stringify(value),
+    decode: (raw) => {
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        return Array.isArray(parsed) && parsed.every((item) => typeof item === "string") ? parsed : null;
+      } catch {
+        return null;
+      }
+    },
+    fallback: [],
+  });
+}

@@ -373,7 +373,13 @@ function rich(now: number): FixtureState {
           { skill: "vitest-migration", tool: "agents_skills", status: "stale" },
           { skill: "systematic-debugging", tool: "claude_code" },
           { skill: "writing-plans", tool: "claude_code" },
+          // Ticket 31's row anatomy: a failed project deployment joins the
+          // row's "N failed" mark, the project named in its tooltip.
+          { skill: "writing-plans", tool: "agents_skills", status: "error", lastError: "Permission denied (os error 13): /Users/alex/Projects/quartermaster/.agents/skills/writing-plans" },
           { skill: "executing-plans", tool: "claude_code" },
+          // A project-only skill (never deployed globally): its scope cell
+          // shows the folder + 1 and no globe.
+          { skill: "prisma-review", tool: "claude_code" },
         ],
       },
       state.skills,
@@ -391,6 +397,9 @@ function rich(now: number): FixtureState {
           { skill: "brainstorming", tool: "claude_code" },
           { skill: "brainstorming", tool: "pi" },
           { skill: "mcp-builder", tool: "claude_code" },
+          // react-perf-audit: global + all three projects (the scope cell's
+          // globe and folder 3, the tooltip naming them).
+          { skill: "react-perf-audit", tool: "claude_code" },
         ],
       },
       state.skills,

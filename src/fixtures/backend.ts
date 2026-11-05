@@ -148,7 +148,32 @@ export function createFixtureBackend(
     state.projects.find((p) => p.id === id) ??
     fail({ code: "NOT_FOUND", kind: "project", id });
 
-  const skillsDto = (): ManagedSkillDto[] => state.skills.map((s) => clone(s.dto));
+  /**
+   * The listing (Rust `skill_catalog`): each skill's projects are derived from
+   * the project world's assignment rows at read time — one pass, ordered by
+   * project name then id, each project's rows by Tool key — never stored on
+   * the skill, so no project mutation can leave them stale.
+   */
+  const skillsDto = (): ManagedSkillDto[] => {
+    const bySkill = new Map<string, ManagedSkillDto["projects"]>();
+    const projects = [...state.projects].sort(
+      (a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.id.localeCompare(b.id),
+    );
+    for (const project of projects) {
+      const rows = [...project.assignments].sort((a, b) => a.tool.localeCompare(b.tool));
+      for (const row of rows) {
+        const list = bySkill.get(row.skill_id) ?? [];
+        let entry = list.find((p) => p.project_id === project.id);
+        if (!entry) {
+          entry = { project_id: project.id, project_name: project.name, deployments: [] };
+          list.push(entry);
+        }
+        entry.deployments.push({ tool: row.tool, status: row.status, synced_at: row.synced_at });
+        bySkill.set(row.skill_id, list);
+      }
+    }
+    return state.skills.map((s) => ({ ...clone(s.dto), projects: bySkill.get(s.dto.id) ?? [] }));
+  };
 
   const isInstalled = (tool: string) => state.installedTools.includes(tool);
 
@@ -195,6 +220,7 @@ export function createFixtureBackend(
         unlocatable: null,
         detachable: input.sourceType === "local",
         health: null,
+        projects: [],
       },
       files,
       contentHash: input.hashOverride ?? hashFiles(files),

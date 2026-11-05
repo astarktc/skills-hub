@@ -9,6 +9,7 @@ import {
   HEALTH_ROW_LABEL_KEY,
   UNLOCATABLE_TOOLTIP_KEY,
   formatRelativeTime,
+  healthRowPlaces,
   type HealthRepair,
   type HealthRow,
   type SkillHealthFold,
@@ -46,7 +47,7 @@ export default function HealthSection({ skill, health, labelOf, actions, blocked
     } else if (row.kind === "central_missing" || row.kind === "source_missing") {
       parts.push(t(UNLOCATABLE_TOOLTIP_KEY[row.kind]));
     }
-    if (row.tools.length > 0) parts.push(t("inspector.health.onTools", { tools: row.tools.map(labelOf).join(", ") }));
+    parts.push(...healthRowPlaces(row, { t, labelOf }));
     if (row.at !== null) parts.push(t("inspector.health.settled", { time: formatRelativeTime(row.at, t) }));
     return parts.length > 0 ? parts.join(" · ") : null;
   };

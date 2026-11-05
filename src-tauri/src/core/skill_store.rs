@@ -271,6 +271,19 @@ pub struct ProjectSkillAssignmentRecord {
     pub created_at: i64,
 }
 
+/// One project deployment of a Managed skill as the library listing reads it:
+/// the assignment row's Tool and lifecycle, with the project it belongs to.
+/// Read for every skill at once by [`SkillStore::list_skill_project_deployments`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillProjectDeploymentRecord {
+    pub skill_id: String,
+    pub project_id: String,
+    pub project_path: String,
+    pub tool: String,
+    pub status: SyncStatus,
+    pub synced_at: Option<i64>,
+}
+
 impl ProjectSkillAssignmentRecord {
     /// See [`owns_artifact`]: a sync of ours succeeded at this row's path.
     pub fn owns_artifact(&self) -> bool {
@@ -1366,6 +1379,53 @@ impl SkillStore {
                 ],
             )?;
             Ok(())
+        })
+    }
+
+    /// Every project deployment of every Managed skill — or of `only` that
+    /// skill — in **one** query (the assignment rows joined to their project),
+    /// ordered by skill, project path, then Tool. The library listing groups
+    /// them per skill; it never asks per skill.
+    pub fn list_skill_project_deployments(
+        &self,
+        only: Option<&str>,
+    ) -> Result<Vec<SkillProjectDeploymentRecord>> {
+        self.with_conn(|conn| {
+            let sql = match only {
+                Some(_) => {
+                    "SELECT a.id, a.skill_id, a.project_id, p.path, a.tool, a.mode, a.status, a.last_error, a.synced_at
+                     FROM project_skill_assignments a JOIN projects p ON p.id = a.project_id
+                     WHERE a.skill_id = ?1
+                     ORDER BY a.skill_id ASC, p.path ASC, a.tool ASC"
+                }
+                None => {
+                    "SELECT a.id, a.skill_id, a.project_id, p.path, a.tool, a.mode, a.status, a.last_error, a.synced_at
+                     FROM project_skill_assignments a JOIN projects p ON p.id = a.project_id
+                     ORDER BY a.skill_id ASC, p.path ASC, a.tool ASC"
+                }
+            };
+            let mut stmt = conn.prepare(sql)?;
+            let read = |row: &rusqlite::Row<'_>| {
+                let id: String = row.get(0)?;
+                let (_, status, _) = read_lifecycle(&id, row.get(5)?, row.get(6)?, row.get(7)?);
+                Ok(SkillProjectDeploymentRecord {
+                    skill_id: row.get(1)?,
+                    project_id: row.get(2)?,
+                    project_path: row.get(3)?,
+                    tool: row.get(4)?,
+                    status,
+                    synced_at: row.get(8)?,
+                })
+            };
+            let rows = match only {
+                Some(skill_id) => stmt.query_map(params![skill_id], read)?,
+                None => stmt.query_map([], read)?,
+            };
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
         })
     }
 

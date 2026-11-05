@@ -78,6 +78,8 @@ export function CandidatePicker(props: CandidatePickerProps) {
             aria-label={t("add.picker.searchLabel")}
             aria-describedby={statusId}
             autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
             spellCheck={false}
           />
         </div>

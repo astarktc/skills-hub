@@ -436,6 +436,9 @@ const ExplorePage = ({
               type="search"
               size="sm"
               className="w-64"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
               onKeyDown={(event) => {

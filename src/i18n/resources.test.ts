@@ -87,7 +87,59 @@ function retiredWordHits(catalog: unknown): string[] {
     .map(([key, value]) => `${key}: ${value}`);
 }
 
+/**
+ * The reverse guard (BACKLOG #82): every `en` leaf is read somewhere in `src/`.
+ * A key is read when the source names it as a quoted literal (`t("a.b")`, or a
+ * key map's value such as `HEALTH_ROW_LABEL_KEY`), or when it sits under a
+ * prefix the source builds dynamically — a template literal `` `a.b.${…}` ``,
+ * detected from the source itself (`DYNAMIC_PREFIX`), so a new dynamic family
+ * needs no hand-kept list. A plural leaf (`_one` / `_other` …) is read through
+ * its base key. Anything else is dead copy: delete it.
+ */
+const DYNAMIC_PREFIX = /`([a-zA-Z][\w.]*)\.\$\{/g;
+
+/** Leaves the scan cannot see but the app reads, each with its reason. Keep it empty if you can. */
+const UNREAD_ALLOW_LIST: Readonly<Record<string, string>> = {};
+
+const PLURAL_SUFFIX = /_(zero|one|two|few|many|other)$/;
+
+function unreadLeaves(catalog: unknown, texts: readonly string[]): string[] {
+  const text = texts.join("\n");
+  const prefixes = new Set([...text.matchAll(DYNAMIC_PREFIX)].map((match) => `${match[1]}.`));
+  const quoted = (key: string) => {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`["'\`]${escaped}["'\`]`).test(text);
+  };
+  const keys = [...new Set(leaves(catalog).map(([key]) => key.replace(PLURAL_SUFFIX, "")))];
+  return keys.filter(
+    (key) => !(key in UNREAD_ALLOW_LIST) && !quoted(key) && ![...prefixes].some((prefix) => key.startsWith(prefix)),
+  );
+}
+
+/** The app's own sources, without the catalog itself (its property names are not reads). */
+const appSources = Object.entries(sources)
+  .filter(([file]) => !file.endsWith("/i18n/resources.ts"))
+  .map(([, text]) => text);
+
 describe("i18n catalog", () => {
+  it("reads every en leaf somewhere in src/ (BACKLOG #82)", () => {
+    expect(unreadLeaves(resources.en.translation, appSources)).toEqual([]);
+  });
+
+  it("the reverse check sees literal, mapped, plural and template-built reads, and flags the rest", () => {
+    // Guards the check itself: a too-generous matcher would make the test above vacuous.
+    const catalog = {
+      a: { read: "x", mapped: "x", dead: "x" },
+      count_one: "x",
+      count_other: "x",
+      tools: { cursor: "Cursor" },
+      orphan_one: "x",
+      orphan_other: "x",
+    };
+    const texts = ['t("a.read")', 'const KEY = { k: "a.mapped" };', 't("count", { count })', "t(`tools.${key}`)"];
+    expect(unreadLeaves(catalog, texts)).toEqual(["a.dead", "orphan"]);
+  });
+
   it("uses no retired vocabulary word in any en value (D45)", () => {
     expect(retiredWordHits(resources.en.translation)).toEqual([]);
   });

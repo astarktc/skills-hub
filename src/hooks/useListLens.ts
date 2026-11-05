@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   displayOrder,
+  onScreenOrder,
   filterAndSortSkills,
   groupSkillsByRepo,
   type RepoGroup,
@@ -27,6 +28,15 @@ const FLAT_ONLY: PersistedPreference<boolean> = {
   write: () => {},
 };
 
+/** A surface with no collapse choice never collapses a group. */
+const NEVER_COLLAPSED: PersistedPreference<readonly string[]> = {
+  key: "",
+  read: () => [],
+  write: () => {},
+};
+
+const NONE: ReadonlySet<string> = new Set();
+
 /** The least a lens row carries: identity, a name, and the source grouping reads. */
 export type LensSubject = { id: string; name: string; source_ref: string | null };
 
@@ -47,6 +57,11 @@ type ListLensBase<T extends LensSubject> = {
   groupByRepoPreference?: PersistedPreference<boolean>;
   /** Where this surface persists its view mode; omitted = list only. */
   viewModePreference?: PersistedPreference<ViewMode>;
+  /**
+   * Where this surface persists its collapsed groups (by group key, D42);
+   * omitted = groups never collapse.
+   */
+  collapsePreference?: PersistedPreference<readonly string[]>;
   /** Fold every single-skill source into one "Individual sources" group. */
   foldSingletons?: boolean;
   /** The surface's selection (surface state); the lens answers its visible subset. */
@@ -75,8 +90,9 @@ export type ListLensOptions<T extends LensSubject> = ListLensBase<T> &
  * The list lens: "which skills am I looking at, and how". One instance per
  * list surface (My Skills, the assignment matrix; the pickers and the
  * palette later). It owns the query, the sort, grouping (Grouped/Flat, with
- * the optional singleton fold), the named filters (chips), the view mode
- * and their persistence; the
+ * the optional singleton fold, decided on the unfiltered catalog), the named
+ * filters (chips), the view mode, which groups are collapsed, and their
+ * persistence; the
  * folds themselves are the pure functions in `skillPresentation.ts`.
  */
 export function useListLens<T extends LensSubject>(options: ListLensOptions<T>) {
@@ -85,6 +101,7 @@ export function useListLens<T extends LensSubject>(options: ListLensOptions<T>) 
     labels,
     groupByRepoPreference = FLAT_ONLY,
     viewModePreference,
+    collapsePreference,
     foldSingletons = false,
     selection,
     filters,
@@ -99,6 +116,7 @@ export function useListLens<T extends LensSubject>(options: ListLensOptions<T>) 
   const [sort, setSort] = useState<SortMode>("name");
   const [groupByRepo, setGroupByRepo] = usePersistedPreference(groupByRepoPreference);
   const [viewMode, setViewMode] = usePersistedPreference(viewModePreference ?? LIST_ONLY);
+  const [storedCollapsed, setStoredCollapsed] = usePersistedPreference(collapsePreference ?? NEVER_COLLAPSED);
 
   const predicate = filter === "all" ? undefined : filters?.[filter];
   const visible = useMemo(() => {
@@ -119,21 +137,73 @@ export function useListLens<T extends LensSubject>(options: ListLensOptions<T>) 
   }, [filters, items]);
 
   const { local, ungrouped, individual } = labels;
-  /** null = Flat. */
+  /**
+   * null = Flat. Grouping is decided on the unfiltered catalog (D42): a query
+   * that leaves one skill of a multi-skill repo keeps its repo header.
+   */
   const groups: RepoGroup<T>[] | null = useMemo(
     () =>
       groupByRepo
-        ? groupSkillsByRepo(visible, { local, ungrouped, individual }, { foldSingletons })
+        ? groupSkillsByRepo(visible, { local, ungrouped, individual }, { foldSingletons, catalog: items })
         : null,
-    [foldSingletons, groupByRepo, individual, local, ungrouped, visible],
+    [foldSingletons, groupByRepo, individual, items, local, ungrouped, visible],
   );
+
+  // Collapse (D42). The stored state is the operator's; while a query or chip
+  // narrows the list every group is expanded for its duration, and a collapse
+  // made meanwhile is the narrowing's own — dropped when it clears, so the
+  // stored state comes back untouched.
+  const narrowing = query.trim() !== "" || filter !== "all";
+  const [transient, setTransient] = useState<ReadonlySet<string>>(NONE);
+  const [wasNarrowing, setWasNarrowing] = useState(narrowing);
+  if (wasNarrowing !== narrowing) {
+    setWasNarrowing(narrowing);
+    setTransient(NONE);
+  }
+  const canCollapse = collapsePreference !== undefined;
+  const stored = useMemo(() => new Set(storedCollapsed), [storedCollapsed]);
+  const collapsed = !canCollapse ? NONE : narrowing ? transient : stored;
+  const writeCollapsed = useCallback(
+    (next: ReadonlySet<string>) => {
+      if (!canCollapse) return;
+      if (narrowing) setTransient(next);
+      else setStoredCollapsed([...next]);
+    },
+    [canCollapse, narrowing, setStoredCollapsed],
+  );
+  /** Collapse or expand one group (its chevron, ←/→ on its header). */
+  const setCollapsed = useCallback(
+    (key: string, on: boolean) => {
+      if (collapsed.has(key) === on) return;
+      const next = new Set(collapsed);
+      if (on) next.add(key);
+      else next.delete(key);
+      writeCollapsed(next);
+    },
+    [collapsed, writeCollapsed],
+  );
+  const toggleCollapsed = useCallback((key: string) => setCollapsed(key, !collapsed.has(key)), [collapsed, setCollapsed]);
+  /** Collapse every group shown (the view menu's Collapse all). */
+  const collapseAll = useCallback(
+    () => writeCollapsed(new Set([...collapsed, ...(groups ?? []).map((group) => group.key)])),
+    [collapsed, groups, writeCollapsed],
+  );
+  const expandAll = useCallback(() => writeCollapsed(NONE), [writeCollapsed]);
 
   /**
    * The rows in the order they are on screen — a grouped list walks its
    * groups — the one sequence rendering, selection navigation and the
-   * post-mutation focus rule (Delete's next row) read.
+   * post-mutation focus rule (Delete's next row) read. A collapsed group's
+   * rows stay in it: they are still in the lens, selected and counted.
    */
   const displayed = useMemo(() => displayOrder(visible, groups), [groups, visible]);
+
+  /**
+   * The rows on screen: `displayed` minus a collapsed group's rows — what
+   * keyboard order (j/k, ⌘A, a shift-click range), the post-mutation focus rule
+   * and the name column read. A collapsed row keeps its selection.
+   */
+  const onScreen = useMemo(() => onScreenOrder(displayed, groups, collapsed), [collapsed, displayed, groups]);
 
   /** The selected ids the lens currently shows, in display order. */
   const visibleSelection = useMemo(
@@ -158,10 +228,22 @@ export function useListLens<T extends LensSubject>(options: ListLensOptions<T>) 
       visible,
       groups,
       displayed,
+      onScreen,
       visibleSelection,
+      collapsed,
+      setCollapsed,
+      toggleCollapsed,
+      collapseAll,
+      expandAll,
     }),
     [
+      collapseAll,
+      collapsed,
+      expandAll,
+      setCollapsed,
+      toggleCollapsed,
       displayed,
+      onScreen,
       filter,
       filterCounts,
       groupByRepo,

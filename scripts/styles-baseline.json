@@ -39,7 +39,8 @@
     "src/components/projects/EditProjectModal.tsx",
     "src/components/projects/RemoveProjectModal.tsx",
     "src/components/shell/CommandPalette.tsx",
-    "src/components/skills/ExplorePage.tsx"
+    "src/components/skills/ExplorePage.tsx",
+    "src/components/skills/listColumns.ts"
   ],
   "rawColourExempt": [
     {

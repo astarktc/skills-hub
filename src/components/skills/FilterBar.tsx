@@ -7,6 +7,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -41,8 +42,9 @@ const VIEW_LABEL_KEY: Record<ViewMode, string> = {
 /**
  * The My Skills filter bar, all through the list lens: search (`/` focuses
  * it — My Skills' keymap, `useSkillListKeymap`, finds it by
- * `data-skill-search`), the chips All · Issues · Edited · Disabled, Grouped / Flat, and one
- * Sort and view menu. Policy (auto-sync) and library-wide verbs live
+ * `data-skill-search`; Enter / ↓ there move to the first row), the chips All · Issues ·
+ * Edited · Disabled, Grouped / Flat, and one Sort and view menu (Collapse all / Expand all
+ * while Grouped). Policy (auto-sync) and library-wide verbs live
  * elsewhere (Settings; the bulk rail).
  */
 const FilterBar = ({ lens, t }: FilterBarProps) => {
@@ -60,12 +62,25 @@ const FilterBar = ({ lens, t }: FilterBarProps) => {
           type="search"
           size="sm"
           className="w-52"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Escape" && query) {
               event.preventDefault();
               setQuery("");
+              return;
+            }
+            // Enter / ↓ take focus to the first row the list shows (BACKLOG
+            // #81): a field-level rule — the list keymap ignores editables.
+            if ((event.key === "Enter" || event.key === "ArrowDown") && !event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
+              const first = document.querySelector<HTMLElement>("[data-skill-list] [data-skill-row]");
+              if (!first) return;
+              event.preventDefault();
+              first.focus();
+              first.scrollIntoView?.({ block: "nearest" });
             }
           }}
           placeholder={t("library.searchPlaceholder")}
@@ -129,6 +144,16 @@ const FilterBar = ({ lens, t }: FilterBarProps) => {
                 ))}
               </DropdownMenuRadioGroup>
             </DropdownMenuGroup>
+            {lens.groupByRepo ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>{t("library.groups")}</DropdownMenuLabel>
+                  <DropdownMenuItem onClick={lens.collapseAll}>{t("library.collapseAll")}</DropdownMenuItem>
+                  <DropdownMenuItem onClick={lens.expandAll}>{t("library.expandAll")}</DropdownMenuItem>
+                </DropdownMenuGroup>
+              </>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

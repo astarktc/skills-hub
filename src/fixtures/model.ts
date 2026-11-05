@@ -426,6 +426,8 @@ export function makeSkill(spec: SkillSpec, now: number, index: number): FixtureS
       health: spec.health
         ? { kind: spec.health.kind, error: spec.health.error, at: now - (spec.health.hoursAgo ?? 2) * HOUR }
         : null,
+      // Derived from the projects' assignment rows by the listing (`skillsDto`).
+      projects: [],
     },
     files,
     contentHash: centralGone ? "" : hashFiles(files),

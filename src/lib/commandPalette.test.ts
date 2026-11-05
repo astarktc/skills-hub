@@ -45,6 +45,7 @@ function skill(id: string, extra: Partial<ManagedSkill> = {}): ManagedSkill {
     unlocatable: null,
     detachable: false,
     health: null,
+    projects: [],
     ...extra,
   };
 }

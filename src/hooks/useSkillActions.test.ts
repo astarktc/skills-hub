@@ -76,6 +76,7 @@ function skill(id: string, name: string, targets: string[] = []): ManagedSkill {
     unlocatable: null,
     detachable: false,
     health: null,
+    projects: [],
   };
 }
 
@@ -735,7 +736,7 @@ describe("Change source opens on the skill's kind", () => {
     const s = setup({ skills: [row] });
     const { result } = await render(s);
     await act(async () => {
-      await result.current.actions.repair(row, { kind: "source_missing", scope: "skill", severity: "stale", count: 0, tools: [], error: null, at: null, repairs: ["repoint"] }, "repoint");
+      await result.current.actions.repair(row, { kind: "source_missing", scope: "skill", severity: "stale", count: 0, tools: [], projects: [], error: null, at: null, repairs: ["repoint"] }, "repoint");
     });
     expect(result.current.surface.layer("repoint")).toMatchObject({ preselect: "local" });
   });

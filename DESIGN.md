@@ -342,7 +342,7 @@ Props: `variant` · `tone` · `size`, plus `pending`.
 | `hue` | `moss` · `teal` · `cyan` · `sky` · `orchid` · `rose` · `slate` (`IDENTITY_HUES`, `ui/styles.ts`) | With `tone="identity"` only. Never chosen by hand: `skillPresentation.identityHue(owner)`. |
 | `size` | `sm` (default) | 20 px. |
 | | `md` | 24 px. |
-| | `chip` | 22 × 22 px square, `rounded-md`, centred, 10.5 px bold (`text-2xs`): two initials or one icon. The default (and only) size of `identity`; with `neutral` it is the ownerless chip (Individual sources, a local folder: an icon on `muted`). |
+| | `chip` | 22 × 22 px square, `rounded-md`, centred, 10.5 px bold (`text-2xs`): two initials or one icon. The default (and only) size of `identity`; with `solid neutral` it is the ownerless chip (Individual sources, a local folder, a non-GitHub git source: an icon on `raised` — `muted` is 1.06 on the dark header, invisible). |
 
 **The identity rule** (ticket 30): the hue comes from a stable key — the repo owner — never from state; the chip
 supplements the name, never replaces it (it sits beside the name, `aria-hidden`, and the name is the label); with 7
@@ -567,6 +567,17 @@ With no modal open the Tab order is unchanged: first in the body is where it was
 hotkey (⌥T) can still move focus into the toaster under a modal; leaving it, sonner returns focus where it was. The
 props are sonner's own; the host is the primitive's.
 
+**Placement** (ticket 31, BACKLOG #80): `bottom-right`, lifted `6rem` above the window's foot (`offset={{ bottom:
+"6rem" }}` in `App.tsx`). The header's verbs — the next action after a notice — and the filter bar are never under it,
+nor the bulk rail (41 px at 960 and 1280), a dialog's foot or the inspector's; it passes over list content, which
+scrolls. Measured on the fixture with the rail up: at 960×640 the toast spans y 491–544 (rail 599–640), at 1280×800
+y 651–704 (rail 759–800); no header, filter-bar or rail control intersects it
+(`.scratch/round19/evidence/31/toast-dark-960.png`). Pointer events and hover-pause are sonner's own — a notice under
+the pointer stays while it is read, and **View report** still takes a click; neither is disabled to make room.
+The stack is **three** toasts (`visibleToasts={3}`, sonner's default; ticket 31 audit F2): five persistent errors
+expanded under the pointer climbed to the header at 960×640 — three expanded multi-line errors stay below the bulk
+rail (~130 px each from the foot). A run is one toast anyway (above); a fourth notice queues behind.
+
 Motion (ticket 15): sonner's own 400 ms slide, fade and height glide are replaced, inside the primitive, by the
 world's 120 ms (`--motion-fast`) transform + opacity on `ease-out` — inline styles on the toaster and each toast
 (they outrank sonner's injected CSS), an important child utility for the content fade of a stacked toast. The toast
@@ -702,11 +713,16 @@ invisible, not motion — so "first DOM frame" is not claimed for toasts.
   title) only when name + marks exceed the whole track — beside two marks at 960, a name over 220–235 px.
   No horizontal scroll at either size. Below a 768 px *list pane* (a container query, `@max-3xl`) the description
   goes.
+- **Superseded by ticket 31 (D39, 2026-11-04)**: the shared name/description track and its 60 % floor are gone. The row
+  is `32 · --name-col · 1fr · strip (marks × 20 + 40) · scope 56 · 40 · 32` (§ My Skills); the two bullets above are
+  the 1.3.0 measurement, kept as history. Re-measured on the fixture (`rich`, 7 harnesses, `--name-col` = 34 ch =
+  278 px): at 960 the description keeps 141 px, at 1280 317 px, at 1800 837 px — one line everywhere, no horizontal
+  scroll. Below a 48 rem list pane the description still goes and the name takes `1fr`.
 
-## My Skills (the first migrated surface, ticket 11)
+## My Skills (the first migrated surface, ticket 11; row and group anatomy, ticket 31)
 
 Composed from the primitives and tokens only; no variant was added. Files: `components/shell/AppSidebar.tsx`,
-`components/skills/{LibraryHeader,FilterBar,SkillsList,SkillRow,SyncedStrip}.tsx`.
+`components/skills/{LibraryHeader,FilterBar,SkillsList,SkillRow,SyncedStrip,listColumns}.tsx`.
 
 - **Shell.** Sidebar 200 px on `card` (`sidebar` tokens): the areas My Skills · Explore · Projects, then at the
   foot Notifications (unread count as a `solid accent` Badge) · Theme (a menu) · Keyboard shortcuts (a popover) ·
@@ -721,44 +737,99 @@ Composed from the primitives and tokens only; no variant was added. Files: `comp
   issues" (`ghost accent` Button that presses the Issues chip). Zero parts are dropped; a healthy library shows
   nothing. A skill has an issue when its loudest fold row is failed or out of date — the Issues chip keeps exactly those.
 - **Filter bar** (48 px + hairline, measured ticket 15 — 8 px around the 32 px Segmented and Sort controls; chips and search are 24 px; every bar is a 4 px multiple plus its hairline, rows are 36 px including theirs): search (`Input sm`, labelled "Search skills" through a Field; `/` focuses it, Escape
-  clears it) · Chips All · Issues · Edited · Disabled with their counts (`faint`) · Segmented Grouped / Flat · one
-  "Sort and view" menu (radio groups). Auto-deploy moved to Settings; library-wide Disable is the bulk rail's
-  (ticket 13) — nothing library-wide is one click away.
-- **Row** (36 px, `h-row`, `border` hairline, `accent` on hover (ticket 35), `raised` + a 3 px iris edge when selected): checkbox · name
-  (`sm` medium; the Tab stop that opens the skill) + Edit pencil (`ghost icon-sm`, only when overridden) +
-  **exception marks** (soft Badges: `failed` with a ⊗ icon, `stale` with a ⚠ icon, `neutral` for "Not
-  deployed"; skill-level rows first, then target-level, in the fold's order; Disabled rows stay silent because the
-  strip and switch say them; in a list narrower than 48 rem — the inspector beside it — the marks compact to their
-  icons (`neutral` gains ⊖) with the words kept as their accessible text and tooltip, so the name keeps its room) · description (`muted-foreground`; it shares the name's track and yields to a long
-  name + marks; in Flat and in "Individual sources" preceded by the source in `font-mono xs faint`) ·
-  **Deployments strip** (`SyncedStrip.tsx`) + N/M · scope (globe when some global deployment is live) · Switch `sm` (= skill-grain Disable / Enable
-  through the door; `focusableWhenDisabled`, so a pressed switch keeps focus while its action runs and every switch
-  says why it is refused meanwhile) · overflow (`ghost icon-sm` → DropdownMenu:
-  a "Fix" group of the fold's repairs, then Update, Change source…, Detach, Edit invocation…, Remove).
+  clears it; Enter or ↓ moves focus to the first row shown — a rule of the field, the list keymap still ignores
+  editables; `autoCorrect` / `autoCapitalize` off and `spellCheck={false}` on every `type="search"` field) · Chips
+  All · Issues · Edited · Disabled with their counts (`faint`) · Segmented Grouped / Flat · one "Sort and view" menu
+  (radio groups, then — while Grouped — a "Groups" group: Collapse all · Expand all). Auto-deploy moved to Settings;
+  library-wide Disable is the bulk rail's (ticket 13) — nothing library-wide is one click away.
+- **Columns** (`listColumns.ts`, one template for the row and its group header): checkbox 32 · name `--name-col` ·
+  description `1fr` · strip `--strip-marks` × 20 px + 40 (N/M) · scope 56 · switch 40 · overflow 32, 12 px gaps.
+  The list publishes both measures on its pane, as it always did `--strip-marks` (the widest strip in view, collapsed
+  groups included so a collapse never shifts the columns). **`--name-col`** (D39, `skillPresentation.nameColumnWidth`)
+  is `clamp(12rem, N ch, 22rem)` where N is the longest *shown* row's name + 2 ch, + each exception mark's words + 5 ch
+  (icon, padding, gap), + 4 ch for the Edit pencil; a collapsed group's rows are not shown, so they do not count. The
+  pane sets `text-sm`, so `ch` resolves at the names' own size. A name wider than the column truncates (its title is
+  the full name); the description takes the rest, truncates on one line, and carries its full text (source label ·
+  description) as its title. Below a 48 rem list pane (`@max-3xl`, the inspector beside it) the description goes and
+  the name takes `1fr`. No row carries a source chip (operator pick A).
+- **Row** (36 px, `h-row`, no hairline — the card holds the rows; D38): on the card's `row` ground; hover `accent`
+  (ticket 35); the **focused** row (the inspector's, `aria-current`) is a `raised` rounded block (`rounded-md`), inset
+  4 px from the card's edges (`mx-1 px-2`, so its columns stay put) with a 1 px inset `ring`; a **selected** row is
+  `raised` with the 3 px iris edge (ticket 13) — both together when both hold. Cells: checkbox · name (`sm` medium;
+  the Tab stop that opens the skill) + Edit pencil (`ghost icon-sm`, only when overridden) + **exception marks** (soft
+  Badges: `failed` with a ⊗ icon, `stale` with a ⚠ icon, `neutral` otherwise; the fold's rows minus the silent ones
+  — `skillPresentation.rowMarks`: Disabled at either grain (the strip and the switch say it) and **Not deployed (D40,
+  never a row mark** — outright false for a skill that lives in projects; the strip's hollow marks say it globally;
+  the kind stays in the inspector ladder, the group summary and Deploy all's count). A target kind reads in the group
+  summary's short form — "2 failed", "1 missing", "1 out of date" (`ROW_MARK_LABEL_KEY`) — and every mark's tooltip
+  carries the ladder's full sentence, then what happened and where ("1 deployment failed — In quartermaster
+  (.agents/skills)", `healthRowPlaces`). In a list narrower than 48 rem the marks compact to their icons (`neutral`
+  gains ⊖), the words kept as accessible text) · description (`muted-foreground`; in Flat and in "Individual sources"
+  preceded by the source in `font-mono xs faint`) · **Deployments strip** (`SyncedStrip.tsx`) + N/M · **scope** ·
+  Switch `sm` (= skill-grain Disable / Enable through the door; `focusableWhenDisabled`, so a pressed switch keeps
+  focus while its action runs and every switch says why it is refused meanwhile) · overflow (`ghost icon-sm` →
+  DropdownMenu: a "Fix" group of the fold's repairs, then Update, Change source…, Detach, Edit invocation…, Remove).
   Clicking anywhere but a control opens the skill.
-- **Group header** (36 px, sticky, `card`): source icon · name (`h2`, links to the repo; the text inside the link
-  truncates, never an ancestor, so the link's ring paints whole) · count · state summary ("1 failed · 2 out of date ·
-  1 not deployed · 1 disabled", state-coloured words) · **Deploy all** (`ghost sm`; disabled with a reason when
-  every skill is deployed). Sources with one skill fold into "Individual sources"; no source pill repeats inside a
-  group.
+- **Scope cell** (D41, `skillPresentation.skillScope`): a globe when some global deployment is live (`deployAction` =
+  deployed), and/or a folder + N when N projects hold at least one live deployment (`isLiveTarget` over the skill's
+  `projects`, now on the wire — `ManagedSkillDto.projects`). One `role="img"` with one name, also its title:
+  "Deployed globally · In 3 projects: agent-skills, quartermaster, skills-hub"; a project-only skill shows the folder
+  alone. `xs faint` on the row: 6.00 dark / 6.24 light on `row`, 5.52 / 5.04 on `accent` (hover), 4.77 / 5.04 on
+  `raised` (focused, selected). N/M stays global. A failed or missing project deployment joins the row's "N failed" /
+  "N missing" mark (and the header's failed count, the Issues chip, the ladder) with its project named.
+- **Group card** (D38): each source group is a card — `border` + `rounded-lg`, `overflow-clip` so the radius clips
+  its rows, rows on `row` inside; cards stack 12 px apart inside 16 px of list padding. Flat is one card without a
+  header. In dark the card's `border` measures 1.17 against `row` (1.14 against `card`) and the header's `card` is a
+  1.02 pane step on black; the border carries the shape (light: 1.42 / 1.25, header 1.13).
+- **Group header** (40 px, sticky to the top of the scroll area within its card, `card`, a `border` hairline under it
+  unless collapsed; it shares the row's column template): checkbox (the group's skills in / out) · then, across the
+  name and description columns, **chevron** (`ghost icon-sm`, `aria-expanded`, named "Collapse {source}" / "Expand
+  {source}") · **source chip** (ticket 30's pick A, header only, `aria-hidden` — the name beside it is the label: a
+  GitHub owner's `Badge tone="identity"` with `identityHue(owner)` / `identityInitials(owner)`; otherwise the neutral
+  `size="chip"` Badge with the source's icon — layers for "Individual sources", a folder for the local group, a branch
+  for a git host other than GitHub) · name (`h2`, links to the repo; the text inside the link truncates, never an
+  ancestor, so the link's ring paints whole) · count (`faint`; hidden below a 48 rem list, where the name and the
+  summary need the room) · state summary ("1 failed · 2 out of date · 1 not deployed · 1 disabled", state-coloured
+  words; it yields first, `shrink-8`) · **harness initials** over the strip column (list view only) · **Deploy all**
+  (`ghost sm`, across scope · switch · overflow; disabled with a reason when every skill is deployed).
+- **Harness initials** (D42, `skillPresentation.harnessInitials`): one 2-letter mark per harness of the strip's set,
+  in its order, each 12 px wide on the strip's 20 px pitch so it sits over its mark — `text-2xs` (10.5 px) bold
+  `faint`, `role="img"` named with the Harness catalog's full label (also its title), inside a group named
+  "Harnesses". `faint` on `card`: **5.86 dark / 5.53 light**. The rule: the first letters of the label's first two
+  words, else its first two letters (Claude Code → CC, Cursor → CU, Gemini CLI → GC, Kimi Code CLI → KC); a pair
+  already taken in the set keeps its first letter and takes the next unused letter of its label (Codex CO, CodeBuddy
+  CD, Continue CN). The fixture's harnesses read CU · CC · CO · AM · KC · PI · GC (+ WI for Windsurf) — eight
+  distinct pairs, no tiebreak needed.
+- **Collapse** (D42): the chevron, ←/→ on a focused header (any control in it), and Collapse all / Expand all in the
+  view menu. State persists per source key through the list lens (`useListLens`'s `collapsePreference`,
+  `preferences.collapsedSourcesPreference`, storage key `skills-collapsedSources`). While a query or a chip narrows
+  the list every group is expanded for its duration; a collapse made meanwhile is the narrowing's own, and clearing it
+  restores the stored state. A collapsed group's rows stay in the lens and keep their selection — counted by the bulk
+  rail and the header checkbox — but are not on screen (`useListLens`'s `onScreen`): `j` / `k`, ⌘A, a shift-click
+  range and the post-mutation focus rule skip them.
+- **Grouping** is decided on the **unfiltered catalog** (D42, BACKLOG #81 (4)): a source holds one skill in the whole
+  library or it keeps its header — a query that leaves one skill of a multi-skill repo shows it under that repo, never
+  under "Individual sources" (`groupSkillsByRepo`'s `catalog`). Sources with one skill fold into "Individual sources";
+  no source pill repeats inside a group.
 - **Card view** (Auto / Dense grid) renders the same anatomy on a `card` tile with the same strip — a stop-gap
   until round 19b designs the grid (F07's clipping is gone: marks never clip).
 
 ### The Deployments strip
 
 One 12 px mark per harness of the effective target set (registry order), then any harness the skill still has a
-deployment row for outside that set. It is **read-only** (D22): each mark is `role="img"` with its own name, and the row opens the
+deployment row for outside that set, on a **20 px pitch** (8 px gaps; ticket 31 — at 16 px the header's two-letter
+initials ran together, "GMAM"), so the strip column is marks × 20 + 40 px. It is **read-only** (D22): each mark is `role="img"` with its own name, and the row opens the
 skill. Shape carries the state; colour only reinforces it; the strip was checked in grayscale
 (`.scratch/round19/evidence/11/*-grayscale.png`).
 
 | Mark | Shape | Colour | Accessible name | Dark (ticket 35 tokens) / light on background · card · raised |
 |---|---|---|---|---|
-| deployed (`synced`) | filled dot | `muted-foreground`; `input` when every mark is deployed (the quiet N/N strip) | "Cursor: deployed" | 8.33 · 8.13 · 6.61 / 8.16 · 7.60 · 7.20; quiet 3.94 · 3.85 · 3.13 / 3.78 · 3.52 · 3.33 |
-| not deployed | hollow ring | `input` | "Amp: not deployed" ("…not deployed yet" for a `pending` row) | 3.94 · 3.85 · 3.13 / 3.78 · 3.52 · 3.33 |
-| out of date copy (`stale`) | half-filled ring | `stale` | "Codex: out of date copy — the copy differs from the skill" | 11.01 · 10.75 · 8.74 / 5.62 · 5.23 · 4.95 (token table) |
-| failed / copy missing | × | `failed` | "Amp: failed — the last deploy did not complete" ("…first deploy…"; "Amp: copy missing — the deployed copy is gone") | 7.57 · 7.39 · 6.01 / 5.50 · 5.12 · 4.85 |
+| deployed (`synced`) | filled dot | `muted-foreground`; `input` when every mark is deployed (the quiet N/N strip) | "Cursor: deployed" | 8.33 · 8.13 · 6.61 / 8.36 · 7.41 · 6.75; quiet 3.94 · 3.85 · 3.13 / 4.38 · 3.88 · 3.54 |
+| not deployed | hollow ring | `input` | "Amp: not deployed" ("…not deployed yet" for a `pending` row) | 3.94 · 3.85 · 3.13 / 4.38 · 3.88 · 3.54 |
+| out of date copy (`stale`) | half-filled ring | `stale` | "Codex: out of date copy — the copy differs from the skill" | 11.01 · 10.75 · 8.74 / 5.68 · 5.03 · 4.58 (token table; light on `raised` is a mark, not text) |
+| failed / copy missing | × | `failed` | "Amp: failed — the last deploy did not complete" ("…first deploy…"; "Amp: copy missing — the deployed copy is gone") | 7.57 · 7.39 · 6.01 / 5.64 · 4.99 · 4.55 |
 | central copy missing (`broken`) | × | `failed` | "Pi: central copy missing — the link has nothing to follow" | as failed |
-| disabled | slashed ring | `faint` | "Codex: disabled" / "…disabled — the skill is off everywhere" | 6.00 · 5.86 · 4.77 / 6.09 · 5.67 · 5.37 |
+| disabled | slashed ring | `faint` | "Codex: disabled" / "…disabled — the skill is off everywhere" | 6.00 · 5.86 · 4.77 / 6.24 · 5.53 · 5.04 |
 
 - A harness detection no longer sees is named "Windsurf (not detected): …"; a label is always the Harness catalog's (`useToolCatalog`).
 - A skill whose **central copy is missing never shows a filled mark**: a deployed or out-of-date row is `broken` (its

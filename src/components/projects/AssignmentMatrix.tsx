@@ -156,6 +156,9 @@ const AssignmentMatrix = ({
             type="search"
             size="sm"
             className="w-44"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {

@@ -7,6 +7,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useListLens, type LensItem, type ListLensOptions } from "./useListLens";
 import {
+  collapsedSourcesPreference,
   groupByRepoPreference,
   projectsGroupByRepoPreference,
   viewModePreference,
@@ -144,6 +145,77 @@ describe("useListLens", () => {
 
     act(() => result.current.setFilter("all"));
     expect(result.current.visible.map((s) => s.name)).toEqual(["gamma"]);
+  });
+});
+
+// Ticket 31 (D42): grouping is decided on the unfiltered catalog, and groups
+// collapse — persisted per source key, expanded for the duration of a query
+// or chip, restored when it clears.
+describe("useListLens groups (ticket 31)", () => {
+  it("keeps a filtered singleton of a multi-skill repo under its repo header", () => {
+    const { result } = render({ foldSingletons: true });
+    act(() => result.current.setGroupByRepo(true));
+    act(() => result.current.setQuery("gam"));
+    expect(result.current.groups?.map((g) => [g.key, g.skills.map((s) => s.name)])).toEqual([
+      ["acme/tools", ["gamma"]],
+    ]);
+  });
+
+  it("collapses a group, persists it per source key, and reads it back", () => {
+    const { result } = render({ collapsePreference: collapsedSourcesPreference });
+    act(() => result.current.setGroupByRepo(true));
+    expect(result.current.collapsed.size).toBe(0);
+    act(() => result.current.toggleCollapsed("acme/tools"));
+    expect([...result.current.collapsed]).toEqual(["acme/tools"]);
+    expect(window.localStorage.getItem("skills-collapsedSources")).toBe('["acme/tools"]');
+    // A collapsed group's rows stay in the lens (selected and counted), but
+    // are not on screen (keyboard order, the focus rule, the name column).
+    expect(result.current.displayed.map((s) => s.name)).toContain("gamma");
+    expect(result.current.onScreen.map((s) => s.name)).toEqual(["beta", "delta"]);
+
+    const again = render({ collapsePreference: collapsedSourcesPreference });
+    expect([...again.result.current.collapsed]).toEqual(["acme/tools"]);
+    act(() => again.result.current.toggleCollapsed("acme/tools"));
+    expect(again.result.current.collapsed.size).toBe(0);
+    expect(window.localStorage.getItem("skills-collapsedSources")).toBe("[]");
+  });
+
+  it("Collapse all / Expand all act on every group shown", () => {
+    const { result } = render({ collapsePreference: collapsedSourcesPreference });
+    act(() => result.current.setGroupByRepo(true));
+    act(() => result.current.collapseAll());
+    expect([...result.current.collapsed].sort()).toEqual(["__local__", "acme/tools", "solo/one"]);
+    act(() => result.current.expandAll());
+    expect(result.current.collapsed.size).toBe(0);
+  });
+
+  it("a query or chip expands every group for its duration, then restores the stored state", () => {
+    const FILTERS = { acme: (item: LensItem) => Boolean(item.source_ref?.includes("acme")) };
+    const { result } = render({ collapsePreference: collapsedSourcesPreference, filters: FILTERS });
+    act(() => result.current.setGroupByRepo(true));
+    act(() => result.current.toggleCollapsed("acme/tools"));
+
+    act(() => result.current.setQuery("gam"));
+    expect(result.current.collapsed.size).toBe(0);
+    // A collapse during the query is the query's own; the stored state is untouched.
+    act(() => result.current.toggleCollapsed("acme/tools"));
+    expect([...result.current.collapsed]).toEqual(["acme/tools"]);
+    act(() => result.current.toggleCollapsed("acme/tools"));
+    act(() => result.current.setQuery(""));
+    expect([...result.current.collapsed]).toEqual(["acme/tools"]);
+
+    act(() => result.current.setFilter("acme"));
+    expect(result.current.collapsed.size).toBe(0);
+    act(() => result.current.setFilter("all"));
+    expect([...result.current.collapsed]).toEqual(["acme/tools"]);
+    expect(window.localStorage.getItem("skills-collapsedSources")).toBe('["acme/tools"]');
+  });
+
+  it("a surface without a collapse preference never collapses", () => {
+    const { result } = render();
+    act(() => result.current.setGroupByRepo(true));
+    act(() => result.current.toggleCollapsed("acme/tools"));
+    expect(result.current.collapsed.size).toBe(0);
   });
 });
 

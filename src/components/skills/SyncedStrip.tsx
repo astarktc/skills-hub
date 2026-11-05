@@ -20,7 +20,9 @@ const SyncedStrip = ({ strip, t }: SyncedStripProps) => {
   }
   return (
     <span className="flex min-w-0 items-center gap-2">
-      <span role="group" aria-label={t("library.row.strip")} className="flex items-center gap-1">
+      {/* 12 px marks at a 20 px pitch (8 px gap): the group header's harness
+          initials sit over them, two letters each (ticket 31). */}
+      <span role="group" aria-label={t("library.row.strip")} className="flex items-center gap-2">
         {strip.marks.map((mark) => {
           const name = stripMarkName(mark, t);
           return (

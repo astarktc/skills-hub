@@ -125,7 +125,7 @@ function Surface({ surface }: { surface: (typeof surfaces)[number] }) {
           </span>
         ))}
         <span className="flex items-center gap-1.5 text-sm text-foreground">
-          <Badge size="chip" aria-hidden="true">
+          <Badge variant="solid" size="chip" aria-hidden="true">
             <Layers />
           </Badge>
           Individual sources

@@ -229,12 +229,28 @@ export type ProjectStateDeps = {
   settleCollisions?: (
     report: ProjectSyncReport,
   ) => Promise<{ report: ProjectSyncReport; resolved: boolean }>;
+  /**
+   * Called after a project mutation settles (success or failure-path
+   * re-read): the library's rows carry each skill's project deployments
+   * (`ManagedSkillDto.projects`, D41), so App hands in the library's reload
+   * and the two worlds converge without importing each other (ticket 31
+   * audit F1). Never called for a plain read (selecting a project).
+   */
+  onDeploymentsChanged?: () => void | Promise<void>;
 };
 
 const UNSETTLED = async (report: ProjectSyncReport) => ({ report, resolved: false });
 
 export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
   const settleCollisions = deps.settleCollisions ?? UNSETTLED;
+  const onDeploymentsChanged = deps.onDeploymentsChanged;
+  /** Tell the library its project data moved; a failed reload is its own concern. */
+  const converge = useCallback(() => {
+    if (!onDeploymentsChanged) return;
+    void Promise.resolve()
+      .then(onDeploymentsChanged)
+      .catch(() => {});
+  }, [onDeploymentsChanged]);
   // Data state
   const [projects, setProjects] = useState<ProjectDto[]>([]);
   const [selection, setSelection] = useState<Selection>(NO_SELECTION);
@@ -302,6 +318,15 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
     );
   }, []);
 
+  /** A mutation's returned view: applied, and the library told (`converge`). */
+  const settleView = useCallback(
+    (view: ProjectViewDto) => {
+      applyView(view);
+      converge();
+    },
+    [applyView, converge],
+  );
+
   /**
    * Re-read a project's view so what is shown matches what the backend
    * settled: the error-path convergence after a failed mutation, and the one
@@ -318,9 +343,12 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
         // The mutation's own outcome is what the caller reports; the read
         // failure is a stale marker, not a second error.
         return false;
+      } finally {
+        // Reached only after a mutation (a failure path, or `resyncAll`).
+        converge();
       }
     },
-    [applyView],
+    [applyView, converge],
   );
 
   const loadProjects = useCallback(async () => {
@@ -383,10 +411,10 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
           ? { projectId: view.project.id, options: gitignore }
           : null,
       );
-      applyView(view);
+      settleView(view);
       return view.project;
     },
-    [applyView],
+    [settleView],
   );
 
   const removeProject = useCallback(
@@ -413,6 +441,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
         // response carries no matrix, so this is the failure-path read.
         await refreshView(id);
       } else {
+        converge();
         setSelection((current) =>
           current.projectId === id ? NO_SELECTION : current,
         );
@@ -425,7 +454,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       }
       return report;
     },
-    [refreshView],
+    [refreshView, converge],
   );
 
   const toggleAssignment = useCallback(
@@ -440,7 +469,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
           skillId,
           tool,
         );
-        applyView(result.view);
+        settleView(result.view);
         if (result.kind === "unassigned") return { kind: "unassigned", report: result.report };
         // A folder in the way is the one overwrite ask's (D12); a retry
         // answers no view, so the matrix is re-read.
@@ -454,7 +483,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
         throw err;
       }
     },
-    [selectedProjectId, applyView, refreshView, settleCollisions],
+    [selectedProjectId, settleView, refreshView, settleCollisions],
   );
 
   const assignToProject = useCallback(
@@ -467,7 +496,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
         const skipped_projects: ProjectSyncReport["skipped_projects"] = [];
         for (const skillId of skillIds) {
           const result = await invokeTauri("bulkAssignSkill", projectId, skillId);
-          applyView(result.view);
+          settleView(result.view);
           items.push(...result.report.items);
           for (const skip of result.report.skipped_projects)
             if (!skipped_projects.some((s) => s.project_id === skip.project_id)) skipped_projects.push(skip);
@@ -480,7 +509,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
         throw err;
       }
     },
-    [applyView, refreshView, settleCollisions],
+    [settleView, refreshView, settleCollisions],
   );
 
   const unassignFromProject = useCallback(
@@ -491,7 +520,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
           const result = await invokeTauri("bulkUnassignSkill", projectId, skillId);
           // A row whose artifact stayed is kept with status `error`
           // (ADR-0002); the view already shows it.
-          applyView(result.view);
+          settleView(result.view);
           reports.push(result.report);
         }
         return reports.length === 1
@@ -507,7 +536,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
         throw err;
       }
     },
-    [applyView, refreshView],
+    [settleView, refreshView],
   );
 
   const syncAssignment = useCallback(
@@ -515,7 +544,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       if (!selectedProjectId) return null;
       try {
         const result = await invokeTauri("resyncProjectAssignment", selectedProjectId, skillId, tool);
-        applyView(result.view);
+        settleView(result.view);
         const settled = await settleCollisions(result.report);
         if (settled.resolved) await refreshView(selectedProjectId);
         return settled.report;
@@ -524,16 +553,16 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
         throw err;
       }
     },
-    [selectedProjectId, applyView, refreshView, settleCollisions],
+    [selectedProjectId, settleView, refreshView, settleCollisions],
   );
 
   const updateProjectPath = useCallback(
     async (projectId: string, newPath: string): Promise<ProjectDto> => {
       const view = await invokeTauri("updateProjectPath", projectId, newPath);
-      applyView(view);
+      settleView(view);
       return view.project;
     },
-    [applyView],
+    [settleView],
   );
 
   // The read takes the project list as it is when called (a stable
@@ -577,7 +606,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
     if (!selectedProjectId) throw new Error("No project selected");
     try {
       const result = await invokeTauri("resyncProject", selectedProjectId);
-      applyView(result.view);
+      settleView(result.view);
       const settled = await settleCollisions(result.report);
       if (settled.resolved) await refreshView(selectedProjectId);
       return settled.report;
@@ -585,7 +614,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       await refreshView(selectedProjectId);
       throw err;
     }
-  }, [selectedProjectId, applyView, refreshView, settleCollisions]);
+  }, [selectedProjectId, settleView, refreshView, settleCollisions]);
 
   const resyncAll = useCallback(async (): Promise<{
     report: ProjectSyncReport;
@@ -626,7 +655,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
           toolIds,
           gitignore,
         );
-        applyView(view);
+        settleView(view);
         // Consume the intent only once the backend has written it. On
         // rejection the modal stays open, so keeping the intent lets a
         // retry replay it instead of silently persisting tools alone.
@@ -639,7 +668,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
         throw err;
       }
     },
-    [selectedProjectId, pendingIgnore, applyView, refreshView],
+    [selectedProjectId, pendingIgnore, settleView, refreshView],
   );
 
   // Dismissing the tool-config modal abandons the registration flow that

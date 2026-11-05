@@ -954,6 +954,27 @@ pub struct ManagedSkillDto {
     /// Skill health: the stored last outcome of a skill-level operation
     /// (see **Skill health** in `CONTEXT.md`), null when healthy.
     pub health: Option<crate::core::skill_health::SkillHealth>,
+    /// Every project the skill is assigned to, with its deployment rows there
+    /// (`disabled` included). Counts are the frontend fold's, never carried.
+    pub projects: Vec<SkillProjectDto>,
+}
+
+/// One project a Managed skill is assigned to (`core::skill_catalog::SkillProject`).
+#[derive(Debug, Serialize, Type)]
+pub struct SkillProjectDto {
+    pub project_id: String,
+    pub project_name: String,
+    pub deployments: Vec<SkillProjectDeploymentDto>,
+}
+
+/// One project assignment row of the skill: its Tool key and lifecycle.
+#[derive(Debug, Serialize, Type)]
+pub struct SkillProjectDeploymentDto {
+    pub tool: String,
+    pub status: SyncStatus,
+    /// Set once a sync of ours succeeded there; a never-synced `error` row
+    /// owns nothing and is not a live deployment.
+    pub synced_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Type)]
@@ -1053,6 +1074,7 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
             unlocatable,
             detachable,
             health,
+            projects,
         } = entry;
         ManagedSkillDto {
             id: skill.id,
@@ -1083,6 +1105,22 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
             unlocatable,
             detachable,
             health,
+            projects: projects
+                .into_iter()
+                .map(|project| SkillProjectDto {
+                    project_id: project.project_id,
+                    project_name: project.project_name,
+                    deployments: project
+                        .deployments
+                        .into_iter()
+                        .map(|deployment| SkillProjectDeploymentDto {
+                            tool: deployment.tool,
+                            status: deployment.status,
+                            synced_at: deployment.synced_at,
+                        })
+                        .collect(),
+                })
+                .collect(),
         }
     }
 }

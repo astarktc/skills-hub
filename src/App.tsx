@@ -53,6 +53,7 @@ import {
   type ExplorePreview,
 } from "./hooks/useSurfaceState";
 import {
+  collapsedSourcesPreference,
   groupByRepoPreference,
   viewModePreference,
 } from "./lib/preferences";
@@ -97,7 +98,12 @@ function App() {
   // The project world lives as long as the app: its selected project, matrix
   // and the Tool catalog's project entries survive navigation. Its skill
   // rows are the library's catalog, passed to its view below.
-  const projects = useProjectState({ settleCollisions: sync.settleProjectCollisions });
+  // The library's rows carry each skill's project deployments (D41): a
+  // project mutation reloads the catalog so the two worlds agree (31 audit F1).
+  const projects = useProjectState({
+    settleCollisions: sync.settleProjectCollisions,
+    onDeploymentsChanged: library.loadManagedSkills,
+  });
 
   const { area, focused, focus, unfocus, open, closeDialog, dismissDialog } =
     surface;
@@ -146,6 +152,7 @@ function App() {
     },
     groupByRepoPreference,
     viewModePreference,
+    collapsePreference: collapsedSourcesPreference,
     foldSingletons: true,
     filters: SKILL_FILTERS,
     selection: surface.selection.skills,
@@ -172,8 +179,9 @@ function App() {
 
   // The skill action door: every verb on a skill (card, detail, toolbar,
   // new-tools notice) goes through its one handle. Delete's focus rule reads
-  // the list's display order (a grouped list walks its groups).
-  const visibleOrder = useMemo(() => lens.displayed.map((skill) => skill.id), [lens.displayed]);
+  // the list's display order (a grouped list walks its groups; a collapsed
+  // group's rows are not on screen, so neither focus nor ⌘A lands there).
+  const visibleOrder = useMemo(() => lens.onScreen.map((skill) => skill.id), [lens.onScreen]);
   const actions = useSkillActions({
     t,
     reporter,
@@ -590,8 +598,13 @@ function App() {
     <div className="flex h-full overflow-hidden bg-background text-foreground">
       {/* Toast lifetime is owned by useStatusReporter, per kind. Errors
           never auto-dismiss, so the visible stack is raised above sonner's
-          default of 3: a fourth open error shows without hovering. */}
-      <Toaster position="top-right" richColors visibleToasts={5} />
+          default of 3: a fourth open error shows without hovering.
+          Placement (BACKLOG #80): the bottom-right corner, lifted 6 rem
+          above the window's foot — clear of the header's verbs (the next
+          action after a notice), the filter bar, the bulk rail and a
+          dialog's or the inspector's foot; it passes over list content,
+          which scrolls. Pointer events and hover-pause stay sonner's. */}
+      <Toaster position="bottom-right" offset={{ bottom: "6rem" }} richColors visibleToasts={3} />
 
       <AppSidebar
         activeArea={area}

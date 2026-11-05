@@ -13,15 +13,74 @@
 //! ordinary state, not a failure (`InvocationMode::default()`).
 
 use anyhow::{Context, Result};
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::core::{
     manifest::{invocation_mode_for_dir, InvocationMode},
+    project_ops::project_name_from_path,
     provenance::is_refreshable,
     skill_health::{all_skill_health, skill_health, SkillHealth},
-    skill_store::{SkillRecord, SkillStore, SkillTargetRecord},
+    skill_store::{SkillProjectDeploymentRecord, SkillRecord, SkillStore, SkillTargetRecord},
+    sync_status::SyncStatus,
     unlocatable::{is_detachable, unlocatable_state, UnlocatableState},
 };
+
+/// One project a Managed skill is deployed to, as the library row needs it:
+/// the project's identity and name, and the skill's assignment rows there.
+/// Counts (how many projects hold a live deployment, how many failed) are the
+/// frontend fold's, never carried.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillProject {
+    pub project_id: String,
+    /// The project's display name (its folder's basename, `project_name_from_path`).
+    pub project_name: String,
+    /// One per assignment row of this skill in the project, by Tool key.
+    pub deployments: Vec<SkillProjectDeployment>,
+}
+
+/// One project assignment row's Tool and lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillProjectDeployment {
+    pub tool: String,
+    pub status: SyncStatus,
+    /// Set once a sync of ours succeeded there (ownership): a never-synced
+    /// `error` row owns nothing and is not a live deployment.
+    pub synced_at: Option<i64>,
+}
+
+/// Group the flat deployment rows (one query) into each skill's projects,
+/// ordered by project name, then id.
+fn projects_by_skill(
+    rows: Vec<SkillProjectDeploymentRecord>,
+) -> HashMap<String, Vec<SkillProject>> {
+    let mut out: HashMap<String, Vec<SkillProject>> = HashMap::new();
+    for row in rows {
+        let projects = out.entry(row.skill_id).or_default();
+        let deployment = SkillProjectDeployment {
+            tool: row.tool,
+            status: row.status,
+            synced_at: row.synced_at,
+        };
+        match projects.iter_mut().find(|p| p.project_id == row.project_id) {
+            Some(project) => project.deployments.push(deployment),
+            None => projects.push(SkillProject {
+                project_name: project_name_from_path(&row.project_path),
+                project_id: row.project_id,
+                deployments: vec![deployment],
+            }),
+        }
+    }
+    for projects in out.values_mut() {
+        projects.sort_by(|a, b| {
+            a.project_name
+                .to_lowercase()
+                .cmp(&b.project_name.to_lowercase())
+                .then_with(|| a.project_id.cmp(&b.project_id))
+        });
+    }
+    out
+}
 
 /// One Managed skill as the library list needs it.
 #[derive(Debug, Clone)]
@@ -51,6 +110,9 @@ pub struct ManagedSkillEntry {
     /// The skill's stored last outcome (`core::skill_health`), `None` when
     /// healthy. Distinct from each target's own status and `last_error`.
     pub health: Option<SkillHealth>,
+    /// Every project the skill has an assignment row in, with those rows
+    /// (`disabled` included), read for the whole catalog in one query.
+    pub projects: Vec<SkillProject>,
 }
 
 /// Assemble the Managed-skill catalog: every Managed skill with its Sync
@@ -59,12 +121,18 @@ pub fn managed_skill_catalog(store: &SkillStore) -> Result<Vec<ManagedSkillEntry
     let skills = store.list_skills().context("list managed skills")?;
     let disabled = store.disabled_skills().context("list disabled skills")?;
     let mut health = all_skill_health(store).context("list skill health")?;
+    let mut projects = projects_by_skill(
+        store
+            .list_skill_project_deployments(None)
+            .context("list project deployments")?,
+    );
     skills
         .into_iter()
         .map(|skill| {
             let disabled_at = disabled.get(&skill.id).copied();
             let health = health.remove(&skill.id);
-            build_entry(store, skill, disabled_at, health)
+            let projects = projects.remove(&skill.id).unwrap_or_default();
+            build_entry(store, skill, disabled_at, health, projects)
         })
         .collect()
 }
@@ -76,7 +144,14 @@ pub fn managed_skill_entry(store: &SkillStore, id: &str) -> Result<Option<Manage
         .map(|skill| {
             let disabled_at = store.skill_disabled_at(&skill.id)?;
             let health = skill_health(store, &skill.id)?;
-            build_entry(store, skill, disabled_at, health)
+            let projects = projects_by_skill(
+                store
+                    .list_skill_project_deployments(Some(&skill.id))
+                    .context("list project deployments")?,
+            )
+            .remove(&skill.id)
+            .unwrap_or_default();
+            build_entry(store, skill, disabled_at, health, projects)
         })
         .transpose()
 }
@@ -86,6 +161,7 @@ fn build_entry(
     skill: SkillRecord,
     disabled_at: Option<i64>,
     health: Option<SkillHealth>,
+    projects: Vec<SkillProject>,
 ) -> Result<ManagedSkillEntry> {
     let targets = store
         .list_skill_targets(&skill.id)
@@ -105,6 +181,7 @@ fn build_entry(
         unlocatable,
         detachable,
         health,
+        projects,
     })
 }
 

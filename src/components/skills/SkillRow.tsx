@@ -1,5 +1,5 @@
 import { memo, useRef, useState, type MouseEvent } from "react";
-import { AlertTriangle, CircleMinus, CircleX, Ellipsis, Globe, Pencil } from "lucide-react";
+import { AlertTriangle, CircleMinus, CircleX, Ellipsis, Folder, Globe, Pencil } from "lucide-react";
 import type { TFunction } from "i18next";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -24,38 +24,19 @@ import {
   HEALTH_REPAIR_LABEL_KEY,
   HEALTH_ROW_LABEL_KEY,
   INVOCATION_LABEL_KEY,
+  ROW_MARK_LABEL_KEY,
   UNLOCATABLE_TOOLTIP_KEY,
-  deployAction,
+  healthRowPlaces,
+  rowMarks,
   skillHealth,
+  skillScope,
   type HealthRepair,
   type HealthRow,
   type SyncedStrip as SyncedStripFold,
 } from "../../lib/skillPresentation";
+import { LIST_COLUMNS } from "./listColumns";
 import SyncedStrip from "./SyncedStrip";
 import type { ManagedSkill } from "./types";
-
-/**
- * The list's column template (36 px rows, DESIGN.md § My Skills row):
- * checkbox · name + exceptions | description · Synced strip + N/M · scope ·
- * switch · overflow. Name and description share one track (`NAME_GROUP`) so
- * the name is never squeezed while the description keeps room. The strip
- * column is sized from `--strip-marks` (set by the list: one 16 px step per
- * Tool). Below a 48rem list the description goes and the name takes its room.
- */
-const LIST_COLUMNS =
-  "grid-cols-[2rem_minmax(0,1fr)_calc(var(--strip-marks)_*_1rem_+_2.5rem)_1.5rem_2.5rem_2rem]";
-
-/**
- * The name group's floor is the old 1.5 : 1 name column — (cell − the 12 px
- * gap) × 0.6 — so descriptions start on one line down the list. A name plus
- * its exception marks wider than that takes the description's room first
- * (the description truncates, then collapses); the name truncates only when
- * name + marks exceed the whole cell.
- */
-const NAME_GROUP = "flex min-w-[calc((100%-0.75rem)*0.6)] items-center gap-2 @max-3xl:min-w-0";
-
-/** Rows the strip and the switch already say — never repeated as a mark. */
-const SILENT_ROWS = new Set<HealthRow["kind"]>(["disabled", "targets_disabled"]);
 
 /** The switch is the Enable; every other repair is reachable from the overflow. */
 const MENU_REPAIRS = new Set<HealthRepair>([
@@ -101,6 +82,8 @@ type SkillRowProps = {
   actions: Pick<SkillActions, "run" | "repair">;
   /** Focus the skill (hash) and open it. */
   onOpen: (skill: ManagedSkill) => void;
+  /** The Harness catalog's label for a key (a mark's tooltip names its harnesses). */
+  labelOf: (tool: string) => string;
   t: TFunction;
 };
 
@@ -124,6 +107,7 @@ const SkillRow = ({
   blockedReason,
   actions,
   onOpen,
+  labelOf,
   t,
 }: SkillRowProps) => {
   const { run, repair } = actions;
@@ -131,8 +115,9 @@ const SkillRow = ({
   const busyHere = isPendingSkill(pending, skill.id);
   const blockedTitle = busy ? (blockedReason ?? undefined) : undefined;
   const health = skillHealth(skill, { t });
-  const marks = health.rows.filter((row) => !SILENT_ROWS.has(row.kind));
-  const live = deployAction(skill).kind === "deployed";
+  // D40: Disabled and Not deployed are never a row mark (`rowMarks`).
+  const marks = rowMarks(health);
+  const scope = skillScope(skill);
   const enabled = skill.disabled_at === null;
   // The switch is Disable / Enable at skill grain (D8). Disable is never
   // asked (reversible; the switch shows it). Enable asks quietly, inline,
@@ -154,12 +139,19 @@ const SkillRow = ({
   };
 
   const rowLabel = (row: HealthRow) => t(HEALTH_ROW_LABEL_KEY[row.kind], { count: row.count });
-  const markTitle = (row: HealthRow) =>
-    row.error
-      ? (describeCommandError(row.error, t) ?? undefined)
-      : row.kind === "central_missing" || row.kind === "source_missing"
-        ? t(UNLOCATABLE_TOOLTIP_KEY[row.kind])
-        : undefined;
+  // What happened, then where (a failed project deployment names its
+  // project, D41) — the same words the inspector ladder shows.
+  const markTitle = (row: HealthRow) => {
+    const parts = [
+      row.error
+        ? describeCommandError(row.error, t)
+        : row.kind === "central_missing" || row.kind === "source_missing"
+          ? t(UNLOCATABLE_TOOLTIP_KEY[row.kind])
+          : null,
+      ...healthRowPlaces(row, { t, labelOf }),
+    ].filter((part): part is string => Boolean(part));
+    return parts.length > 0 ? parts.join(" · ") : undefined;
+  };
 
   // The Fix group: every repair the fold offers but the switch (Enable).
   // Remove stays the menu's last item; a Delete that did not finish is
@@ -207,8 +199,11 @@ const SkillRow = ({
   // In a list narrower than 48rem (the inspector beside it, D3) the
   // description has gone and the marks compact to their icons, so the name
   // keeps its room (I3): each label stays the mark's accessible text and its
-  // tooltip. The card and a wider list show the words.
+  // tooltip. The card and a wider list show the words — a target kind in its
+  // short form ("2 failed", `ROW_MARK_LABEL_KEY`); the tooltip always carries
+  // the ladder's full sentence, then what happened and where.
   const compact = layout === "list";
+  const markLabel = (row: HealthRow) => t(ROW_MARK_LABEL_KEY[row.kind], { count: row.count });
   const exceptionMarks =
     marks.length > 0 ? (
       <span
@@ -222,23 +217,24 @@ const SkillRow = ({
             <Badge
               key={row.kind}
               tone={row.severity === "failed" ? "failed" : row.severity === "stale" ? "stale" : "neutral"}
-              title={compact ? (detail ? `${rowLabel(row)} — ${detail}` : rowLabel(row)) : detail}
+              title={detail ? `${rowLabel(row)} — ${detail}` : rowLabel(row)}
             >
               {row.severity === "failed" ? <CircleX aria-hidden="true" /> : null}
               {row.severity === "stale" ? <AlertTriangle aria-hidden="true" /> : null}
               {row.severity !== "failed" && row.severity !== "stale" && compact ? (
                 <CircleMinus aria-hidden="true" className="hidden @max-3xl:block" />
               ) : null}
-              <span className={cn(compact && "@max-3xl:sr-only")}>{rowLabel(row)}</span>
+              <span className={cn(compact && "@max-3xl:sr-only")}>{markLabel(row)}</span>
             </Badge>
           );
         })}
       </span>
     ) : null;
 
+  const descriptionTitle = [sourceLabel, skill.description].filter(Boolean).join(" · ") || undefined;
   const description =
     sourceLabel || skill.description ? (
-      <span className="min-w-0 truncate text-sm text-muted-foreground" title={skill.description ?? undefined}>
+      <span className="min-w-0 truncate text-sm text-muted-foreground" title={descriptionTitle}>
         {sourceLabel ? <span className="mr-2 font-mono text-xs text-faint">{sourceLabel}</span> : null}
         {skill.description}
       </span>
@@ -246,9 +242,33 @@ const SkillRow = ({
       <span />
     );
 
-  const scope = live ? (
-    <span role="img" aria-label={t("library.row.scopeGlobal")} title={t("library.row.scopeGlobal")} className="inline-flex text-faint">
-      <Globe className="size-3.5" aria-hidden="true" />
+  // Scope (D41): a globe when some global deployment is live, and/or a
+  // folder + N for the projects holding a live deployment — one name for both.
+  const scopeLabel = [
+    scope.global ? t("library.row.scopeGlobal") : null,
+    scope.projects.length > 0
+      ? t("library.row.scopeProjects", {
+          count: scope.projects.length,
+          projects: scope.projects.map((project) => project.name).join(", "),
+        })
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const scopeCell = scopeLabel ? (
+    <span
+      role="img"
+      aria-label={scopeLabel}
+      title={scopeLabel}
+      className="inline-flex items-center gap-1.5 text-xs text-faint tabular-nums"
+    >
+      {scope.global ? <Globe className="size-3.5" aria-hidden="true" /> : null}
+      {scope.projects.length > 0 ? (
+        <span className="inline-flex items-center gap-0.5">
+          <Folder className="size-3.5" aria-hidden="true" />
+          {scope.projects.length}
+        </span>
+      ) : null}
     </span>
   ) : (
     <span />
@@ -413,13 +433,17 @@ const SkillRow = ({
         ) : null}
         <div className="mt-auto flex min-w-0 items-center gap-2">
           <SyncedStrip strip={strip} t={t} />
-          <span className="ml-auto">{scope}</span>
+          <span className="ml-auto">{scopeCell}</span>
         </div>
         {sourceLabel ? <span className="truncate font-mono text-xs text-faint">{sourceLabel}</span> : null}
       </li>
     );
   }
 
+  // The row sits on its group card's `row` ground; hover lifts it to
+  // `accent`; the focused row (the inspector's) is a `raised` rounded block
+  // inset from the card's edges with a 1 px inset ring; a selected row keeps
+  // the 3 px iris edge (D38).
   return (
     <li
       data-skill-item={skill.id}
@@ -429,22 +453,21 @@ const SkillRow = ({
       aria-busy={busyHere || undefined}
       onClick={handleRowClick}
       className={cn(
-        "relative grid h-row items-center gap-x-3 border-b border-border px-3 hover:bg-accent data-selected:bg-raised data-focused:bg-raised data-focused:ring-1 data-focused:ring-ring data-focused:ring-inset",
+        "relative grid h-row items-center gap-x-3 px-3 hover:bg-accent data-selected:bg-raised",
+        "data-focused:mx-1 data-focused:rounded-md data-focused:bg-raised data-focused:px-2 data-focused:ring-1 data-focused:ring-ring data-focused:ring-inset",
         SELECTED_EDGE,
         LIST_COLUMNS,
       )}
     >
       <span className="flex items-center justify-center">{checkbox}</span>
-      <span className="flex min-w-0 items-center gap-x-3">
-        <span className={NAME_GROUP}>
-          {name}
-          {pencil}
-          {exceptionMarks}
-        </span>
-        <span className="flex min-w-0 flex-1 @max-3xl:hidden">{description}</span>
+      <span className="flex min-w-0 items-center gap-2">
+        {name}
+        {pencil}
+        {exceptionMarks}
       </span>
+      <span className="flex min-w-0 @max-3xl:hidden">{description}</span>
       <SyncedStrip strip={strip} t={t} />
-      <span className="flex items-center justify-center">{scope}</span>
+      <span className="flex items-center">{scopeCell}</span>
       <span className="flex items-center justify-center">{toggle}</span>
       <span className="flex items-center justify-center">{menu}</span>
     </li>

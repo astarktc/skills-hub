@@ -785,6 +785,11 @@ export type ManagedSkillDto = {
 	 *  (see **Skill health** in `CONTEXT.md`), null when healthy.
 	 */
 	health: SkillHealth | null,
+	/**
+	 *  Every project the skill is assigned to, with its deployment rows there
+	 *  (`disabled` included). Counts are the frontend fold's, never carried.
+	 */
+	projects: SkillProjectDto[],
 };
 
 export type OnboardingGroup = {
@@ -1340,6 +1345,24 @@ export type SkillOutcomeKind =
  *  original afterwards.
  */
 "import_failed";
+
+/**  One project assignment row of the skill: its Tool key and lifecycle. */
+export type SkillProjectDeploymentDto = {
+	tool: string,
+	status: SyncStatus,
+	/**
+	 *  Set once a sync of ours succeeded there; a never-synced `error` row
+	 *  owns nothing and is not a live deployment.
+	 */
+	synced_at: number | null,
+};
+
+/**  One project a Managed skill is assigned to (`core::skill_catalog::SkillProject`). */
+export type SkillProjectDto = {
+	project_id: string,
+	project_name: string,
+	deployments: SkillProjectDeploymentDto[],
+};
 
 export type SkillRefreshOutcome = {
 	skill_id: string,
